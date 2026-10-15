@@ -32,9 +32,6 @@ importers:
 
   apps/api:
     dependencies:
-      '@consultorio/contracts':
-        specifier: workspace:*
-        version: link:../../packages/contracts
       drizzle-orm:
         specifier: ^0.45.4
         version: 0.45.4(@types/pg@8.23.1)(pg@8.23.1)
@@ -57,6 +54,9 @@ importers:
       '@consultorio/config':
         specifier: workspace:*
         version: link:../../packages/config
+      '@consultorio/contracts':
+        specifier: workspace:*
+        version: link:../../packages/contracts
       '@testcontainers/postgresql':
         specifier: ^12.2.1
         version: 12.2.1
@@ -69,6 +69,9 @@ importers:
       drizzle-kit:
         specifier: ^0.31.11
         version: 0.31.11
+      esbuild:
+        specifier: ^0.28.2
+        version: 0.28.2
       testcontainers:
         specifier: ^12.2.1
         version: 12.2.1
