@@ -11,7 +11,8 @@
     "test": "vitest run",
     "test:integration": "vitest run --config vitest.integration.config.ts",
     "db:migrate": "tsx src/db/migrate-cli.ts",
-    "db:generate": "drizzle-kit generate"
+    "db:generate": "drizzle-kit generate",
+    "db:check": "tsx scripts/check-migration-drift.ts"
   },
   "dependencies": {
     "@consultorio/contracts": "workspace:*",

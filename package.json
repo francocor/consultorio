@@ -18,7 +18,8 @@
     "test": "vitest run",
     "test:integration": "pnpm -r --if-present run test:integration",
     "test:e2e": "pnpm -r --if-present run test:e2e",
-    "test:coverage": "vitest run --coverage"
+    "test:coverage": "vitest run --coverage",
+    "db:check": "pnpm --filter @consultorio/api db:check"
   },
   "prettier": "@consultorio/config/prettier.config.js",
   "devDependencies": {
