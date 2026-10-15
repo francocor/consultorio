@@ -112,9 +112,9 @@ Depends: S0.03. Independent of S0.04.
 
 Depends: S0.04, S0.05.
 
-- [ ] 0.16 Root `vitest.workspace.ts` and per-package Vitest configs (`api` node env, `web` jsdom env, `contracts` node env), v8 coverage reporting without a threshold, scripts `test` and `test:integration`. Add `packages/contracts/src/health.test.ts` (task 0.9) and `App.test.tsx` (task 0.15). Test: `pnpm test` runs all three packages green.
-- [ ] 0.17 Playwright in `apps/web`: `playwright.config.ts` with projects `mobile-360` (360x740) and `desktop`, `e2e/smoke.spec.ts` loading the built shell, `@axe-core/playwright` assertion with zero violations. Test: `pnpm test:e2e` green locally.
-- [ ] 0.18 `vitest-axe` helper `apps/web/src/shared/test/a11y.ts` used by component tests from Stage 1. Test: self-test on a known-bad fixture reports a violation.
+- [x] 0.16 Root `vitest.workspace.ts` and per-package Vitest configs (`api` node env, `web` jsdom env, `contracts` node env), v8 coverage reporting without a threshold, scripts `test` and `test:integration`. Add `packages/contracts/src/health.test.ts` (task 0.9) and `App.test.tsx` (task 0.15). Test: `pnpm test` runs all three packages green.
+- [x] 0.17 Playwright in `apps/web`: `playwright.config.ts` with projects `mobile-360` (360x740) and `desktop`, `e2e/smoke.spec.ts` loading the built shell, `@axe-core/playwright` assertion with zero violations. Test: `pnpm test:e2e` green locally.
+- [x] 0.18 `vitest-axe` helper `apps/web/src/shared/test/a11y.ts` used by component tests from Stage 1. Test: self-test on a known-bad fixture reports a violation.
 
 ## S0.07 Database foundation (~400 lines)
 
