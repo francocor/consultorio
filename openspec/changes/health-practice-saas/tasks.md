@@ -26,11 +26,11 @@ Hand-written changed lines (additions + deletions, tests included). Lockfiles, s
 | Chained PRs recommended | Yes |
 | Suggested split | Stage by stage. Inside a stage, slices in the order listed (each slice is one PR). |
 | Delivery strategy | ask-on-risk |
-| Chain strategy | pending (orchestrator asks the user) |
+| Chain strategy | stacked-to-main (chosen by the owner) |
 
 Decision needed before apply: Yes
 Chained PRs recommended: Yes
-Chain strategy: pending
+Chain strategy: stacked-to-main
 400-line budget risk: High
 
 Decisions the owner must make before `sdd-apply`:
