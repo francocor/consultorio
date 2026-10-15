@@ -11,7 +11,7 @@
     "./eslint/base.js": "./eslint/base.js",
     "./prettier.config.js": "./prettier.config.js"
   },
-  "dependencies": {
+  "devDependencies": {
     "@eslint/js": "^10.0.1",
     "eslint-plugin-boundaries": "^7.2.0",
     "eslint-plugin-import-x": "^4.17.1",
