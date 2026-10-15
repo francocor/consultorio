@@ -27,6 +27,9 @@ export default defineConfig(
     // Planning artifacts and local caches.
     'openspec/**',
     '.atl/**',
+    // Agent skills installed by AutoSkills (third-party content).
+    '.agents/**',
+    '.claude/**',
   ]),
 
   js.configs.recommended,

@@ -2,6 +2,11 @@
 openspec
 .atl
 
+# Agent skills installed by AutoSkills (third-party content)
+.agents
+.claude
+skills-lock.json
+
 # Generated and build output
 node_modules
 dist

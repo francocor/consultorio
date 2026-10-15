@@ -5,6 +5,8 @@
 .gitattributes
 .github
 .atl
+.agents
+.claude
 openspec
 docs
 
