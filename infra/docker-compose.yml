@@ -1,0 +1,114 @@
+# Local development services. Run from the repository root:
+#   docker compose -f infra/docker-compose.yml up -d
+#
+# Everything here is for development only: the credentials are throwaway defaults and the ports
+# are published on localhost. Nothing in this file is used in production.
+
+name: consultorio
+
+services:
+  postgres:
+    image: postgres:17
+    environment:
+      POSTGRES_USER: ${POSTGRES_SUPERUSER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_SUPERUSER_PASSWORD:-postgres_dev_only}
+      POSTGRES_DB: ${POSTGRES_DB:-consultorio}
+    ports:
+      - '${POSTGRES_PORT:-5432}:5432'
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      # Creates the app_owner and app_rw roles on first start (see the file for details).
+      - ./postgres/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U "$$POSTGRES_USER" -d "$$POSTGRES_DB"']
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  minio:
+    image: minio/minio:latest
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minio_dev}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minio_dev_only_secret}
+    ports:
+      - '${MINIO_PORT:-9000}:9000'
+      - '${MINIO_CONSOLE_PORT:-9001}:9001'
+    volumes:
+      - minio-data:/data
+    healthcheck:
+      test: ['CMD', 'mc', 'ready', 'local']
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  # One-shot job: creates the private bucket the application will use, then exits.
+  minio-init:
+    image: minio/mc:latest
+    depends_on:
+      minio:
+        condition: service_healthy
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minio_dev}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minio_dev_only_secret}
+      S3_BUCKET: ${S3_BUCKET:-consultorio-files}
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        mc alias set local http://minio:9000 "$$MINIO_ROOT_USER" "$$MINIO_ROOT_PASSWORD" &&
+        mc mb --ignore-existing "local/$$S3_BUCKET" &&
+        mc anonymous set none "local/$$S3_BUCKET"
+    restart: 'no'
+
+  mailpit:
+    image: axllent/mailpit:latest
+    ports:
+      - '${MAILPIT_SMTP_PORT:-1025}:1025'
+      - '${MAILPIT_UI_PORT:-8025}:8025'
+    healthcheck:
+      test: ['CMD', '/mailpit', 'readyz']
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  # Antivirus scanner for uploaded documents. Needs roughly 1 GB of RAM and a minute or two to
+  # download signatures on first start. Start it only when working on uploads:
+  #   docker compose -f infra/docker-compose.yml up -d clamav
+  clamav:
+    image: clamav/clamav:stable
+    profiles: ['scan']
+    ports:
+      - '${CLAMAV_PORT:-3310}:3310'
+    volumes:
+      - clamav-data:/var/lib/clamav
+    healthcheck:
+      test: ['CMD', '/usr/local/bin/clamdcheck.sh']
+      interval: 30s
+      timeout: 10s
+      retries: 10
+      start_period: 120s
+
+  # The application image, for checking the production build locally:
+  #   docker compose -f infra/docker-compose.yml --profile app up --build
+  api:
+    profiles: ['app']
+    build:
+      context: ..
+      dockerfile: infra/Dockerfile
+    command: ['api']
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: postgres://app_rw:app_rw_dev_only@postgres:5432/${POSTGRES_DB:-consultorio}
+      DEPLOYMENT_MODE: ${DEPLOYMENT_MODE:-multi}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+    ports:
+      - '${API_PORT:-3000}:3000'
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+volumes:
+  postgres-data:
+  minio-data:
+  clamav-data:
