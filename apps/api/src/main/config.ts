@@ -15,6 +15,9 @@ const envSchema = z.object({
   PORT: z.coerce.number().int().min(1).max(65535).default(3000),
 });
 
+/** Names of every variable the application reads. `.env.example` must document each of them. */
+export const ENV_VARIABLES: readonly string[] = Object.keys(envSchema.shape);
+
 export interface Config {
   readonly nodeEnv: 'development' | 'test' | 'production';
   readonly databaseUrl: string;

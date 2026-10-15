@@ -1,6 +1,9 @@
+import { readFileSync } from 'node:fs';
+import { parseEnv } from 'node:util';
+
 import { describe, expect, it } from 'vitest';
 
-import { ConfigError, loadConfig } from './config.js';
+import { ConfigError, ENV_VARIABLES, loadConfig } from './config.js';
 
 const validEnv = {
   DATABASE_URL: 'postgres://app_rw:placeholder@localhost:5432/app',
@@ -61,5 +64,30 @@ describe('loadConfig', () => {
     expect(message).not.toContain('topsecret-password');
     expect(message).not.toContain('admin');
     expect(message).not.toContain('not-a-port-secret');
+  });
+});
+
+describe('.env.example', () => {
+  const example = parseEnv(
+    readFileSync(new URL('../../../../.env.example', import.meta.url), 'utf8'),
+  );
+
+  it('is accepted by the config schema as it is', () => {
+    const config = loadConfig(example);
+
+    expect(config.deploymentMode).toBe('multi');
+    expect(config.databaseUrl).toContain('app_rw');
+  });
+
+  it('documents every variable the application reads', () => {
+    expect(Object.keys(example)).toEqual(expect.arrayContaining([...ENV_VARIABLES]));
+  });
+
+  it('contains placeholders only: no value looks like a real credential', () => {
+    for (const [name, value] of Object.entries(example)) {
+      if (/PASSWORD|SECRET|DATABASE_URL/.test(name)) {
+        expect(value, name).toMatch(/dev_only|placeholder|^$/);
+      }
+    }
   });
 });
