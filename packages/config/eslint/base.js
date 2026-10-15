@@ -2,6 +2,8 @@ import js from '@eslint/js';
 import { defineConfig, globalIgnores } from 'eslint/config';
 import boundaries from 'eslint-plugin-boundaries';
 import importX from 'eslint-plugin-import-x';
+import jsxA11y from 'eslint-plugin-jsx-a11y';
+import reactHooks from 'eslint-plugin-react-hooks';
 import globals from 'globals';
 import tseslint from 'typescript-eslint';
 
@@ -10,6 +12,7 @@ import tseslint from 'typescript-eslint';
  *
  * - TypeScript files use typescript-eslint `strictTypeChecked` (type-aware, via projectService).
  * - Plain JS files (configs, scripts) get the base rules only, without type information.
+ * - React files (`.jsx`, `.tsx`) also get the React hooks rules and the JSX accessibility rules.
  * - Import order is enforced everywhere.
  * - `eslint-plugin-boundaries` is registered with the repo layout elements. Its dependency rules
  *   stay off until the first modules exist (Stage 1) and are switched on there.
@@ -73,6 +76,12 @@ export default defineConfig(
         { prefer: 'type-imports', fixStyle: 'inline-type-imports' },
       ],
     },
+  },
+
+  {
+    files: ['**/*.{jsx,tsx}'],
+    extends: [reactHooks.configs.flat.recommended, jsxA11y.flatConfigs.recommended],
+    languageOptions: { globals: { ...globals.browser } },
   },
 
   {

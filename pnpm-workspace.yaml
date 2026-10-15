@@ -15,3 +15,8 @@ minimumReleaseAge: 1440
 # Install scripts we have reviewed and deliberately skip (prebuilt binaries ship as optional deps).
 ignoredBuiltDependencies:
   - unrs-resolver
+
+# eslint-plugin-jsx-a11y declares peer support up to ESLint 9; verified working on ESLint 10.
+peerDependencyRules:
+  allowedVersions:
+    eslint-plugin-jsx-a11y>eslint: '10'
