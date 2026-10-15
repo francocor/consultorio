@@ -19,7 +19,7 @@ corepack enable
 pnpm install
 
 cp .env.example .env            # safe local placeholders, never commit .env
-docker compose -f infra/docker-compose.yml up -d
+pnpm infra:up                   # docker compose with the root .env, waits until healthy
 
 # create the schema (runs as app_owner)
 pnpm --filter @consultorio/api db:migrate
@@ -28,8 +28,10 @@ pnpm --filter @consultorio/api db:migrate
 Compose creates the `app_owner` and `app_rw` database roles on the first start of the Postgres volume. If you change `infra/postgres/init/01-roles.sql`, recreate the volume:
 
 ```bash
-docker compose -f infra/docker-compose.yml down -v
+pnpm infra:reset                # docker compose down -v: removes containers and volumes
 ```
+
+`pnpm infra:up`, `infra:down` and `infra:reset` wrap `docker compose --env-file .env -f infra/docker-compose.yml ...`. The `--env-file .env` part matters: compose reads variable defaults from the folder of the compose file (`infra/`), so without it your root `.env` (ports, passwords) would be ignored. Every published port is bound to `127.0.0.1` only.
 
 ## Run the apps
 
@@ -51,9 +53,9 @@ Check the API: `curl http://localhost:3000/health` answers `{"status":"ok"}`, an
 | Mailpit UI | `http://localhost:8025` (SMTP on `localhost:1025`) | none; every outgoing email is captured here          |
 | ClamAV     | `localhost:3310`, profile `scan`                   | none; needs about 1 GB of RAM, so it is opt-in       |
 
-Start the virus scanner only when working on uploads: `docker compose -f infra/docker-compose.yml --profile scan up -d clamav`.
+Start the virus scanner only when working on uploads: `docker compose --env-file .env -f infra/docker-compose.yml --profile scan up -d clamav`.
 
-To try the production image locally: `docker compose -f infra/docker-compose.yml --profile app up --build`.
+To try the production image locally: `docker compose --env-file .env -f infra/docker-compose.yml --profile app up --build`.
 
 ## Everyday commands
 
@@ -76,4 +78,4 @@ Migrations are forward-only. Never edit a migration that has been merged; add a 
 - **Install fails with an engine error**: your Node is older than 24. Use `nvm use` (reads `.nvmrc`) or install Node 24.
 - **`pnpm` is the wrong version**: run `corepack enable`, or call `corepack pnpm ...` explicitly.
 - **Integration tests say "Could not find a working container runtime"**: start Docker Desktop.
-- **Port already in use**: change the matching `*_PORT` variable in `.env`.
+- **Port already in use** (another Postgres or MinIO container is common): change the matching `*_PORT` variable in `.env`, and the port inside `DATABASE_URL` and `MIGRATION_DATABASE_URL` if you changed `POSTGRES_PORT`.
