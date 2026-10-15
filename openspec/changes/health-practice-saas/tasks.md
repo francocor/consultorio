@@ -138,9 +138,9 @@ Depends: S0.03 (independent of S0.06 and S0.07 except the init script).
 
 Depends: S0.06, S0.07, S0.08.
 
-- [ ] 0.27 `.github/workflows/ci.yml`: pnpm install with cache, typecheck, lint and Prettier check, unit, integration (Docker available for Testcontainers), `docker build`, Playwright e2e, gitleaks, `pnpm audit --prod --audit-level=high`, migration drift check. Least-privilege `permissions`, concurrency cancel. Test: the workflow is green on the PR itself.
-- [ ] 0.28 `.gitleaks.toml` (default rules, allowlist `.env.example`), `lefthook.yml` pre-commit running `gitleaks protect --staged` and lint-staged. [IDA-10] Test: committing a fake AWS key locally is blocked; on a throwaway branch CI gitleaks fails.
-- [ ] 0.29 `renovate.json` (group minor and patch updates, security updates immediate). Owner action: enable branch protection on `master` requiring the CI checks. Test: none (config).
+- [x] 0.27 `.github/workflows/ci.yml`: pnpm install with cache, typecheck, lint and Prettier check, unit, integration (Docker available for Testcontainers), `docker build`, Playwright e2e, gitleaks, `pnpm audit --prod --audit-level=high`, migration drift check. Least-privilege `permissions`, concurrency cancel. Test: the workflow is green on the PR itself. `actionlint` passes; every job command was run locally except Docker-dependent ones. **Green-on-PR PENDING** (needs a push; nothing is pushed yet).
+- [x] 0.28 `.gitleaks.toml` (default rules, allowlist `.env.example`), `lefthook.yml` pre-commit running `gitleaks protect --staged` and lint-staged. [IDA-10] Test: committing a fake AWS key locally is blocked; on a throwaway branch CI gitleaks fails. Local pre-commit block verified with a staged fake AWS key; `gitleaks git` over `master..HEAD` finds nothing. **CI check on a throwaway branch PENDING** (needs a push).
+- [x] 0.29 `renovate.json` (group minor and patch updates, security updates immediate). Owner action: enable branch protection on `master` requiring the CI checks. Test: none (config). Config validated with `renovate-config-validator --strict`. **Owner action PENDING**: enable branch protection on `master` requiring the CI checks, and install the Renovate GitHub app.
 
 ## S0.10 Legacy marker, docs and tooling refresh (~150 lines)
 
