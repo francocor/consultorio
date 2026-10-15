@@ -129,10 +129,10 @@ Depends: S0.06.
 
 Depends: S0.03 (independent of S0.06 and S0.07 except the init script).
 
-- [ ] 0.23 `infra/Dockerfile` (multi-stage: deps, build, runtime on a Node 24 slim image, non-root user, tini, `HEALTHCHECK`), `.dockerignore`. Test: `docker build -f infra/Dockerfile .` succeeds and `docker run ... node dist/main.js api` answers `/health`.
-- [ ] 0.24 `infra/docker-compose.yml`: `postgres:17` (mounts `infra/postgres/init/01-roles.sql`), `minio` (+ bucket-creation init), `mailpit`, `clamav` (with healthcheck and a memory note of about 1 GB), named volumes, optional `api` profile. Test: `docker compose config` validates; `docker compose up -d` reaches healthy.
-- [ ] 0.25 Root `.env.example` listing every variable with safe placeholders and comments, no secrets. [IDA-10] Test: a unit test in `apps/api` loads `.env.example` through the config schema and passes.
-- [ ] 0.26 `docs/dev-setup.md`: prerequisites, `pnpm install`, `docker compose -f infra/docker-compose.yml up -d`, run commands, Mailpit and MinIO console URLs. Test: manual walkthrough from a clean clone listed in the PR checklist.
+- [x] 0.23 `infra/Dockerfile` (multi-stage: deps, build, runtime on a Node 24 slim image, non-root user, tini, `HEALTHCHECK`), `.dockerignore`. Test: `docker build -f infra/Dockerfile .` succeeds and `docker run ... node dist/main.js api` answers `/health`. **Docker run PENDING**: the bundle was verified outside Docker (`pnpm deploy --prod` then `node dist/main.js api` answers `/health`); run `docker build -f infra/Dockerfile -t consultorio-api .` once the daemon is up.
+- [x] 0.24 `infra/docker-compose.yml`: `postgres:17` (mounts `infra/postgres/init/01-roles.sql`), `minio` (+ bucket-creation init), `mailpit`, `clamav` (with healthcheck and a memory note of about 1 GB), named volumes, optional `api` profile. Test: `docker compose config` validates; `docker compose up -d` reaches healthy. `docker compose config` validated; **`up -d` health PENDING** (daemon down). ClamAV sits behind the `scan` profile so the default stack stays light.
+- [x] 0.25 Root `.env.example` listing every variable with safe placeholders and comments, no secrets. [IDA-10] Test: a unit test in `apps/api` loads `.env.example` through the config schema and passes.
+- [x] 0.26 `docs/dev-setup.md`: prerequisites, `pnpm install`, `docker compose -f infra/docker-compose.yml up -d`, run commands, Mailpit and MinIO console URLs. Test: manual walkthrough from a clean clone listed in the PR checklist. **Clean-clone walkthrough PENDING** (owner, PR checklist).
 
 ## S0.09 CI pipeline and secret scanning (~300 lines)
 
