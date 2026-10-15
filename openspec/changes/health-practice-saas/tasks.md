@@ -97,8 +97,8 @@ Start: S0.01. Depends: S0.01.
 Depends: S0.03.
 
 - [x] 0.10 `apps/api/package.json`, `tsconfig.json`, `src/main/config.ts` (Zod-validated env: `NODE_ENV`, `DATABASE_URL`, `DEPLOYMENT_MODE` default `multi`, log level; secrets come only from the environment). [IDA-10] Test: invalid env throws a startup error that never prints secret values.
-- [ ] 0.11 `src/main/server.ts` `buildServer()` (Fastify, Zod type provider, pino with redaction of `authorization`, `cookie`, bodies), `src/platform/http/health.ts` (`/health` liveness, `/ready` checks DB), `src/main/main.ts` taking `api|worker` (worker is an idle stub that logs). Test: see 0.12.
-- [ ] 0.12 `src/platform/http/health.test.ts` with `fastify.inject`: `/health` 200; `/ready` 503 when the DB probe fails. Test: that file.
+- [x] 0.11 `src/main/server.ts` `buildServer()` (Fastify, Zod type provider, pino with redaction of `authorization`, `cookie`, bodies), `src/platform/http/health.ts` (`/health` liveness, `/ready` checks DB), `src/main/main.ts` taking `api|worker` (worker is an idle stub that logs). Test: see 0.12.
+- [x] 0.12 `src/platform/http/health.test.ts` with `fastify.inject`: `/health` 200; `/ready` 503 when the DB probe fails. Test: that file.
 
 ## S0.05 Web skeleton (~350 lines)
 
