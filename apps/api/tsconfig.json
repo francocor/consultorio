@@ -1,4 +1,4 @@
 {
   "extends": "@consultorio/config/tsconfig.node.json",
-  "include": ["src"]
+  "include": ["src", "vitest.config.ts", "vitest.integration.config.ts"]
 }
