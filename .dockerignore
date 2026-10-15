@@ -13,9 +13,9 @@ BackEnd
 FrontEnd
 
 # Secrets and local environment
-.env
-.env.*
-!.env.example
+**/.env
+**/.env.*
+!**/.env.example
 
 # Installed and generated output (rebuilt inside the image)
 **/node_modules
