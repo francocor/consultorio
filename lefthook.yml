@@ -1,0 +1,11 @@
+# Git hooks (installed by "pnpm install" through the prepare script).
+# Requires gitleaks on your PATH: https://github.com/gitleaks/gitleaks#installing
+#   Windows: winget install Gitleaks.Gitleaks    macOS: brew install gitleaks
+# A missing gitleaks blocks the commit on purpose: a secret scan that silently skips is worthless.
+pre-commit:
+  commands:
+    secrets:
+      run: gitleaks git --pre-commit --staged --redact --config .gitleaks.toml
+      fail_text: Secret scan failed (or gitleaks is not installed). Remove the secret, never commit it.
+    staged-files:
+      run: pnpm exec lint-staged
