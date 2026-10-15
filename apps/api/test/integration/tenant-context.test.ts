@@ -65,11 +65,14 @@ describe('withTenant', () => {
   it('rejects writing a row that belongs to another tenant', async () => {
     const run = withTenant();
 
+    // drizzle-orm wraps driver errors in DrizzleQueryError; the Postgres error is its cause.
     await expect(
       run({ tenantId: TENANT_A, userId: USER }, (tx) =>
         tx.execute(sql`INSERT INTO tenant_probe (tenant_id, label) VALUES (${TENANT_B}, 'leak')`),
       ),
-    ).rejects.toThrow(/row-level security/);
+    ).rejects.toMatchObject({
+      cause: { code: '42501', message: expect.stringMatching(/row-level security/) as unknown },
+    });
   });
 
   it('fails closed outside withTenant instead of returning rows', async () => {
