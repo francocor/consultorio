@@ -44,6 +44,8 @@ Full instructions, local service URLs and troubleshooting: [docs/dev-setup.md](d
 
 `pnpm typecheck`, `pnpm lint`, `pnpm format:check`, `pnpm test`, `pnpm test:integration` and `pnpm test:e2e` run in CI on every pull request, together with an image build, a dependency audit and a secret scan (gitleaks). A pre-commit hook scans staged changes for secrets, so install [gitleaks](https://github.com/gitleaks/gitleaks#installing) before your first commit.
 
+The CI secret scan uses `gitleaks/gitleaks-action`, which is free for personal GitHub accounts but requires a license key when the repository belongs to a GitHub organization. In that case add the key as the repository secret `GITLEAKS_LICENSE` (the workflow already passes it).
+
 ## Stack
 
 TypeScript everywhere. Node 24, Fastify, PostgreSQL 17 with Drizzle ORM and pg-boss, React 19, Vite, Tailwind CSS 4, Vitest, Testcontainers and Playwright, in a pnpm monorepo.
