@@ -50,7 +50,7 @@ describe('request logging', () => {
     expect(output).not.toContain('maria');
   });
 
-  it('redacts credentials, cookies and bodies', async () => {
+  it('redacts credentials, API keys, tokens, cookies and bodies', async () => {
     const logs = captureLogs();
     const app = buildServer({
       logLevel: 'info',
@@ -60,7 +60,15 @@ describe('request logging', () => {
     await app.ready();
 
     app.log.info({
-      req: { headers: { authorization: 'Bearer very-secret-token', cookie: 'sid=very-secret' } },
+      req: {
+        headers: {
+          authorization: 'Bearer very-secret-token',
+          cookie: 'sid=very-secret',
+          'x-api-key': 'very-secret-api-key',
+        },
+      },
+      session: { token: 'very-secret-session-token' },
+      token: 'very-secret-action-token',
       body: { diagnosis: 'very-secret-diagnosis' },
     });
     await app.close();

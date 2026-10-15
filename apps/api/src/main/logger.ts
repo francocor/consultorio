@@ -1,8 +1,8 @@
 import type { LoggerOptions } from 'pino';
 
 /**
- * Paths whose values are never written to logs: credentials, cookies and request or response
- * bodies (clinical routes carry health data, so bodies are never logged).
+ * Paths whose values are never written to logs: credentials, API keys, tokens, cookies and request
+ * or response bodies (clinical routes carry health data, so bodies are never logged).
  */
 export const REDACT_PATHS: string[] = [
   'req.headers.authorization',
@@ -12,6 +12,11 @@ export const REDACT_PATHS: string[] = [
   'headers.cookie',
   '*.headers.authorization',
   '*.headers.cookie',
+  'req.headers["x-api-key"]',
+  'headers["x-api-key"]',
+  '*.headers["x-api-key"]',
+  'token',
+  '*.token',
   'body',
   '*.body',
 ];
