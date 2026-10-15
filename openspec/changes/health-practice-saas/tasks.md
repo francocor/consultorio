@@ -105,7 +105,7 @@ Depends: S0.03.
 Depends: S0.03. Independent of S0.04.
 
 - [x] 0.13 `apps/web`: Vite, React 19, TypeScript, Tailwind 4, `index.html`, `src/main.tsx`, `src/app/App.tsx` placeholder, `src/shared/lib/cn.ts`. Test: `pnpm --filter web build` succeeds.
-- [ ] 0.14 `vite.config.ts` with `vite-plugin-pwa` (minimal manifest, placeholder icons in `public/`) and a dev proxy of `/api` to the API port. Test: build emits `manifest.webmanifest` and a service worker.
+- [x] 0.14 `vite.config.ts` with `vite-plugin-pwa` (minimal manifest, placeholder icons in `public/`) and a dev proxy of `/api` to the API port. Test: build emits `manifest.webmanifest` and a service worker.
 - [x] 0.15 `src/app/App.tsx` renders a tenant-neutral placeholder shell and `index.html` sets `lang="es-AR"`. Its test `App.test.tsx` is written in task 0.16, once the runner exists. Test: see 0.16.
 
 ## S0.06 Test tooling (~350 lines)
