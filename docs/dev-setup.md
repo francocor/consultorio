@@ -1,6 +1,6 @@
 # Development setup
 
-How to run the new stack (`apps/`, `packages/`, `infra/`) on your machine. The legacy `BackEnd/` and `FrontEnd/` folders are reference only and are not part of this setup.
+How to run the new stack (`apps/`, `packages/`, `infra/`) on your machine. The legacy reference app lives in the separate archived repository `francocor/AppmedicoCMAillu` and is not part of this setup.
 
 ## Prerequisites
 

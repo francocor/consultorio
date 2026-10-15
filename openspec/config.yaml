@@ -1,7 +1,7 @@
 schema: spec-driven
 
 context: |
-  Project: Centro Medico Aillu (engram project: appmedicocmaillu) - medical practice management app.
+  Project: consultorio (working name; rewrite of the Centro Medico Aillu app; engram project: appmedicocmaillu) - medical practice management app.
   Current code is LEGACY and will be REWRITTEN on a new foundation (domain knowledge + UI design reused)
   to become a professional multi-specialty health practice SaaS. Target stack: NOT decided yet (decide in sdd-design).
   Legacy BackEnd: Node, Express 5, mysql2 (raw SQL), JWT issued but never verified, bcrypt/bcryptjs, exceljs, multer. Plain JS (CommonJS-style scripts), no tests/lint/CI.
@@ -28,7 +28,7 @@ testing:
 rules:
   proposal:
     - Include rollback plan for risky changes
-    - Treat existing BackEnd/ and FrontEnd/ as legacy reference (domain knowledge, UI design), not as code to extend
+    - Treat the legacy app (separate archived repo francocor/AppmedicoCMAillu) as reference (domain knowledge, UI design), not as code to extend
   specs:
     - Use Given/When/Then for scenarios
     - Use RFC 2119 keywords (MUST, SHALL, SHOULD, MAY)
@@ -42,7 +42,6 @@ rules:
     - Keep tasks completable in one session
     - Include a Review Workload Forecast (400-line budget); delivery_strategy is ask-on-risk
   apply:
-    - Do not modify legacy BackEnd/ or FrontEnd/ unless a task explicitly says so
     - Follow patterns defined in the design phase for the new foundation
     tdd: false
     test_command: ""

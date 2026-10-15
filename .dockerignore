@@ -8,10 +8,6 @@
 openspec
 docs
 
-# Legacy code is reference only
-BackEnd
-FrontEnd
-
 # Secrets and local environment
 **/.env
 **/.env.*

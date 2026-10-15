@@ -23,6 +23,10 @@ The product is delivered in seven demoable stages (0 to 6). The plan, specificat
 | `docs`               | [Development setup](docs/dev-setup.md), [external dependencies](docs/external-dependencies.md) |
 | `openspec`           | Spec-driven planning artifacts: proposal, specs, design and tasks                              |
 
+## Legacy reference app
+
+This product is the rewrite of the Centro Medico Aillu app. That legacy app is reference material only (domain knowledge and UI design). It is not part of this repository: it lives in the separate, archived repository `francocor/AppmedicoCMAillu`.
+
 ## Getting started
 
 ```bash
