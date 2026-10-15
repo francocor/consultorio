@@ -146,11 +146,11 @@ Depends: S0.06, S0.07, S0.08.
 
 Depends: S0.09.
 
-- [ ] 0.30 Root `README.md` (product overview, layout, links to `docs/dev-setup.md` and `openspec/`). Test: none.
-- [ ] 0.31 `docs/external-dependencies.md` skeleton (AFIP, WhatsApp Business, e-Rx provider, Mercado Pago, legal Q1 and Q7) filled in S1.00. Test: none.
+- [x] 0.30 Root `README.md` (product overview, layout, links to `docs/dev-setup.md` and `openspec/`). Test: none.
+- [x] 0.31 `docs/external-dependencies.md` skeleton (AFIP, WhatsApp Business, e-Rx provider, Mercado Pago, legal Q1 and Q7) filled in S1.00. Test: none.
 - [x] 0.32 N/A: legacy lives in a separate repo (`francocor/AppmedicoCMAillu`, archived). No marker files are needed because there is no legacy code in this repository.
-- [ ] 0.33 Update `openspec/config.yaml` `testing` and `apply.test_command` (runner Vitest, layers unit/integration/e2e true, linter/type checker/formatter true) and re-run `sdd-init` to refresh the cached testing capabilities. Decide whether strict TDD turns on from Stage 1 (recommendation: on for domain and security code). Test: `sdd-init` reports the runner.
-- [ ] 0.34 Stage 0 gate: record the demo evidence (clean `git ls-files`, green pipeline link) in the PR. Test: checklist.
+- [x] 0.33 Update `openspec/config.yaml` `testing` and `apply.test_command` (runner Vitest, layers unit/integration/e2e true, linter/type checker/formatter true) and re-run `sdd-init` to refresh the cached testing capabilities. Decide whether strict TDD turns on from Stage 1 (recommendation: on for domain and security code). Test: `sdd-init` reports the runner.
+- [x] 0.34 Stage 0 gate: record the demo evidence (clean `git ls-files`, green pipeline link) in the PR. Test: checklist. Evidence recorded in `apply-progress.md` (clean `git ls-files`, local verification run). **Green pipeline link PENDING**: nothing is pushed, so CI has not run.
 
 ---
 
