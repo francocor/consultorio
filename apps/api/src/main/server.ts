@@ -4,6 +4,7 @@ import Fastify, { type FastifyInstance } from 'fastify';
 import { serializerCompiler, validatorCompiler } from 'fastify-type-provider-zod';
 
 import { healthRoutes, type HealthDeps } from '../platform/http/health.js';
+import { generateRequestId, registerProblemHandlers } from '../platform/http/problem.js';
 
 import { buildLoggerOptions } from './logger.js';
 
@@ -19,7 +20,10 @@ export function buildServer(options: BuildServerOptions): FastifyInstance {
 
   const app = Fastify({
     logger: options.logStream ? { ...loggerOptions, stream: options.logStream } : loggerOptions,
+    genReqId: generateRequestId,
   });
+
+  registerProblemHandlers(app);
 
   app.setValidatorCompiler(validatorCompiler);
   app.setSerializerCompiler(serializerCompiler);
