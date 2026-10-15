@@ -1,0 +1,4 @@
+{
+  "extends": "@consultorio/config/tsconfig.base.json",
+  "include": ["src"]
+}

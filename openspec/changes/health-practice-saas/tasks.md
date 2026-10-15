@@ -88,9 +88,9 @@ Start: S0.01 merged. Done when: `openspec/` is tracked. Verify: `git ls-files op
 
 Start: S0.01. Depends: S0.01.
 
-- [ ] 0.7 Root `package.json` (private, `packageManager` pnpm, `engines.node >=24`, scripts `dev build typecheck lint format format:check test test:integration test:e2e`), `pnpm-workspace.yaml` (`apps/*`, `packages/*`; `BackEnd` and `FrontEnd` explicitly excluded), `.nvmrc`, `.editorconfig`, `.npmrc` (`engine-strict`). Test: `pnpm install` succeeds; `pnpm -r exec node -v` reports Node 24.
-- [ ] 0.8 `packages/config`: `tsconfig.base.json` (strict, `noUncheckedIndexedAccess`, ESM), `tsconfig.node.json`, `tsconfig.react.json`, `eslint/base.js` (typescript-eslint strict-type-checked, import order, `eslint-plugin-boundaries` scaffold), `prettier.config.js`. Test: `pnpm lint` and `pnpm typecheck` pass on the empty workspace.
-- [ ] 0.9 `packages/contracts`: `package.json`, `src/index.ts`, `src/health.ts` (Zod `HealthResponse`). Test: `health.test.ts` (written in task 0.16, once the runner exists) parses a valid and an invalid payload.
+- [x] 0.7 Root `package.json` (private, `packageManager` pnpm, `engines.node >=24`, scripts `dev build typecheck lint format format:check test test:integration test:e2e`), `pnpm-workspace.yaml` (`apps/*`, `packages/*`; `BackEnd` and `FrontEnd` explicitly excluded), `.nvmrc`, `.editorconfig`, `.npmrc` (`engine-strict`). Test: `pnpm install` succeeds; `pnpm -r exec node -v` reports Node 24.
+- [x] 0.8 `packages/config`: `tsconfig.base.json` (strict, `noUncheckedIndexedAccess`, ESM), `tsconfig.node.json`, `tsconfig.react.json`, `eslint/base.js` (typescript-eslint strict-type-checked, import order, `eslint-plugin-boundaries` scaffold), `prettier.config.js`. Test: `pnpm lint` and `pnpm typecheck` pass on the empty workspace.
+- [x] 0.9 `packages/contracts`: `package.json`, `src/index.ts`, `src/health.ts` (Zod `HealthResponse`). Test: `health.test.ts` (written in task 0.16, once the runner exists) parses a valid and an invalid payload.
 
 ## S0.04 API skeleton (~350 lines)
 
