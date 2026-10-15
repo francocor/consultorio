@@ -1,0 +1,22 @@
+# Dependencies
+node_modules/
+
+# Environment and secrets (never commit real values)
+.env
+.env.*
+!.env.example
+*.pem
+*.pfx
+*.p12
+
+# Build and test output
+dist/
+coverage/
+playwright-report/
+test-results/
+
+# OS
+.DS_Store
+
+# Local skill-registry cache
+.atl/
