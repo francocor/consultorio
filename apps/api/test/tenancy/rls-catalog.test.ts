@@ -48,8 +48,8 @@ describe('RLS catalog', () => {
     const unprotected = await findUnprotectedTenantTables(owner, ['rls_scratch']);
 
     expect(unprotected.map((row) => row.table).sort()).toEqual([
-      'bad_nopolicy',
       'bad_none',
+      'bad_nopolicy',
       'bad_unforced',
     ]);
   });
