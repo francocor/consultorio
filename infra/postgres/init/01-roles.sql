@@ -1,0 +1,27 @@
+-- Cluster bootstrap, run once by a superuser on a fresh database
+-- (docker-entrypoint-initdb.d locally, a Testcontainers setup step in tests).
+--
+-- Two login roles with different powers:
+--   app_owner  owns the schema objects and runs migrations.
+--   app_rw     is what the API and worker connect as. It does NOT own any table, so
+--              FORCE ROW LEVEL SECURITY applies to it, and it has no BYPASSRLS.
+--
+-- The passwords below are for local development and tests ONLY. Production roles are provisioned
+-- by the infrastructure with managed secrets and are never created from this file.
+
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'app_owner') THEN
+    CREATE ROLE app_owner LOGIN PASSWORD 'app_owner_dev_only'
+      NOSUPERUSER NOCREATEROLE NOCREATEDB NOBYPASSRLS NOREPLICATION;
+  END IF;
+  IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'app_rw') THEN
+    CREATE ROLE app_rw LOGIN PASSWORD 'app_rw_dev_only'
+      NOSUPERUSER NOCREATEROLE NOCREATEDB NOBYPASSRLS NOREPLICATION;
+  END IF;
+
+  -- The owner needs to create extensions and schemas in this database.
+  EXECUTE format('ALTER DATABASE %I OWNER TO app_owner', current_database());
+  EXECUTE format('GRANT CONNECT ON DATABASE %I TO app_rw', current_database());
+END
+$$;
