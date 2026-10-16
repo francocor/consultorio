@@ -7,6 +7,7 @@ import { createAccess, createGrants, createGrantsRepo } from '../modules/access/
 import type { LockoutPolicy } from '../modules/identity/application/lockout.js';
 import type { PasswordValidator } from '../modules/identity/domain/password-policy.js';
 import { createIdentity, type PasswordHasher } from '../modules/identity/index.js';
+import { createPatients } from '../modules/patients/index.js';
 import { createStaff } from '../modules/staff/index.js';
 import { createTenantLookup, type DeploymentSettings } from '../modules/tenancy/index.js';
 import { createAuditDeny } from '../platform/audit/deny.js';
@@ -142,6 +143,18 @@ export function createApplication(options: ApplicationOptions): FastifyInstance 
     },
   });
 
+  const patients = createPatients({
+    withTenant,
+    auditDeny,
+    ...(options.clock ? { clock: options.clock } : {}),
+    documents: (country, type, value) => {
+      const found = getCountryPack(country, createCatalogReader(db));
+      return found.ok
+        ? found.value.validateDocument(type, value)
+        : fail('errors.unsupported_country');
+    },
+  });
+
   const server = buildServer({
     ...(options.logLevel === undefined ? {} : { logLevel: options.logLevel }),
     ...(options.logStream ? { logStream: options.logStream } : {}),
@@ -166,7 +179,13 @@ export function createApplication(options: ApplicationOptions): FastifyInstance 
         auditDeny,
       },
     },
-    routes: [identity.routes, access.routes, staff.routes, ...(options.modules ?? [])],
+    routes: [
+      identity.routes,
+      access.routes,
+      staff.routes,
+      patients.routes,
+      ...(options.modules ?? []),
+    ],
   });
   built.server = server;
   return server;

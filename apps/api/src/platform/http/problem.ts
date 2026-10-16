@@ -66,7 +66,7 @@ function sendProblem(
   request: FastifyRequest,
   reply: FastifyReply,
   code: ErrorCode,
-  options: { errors?: FieldError[]; status?: number } = {},
+  options: { errors?: FieldError[]; status?: number; extra?: Record<string, unknown> } = {},
 ): FastifyReply {
   const { i18nKey } = ERROR_CATALOG[code];
   // The catalog decides the status, except for a framework error (payload too large, unsupported
@@ -80,6 +80,7 @@ function sendProblem(
     i18nKey,
     requestId: request.id,
     ...(options.errors ? { errors: options.errors } : {}),
+    ...options.extra,
   };
   return reply.code(status).type(PROBLEM_CONTENT_TYPE).send(body);
 }
@@ -91,6 +92,18 @@ function sendProblem(
  */
 export function denied(request: FastifyRequest, reply: FastifyReply): FastifyReply {
   return sendProblem(request, reply, 'not_found');
+}
+
+/**
+ * A 409 that tells the caller about the record they collided with (a duplicate document shows the
+ * existing patient). The extra members are chosen by the caller's code, never copied from input.
+ */
+export function conflictWith(
+  request: FastifyRequest,
+  reply: FastifyReply,
+  extra: Record<string, unknown>,
+): FastifyReply {
+  return sendProblem(request, reply, 'conflict', { extra });
 }
 
 /**

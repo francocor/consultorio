@@ -59,14 +59,15 @@ export const UpdatePatientRequest = z
     familyName: demographics.familyName.optional(),
     givenNames: demographics.givenNames.optional(),
     birthDate: demographics.birthDate.optional(),
-    sex: demographics.sex,
+    sex: z.enum(PATIENT_SEXES).nullable().optional(),
     /** A document can be added or corrected, never removed: it is the identity key. */
     document: DocumentInput.optional(),
-    phone: demographics.phone,
-    email: demographics.email,
-    address: demographics.address,
+    // `null` clears a value; leaving the key out keeps it.
+    phone: Phone.nullable().optional(),
+    email: z.string().trim().pipe(z.email().max(254)).nullable().optional(),
+    address: OptionalText(300).nullable().optional(),
     emergencyContact: demographics.emergencyContact,
-    adminNotes: demographics.adminNotes,
+    adminNotes: OptionalText(1000).nullable().optional(),
     /** Optimistic concurrency: the version the editor started from. A stale edit gets 409. */
     expectedVersion: z.number().int().min(1).optional(),
   })
