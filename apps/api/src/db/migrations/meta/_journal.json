@@ -43,6 +43,13 @@
       "when": 1792119462059,
       "tag": "0005_jobs_and_platform_scope",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1792120221579,
+      "tag": "0006_tenant_key",
+      "breakpoints": true
     }
   ]
 }

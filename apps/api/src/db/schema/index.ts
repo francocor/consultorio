@@ -3,4 +3,5 @@
 export * from './audit.js';
 export * from './jobs.js';
 export * from './platform-catalogs.js';
+export * from './tenant-key.js';
 export * from './tenant.js';

@@ -25,7 +25,9 @@ pnpm infra:up                   # starts the services, waits until healthy, then
 pnpm --filter @consultorio/api db:migrate
 ```
 
-Compose creates the `app_owner` and `app_rw` database roles on the first start of the Postgres volume. If you change `infra/postgres/init/01-roles.sql`, recreate the volume:
+`db:migrate` applies the SQL migrations and then installs (or upgrades) the pg-boss job tables and queues, both as `app_owner`. Run it again after every `git pull` that adds a migration.
+
+Compose creates the `app_owner`, `app_rw` and `audit_sealer` database roles on the first start of the Postgres volume. If you change `infra/postgres/init/01-roles.sql` (the `audit_sealer` role arrived with the audit trail), recreate the volume:
 
 ```bash
 pnpm infra:reset                # docker compose down -v: removes containers and volumes
@@ -34,6 +36,12 @@ pnpm infra:reset                # docker compose down -v: removes containers and
 `pnpm infra:up`, `infra:down` and `infra:reset` wrap `docker compose --env-file .env -f infra/docker-compose.yml ...`. The `--env-file .env` part matters: compose reads variable defaults from the folder of the compose file (`infra/`), so without it your root `.env` (ports, passwords) would be ignored. Every published port is bound to `127.0.0.1` only.
 
 `pnpm infra:up` starts Postgres, MinIO and Mailpit with `up --wait`, then runs the one-shot `minio-init` job with `docker compose run`. The job is run on its own because Compose treats a container that exits, even with code 0, as a failure while it waits. It is safe to run again: an existing bucket is kept.
+
+### Encryption keys and the local KEK
+
+Sensitive fields are encrypted with a per-tenant key that a key-encryption key (KEK) wraps. In development the KEK is `KMS_LOCAL_KEK_BASE64` from `.env.example`: a public placeholder, so anything you encrypt locally can be decrypted by anyone with this repository. Production refuses the local KEK and uses AWS KMS (`KMS_PROVIDER=aws`).
+
+The API reads the tenant from the host name: `{slug}.localhost` in multi mode (current browsers resolve `*.localhost` to 127.0.0.1) and `platform.localhost` for the operator console.
 
 ## Run the apps
 

@@ -25,6 +25,13 @@ async function returningId(tx: Tx, statement: ReturnType<typeof sql>): Promise<s
   return id;
 }
 
+let versionCounter = 100;
+/** Distinct key versions for fixtures (the version is unique per tenant). */
+function nextVersion(): number {
+  versionCounter += 1;
+  return versionCounter;
+}
+
 let counter = 0;
 /** Unique suffix so repeated fixtures never collide on a unique business key. */
 export function unique(prefix: string): string {
@@ -48,6 +55,16 @@ export const TENANT_FIXTURES: Record<string, TenantTableFixture> = {
         tx,
         sql`INSERT INTO job_execution (tenant_id, queue, job_id)
               VALUES (${tenantId}, 'test.echo', ${randomUUID()})
+              RETURNING id`,
+      ),
+  },
+  tenant_key: {
+    // Retired, so the one-active-key rule does not stop a second fixture row for the same tenant.
+    insert: (tx, tenantId) =>
+      returningId(
+        tx,
+        sql`INSERT INTO tenant_key (tenant_id, purpose, version, kek_id, dek_wrapped, status)
+              VALUES (${tenantId}, 'tenant-dek', ${nextVersion()}, 'test', ${Buffer.from([0])}, 'retired')
               RETURNING id`,
       ),
   },
