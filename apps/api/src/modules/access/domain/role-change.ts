@@ -1,4 +1,4 @@
-import { STAFF_ROLES, canGrantRoles, type Role } from '@consultorio/contracts';
+import { STAFF_ROLES, canChangeRoles, type Role } from '@consultorio/contracts';
 
 export interface RoleChangeInput {
   actor: { membershipId: string; roles: readonly Role[] };
@@ -24,8 +24,9 @@ function isStaffRole(role: Role): boolean {
  * escalation of roles"). Pure, so the whole table can be tested without a database.
  *
  * - Nobody changes their own roles, up or down.
- * - The new roles must be inside the actor's ceiling, and so must the target's current roles: an
- *   admin cannot touch an owner, not even to demote them.
+ * - The target's current roles must be inside what the actor manages (an admin cannot touch an
+ *   owner, not even to demote them) and the roles being ADDED inside what the actor hands out
+ *   (decision D19: an admin cannot add the professional role, but may keep or remove it).
  * - An organization always keeps at least one active owner.
  */
 export function evaluateRoleChange(input: RoleChangeInput): RoleChangeVerdict {
@@ -34,7 +35,7 @@ export function evaluateRoleChange(input: RoleChangeInput): RoleChangeVerdict {
   if (newRoles.length === 0 || !newRoles.every(isStaffRole)) {
     return { ok: false, reason: 'invalid_roles' };
   }
-  if (!canGrantRoles(actor.roles, newRoles) || !canGrantRoles(actor.roles, target.roles)) {
+  if (!canChangeRoles(actor.roles, target.roles, newRoles)) {
     return { ok: false, reason: 'above_ceiling' };
   }
   if (target.status !== 'active') return { ok: false, reason: 'inactive_target' };

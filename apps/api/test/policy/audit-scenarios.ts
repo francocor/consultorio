@@ -70,6 +70,7 @@ export const AUDIT_SCENARIOS: Record<AuditAction, AuditScenario> = {
   'sharing.changed': t('access-settings.test.ts'),
   'assignment.created': t('care-assignment-api.test.ts'),
   'assignment.removed': t('care-assignment-api.test.ts'),
+  'assignment.review_flag': t('care-assignment-api.test.ts'),
   'matricula.verified': { pending: 'Stage 5: matricula verification in the operator console' },
   'setting.reception_sees_clinical_metadata.changed': t('access-settings.test.ts'),
   'setting.changed': t('access-settings.test.ts'),

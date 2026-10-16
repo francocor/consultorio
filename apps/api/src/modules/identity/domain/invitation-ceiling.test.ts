@@ -10,10 +10,8 @@ describe('who may invite whom (authorization, "No self-assignment or silent esca
     );
   });
 
-  it('lets an admin invite everything except an owner', () => {
-    expect(rolesInviterMayGrant(['admin']).sort()).toEqual(
-      ['admin', 'professional', 'reception'].sort(),
-    );
+  it('lets an admin invite reception and admin only: professionals are the owner’s to bring in (D19)', () => {
+    expect(rolesInviterMayGrant(['admin']).sort()).toEqual(['admin', 'reception']);
   });
 
   it('gives professionals and reception no power to invite, and patients none either', () => {
@@ -30,7 +28,8 @@ describe('who may invite whom (authorization, "No self-assignment or silent esca
 
   it.each([
     [['admin'], ['reception'], true],
-    [['admin'], ['professional', 'reception'], true],
+    [['admin'], ['professional', 'reception'], false],
+    [['admin'], ['professional'], false],
     [['admin'], ['owner'], false],
     [['admin'], ['reception', 'owner'], false],
     [['owner'], ['owner', 'professional'], true],

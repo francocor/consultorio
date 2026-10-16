@@ -21,6 +21,9 @@ import { DEMO_ACCOUNTS, DEMO_PASSWORD } from './credentials.js';
 import { buildDemoDataset, type DemoPatient, type DemoStaff } from './dataset.js';
 
 /** The seed cannot run: wrong environment, wrong organization, or data already there. */
+/** How long the demo's professionals have been in the team, by their profile. */
+const DEMO_TEAM_AGE_MS = 90 * 86_400_000;
+
 export class DemoSeedError extends Error {
   constructor(message: string) {
     super(message);
@@ -244,6 +247,9 @@ export async function seedDemoTenant(
         specialties: [...staff.professional.specialties],
         matricula: staff.professional.matricula,
         matriculaJurisdiction: staff.professional.jurisdiction,
+        // The demo team has been working there for months: the review flag for a professional added
+        // in the last 7 days (decision D19) must not fire on every assignment of the story.
+        createdAt: new Date(now.getTime() - DEMO_TEAM_AGE_MS),
       });
       for (const slot of staff.professional.hours) {
         const locationId = locationIds.get(slot.location);
@@ -312,6 +318,7 @@ export async function seedDemoTenant(
     await deps.withTenant({ tenantId, userId: reception.userId }, (tx) =>
       assignments.assign(tx, {
         actor: { ...receptionActor, userId: reception.userId },
+        actorRoles: ['reception'],
         patientId,
         professionalId,
       }),

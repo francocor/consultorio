@@ -1,4 +1,4 @@
-import { canGrantRoles, type Role, type StaffRole } from '@consultorio/contracts';
+import { canGrantRoles, canManageRoles, type Role, type StaffRole } from '@consultorio/contracts';
 import { eq } from 'drizzle-orm';
 
 import { membership, userAccount } from '../../../db/schema/identity.js';
@@ -71,7 +71,7 @@ export function createLifecycleService(deps: {
       throw new AccessRefused('staff_status_actor');
     }
     if (actor.id === target.id) throw new AccessRefused('staff_status_self');
-    if (!canGrantRoles(actor.roles as Role[], target.roles as Role[])) {
+    if (!canManageRoles(actor.roles as Role[], target.roles as Role[])) {
       throw new AccessRefused('staff_status_above_ceiling');
     }
     return { locked, actor, target };

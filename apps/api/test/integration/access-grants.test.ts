@@ -352,6 +352,50 @@ describe('changing the roles of a member', () => {
     expect(await auditRows('access.denied', ownerUser.membershipId)).toHaveLength(1);
   });
 
+  it('keeps the professional role out of an admin hands: no second clinical account (D19)', async () => {
+    const admin = await session(await member(['admin']));
+    const colleague = await member(['reception']);
+
+    const response = await api.put(`/members/${colleague.membershipId}/roles`, admin, {
+      roles: ['reception', 'professional'],
+    });
+
+    expect(response.statusCode).toBe(403);
+    expect(await rolesOf(colleague)).toEqual(['reception']);
+    expect((await auditRows('access.denied', colleague.membershipId))[0]).toMatchObject({
+      outcome: 'deny',
+      reason: 'role_change_above_ceiling',
+    });
+  });
+
+  it('still lets an admin manage the roles of a professional who already is one', async () => {
+    const admin = await session(await member(['admin']));
+    const doctor = await member(['professional']);
+
+    const keep = await api.put(`/members/${doctor.membershipId}/roles`, admin, {
+      roles: ['professional', 'admin'],
+    });
+    const stepDown = await api.put(`/members/${doctor.membershipId}/roles`, admin, {
+      roles: ['reception'],
+    });
+
+    expect(keep.statusCode).toBe(200);
+    expect(stepDown.statusCode).toBe(200);
+    expect(await rolesOf(doctor)).toEqual(['reception']);
+  });
+
+  it('lets an owner grant the professional role', async () => {
+    const owner = await session(await member(['owner']));
+    const colleague = await member(['reception']);
+
+    const response = await api.put(`/members/${colleague.membershipId}/roles`, owner, {
+      roles: ['reception', 'professional'],
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(await rolesOf(colleague)).toEqual(['reception', 'professional']);
+  });
+
   it('lets an owner step another owner down while two exist', async () => {
     const owner = await session(await member(['owner']));
     const second = await member(['owner']);

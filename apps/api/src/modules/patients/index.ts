@@ -80,7 +80,7 @@ export function createPatients(options: PatientsOptions): Patients {
   const assignments = assignmentRoutes({
     withTenant: options.withTenant,
     auditDeny: options.auditDeny,
-    assignments: createAssignmentService(),
+    assignments: createAssignmentService(clock),
   });
   const coverageService = createCoverageService(clock);
   const coverage = coverageRoutes({

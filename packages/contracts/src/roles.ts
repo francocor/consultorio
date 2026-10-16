@@ -17,21 +17,48 @@ export const STAFF_ROLES = [
 ] as const satisfies readonly Role[];
 export type StaffRole = (typeof STAFF_ROLES)[number];
 
+/**
+ * What a person may HAND OUT, in an invitation or by adding a role to an existing member.
+ *
+ * Decision D19: only the owner brings professionals into the organization. A professional is the
+ * only role that opens clinical records, and an unverified registration is enough to do clinical
+ * work (D1), so an admin who could create a professional account would hold a second, clinical
+ * account of their own. The owner already controls the organization, which bounds that risk to
+ * the owner.
+ */
 const GRANT_CEILING: Partial<Record<Role, readonly Role[]>> = {
   owner: ['owner', 'admin', 'professional', 'reception'],
-  // An admin cannot create an owner: that would be a way to escalate above themselves.
+  // An admin cannot create an owner (escalation above themselves) or a professional (D19).
+  admin: ['admin', 'reception'],
+};
+
+/**
+ * Whose roles a person may MANAGE: edit the roles of, deactivate, reactivate. An admin still
+ * looks after the professionals who already work in the organization (a departing professional
+ * must be deactivated by whoever is on duty), but never touches an owner.
+ */
+const MANAGE_CEILING: Partial<Record<Role, readonly Role[]>> = {
+  owner: ['owner', 'admin', 'professional', 'reception'],
   admin: ['admin', 'professional', 'reception'],
 };
+
+function ceilingOf(
+  ceiling: Partial<Record<Role, readonly Role[]>>,
+  grantorRoles: readonly Role[],
+): Set<Role> {
+  const allowed = new Set<Role>();
+  for (const role of grantorRoles) {
+    for (const granted of ceiling[role] ?? []) allowed.add(granted);
+  }
+  return allowed;
+}
 
 /**
  * The roles a person holding `grantorRoles` may hand out, in an invitation or in a role change.
  * Professionals, reception and patients hand out nothing.
  */
 export function rolesInviterMayGrant(grantorRoles: readonly Role[]): StaffRole[] {
-  const allowed = new Set<Role>();
-  for (const role of grantorRoles) {
-    for (const granted of GRANT_CEILING[role] ?? []) allowed.add(granted);
-  }
+  const allowed = ceilingOf(GRANT_CEILING, grantorRoles);
   return STAFF_ROLES.filter((role) => allowed.has(role));
 }
 
@@ -40,6 +67,28 @@ export function canGrantRoles(grantorRoles: readonly Role[], roles: readonly Rol
   if (roles.length === 0) return false;
   const allowed: readonly Role[] = rolesInviterMayGrant(grantorRoles);
   return roles.every((role) => allowed.includes(role));
+}
+
+/** True when a person with `actorRoles` may manage someone who holds `targetRoles`. */
+export function canManageRoles(actorRoles: readonly Role[], targetRoles: readonly Role[]): boolean {
+  if (targetRoles.length === 0) return false;
+  const allowed = ceilingOf(MANAGE_CEILING, actorRoles);
+  return targetRoles.every((role) => allowed.has(role));
+}
+
+/**
+ * True when `actorRoles` may turn `currentRoles` into `newRoles`: the member must be inside what
+ * the actor manages, and only the roles that are being ADDED must be inside what the actor hands
+ * out. Keeping a role the member already has is not a grant.
+ */
+export function canChangeRoles(
+  actorRoles: readonly Role[],
+  currentRoles: readonly Role[],
+  newRoles: readonly Role[],
+): boolean {
+  if (newRoles.length === 0 || !canManageRoles(actorRoles, currentRoles)) return false;
+  const added = newRoles.filter((role) => !currentRoles.includes(role));
+  return added.length === 0 || canGrantRoles(actorRoles, added);
 }
 
 export const PERMISSIONS = [

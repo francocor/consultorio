@@ -153,6 +153,40 @@ describe('inviting staff', () => {
     expect(row).toMatchObject({ outcome: 'deny', reason: 'invite_above_ceiling' });
   });
 
+  it('keeps the professional role out of an admin hands: only the owner invites professionals (D19)', async () => {
+    const admin = await person(['admin']);
+    const to = address();
+
+    const response = await api.post('/staff/invitations', admin.session, {
+      email: to,
+      roles: ['professional'],
+    });
+
+    expect(response.statusCode).toBe(403);
+    expect(mail.lastTo(to)).toBeUndefined();
+    const [row] = await auditRows('access.denied');
+    expect(row).toMatchObject({ outcome: 'deny', reason: 'invite_above_ceiling' });
+  });
+
+  it('lets an admin invite administration and reception, and an owner invite a professional', async () => {
+    const admin = await person(['admin']);
+    const owner = await person(['owner']);
+    const forReception = address();
+    const forDoctor = address();
+
+    const byAdmin = await api.post('/staff/invitations', admin.session, {
+      email: forReception,
+      roles: ['reception', 'admin'],
+    });
+    const byOwner = await api.post('/staff/invitations', owner.session, {
+      email: forDoctor,
+      roles: ['professional'],
+    });
+
+    expect(byAdmin.statusCode).toBe(201);
+    expect(byOwner.statusCode).toBe(201);
+  });
+
   it('is closed to reception and professionals', async () => {
     const desk = await person(['reception']);
     const doctor = await person(['professional']);
@@ -497,6 +531,15 @@ describe('deactivating and reactivating staff', () => {
     expect((await auditRows('access.denied', owner.user.membershipId))[0]).toMatchObject({
       reason: 'staff_status_above_ceiling',
     });
+  });
+
+  it('still lets an admin deactivate a professional who leaves (the ceiling is for handing roles out)', async () => {
+    const admin = await person(['admin']);
+    const doctor = await person(['professional']);
+
+    const response = await api.post(`/staff/${doctor.user.membershipId}/deactivate`, admin.session);
+
+    expect(response.statusCode).toBe(200);
   });
 
   it('never deactivates the last owner, even when two owners deactivate each other at once', async () => {

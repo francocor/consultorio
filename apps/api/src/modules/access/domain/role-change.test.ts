@@ -36,6 +36,38 @@ describe('evaluateRoleChange', () => {
     });
   });
 
+  it('refuses an admin who tries to grant the professional role to a colleague (D19)', () => {
+    expect(
+      evaluateRoleChange(
+        change({ actor: ['admin'], target: ['reception'], next: ['professional'] }),
+      ),
+    ).toEqual({ ok: false, reason: 'above_ceiling' });
+    expect(
+      evaluateRoleChange(
+        change({ actor: ['admin'], target: ['reception'], next: ['reception', 'professional'] }),
+      ),
+    ).toEqual({ ok: false, reason: 'above_ceiling' });
+  });
+
+  it('lets an owner grant the professional role', () => {
+    expect(
+      evaluateRoleChange(change({ target: ['reception'], next: ['reception', 'professional'] })),
+    ).toEqual({ ok: true });
+  });
+
+  it('lets an admin manage a professional who already is one: keep the role or step them down', () => {
+    expect(
+      evaluateRoleChange(
+        change({ actor: ['admin'], target: ['professional'], next: ['professional', 'admin'] }),
+      ),
+    ).toEqual({ ok: true });
+    expect(
+      evaluateRoleChange(
+        change({ actor: ['admin'], target: ['professional'], next: ['reception'] }),
+      ),
+    ).toEqual({ ok: true });
+  });
+
   it.each<[string, Parameters<typeof change>[0]]>([
     ['an owner promoting themselves', { self: true, target: ['owner'], next: ['owner', 'admin'] }],
     ['an admin promoting themselves', { actor: ['admin'], self: true, next: ['owner'] }],

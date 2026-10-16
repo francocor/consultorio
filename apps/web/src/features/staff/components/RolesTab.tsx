@@ -1,5 +1,5 @@
 import {
-  canGrantRoles,
+  canManageRoles,
   rolesInviterMayGrant,
   STAFF_ROLES,
   type Role,
@@ -43,13 +43,18 @@ export function RolesTab({
   const { t } = useTranslation(['staff', 'common']);
   const api = useApi();
   const queryClient = useQueryClient();
-  const offered: StaffRole[] = rolesInviterMayGrant(viewerRoles);
+  // What the viewer can hand out, plus what this person already holds: an administrator sees (and
+  // may keep or remove) the professional role of a professional, but cannot add it to anyone.
+  const grantable = rolesInviterMayGrant(viewerRoles);
+  const offered: StaffRole[] = STAFF_ROLES.filter(
+    (role) => grantable.includes(role) || member.roles.includes(role),
+  );
   const [roles, setRoles] = useState<StaffRole[]>(member.roles);
   const [confirming, setConfirming] = useState(false);
   const name = member.displayName ?? t('staff:member.noName');
   const deactivated = member.status === 'deactivated';
   // Nobody changes their own roles, and nobody edits a person above their own level.
-  const locked = isSelf || !canGrantRoles(viewerRoles, member.roles);
+  const locked = isSelf || !canManageRoles(viewerRoles, member.roles);
   const refresh = () => queryClient.invalidateQueries({ queryKey: staffKeys.all });
 
   const save = useMutation({
@@ -101,7 +106,10 @@ export function RolesTab({
             <CheckboxCard
               key={role}
               checked={roles.includes(role)}
-              disabled={locked || deactivated}
+              // A role the viewer cannot hand out can be removed but not added back before saving.
+              disabled={
+                locked || deactivated || (!grantable.includes(role) && !roles.includes(role))
+              }
               onCheckedChange={(checked) => {
                 setRoles((current) =>
                   checked ? [...current, role] : current.filter((entry) => entry !== role),

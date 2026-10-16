@@ -327,3 +327,83 @@ describe('removing an assignment', () => {
     expect((await saveAnamnesis(id, doctor)).statusCode).toBe(200);
   });
 });
+
+/** Backdates a professional profile, as if it had been created some days ago. */
+async function ageProfessional(professionalId: string, days: number) {
+  await owner.query('BEGIN');
+  try {
+    await owner.query(`select set_config('app.tenant_id', $1, true)`, [tenant.id]);
+    await owner.query(
+      `update professional set created_at = now() - make_interval(days => $2) where id = $1`,
+      [professionalId, days],
+    );
+  } finally {
+    await owner.query('COMMIT');
+  }
+}
+
+describe('review flag for a recent professional (decision D19)', () => {
+  it('writes a distinct audit event when a non-clinical actor assigns a patient to a professional added in the last 7 days', async () => {
+    const fresh = await professionalMember();
+    const id = await patientId();
+
+    const response = await assign(id, fresh.professionalId, reception);
+
+    expect(response.statusCode).toBe(201);
+    const [flag] = await auditRows(id, 'assignment.review_flag');
+    expect(flag).toMatchObject({
+      outcome: 'allow',
+      actorUserId: reception.user.id,
+      metadata: { professionalId: fresh.professionalId, reason: 'recent_professional' },
+    });
+    // The ordinary event is still written: the flag adds to it, never replaces it.
+    expect(await auditRows(id, 'assignment.created')).toHaveLength(1);
+  });
+
+  it('flags an administrator the same way', async () => {
+    const fresh = await professionalMember();
+    const id = await patientId();
+
+    await assign(id, fresh.professionalId, admin);
+
+    expect(await auditRows(id, 'assignment.review_flag')).toHaveLength(1);
+  });
+
+  it('does not flag a professional who has been in the team for more than 7 days', async () => {
+    const veteran = await professionalMember();
+    await ageProfessional(veteran.professionalId, 8);
+    const id = await patientId();
+
+    const response = await assign(id, veteran.professionalId, reception);
+
+    expect(response.statusCode).toBe(201);
+    expect(await auditRows(id, 'assignment.review_flag')).toHaveLength(0);
+    expect(await auditRows(id, 'assignment.created')).toHaveLength(1);
+  });
+
+  it('flags a professional 6 days in, and not one 8 days in', async () => {
+    const sixDays = await professionalMember();
+    await ageProfessional(sixDays.professionalId, 6);
+    const eightDays = await professionalMember();
+    await ageProfessional(eightDays.professionalId, 8);
+    const id = await patientId();
+
+    await assign(id, sixDays.professionalId, reception);
+    await assign(id, eightDays.professionalId, reception);
+
+    const flags = await auditRows(id, 'assignment.review_flag');
+    expect(flags).toHaveLength(1);
+    expect(flags[0]).toMatchObject({ metadata: { professionalId: sixDays.professionalId } });
+  });
+
+  it('does not flag an assignment made by a clinical actor', async () => {
+    const fresh = await professionalMember();
+    const clinicalOwner = await professionalMember(['owner', 'professional']);
+    const id = await patientId();
+
+    const response = await assign(id, fresh.professionalId, clinicalOwner.session);
+
+    expect(response.statusCode).toBe(201);
+    expect(await auditRows(id, 'assignment.review_flag')).toHaveLength(0);
+  });
+});

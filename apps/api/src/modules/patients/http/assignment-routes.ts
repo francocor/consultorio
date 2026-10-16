@@ -52,7 +52,7 @@ export function assignmentRoutes(deps: AssignmentRoutesDeps) {
         config: {
           readOnly: 'write',
           permission: 'patients.administer',
-          audits: ['assignment.created'],
+          audits: ['assignment.created', 'assignment.review_flag'],
         },
         schema: {
           params: PatientParams,
@@ -69,6 +69,7 @@ export function assignmentRoutes(deps: AssignmentRoutesDeps) {
             (tx) =>
               deps.assignments.assign(tx, {
                 actor: { ...request.auditActor, userId: actor.userId },
+                actorRoles: actor.roles,
                 patientId: request.params.id,
                 professionalId: request.body.professionalId,
               }),

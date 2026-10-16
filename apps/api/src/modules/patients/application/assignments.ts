@@ -1,4 +1,4 @@
-import type { AssignmentDto, AssignmentListResponse } from '@consultorio/contracts';
+import type { AssignmentDto, AssignmentListResponse, Role } from '@consultorio/contracts';
 import { and, asc, eq, isNull, sql } from 'drizzle-orm';
 
 import { careAssignment } from '../../../db/schema/care.js';
@@ -16,12 +16,15 @@ export interface AssignmentService {
   list(tx: Tx, patientId: string): Promise<AssignmentListResponse>;
   assign(
     tx: Tx,
-    input: { actor: Actor; patientId: string; professionalId: string },
+    input: { actor: Actor; actorRoles: readonly Role[]; patientId: string; professionalId: string },
   ): Promise<AssignmentDto>;
   remove(tx: Tx, input: { actor: Actor; patientId: string; professionalId: string }): Promise<void>;
 }
 
 const UNIQUE_VIOLATION = '23505';
+const DAY_MS = 86_400_000;
+/** Decision D19: how long a new professional's assignments from non-clinical staff are flagged. */
+export const RECENT_PROFESSIONAL_DAYS = 7;
 
 function sqlState(error: unknown): string | undefined {
   const cause = (error as { cause?: { code?: unknown } } | null)?.cause;
@@ -37,8 +40,15 @@ function sqlState(error: unknown): string | undefined {
  *
  * Nobody assigns a patient to themselves: a professional must not be able to open a record by
  * their own hand, whatever else they hold.
+ *
+ * Decision D19: when someone who is not a professional assigns a patient to a professional whose
+ * profile is less than 7 days old, a second, distinct audit event (`assignment.review_flag`) is
+ * written next to the ordinary one, so a review of the trail can find the pattern "a new account
+ * was given patients right away" without reading every assignment.
  */
-export function createAssignmentService(): AssignmentService {
+export function createAssignmentService(options: { clock?: () => Date } = {}): AssignmentService {
+  const clock = options.clock ?? (() => new Date());
+
   async function assertPatient(tx: Tx, patientId: string): Promise<void> {
     const [row] = await tx
       .select({ id: patient.id })
@@ -52,6 +62,7 @@ export function createAssignmentService(): AssignmentService {
       .select({
         id: professional.id,
         status: professional.status,
+        addedAt: professional.createdAt,
         userId: membership.userId,
         membershipStatus: membership.status,
         name: membership.displayName,
@@ -115,6 +126,19 @@ export function createAssignmentService(): AssignmentService {
           patientId: input.patientId,
           metadata: { professionalId: target.id },
         });
+        const recentlyAdded =
+          clock().getTime() - target.addedAt.getTime() < RECENT_PROFESSIONAL_DAYS * DAY_MS;
+        if (recentlyAdded && !input.actorRoles.includes('professional')) {
+          await audit(tx, {
+            action: 'assignment.review_flag',
+            outcome: 'allow',
+            actor: input.actor,
+            resourceType: 'patient',
+            resourceId: input.patientId,
+            patientId: input.patientId,
+            metadata: { professionalId: target.id, reason: 'recent_professional' },
+          });
+        }
         return {
           professionalId: target.id,
           professionalName: target.name,
