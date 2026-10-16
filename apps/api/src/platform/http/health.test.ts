@@ -1,11 +1,13 @@
-import { Writable } from 'node:stream';
+import type { Writable } from 'node:stream';
 
 import { HealthResponse } from '@consultorio/contracts';
 import { describe, expect, it } from 'vitest';
 
 import { buildServer } from '../../main/server.js';
+import { captureLogs } from '../../testing/log-capture.js';
+import type { DbCheckResult } from '../db/probe.js';
 
-function testServer(checkDatabase: () => Promise<boolean>, logStream?: Writable) {
+function testServer(checkDatabase: () => Promise<DbCheckResult>, logStream?: Writable) {
   return buildServer({
     logLevel: logStream ? 'info' : 'silent',
     ...(logStream ? { logStream } : {}),
@@ -13,12 +15,18 @@ function testServer(checkDatabase: () => Promise<boolean>, logStream?: Writable)
   });
 }
 
+const up = () => Promise.resolve<DbCheckResult>({ ok: true });
+const down =
+  (code = 'ECONNREFUSED') =>
+  () =>
+    Promise.resolve<DbCheckResult>({ ok: false, code });
+
 describe('health routes', () => {
   it('GET /health answers 200 without touching the database', async () => {
     let probed = false;
     const app = testServer(() => {
       probed = true;
-      return Promise.resolve(true);
+      return up();
     });
 
     const response = await app.inject({ method: 'GET', url: '/health' });
@@ -30,7 +38,7 @@ describe('health routes', () => {
   });
 
   it('GET /ready answers 200 when the database probe succeeds', async () => {
-    const app = testServer(() => Promise.resolve(true));
+    const app = testServer(up);
 
     const response = await app.inject({ method: 'GET', url: '/ready' });
 
@@ -40,7 +48,7 @@ describe('health routes', () => {
   });
 
   it('GET /ready answers 503 when the database probe reports down', async () => {
-    const app = testServer(() => Promise.resolve(false));
+    const app = testServer(down());
 
     const response = await app.inject({ method: 'GET', url: '/ready' });
 
@@ -58,28 +66,30 @@ describe('health routes', () => {
     expect(response.body).not.toContain('connection refused');
     await app.close();
   });
-});
 
-describe('logging', () => {
-  it('redacts credentials, cookies and bodies', async () => {
-    const lines: string[] = [];
-    const stream = new Writable({
-      write(chunk: Buffer, _encoding, callback) {
-        lines.push(chunk.toString());
-        callback();
-      },
-    });
-    const app = testServer(() => Promise.resolve(true), stream);
-    await app.ready();
+  it('GET /ready logs a warning with only the error code when the database is down', async () => {
+    const logs = captureLogs();
+    const app = testServer(down('ECONNREFUSED'), logs.stream);
 
-    app.log.info({
-      req: { headers: { authorization: 'Bearer very-secret-token', cookie: 'sid=very-secret' } },
-      body: { diagnosis: 'very-secret-diagnosis' },
-    });
+    await app.inject({ method: 'GET', url: '/ready' });
     await app.close();
 
-    const output = lines.join('');
-    expect(output).toContain('[redacted]');
-    expect(output).not.toContain('very-secret');
+    const warning = logs.lines().find((line) => line['level'] === 40);
+    expect(warning).toMatchObject({ code: 'ECONNREFUSED' });
+    expect(warning).not.toHaveProperty('err');
+  });
+
+  it('GET /ready never logs the message of a thrown probe error', async () => {
+    const logs = captureLogs();
+    const app = testServer(
+      () => Promise.reject(new Error('password authentication failed for user "secret-user"')),
+      logs.stream,
+    );
+
+    await app.inject({ method: 'GET', url: '/ready' });
+    await app.close();
+
+    expect(logs.raw()).not.toContain('secret-user');
+    expect(logs.lines().find((line) => line['level'] === 40)).toMatchObject({ code: 'unknown' });
   });
 });

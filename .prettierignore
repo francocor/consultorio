@@ -13,3 +13,6 @@ coverage
 playwright-report
 test-results
 pnpm-lock.yaml
+
+# drizzle-kit owns the format of its snapshots
+apps/api/src/db/migrations/meta
