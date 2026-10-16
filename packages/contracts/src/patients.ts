@@ -1,5 +1,7 @@
 import { z } from 'zod';
 
+import { CoverageDto } from './coverage.js';
+
 /**
  * Contracts of the patients module: demographics, search, history and representatives. The tenant
  * is never a field. The safety flag is never an input anywhere: the system keeps it in step with
@@ -234,3 +236,59 @@ export const ConsentResponse = z.strictObject({
   history: z.array(ConsentRecordDto),
 });
 export type ConsentResponse = z.infer<typeof ConsentResponse>;
+
+// Access and rectification rights -----------------------------------------------------------
+
+export const RIGHTS_REQUEST_KINDS = ['access', 'rectification'] as const;
+
+export const CreateRightsRequest = z.strictObject({
+  kind: z.enum(RIGHTS_REQUEST_KINDS),
+  /** Short and administrative: how the request arrived. Clinical content never goes here. */
+  note: z.string().trim().max(300).optional(),
+});
+export type CreateRightsRequest = z.infer<typeof CreateRightsRequest>;
+
+export const RightsRequestDto = z.strictObject({
+  id: z.uuid(),
+  kind: z.enum(RIGHTS_REQUEST_KINDS),
+  status: z.enum(['open', 'fulfilled']),
+  requestedAt: z.iso.datetime(),
+  requestedBy: z.uuid(),
+  note: z.string().nullable(),
+  fulfilledAt: z.iso.datetime().nullable(),
+  fulfilledBy: z.uuid().nullable(),
+});
+export type RightsRequestDto = z.infer<typeof RightsRequestDto>;
+
+export const RightsRequestListResponse = z.strictObject({ requests: z.array(RightsRequestDto) });
+export type RightsRequestListResponse = z.infer<typeof RightsRequestListResponse>;
+
+/**
+ * Fulfils a request. An access request takes no body and produces the copy. A rectification
+ * request carries the corrections, which go through the versioned update of the patient.
+ */
+export const FulfillRightsRequest = z.strictObject({ changes: UpdatePatientRequest.optional() });
+export type FulfillRightsRequest = z.infer<typeof FulfillRightsRequest>;
+
+/**
+ * The patient's data in a readable form: everything the registry holds. The formal copy of the
+ * clinical history is a separate act that a professional of the organization performs (Ley 26.529).
+ */
+export const PatientCopyDto = z.strictObject({
+  generatedAt: z.iso.datetime(),
+  patient: PatientDto,
+  coverages: z.array(CoverageDto),
+  consent: ConsentResponse,
+  representatives: z.array(RepresentativeDto),
+  history: z.array(PatientVersionDto),
+  rightsRequests: z.array(RightsRequestDto),
+  clinicalCopy: z.literal('requires_professional'),
+});
+export type PatientCopyDto = z.infer<typeof PatientCopyDto>;
+
+export const FulfillRightsResponse = z.strictObject({
+  request: RightsRequestDto,
+  /** Present for an access request, null for a rectification. */
+  copy: PatientCopyDto.nullable(),
+});
+export type FulfillRightsResponse = z.infer<typeof FulfillRightsResponse>;

@@ -13,10 +13,12 @@ import { createCoverageService } from './application/coverage.js';
 import { exportPatients } from './application/export-contributor.js';
 import { createPatientService, type DocumentRules } from './application/patients.js';
 import { createRepresentativeService } from './application/representatives.js';
+import { createRightsService } from './application/rights.js';
 import { consentRoutes } from './http/consent-routes.js';
 import { coverageRoutes } from './http/coverage-routes.js';
 import { patientRoutes } from './http/patient-routes.js';
 import { representativeRoutes } from './http/representative-routes.js';
+import { rightsRoutes } from './http/rights-routes.js';
 
 /** Registers what patients contributes to the cancellation export. */
 export function registerPatientsExportContributors(registry: ExportRegistry): void {
@@ -63,10 +65,22 @@ export function createPatients(options: PatientsOptions): Patients {
 
   const contacts = representativeRoutes({ withTenant: options.withTenant, representatives });
   const consentEndpoints = consentRoutes({ withTenant: options.withTenant, consent });
+  const coverageService = createCoverageService(clock);
   const coverage = coverageRoutes({
     withTenant: options.withTenant,
     auditDeny: options.auditDeny,
-    coverage: createCoverageService(clock),
+    coverage: coverageService,
+  });
+  const rights = rightsRoutes({
+    withTenant: options.withTenant,
+    auditDeny: options.auditDeny,
+    rights: createRightsService({
+      patients,
+      coverage: coverageService,
+      consent,
+      representatives,
+      ...clock,
+    }),
   });
 
   return {
@@ -75,6 +89,7 @@ export function createPatients(options: PatientsOptions): Patients {
       contacts(app);
       coverage(app);
       consentEndpoints(app);
+      rights(app);
     },
   };
 }
