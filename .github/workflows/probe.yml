@@ -1,9 +1,0 @@
-name: Actions probe
-on:
-  push:
-  pull_request:
-jobs:
-  probe:
-    runs-on: ubuntu-latest
-    steps:
-      - run: echo ok
