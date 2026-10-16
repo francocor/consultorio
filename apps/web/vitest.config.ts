@@ -5,7 +5,7 @@ export default defineConfig({
   test: {
     name: 'web',
     environment: 'jsdom',
-    include: ['src/**/*.test.{ts,tsx}'],
+    include: ['src/**/*.test.{ts,tsx}', 'vite/**/*.test.ts'],
     setupFiles: ['./src/shared/test/setup.ts'],
   },
 });
