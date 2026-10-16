@@ -4,6 +4,7 @@
  */
 import type { FastifyInstance } from 'fastify';
 
+import type { GrantsRepo } from '../../platform/authz/guard.js';
 import type { TenantKeys } from '../../platform/crypto/tenant-keys.js';
 import { SYSTEM_USER_ID, type WithTenant } from '../../platform/db/tenant-context.js';
 import type { Authenticate } from '../../platform/http/auth-guard.js';
@@ -52,6 +53,8 @@ export interface IdentityOptions {
   /** Counters shared with the rest of the API, here for the reset emails per account. */
   rateLimitStore: RateLimitStore;
   cookieSecure: boolean;
+  /** Grantable permissions of a member, shown in the profile. The access module provides them. */
+  grants?: GrantsRepo;
   clock?: () => Date;
   hasher?: PasswordHasher;
   lockout?: LockoutPolicy;
@@ -135,6 +138,7 @@ export function createIdentity(options: IdentityOptions): Identity {
     sessions,
     twoFactor,
     cookieSecure: options.cookieSecure,
+    ...(options.grants ? { grants: options.grants } : {}),
     ...loginRateLimit,
   });
   const factorRoutes = twoFactorRoutes({

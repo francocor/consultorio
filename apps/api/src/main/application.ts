@@ -2,12 +2,13 @@ import type { Writable } from 'node:stream';
 
 import type { FastifyInstance } from 'fastify';
 
+import { createAccess, createGrants, createGrantsRepo } from '../modules/access/index.js';
 import type { LockoutPolicy } from '../modules/identity/application/lockout.js';
 import type { PasswordValidator } from '../modules/identity/domain/password-policy.js';
 import { createIdentity, type PasswordHasher } from '../modules/identity/index.js';
 import { createTenantLookup, type DeploymentSettings } from '../modules/tenancy/index.js';
 import { createAuditDeny } from '../platform/audit/deny.js';
-import { createActorLoader, noGrants, type GrantsRepo } from '../platform/authz/guard.js';
+import { createActorLoader } from '../platform/authz/guard.js';
 import {
   noProfessionals,
   type MatriculaValidator,
@@ -45,8 +46,6 @@ export interface ApplicationOptions {
   limits?: Partial<RequestLimits>;
   /** Professional profiles for the clinical gate. The staff module provides them (S1.19). */
   professionals?: ProfessionalRepo;
-  /** Grantable permissions per member. The access module provides them (S1.18). */
-  grants?: GrantsRepo;
   /** Routes of the capability modules, registered after identity. */
   modules?: readonly FeatureRoutes[];
 }
@@ -79,8 +78,13 @@ export function createApplication(options: ApplicationOptions): FastifyInstance 
   const withTenant = createWithTenant(db);
   const rateLimitStore = createMemoryRateLimitStore();
 
+  // Grants are read fresh on every request, so a revocation takes effect with the next call.
+  const grants = createGrants();
+  const grantsRepo = createGrantsRepo(withTenant, grants);
+
   const identity = createIdentity({
     withTenant,
+    grants: grantsRepo,
     keys: options.keys,
     email: options.email,
     passwordValidator: options.passwordValidator,
@@ -107,6 +111,13 @@ export function createApplication(options: ApplicationOptions): FastifyInstance 
     },
   });
 
+  const access = createAccess({
+    withTenant,
+    auditDeny,
+    sessions: identity.sessions,
+    grants,
+  });
+
   const server = buildServer({
     ...(options.logLevel === undefined ? {} : { logLevel: options.logLevel }),
     ...(options.logStream ? { logStream: options.logStream } : {}),
@@ -125,13 +136,13 @@ export function createApplication(options: ApplicationOptions): FastifyInstance 
       authz: {
         loadActor: createActorLoader({
           professionals: options.professionals ?? noProfessionals,
-          grants: options.grants ?? noGrants,
+          grants: grantsRepo,
           validateMatricula,
         }),
         auditDeny,
       },
     },
-    routes: [identity.routes, ...(options.modules ?? [])],
+    routes: [identity.routes, access.routes, ...(options.modules ?? [])],
   });
   built.server = server;
   return server;

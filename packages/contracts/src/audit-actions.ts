@@ -50,6 +50,13 @@ export const AUDIT_ACTIONS = [
   'assignment.removed',
   'matricula.verified',
   'setting.reception_sees_clinical_metadata.changed',
+  // Other organization settings (two-factor policy, quiet hours): the entry names the setting.
+  'setting.changed',
+  // Locations of the organization.
+  'location.created',
+  'location.updated',
+  'location.deactivated',
+  'location.reactivated',
   // Staff lifecycle.
   'staff.invited',
   'staff.deactivated',

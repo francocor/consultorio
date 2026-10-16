@@ -8,6 +8,40 @@
 export const ROLES = ['owner', 'admin', 'professional', 'reception', 'patient'] as const;
 export type Role = (typeof ROLES)[number];
 
+/** Roles that exist inside an organization's staff. `patient` is never granted to staff. */
+export const STAFF_ROLES = [
+  'owner',
+  'admin',
+  'professional',
+  'reception',
+] as const satisfies readonly Role[];
+export type StaffRole = (typeof STAFF_ROLES)[number];
+
+const GRANT_CEILING: Partial<Record<Role, readonly Role[]>> = {
+  owner: ['owner', 'admin', 'professional', 'reception'],
+  // An admin cannot create an owner: that would be a way to escalate above themselves.
+  admin: ['admin', 'professional', 'reception'],
+};
+
+/**
+ * The roles a person holding `grantorRoles` may hand out, in an invitation or in a role change.
+ * Professionals, reception and patients hand out nothing.
+ */
+export function rolesInviterMayGrant(grantorRoles: readonly Role[]): StaffRole[] {
+  const allowed = new Set<Role>();
+  for (const role of grantorRoles) {
+    for (const granted of GRANT_CEILING[role] ?? []) allowed.add(granted);
+  }
+  return STAFF_ROLES.filter((role) => allowed.has(role));
+}
+
+/** True when every role in `roles` is inside the grantor's ceiling, and there is at least one. */
+export function canGrantRoles(grantorRoles: readonly Role[], roles: readonly Role[]): boolean {
+  if (roles.length === 0) return false;
+  const allowed: readonly Role[] = rolesInviterMayGrant(grantorRoles);
+  return roles.every((role) => allowed.includes(role));
+}
+
 export const PERMISSIONS = [
   // Organization administration (non-clinical).
   'tenant.settings.manage',

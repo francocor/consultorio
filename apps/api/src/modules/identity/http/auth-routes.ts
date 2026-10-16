@@ -13,6 +13,7 @@ import { z } from 'zod';
 import { userAccount } from '../../../db/schema/identity.js';
 import { tenant } from '../../../db/schema/tenant.js';
 import { audit } from '../../../platform/audit/writer.js';
+import { noGrants, type GrantsRepo } from '../../../platform/authz/guard.js';
 import type { WithTenant } from '../../../platform/db/tenant-context.js';
 import { primaryRole } from '../../../platform/http/auth-guard.js';
 import { AppError, denied } from '../../../platform/http/problem.js';
@@ -32,6 +33,8 @@ export interface AuthRoutesDeps {
   sessions: SessionService;
   twoFactor: TwoFactor;
   cookieSecure: boolean;
+  /** Where the grantable permissions of the member come from. None until the access module is wired. */
+  grants?: GrantsRepo;
   /** Sign-in attempts per client address and tenant. */
   loginRateLimit?: { max: number; timeWindow: number };
 }
@@ -137,6 +140,10 @@ export function authRoutes(deps: AuthRoutesDeps) {
           },
         );
         if (profile.row === undefined) throw new AppError('unauthenticated');
+        // A failure reading the grants counts as none: roles alone decide (fail closed).
+        const grants = await (deps.grants ?? noGrants)
+          .grantsFor(current.tenantId, current.membershipId)
+          .catch(() => []);
         const email = profile.row.email;
         const requirement = twoFactorRequirement({
           roles: current.roles,
@@ -148,8 +155,7 @@ export function authRoutes(deps: AuthRoutesDeps) {
         return {
           user: { id: current.userId, email },
           roles: [...current.roles],
-          // Grantable permissions are added when the access module exists (S1.18).
-          permissions: effectivePermissions(current.roles, []),
+          permissions: effectivePermissions(current.roles, grants),
           scope: current.scope,
           twoFactor: {
             enrolled: profile.enrolled,
