@@ -15,13 +15,20 @@ export interface HealthDeps {
  */
 export function healthRoutes(deps: HealthDeps): FastifyPluginCallbackZod {
   return (app, _options, done) => {
-    app.get('/health', { schema: { response: { 200: HealthResponse } } }, () => ({
-      status: 'ok' as const,
-    }));
+    app.get(
+      '/health',
+      { config: { readOnly: 'read' }, schema: { response: { 200: HealthResponse } } },
+      () => ({
+        status: 'ok' as const,
+      }),
+    );
 
     app.get(
       '/ready',
-      { schema: { response: { 200: HealthResponse, 503: HealthResponse } } },
+      {
+        config: { readOnly: 'read' },
+        schema: { response: { 200: HealthResponse, 503: HealthResponse } },
+      },
       async (request, reply) => {
         const result = await deps
           .checkDatabase()

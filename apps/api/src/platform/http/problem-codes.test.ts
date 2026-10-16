@@ -13,15 +13,22 @@ function server() {
     health: { checkDatabase: () => Promise.resolve({ ok: true }) },
     ...testTenancy(),
   });
-  app.get('/read-only', () => {
+  app.get('/read-only', { config: { readOnly: 'read' } }, () => {
     throw new AppError('tenant_read_only');
   });
-  app.get('/missing', (request, reply) => denied(request, reply));
-  app.get('/not-allowed', (request, reply) => forbidden(request, reply));
-  app.get('/not-yours', (request, reply) => denied(request, reply));
+  app.get('/missing', { config: { readOnly: 'read' } }, (request, reply) => denied(request, reply));
+  app.get('/not-allowed', { config: { readOnly: 'read' } }, (request, reply) =>
+    forbidden(request, reply),
+  );
+  app.get('/not-yours', { config: { readOnly: 'read' } }, (request, reply) =>
+    denied(request, reply),
+  );
   app.post(
     '/validated',
-    { schema: { body: z.object({ name: z.string().min(3), age: z.number().int() }) } },
+    {
+      config: { readOnly: 'write' },
+      schema: { body: z.object({ name: z.string().min(3), age: z.number().int() }) },
+    },
     () => ({ ok: true }),
   );
   return app;
@@ -59,7 +66,7 @@ describe('problem+json carries a catalogued code', () => {
 
   it('sends an unexpected error as internal_error without internals', async () => {
     const app = server();
-    app.get('/crash', () => {
+    app.get('/crash', { config: { readOnly: 'read' } }, () => {
       throw new Error('select * from patient where dni = 30123456');
     });
 

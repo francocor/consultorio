@@ -16,10 +16,10 @@ function serverWithFailingRoutes(logStream?: ReturnType<typeof captureLogs>['str
     health: { checkDatabase: () => Promise.resolve({ ok: true }) },
     ...testTenancy(),
   });
-  app.get('/boom', () => {
+  app.get('/boom', { config: { readOnly: 'read' } }, () => {
     throw new Error(LEAKY_MESSAGE);
   });
-  app.get('/conflict', () => {
+  app.get('/conflict', { config: { readOnly: 'read' } }, () => {
     throw Object.assign(new Error(LEAKY_MESSAGE), { statusCode: 409 });
   });
   return app;

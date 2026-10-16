@@ -32,8 +32,8 @@ function server(deployment: DeploymentSettings = multi) {
     lookupTenant: (slug) =>
       Promise.resolve([NORTE, SUR].find((tenant) => tenant.slug === slug) ?? null),
   });
-  app.get('/whoami', (request) => request.hostContext);
-  app.post('/webhooks/provider', () => ({ received: true }));
+  app.get('/whoami', { config: { readOnly: 'read' } }, (request) => request.hostContext);
+  app.post('/webhooks/provider', { config: { readOnly: 'webhook' } }, () => ({ received: true }));
   return app;
 }
 

@@ -16,6 +16,7 @@ import {
   registerRequestId,
 } from '../platform/http/problem.js';
 import { registerTenantHost } from '../platform/http/tenant-host.js';
+import { registerReadOnlyPolicy } from '../platform/read-only/index.js';
 
 import { buildLoggerOptions } from './logger.js';
 
@@ -48,6 +49,8 @@ export function buildServer(options: BuildServerOptions): FastifyInstance {
   registerRequestId(app);
   registerProblemHandlers(app);
   registerTenantHost(app, createResolveHost(options.deployment, options.lookupTenant));
+  // After the host guard (it reads the tenant) and before any route (it checks their categories).
+  registerReadOnlyPolicy(app);
 
   app.setValidatorCompiler(validatorCompiler);
   app.setSerializerCompiler(serializerCompiler);

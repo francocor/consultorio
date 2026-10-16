@@ -48,10 +48,10 @@ describe('the same build boots in both modes from configuration only', () => {
           : { mode: 'single', slug: 'test-tenant' },
       featureRoutes: {
         signup: (app) => {
-          app.post('/public/signup', () => ({ created: true }));
+          app.post('/public/signup', { config: { readOnly: 'write' } }, () => ({ created: true }));
         },
         subscriptions: (app) => {
-          app.get('/subscription', () => ({ plan: 'basic' }));
+          app.get('/subscription', { config: { readOnly: 'read' } }, () => ({ plan: 'basic' }));
         },
       },
     });
