@@ -1,3 +1,5 @@
+import { randomUUID } from 'node:crypto';
+
 import { sql } from 'drizzle-orm';
 
 import type { Tx } from '../../src/platform/db/tenant-context.js';
@@ -37,6 +39,15 @@ export const TENANT_FIXTURES: Record<string, TenantTableFixture> = {
         tx,
         sql`INSERT INTO audit_event (tenant_id, action, outcome)
               VALUES (${tenantId}, 'access.denied', 'deny')
+              RETURNING id`,
+      ),
+  },
+  job_execution: {
+    insert: (tx, tenantId) =>
+      returningId(
+        tx,
+        sql`INSERT INTO job_execution (tenant_id, queue, job_id)
+              VALUES (${tenantId}, 'test.echo', ${randomUUID()})
               RETURNING id`,
       ),
   },

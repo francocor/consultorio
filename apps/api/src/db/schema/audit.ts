@@ -35,7 +35,10 @@ export const auditEvent = pgTable(
       .notNull()
       .default(sql`app.uuid_v7()`),
     tenantId: uuid('tenant_id').notNull(),
-    occurredAt: timestamp('occurred_at', { withTimezone: true }).notNull().defaultNow(),
+    /** Insertion time (`clock_timestamp()`, not the transaction start), so the seal order follows writes. */
+    occurredAt: timestamp('occurred_at', { withTimezone: true })
+      .notNull()
+      .default(sql`clock_timestamp()`),
     /** Position in the tenant's hash chain. Null until sealed. */
     seq: bigint('seq', { mode: 'number' }),
     /** Null for system actions and unauthenticated attempts. */

@@ -1,4 +1,5 @@
 import { sql } from 'drizzle-orm';
+import type { ClientBase } from 'pg';
 
 import type { Db } from './pool.js';
 
@@ -31,4 +32,25 @@ export function createWithTenant(db: Db): WithTenant {
         set_config('app.professional_id', ${ctx.actingProfessionalId ?? ''}, true)`);
       return fn(tx);
     });
+}
+
+/** Nil UUID used as `app.user_id` when the system itself acts (jobs, sealing). */
+export const SYSTEM_USER_ID = '00000000-0000-0000-0000-000000000000';
+
+/**
+ * The node-postgres client a `withTenant` transaction runs on. Needed to hand the SAME connection
+ * to another library, such as pg-boss, so its writes join the caller's transaction. Drizzle does
+ * not expose the client publicly, so this reads it from the session and fails loudly (and is
+ * covered by an integration test) if a Drizzle upgrade ever moves it.
+ */
+export function rawClientOf(tx: Tx): ClientBase {
+  const client = (tx as unknown as { session?: { client?: unknown } }).session?.client;
+  if (
+    typeof client !== 'object' ||
+    client === null ||
+    typeof (client as { query?: unknown }).query !== 'function'
+  ) {
+    throw new Error('Cannot reach the database client of this transaction');
+  }
+  return client as ClientBase;
 }

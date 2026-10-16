@@ -16,6 +16,13 @@ declare module 'vitest' {
 }
 
 const DATABASE = 'consultorio_test';
+/** Queues that only tests use. */
+const TEST_QUEUES = [
+  { name: 'test.echo', options: { retryLimit: 0 } },
+  { name: 'test.write', options: { retryLimit: 0 } },
+  { name: 'test.fail', options: { retryLimit: 0 } },
+  { name: 'test.afip', options: { retryLimit: 0 } },
+];
 const ROLES_SQL = new URL('../../../../infra/postgres/init/01-roles.sql', import.meta.url);
 
 /**
@@ -39,7 +46,7 @@ export default async function setup(project: TestProject): Promise<() => Promise
   const ownerUrl = url('app_owner', 'app_owner_dev_only');
   const runtimeUrl = url('app_rw', 'app_rw_dev_only');
 
-  await runMigrations(ownerUrl);
+  await runMigrations(ownerUrl, TEST_QUEUES);
 
   project.provide('ownerUrl', ownerUrl);
   project.provide('runtimeUrl', runtimeUrl);
