@@ -309,9 +309,9 @@ Depends: S1.15.
 
 Depends: S1.16, S1.03.
 
-- [ ] 1.61 `db/schema/care.ts` + migration: `care_assignment`, `care_relationship` (patient, professional, qualifying appointments, encounters, assigned, generated `active`); trigger from `care_assignment`. Appointment and encounter triggers arrive in Stage 2. [AUZ-09, AUZ-10] Test: assignment makes the relationship active.
-- [ ] 1.62 SQL `app.clinical_readable(patient_id, author_professional_id, visibility, template_kind)` and `clinicalPolicies(table)` helper creating the RESTRICTIVE `clinical_professionals_only` and `clinical_scope` policies; extend `withTenant` to load sharing settings once per transaction. [AUZ-04, AUZ-11] Test: see 1.63.
-- [ ] 1.63 Integration tests on a test-only table `test_clinical_item`: admin sees 0 rows; non-treating professional 0; treating 1; `author_only`; sharing on and off; prescription excluded (D17); and a property test that the TS predicate (1.59) and the SQL function agree on random actor/entry combinations. [AUZ-04, AUZ-09, AUZ-11] Test: that file.
+- [x] 1.61 `db/schema/care.ts` + migration: `care_assignment`, `care_relationship` (patient, professional, qualifying appointments, encounters, assigned, generated `active`); trigger from `care_assignment`. Appointment and encounter triggers arrive in Stage 2. [AUZ-09, AUZ-10] Test: assignment makes the relationship active.
+- [x] 1.62 SQL `app.clinical_readable(patient_id, author_professional_id, visibility, template_kind)` and `clinicalPolicies(table)` helper creating the RESTRICTIVE `clinical_professionals_only` and `clinical_scope` policies; extend `withTenant` to load sharing settings once per transaction. [AUZ-04, AUZ-11] Test: see 1.63.
+- [x] 1.63 Integration tests on a test-only table `test_clinical_item`: admin sees 0 rows; non-treating professional 0; treating 1; `author_only`; sharing on and off; prescription excluded (D17); and a property test that the TS predicate (1.59) and the SQL function agree on random actor/entry combinations. [AUZ-04, AUZ-09, AUZ-11] Test: that file.
 
 ## S1.18 Access module: grants, settings, locations (~400 lines)
 

@@ -1,7 +1,7 @@
 import { getTableConfig, text, unique } from 'drizzle-orm/pg-core';
 import { describe, expect, it } from 'vitest';
 
-import { tenantPolicies, tenantTable } from './_helpers.js';
+import { clinicalPolicies, tenantPolicies, tenantTable } from './_helpers.js';
 
 describe('tenantTable', () => {
   const widget = tenantTable('widget', { label: text('label').notNull() });
@@ -65,5 +65,50 @@ describe('tenantPolicies', () => {
 
   it('quotes the table name', () => {
     expect(tenantPolicies('weird"name')).toContain('"weird""name"');
+  });
+});
+
+describe('clinicalPolicies', () => {
+  const statements = (sql: string) => sql.split('\n--> statement-breakpoint\n');
+
+  it('creates the two RESTRICTIVE policies of the clinical backstop (ADR-003)', () => {
+    const [professionalsOnly, scope] = statements(clinicalPolicies('clinical_note'));
+
+    expect(professionalsOnly).toBe(
+      'CREATE POLICY "clinical_professionals_only" ON "clinical_note" AS RESTRICTIVE USING (nullif(current_setting(\'app.professional_id\', true), \'\') IS NOT NULL);',
+    );
+    expect(scope).toBe(
+      'CREATE POLICY "clinical_scope" ON "clinical_note" AS RESTRICTIVE USING (app.clinical_readable("patient_id", "author_professional_id", "visibility", "template_kind"));',
+    );
+  });
+
+  it('adapts to the column names of the table', () => {
+    const [, scope] = statements(
+      clinicalPolicies('anamnesis', {
+        authorColumn: 'recorded_by_professional_id',
+        templateKind: null,
+      }),
+    );
+
+    expect(scope).toContain(
+      'app.clinical_readable("patient_id", "recorded_by_professional_id", "visibility", NULL::text)',
+    );
+  });
+
+  it('takes a constant template kind, as prescriptions do, which never follow sharing', () => {
+    const [, scope] = statements(
+      clinicalPolicies('prescription', { templateKind: { constant: 'prescription' } }),
+    );
+
+    expect(scope).toContain('"visibility", \'prescription\'::text)');
+  });
+
+  it('quotes identifiers and escapes the constant', () => {
+    const [first, scope] = statements(
+      clinicalPolicies('weird"name', { templateKind: { constant: "it's" } }),
+    );
+
+    expect(first).toContain('"weird""name"');
+    expect(scope).toContain("'it''s'::text");
   });
 });

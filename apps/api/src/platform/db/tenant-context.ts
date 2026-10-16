@@ -30,8 +30,34 @@ export function createWithTenant(db: Db): WithTenant {
         set_config('app.tenant_id', ${ctx.tenantId}, true),
         set_config('app.user_id', ${ctx.userId}, true),
         set_config('app.professional_id', ${ctx.actingProfessionalId ?? ''}, true)`);
+      // A health professional's transaction also carries the organization's sharing settings, read
+      // once here, so the clinical policies (`app.clinical_readable`) can decide row by row without
+      // a lookup per row. A transaction that did not load them has sharing OFF: every doubt is a
+      // refusal. The settings are read inside the transaction, so a change takes effect with the
+      // very next one.
+      if (ctx.actingProfessionalId) await loadSharingSettings(tx);
       return fn(tx);
     });
+}
+
+/**
+ * Copies `tenant.settings.clinicalSharing` and `sharedTemplates` into transaction settings. A value
+ * of the wrong type counts as "off" / "empty", never as "on".
+ */
+async function loadSharingSettings(tx: Tx): Promise<void> {
+  await tx.execute(sql`select
+      set_config('app.clinical_sharing',
+        case when t.settings -> 'clinicalSharing' = 'true'::jsonb then 'true' else 'false' end, true),
+      set_config('app.shared_templates',
+        case when jsonb_typeof(t.settings -> 'sharedTemplates') = 'array'
+          then coalesce((
+            select string_agg(v, ',')
+              from jsonb_array_elements_text(t.settings -> 'sharedTemplates') as v
+             where v <> '' and position(',' in v) = 0
+          ), '')
+          else '' end, true)
+    from public.tenant t
+   where t.id = current_setting('app.tenant_id')::uuid`);
 }
 
 /** Nil UUID used as `app.user_id` when the system itself acts (jobs, sealing). */

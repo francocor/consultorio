@@ -87,3 +87,51 @@ export function tenantPolicies(table: string, options: { column?: string } = {})
     `CREATE POLICY "tenant_isolation" ON ${name} USING (${predicate}) WITH CHECK (${predicate});`,
   ].join('\n--> statement-breakpoint\n');
 }
+
+export interface ClinicalPolicyOptions {
+  patientColumn?: string;
+  authorColumn?: string;
+  visibilityColumn?: string;
+  /**
+   * What the table passes as the template kind: the name of a column (default `template_kind`);
+   * `null` for entries that follow the general ceiling (anamnesis, documents, consent); or a
+   * constant such as `{ constant: 'prescription' }` for prescriptions, which never follow sharing.
+   */
+  templateKind?: string | null | { constant: string };
+}
+
+function sqlLiteral(value: string): string {
+  return `'${value.replaceAll("'", "''")}'`;
+}
+
+/**
+ * SQL for the database backstop of clinical access (ADR-003, ADR-002): two RESTRICTIVE policies,
+ * combined with AND with `tenant_isolation`, so a row is visible only if
+ *
+ * - `clinical_professionals_only`: the transaction acts as a health professional
+ *   (`app.professional_id` is set only for an active profile with a recorded matricula), and
+ * - `clinical_scope`: `app.clinical_readable` allows this entry (author, treating professional,
+ *   or the sharing scope).
+ *
+ * An owner, admin or reception transaction has no professional id, so it sees zero rows even if the
+ * application layer had a bug. Apply it, after `tenantPolicies`, to every table that holds
+ * clinical content.
+ */
+export function clinicalPolicies(table: string, options: ClinicalPolicyOptions = {}): string {
+  const name = quoteIdentifier(table);
+  const patient = quoteIdentifier(options.patientColumn ?? 'patient_id');
+  const author = quoteIdentifier(options.authorColumn ?? 'author_professional_id');
+  const visibility = quoteIdentifier(options.visibilityColumn ?? 'visibility');
+  const template = options.templateKind;
+  const templateExpression =
+    template === null
+      ? 'NULL::text'
+      : typeof template === 'object'
+        ? `${sqlLiteral(template.constant)}::text`
+        : quoteIdentifier(template ?? 'template_kind');
+
+  return [
+    `CREATE POLICY "clinical_professionals_only" ON ${name} AS RESTRICTIVE USING (nullif(current_setting('app.professional_id', true), '') IS NOT NULL);`,
+    `CREATE POLICY "clinical_scope" ON ${name} AS RESTRICTIVE USING (app.clinical_readable(${patient}, ${author}, ${visibility}, ${templateExpression}));`,
+  ].join('\n--> statement-breakpoint\n');
+}
