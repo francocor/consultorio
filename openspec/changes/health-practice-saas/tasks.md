@@ -236,7 +236,7 @@ Depends: S1.06.
 Depends: S1.03.
 
 - [x] 1.32 `platform/crypto/aes-gcm.ts` (AES-256-GCM, random 96-bit nonce, AAD binding tenant, table, column, row id; versioned format). [IDA-05, PAT-06] Test: round trip; tamper and AAD mismatch throw; nonces never repeat.
-- [ ] 1.33 `platform/crypto/key-management.ts` port + `adapters/local-kek/` (dev, test) + `adapters/aws-kms/` (encryption context carries tenant id). [IDA-05] Test: local adapter; AWS adapter against a mocked client.
+- [x] 1.33 `platform/crypto/key-management.ts` port + `adapters/local-kek/` (dev, test) + `adapters/aws-kms/` (encryption context carries tenant id). [IDA-05] Test: local adapter; AWS adapter against a mocked client.
 - [ ] 1.34 `db/schema/tenant-key.ts` + migration; `platform/crypto/tenant-keys.ts` (create DEK at tenant creation, unwrap cache with TTL, `encryptField`/`decryptField`). [IDA-05, PAT-06] Test: tenant A cannot decrypt tenant B data; cache expiry; creation is idempotent.
 
 ## S1.09 Identity schema and password policy (~350 lines)
