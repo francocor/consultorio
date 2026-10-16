@@ -1,6 +1,7 @@
 export * from './access.js';
 export * from './anamnesis.js';
 export * from './audit-actions.js';
+export * from './audit.js';
 export * from './auth.js';
 export * from './auth-recovery.js';
 export * from './country/ar/index.js';

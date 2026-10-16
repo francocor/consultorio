@@ -4,6 +4,7 @@ import { fail } from '@consultorio/contracts';
 import type { FastifyInstance } from 'fastify';
 
 import { createAccess, createGrants, createGrantsRepo } from '../modules/access/index.js';
+import { createAudit } from '../modules/audit/index.js';
 import type { LockoutPolicy } from '../modules/identity/application/lockout.js';
 import type { PasswordValidator } from '../modules/identity/domain/password-policy.js';
 import { createIdentity, type PasswordHasher } from '../modules/identity/index.js';
@@ -168,6 +169,8 @@ export function createApplication(options: ApplicationOptions): FastifyInstance 
     },
   });
 
+  const auditViewer = createAudit({ withTenant });
+
   const server = buildServer({
     ...(options.logLevel === undefined ? {} : { logLevel: options.logLevel }),
     ...(options.logStream ? { logStream: options.logStream } : {}),
@@ -197,6 +200,7 @@ export function createApplication(options: ApplicationOptions): FastifyInstance 
       access.routes,
       staff.routes,
       patients.routes,
+      auditViewer.routes,
       ...(options.modules ?? []),
     ],
   });
