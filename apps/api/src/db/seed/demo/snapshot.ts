@@ -1,0 +1,130 @@
+import { asc, eq } from 'drizzle-orm';
+
+import { SYSTEM_USER_ID, type WithTenant } from '../../../platform/db/tenant-context.js';
+import { membershipLocation } from '../../schema/access.js';
+import { patientCoverage, payerPlan } from '../../schema/coverage.js';
+import { membership, userAccount } from '../../schema/identity.js';
+import { patient, patientRepresentative } from '../../schema/patients.js';
+import { payer } from '../../schema/platform-catalogs.js';
+import { dataProcessingConsent } from '../../schema/privacy.js';
+import { professional, professionalHours } from '../../schema/staff.js';
+import { location, tenant } from '../../schema/tenant.js';
+
+/**
+ * The logical content of an organization: what a person would notice (names, documents, roles,
+ * coverage, hours), without ids, timestamps and password hashes. Two seeds of the same dataset
+ * produce equal snapshots; the reset test uses it to prove "identical logical content".
+ */
+export interface DemoSnapshot {
+  theme: Record<string, unknown>;
+  locations: { name: string; timeZone: string }[];
+  staff: {
+    email: string;
+    displayName: string | null;
+    roles: string[];
+    locations: string[];
+    specialties: string[];
+    matricula: string | null;
+    hours: string[];
+  }[];
+  patients: {
+    name: string;
+    birthDate: string;
+    document: string | null;
+    coverage: string | null;
+    consent: boolean;
+    representative: string | null;
+  }[];
+}
+
+export async function snapshotDemoTenant(
+  withTenant: WithTenant,
+  tenantId: string,
+): Promise<DemoSnapshot> {
+  return withTenant({ tenantId, userId: SYSTEM_USER_ID }, async (tx) => {
+    const [org] = await tx
+      .select({ theme: tenant.theme })
+      .from(tenant)
+      .where(eq(tenant.id, tenantId));
+    const places = await tx.select().from(location).orderBy(asc(location.name));
+    const placeName = new Map(places.map((place) => [place.id, place.name]));
+
+    const members = await tx
+      .select({
+        id: membership.id,
+        displayName: membership.displayName,
+        roles: membership.roles,
+        email: userAccount.email,
+      })
+      .from(membership)
+      .innerJoin(userAccount, eq(userAccount.id, membership.userId))
+      .orderBy(asc(userAccount.email));
+    const assignments = await tx.select().from(membershipLocation);
+    const profiles = await tx.select().from(professional);
+    const slots = await tx.select().from(professionalHours);
+
+    const people = await tx
+      .select()
+      .from(patient)
+      .orderBy(asc(patient.familyName), asc(patient.givenNames));
+    const coverages = await tx
+      .select({
+        patientId: patientCoverage.patientId,
+        number: patientCoverage.memberNumber,
+        plan: payerPlan.planName,
+        payer: payer.name,
+      })
+      .from(patientCoverage)
+      .innerJoin(payerPlan, eq(payerPlan.id, patientCoverage.payerPlanId))
+      .innerJoin(payer, eq(payer.id, payerPlan.payerId));
+    const consents = await tx
+      .select({ patientId: dataProcessingConsent.patientId })
+      .from(dataProcessingConsent);
+    const guardians = await tx.select().from(patientRepresentative);
+
+    return {
+      theme: org?.theme ?? {},
+      locations: places.map((place) => ({ name: place.name, timeZone: place.timeZone })),
+      staff: members.map((member) => {
+        const profile = profiles.find((candidate) => candidate.membershipId === member.id);
+        return {
+          email: member.email,
+          displayName: member.displayName,
+          roles: [...member.roles].sort(),
+          locations: assignments
+            .filter((entry) => entry.membershipId === member.id)
+            .map((entry) => placeName.get(entry.locationId) ?? '?')
+            .sort(),
+          specialties: profile ? [...profile.specialties] : [],
+          matricula: profile
+            ? `${profile.matriculaJurisdiction ?? ''} ${profile.matricula ?? ''}`
+            : null,
+          hours: slots
+            .filter((slot) => slot.professionalId === profile?.id)
+            .map(
+              (slot) =>
+                `${placeName.get(slot.locationId) ?? '?'} ${String(slot.weekday)} ${String(slot.startMinute)}-${String(slot.endMinute)}`,
+            )
+            .sort(),
+        };
+      }),
+      patients: people.map((person) => {
+        const coverage = coverages.find((entry) => entry.patientId === person.id);
+        const guardian = guardians.find((entry) => entry.patientId === person.id);
+        return {
+          name: `${person.familyName}, ${person.givenNames}`,
+          birthDate: person.birthDate,
+          document:
+            person.nationalId === null
+              ? null
+              : `${person.nationalIdType ?? ''} ${person.nationalId}`,
+          coverage: coverage
+            ? `${coverage.payer} ${coverage.plan ?? ''} ${coverage.number ?? ''}`
+            : null,
+          consent: consents.some((entry) => entry.patientId === person.id),
+          representative: guardian ? `${guardian.fullName} (${guardian.relation})` : null,
+        };
+      }),
+    };
+  });
+}

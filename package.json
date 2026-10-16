@@ -23,7 +23,9 @@
     "infra:up": "docker compose --env-file .env -f infra/docker-compose.yml up -d --wait postgres minio mailpit && docker compose --env-file .env -f infra/docker-compose.yml run --rm --no-deps minio-init",
     "infra:down": "docker compose --env-file .env -f infra/docker-compose.yml down",
     "infra:reset": "docker compose --env-file .env -f infra/docker-compose.yml down -v",
-    "prepare": "node -e \"require('node:fs').existsSync('.git')&&require('node:child_process').execSync('lefthook install',{stdio:'inherit'})\""
+    "prepare": "node -e \"require('node:fs').existsSync('.git')&&require('node:child_process').execSync('lefthook install',{stdio:'inherit'})\"",
+    "demo:seed": "pnpm --filter @consultorio/api demo:seed",
+    "demo:stack": "pnpm --filter @consultorio/api demo:stack"
   },
   "prettier": "@consultorio/config/prettier.config.js",
   "devDependencies": {
