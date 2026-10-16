@@ -134,6 +134,13 @@
       "when": 1792185647621,
       "tag": "0018_demo_reset",
       "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "7",
+      "when": 1792192850337,
+      "tag": "0019_definer_privileges",
+      "breakpoints": true
     }
   ]
 }
