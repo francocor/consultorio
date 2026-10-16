@@ -65,11 +65,14 @@ export function buildTestApplication(
   });
 }
 
-/** The `sid=...` pair of a response's Set-Cookie header, ready to send back as a `Cookie` header. */
+/**
+ * The session pair (`__Host-sid=...` in the secure test app, `sid=...` otherwise) of a response's
+ * Set-Cookie header, ready to send back as a `Cookie` header.
+ */
 export function sessionCookieOf(setCookie: string | string[] | undefined): string {
   const header = Array.isArray(setCookie) ? setCookie[0] : setCookie;
   const pair = header?.split(';')[0];
-  if (!pair?.startsWith('sid=') || pair === 'sid=') {
+  if (!pair || !/^(?:__Host-)?sid=.+/.test(pair)) {
     throw new Error('response did not set a session cookie');
   }
   return pair;

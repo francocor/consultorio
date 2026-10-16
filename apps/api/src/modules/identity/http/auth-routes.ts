@@ -75,7 +75,7 @@ export function authRoutes(deps: AuthRoutesDeps) {
           email: request.body.email,
           password: request.body.password,
           actor: request.auditActor,
-          previousToken: readSessionCookie(request.headers.cookie),
+          previousToken: readSessionCookie(request.headers.cookie, { secure: deps.cookieSecure }),
         });
         // Every failure is the same answer: it must not say which part was wrong.
         if (outcome.kind === 'failed') throw new AppError('unauthenticated');

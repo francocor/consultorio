@@ -10,7 +10,10 @@ import {
   isAllowedPublicPath,
   type AuthenticatedSession,
 } from './auth-guard.js';
-import { SESSION_COOKIE } from './session-cookie.js';
+import { sessionCookieName } from './session-cookie.js';
+
+/** Every app in this file runs with secure cookies, so the session cookie has its prefix. */
+const SESSION_COOKIE = sessionCookieName(true);
 
 const TOKEN = 'T'.repeat(43);
 const COOKIE = `${SESSION_COOKIE}=${TOKEN}`;

@@ -159,7 +159,7 @@ export function registerAuthGuard(app: FastifyInstance, options: AuthGuardOption
     if (request.routeOptions.config.auth === 'public') return;
 
     const context = request.hostContext;
-    const token = readSessionCookie(request.headers.cookie);
+    const token = readSessionCookie(request.headers.cookie, { secure: options.cookieSecure });
     if (context?.kind !== 'tenant' || token === null) throw new AppError('unauthenticated');
 
     const session = await options.authenticate(token, context.tenant.id);

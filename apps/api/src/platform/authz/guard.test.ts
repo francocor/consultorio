@@ -5,10 +5,13 @@ import { buildServer } from '../../main/server.js';
 import { testTenancy } from '../../testing/tenancy.js';
 import type { AuditDenyEvent } from '../audit/deny.js';
 import type { AuthenticatedSession } from '../http/auth-guard.js';
-import { SESSION_COOKIE } from '../http/session-cookie.js';
+import { sessionCookieName } from '../http/session-cookie.js';
 
 import { createActorLoader, noGrants, type GrantsRepo, type ActorLoader } from './guard.js';
 import type { ProfessionalRepo } from './professional-gate.js';
+
+/** Every app in this file runs with secure cookies, so the session cookie has its prefix. */
+const SESSION_COOKIE = sessionCookieName(true);
 
 const TENANT = '0190a000-0000-7000-8000-0000000000e1';
 const COOKIE = `${SESSION_COOKIE}=${'G'.repeat(43)}`;

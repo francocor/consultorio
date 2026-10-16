@@ -77,7 +77,7 @@ export function twoFactorRoutes(deps: TwoFactorRoutesDeps) {
             ? {}
             : { recoveryCode: request.body.recoveryCode }),
           actor: request.auditActor,
-          previousToken: readSessionCookie(request.headers.cookie),
+          previousToken: readSessionCookie(request.headers.cookie, { secure: deps.cookieSecure }),
         });
         if (outcome.kind !== 'session') throw new AppError('unauthenticated');
 

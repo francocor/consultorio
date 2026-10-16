@@ -106,14 +106,15 @@ export function operatorRoutes(deps: OperatorRoutesDeps) {
       // Defence in depth on top of SameSite=Strict: a change must come from the console's own page.
       if (!SAFE_METHODS.has(request.method)) {
         const origin = request.headers.origin;
-        const hasCookie = readOperatorCookie(request.headers.cookie) !== null;
+        const hasCookie =
+          readOperatorCookie(request.headers.cookie, { secure: deps.secureLinks }) !== null;
         const allowed =
           origin === undefined ? !hasCookie : hostOfOrigin(origin) === request.headers.host;
         if (!allowed) throw new AppError('forbidden');
       }
 
       if (request.routeOptions.config.operatorAuth === 'public') return undefined;
-      const token = readOperatorCookie(request.headers.cookie);
+      const token = readOperatorCookie(request.headers.cookie, { secure: deps.secureLinks });
       const session = token === null ? null : await deps.auth.resolve(token);
       if (!session) {
         void reply.header('set-cookie', clearOperatorCookie({ secure: deps.secureLinks }));

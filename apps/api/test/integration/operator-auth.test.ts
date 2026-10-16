@@ -138,7 +138,7 @@ describe('POST /operator/auth/login', () => {
       displayName: expect.stringContaining('Operator') as unknown,
     });
     const setCookie = String(response.headers['set-cookie']);
-    expect(setCookie).toMatch(/^osid=[A-Za-z0-9_-]{43};/);
+    expect(setCookie).toMatch(/^__Host-osid=[A-Za-z0-9_-]{43};/);
     expect(setCookie).toContain('HttpOnly');
     expect(setCookie).toContain('Secure');
     expect(setCookie).toContain('SameSite=Strict');

@@ -77,9 +77,9 @@ describe('POST /auth/login', () => {
     expect(LoginResponse.parse(response.json())).toEqual({ next: 'authenticated' });
     const setCookie = String(response.headers['set-cookie']);
     expect(setCookie).toMatch(
-      /^sid=[A-Za-z0-9_-]{43}; Path=\/; HttpOnly; SameSite=Lax; Secure; Max-Age=604800$/,
+      /^__Host-sid=[A-Za-z0-9_-]{43}; Path=\/; HttpOnly; SameSite=Lax; Secure; Max-Age=604800$/,
     );
-    const token = sessionCookieOf(setCookie).slice('sid='.length);
+    const token = sessionCookieOf(setCookie).slice('__Host-sid='.length);
     expect(response.body).not.toContain(token);
     expect(response.headers['cache-control']).toBe('no-store');
   });
@@ -307,7 +307,7 @@ describe('GET and DELETE /auth/sessions', () => {
     expect(sessions.length).toBeGreaterThanOrEqual(2);
     expect(sessions.filter((entry) => entry.current)).toHaveLength(1);
     expect(sessions[0]).toMatchObject({ current: true, userAgent: 'vitest-browser' });
-    expect(response.body).not.toContain(mobile.slice('sid='.length));
+    expect(response.body).not.toContain(mobile.slice('__Host-sid='.length));
   });
 
   it('revokes another session: it fails on its next request, and the revocation is audited', async () => {

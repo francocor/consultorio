@@ -22,8 +22,11 @@ import { createActorLoader, noGrants } from '../../src/platform/authz/guard.js';
 import { createTenantKeys } from '../../src/platform/crypto/tenant-keys.js';
 import { createRuntimeDb } from '../../src/platform/db/pool.js';
 import type { AuthenticatedSession } from '../../src/platform/http/auth-guard.js';
-import { SESSION_COOKIE } from '../../src/platform/http/session-cookie.js';
+import { sessionCookieName } from '../../src/platform/http/session-cookie.js';
 import { testTenancy } from '../../src/testing/tenancy.js';
+
+/** Every app in this file runs with secure cookies, so the session cookie has its prefix. */
+const SESSION_COOKIE = sessionCookieName(true);
 
 /**
  * The role x route matrix, generated from the permission catalog (authorization, "Server-side

@@ -5,7 +5,10 @@ import { buildServer } from '../../main/server.js';
 import { stubAuthz } from '../../testing/authz.js';
 import { testTenancy } from '../../testing/tenancy.js';
 
-import { SESSION_COOKIE } from './session-cookie.js';
+import { sessionCookieName } from './session-cookie.js';
+
+/** Every app in this file runs with secure cookies, so the session cookie has its prefix. */
+const SESSION_COOKIE = sessionCookieName(true);
 
 const HOST = 'clinica.consultorio.test';
 const COOKIE = `${SESSION_COOKIE}=${'C'.repeat(43)}`;

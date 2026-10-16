@@ -94,7 +94,7 @@ export function codeFor(operator: TestOperator, at: Date, stepOffset = 0): strin
   return codeAt(operator.secret, totpStepAt(at) + stepOffset);
 }
 
-/** Signs an operator in on the platform host; returns the response and the `osid=...` pair. */
+/** Signs an operator in on the platform host; returns the response and the `__Host-osid=...` pair (the test app is secure). */
 export async function loginOperator(
   app: FastifyInstance,
   operator: TestOperator,
@@ -119,7 +119,10 @@ export async function loginOperator(
       ? response.headers['set-cookie'][0]
       : response.headers['set-cookie']
   )?.split(';')[0];
-  return { response, cookie: pair?.startsWith('osid=') && pair !== 'osid=' ? pair : undefined };
+  return {
+    response,
+    cookie: pair?.startsWith('__Host-osid=') && pair !== '__Host-osid=' ? pair : undefined,
+  };
 }
 
 /** Signs in and returns the cookie, failing the test if the sign-in did not work. */

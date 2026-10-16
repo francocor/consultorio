@@ -86,7 +86,7 @@ export function buildServer(options: BuildServerOptions): FastifyInstance {
   registerRouteAudits(app);
   if (options.rateLimit) registerRateLimit(app, options.rateLimit);
   if (options.auth) {
-    registerOriginCheck(app);
+    registerOriginCheck(app, { secure: options.auth.cookieSecure });
     registerAuthGuard(app, options.auth);
   }
 

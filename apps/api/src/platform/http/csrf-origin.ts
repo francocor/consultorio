@@ -26,7 +26,7 @@ function hostOfOrigin(origin: string): string | null {
  *   `Origin` on a cross-site POST, so a cookie without it is not a normal browser request) and
  *   allowed otherwise, since there is no ambient credential to abuse.
  */
-export function registerOriginCheck(app: FastifyInstance): void {
+export function registerOriginCheck(app: FastifyInstance, options: { secure: boolean }): void {
   app.addHook('onRequest', (request, _reply, done) => {
     const path = request.url.split('?')[0] ?? request.url;
     if (SAFE_METHODS.has(request.method) || EXEMPT.test(path)) {
@@ -37,7 +37,7 @@ export function registerOriginCheck(app: FastifyInstance): void {
     const origin = request.headers.origin;
     const allowed =
       origin === undefined
-        ? readSessionCookie(request.headers.cookie) === null
+        ? readSessionCookie(request.headers.cookie, options) === null
         : hostOfOrigin(origin) === request.headers.host;
 
     done(allowed ? undefined : new AppError('forbidden'));

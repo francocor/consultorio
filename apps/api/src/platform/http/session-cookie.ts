@@ -1,5 +1,14 @@
-/** Name of the staff session cookie. Patient portal sessions use a separate cookie (ADR-008). */
-export const SESSION_COOKIE = 'sid';
+/**
+ * Name of the staff session cookie. Patient portal sessions use a separate cookie (ADR-008).
+ *
+ * Wherever cookies are secure (production, HTTPS) the name carries the `__Host-` prefix (ASVS
+ * 3.4.4): a browser then accepts the cookie only if it is `Secure`, has `Path=/` and has no
+ * `Domain`, so a sibling subdomain or a plain-http page cannot plant or overwrite it. Plain-http
+ * local development keeps `sid`, because browsers reject a `__Host-` cookie that is not Secure.
+ */
+export function sessionCookieName(secure: boolean): string {
+  return secure ? '__Host-sid' : 'sid';
+}
 
 /** A 256-bit token in unpadded base64url is always 43 characters. */
 const TOKEN_PATTERN = /^[A-Za-z0-9_-]{43}$/;
@@ -20,12 +29,16 @@ export function serializeSessionCookie(
   options: CookieOptions & { maxAgeSeconds: number },
 ): string {
   if (!TOKEN_PATTERN.test(token)) throw new Error('not a session token');
-  return attributes(`${SESSION_COOKIE}=${token}`, options, options.maxAgeSeconds);
+  return attributes(
+    `${sessionCookieName(options.secure)}=${token}`,
+    options,
+    options.maxAgeSeconds,
+  );
 }
 
 /** `Set-Cookie` value that removes the session cookie (same attributes, empty value). */
 export function clearSessionCookie(options: CookieOptions): string {
-  return attributes(`${SESSION_COOKIE}=`, options, 0);
+  return attributes(`${sessionCookieName(options.secure)}=`, options, 0);
 }
 
 function attributes(pair: string, options: CookieOptions, maxAgeSeconds: number): string {
@@ -43,12 +56,16 @@ function attributes(pair: string, options: CookieOptions, maxAgeSeconds: number)
  * The session token from a `Cookie` header, or null when there is none or it is malformed. A
  * malformed value never reaches the database. If the cookie is sent twice the first one wins.
  */
-export function readSessionCookie(header: string | undefined): string | null {
+export function readSessionCookie(
+  header: string | undefined,
+  options: CookieOptions,
+): string | null {
   if (header === undefined) return null;
+  const name = sessionCookieName(options.secure);
   for (const part of header.split(';')) {
     const separator = part.indexOf('=');
     if (separator === -1) continue;
-    if (part.slice(0, separator).trim() !== SESSION_COOKIE) continue;
+    if (part.slice(0, separator).trim() !== name) continue;
     const value = part.slice(separator + 1).trim();
     return TOKEN_PATTERN.test(value) ? value : null;
   }
