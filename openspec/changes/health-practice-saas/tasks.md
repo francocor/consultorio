@@ -210,7 +210,7 @@ Depends: S1.03.
 Depends: S1.01, S1.04.
 
 - [x] 1.21 `platform/read-only/index.ts`: route option `config.readOnly: Category`; an `onRoute` hook throws at boot when a route has no category; `onRequest` returns `402 tenant_read_only` for non-allowlisted routes of a read-only tenant; public booking and waitlist prefixes render the generic "not available" response instead. [TEN-11] Test: inject matrix, one case per category.
-- [ ] 1.22 `platform/read-only/jobs.ts` `assertTenantWritable(job, enqueuedAt)` (only `afip.issue` enqueued before `read_only_since` may run). [TEN-11] Test: unit cases.
+- [x] 1.22 `platform/read-only/jobs.ts` `assertTenantWritable(job, enqueuedAt)` (only `afip.issue` enqueued before `read_only_since` may run). [TEN-11] Test: unit cases.
 - [ ] 1.23 `apps/api/test/policy/route-categories.test.ts`: enumerates registered routes and fails if one has no category. [TEN-11] Test: that file.
 
 ## S1.06 Audit writer (~400 lines)
