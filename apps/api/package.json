@@ -1,0 +1,29 @@
+{
+  "name": "@consultorio/api",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Fastify API and worker (modular monolith)",
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch --env-file-if-exists=../../.env src/main/main.ts api",
+    "dev:worker": "tsx watch --env-file-if-exists=../../.env src/main/main.ts worker",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@consultorio/contracts": "workspace:*",
+    "fastify": "^5.12.7",
+    "fastify-type-provider-zod": "^7.0.0",
+    "pg": "^8.23.1",
+    "pino": "^10.4.0",
+    "zod": "^4.6.7"
+  },
+  "devDependencies": {
+    "@consultorio/config": "workspace:*",
+    "@types/node": "^24",
+    "@types/pg": "^8.23.1",
+    "tsx": "^4.23.15",
+    "typescript": "~6.0.3",
+    "vitest": "^5.0.5"
+  }
+}

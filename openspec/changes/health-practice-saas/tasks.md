@@ -26,11 +26,11 @@ Hand-written changed lines (additions + deletions, tests included). Lockfiles, s
 | Chained PRs recommended | Yes |
 | Suggested split | Stage by stage. Inside a stage, slices in the order listed (each slice is one PR). |
 | Delivery strategy | ask-on-risk |
-| Chain strategy | pending (orchestrator asks the user) |
+| Chain strategy | stacked-to-main (chosen by the owner) |
 
 Decision needed before apply: Yes
 Chained PRs recommended: Yes
-Chain strategy: pending
+Chain strategy: stacked-to-main
 400-line budget risk: High
 
 Decisions the owner must make before `sdd-apply`:
@@ -96,17 +96,17 @@ Start: S0.01. Depends: S0.01.
 
 Depends: S0.03.
 
-- [ ] 0.10 `apps/api/package.json`, `tsconfig.json`, `src/main/config.ts` (Zod-validated env: `NODE_ENV`, `DATABASE_URL`, `DEPLOYMENT_MODE` default `multi`, log level; secrets come only from the environment). [IDA-10] Test: invalid env throws a startup error that never prints secret values.
-- [ ] 0.11 `src/main/server.ts` `buildServer()` (Fastify, Zod type provider, pino with redaction of `authorization`, `cookie`, bodies), `src/platform/http/health.ts` (`/health` liveness, `/ready` checks DB), `src/main/main.ts` taking `api|worker` (worker is an idle stub that logs). Test: see 0.12.
-- [ ] 0.12 `src/platform/http/health.test.ts` with `fastify.inject`: `/health` 200; `/ready` 503 when the DB probe fails. Test: that file.
+- [x] 0.10 `apps/api/package.json`, `tsconfig.json`, `src/main/config.ts` (Zod-validated env: `NODE_ENV`, `DATABASE_URL`, `DEPLOYMENT_MODE` default `multi`, log level; secrets come only from the environment). [IDA-10] Test: invalid env throws a startup error that never prints secret values.
+- [x] 0.11 `src/main/server.ts` `buildServer()` (Fastify, Zod type provider, pino with redaction of `authorization`, `cookie`, bodies), `src/platform/http/health.ts` (`/health` liveness, `/ready` checks DB), `src/main/main.ts` taking `api|worker` (worker is an idle stub that logs). Test: see 0.12.
+- [x] 0.12 `src/platform/http/health.test.ts` with `fastify.inject`: `/health` 200; `/ready` 503 when the DB probe fails. Test: that file.
 
 ## S0.05 Web skeleton (~350 lines)
 
 Depends: S0.03. Independent of S0.04.
 
-- [ ] 0.13 `apps/web`: Vite, React 19, TypeScript, Tailwind 4, `index.html`, `src/main.tsx`, `src/app/App.tsx` placeholder, `src/shared/lib/cn.ts`. Test: `pnpm --filter web build` succeeds.
-- [ ] 0.14 `vite.config.ts` with `vite-plugin-pwa` (minimal manifest, placeholder icons in `public/`) and a dev proxy of `/api` to the API port. Test: build emits `manifest.webmanifest` and a service worker.
-- [ ] 0.15 `src/app/App.tsx` renders a tenant-neutral placeholder shell and `index.html` sets `lang="es-AR"`. Its test `App.test.tsx` is written in task 0.16, once the runner exists. Test: see 0.16.
+- [x] 0.13 `apps/web`: Vite, React 19, TypeScript, Tailwind 4, `index.html`, `src/main.tsx`, `src/app/App.tsx` placeholder, `src/shared/lib/cn.ts`. Test: `pnpm --filter web build` succeeds.
+- [x] 0.14 `vite.config.ts` with `vite-plugin-pwa` (minimal manifest, placeholder icons in `public/`) and a dev proxy of `/api` to the API port. Test: build emits `manifest.webmanifest` and a service worker.
+- [x] 0.15 `src/app/App.tsx` renders a tenant-neutral placeholder shell and `index.html` sets `lang="es-AR"`. Its test `App.test.tsx` is written in task 0.16, once the runner exists. Test: see 0.16.
 
 ## S0.06 Test tooling (~350 lines)
 
