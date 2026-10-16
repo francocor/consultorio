@@ -42,12 +42,17 @@ export const TwoFactorSummary = z.strictObject({
 export type TwoFactorSummary = z.infer<typeof TwoFactorSummary>;
 
 /** The profile of the signed-in user, as the web app needs it to draw the shell. */
+export const TenantStatus = z.enum(['active', 'read_only', 'cancelled']);
+export type TenantStatus = z.infer<typeof TenantStatus>;
+
 export const MeResponse = z.strictObject({
   user: z.strictObject({ id: z.uuid(), email: z.email() }),
   roles: z.array(z.enum(ROLES)),
   permissions: z.array(z.enum(PERMISSIONS)),
   scope: SessionScope,
   twoFactor: TwoFactorSummary,
+  /** The state of the organization, so the shell can explain read-only mode on sign-in. */
+  tenantStatus: TenantStatus,
 });
 export type MeResponse = z.infer<typeof MeResponse>;
 

@@ -198,10 +198,31 @@ describe('GET /auth/me', () => {
       user: { id: ana.id, email: ana.email },
       roles: ['owner', 'professional'],
       scope: 'full',
+      tenantStatus: 'active',
     });
     expect(profile.permissions).toContain('clinical.note.read');
     expect(profile.permissions).toContain('staff.manage');
     expect(response.body).not.toContain('argon2');
+  });
+
+  it('tells the web app when the organization is read only, so the banner shows at sign-in', async () => {
+    const readOnly = await createTestTenant(runtime, {
+      slug: 'auth-readonly',
+      status: 'read_only',
+      readOnlySince: new Date('2026-01-01T00:00:00Z'),
+    });
+    const owner = await createTestUser(runtime, readOnly.id, {
+      roles: ['owner'],
+      password: PASSWORD,
+    });
+    const cookie = sessionCookieOf(
+      (await login('auth-readonly', owner.email, PASSWORD)).headers['set-cookie'],
+    );
+
+    const response = await me('auth-readonly', cookie);
+
+    expect(response.statusCode).toBe(200);
+    expect(MeResponse.parse(response.json()).tenantStatus).toBe('read_only');
   });
 
   it('answers 401 without a session', async () => {

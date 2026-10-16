@@ -175,6 +175,8 @@ export function authRoutes(deps: AuthRoutesDeps) {
             required: requirement.required,
             graceEndsAt: requirement.graceEndsAt?.toISOString() ?? null,
           },
+          tenantStatus:
+            request.hostContext?.kind === 'tenant' ? request.hostContext.tenant.status : 'active',
         };
       },
     );

@@ -72,10 +72,12 @@ describe('MeResponse and SessionList', () => {
       permissions: ['patients.read'],
       scope: 'full',
       twoFactor: { enrolled: false, required: true, graceEndsAt: '2026-10-23T10:00:00.000Z' },
+      tenantStatus: 'read_only',
     };
 
     expect(MeResponse.parse(me)).toEqual(me);
     expect(MeResponse.safeParse({ ...me, roles: ['superuser'] }).success).toBe(false);
+    expect(MeResponse.safeParse({ ...me, tenantStatus: 'frozen' }).success).toBe(false);
   });
 
   it('lists sessions with the one in use flagged', () => {
