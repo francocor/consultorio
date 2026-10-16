@@ -67,6 +67,26 @@ async function insertMembership(tx: Tx, tenantId: string, userId: string): Promi
 }
 
 export const TENANT_FIXTURES: Record<string, TenantTableFixture> = {
+  care_assignment: {
+    insert: (tx, tenantId) =>
+      returningId(
+        tx,
+        sql`INSERT INTO care_assignment (tenant_id, patient_id, professional_id, assigned_by)
+              VALUES (${tenantId}, ${randomUUID()}, ${randomUUID()}, ${randomUUID()})
+              RETURNING id`,
+      ),
+  },
+  care_relationship: {
+    // The runtime role cannot write this table: the relationship appears through an assignment.
+    insert: async (tx, tenantId) => {
+      const patientId = randomUUID();
+      await tx.execute(
+        sql`INSERT INTO care_assignment (tenant_id, patient_id, professional_id, assigned_by)
+              VALUES (${tenantId}, ${patientId}, ${randomUUID()}, ${randomUUID()})`,
+      );
+      return returningId(tx, sql`SELECT id FROM care_relationship WHERE patient_id = ${patientId}`);
+    },
+  },
   action_token: {
     insert: (tx, tenantId) =>
       returningId(
