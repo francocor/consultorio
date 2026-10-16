@@ -24,6 +24,7 @@ const single = {
   DATABASE_URL,
   DEPLOYMENT_MODE: 'single',
   SINGLE_TENANT_SLUG: 'centro-norte',
+  PUBLIC_URL: 'https://agenda.clinica.example',
   KMS_LOCAL_KEK_BASE64: LOCAL_KEK,
 };
 
@@ -110,17 +111,86 @@ describe('cookie configuration', () => {
   });
 });
 
-describe('proxy configuration', () => {
-  it('does not trust proxies by default', () => {
+describe('proxy configuration (security review finding 2)', () => {
+  const production = { ...multi, NODE_ENV: 'production', KMS_PROVIDER: 'aws', ...aws, ...mail };
+
+  it('does not trust proxies by default in development', () => {
     expect(loadConfig(multi).trustProxy).toBe(false);
   });
 
-  it('trusts the proxy when told to', () => {
-    expect(loadConfig({ ...multi, TRUST_PROXY: 'true' }).trustProxy).toBe(true);
+  it('trusts exactly one proxy by default in production (behind a single reverse proxy)', () => {
+    expect(loadConfig(production).trustProxy).toBe(1);
   });
 
-  it('rejects a value that is not true or false', () => {
-    expect(() => loadConfig({ ...multi, TRUST_PROXY: 'yes' })).toThrow(/TRUST_PROXY/);
+  it('lets production say that nothing is in front of the app', () => {
+    expect(loadConfig({ ...production, TRUST_PROXY: 'false' }).trustProxy).toBe(false);
+    expect(loadConfig({ ...production, TRUST_PROXY: '0' }).trustProxy).toBe(false);
+  });
+
+  it('takes the number of proxies in front of the app', () => {
+    expect(loadConfig({ ...multi, TRUST_PROXY: '1' }).trustProxy).toBe(1);
+    expect(loadConfig({ ...multi, TRUST_PROXY: '2' }).trustProxy).toBe(2);
+  });
+
+  it('takes a list of proxy addresses and ranges', () => {
+    expect(loadConfig({ ...multi, TRUST_PROXY: '10.0.0.0/8, 192.168.1.5,::1' }).trustProxy).toEqual(
+      ['10.0.0.0/8', '192.168.1.5', '::1'],
+    );
+  });
+
+  it('refuses "true": it would trust every hop and let a client pick its own address', () => {
+    expect(() => loadConfig({ ...multi, TRUST_PROXY: 'true' })).toThrow(/TRUST_PROXY/);
+  });
+
+  it.each(['yes', '-1', '1.5', '99', '10.0.0.0/33', 'not-an-address', '10.0.0.1,,'])(
+    'rejects the malformed value %j',
+    (value) => {
+      expect(() => loadConfig({ ...multi, TRUST_PROXY: value })).toThrow(/TRUST_PROXY/);
+    },
+  );
+});
+
+describe('public URL configuration (security review finding 1)', () => {
+  it('single mode needs PUBLIC_URL: emailed links are never built from the Host header', () => {
+    const rest = omit(single, 'PUBLIC_URL');
+
+    expect(() => loadConfig(rest)).toThrow(ConfigError);
+    expect(() => loadConfig(rest)).toThrow(/PUBLIC_URL/);
+  });
+
+  it('keeps only the origin of PUBLIC_URL', () => {
+    expect(loadConfig({ ...single, PUBLIC_URL: 'https://agenda.clinica.example' }).publicUrl).toBe(
+      'https://agenda.clinica.example',
+    );
+  });
+
+  it.each(['agenda.clinica.example', 'ftp://clinica.example', 'https://u:p@clinica.example'])(
+    'rejects PUBLIC_URL %j',
+    (value) => {
+      expect(() => loadConfig({ ...single, PUBLIC_URL: value })).toThrow(/PUBLIC_URL/);
+    },
+  );
+
+  it('requires https for PUBLIC_URL in production', () => {
+    expect(() =>
+      loadConfig({
+        ...single,
+        NODE_ENV: 'production',
+        KMS_PROVIDER: 'aws',
+        ...aws,
+        ...mail,
+        PUBLIC_URL: 'http://agenda.clinica.example',
+      }),
+    ).toThrow(/PUBLIC_URL/);
+  });
+
+  it('multi mode builds links from BASE_DOMAIN and does not need PUBLIC_URL', () => {
+    expect(loadConfig(multi).publicUrl).toBeUndefined();
+  });
+
+  it('accepts a development port for the links of multi mode', () => {
+    expect(loadConfig({ ...multi, PUBLIC_PORT: '5173' }).publicPort).toBe(5173);
+    expect(() => loadConfig({ ...multi, PUBLIC_PORT: '70000' })).toThrow(/PUBLIC_PORT/);
   });
 });
 

@@ -80,6 +80,8 @@ async function runApi(config: Config): Promise<void> {
     health: { checkDatabase: () => probe.check() },
     deployment: deploymentFromConfig(config),
     trustProxy: config.trustProxy,
+    ...(config.publicUrl === undefined ? {} : { publicUrl: config.publicUrl }),
+    ...(config.publicPort === undefined ? {} : { publicPort: config.publicPort }),
     cookieSecure: config.cookieSecure,
     keys,
     email: createTenantRoutedEmail(adapters),

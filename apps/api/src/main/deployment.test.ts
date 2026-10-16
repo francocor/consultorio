@@ -29,6 +29,7 @@ describe('deploymentFromConfig', () => {
       ...base,
       DEPLOYMENT_MODE: 'single',
       SINGLE_TENANT_SLUG: 'centro-norte',
+      PUBLIC_URL: 'https://agenda.centro-norte.example',
       BASE_DOMAIN: 'consultorio.test',
     });
 

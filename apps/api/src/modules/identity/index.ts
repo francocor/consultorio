@@ -8,6 +8,7 @@ import type { GrantsRepo } from '../../platform/authz/guard.js';
 import type { TenantKeys } from '../../platform/crypto/tenant-keys.js';
 import { SYSTEM_USER_ID, type WithTenant } from '../../platform/db/tenant-context.js';
 import type { Authenticate } from '../../platform/http/auth-guard.js';
+import type { PublicOrigins } from '../../platform/http/public-origin.js';
 import type { RateLimitStore } from '../../platform/http/rate-limit.js';
 import type { EmailSender } from '../../platform/mail/email-sender.js';
 import { createActionTokens } from '../../platform/tokens/index.js';
@@ -54,6 +55,8 @@ export interface IdentityOptions {
   /** Counters shared with the rest of the API, here for the reset emails per account. */
   rateLimitStore: RateLimitStore;
   cookieSecure: boolean;
+  /** Where the emailed links point (reset, invitation). From configuration, never the request. */
+  origins: PublicOrigins;
   /** Grantable permissions of a member, shown in the profile. The access module provides them. */
   grants?: GrantsRepo;
   clock?: () => Date;
@@ -156,7 +159,7 @@ export function createIdentity(options: IdentityOptions): Identity {
     withTenant: options.withTenant,
     passwordReset,
     invitations: invitationAcceptance,
-    secureLinks: options.cookieSecure,
+    origins: options.origins,
     ...loginRateLimit,
   });
 

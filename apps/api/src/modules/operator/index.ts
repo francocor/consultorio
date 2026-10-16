@@ -7,6 +7,7 @@ import type { FastifyInstance } from 'fastify';
 
 import type { TenantKeys } from '../../platform/crypto/tenant-keys.js';
 import type { Db } from '../../platform/db/pool.js';
+import type { PublicOrigins } from '../../platform/http/public-origin.js';
 import type { EmailSender } from '../../platform/mail/email-sender.js';
 import type { PasswordHasher } from '../identity/index.js';
 
@@ -41,8 +42,8 @@ export interface OperatorOptions {
   keys: TenantKeys;
   hasher: PasswordHasher;
   email: EmailSender;
-  /** Tenants live at `{slug}.{baseDomain}`. */
-  baseDomain: string;
+  /** Where an organization's emailed links point. */
+  origins: PublicOrigins;
   secureLinks: boolean;
   loginRateLimit?: { max: number; timeWindow: number };
   /** The privileged reset of a demo organization (the demo module provides it, S1.36). */
@@ -83,7 +84,7 @@ export function createOperatorConsole(options: OperatorOptions): OperatorConsole
       tenants,
       support,
       email: options.email,
-      baseDomain: options.baseDomain,
+      origins: options.origins,
       secureLinks: options.secureLinks,
       loginRateLimit: options.loginRateLimit ?? { max: 10, timeWindow: 60_000 },
     }),

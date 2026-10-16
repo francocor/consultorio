@@ -33,11 +33,13 @@ import type { TenantKeys } from '../platform/crypto/tenant-keys.js';
 import type { Db, DbHandle } from '../platform/db/pool.js';
 import { createWithTenant } from '../platform/db/tenant-context.js';
 import type { HealthDeps } from '../platform/http/health.js';
+import { createPublicOrigins } from '../platform/http/public-origin.js';
 import { createMemoryRateLimitStore, type RateLimit } from '../platform/http/rate-limit.js';
 import type { EmailSender } from '../platform/mail/email-sender.js';
 import type { ObjectStorage } from '../platform/storage/object-storage.js';
 
 import { buildServer, type FeatureRoutes } from './server.js';
+import type { TrustProxySetting } from './trust-proxy.js';
 
 export interface ApplicationOptions {
   /** The runtime database (connects as `app_rw`). */
@@ -46,8 +48,16 @@ export interface ApplicationOptions {
   deployment: DeploymentSettings;
   logLevel?: string;
   logStream?: Writable;
-  trustProxy: boolean;
+  trustProxy: TrustProxySetting;
   cookieSecure: boolean;
+  /**
+   * Single mode only (required there): the origin the deployment is served from, such as
+   * `https://agenda.clinica.example`. Emailed links are built from it. Multi mode builds them from
+   * the base domain and the organization's slug, so it ignores this.
+   */
+  publicUrl?: string;
+  /** Multi mode, development only: the port of the web app in emailed links. */
+  publicPort?: number;
   /** Per-tenant data keys: second-factor secrets are stored encrypted with them. */
   keys: TenantKeys;
   email: EmailSender;
@@ -112,6 +122,13 @@ export function createApplication(options: ApplicationOptions): FastifyInstance 
   const grants = createGrants();
   const grantsRepo = createGrantsRepo(withTenant, grants);
 
+  // Every emailed link comes from here: configuration, never the Host header of a request.
+  const origins = createPublicOrigins(options.deployment, {
+    secure: options.cookieSecure,
+    ...(options.publicUrl === undefined ? {} : { publicUrl: options.publicUrl }),
+    ...(options.publicPort === undefined ? {} : { port: options.publicPort }),
+  });
+
   const identity = createIdentity({
     withTenant,
     grants: grantsRepo,
@@ -120,6 +137,7 @@ export function createApplication(options: ApplicationOptions): FastifyInstance 
     passwordValidator: options.passwordValidator,
     rateLimitStore,
     cookieSecure: options.cookieSecure,
+    origins,
     ...(options.clock ? { clock: options.clock } : {}),
     ...(options.hasher ? { hasher: options.hasher } : {}),
     ...(options.lockout ? { lockout: options.lockout } : {}),
@@ -162,7 +180,7 @@ export function createApplication(options: ApplicationOptions): FastifyInstance 
     invitations: identity.invitations,
     sessions: identity.sessions,
     email: options.email,
-    secureLinks: options.cookieSecure,
+    origins,
     matriculaRules: (country, jurisdiction, value) => {
       const found = getCountryPack(country, createCatalogReader(db));
       return found.ok
@@ -206,7 +224,7 @@ export function createApplication(options: ApplicationOptions): FastifyInstance 
           keys: options.keys,
           hasher: identity.hasher,
           email: options.email,
-          baseDomain: options.deployment.baseDomain,
+          origins,
           secureLinks: options.cookieSecure,
           loginRateLimit: limits.login,
           ...(options.operator.demoReset ? { demoReset: options.operator.demoReset } : {}),

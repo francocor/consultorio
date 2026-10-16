@@ -34,6 +34,7 @@ describe('loadConfig', () => {
       NODE_ENV: 'production',
       DEPLOYMENT_MODE: 'single',
       SINGLE_TENANT_SLUG: 'centro',
+      PUBLIC_URL: 'https://agenda.centro.example',
       KMS_PROVIDER: 'aws',
       AWS_REGION: 'sa-east-1',
       AWS_KMS_KEY_ID: 'alias/test',

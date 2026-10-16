@@ -46,6 +46,8 @@ export interface StackOptions {
   infoFile?: string;
   baseDomain?: string;
   platformHost?: string;
+  /** The port of the web app in emailed links (`pnpm demo:stack` serves it on 5173). */
+  publicPort?: number;
   /** Run the worker (audit sealing, nightly verification) in the same process. */
   withWorker?: boolean;
   log?: (line: string) => void;
@@ -180,6 +182,7 @@ export async function startStack(options: StackOptions): Promise<Stack> {
       deployment: { mode: 'multi', baseDomain, platformHost },
       trustProxy: false,
       cookieSecure: false,
+      ...(options.publicPort === undefined ? {} : { publicPort: options.publicPort }),
       keys,
       email: email.sender,
       passwordValidator,

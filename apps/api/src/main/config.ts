@@ -1,5 +1,7 @@
 import { z } from 'zod';
 
+import { parseTrustProxy, type TrustProxySetting } from './trust-proxy.js';
+
 const LOG_LEVELS = ['fatal', 'error', 'warn', 'info', 'debug', 'trace', 'silent'] as const;
 
 const HOSTNAME =
@@ -9,6 +11,17 @@ const TENANT_SLUG = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])$/;
 const KEK_BYTES = 32;
 /** `name@host` or `Display Name <name@host>`. */
 const MAIL_FROM_PATTERN = /^(?:[^<>\r\n]+ <[^\s<>@]+@[^\s<>@]+>|[^\s<>@]+@[^\s<>@]+)$/;
+
+/** The origin of an http(s) URL without credentials, or null. */
+function originOf(value: string): string | null {
+  try {
+    const url = new URL(value);
+    const http = url.protocol === 'https:' || url.protocol === 'http:';
+    return http && url.username === '' && url.password === '' ? url.origin : null;
+  } catch {
+    return null;
+  }
+}
 
 const booleanFlag = z.enum(['true', 'false']).transform((value) => value === 'true');
 
@@ -36,8 +49,19 @@ const envSchema = z
     SINGLE_TENANT_SLUG: z.string().regex(TENANT_SLUG).optional(),
     /** Secure cookies. Defaults to true in production and false elsewhere (plain http locally). */
     COOKIE_SECURE: booleanFlag.optional(),
-    /** True behind a load balancer: client addresses are then read from X-Forwarded-For. */
-    TRUST_PROXY: booleanFlag.default(false),
+    /**
+     * How many reverse proxies sit in front of the app (client addresses are read from
+     * X-Forwarded-For that many hops from the right), or a list of proxy addresses and ranges, or
+     * `false`. Default: 1 in production (one reverse proxy), `false` elsewhere. `true` is refused.
+     */
+    TRUST_PROXY: z.string().optional(),
+    /**
+     * Single mode: the origin the deployment is served from. Emailed links (password reset,
+     * invitation) are built from it and never from the Host header of a request.
+     */
+    PUBLIC_URL: z.string().optional(),
+    /** Multi mode, development only: the port the web app is served on, for emailed links. */
+    PUBLIC_PORT: z.coerce.number().int().min(1).max(65535).optional(),
     KMS_PROVIDER: z.enum(['local', 'aws']).default('local'),
     /** Development and tests only: 32 random bytes, base64. */
     KMS_LOCAL_KEK_BASE64: z.string().min(1).optional(),
@@ -83,6 +107,31 @@ const envSchema = z
       require('PLATFORM_HOST', 'is required when DEPLOYMENT_MODE is multi');
     } else {
       require('SINGLE_TENANT_SLUG', 'is required when DEPLOYMENT_MODE is single');
+      require('PUBLIC_URL', 'is required when DEPLOYMENT_MODE is single');
+    }
+
+    if (env.PUBLIC_URL !== undefined) {
+      const origin = originOf(env.PUBLIC_URL);
+      if (origin === null) {
+        ctx.addIssue({
+          code: 'custom',
+          path: ['PUBLIC_URL'],
+          message: 'must be an http(s) origin without credentials, such as https://agenda.example',
+        });
+      } else if (env.NODE_ENV === 'production' && !origin.startsWith('https://')) {
+        ctx.addIssue({
+          code: 'custom',
+          path: ['PUBLIC_URL'],
+          message: 'must be https in production',
+        });
+      }
+    }
+
+    if (env.TRUST_PROXY !== undefined) {
+      const parsed = parseTrustProxy(env.TRUST_PROXY);
+      if (!parsed.ok) {
+        ctx.addIssue({ code: 'custom', path: ['TRUST_PROXY'], message: parsed.message });
+      }
     }
 
     if (env.KMS_PROVIDER === 'aws') {
@@ -210,7 +259,12 @@ export interface Config {
   /** Set in single mode. */
   readonly singleTenantSlug?: string;
   readonly cookieSecure: boolean;
-  readonly trustProxy: boolean;
+  /** See `TrustProxySetting`: which hops of X-Forwarded-For are believed. */
+  readonly trustProxy: TrustProxySetting;
+  /** Single mode: the origin emailed links point at. */
+  readonly publicUrl?: string;
+  /** Multi mode, development: the web port in emailed links. */
+  readonly publicPort?: number;
   readonly kms: KmsConfig;
   /** Undefined when S3_BUCKET is not set: logo upload and documents are then unavailable. */
   readonly storage?: StorageConfig;
@@ -237,6 +291,13 @@ function kmsFrom(value: z.output<typeof envSchema>): KmsConfig {
     return { provider: 'aws', region: value.AWS_REGION ?? '', keyId: value.AWS_KMS_KEY_ID ?? '' };
   }
   return { provider: 'local', kekBase64: value.KMS_LOCAL_KEK_BASE64 ?? '' };
+}
+
+function trustProxyFrom(value: z.output<typeof envSchema>): TrustProxySetting {
+  if (value.TRUST_PROXY === undefined) return value.NODE_ENV === 'production' ? 1 : false;
+  const parsed = parseTrustProxy(value.TRUST_PROXY);
+  // superRefine guarantees the value is valid.
+  return parsed.ok ? parsed.value : false;
 }
 
 /** An empty variable (`NAME=` in an env file) means "not set". */
@@ -268,7 +329,9 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
       ? {}
       : { singleTenantSlug: value.SINGLE_TENANT_SLUG }),
     cookieSecure: value.COOKIE_SECURE ?? value.NODE_ENV === 'production',
-    trustProxy: value.TRUST_PROXY,
+    trustProxy: trustProxyFrom(value),
+    ...(value.PUBLIC_URL === undefined ? {} : { publicUrl: originOf(value.PUBLIC_URL) ?? '' }),
+    ...(value.PUBLIC_PORT === undefined ? {} : { publicPort: value.PUBLIC_PORT }),
     kms: kmsFrom(value),
     ...(value.S3_BUCKET === undefined
       ? {}

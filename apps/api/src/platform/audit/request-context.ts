@@ -1,3 +1,5 @@
+import { isIP } from 'node:net';
+
 import type { Role } from '@consultorio/contracts';
 import type { FastifyInstance, FastifyRequest } from 'fastify';
 
@@ -21,6 +23,15 @@ function sanitizeUserAgent(header: string | undefined): string | null {
 }
 
 /**
+ * The audit column is an `inet`: a value that is not an IP address (a forged forwarded header, say)
+ * would make the insert fail and turn a harmless request into a 500. It is stored as unknown.
+ */
+function validAddress(address: string | undefined): string | null {
+  // A zone id (`fe80::1%eth0`) is a valid IP for Node but not for an `inet` column.
+  return address !== undefined && isIP(address) !== 0 && !address.includes('%') ? address : null;
+}
+
+/**
  * Fills `request.auditActor` with what is known before authentication: client address, user
  * agent and request id. The address is `request.ip`, which honours `X-Forwarded-For` only when
  * the server was built with `trustProxy` (behind the load balancer), so it cannot be spoofed
@@ -33,7 +44,7 @@ export function registerRequestContext(app: FastifyInstance): void {
     request.auditActor = {
       userId: null,
       actingRole: null,
-      ip: request.ip,
+      ip: validAddress(request.ip),
       userAgent: sanitizeUserAgent(request.headers['user-agent']),
       requestId: request.id,
     };

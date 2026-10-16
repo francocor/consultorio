@@ -15,6 +15,7 @@ import { z } from 'zod';
 
 import type { PlatformAuditActor } from '../../../platform/audit/platform-audit.js';
 import { denied, AppError } from '../../../platform/http/problem.js';
+import type { PublicOrigins } from '../../../platform/http/public-origin.js';
 import { EmailDeliveryError, type EmailSender } from '../../../platform/mail/email-sender.js';
 import { renderInvitationEmail } from '../../../platform/mail/templates.js';
 import { TOKEN_KIND_REGISTRY } from '../../../platform/tokens/index.js';
@@ -48,8 +49,8 @@ export interface OperatorRoutesDeps {
   tenants: OperatorTenants;
   support: OperatorSupport;
   email: EmailSender;
-  /** Tenants live at `{slug}.{baseDomain}`; the console is on the platform host. */
-  baseDomain: string;
+  /** Where an organization's emailed links point (the console is on the platform host). */
+  origins: PublicOrigins;
   /** `https` unless the deployment is plain-http local development. */
   secureLinks: boolean;
   /** Sign-in attempts per client address and minute. */
@@ -126,10 +127,7 @@ export function operatorRoutes(deps: OperatorRoutesDeps) {
       request: FastifyRequest,
       invitation: OwnerInvitation,
     ): Promise<boolean> {
-      // Same port as the console, so a local setup keeps working (`platform.localhost:3000` ->
-      // `acme.localhost:3000`); in production there is none.
-      const port = /:(\d{1,5})$/.exec(request.headers.host ?? '')?.[1];
-      const origin = `${deps.secureLinks ? 'https' : 'http'}://${invitation.slug}.${deps.baseDomain}${port === undefined ? '' : `:${port}`}`;
+      const origin = deps.origins(invitation.slug);
       try {
         await deps.email.send({
           to: invitation.email,

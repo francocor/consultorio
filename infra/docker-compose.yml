@@ -125,6 +125,8 @@ services:
       BASE_DOMAIN: ${BASE_DOMAIN:-localhost}
       PLATFORM_HOST: ${PLATFORM_HOST:-platform.localhost}
       SINGLE_TENANT_SLUG: ${SINGLE_TENANT_SLUG:-}
+      # Single mode only: the origin that emailed links point at.
+      PUBLIC_URL: ${PUBLIC_URL:-}
       SMTP_HOST: mailpit
       SMTP_PORT: 1025
       S3_BUCKET: ${S3_BUCKET:-consultorio-files}

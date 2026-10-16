@@ -9,6 +9,7 @@ import { z } from 'zod';
 
 import type { WithTenant } from '../../../platform/db/tenant-context.js';
 import { AppError } from '../../../platform/http/problem.js';
+import type { PublicOrigins } from '../../../platform/http/public-origin.js';
 import type { InvitationAcceptance } from '../application/invitations.js';
 import type { PasswordReset, ResetLinkContext } from '../application/password-reset.js';
 
@@ -16,8 +17,8 @@ export interface RecoveryRoutesDeps {
   withTenant: WithTenant;
   passwordReset: PasswordReset;
   invitations: InvitationAcceptance;
-  /** `https` unless the deployment is plain-http local development. */
-  secureLinks: boolean;
+  /** Where the emailed links point. From configuration, never from the request. */
+  origins: PublicOrigins;
   loginRateLimit?: { max: number; timeWindow: number };
 }
 
@@ -42,17 +43,16 @@ export function recoveryRoutes(deps: RecoveryRoutesDeps) {
       ...(deps.loginRateLimit ? { rateLimit: deps.loginRateLimit } : {}),
     } as const;
 
-    /** Where links in the email point: the tenant's own host, as the request reached it. */
+    /** Where links in the email point: the organization's public origin, from configuration. */
     function linkContext(request: FastifyRequest): ResetLinkContext {
       const context = request.hostContext;
       if (context?.kind !== 'tenant') throw new AppError('unauthenticated');
-      const host = request.headers.host ?? '';
       return {
         tenantId: context.tenant.id,
         isDemo: context.tenant.isDemo,
         // The display name of the organization arrives with branding (S1.25); the slug until then.
         organizationName: context.tenant.slug,
-        baseUrl: `${deps.secureLinks ? 'https' : 'http'}://${host}`,
+        baseUrl: deps.origins(context.tenant.slug),
         actor: request.auditActor,
       };
     }

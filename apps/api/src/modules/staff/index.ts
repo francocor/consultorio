@@ -7,6 +7,7 @@ import type { FastifyInstance } from 'fastify';
 import type { AuthzOptions } from '../../platform/authz/guard.js';
 import type { ProfessionalRepo } from '../../platform/authz/professional-gate.js';
 import type { WithTenant } from '../../platform/db/tenant-context.js';
+import type { PublicOrigins } from '../../platform/http/public-origin.js';
 import type { EmailSender } from '../../platform/mail/email-sender.js';
 import type { SessionRevoker } from '../access/index.js';
 import type { Invitations } from '../identity/index.js';
@@ -40,8 +41,8 @@ export interface StaffOptions {
   sessions: SessionRevoker;
   /** Sends the invitation emails. */
   email: EmailSender;
-  /** `https` links unless the deployment is plain-http local development. */
-  secureLinks: boolean;
+  /** Where the emailed links point. From configuration, never from the request. */
+  origins: PublicOrigins;
   clock?: () => Date;
 }
 
@@ -68,7 +69,7 @@ export function createStaff(options: StaffOptions): Staff {
     }),
     directory: createDirectoryService(),
     email: options.email,
-    secureLinks: options.secureLinks,
+    origins: options.origins,
   });
 
   const hours = hoursRoutes({

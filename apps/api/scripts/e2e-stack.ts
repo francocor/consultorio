@@ -22,6 +22,8 @@ async function main(): Promise<void> {
   const port = Number(values.port);
   const stack = await startStack({
     apiPort: port,
+    // The demo's emailed links open the web app, which the dev server serves on its own port.
+    ...(values.banner ? { publicPort: Number(values['web-port']) } : {}),
     ...(values.info ? { infoFile: values.info } : {}),
     log: (line) => {
       process.stdout.write(`[stack] ${line}\n`);

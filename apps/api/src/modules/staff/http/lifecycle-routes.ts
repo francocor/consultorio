@@ -14,6 +14,7 @@ import type { AuthzOptions } from '../../../platform/authz/guard.js';
 import { refuseRequest } from '../../../platform/authz/refuse.js';
 import type { WithTenant } from '../../../platform/db/tenant-context.js';
 import { AppError } from '../../../platform/http/problem.js';
+import type { PublicOrigins } from '../../../platform/http/public-origin.js';
 import type { EmailSender } from '../../../platform/mail/email-sender.js';
 import { renderInvitationEmail } from '../../../platform/mail/templates.js';
 import { AccessRefused } from '../../access/index.js';
@@ -26,8 +27,8 @@ export interface LifecycleRoutesDeps {
   lifecycle: LifecycleService;
   directory: DirectoryService;
   email: EmailSender;
-  /** `https` unless the deployment is plain-http local development. */
-  secureLinks: boolean;
+  /** Where the emailed links point. From configuration, never from the request. */
+  origins: PublicOrigins;
 }
 
 /** The screen of the web app where the invitee chooses a password. */
@@ -53,7 +54,8 @@ export function lifecycleRoutes(deps: LifecycleRoutesDeps) {
       },
       async (request, reply) => {
         const actor = request.actor;
-        if (!actor) throw new AppError('unauthenticated');
+        const host = request.hostContext;
+        if (!actor || host?.kind !== 'tenant') throw new AppError('unauthenticated');
         let prepared;
         try {
           prepared = await deps.withTenant(
@@ -80,18 +82,10 @@ export function lifecycleRoutes(deps: LifecycleRoutesDeps) {
 
         // The link goes by email only, after the invitation is safely stored. The response never
         // carries it.
-        const host = request.headers.host ?? '';
-        const link = `${deps.secureLinks ? 'https' : 'http'}://${host}${INVITATION_PATH}?token=${prepared.token}`;
+        const link = `${deps.origins(host.tenant.slug)}${INVITATION_PATH}?token=${prepared.token}`;
         await deps.email.send({
           to: prepared.email,
-          ...(request.hostContext?.kind === 'tenant'
-            ? {
-                tenant: {
-                  id: request.hostContext.tenant.id,
-                  isDemo: request.hostContext.tenant.isDemo,
-                },
-              }
-            : {}),
+          tenant: { id: host.tenant.id, isDemo: host.tenant.isDemo },
           ...renderInvitationEmail({
             organizationName: prepared.organizationName,
             ...(prepared.inviterName === null ? {} : { inviterName: prepared.inviterName }),

@@ -26,6 +26,7 @@ import { registerTenantHost } from '../platform/http/tenant-host.js';
 import { registerReadOnlyPolicy } from '../platform/read-only/index.js';
 
 import { buildLoggerOptions } from './logger.js';
+import { fastifyTrustProxy, type TrustProxySetting } from './trust-proxy.js';
 
 /** Registers the routes of a capability. Called only when the deployment has that capability. */
 export type FeatureRoutes = (app: FastifyInstance) => void | Promise<void>;
@@ -42,7 +43,8 @@ export interface BuildServerOptions {
   /** Routes of the multi-tenant-only capabilities, registered only when the mode enables them. */
   featureRoutes?: Partial<Record<FeatureKey, FeatureRoutes>>;
   /** True behind a load balancer: the client address then comes from X-Forwarded-For. */
-  trustProxy?: boolean;
+  /** Which hops of X-Forwarded-For are believed. Never `true`: see `TrustProxySetting`. */
+  trustProxy?: TrustProxySetting;
   /**
    * Session authentication. When present, every route must declare `config.auth` and protected
    * routes require a session; state-changing requests also pass the Origin check. The real
@@ -63,7 +65,8 @@ export function buildServer(options: BuildServerOptions): FastifyInstance {
     genReqId: generateRequestId,
     // The request id is always generated here; a client-supplied one is never trusted.
     requestIdHeader: false,
-    trustProxy: options.trustProxy ?? false,
+    // A number of hops or a list of proxies, never `true`: the leftmost entry is client-written.
+    trustProxy: fastifyTrustProxy(options.trustProxy ?? false),
   });
 
   registerRequestId(app);
