@@ -110,9 +110,32 @@ describe('worker role: sealing end to end', () => {
       }
     }
 
-    await eventually(async () =>
-      (await sealedCount(a)) === 3 && (await sealedCount(b)) === 3 ? true : undefined,
-    );
+    try {
+      await eventually(async () =>
+        (await sealedCount(a)) === 3 && (await sealedCount(b)) === 3 ? true : undefined,
+      );
+    } catch (error) {
+      // Make a timeout self-explanatory: what was sealed, which jobs exist and what failed.
+      const probe = createBoss(inject('runtimeUrl'), 'api');
+      await probe.start();
+      const jobs = await probe.findJobs('audit.seal', { data: { tenantId: a.id } });
+      await probe.stop({ graceful: false });
+      throw new Error(
+        `sealing did not finish: ${JSON.stringify({
+          sealedA: await sealedCount(a),
+          sealedB: await sealedCount(b),
+          errors,
+          jobs: jobs.map((job) => ({
+            state: job.state,
+            retryCount: job.retryCount,
+            createdOn: job.createdOn,
+            startedOn: job.startedOn,
+            output: job.output,
+          })),
+        })}`,
+        { cause: error },
+      );
+    }
     expect(errors).toEqual([]);
   }, 60_000);
 });

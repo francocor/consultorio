@@ -139,6 +139,19 @@ export async function registerJobs(
             data: job.data,
             enqueuedAt: job.createdOn,
             retryCount: job.retryCount,
+          }).catch((error: unknown) => {
+            // pg-boss records the failure and retries; this makes it visible in the logs too.
+            // Only the error code is logged: messages can carry data.
+            const cause = (error as { cause?: { code?: string }; code?: string } | null) ?? {};
+            deps.log.error(
+              {
+                job: definition.name,
+                retryCount: job.retryCount,
+                code: cause.cause?.code ?? cause.code ?? 'unknown',
+              },
+              'job failed',
+            );
+            throw error;
           });
           if (result.status === 'cancelled') {
             deps.log.info(
