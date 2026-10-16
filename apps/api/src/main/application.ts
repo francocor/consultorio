@@ -10,7 +10,11 @@ import type { PasswordValidator } from '../modules/identity/domain/password-poli
 import { createIdentity, type PasswordHasher } from '../modules/identity/index.js';
 import { createPatients } from '../modules/patients/index.js';
 import { createStaff } from '../modules/staff/index.js';
-import { createTenantLookup, type DeploymentSettings } from '../modules/tenancy/index.js';
+import {
+  createBranding,
+  createTenantLookup,
+  type DeploymentSettings,
+} from '../modules/tenancy/index.js';
 import { createAuditDeny } from '../platform/audit/deny.js';
 import { createActorLoader } from '../platform/authz/guard.js';
 import {
@@ -176,6 +180,7 @@ export function createApplication(options: ApplicationOptions): FastifyInstance 
   });
 
   const auditViewer = createAudit({ withTenant });
+  const branding = createBranding({ withTenant, auditDeny });
 
   const server = buildServer({
     ...(options.logLevel === undefined ? {} : { logLevel: options.logLevel }),
@@ -207,6 +212,7 @@ export function createApplication(options: ApplicationOptions): FastifyInstance 
       staff.routes,
       patients.routes,
       auditViewer.routes,
+      branding.routes,
       ...(options.modules ?? []),
     ],
   });

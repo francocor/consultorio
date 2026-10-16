@@ -57,6 +57,9 @@ export const AUDIT_ACTIONS = [
   'assignment.removed',
   'matricula.verified',
   'setting.reception_sees_clinical_metadata.changed',
+  // Branding: the identity of the organization and its logo.
+  'branding.updated',
+  'branding.logo_updated',
   // Other organization settings (two-factor policy, quiet hours): the entry names the setting.
   'setting.changed',
   // Locations of the organization.

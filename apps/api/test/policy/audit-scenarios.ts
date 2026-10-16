@@ -73,6 +73,8 @@ export const AUDIT_SCENARIOS: Record<AuditAction, AuditScenario> = {
   'matricula.verified': { pending: 'Stage 5: matricula verification in the operator console' },
   'setting.reception_sees_clinical_metadata.changed': t('access-settings.test.ts'),
   'setting.changed': t('access-settings.test.ts'),
+  'branding.updated': t('branding-api.test.ts'),
+  'branding.logo_updated': { pending: 'S1.25 (task 1.90): logo upload' },
   'location.created': t('access-locations.test.ts'),
   'location.updated': t('access-locations.test.ts'),
   'location.deactivated': t('access-locations.test.ts'),
