@@ -1,10 +1,21 @@
+# ====================================================================================================
+#  DEVELOPMENT ONLY. DO NOT DEPLOY THIS FILE. DO NOT POINT IT AT REAL DATA.
+#
+#  Every credential in it is a public throwaway default (postgres_dev_only, minio_dev_only_secret,
+#  app_rw_dev_only, ...), the key-encryption key of the `api` service is the public development
+#  placeholder, and MinIO and Mailpit have no authentication worth the name. Anyone who has read this
+#  repository knows all of them. The application refuses to start in production with the local key
+#  (KMS_PROVIDER=local) and with insecure cookies, which is the safety net, not a licence to reuse
+#  these values: production roles, secrets and keys come from the infrastructure (AWS KMS, a secrets
+#  store), never from here.
+# ====================================================================================================
+#
 # Local development services. Run from the repository root with the root .env as the interpolation
 # source (compose reads .env from the compose file's folder by default, which is infra/):
 #   docker compose --env-file .env -f infra/docker-compose.yml up -d
 # or use the shortcuts: pnpm infra:up, pnpm infra:down, pnpm infra:reset.
 #
-# Everything here is for development only: the credentials are throwaway defaults and every
-# published port is bound to 127.0.0.1, so nothing is reachable from the network.
+# Every published port is bound to 127.0.0.1, so nothing is reachable from the network.
 # Nothing in this file is used in production.
 
 name: consultorio
