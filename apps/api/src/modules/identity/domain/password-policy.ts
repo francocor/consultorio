@@ -13,6 +13,9 @@ export {
   type PasswordIssue,
 } from '@consultorio/contracts';
 
+/** Local parts shorter than this are too ambiguous to compare against the password. */
+const MIN_EMAIL_PART = 4;
+
 export type PasswordCheck = { ok: true } | { ok: false; issues: PasswordIssue[] };
 
 export interface PasswordContext {
