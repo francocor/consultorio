@@ -1,5 +1,6 @@
 import { SEAL_JOB, VERIFY_JOB, createAuditJobs } from '../audit/jobs.js';
 import { ensureAuditPartitions } from '../audit/partitions.js';
+import { sealPlatformAudit, verifyPlatformChain } from '../audit/platform-audit.js';
 import { createRuntimeDb } from '../db/pool.js';
 import type { Db } from '../db/pool.js';
 import { SYSTEM_USER_ID, createWithTenant } from '../db/tenant-context.js';
@@ -93,11 +94,33 @@ export async function startWorker(options: WorkerOptions): Promise<Worker> {
       },
       onError: report('audit.seal tick'),
     }),
+    // The platform's own trail is one global chain: sealed here, not by a per-tenant job.
+    createTicker({
+      intervalMs: options.sealIntervalMs ?? 5000,
+      tick: async () => {
+        await handle.db.transaction((tx) =>
+          sealPlatformAudit(
+            tx,
+            options.sealGraceMs === undefined ? {} : { graceMs: options.sealGraceMs },
+          ),
+        );
+      },
+      onError: report('platform audit seal tick'),
+    }),
     createDailyTicker({
       hourUtc: options.nightlyHourUtc ?? 3,
       tick: async () => {
         await ensureAuditPartitions(handle.db, { metrics });
         await fanOut(handle.db, client, VERIFY_JOB, { singletonSeconds: 3600 });
+        const platform = await handle.db.transaction((tx) => verifyPlatformChain(tx));
+        metrics.gauge('platform_audit_chain_verified_events', platform.verified);
+        if (!platform.ok) {
+          metrics.increment('platform_audit_chain_break_total');
+          options.log.error(
+            { firstBadSeq: platform.firstBadSeq, reason: platform.reason },
+            'platform audit chain break',
+          );
+        }
       },
       onError: report('nightly audit tasks'),
     }),

@@ -120,6 +120,13 @@
       "when": 1792131074004,
       "tag": "0016_anamnesis",
       "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "7",
+      "when": 1792133854625,
+      "tag": "0017_operator",
+      "breakpoints": true
     }
   ]
 }

@@ -64,6 +64,8 @@ describe('no request schema lets one user set the password of another (IDA-08, A
       [
         'InvitationAcceptRequest',
         'LoginRequest',
+        // The platform operator signing in as themselves (the console, not a tenant user).
+        'OperatorLoginRequest',
         'PasswordResetCompleteRequest',
         'ReauthenticateRequest',
         'TwoFactorEnrollStartRequest',

@@ -10,6 +10,7 @@ export * from './country/catalog.js';
 export * from './coverage.js';
 export * from './errors.js';
 export * from './health.js';
+export * from './operator.js';
 export * from './patients.js';
 export * from './ports.js';
 export * from './result.js';

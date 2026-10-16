@@ -5,13 +5,9 @@ import { afterAll, beforeAll, describe, expect, inject, it } from 'vitest';
 
 import { createLocalKeyManagement } from '../../src/adapters/local-kek/index.js';
 import { recoveryCode, userAccount } from '../../src/db/schema/identity.js';
-import {
-  codeAt,
-  decodeBase32Secret,
-  totpStepAt,
-} from '../../src/modules/identity/application/totp.js';
 import { createTwoFactor } from '../../src/modules/identity/application/two-factor.js';
 import { createTenantKeys } from '../../src/platform/crypto/tenant-keys.js';
+import { codeAt, decodeBase32Secret, totpStepAt } from '../../src/platform/crypto/totp.js';
 import { createRuntimeDb, type DbHandle } from '../../src/platform/db/pool.js';
 import { createWithTenant, type Tx } from '../../src/platform/db/tenant-context.js';
 import { createTestTenant, type TestTenant } from '../support/tenants.js';

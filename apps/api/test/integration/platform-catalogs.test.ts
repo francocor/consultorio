@@ -9,6 +9,9 @@ import { createOwnerDb, createRuntimeDb, type DbHandle } from '../../src/platfor
 let owner: DbHandle;
 let runtime: DbHandle;
 
+/** Other test files add their own payers to the shared database, so only the seeded ones are counted. */
+const seededCodes = new Set(arPayers.map((payer) => payer.code));
+
 beforeAll(async () => {
   owner = createOwnerDb(inject('ownerUrl'));
   runtime = createRuntimeDb(inject('runtimeUrl'));
@@ -85,7 +88,7 @@ describe('payer', () => {
       sql`SELECT code, kind FROM payer WHERE country = 'AR' ORDER BY code`,
     );
 
-    expect(rows.rows).toHaveLength(arPayers.length);
+    expect(rows.rows.filter((row) => seededCodes.has(row.code))).toHaveLength(arPayers.length);
     expect(rows.rows).toContainEqual({ code: 'particular', kind: 'private' });
   });
 
@@ -165,7 +168,7 @@ describe('catalog reader (what the country pack reads)', () => {
   it('returns the payer catalog of a country', async () => {
     const payers = await createCatalogReader(runtime.db).payers('AR');
 
-    expect(payers).toHaveLength(arPayers.length);
+    expect(payers.filter((payer) => seededCodes.has(payer.code))).toHaveLength(arPayers.length);
     expect(payers).toContainEqual({
       country: 'AR',
       code: 'particular',

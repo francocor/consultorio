@@ -27,6 +27,15 @@ export function createRuntimeDb(databaseUrl: string): DbHandle {
 }
 
 /**
+ * Operator pool: connects as `app_operator`, the role of the platform operator console. It is a
+ * different login from the runtime one, with an allowlist of privileges, so a flaw in the tenant
+ * API never carries the operator's reach. Small on purpose: there are few operators.
+ */
+export function createOperatorDb(operatorDatabaseUrl: string): DbHandle {
+  return open(operatorDatabaseUrl, 3);
+}
+
+/**
  * Owner pool: connects as `app_owner`. Used only to run migrations and by test setup, never by
  * request handling, because the owner is the one role that could be exempted from policies.
  */

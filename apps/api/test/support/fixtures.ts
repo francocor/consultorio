@@ -250,6 +250,15 @@ export const TENANT_FIXTURES: Record<string, TenantTableFixture> = {
               RETURNING id`,
       ),
   },
+  support_grant: {
+    insert: (tx, tenantId) =>
+      returningId(
+        tx,
+        sql`INSERT INTO support_grant (tenant_id, reason, expires_at, granted_by)
+              VALUES (${tenantId}, 'Ayuda con la configuración', now() + interval '1 hour', ${randomUUID()})
+              RETURNING id`,
+      ),
+  },
   anamnesis: {
     // The clinical policies read the professional of the transaction, so the fixture acts as the author.
     insert: async (tx, tenantId, overrides) => {

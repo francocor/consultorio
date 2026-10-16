@@ -2,6 +2,12 @@ import { and, eq, isNull, sql } from 'drizzle-orm';
 
 import { recoveryCode, userAccount } from '../../../db/schema/identity.js';
 import type { TenantKeys } from '../../../platform/crypto/tenant-keys.js';
+import {
+  buildOtpauthUri,
+  decodeBase32Secret,
+  generateTotpSecret,
+  verifyTotp,
+} from '../../../platform/crypto/totp.js';
 import type { Tx, WithTenant } from '../../../platform/db/tenant-context.js';
 
 import {
@@ -9,7 +15,6 @@ import {
   hashRecoveryCode,
   normalizeRecoveryCode,
 } from './recovery-codes.js';
-import { buildOtpauthUri, decodeBase32Secret, generateTotpSecret, verifyTotp } from './totp.js';
 
 export interface TwoFactorStatus {
   /** A confirmed factor exists: sign-in asks for a code. */

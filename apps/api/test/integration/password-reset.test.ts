@@ -15,11 +15,7 @@ import {
 } from '../../src/adapters/fake-email/index.js';
 import { auditEvent } from '../../src/db/schema/audit.js';
 import { userAccount } from '../../src/db/schema/identity.js';
-import {
-  codeAt,
-  decodeBase32Secret,
-  totpStepAt,
-} from '../../src/modules/identity/application/totp.js';
+import { codeAt, decodeBase32Secret, totpStepAt } from '../../src/platform/crypto/totp.js';
 import { createRuntimeDb, type DbHandle } from '../../src/platform/db/pool.js';
 import { createWithTenant } from '../../src/platform/db/tenant-context.js';
 import { browserHeaders, buildTestApplication, hostOf, sessionCookieOf } from '../support/app.js';
