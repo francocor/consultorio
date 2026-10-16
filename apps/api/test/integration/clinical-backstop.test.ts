@@ -15,6 +15,7 @@ import {
 } from '../../src/platform/authz/sharing-scope.js';
 import { createRuntimeDb, type DbHandle } from '../../src/platform/db/pool.js';
 import { createWithTenant } from '../../src/platform/db/tenant-context.js';
+import { ensureTestPatient } from '../support/patients.js';
 import { asTenant, createTestTenant, type TestTenant } from '../support/tenants.js';
 import { createTestProfessional } from '../support/users.js';
 
@@ -115,6 +116,7 @@ async function insertItem(
 }
 
 async function treat(tenantOf: TestTenant, patient: string, professional: string) {
+  await ensureTestPatient(runtime, tenantOf.id, patient);
   await asTenant(runtime, tenantOf.id, (tx) =>
     tx.insert(careAssignment).values({
       tenantId: tenantOf.id,

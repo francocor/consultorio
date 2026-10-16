@@ -6,6 +6,7 @@ import { afterAll, beforeAll, describe, expect, inject, it } from 'vitest';
 
 import { careAssignment, careRelationship } from '../../src/db/schema/care.js';
 import { createRuntimeDb, type DbHandle } from '../../src/platform/db/pool.js';
+import { ensureTestPatient } from '../support/patients.js';
 import { asTenant, createTestTenant, type TestTenant } from '../support/tenants.js';
 import { ensureTestProfessional } from '../support/users.js';
 
@@ -33,8 +34,10 @@ const ADMIN = '0190a000-0000-7000-8000-0000000000c1';
 /** A patient id and a professional that really exists (the care tables key on the profile). */
 async function pair(tenant: TestTenant = a) {
   const professionalId = randomUUID();
+  const patientId = randomUUID();
   await ensureTestProfessional(runtime, tenant.id, professionalId);
-  return { patientId: randomUUID(), professionalId };
+  await ensureTestPatient(runtime, tenant.id, patientId);
+  return { patientId, professionalId };
 }
 
 const assign = (tenant: TestTenant, ids: { patientId: string; professionalId: string }) =>
@@ -111,7 +114,7 @@ describe('an explicit assignment (authorization, "Explicit patient assignment")'
   });
 
   it('keeps assignments of different professionals for one patient apart', async () => {
-    const patientId = randomUUID();
+    const patientId = (await pair()).patientId;
     const first = { patientId, professionalId: (await pair()).professionalId };
     const second = { patientId, professionalId: (await pair()).professionalId };
     await assign(a, first);

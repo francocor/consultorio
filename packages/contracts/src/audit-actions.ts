@@ -40,6 +40,8 @@ export const AUDIT_ACTIONS = [
   'patient.read',
   'patient.bulk_read',
   'patient.deactivated',
+  'patient.reactivated',
+  'patient.representative.changed',
   // Access control changes.
   'role.changed',
   'permission.granted',

@@ -1,4 +1,11 @@
-import { validateCuit, validateMatricula, validateNationalId } from '@consultorio/contracts';
+import {
+  fail,
+  ok,
+  validateCuit,
+  validateMatricula,
+  validateNationalId,
+  validatePassport,
+} from '@consultorio/contracts';
 
 import type { CatalogReader, CountryPack } from '../../platform/country/country-pack.js';
 
@@ -18,6 +25,22 @@ export function createArPack(catalogs: CatalogReader): CountryPack {
     code: COUNTRY,
     defaults: AR_DEFAULTS,
     validateNationalId,
+    validateDocument(type, value) {
+      switch (type) {
+        case 'dni': {
+          const checked = validateNationalId(value);
+          return checked.ok ? ok({ type, number: checked.value }) : checked;
+        }
+        case 'passport': {
+          const checked = validatePassport(value);
+          return checked.ok ? ok({ type, number: checked.value }) : checked;
+        }
+        default:
+          return fail('country.ar.document.unknown_type');
+      }
+    },
+    // Ley 26.579: legal age is 18.
+    majorityAge: 18,
     validateTaxId: validateCuit,
     validateMatricula,
     holidays: (year) => catalogs.holidays(COUNTRY, year),

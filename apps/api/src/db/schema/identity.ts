@@ -2,7 +2,6 @@ import { sql } from 'drizzle-orm';
 import {
   bigint,
   check,
-  customType,
   foreignKey,
   index,
   integer,
@@ -14,13 +13,8 @@ import {
   uuid,
 } from 'drizzle-orm/pg-core';
 
-import { bytea, tenantTable } from './_helpers.js';
+import { bytea, citext, tenantTable } from './_helpers.js';
 import { tenant } from './tenant.js';
-
-/** Case-insensitive text (PostgreSQL `citext`): emails compare equal whatever their case. */
-const citext = customType<{ data: string; driverData: string }>({
-  dataType: () => 'citext',
-});
 
 /**
  * A person who signs in to the staff application. Global on purpose: one account may work in

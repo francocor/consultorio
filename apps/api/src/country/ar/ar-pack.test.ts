@@ -54,6 +54,35 @@ describe('Argentina country pack', () => {
     expect(pack.validateMatricula('AR-B', 'x').ok).toBe(false);
   });
 
+  it('validates the identity documents a patient can have, with an explicit type', () => {
+    const pack = createArPack(catalogs());
+
+    expect(pack.validateDocument('dni', '30.123.456')).toEqual({
+      ok: true,
+      value: { type: 'dni', number: '30123456' },
+    });
+    expect(pack.validateDocument('passport', 'ab-123 456')).toEqual({
+      ok: true,
+      value: { type: 'passport', number: 'AB123456' },
+    });
+    expect(pack.validateDocument('dni', '12AB')).toEqual({
+      ok: false,
+      error: { i18nKey: 'country.ar.national_id.invalid' },
+    });
+    expect(pack.validateDocument('passport', '!!')).toEqual({
+      ok: false,
+      error: { i18nKey: 'country.ar.passport.invalid' },
+    });
+    expect(pack.validateDocument('library_card', '123456')).toEqual({
+      ok: false,
+      error: { i18nKey: 'country.ar.document.unknown_type' },
+    });
+  });
+
+  it('states the age of majority', () => {
+    expect(createArPack(catalogs()).majorityAge).toBe(18);
+  });
+
   it('reads holidays and payers from the platform catalogs, not from code', async () => {
     const pack = createArPack(catalogs());
 

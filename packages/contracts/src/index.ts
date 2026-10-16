@@ -6,6 +6,7 @@ export * from './country/ar/index.js';
 export * from './country/catalog.js';
 export * from './errors.js';
 export * from './health.js';
+export * from './patients.js';
 export * from './ports.js';
 export * from './result.js';
 export * from './roles.js';

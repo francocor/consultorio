@@ -68,6 +68,14 @@ export interface CountryPack {
   readonly code: 'AR';
   readonly defaults: CountryDefaults;
   validateNationalId(value: string): Result<NationalId>;
+  /**
+   * Validates and normalizes an identity document of a patient. The type is explicit (`dni`,
+   * `passport`); an unknown type is refused. The pair (type, number) is the identity key of a
+   * patient inside an organization.
+   */
+  validateDocument(type: string, value: string): Result<{ type: string; number: string }>;
+  /** Age at which a person is no longer a minor. */
+  readonly majorityAge: number;
   validateTaxId(value: string): Result<TaxId>;
   /** Format only. It never proves the registration exists. */
   validateMatricula(jurisdiction: string, value: string): Result<Matricula>;

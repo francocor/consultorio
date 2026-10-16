@@ -76,20 +76,29 @@ async function insertProfessional(tx: Tx, tenantId: string): Promise<string> {
   );
 }
 
+async function insertPatient(tx: Tx, tenantId: string): Promise<string> {
+  return returningId(
+    tx,
+    sql`INSERT INTO patient (tenant_id, family_name, given_names, birth_date)
+          VALUES (${tenantId}, ${unique('Apellido')}, 'Nombre', '1990-01-01')
+          RETURNING id`,
+  );
+}
+
 export const TENANT_FIXTURES: Record<string, TenantTableFixture> = {
   care_assignment: {
     insert: async (tx, tenantId, overrides) =>
       returningId(
         tx,
         sql`INSERT INTO care_assignment (tenant_id, patient_id, professional_id, assigned_by)
-              VALUES (${tenantId}, ${randomUUID()}, ${overrides?.['professional_id'] ?? (await insertProfessional(tx, tenantId))}, ${randomUUID()})
+              VALUES (${tenantId}, ${overrides?.['patient_id'] ?? (await insertPatient(tx, tenantId))}, ${overrides?.['professional_id'] ?? (await insertProfessional(tx, tenantId))}, ${randomUUID()})
               RETURNING id`,
       ),
   },
   care_relationship: {
     // The runtime role cannot write this table: the relationship appears through an assignment.
     insert: async (tx, tenantId, overrides) => {
-      const patientId = randomUUID();
+      const patientId = overrides?.['patient_id'] ?? (await insertPatient(tx, tenantId));
       await tx.execute(
         sql`INSERT INTO care_assignment (tenant_id, patient_id, professional_id, assigned_by)
               VALUES (${tenantId}, ${patientId}, ${overrides?.['professional_id'] ?? (await insertProfessional(tx, tenantId))}, ${randomUUID()})`,
@@ -169,6 +178,27 @@ export const TENANT_FIXTURES: Record<string, TenantTableFixture> = {
         tx,
         sql`INSERT INTO location (tenant_id, name, time_zone)
               VALUES (${tenantId}, ${unique('Location')}, 'America/Argentina/Buenos_Aires')
+              RETURNING id`,
+      ),
+  },
+  patient: {
+    insert: (tx, tenantId) => insertPatient(tx, tenantId),
+  },
+  patient_version: {
+    insert: async (tx, tenantId, overrides) =>
+      returningId(
+        tx,
+        sql`INSERT INTO patient_version (tenant_id, patient_id, version, snapshot)
+              VALUES (${tenantId}, ${overrides?.['patient_id'] ?? (await insertPatient(tx, tenantId))}, 1, '{}'::jsonb)
+              RETURNING id`,
+      ),
+  },
+  patient_representative: {
+    insert: async (tx, tenantId, overrides) =>
+      returningId(
+        tx,
+        sql`INSERT INTO patient_representative (tenant_id, patient_id, full_name, relation, phone, majority_review_on)
+              VALUES (${tenantId}, ${overrides?.['patient_id'] ?? (await insertPatient(tx, tenantId))}, 'Rosa', 'mother', '1144445555', '2030-01-01')
               RETURNING id`,
       ),
   },
