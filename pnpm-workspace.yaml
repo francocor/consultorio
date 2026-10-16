@@ -15,6 +15,7 @@ minimumReleaseAge: 1440
 # Install scripts we have reviewed and deliberately skip (prebuilt binaries ship as optional deps).
 ignoredBuiltDependencies:
   - cpu-features
+  - lefthook
   - protobufjs
   - ssh2
   - unrs-resolver

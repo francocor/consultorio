@@ -1,0 +1,10 @@
+# gitleaks configuration. Runs in CI on every PR and locally as a pre-commit hook (lefthook.yml).
+title = "Consultorio secret scanning"
+
+[extend]
+# Keep every default rule (cloud keys, private keys, tokens, ...).
+useDefault = true
+
+[[allowlists]]
+description = "Local-only placeholders in the committed environment template"
+paths = ['''^\.env\.example$''']

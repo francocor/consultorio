@@ -1,0 +1,17 @@
+name: Set up workspace
+description: Install Node (from .nvmrc), pnpm (from package.json packageManager) and the locked dependencies.
+
+runs:
+  using: composite
+  steps:
+    # No "version" input: pnpm/action-setup reads packageManager, the single source of truth.
+    - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v4.4.0
+
+    - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+      with:
+        node-version-file: .nvmrc
+        cache: pnpm
+
+    - name: Install dependencies
+      shell: bash
+      run: pnpm install --frozen-lockfile

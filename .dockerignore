@@ -1,0 +1,30 @@
+# Keep the build context small and free of secrets.
+
+# Version control and planning artifacts
+.git
+.gitattributes
+.github
+.atl
+openspec
+docs
+
+# Legacy code is reference only
+BackEnd
+FrontEnd
+
+# Secrets and local environment
+**/.env
+**/.env.*
+!**/.env.example
+
+# Installed and generated output (rebuilt inside the image)
+**/node_modules
+**/dist
+**/coverage
+**/playwright-report
+**/test-results
+
+# Editor and OS noise
+.vscode
+.idea
+.DS_Store
