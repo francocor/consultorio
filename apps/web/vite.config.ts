@@ -5,6 +5,7 @@ import react from '@vitejs/plugin-react';
 import { defineConfig, type ProxyOptions } from 'vite';
 import { VitePWA } from 'vite-plugin-pwa';
 
+import { cspPlugin } from './vite/csp-plugin.js';
 import { pwaOptions } from './vite/pwa-config.js';
 import { themeBootPlugin } from './vite/theme-boot-plugin.js';
 
@@ -30,9 +31,13 @@ const proxy: Record<string, string | ProxyOptions> = {
   '/public/branding/logo': { target: apiTarget, changeOrigin: false },
 };
 
+const themeBootSource = resolve(import.meta.dirname, 'src/shared/lib/theme-boot.ts');
+
 export default defineConfig({
   plugins: [
-    themeBootPlugin(resolve(import.meta.dirname, 'src/shared/lib/theme-boot.ts')),
+    themeBootPlugin(themeBootSource),
+    // The Content Security Policy of the bundle, sent by `vite dev` and `vite preview`.
+    cspPlugin(themeBootSource),
     react(),
     tailwindcss(),
     VitePWA(pwaOptions),
