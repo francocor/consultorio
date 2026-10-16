@@ -9,8 +9,10 @@ import type { ObjectStorage } from '../../platform/storage/object-storage.js';
 
 import { exportOrganization } from './application/export-contributor.js';
 import type { ExportRegistry } from './application/export-registry.js';
+import { createBootService, type BootDeps } from './branding/boot.js';
 import { createBrandingService } from './branding/branding.js';
 import { createLogoService } from './branding/logo-service.js';
+import { bootRoutes } from './http/boot-routes.js';
 import { brandingRoutes } from './http/branding-routes.js';
 
 export { readOrganizationName } from './application/organization-name.js';
@@ -39,6 +41,8 @@ export interface BrandingOptions {
   auditDeny: AuthzOptions['auditDeny'];
   /** Where logos are stored. Absent: logo upload answers "unavailable". */
   storage?: ObjectStorage | undefined;
+  /** What the public boot payload needs from the deployment. */
+  boot: BootDeps;
 }
 
 export interface Branding {
@@ -52,9 +56,14 @@ export function createBranding(options: BrandingOptions): Branding {
     branding: createBrandingService(),
     logo: createLogoService({ storage: options.storage }),
   });
+  const boot = bootRoutes({
+    withTenant: options.withTenant,
+    boot: createBootService(options.boot),
+  });
   return {
     routes: (app) => {
       identity(app);
+      boot(app);
     },
   };
 }

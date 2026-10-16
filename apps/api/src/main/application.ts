@@ -180,7 +180,18 @@ export function createApplication(options: ApplicationOptions): FastifyInstance 
   });
 
   const auditViewer = createAudit({ withTenant });
-  const branding = createBranding({ withTenant, auditDeny, storage: options.storage });
+  const branding = createBranding({
+    withTenant,
+    auditDeny,
+    storage: options.storage,
+    boot: {
+      deploymentMode: options.deployment.mode,
+      locale: (country) => {
+        const found = getCountryPack(country, createCatalogReader(db));
+        return found.ok ? found.value.defaults.locale : 'es-AR';
+      },
+    },
+  });
 
   const server = buildServer({
     ...(options.logLevel === undefined ? {} : { logLevel: options.logLevel }),

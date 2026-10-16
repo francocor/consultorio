@@ -56,6 +56,8 @@ export const PUBLIC_ROUTE_PREFIXES = [
   '/public/',
   '/files/',
   '/webhooks/',
+  // The installable app's manifest: a browser asks for it without credentials.
+  '/manifest.webmanifest',
   '/health',
   '/ready',
 ] as const;

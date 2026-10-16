@@ -25,6 +25,21 @@ export function logoUrlFor(version: number): string {
   return `/public/branding/logo?v=${String(version)}`;
 }
 
+/** The address of the logo scaled to a square icon, for the installable app's manifest. */
+export function logoIconUrlFor(version: number, size: 192 | 512): string {
+  return `/public/branding/logo?size=${String(size)}&v=${String(version)}`;
+}
+
+/** The version of the stored logo, or null when the organization has none. */
+export function logoVersionOf(theme: Theme): number | null {
+  const logo = theme['logo'];
+  return typeof logo === 'object' &&
+    logo !== null &&
+    typeof (logo as { version?: unknown }).version === 'number'
+    ? (logo as { version: number }).version
+    : null;
+}
+
 function text(value: unknown): string | null {
   return typeof value === 'string' && value.trim() !== '' ? value : null;
 }
@@ -41,13 +56,7 @@ export function readBranding(theme: Theme): BrandingDto {
   // The effective color is a function of the requested one; recomputing it means a change to the
   // rule reaches every organization without a data migration.
   const contrast = ensureAccessiblePrimary(requested);
-  const logo = theme['logo'];
-  const version =
-    typeof logo === 'object' &&
-    logo !== null &&
-    typeof (logo as { version?: unknown }).version === 'number'
-      ? (logo as { version: number }).version
-      : null;
+  const version = logoVersionOf(theme);
   return {
     displayName: text(theme['displayName']),
     shortName: text(theme['shortName']),
