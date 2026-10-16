@@ -17,7 +17,10 @@ export function healthRoutes(deps: HealthDeps): FastifyPluginCallbackZod {
   return (app, _options, done) => {
     app.get(
       '/health',
-      { config: { readOnly: 'read' }, schema: { response: { 200: HealthResponse } } },
+      {
+        config: { readOnly: 'read', auth: 'public' },
+        schema: { response: { 200: HealthResponse } },
+      },
       () => ({
         status: 'ok' as const,
       }),
@@ -26,7 +29,7 @@ export function healthRoutes(deps: HealthDeps): FastifyPluginCallbackZod {
     app.get(
       '/ready',
       {
-        config: { readOnly: 'read' },
+        config: { readOnly: 'read', auth: 'public' },
         schema: { response: { 200: HealthResponse, 503: HealthResponse } },
       },
       async (request, reply) => {

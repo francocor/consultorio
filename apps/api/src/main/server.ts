@@ -10,6 +10,8 @@ import {
 } from '../modules/tenancy/index.js';
 import { registerRequestContext } from '../platform/audit/request-context.js';
 import { createFeatureRegistry, type FeatureKey } from '../platform/features.js';
+import { registerAuthGuard, type AuthGuardOptions } from '../platform/http/auth-guard.js';
+import { registerOriginCheck } from '../platform/http/csrf-origin.js';
 import { healthRoutes, type HealthDeps } from '../platform/http/health.js';
 import {
   generateRequestId,
@@ -37,6 +39,14 @@ export interface BuildServerOptions {
   featureRoutes?: Partial<Record<FeatureKey, FeatureRoutes>>;
   /** True behind a load balancer: the client address then comes from X-Forwarded-For. */
   trustProxy?: boolean;
+  /**
+   * Session authentication. When present, every route must declare `config.auth` and protected
+   * routes require a session; state-changing requests also pass the Origin check. The real
+   * application always supplies it (see `createApplication`); only tests of unrelated pieces omit it.
+   */
+  auth?: AuthGuardOptions;
+  /** Routes of the capabilities every deployment has (identity, access, ...). */
+  routes?: readonly FeatureRoutes[];
 }
 
 export function buildServer(options: BuildServerOptions): FastifyInstance {
@@ -56,11 +66,21 @@ export function buildServer(options: BuildServerOptions): FastifyInstance {
   registerTenantHost(app, createResolveHost(options.deployment, options.lookupTenant));
   // After the host guard (it reads the tenant) and before any route (it checks their categories).
   registerReadOnlyPolicy(app);
+  if (options.auth) {
+    registerOriginCheck(app);
+    registerAuthGuard(app, options.auth);
+  }
 
   app.setValidatorCompiler(validatorCompiler);
   app.setSerializerCompiler(serializerCompiler);
 
   void app.register(healthRoutes(options.health));
+
+  for (const routes of options.routes ?? []) {
+    void app.register(async (scope) => {
+      await routes(scope);
+    });
+  }
 
   const features = createFeatureRegistry(options.deployment.mode);
   for (const [feature, routes] of Object.entries(options.featureRoutes ?? {}) as [
