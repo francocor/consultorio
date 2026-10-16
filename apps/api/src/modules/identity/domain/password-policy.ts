@@ -1,21 +1,17 @@
 import { readFile } from 'node:fs/promises';
 
-/** Shortest and longest accepted password, in characters (Unicode code points). */
-export const PASSWORD_MIN_LENGTH = 10;
-export const PASSWORD_MAX_LENGTH = 128;
+import {
+  PASSWORD_MAX_LENGTH,
+  PASSWORD_MIN_LENGTH,
+  type PasswordIssue,
+} from '@consultorio/contracts';
 
-/** Local parts shorter than this are too ambiguous to compare against the password. */
-const MIN_EMAIL_PART = 4;
-
-export const PASSWORD_ISSUES = [
-  'too_short',
-  'too_long',
-  'common',
-  'repeated_character',
-  'contains_email',
-  'breached',
-] as const;
-export type PasswordIssue = (typeof PASSWORD_ISSUES)[number];
+export {
+  PASSWORD_ISSUES,
+  PASSWORD_MAX_LENGTH,
+  PASSWORD_MIN_LENGTH,
+  type PasswordIssue,
+} from '@consultorio/contracts';
 
 export type PasswordCheck = { ok: true } | { ok: false; issues: PasswordIssue[] };
 

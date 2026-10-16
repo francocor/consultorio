@@ -9,6 +9,7 @@
     "./tsconfig.node.json": "./tsconfig.node.json",
     "./tsconfig.react.json": "./tsconfig.react.json",
     "./eslint/base.js": "./eslint/base.js",
+    "./eslint/web.js": "./eslint/web.js",
     "./prettier.config.js": "./prettier.config.js"
   },
   "devDependencies": {
