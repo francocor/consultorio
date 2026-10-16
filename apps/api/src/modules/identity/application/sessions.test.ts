@@ -8,7 +8,8 @@ import {
   sessionVerdict,
 } from './sessions.js';
 
-const HOUR = 3_600_000;
+const MINUTE = 60_000;
+const HOUR = 60 * MINUTE;
 const T0 = new Date('2026-10-16T08:00:00.000Z');
 const after = (ms: number) => new Date(T0.getTime() + ms);
 
@@ -18,24 +19,24 @@ const fresh = {
   expiresAt: after(SESSION_ABSOLUTE_MS),
 };
 
-describe('session lifetime (idle 12 h, absolute 7 days)', () => {
-  it('uses the staff timeouts of the design', () => {
-    expect(SESSION_IDLE_MS).toBe(12 * HOUR);
+describe('session lifetime (idle 30 minutes, absolute 7 days)', () => {
+  it('uses the staff timeouts of the design (ASVS 3.3.2: 30 minutes of inactivity)', () => {
+    expect(SESSION_IDLE_MS).toBe(30 * MINUTE);
     expect(SESSION_ABSOLUTE_MS).toBe(7 * 24 * HOUR);
   });
 
   it('is active while it is used within the idle window', () => {
-    expect(sessionVerdict(fresh, after(HOUR))).toBe('active');
+    expect(sessionVerdict(fresh, after(10 * MINUTE))).toBe('active');
     expect(sessionVerdict(fresh, after(SESSION_IDLE_MS - 1))).toBe('active');
   });
 
   it('expires from inactivity exactly at the idle limit', () => {
     expect(sessionVerdict(fresh, after(SESSION_IDLE_MS))).toBe('idle_expired');
-    expect(sessionVerdict(fresh, after(SESSION_IDLE_MS + HOUR))).toBe('idle_expired');
+    expect(sessionVerdict(fresh, after(SESSION_IDLE_MS + 12 * HOUR))).toBe('idle_expired');
   });
 
   it('keeps an active session alive by use, up to the absolute limit', () => {
-    const lastWeek = { ...fresh, lastSeenAt: after(SESSION_ABSOLUTE_MS - HOUR) };
+    const lastWeek = { ...fresh, lastSeenAt: after(SESSION_ABSOLUTE_MS - 10 * MINUTE) };
 
     expect(sessionVerdict(lastWeek, after(SESSION_ABSOLUTE_MS - 1))).toBe('active');
     expect(sessionVerdict(lastWeek, after(SESSION_ABSOLUTE_MS))).toBe('absolute_expired');

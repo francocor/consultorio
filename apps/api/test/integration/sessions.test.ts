@@ -26,7 +26,7 @@ afterAll(async () => {
   await runtime.close();
 });
 
-const HOUR = 3_600_000;
+const MINUTE = 60_000;
 
 /** A clock the test moves by hand. */
 function fakeClock(start = new Date('2026-10-16T08:00:00.000Z')) {
@@ -118,7 +118,7 @@ describe('resolving a session', () => {
     expect(await resolve(token, b.id)).toBeNull();
   });
 
-  it('expires after 12 hours without use, with a fake clock', async () => {
+  it('expires after 30 minutes without use, with a fake clock', async () => {
     const { issue, resolve, clock } = await setup();
     const { token } = await issue();
 
@@ -134,15 +134,20 @@ describe('resolving a session', () => {
     const { issue, resolve, clock } = await setup();
     const { token } = await issue();
 
-    // Used every 11 hours (inside the idle window) for 165 hours.
-    for (let step = 0; step < 15; step += 1) {
-      clock.advance(11 * HOUR);
+    // Used every 29 minutes (inside the idle window) until the last use is under 30 minutes
+    // before the absolute limit.
+    const STEP = SESSION_IDLE_MS - MINUTE;
+    let elapsed = 0;
+    while (SESSION_ABSOLUTE_MS - elapsed > SESSION_IDLE_MS) {
+      clock.advance(STEP);
+      elapsed += STEP;
       expect(await resolve(token)).not.toBeNull();
     }
-    clock.advance(2 * HOUR);
+    // Just before the absolute limit, minutes after the last use: still fine.
+    clock.advance(SESSION_ABSOLUTE_MS - elapsed - 1);
     expect(await resolve(token)).not.toBeNull();
-    // 169 hours after sign-in, only 2 hours after the last use: the absolute limit ends it.
-    clock.advance(2 * HOUR);
+    // At the absolute limit, a moment after the last use: the limit ends it, not the idle time.
+    clock.advance(2);
 
     expect(await resolve(token)).toBeNull();
   });
@@ -224,9 +229,9 @@ describe('revoking and rotating', () => {
   it('lists the sessions of a user, newest first, flagging the current one, hiding revoked ones', async () => {
     const { issue, sessions, user, clock } = await setup();
     const first = await issue();
-    clock.advance(HOUR);
+    clock.advance(5 * MINUTE);
     const second = await issue();
-    clock.advance(HOUR);
+    clock.advance(5 * MINUTE);
     const gone = await issue();
     await asTenant(runtime, a.id, (tx) => sessions.revoke(tx, gone.sessionId, 'revoked_by_user'));
 

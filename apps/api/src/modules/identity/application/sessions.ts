@@ -6,8 +6,13 @@ import { and, desc, eq, isNull, ne, sql } from 'drizzle-orm';
 import { membership, session } from '../../../db/schema/identity.js';
 import type { Tx } from '../../../platform/db/tenant-context.js';
 
-/** Staff sessions end after 12 hours without use and after 7 days whatever the use (ADR-004). */
-export const SESSION_IDLE_MS = 12 * 3_600_000;
+/**
+ * Staff sessions end after 30 minutes without use and after 7 days whatever the use (ADR-004).
+ * Thirty minutes of inactivity is the Level 2 answer of ASVS 3.3.2 (security review: the earlier
+ * 12 hours was accepted only until the owner decided). Any request counts as use, so a person
+ * working in the app never notices it.
+ */
+export const SESSION_IDLE_MS = 30 * 60_000;
 export const SESSION_ABSOLUTE_MS = 7 * 24 * 3_600_000;
 
 /** `last_seen_at` is only rewritten when it is older than this, to avoid a write per request. */
