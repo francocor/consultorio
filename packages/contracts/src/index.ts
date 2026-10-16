@@ -1,4 +1,5 @@
 export * from './audit-actions.js';
+export * from './auth.js';
 export * from './country/ar/index.js';
 export * from './country/catalog.js';
 export * from './errors.js';

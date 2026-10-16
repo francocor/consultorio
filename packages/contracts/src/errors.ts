@@ -15,6 +15,11 @@ export const ERROR_CATALOG = {
   tenant_read_only: { status: 402, i18nKey: 'errors.tenant_read_only' },
   forbidden: { status: 403, i18nKey: 'errors.forbidden' },
   two_factor_required: { status: 403, i18nKey: 'errors.two_factor_required' },
+  // The session only reaches the two-factor enrollment endpoints until the user enrolls.
+  two_factor_enrollment_required: {
+    status: 403,
+    i18nKey: 'errors.two_factor_enrollment_required',
+  },
   not_found: { status: 404, i18nKey: 'errors.not_found' },
   conflict: { status: 409, i18nKey: 'errors.conflict' },
   stale_revision: { status: 409, i18nKey: 'errors.stale_revision' },

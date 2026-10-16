@@ -1,3 +1,4 @@
+import { registerIdentityExportContributors } from '../modules/identity/index.js';
 import {
   registerTenancyExportContributors,
   type ExportRegistry,
@@ -9,4 +10,5 @@ import {
  */
 export function registerAllExportContributors(registry: ExportRegistry): void {
   registerTenancyExportContributors(registry);
+  registerIdentityExportContributors(registry);
 }

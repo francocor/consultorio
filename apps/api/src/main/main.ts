@@ -1,14 +1,13 @@
 import pino from 'pino';
 
-import { createTenantLookup } from '../modules/tenancy/index.js';
 import { createRuntimeDb } from '../platform/db/pool.js';
 import { createDbProbe } from '../platform/db/probe.js';
 import { startWorker } from '../platform/jobs/worker.js';
 
+import { createApplication } from './application.js';
 import { loadConfig, type Config } from './config.js';
 import { deploymentFromConfig } from './deployment.js';
 import { buildLoggerOptions } from './logger.js';
-import { buildServer } from './server.js';
 
 const ROLES = ['api', 'worker'] as const;
 type Role = (typeof ROLES)[number];
@@ -31,12 +30,13 @@ function waitForShutdownSignal(): Promise<void> {
 async function runApi(config: Config): Promise<void> {
   const probe = createDbProbe(config.databaseUrl);
   const database = createRuntimeDb(config.databaseUrl);
-  const app = buildServer({
+  const app = createApplication({
+    database,
     logLevel: config.logLevel,
     health: { checkDatabase: () => probe.check() },
     deployment: deploymentFromConfig(config),
     trustProxy: config.trustProxy,
-    lookupTenant: createTenantLookup(database.db),
+    cookieSecure: config.cookieSecure,
   });
 
   await app.listen({ host: config.host, port: config.port });
