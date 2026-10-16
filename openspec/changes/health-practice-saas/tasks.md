@@ -162,9 +162,11 @@ Goal: two isolated, branded tenants with role-specific views and an audit trail.
 
 Runs in parallel with everything. Done when each dependency has an owner, a date and a status in `docs/external-dependencies.md`.
 
-- [ ] 1.1 Start AFIP/ARCA certificate and homologation access request (needed by Stage 4). Record the date. Test: none.
-- [ ] 1.2 Start Meta WhatsApp Business verification for the platform WABA and choose the e-Rx provider (Q3) (needed by Stages 3 and 5). Test: none.
-- [ ] 1.3 Request legal review of hosting and the AAIP model clauses (Q1) and of governance-mode erasure (Q7, D13). Test: none.
+> Local-first note (owner decision, 2026-10-15): the real requests are deferred. S1.00 is done as documentation: every dependency has an owner and the status `deferred`, and the file names the fake adapter the code uses meanwhile. The dates are filled when the owner files each request.
+
+- [x] 1.1 Start AFIP/ARCA certificate and homologation access request (needed by Stage 4). Record the date. Test: none.
+- [x] 1.2 Start Meta WhatsApp Business verification for the platform WABA and choose the e-Rx provider (Q3) (needed by Stages 3 and 5). Test: none.
+- [x] 1.3 Request legal review of hosting and the AAIP model clauses (Q1) and of governance-mode erasure (Q7, D13). Test: none.
 
 ## S1.01 Contracts, errors and permission catalog (~350 lines)
 
