@@ -19,6 +19,12 @@ if (typeof window !== 'undefined') {
   polyfill(element, 'scrollIntoView', () => undefined);
   polyfill(element, 'hasPointerCapture', () => false);
   polyfill(element, 'releasePointerCapture', () => undefined);
+  // jsdom logs "not implemented" for these; the router scrolls and axe probes the canvas.
+  Object.defineProperty(window, 'scrollTo', { value: () => undefined, configurable: true });
+  Object.defineProperty(window.HTMLCanvasElement.prototype, 'getContext', {
+    value: () => null,
+    configurable: true,
+  });
   polyfill(window, 'matchMedia', (query: string) => ({
     matches: false,
     media: query,

@@ -6,7 +6,7 @@ import { describe, expect, it } from 'vitest';
 
 import { buildThemeBootScript, themeBootPlugin } from './theme-boot-plugin.js';
 
-const SOURCE = resolve(import.meta.dirname, '../src/app/theme-boot.ts');
+const SOURCE = resolve(import.meta.dirname, '../src/shared/lib/theme-boot.ts');
 
 describe('theme boot inline script', () => {
   it('is plain JavaScript with no module syntax or leftover types', async () => {

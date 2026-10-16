@@ -1,3 +1,4 @@
+import { Check } from 'lucide-react';
 import { DropdownMenu as MenuPrimitive } from 'radix-ui';
 import type { ComponentProps } from 'react';
 
@@ -6,6 +7,7 @@ import { cn } from '../lib/cn.js';
 export const DropdownMenu = MenuPrimitive.Root;
 export const DropdownMenuTrigger = MenuPrimitive.Trigger;
 export const DropdownMenuGroup = MenuPrimitive.Group;
+export const DropdownMenuRadioGroup = MenuPrimitive.RadioGroup;
 
 export function DropdownMenuContent({
   className,
@@ -61,5 +63,29 @@ export function DropdownMenuSeparator({
 }: ComponentProps<typeof MenuPrimitive.Separator>) {
   return (
     <MenuPrimitive.Separator className={cn('-mx-1 my-1 h-px bg-border', className)} {...props} />
+  );
+}
+
+export function DropdownMenuRadioItem({
+  className,
+  children,
+  ...props
+}: ComponentProps<typeof MenuPrimitive.RadioItem>) {
+  return (
+    <MenuPrimitive.RadioItem
+      className={cn(
+        'touch-target-md relative flex cursor-pointer select-none items-center gap-2 rounded-sm pl-8 pr-2 text-sm outline-none',
+        'data-[disabled]:pointer-events-none data-[disabled]:opacity-50 data-[highlighted]:bg-accent data-[highlighted]:text-accent-foreground',
+        className,
+      )}
+      {...props}
+    >
+      <span className="absolute left-2 grid size-4 place-content-center">
+        <MenuPrimitive.ItemIndicator>
+          <Check className="size-4" aria-hidden="true" />
+        </MenuPrimitive.ItemIndicator>
+      </span>
+      {children}
+    </MenuPrimitive.RadioItem>
   );
 }

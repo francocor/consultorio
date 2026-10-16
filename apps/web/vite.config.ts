@@ -31,7 +31,7 @@ const proxy: Record<string, string | ProxyOptions> = {
 
 export default defineConfig({
   plugins: [
-    themeBootPlugin(resolve(import.meta.dirname, 'src/app/theme-boot.ts')),
+    themeBootPlugin(resolve(import.meta.dirname, 'src/shared/lib/theme-boot.ts')),
     react(),
     tailwindcss(),
     VitePWA({

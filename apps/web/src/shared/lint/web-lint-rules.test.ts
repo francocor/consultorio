@@ -43,7 +43,9 @@ describe('web lint rules', () => {
   }, 120_000);
 
   it('lets the theme boot module use storage for the look of the organization', async () => {
-    const messages = await restrictions(resolve(REPO_ROOT, 'apps/web/src/app/theme-boot.ts'));
+    const messages = await restrictions(
+      resolve(REPO_ROOT, 'apps/web/src/shared/lib/theme-boot.ts'),
+    );
 
     expect(messages).toEqual([]);
   }, 120_000);

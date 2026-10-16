@@ -5,7 +5,7 @@ import { transformWithOxc, type Plugin } from 'vite';
 const PLACEHOLDER = '<!--theme-boot-->';
 
 /**
- * Compiles `src/app/theme-boot.ts` (which only imports types) into a classic script: types
+ * Compiles `src/shared/lib/theme-boot.ts` (which only imports types) into a classic script: types
  * stripped, `export` removed, wrapped so nothing leaks into the global scope. Keeping a single
  * source means the code that runs before the first paint is the code the unit tests cover.
  */

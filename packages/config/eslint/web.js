@@ -59,8 +59,8 @@ const PERSIST_IMPORTS = {
 
 /** Files that may touch storage because they only keep non-sensitive display preferences. */
 const STORAGE_ALLOWED = [
-  'apps/web/src/app/theme-boot.ts',
-  'apps/web/src/shared/lib/color-scheme.ts',
+  'apps/web/src/shared/lib/theme-boot.ts',
+  'apps/web/src/shared/lib/preferences.ts',
 ];
 
 export default defineConfig(
@@ -70,6 +70,16 @@ export default defineConfig(
     rules: {
       'no-restricted-syntax': ['error', ...JSX_TEXT_RULES, ...STORAGE_RULES],
       'no-restricted-imports': ['error', PERSIST_IMPORTS],
+    },
+  },
+  {
+    // TanStack Router's `redirect()` is thrown on purpose (it is how a guard redirects).
+    files: ['apps/web/src/app/router.tsx'],
+    rules: {
+      '@typescript-eslint/only-throw-error': [
+        'error',
+        { allow: [{ from: 'package', package: '@tanstack/router-core', name: 'Redirect' }] },
+      ],
     },
   },
   {
