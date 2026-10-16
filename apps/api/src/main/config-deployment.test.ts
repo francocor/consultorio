@@ -106,6 +106,20 @@ describe('cookie configuration', () => {
   });
 });
 
+describe('proxy configuration', () => {
+  it('does not trust proxies by default', () => {
+    expect(loadConfig(multi).trustProxy).toBe(false);
+  });
+
+  it('trusts the proxy when told to', () => {
+    expect(loadConfig({ ...multi, TRUST_PROXY: 'true' }).trustProxy).toBe(true);
+  });
+
+  it('rejects a value that is not true or false', () => {
+    expect(() => loadConfig({ ...multi, TRUST_PROXY: 'yes' })).toThrow(/TRUST_PROXY/);
+  });
+});
+
 describe('key management configuration', () => {
   it('uses the local key-encryption key by default (development and tests)', () => {
     expect(loadConfig(multi).kms).toEqual({ provider: 'local', kekBase64: LOCAL_KEK });

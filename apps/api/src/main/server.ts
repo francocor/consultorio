@@ -8,6 +8,7 @@ import {
   type DeploymentSettings,
   type LookupTenant,
 } from '../modules/tenancy/index.js';
+import { registerRequestContext } from '../platform/audit/request-context.js';
 import { createFeatureRegistry, type FeatureKey } from '../platform/features.js';
 import { healthRoutes, type HealthDeps } from '../platform/http/health.js';
 import {
@@ -34,6 +35,8 @@ export interface BuildServerOptions {
   lookupTenant: LookupTenant;
   /** Routes of the multi-tenant-only capabilities, registered only when the mode enables them. */
   featureRoutes?: Partial<Record<FeatureKey, FeatureRoutes>>;
+  /** True behind a load balancer: the client address then comes from X-Forwarded-For. */
+  trustProxy?: boolean;
 }
 
 export function buildServer(options: BuildServerOptions): FastifyInstance {
@@ -44,9 +47,11 @@ export function buildServer(options: BuildServerOptions): FastifyInstance {
     genReqId: generateRequestId,
     // The request id is always generated here; a client-supplied one is never trusted.
     requestIdHeader: false,
+    trustProxy: options.trustProxy ?? false,
   });
 
   registerRequestId(app);
+  registerRequestContext(app);
   registerProblemHandlers(app);
   registerTenantHost(app, createResolveHost(options.deployment, options.lookupTenant));
   // After the host guard (it reads the tenant) and before any route (it checks their categories).

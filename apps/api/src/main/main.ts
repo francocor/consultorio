@@ -34,6 +34,7 @@ async function runApi(config: Config): Promise<void> {
     logLevel: config.logLevel,
     health: { checkDatabase: () => probe.check() },
     deployment: deploymentFromConfig(config),
+    trustProxy: config.trustProxy,
     lookupTenant: createTenantLookup(database.db),
   });
 

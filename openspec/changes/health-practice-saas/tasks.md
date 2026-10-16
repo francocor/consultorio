@@ -219,9 +219,9 @@ Depends: S1.03.
 
 - [x] 1.24 `db/schema/audit.ts` + migration: `audit_event` partitioned by month with the columns from design section 3.6, indexes on tenant+time, tenant+patient, tenant+actor, RLS, `app_rw` gets only INSERT and SELECT, function `app.ensure_audit_partitions(n)`. [AUD-03, AUD-04] Test: partitions are created; grants verified.
 - [x] 1.25 Triggers: reject `DELETE`; reject `UPDATE` except filling `seq`, `prev_hash`, `hash` from NULL by role `audit_sealer`. [AUD-04] Test: `app_rw` update and delete fail; sealer fills once and a second fill fails.
-- [ ] 1.26 `platform/audit/writer.ts` `audit(tx, event)` (same transaction, fail-closed) and `packages/contracts/src/audit-actions.ts` (typed action catalogue; metadata schema rejects clinical content keys). [AUD-01, AUD-02, AUD-03] Test: a forced audit failure aborts the business write (row absent).
-- [ ] 1.27 `platform/audit/deny.ts` `auditDeny()` on a separate connection in its own transaction. [AUD-01, AUD-02] Test: the deny row persists although the business transaction rolled back.
-- [ ] 1.28 Request context plugin filling actor, acting role, ip, user agent and request id into `RequestContext` for audit. [AUD-03] Test: inject check of captured fields.
+- [x] 1.26 `platform/audit/writer.ts` `audit(tx, event)` (same transaction, fail-closed) and `packages/contracts/src/audit-actions.ts` (typed action catalogue; metadata schema rejects clinical content keys). [AUD-01, AUD-02, AUD-03] Test: a forced audit failure aborts the business write (row absent).
+- [x] 1.27 `platform/audit/deny.ts` `auditDeny()` on a separate connection in its own transaction. [AUD-01, AUD-02] Test: the deny row persists although the business transaction rolled back.
+- [x] 1.28 Request context plugin filling actor, acting role, ip, user agent and request id into `RequestContext` for audit. [AUD-03] Test: inject check of captured fields.
 
 ## S1.07 Jobs platform and audit sealer (~400 lines)
 

@@ -29,6 +29,8 @@ const envSchema = z
     SINGLE_TENANT_SLUG: z.string().regex(TENANT_SLUG).optional(),
     /** Secure cookies. Defaults to true in production and false elsewhere (plain http locally). */
     COOKIE_SECURE: booleanFlag.optional(),
+    /** True behind a load balancer: client addresses are then read from X-Forwarded-For. */
+    TRUST_PROXY: booleanFlag.default(false),
     KMS_PROVIDER: z.enum(['local', 'aws']).default('local'),
     /** Development and tests only: 32 random bytes, base64. */
     KMS_LOCAL_KEK_BASE64: z.string().min(1).optional(),
@@ -105,6 +107,7 @@ export interface Config {
   /** Set in single mode. */
   readonly singleTenantSlug?: string;
   readonly cookieSecure: boolean;
+  readonly trustProxy: boolean;
   readonly kms: KmsConfig;
   readonly logLevel: (typeof LOG_LEVELS)[number];
   readonly host: string;
@@ -153,6 +156,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
       ? {}
       : { singleTenantSlug: value.SINGLE_TENANT_SLUG }),
     cookieSecure: value.COOKIE_SECURE ?? value.NODE_ENV === 'production',
+    trustProxy: value.TRUST_PROXY,
     kms: kmsFrom(value),
     logLevel: value.LOG_LEVEL,
     host: value.HOST,
