@@ -23,6 +23,12 @@ function server() {
   app.get('/not-yours', { config: { readOnly: 'read' } }, (request, reply) =>
     denied(request, reply),
   );
+  app.get('/rejected-fields', { config: { readOnly: 'read' } }, () => {
+    throw new AppError('validation_failed', [
+      { path: 'password', i18nKey: 'auth.password.common' },
+      { path: 'password', i18nKey: 'auth.password.too_short' },
+    ]);
+  });
   app.post(
     '/validated',
     {
@@ -165,6 +171,23 @@ describe('uniform denial', () => {
       'status',
       'title',
       'type',
+    ]);
+    await app.close();
+  });
+});
+
+describe('an AppError can carry field errors', () => {
+  it('sends them as paths and translation keys, and nothing else', async () => {
+    const app = server();
+
+    const response = await app.inject({ method: 'GET', url: '/rejected-fields' });
+    const body = Problem.parse(response.json());
+
+    expect(response.statusCode).toBe(400);
+    expect(body).toMatchObject({ code: 'validation_failed' });
+    expect(body.errors).toEqual([
+      { path: 'password', i18nKey: 'auth.password.common' },
+      { path: 'password', i18nKey: 'auth.password.too_short' },
     ]);
     await app.close();
   });

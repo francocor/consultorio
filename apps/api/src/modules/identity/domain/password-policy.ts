@@ -13,6 +13,7 @@ export const PASSWORD_ISSUES = [
   'common',
   'repeated_character',
   'contains_email',
+  'breached',
 ] as const;
 export type PasswordIssue = (typeof PASSWORD_ISSUES)[number];
 
@@ -35,6 +36,7 @@ const MESSAGES_ES_AR: Record<PasswordIssue, string> = {
   repeated_character:
     'La contraseña no puede ser un solo carácter repetido. Elegí una frase fácil de recordar pero difícil de adivinar.',
   contains_email: 'La contraseña no puede contener tu correo electrónico. Elegí otra.',
+  breached: 'Esa contraseña apareció en filtraciones de datos conocidas. Elegí otra distinta.',
 };
 
 export interface DescribedIssue {
@@ -104,6 +106,32 @@ export function createPasswordPolicy(common: ReadonlySet<string>): PasswordPolic
       }
 
       return issues.length === 0 ? { ok: true } : { ok: false, issues };
+    },
+  };
+}
+
+/** Checks a password against a list of breached ones. Optional; see `breached-passwords.ts`. */
+export interface BreachCheck {
+  isBreached(password: string): Promise<boolean>;
+}
+
+export interface PasswordValidator {
+  validate(password: string, context?: PasswordContext): Promise<PasswordCheck>;
+}
+
+/**
+ * The local policy first (always on, nothing leaves the server), then, only for a password it
+ * accepted, the optional breach check. The breach check never blocks when its provider is down.
+ */
+export function createPasswordValidator(
+  policy: PasswordPolicy,
+  breach?: BreachCheck,
+): PasswordValidator {
+  return {
+    async validate(password, context) {
+      const local = policy.check(password, context);
+      if (!local.ok || !breach) return local;
+      return (await breach.isBreached(password)) ? { ok: false, issues: ['breached'] } : local;
     },
   };
 }

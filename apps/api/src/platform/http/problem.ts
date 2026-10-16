@@ -31,11 +31,14 @@ export function generateRequestId(): string {
  */
 export class AppError extends Error {
   readonly code: ErrorCode;
+  /** Which fields were wrong, as paths and translation keys. Never the submitted values. */
+  readonly fieldErrors: readonly FieldError[];
 
-  constructor(code: ErrorCode) {
+  constructor(code: ErrorCode, fieldErrors: readonly FieldError[] = []) {
     super(code);
     this.name = 'AppError';
     this.code = code;
+    this.fieldErrors = fieldErrors;
   }
 }
 
@@ -140,7 +143,12 @@ export function registerProblemHandlers(app: FastifyInstance): void {
       request.log.info({ failure: { name: error.name, code: error.code } }, 'request rejected');
     }
 
-    const errors = code === 'validation_failed' ? fieldErrors(error) : [];
+    const errors =
+      error instanceof AppError
+        ? [...error.fieldErrors]
+        : code === 'validation_failed'
+          ? fieldErrors(error)
+          : [];
     return sendProblem(request, reply, code, {
       status,
       ...(errors.length > 0 ? { errors } : {}),

@@ -7,6 +7,7 @@ import {
   PASSWORD_MAX_LENGTH,
   PASSWORD_MIN_LENGTH,
   createPasswordPolicy,
+  createPasswordValidator,
   describePasswordIssues,
   loadCommonPasswords,
   parseCommonPasswords,
@@ -125,5 +126,45 @@ describe('the bundled list', () => {
     expect(real.check('passw0rd12345')).toEqual({ ok: true });
     expect(real.check('1234567890')).toEqual({ ok: false, issues: ['common'] });
     expect(real.check('qwertyuiop')).toEqual({ ok: false, issues: ['common'] });
+  });
+});
+
+describe('the validator with the optional breached-password check', () => {
+  const local = createPasswordPolicy(parseCommonPasswords('password123'));
+
+  it('is the local policy alone when no breach check is configured', async () => {
+    const validator = createPasswordValidator(local);
+
+    expect(await validator.validate('correct horse battery staple')).toEqual({ ok: true });
+    expect(await validator.validate('PASSWORD123')).toEqual({ ok: false, issues: ['common'] });
+  });
+
+  it('asks the breach check only about passwords the local policy accepted', async () => {
+    const asked: string[] = [];
+    const validator = createPasswordValidator(local, {
+      isBreached: (password) => {
+        asked.push(password);
+        return Promise.resolve(password === 'leaked-passphrase-2020');
+      },
+    });
+
+    expect(await validator.validate('leaked-passphrase-2020')).toEqual({
+      ok: false,
+      issues: ['breached'],
+    });
+    expect(await validator.validate('a-fresh-unleaked-phrase')).toEqual({ ok: true });
+    expect(await validator.validate('password123')).toEqual({ ok: false, issues: ['common'] });
+    expect(await validator.validate('short')).toEqual({ ok: false, issues: ['too_short'] });
+    expect(asked).toEqual(['leaked-passphrase-2020', 'a-fresh-unleaked-phrase']);
+  });
+
+  it('describes a breached password in es-AR', () => {
+    expect(describePasswordIssues(['breached'])).toEqual([
+      {
+        code: 'breached',
+        i18nKey: 'auth.password.breached',
+        message: expect.stringContaining('filtraciones') as string,
+      },
+    ]);
   });
 });
