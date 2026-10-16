@@ -275,10 +275,10 @@ Depends: S1.03.
 
 Depends: S1.11, S1.08, S1.12.
 
-- [ ] 1.47 `modules/identity/application/totp.ts` (`@oslojs/otp`): enrollment with encrypted secret, verify with +-1 step, last-used-step replay block. [IDA-05] Test: RFC 6238 vectors, replay rejected, drift window.
-- [ ] 1.48 Recovery codes: generate 10, store hashed, single use, regenerate. [IDA-05] Test: reuse fails; hashes only at rest.
-- [ ] 1.49 Login 2FA flow: `login_challenge` (5 min, max 5 attempts), `POST /auth/2fa`, wrong or reused code counts toward lockout, mandatory for professionals and owners/admins with a 7-day grace from `first_sign_in_at`, then an enrollment-scoped session; optional for reception unless `settings.require_2fa`. [IDA-05, IDA-04] Test: role x grace x enrolled matrix; an enrollment-scoped session gets 403 `two_factor_enrollment_required` everywhere else.
-- [ ] 1.50 Audit `auth.2fa.enrolled|verified|failed|recovery_used`. [IDA-09] Test: events emitted.
+- [x] 1.47 `modules/identity/application/totp.ts` (`@oslojs/otp`): enrollment with encrypted secret, verify with +-1 step, last-used-step replay block. [IDA-05] Test: RFC 6238 vectors, replay rejected, drift window.
+- [x] 1.48 Recovery codes: generate 10, store hashed, single use, regenerate. [IDA-05] Test: reuse fails; hashes only at rest.
+- [x] 1.49 Login 2FA flow: `login_challenge` (5 min, max 5 attempts), `POST /auth/2fa`, wrong or reused code counts toward lockout, mandatory for professionals and owners/admins with a 7-day grace from `first_sign_in_at`, then an enrollment-scoped session; optional for reception unless `settings.require_2fa`. [IDA-05, IDA-04] Test: role x grace x enrolled matrix; an enrollment-scoped session gets 403 `two_factor_enrollment_required` everywhere else.
+- [x] 1.50 Audit `auth.2fa.enrolled|verified|failed|recovery_used`. [IDA-09] Test: events emitted.
 
 ## S1.14 Password reset and invitation acceptance (~350 lines)
 

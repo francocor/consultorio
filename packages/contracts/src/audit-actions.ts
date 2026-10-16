@@ -20,6 +20,8 @@ export const AUDIT_ACTIONS = [
   'auth.2fa.verified',
   'auth.2fa.failed',
   'auth.2fa.recovery_used',
+  'auth.2fa.recovery_regenerated',
+  'auth.2fa.disabled',
   'auth.invitation.accepted',
   'auth.portal.sign_in',
   // Clinical records (every read and write).

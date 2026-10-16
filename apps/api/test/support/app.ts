@@ -1,6 +1,10 @@
+import { randomBytes } from 'node:crypto';
+
 import type { FastifyInstance } from 'fastify';
 
+import { createLocalKeyManagement } from '../../src/adapters/local-kek/index.js';
 import { createApplication, type ApplicationOptions } from '../../src/main/application.js';
+import { createTenantKeys } from '../../src/platform/crypto/tenant-keys.js';
 import type { DbHandle } from '../../src/platform/db/pool.js';
 
 export const BASE_DOMAIN = 'consultorio.test';
@@ -34,6 +38,9 @@ export function buildTestApplication(
     },
     cookieSecure: true,
     trustProxy: false,
+    keys: createTenantKeys({
+      kms: createLocalKeyManagement(randomBytes(32).toString('base64')),
+    }),
     // Tests sign in many times from one address; the limits have their own tests.
     limits: {
       perClient: { max: 100_000, windowMs: 60_000 },

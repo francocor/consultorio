@@ -1,6 +1,10 @@
+import { randomBytes } from 'node:crypto';
+
 import { afterAll, describe, expect, it } from 'vitest';
 
+import { createLocalKeyManagement } from '../../src/adapters/local-kek/index.js';
 import { createApplication } from '../../src/main/application.js';
+import { createTenantKeys } from '../../src/platform/crypto/tenant-keys.js';
 import { createRuntimeDb } from '../../src/platform/db/pool.js';
 import { findUnlistedPublicRoutes } from '../../src/platform/http/auth-guard.js';
 
@@ -22,6 +26,7 @@ const app = createApplication({
   },
   cookieSecure: true,
   trustProxy: false,
+  keys: createTenantKeys({ kms: createLocalKeyManagement(randomBytes(32).toString('base64')) }),
 });
 await app.ready();
 

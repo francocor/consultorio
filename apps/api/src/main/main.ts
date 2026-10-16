@@ -1,5 +1,6 @@
 import pino from 'pino';
 
+import { createTenantKeys } from '../platform/crypto/tenant-keys.js';
 import { createRuntimeDb } from '../platform/db/pool.js';
 import { createDbProbe } from '../platform/db/probe.js';
 import { startWorker } from '../platform/jobs/worker.js';
@@ -7,6 +8,7 @@ import { startWorker } from '../platform/jobs/worker.js';
 import { createApplication } from './application.js';
 import { loadConfig, type Config } from './config.js';
 import { deploymentFromConfig } from './deployment.js';
+import { createKeyManagement } from './key-management.js';
 import { buildLoggerOptions } from './logger.js';
 
 const ROLES = ['api', 'worker'] as const;
@@ -37,6 +39,7 @@ async function runApi(config: Config): Promise<void> {
     deployment: deploymentFromConfig(config),
     trustProxy: config.trustProxy,
     cookieSecure: config.cookieSecure,
+    keys: createTenantKeys({ kms: createKeyManagement(config.kms) }),
     lockout: config.lockout,
   });
 

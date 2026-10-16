@@ -5,6 +5,7 @@ import type { FastifyInstance } from 'fastify';
 import type { LockoutPolicy } from '../modules/identity/application/lockout.js';
 import { createIdentity, type PasswordHasher } from '../modules/identity/index.js';
 import { createTenantLookup, type DeploymentSettings } from '../modules/tenancy/index.js';
+import type { TenantKeys } from '../platform/crypto/tenant-keys.js';
 import type { Db, DbHandle } from '../platform/db/pool.js';
 import { createWithTenant } from '../platform/db/tenant-context.js';
 import type { HealthDeps } from '../platform/http/health.js';
@@ -21,6 +22,8 @@ export interface ApplicationOptions {
   logStream?: Writable;
   trustProxy: boolean;
   cookieSecure: boolean;
+  /** Per-tenant data keys: second-factor secrets are stored encrypted with them. */
+  keys: TenantKeys;
   /** Replaceable in tests; production uses the system clock. */
   clock?: () => Date;
   hasher?: PasswordHasher;
@@ -55,6 +58,7 @@ export function createApplication(options: ApplicationOptions): FastifyInstance 
 
   const identity = createIdentity({
     withTenant,
+    keys: options.keys,
     cookieSecure: options.cookieSecure,
     ...(options.clock ? { clock: options.clock } : {}),
     ...(options.hasher ? { hasher: options.hasher } : {}),

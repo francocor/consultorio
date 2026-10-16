@@ -11,6 +11,7 @@ import { type ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 
 import { userAccount } from '../../../db/schema/identity.js';
+import { tenant } from '../../../db/schema/tenant.js';
 import { audit } from '../../../platform/audit/writer.js';
 import type { WithTenant } from '../../../platform/db/tenant-context.js';
 import { primaryRole } from '../../../platform/http/auth-guard.js';
@@ -22,11 +23,14 @@ import {
 } from '../../../platform/http/session-cookie.js';
 import type { LoginService } from '../application/login.js';
 import { SESSION_ABSOLUTE_MS, type SessionService } from '../application/sessions.js';
+import { twoFactorRequirement } from '../application/two-factor-policy.js';
+import type { TwoFactor } from '../application/two-factor.js';
 
 export interface AuthRoutesDeps {
   withTenant: WithTenant;
   login: LoginService;
   sessions: SessionService;
+  twoFactor: TwoFactor;
   cookieSecure: boolean;
   /** Sign-in attempts per client address and tenant. */
   loginRateLimit?: { max: number; timeWindow: number };
@@ -66,6 +70,10 @@ export function authRoutes(deps: AuthRoutesDeps) {
         });
         // Every failure is the same answer: it must not say which part was wrong.
         if (outcome.kind === 'failed') throw new AppError('unauthenticated');
+        // The password was right and a code is needed: no session yet, just the challenge.
+        if (outcome.kind === 'challenge') {
+          return { next: 'totp' as const, challenge: outcome.challenge };
+        }
 
         void reply.header(
           'set-cookie',
@@ -82,7 +90,7 @@ export function authRoutes(deps: AuthRoutesDeps) {
 
     typed.post(
       '/auth/logout',
-      { config: { readOnly: 'auth', auth: 'session' } },
+      { config: { readOnly: 'auth', auth: 'session', allowEnrollmentScope: true } },
       async (request, reply) => {
         const current = request.session;
         if (!current) throw new AppError('unauthenticated');
@@ -107,29 +115,47 @@ export function authRoutes(deps: AuthRoutesDeps) {
     typed.get(
       '/auth/me',
       {
-        config: { readOnly: 'read', auth: 'session' },
+        config: { readOnly: 'read', auth: 'session', allowEnrollmentScope: true },
         schema: { response: { 200: MeResponse } },
       },
       async (request) => {
         const current = request.session;
         if (!current) throw new AppError('unauthenticated');
-        const email = await deps.withTenant(
+        const profile = await deps.withTenant(
           { tenantId: current.tenantId, userId: current.userId },
           async (tx) => {
             const [row] = await tx
-              .select({ email: userAccount.email })
+              .select({
+                email: userAccount.email,
+                firstSignInAt: userAccount.firstSignInAt,
+              })
               .from(userAccount)
               .where(eq(userAccount.id, current.userId));
-            return row?.email;
+            const [organization] = await tx.select({ settings: tenant.settings }).from(tenant);
+            const enrolled = (await deps.twoFactor.status(tx, current.userId)).enrolled;
+            return { row, enrolled, settings: organization?.settings };
           },
         );
-        if (email === undefined) throw new AppError('unauthenticated');
+        if (profile.row === undefined) throw new AppError('unauthenticated');
+        const email = profile.row.email;
+        const requirement = twoFactorRequirement({
+          roles: current.roles,
+          enrolled: profile.enrolled,
+          firstSignInAt: profile.row.firstSignInAt,
+          organizationRequires: profile.settings?.['require_2fa'] === true,
+          now: new Date(),
+        });
         return {
           user: { id: current.userId, email },
           roles: [...current.roles],
           // Grantable permissions are added when the access module exists (S1.18).
           permissions: effectivePermissions(current.roles, []),
           scope: current.scope,
+          twoFactor: {
+            enrolled: profile.enrolled,
+            required: requirement.required,
+            graceEndsAt: requirement.graceEndsAt?.toISOString() ?? null,
+          },
         };
       },
     );

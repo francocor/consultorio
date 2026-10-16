@@ -2,6 +2,7 @@ import type { Role, SessionScope } from '@consultorio/contracts';
 import { and, eq, sql } from 'drizzle-orm';
 
 import { membership, userAccount } from '../../../db/schema/identity.js';
+import { tenant } from '../../../db/schema/tenant.js';
 import { audit, type AuditActor } from '../../../platform/audit/writer.js';
 import { SYSTEM_USER_ID, type Tx, type WithTenant } from '../../../platform/db/tenant-context.js';
 import { primaryRole } from '../../../platform/http/auth-guard.js';
@@ -9,14 +10,18 @@ import { clientKeyOf } from '../../../platform/http/rate-limit.js';
 import type { PasswordHasher } from '../infrastructure/argon2.js';
 
 import type { AttemptThrottle } from './attempt-throttle.js';
-import type { Lockout } from './lockout.js';
+import type { Charge, Lockout } from './lockout.js';
+import { createLoginChallenge } from './second-factor-login.js';
 import type { IssuedSession, SessionService } from './sessions.js';
+import { twoFactorRequirement } from './two-factor-policy.js';
+import type { TwoFactor } from './two-factor.js';
 
 export interface LoginDeps {
   withTenant: WithTenant;
   hasher: PasswordHasher;
   sessions: SessionService;
   lockout: Lockout;
+  twoFactor: TwoFactor;
   /** Failures of identifiers that have no account on the tenant: they get the same delays. */
   accountThrottle: AttemptThrottle;
   /** Failures per client address. */
@@ -35,7 +40,10 @@ export interface LoginInput {
 }
 
 export type LoginOutcome =
-  { kind: 'session'; issued: IssuedSession; scope: SessionScope } | { kind: 'failed' };
+  | { kind: 'session'; issued: IssuedSession; scope: SessionScope }
+  /** The password was right and a second factor is needed: the client sends this challenge back. */
+  | { kind: 'challenge'; challenge: string }
+  | { kind: 'failed' };
 
 export type LoginFailureReason = 'bad_credentials' | 'inactive_membership';
 
@@ -119,12 +127,14 @@ export function createLoginService(deps: LoginDeps): LoginService {
 
       // 1. The gate. Nothing about the password is looked at until the attempt is allowed.
       let allowed = !deps.clientThrottle.check(clientKey).blocked;
+      let charge: Charge | null = null;
       if (allowed && candidate) {
         const reservation = await deps.withTenant(
           { tenantId: input.tenantId, userId: candidate.userId },
           (tx) => lockout.reserveAttempt(tx, candidate.userId, input.actor),
         );
         allowed = reservation.kind === 'proceed';
+        if (reservation.kind === 'proceed') charge = reservation.charge;
       } else if (allowed) {
         allowed = !deps.accountThrottle.check(identifierKey).blocked;
       }
@@ -152,13 +162,43 @@ export function createLoginService(deps: LoginDeps): LoginService {
           return { kind: 'failed' };
         }
 
-        // The first successful sign-in starts the two-factor grace period.
+        // The password is right. What the second factor asks of this user depends on the role, the
+        // grace period (counted from the first sign-in) and the organization's setting.
+        const now = clock();
+        const [account] = await tx
+          .select({ firstSignInAt: userAccount.firstSignInAt })
+          .from(userAccount)
+          .where(eq(userAccount.id, candidate.userId));
+        const [organization] = await tx.select({ settings: tenant.settings }).from(tenant);
+        const enrolled = (await deps.twoFactor.status(tx, candidate.userId)).enrolled;
+        const requirement = twoFactorRequirement({
+          roles: candidate.roles,
+          enrolled,
+          firstSignInAt: account?.firstSignInAt ?? null,
+          organizationRequires: organization?.settings['require_2fa'] === true,
+          now,
+        });
+
+        // The first successful password check starts the grace period.
         await tx
           .update(userAccount)
           .set({
-            firstSignInAt: sql`coalesce(${userAccount.firstSignInAt}, ${clock().toISOString()}::timestamptz)`,
+            firstSignInAt: sql`coalesce(${userAccount.firstSignInAt}, ${now.toISOString()}::timestamptz)`,
           })
           .where(eq(userAccount.id, candidate.userId));
+
+        if (requirement.kind === 'challenge') {
+          // Not signed in yet. Give the attempt back (the password was right) but keep earlier
+          // failures: a wrong code will count toward the lock.
+          await lockout.refundAttempt(tx, candidate.userId, charge);
+          const challenge = await createLoginChallenge(tx, {
+            tenantId: input.tenantId,
+            userId: candidate.userId,
+            membershipId: candidate.membershipId,
+            now,
+          });
+          return { kind: 'challenge', challenge };
+        }
         await lockout.reset(tx, candidate.userId);
 
         // A new sign-in replaces the session of the cookie it came with.
@@ -167,7 +207,9 @@ export function createLoginService(deps: LoginDeps): LoginService {
           if (previous) await deps.sessions.revoke(tx, previous.sessionId, 'rotated');
         }
 
-        const scope: SessionScope = 'full';
+        // Past the grace period without a factor: the session only reaches the enrollment endpoints.
+        const scope: SessionScope =
+          requirement.kind === 'enrollment_required' ? 'two_factor_enrollment' : 'full';
         const issued = await deps.sessions.issue(tx, {
           tenantId: input.tenantId,
           userId: candidate.userId,

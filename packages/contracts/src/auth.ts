@@ -31,12 +31,23 @@ export type LoginResponse = z.infer<typeof LoginResponse>;
 export const SessionScope = z.enum(['full', 'two_factor_enrollment']);
 export type SessionScope = z.infer<typeof SessionScope>;
 
+/** Where the user stands with the second factor, so the shell can prompt or block. */
+export const TwoFactorSummary = z.strictObject({
+  enrolled: z.boolean(),
+  /** The user is obliged to have one (mandatory role, or the organization requires it). */
+  required: z.boolean(),
+  /** End of the 7-day grace period for a user who is obliged but not enrolled; else null. */
+  graceEndsAt: z.iso.datetime().nullable(),
+});
+export type TwoFactorSummary = z.infer<typeof TwoFactorSummary>;
+
 /** The profile of the signed-in user, as the web app needs it to draw the shell. */
 export const MeResponse = z.strictObject({
   user: z.strictObject({ id: z.uuid(), email: z.email() }),
   roles: z.array(z.enum(ROLES)),
   permissions: z.array(z.enum(PERMISSIONS)),
   scope: SessionScope,
+  twoFactor: TwoFactorSummary,
 });
 export type MeResponse = z.infer<typeof MeResponse>;
 
@@ -54,3 +65,43 @@ export type SessionSummary = z.infer<typeof SessionSummary>;
 
 export const SessionList = z.strictObject({ sessions: z.array(SessionSummary) });
 export type SessionList = z.infer<typeof SessionList>;
+
+const Password = z.string().min(1).max(LOGIN_PASSWORD_MAX);
+
+/** Second step of a sign-in: the challenge from `/auth/login` plus a code OR a recovery code. */
+export const TwoFactorVerifyRequest = z
+  .strictObject({
+    challenge: z.string().min(1).max(256),
+    code: z.string().min(1).max(32).optional(),
+    recoveryCode: z.string().min(1).max(64).optional(),
+  })
+  .refine((body) => (body.code === undefined) !== (body.recoveryCode === undefined), {
+    message: 'send either code or recoveryCode',
+  });
+export type TwoFactorVerifyRequest = z.infer<typeof TwoFactorVerifyRequest>;
+
+/**
+ * Starts enrolling (or replacing) the second factor. A user who already has one must prove the
+ * password again: replacing it is a sensitive change.
+ */
+export const TwoFactorEnrollStartRequest = z.strictObject({ password: Password.optional() });
+export type TwoFactorEnrollStartRequest = z.infer<typeof TwoFactorEnrollStartRequest>;
+
+export const TwoFactorEnrollStartResponse = z.strictObject({
+  /** Base32 secret, for typing into an authenticator app by hand. */
+  secret: z.string().min(1),
+  /** The otpauth link a QR code carries. */
+  otpauthUri: z.string().min(1),
+});
+export type TwoFactorEnrollStartResponse = z.infer<typeof TwoFactorEnrollStartResponse>;
+
+export const TwoFactorConfirmRequest = z.strictObject({ code: z.string().min(1).max(32) });
+export type TwoFactorConfirmRequest = z.infer<typeof TwoFactorConfirmRequest>;
+
+/** Recovery codes are shown once, when they are generated. */
+export const RecoveryCodesResponse = z.strictObject({ recoveryCodes: z.array(z.string()) });
+export type RecoveryCodesResponse = z.infer<typeof RecoveryCodesResponse>;
+
+/** Actions that need the password again: new recovery codes, turning the factor off. */
+export const ReauthenticateRequest = z.strictObject({ password: Password });
+export type ReauthenticateRequest = z.infer<typeof ReauthenticateRequest>;

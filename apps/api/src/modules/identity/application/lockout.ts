@@ -70,7 +70,14 @@ export function gateDecision(state: LockState, now: Date, policy = DEFAULT_LOCKO
 /** What kind of credential failed. A wrong second factor counts exactly like a wrong password. */
 export type FailureKind = 'password' | 'second_factor';
 
-export type Reservation = { kind: 'proceed' } | { kind: 'locked' } | { kind: 'throttled' };
+/** What `reserveAttempt` charged, so `refundAttempt` can undo exactly that. */
+export interface Charge {
+  at: Date;
+  previousLastFailedAt: Date | null;
+}
+
+export type Reservation =
+  { kind: 'proceed'; charge: Charge | null } | { kind: 'locked' } | { kind: 'throttled' };
 
 export interface Lockout {
   /**
@@ -80,8 +87,10 @@ export interface Lockout {
    */
   reserveAttempt(tx: Tx, userId: string, actor: AuditActor): Promise<Reservation>;
   /**
-   * Gate only, for a step that continues a sign-in (the second factor): refuses while locked or
-   * throttled, charges nothing.
+   * Gate only, for a step that continues a sign-in (the second factor): refuses while the account
+   * is locked and charges nothing. The backoff between password attempts does not apply here: the
+   * password was just proven, and guessing a code is bounded by the challenge (five attempts) and
+   * by the lock.
    */
   checkGate(tx: Tx, userId: string, actor: AuditActor): Promise<Reservation>;
   /**
@@ -97,7 +106,7 @@ export interface Lockout {
     options?: { charged?: boolean },
   ): Promise<{ locked: boolean }>;
   /** A sign-in that needs a second factor: the password was right, so give the charge back. */
-  refundAttempt(tx: Tx, userId: string): Promise<void>;
+  refundAttempt(tx: Tx, userId: string, charge: Charge | null): Promise<void>;
   /** A completed sign-in: forget the failures. */
   reset(tx: Tx, userId: string): Promise<void>;
 }
@@ -142,10 +151,12 @@ export function createLockout(
       });
       return { kind: 'locked' };
     }
-    if (decision.kind === 'throttled') return { kind: 'throttled' };
+    // A step that continues a sign-in is not subject to the delay between password attempts.
+    if (decision.kind === 'throttled' && charge) return { kind: 'throttled' };
+    const expiredLock = decision.kind === 'open' && decision.expiredLock;
 
     let failures = state.failedLogins;
-    if (decision.expiredLock) {
+    if (expiredLock) {
       failures = 0;
       await audit(tx, {
         action: 'auth.account.unlocked',
@@ -159,13 +170,18 @@ export function createLockout(
         .update(userAccount)
         .set({ failedLogins: failures + 1, lastFailedAt: now, lockedUntil: null })
         .where(eq(userAccount.id, userId));
-    } else if (decision.expiredLock) {
+      return {
+        kind: 'proceed',
+        charge: { at: now, previousLastFailedAt: expiredLock ? null : state.lastFailedAt },
+      };
+    }
+    if (expiredLock) {
       await tx
         .update(userAccount)
         .set({ failedLogins: 0, lastFailedAt: null, lockedUntil: null })
         .where(eq(userAccount.id, userId));
     }
-    return { kind: 'proceed' };
+    return { kind: 'proceed', charge: null };
   }
 
   return {
@@ -202,10 +218,18 @@ export function createLockout(
       return { locked: true };
     },
 
-    async refundAttempt(tx, userId) {
+    async refundAttempt(tx, userId, charge) {
       await tx
         .update(userAccount)
-        .set({ failedLogins: sql`greatest(${userAccount.failedLogins} - 1, 0)` })
+        .set({
+          failedLogins: sql`greatest(${userAccount.failedLogins} - 1, 0)`,
+          // Put the time of the last failure back, unless another attempt has moved it since.
+          ...(charge
+            ? {
+                lastFailedAt: sql`case when ${userAccount.lastFailedAt} = ${charge.at.toISOString()}::timestamptz then ${charge.previousLastFailedAt?.toISOString() ?? null}::timestamptz else ${userAccount.lastFailedAt} end`,
+              }
+            : {}),
+        })
         .where(eq(userAccount.id, userId));
     },
 

@@ -29,6 +29,11 @@ declare module 'fastify' {
   interface FastifyContextConfig {
     /** Mandatory on every route once authentication is configured: a route without it fails at boot. */
     auth?: RouteAuth;
+    /**
+     * A session that may only enroll a second factor (`two_factor_enrollment`) can reach this route.
+     * Every other route answers it 403 `two_factor_enrollment_required`.
+     */
+    allowEnrollmentScope?: boolean;
   }
   interface FastifyRequest {
     /** The verified session, or null on public routes and before authentication. */
@@ -126,6 +131,13 @@ export function registerAuthGuard(app: FastifyInstance, options: AuthGuardOption
     if (session === null) {
       void reply.header('set-cookie', clearSessionCookie({ secure: options.cookieSecure }));
       throw new AppError('unauthenticated');
+    }
+
+    if (
+      session.scope === 'two_factor_enrollment' &&
+      !request.routeOptions.config.allowEnrollmentScope
+    ) {
+      throw new AppError('two_factor_enrollment_required');
     }
 
     request.session = session;

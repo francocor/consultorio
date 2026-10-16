@@ -88,8 +88,16 @@ export interface SessionService {
   resolve(tx: Tx, token: string): Promise<ResolvedSession | null>;
   /** True when this call ended the session; false when it was already over or not visible. */
   revoke(tx: Tx, sessionId: string, reason: SessionRevokeReason): Promise<boolean>;
-  /** Ends a session and starts another for the same user and membership. */
-  rotate(tx: Tx, sessionId: string, reason: SessionRevokeReason): Promise<IssuedSession>;
+  /**
+   * Ends a session and starts another for the same user and membership. The new one keeps the
+   * scope unless `scope` says otherwise (an enrollment-only session becomes a full one).
+   */
+  rotate(
+    tx: Tx,
+    sessionId: string,
+    reason: SessionRevokeReason,
+    options?: { scope?: SessionScope },
+  ): Promise<IssuedSession>;
   /** Ends the user's sessions on this tenant, except one. Returns how many were ended. */
   revokeAllForUser(
     tx: Tx,
@@ -187,7 +195,7 @@ export function createSessionService(options: { clock?: () => Date } = {}): Sess
       };
     },
 
-    async rotate(tx, sessionId, reason) {
+    async rotate(tx, sessionId, reason, rotateOptions = {}) {
       const [current] = await tx.select().from(session).where(eq(session.id, sessionId));
       if (!current) throw new Error('session not found');
       await revoke(tx, sessionId, reason);
@@ -195,7 +203,7 @@ export function createSessionService(options: { clock?: () => Date } = {}): Sess
         tenantId: current.tenantId,
         userId: current.userId,
         membershipId: current.membershipId,
-        scope: current.scope as SessionScope,
+        scope: rotateOptions.scope ?? (current.scope as SessionScope),
         ip: current.ip,
         userAgent: current.userAgent,
       });

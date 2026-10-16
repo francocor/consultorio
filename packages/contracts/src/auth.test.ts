@@ -1,6 +1,14 @@
 import { describe, expect, it } from 'vitest';
 
-import { LoginRequest, LoginResponse, MeResponse, SessionList } from './auth.js';
+import {
+  LoginRequest,
+  LoginResponse,
+  MeResponse,
+  ReauthenticateRequest,
+  SessionList,
+  TwoFactorEnrollStartRequest,
+  TwoFactorVerifyRequest,
+} from './auth.js';
 import { ERROR_CATALOG } from './errors.js';
 
 describe('LoginRequest', () => {
@@ -63,6 +71,7 @@ describe('MeResponse and SessionList', () => {
       roles: ['owner', 'professional'],
       permissions: ['patients.read'],
       scope: 'full',
+      twoFactor: { enrolled: false, required: true, graceEndsAt: '2026-10-23T10:00:00.000Z' },
     };
 
     expect(MeResponse.parse(me)).toEqual(me);
@@ -95,5 +104,32 @@ describe('error catalog additions for authentication', () => {
     expect(ERROR_CATALOG.two_factor_enrollment_required.i18nKey).toBe(
       'errors.two_factor_enrollment_required',
     );
+  });
+});
+
+describe('two-factor requests', () => {
+  it('verify takes a challenge and exactly one of code or recoveryCode', () => {
+    expect(TwoFactorVerifyRequest.safeParse({ challenge: 'c', code: '123456' }).success).toBe(true);
+    expect(TwoFactorVerifyRequest.safeParse({ challenge: 'c', recoveryCode: 'abcd' }).success).toBe(
+      true,
+    );
+    expect(TwoFactorVerifyRequest.safeParse({ challenge: 'c' }).success).toBe(false);
+    expect(
+      TwoFactorVerifyRequest.safeParse({ challenge: 'c', code: '123456', recoveryCode: 'abcd' })
+        .success,
+    ).toBe(false);
+    expect(TwoFactorVerifyRequest.safeParse({ code: '123456' }).success).toBe(false);
+  });
+
+  it('enrollment start takes an optional password and nothing else', () => {
+    expect(TwoFactorEnrollStartRequest.safeParse({}).success).toBe(true);
+    expect(TwoFactorEnrollStartRequest.safeParse({ password: 'x' }).success).toBe(true);
+    expect(TwoFactorEnrollStartRequest.safeParse({ password: '' }).success).toBe(false);
+    expect(TwoFactorEnrollStartRequest.safeParse({ userId: 'someone-else' }).success).toBe(false);
+  });
+
+  it('re-authentication needs the password', () => {
+    expect(ReauthenticateRequest.safeParse({ password: 'x' }).success).toBe(true);
+    expect(ReauthenticateRequest.safeParse({}).success).toBe(false);
   });
 });
