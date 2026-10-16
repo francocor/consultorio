@@ -37,6 +37,8 @@ describe('loadConfig', () => {
       KMS_PROVIDER: 'aws',
       AWS_REGION: 'sa-east-1',
       AWS_KMS_KEY_ID: 'alias/test',
+      SMTP_HOST: 'smtp.example.test',
+      SMTP_SECURITY: 'starttls',
       LOG_LEVEL: 'warn',
       PORT: '8080',
     });

@@ -51,7 +51,7 @@ jobs:
       - name: Smoke test /health
         run: |
           # The image runs with NODE_ENV=production, so this uses the production configuration:
-          # AWS KMS settings (nothing contacts AWS at startup) and the multi-tenant domains.
+          # AWS KMS and SMTP settings (nothing contacts them at startup) and the multi-tenant domains.
           docker run -d --name api -p 3000:3000 \
             -e DATABASE_URL=postgres://unused:unused@127.0.0.1:1/unused \
             -e DEPLOYMENT_MODE=multi \
@@ -60,6 +60,8 @@ jobs:
             -e KMS_PROVIDER=aws \
             -e AWS_REGION=sa-east-1 \
             -e AWS_KMS_KEY_ID=alias/smoke-test \
+            -e SMTP_HOST=smtp.smoke.test \
+            -e SMTP_SECURITY=starttls \
             consultorio-api:ci api
           for attempt in $(seq 1 20); do
             if curl -fsS http://127.0.0.1:3000/health; then exit 0; fi

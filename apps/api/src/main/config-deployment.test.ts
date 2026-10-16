@@ -17,6 +17,9 @@ const multi = {
 
 const aws = { AWS_REGION: 'sa-east-1', AWS_KMS_KEY_ID: 'alias/consultorio-tenant-kek' };
 
+/** Production needs a mail server with transport security. */
+const mail = { SMTP_HOST: 'smtp.example.test', SMTP_SECURITY: 'starttls' };
+
 const single = {
   DATABASE_URL,
   DEPLOYMENT_MODE: 'single',
@@ -85,7 +88,8 @@ describe('cookie configuration', () => {
 
   it('is secure by default in production', () => {
     expect(
-      loadConfig({ ...multi, NODE_ENV: 'production', KMS_PROVIDER: 'aws', ...aws }).cookieSecure,
+      loadConfig({ ...multi, NODE_ENV: 'production', KMS_PROVIDER: 'aws', ...aws, ...mail })
+        .cookieSecure,
     ).toBe(true);
   });
 

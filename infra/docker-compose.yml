@@ -123,6 +123,8 @@ services:
       BASE_DOMAIN: ${BASE_DOMAIN:-localhost}
       PLATFORM_HOST: ${PLATFORM_HOST:-platform.localhost}
       SINGLE_TENANT_SLUG: ${SINGLE_TENANT_SLUG:-}
+      SMTP_HOST: mailpit
+      SMTP_PORT: 1025
       KMS_PROVIDER: local
       KMS_LOCAL_KEK_BASE64: ${KMS_LOCAL_KEK_BASE64:-ZGV2X29ubHlfbG9jYWxfa2VrXzAxMjM0NTY3ODlhYmM=}
       LOG_LEVEL: ${LOG_LEVEL:-info}

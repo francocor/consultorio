@@ -243,33 +243,33 @@ Depends: S1.03.
 
 Depends: S1.03, S1.08.
 
-- [ ] 1.35 `db/schema/identity.ts` + migration: `user` (global, citext email, `password_hash`, encrypted `totp_secret`, `first_sign_in_at`, `failed_logins`, `locked_until`), `membership` (tenant, roles, status), `session`, `login_challenge`, `recovery_code`. `user` is readable only through membership of the current tenant or the login lookup function `app.lookup_user_for_login(email)` (SECURITY DEFINER, minimal columns). [IDA-02, TEN-01] Test: tenant B context cannot read tenant A's users.
-- [ ] 1.36 `modules/identity/domain/password-policy.ts` and the bundled list `apps/api/assets/common-passwords-100k.txt` loaded at boot (data asset, outside the line budget); optional breached-password range check behind a flag. [IDA-03] Test: rejects common passwords, accepts a passphrase, length boundaries.
-- [ ] 1.37 `modules/identity/infrastructure/argon2.ts` (`@node-rs/argon2`) with `verifyOrDummy` so unknown users take the same path. [IDA-02] Test: unknown and known users call the same verify path (spy count).
+- [x] 1.35 `db/schema/identity.ts` + migration: `user` (global, citext email, `password_hash`, encrypted `totp_secret`, `first_sign_in_at`, `failed_logins`, `locked_until`), `membership` (tenant, roles, status), `session`, `login_challenge`, `recovery_code`. `user` is readable only through membership of the current tenant or the login lookup function `app.lookup_user_for_login(email)` (SECURITY DEFINER, minimal columns). [IDA-02, TEN-01] Test: tenant B context cannot read tenant A's users.
+- [x] 1.36 `modules/identity/domain/password-policy.ts` and the bundled list `apps/api/assets/common-passwords-100k.txt` loaded at boot (data asset, outside the line budget); optional breached-password range check behind a flag. [IDA-03] Test: rejects common passwords, accepts a passphrase, length boundaries.
+- [x] 1.37 `modules/identity/infrastructure/argon2.ts` (`@node-rs/argon2`) with `verifyOrDummy` so unknown users take the same path. [IDA-02] Test: unknown and known users call the same verify path (spy count).
 
 ## S1.10 Sessions and login (~400 lines)
 
 Depends: S1.09, S1.06.
 
-- [ ] 1.38 `modules/identity/application/sessions.ts` and `platform/http/session-cookie.ts`: opaque 256-bit token, SHA-256 at rest, `HttpOnly; Secure; SameSite=Lax`, idle 12 h and absolute 7 days (staff), rotation on login and privilege change, `active_tenant_id`. [IDA-07] Test: expiry with a fake clock; rotation on login.
-- [ ] 1.39 Routes `POST /auth/login`, `POST /auth/logout`, `GET /auth/me`, `GET|DELETE /auth/sessions` with contracts in `packages/contracts/src/auth.ts`; host and session tenant mismatch returns 401; unknown identifiers get identical responses. [IDA-02, IDA-07, TEN-02] Test: integration login, logout, revoke, mismatch.
-- [ ] 1.40 `platform/http/auth-guard.ts` (every route requires a session unless it is declared public under the allowed prefixes of design 4.5) and `csrf-origin.ts` (`Origin` check on non-GET). [IDA-01] Test: boot-time test enumerates routes and fails on an unauthenticated route outside the allowlist; cross-origin POST returns 403.
-- [ ] 1.41 Audit hooks `auth.login.success|failure`, `auth.logout`, `auth.session.revoked`. [IDA-09] Test: events present with required fields.
+- [x] 1.38 `modules/identity/application/sessions.ts` and `platform/http/session-cookie.ts`: opaque 256-bit token, SHA-256 at rest, `HttpOnly; Secure; SameSite=Lax`, idle 12 h and absolute 7 days (staff), rotation on login and privilege change, `active_tenant_id`. [IDA-07] Test: expiry with a fake clock; rotation on login.
+- [x] 1.39 Routes `POST /auth/login`, `POST /auth/logout`, `GET /auth/me`, `GET|DELETE /auth/sessions` with contracts in `packages/contracts/src/auth.ts`; host and session tenant mismatch returns 401; unknown identifiers get identical responses. [IDA-02, IDA-07, TEN-02] Test: integration login, logout, revoke, mismatch.
+- [x] 1.40 `platform/http/auth-guard.ts` (every route requires a session unless it is declared public under the allowed prefixes of design 4.5) and `csrf-origin.ts` (`Origin` check on non-GET). [IDA-01] Test: boot-time test enumerates routes and fails on an unauthenticated route outside the allowlist; cross-origin POST returns 403.
+- [x] 1.41 Audit hooks `auth.login.success|failure`, `auth.logout`, `auth.session.revoked`. [IDA-09] Test: events present with required fields.
 
 ## S1.11 Lockout and throttling (~350 lines)
 
 Depends: S1.10.
 
-- [ ] 1.42 `modules/identity/application/lockout.ts`: counter, lock after 10 consecutive failures for 15 minutes (configurable), exponential backoff per account and IP, lock checked before credentials, `recordFailure(kind)` reusable by 2FA. [IDA-04] Test: 10 failures lock; the 11th with the correct password is still 401 generic; unlock after the window.
-- [ ] 1.43 `platform/http/rate-limit.ts` (`@fastify/rate-limit` per IP and per tenant, store behind an interface). [IDA-04, IDA-01] Test: 429 after the limit; separate buckets per tenant.
-- [ ] 1.44 Audit `auth.account.locked|unlocked`, `auth.login.locked`; identical response body and timing class for unknown identifiers. [IDA-09, IDA-04] Test: unknown versus known account responses equal.
+- [x] 1.42 `modules/identity/application/lockout.ts`: counter, lock after 10 consecutive failures for 15 minutes (configurable), exponential backoff per account and IP, lock checked before credentials, `recordFailure(kind)` reusable by 2FA. [IDA-04] Test: 10 failures lock; the 11th with the correct password is still 401 generic; unlock after the window.
+- [x] 1.43 `platform/http/rate-limit.ts` (`@fastify/rate-limit` per IP and per tenant, store behind an interface). [IDA-04, IDA-01] Test: 429 after the limit; separate buckets per tenant.
+- [x] 1.44 Audit `auth.account.locked|unlocked`, `auth.login.locked`; identical response body and timing class for unknown identifiers. [IDA-09, IDA-04] Test: unknown versus known account responses equal.
 
 ## S1.12 Action tokens and transactional email (~350 lines)
 
 Depends: S1.03.
 
-- [ ] 1.45 `db/schema/action-token.ts` + `platform/tokens/index.ts`: `issue(kind, subject, opts)` returns the raw token once; SHA-256 at rest; `redeem()` is an atomic `UPDATE ... RETURNING` with max uses, expiry per kind and optional session binding; canonical kind registry (only account kinds enabled now). [IDA-08, STF-01] Test: single use under concurrency, expired, wrong kind, hash at rest.
-- [ ] 1.46 `platform/mail/email-sender.ts` port, `adapters/smtp/` (Mailpit locally, SES SMTP in production), `adapters/fake-email/` (in memory), es-AR templates for invitation and reset. The native SES API adapter arrives with `notifications` in Stage 3. [IDA-08] Test: fake captures messages; SMTP adapter against Mailpit (integration).
+- [x] 1.45 `db/schema/action-token.ts` + `platform/tokens/index.ts`: `issue(kind, subject, opts)` returns the raw token once; SHA-256 at rest; `redeem()` is an atomic `UPDATE ... RETURNING` with max uses, expiry per kind and optional session binding; canonical kind registry (only account kinds enabled now). [IDA-08, STF-01] Test: single use under concurrency, expired, wrong kind, hash at rest.
+- [x] 1.46 `platform/mail/email-sender.ts` port, `adapters/smtp/` (Mailpit locally, SES SMTP in production), `adapters/fake-email/` (in memory), es-AR templates for invitation and reset. The native SES API adapter arrives with `notifications` in Stage 3. [IDA-08] Test: fake captures messages; SMTP adapter against Mailpit (integration).
 
 ## S1.13 Two-factor authentication (~400 lines)
 

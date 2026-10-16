@@ -7,6 +7,8 @@ const HOSTNAME =
 /** 2 to 63 characters, lowercase letters, digits and inner hyphens: safe as a DNS label. */
 const TENANT_SLUG = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])$/;
 const KEK_BYTES = 32;
+/** `name@host` or `Display Name <name@host>`. */
+const MAIL_FROM_PATTERN = /^(?:[^<>\r\n]+ <[^\s<>@]+@[^\s<>@]+>|[^\s<>@]+@[^\s<>@]+)$/;
 
 const booleanFlag = z.enum(['true', 'false']).transform((value) => value === 'true');
 
@@ -36,6 +38,13 @@ const envSchema = z
     KMS_LOCAL_KEK_BASE64: z.string().min(1).optional(),
     AWS_REGION: z.string().min(1).optional(),
     AWS_KMS_KEY_ID: z.string().min(1).optional(),
+    /** Transactional email over SMTP: Mailpit locally, the SES SMTP interface in production. */
+    SMTP_HOST: z.string().regex(HOSTNAME).optional(),
+    SMTP_PORT: z.coerce.number().int().min(1).max(65535).default(1025),
+    SMTP_SECURITY: z.enum(['none', 'starttls', 'tls']).default('none'),
+    SMTP_USER: z.string().min(1).optional(),
+    SMTP_PASSWORD: z.string().min(1).optional(),
+    MAIL_FROM: z.string().regex(MAIL_FROM_PATTERN).default('Consultorio <no-responder@localhost>'),
     /** Consecutive failed sign-ins (wrong password or second-factor code) that lock an account. */
     AUTH_LOCKOUT_MAX_FAILURES: z.coerce.number().int().min(1).max(100).default(10),
     /** How long a locked account stays locked. */
@@ -75,7 +84,23 @@ const envSchema = z
       }
     }
 
+    if ((env.SMTP_USER === undefined) !== (env.SMTP_PASSWORD === undefined)) {
+      ctx.addIssue({
+        code: 'custom',
+        path: [env.SMTP_USER === undefined ? 'SMTP_USER' : 'SMTP_PASSWORD'],
+        message: 'SMTP_USER and SMTP_PASSWORD must be set together',
+      });
+    }
+
     if (env.NODE_ENV === 'production') {
+      require('SMTP_HOST', 'is required in production (transactional email)');
+      if (env.SMTP_HOST !== undefined && env.SMTP_SECURITY === 'none') {
+        ctx.addIssue({
+          code: 'custom',
+          path: ['SMTP_SECURITY'],
+          message: 'the mail connection must use starttls or tls in production',
+        });
+      }
       if (env.KMS_PROVIDER === 'local') {
         ctx.addIssue({
           code: 'custom',
@@ -100,6 +125,15 @@ export type KmsConfig =
   | { readonly provider: 'local'; readonly kekBase64: string }
   | { readonly provider: 'aws'; readonly region: string; readonly keyId: string };
 
+export interface MailConfig {
+  readonly host: string;
+  readonly port: number;
+  readonly security: 'none' | 'starttls' | 'tls';
+  readonly user?: string;
+  readonly password?: string;
+  readonly from: string;
+}
+
 export interface Config {
   readonly nodeEnv: 'development' | 'test' | 'production';
   readonly databaseUrl: string;
@@ -113,6 +147,8 @@ export interface Config {
   readonly cookieSecure: boolean;
   readonly trustProxy: boolean;
   readonly kms: KmsConfig;
+  /** Undefined when SMTP_HOST is not set (allowed outside production). */
+  readonly mail?: MailConfig;
   readonly lockout: { readonly maxFailures: number; readonly lockMs: number };
   readonly logLevel: (typeof LOG_LEVELS)[number];
   readonly host: string;
@@ -163,6 +199,18 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     cookieSecure: value.COOKIE_SECURE ?? value.NODE_ENV === 'production',
     trustProxy: value.TRUST_PROXY,
     kms: kmsFrom(value),
+    ...(value.SMTP_HOST === undefined
+      ? {}
+      : {
+          mail: {
+            host: value.SMTP_HOST,
+            port: value.SMTP_PORT,
+            security: value.SMTP_SECURITY,
+            ...(value.SMTP_USER === undefined ? {} : { user: value.SMTP_USER }),
+            ...(value.SMTP_PASSWORD === undefined ? {} : { password: value.SMTP_PASSWORD }),
+            from: value.MAIL_FROM,
+          },
+        }),
     lockout: {
       maxFailures: value.AUTH_LOCKOUT_MAX_FAILURES,
       lockMs: value.AUTH_LOCKOUT_MINUTES * 60_000,
