@@ -284,9 +284,9 @@ Depends: S1.11, S1.08, S1.12.
 
 Depends: S1.12, S1.13.
 
-- [ ] 1.51 `POST /auth/password-reset/request` (always the same response, email only) and `/complete` (token 30 min, single use, policy check, revokes all sessions, does not bypass 2FA, audited). [IDA-08] Test: non-enumeration, reuse fails, sessions revoked.
-- [ ] 1.52 Admin-triggered reset `POST /users/:id/password-reset` only sends the email and never sets a password. [IDA-08, AUZ-03] Test: no endpoint accepts a password for another user.
-- [ ] 1.53 `POST /auth/invitations/accept {token, password}`: creates the user or links an existing user to a new membership with the invited roles, within the inviter's ceiling. [STF-01, ONB-01] Test: roles granted equal roles invited; expired token fails.
+- [x] 1.51 `POST /auth/password-reset/request` (always the same response, email only) and `/complete` (token 30 min, single use, policy check, revokes all sessions, does not bypass 2FA, audited). [IDA-08] Test: non-enumeration, reuse fails, sessions revoked.
+- [x] 1.52 Admin-triggered reset `POST /users/:id/password-reset` only sends the email and never sets a password. [IDA-08, AUZ-03] Test: no endpoint accepts a password for another user.
+- [x] 1.53 `POST /auth/invitations/accept {token, password}`: creates the user or links an existing user to a new membership with the invited roles, within the inviter's ceiling. [STF-01, ONB-01] Test: roles granted equal roles invited; expired token fails.
 
 ## S1.15 Authorization engine (~400 lines)
 

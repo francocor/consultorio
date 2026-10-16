@@ -2,8 +2,13 @@ import { randomBytes } from 'node:crypto';
 
 import { afterAll, describe, expect, it } from 'vitest';
 
+import { createFakeEmailSender } from '../../src/adapters/fake-email/index.js';
 import { createLocalKeyManagement } from '../../src/adapters/local-kek/index.js';
 import { createApplication } from '../../src/main/application.js';
+import {
+  createPasswordPolicy,
+  createPasswordValidator,
+} from '../../src/modules/identity/domain/password-policy.js';
 import { createTenantKeys } from '../../src/platform/crypto/tenant-keys.js';
 import { createRuntimeDb } from '../../src/platform/db/pool.js';
 import { findUnlistedPublicRoutes } from '../../src/platform/http/auth-guard.js';
@@ -26,6 +31,8 @@ const app = createApplication({
   },
   cookieSecure: true,
   trustProxy: false,
+  email: createFakeEmailSender(),
+  passwordValidator: createPasswordValidator(createPasswordPolicy(new Set<string>())),
   keys: createTenantKeys({ kms: createLocalKeyManagement(randomBytes(32).toString('base64')) }),
 });
 await app.ready();

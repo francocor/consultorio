@@ -45,6 +45,8 @@ const envSchema = z
     SMTP_USER: z.string().min(1).optional(),
     SMTP_PASSWORD: z.string().min(1).optional(),
     MAIL_FROM: z.string().regex(MAIL_FROM_PATTERN).default('Consultorio <no-responder@localhost>'),
+    /** Also check new passwords against a k-anonymity breach range API. Off by default. */
+    AUTH_BREACH_CHECK: booleanFlag.default(false),
     /** Consecutive failed sign-ins (wrong password or second-factor code) that lock an account. */
     AUTH_LOCKOUT_MAX_FAILURES: z.coerce.number().int().min(1).max(100).default(10),
     /** How long a locked account stays locked. */
@@ -149,6 +151,7 @@ export interface Config {
   readonly kms: KmsConfig;
   /** Undefined when SMTP_HOST is not set (allowed outside production). */
   readonly mail?: MailConfig;
+  readonly passwordBreachCheck: boolean;
   readonly lockout: { readonly maxFailures: number; readonly lockMs: number };
   readonly logLevel: (typeof LOG_LEVELS)[number];
   readonly host: string;
@@ -211,6 +214,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
             from: value.MAIL_FROM,
           },
         }),
+    passwordBreachCheck: value.AUTH_BREACH_CHECK,
     lockout: {
       maxFailures: value.AUTH_LOCKOUT_MAX_FAILURES,
       lockMs: value.AUTH_LOCKOUT_MINUTES * 60_000,

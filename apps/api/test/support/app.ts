@@ -2,10 +2,22 @@ import { randomBytes } from 'node:crypto';
 
 import type { FastifyInstance } from 'fastify';
 
+import { createFakeEmailSender } from '../../src/adapters/fake-email/index.js';
 import { createLocalKeyManagement } from '../../src/adapters/local-kek/index.js';
 import { createApplication, type ApplicationOptions } from '../../src/main/application.js';
+import { findAsset } from '../../src/main/assets.js';
+import {
+  createPasswordPolicy,
+  createPasswordValidator,
+  loadCommonPasswords,
+} from '../../src/modules/identity/domain/password-policy.js';
 import { createTenantKeys } from '../../src/platform/crypto/tenant-keys.js';
 import type { DbHandle } from '../../src/platform/db/pool.js';
+
+/** The real password rules: the bundled list of common passwords. Loaded once per test file. */
+const testPasswordValidator = createPasswordValidator(
+  createPasswordPolicy(await loadCommonPasswords(findAsset('common-passwords-100k.txt'))),
+);
 
 export const BASE_DOMAIN = 'consultorio.test';
 
@@ -41,6 +53,8 @@ export function buildTestApplication(
     keys: createTenantKeys({
       kms: createLocalKeyManagement(randomBytes(32).toString('base64')),
     }),
+    email: createFakeEmailSender(),
+    passwordValidator: testPasswordValidator,
     // Tests sign in many times from one address; the limits have their own tests.
     limits: {
       perClient: { max: 100_000, windowMs: 60_000 },

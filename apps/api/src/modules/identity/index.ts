@@ -7,17 +7,28 @@ import type { FastifyInstance } from 'fastify';
 import type { TenantKeys } from '../../platform/crypto/tenant-keys.js';
 import { SYSTEM_USER_ID, type WithTenant } from '../../platform/db/tenant-context.js';
 import type { Authenticate } from '../../platform/http/auth-guard.js';
+import type { RateLimitStore } from '../../platform/http/rate-limit.js';
+import type { EmailSender } from '../../platform/mail/email-sender.js';
+import { createActionTokens } from '../../platform/tokens/index.js';
 import type { ExportRegistry } from '../tenancy/index.js';
 
 import { createAttemptThrottle } from './application/attempt-throttle.js';
 import { exportStaff } from './application/export-contributor.js';
+import {
+  createInvitationAcceptance,
+  createInvitations,
+  type Invitations,
+} from './application/invitations.js';
 import { createLockout, DEFAULT_LOCKOUT, type LockoutPolicy } from './application/lockout.js';
 import { createLoginService, type LoginService } from './application/login.js';
+import { createPasswordReset } from './application/password-reset.js';
 import { createReauthentication } from './application/reauthentication.js';
 import { createSecondFactorLogin } from './application/second-factor-login.js';
 import { createSessionService, type SessionService } from './application/sessions.js';
 import { createTwoFactor } from './application/two-factor.js';
+import type { PasswordValidator } from './domain/password-policy.js';
 import { authRoutes } from './http/auth-routes.js';
+import { recoveryRoutes } from './http/recovery-routes.js';
 import { twoFactorRoutes } from './http/two-factor-routes.js';
 import { createPasswordHasher, type PasswordHasher } from './infrastructure/argon2.js';
 
@@ -34,6 +45,12 @@ export interface IdentityOptions {
   withTenant: WithTenant;
   /** Envelope encryption: second-factor secrets are stored encrypted with the tenant key. */
   keys: TenantKeys;
+  /** Transactional email: password reset links. */
+  email: EmailSender;
+  /** Checks new passwords (length, common passwords, optional breach check). */
+  passwordValidator: PasswordValidator;
+  /** Counters shared with the rest of the API, here for the reset emails per account. */
+  rateLimitStore: RateLimitStore;
   cookieSecure: boolean;
   clock?: () => Date;
   hasher?: PasswordHasher;
@@ -45,6 +62,8 @@ export interface Identity {
   sessions: SessionService;
   login: LoginService;
   hasher: PasswordHasher;
+  /** Issues staff invitation links (the staff module sends them). */
+  invitations: Invitations;
   /** Verifies a session token on a tenant; plugged into the platform authentication guard. */
   authenticate: Authenticate;
   /** The HTTP routes of sign-in, sign-out and session management. */
@@ -89,6 +108,25 @@ export function createIdentity(options: IdentityOptions): Identity {
     ...clock,
   });
   const reauth = createReauthentication({ hasher, lockout });
+  const tokens = createActionTokens(clock);
+  const passwordReset = createPasswordReset({
+    withTenant: options.withTenant,
+    tokens,
+    sessions,
+    hasher,
+    validator: options.passwordValidator,
+    lockout,
+    email: options.email,
+    limits: options.rateLimitStore,
+    ...clock,
+  });
+  const invitationAcceptance = createInvitationAcceptance({
+    withTenant: options.withTenant,
+    tokens,
+    hasher,
+    validator: options.passwordValidator,
+    ...clock,
+  });
   const loginRateLimit = options.loginRateLimit ? { loginRateLimit: options.loginRateLimit } : {};
 
   const mainRoutes = authRoutes({
@@ -109,16 +147,26 @@ export function createIdentity(options: IdentityOptions): Identity {
     ...loginRateLimit,
   });
 
+  const recovery = recoveryRoutes({
+    withTenant: options.withTenant,
+    passwordReset,
+    invitations: invitationAcceptance,
+    secureLinks: options.cookieSecure,
+    ...loginRateLimit,
+  });
+
   return {
     sessions,
     login,
     hasher,
+    invitations: createInvitations({ tokens, ...clock }),
     // The guard looks the session up before it knows the user, so it acts as the system.
     authenticate: (token, tenantId) =>
       options.withTenant({ tenantId, userId: SYSTEM_USER_ID }, (tx) => sessions.resolve(tx, token)),
     routes: (app) => {
       mainRoutes(app);
       factorRoutes(app);
+      recovery(app);
     },
   };
 }

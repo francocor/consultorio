@@ -3,6 +3,7 @@ import type { Writable } from 'node:stream';
 import type { FastifyInstance } from 'fastify';
 
 import type { LockoutPolicy } from '../modules/identity/application/lockout.js';
+import type { PasswordValidator } from '../modules/identity/domain/password-policy.js';
 import { createIdentity, type PasswordHasher } from '../modules/identity/index.js';
 import { createTenantLookup, type DeploymentSettings } from '../modules/tenancy/index.js';
 import type { TenantKeys } from '../platform/crypto/tenant-keys.js';
@@ -10,6 +11,7 @@ import type { Db, DbHandle } from '../platform/db/pool.js';
 import { createWithTenant } from '../platform/db/tenant-context.js';
 import type { HealthDeps } from '../platform/http/health.js';
 import { createMemoryRateLimitStore, type RateLimit } from '../platform/http/rate-limit.js';
+import type { EmailSender } from '../platform/mail/email-sender.js';
 
 import { buildServer } from './server.js';
 
@@ -24,6 +26,8 @@ export interface ApplicationOptions {
   cookieSecure: boolean;
   /** Per-tenant data keys: second-factor secrets are stored encrypted with them. */
   keys: TenantKeys;
+  email: EmailSender;
+  passwordValidator: PasswordValidator;
   /** Replaceable in tests; production uses the system clock. */
   clock?: () => Date;
   hasher?: PasswordHasher;
@@ -55,10 +59,14 @@ export function createApplication(options: ApplicationOptions): FastifyInstance 
   const db: Db = options.database.db;
   const limits: RequestLimits = { ...DEFAULT_LIMITS, ...options.limits };
   const withTenant = createWithTenant(db);
+  const rateLimitStore = createMemoryRateLimitStore();
 
   const identity = createIdentity({
     withTenant,
     keys: options.keys,
+    email: options.email,
+    passwordValidator: options.passwordValidator,
+    rateLimitStore,
     cookieSecure: options.cookieSecure,
     ...(options.clock ? { clock: options.clock } : {}),
     ...(options.hasher ? { hasher: options.hasher } : {}),
@@ -73,7 +81,7 @@ export function createApplication(options: ApplicationOptions): FastifyInstance 
     deployment: options.deployment,
     trustProxy: options.trustProxy,
     rateLimit: {
-      store: createMemoryRateLimitStore(),
+      store: rateLimitStore,
       perClient: limits.perClient,
       perTenant: limits.perTenant,
     },

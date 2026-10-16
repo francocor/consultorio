@@ -8,8 +8,10 @@ import { startWorker } from '../platform/jobs/worker.js';
 import { createApplication } from './application.js';
 import { loadConfig, type Config } from './config.js';
 import { deploymentFromConfig } from './deployment.js';
+import { createConfiguredEmail } from './email.js';
 import { createKeyManagement } from './key-management.js';
 import { buildLoggerOptions } from './logger.js';
+import { loadPasswordValidator } from './password-validator.js';
 
 const ROLES = ['api', 'worker'] as const;
 type Role = (typeof ROLES)[number];
@@ -32,6 +34,10 @@ function waitForShutdownSignal(): Promise<void> {
 async function runApi(config: Config): Promise<void> {
   const probe = createDbProbe(config.databaseUrl);
   const database = createRuntimeDb(config.databaseUrl);
+  const email = createConfiguredEmail(config.mail);
+  const passwordValidator = await loadPasswordValidator({
+    breachCheck: config.passwordBreachCheck,
+  });
   const app = createApplication({
     database,
     logLevel: config.logLevel,
@@ -40,14 +46,20 @@ async function runApi(config: Config): Promise<void> {
     trustProxy: config.trustProxy,
     cookieSecure: config.cookieSecure,
     keys: createTenantKeys({ kms: createKeyManagement(config.kms) }),
+    email: email.sender,
+    passwordValidator,
     lockout: config.lockout,
   });
 
+  if (email.kind === 'fake') {
+    app.log.warn('SMTP_HOST is not set: emails (password reset, invitations) are not delivered');
+  }
   await app.listen({ host: config.host, port: config.port });
   await waitForShutdownSignal();
 
   app.log.info('shutting down');
   await app.close();
+  email.close();
   await database.close();
   await probe.close();
 }

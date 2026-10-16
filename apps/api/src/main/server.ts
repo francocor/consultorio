@@ -11,6 +11,7 @@ import {
 import { registerRequestContext } from '../platform/audit/request-context.js';
 import { createFeatureRegistry, type FeatureKey } from '../platform/features.js';
 import { registerAuthGuard, type AuthGuardOptions } from '../platform/http/auth-guard.js';
+import { registerBackgroundTasks } from '../platform/http/background.js';
 import { registerOriginCheck } from '../platform/http/csrf-origin.js';
 import { healthRoutes, type HealthDeps } from '../platform/http/health.js';
 import {
@@ -64,6 +65,7 @@ export function buildServer(options: BuildServerOptions): FastifyInstance {
   });
 
   registerRequestId(app);
+  registerBackgroundTasks(app);
   registerRequestContext(app);
   registerProblemHandlers(app);
   registerTenantHost(app, createResolveHost(options.deployment, options.lookupTenant));
