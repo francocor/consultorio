@@ -4,7 +4,7 @@ Mode: Standard (strict TDD off during Stage 0; `strict_tdd` turns on from Stage 
 
 ## Cumulative status
 
-Stage 0: tasks 0.2 to 0.34 done. Task 0.1 (rotate secrets in `BackEnd/.env`) is a manual owner action and is NOT done. Several verification steps are PENDING because they need Docker or a push (see "Pending verification").
+Stage 0: tasks 0.2 to 0.34 done. Task 0.1 (rotate secrets in `BackEnd/.env`) is a manual owner action and is NOT done. Docker-dependent verification has been run and passes. Only push-dependent and owner steps remain PENDING (see "Pending verification").
 
 ## Batch 1: Stage 0, slices S0.01 to S0.05
 
@@ -56,13 +56,15 @@ Slice checks:
 
 Toolchain: Node v24.22.0 (system), `corepack pnpm@10` (10.34.7). Docker CLI present, daemon NOT running. Extra fixes from the batch 1 audit were folded into the most fitting slice as their own work-unit commits.
 
-| Slice | Branch (stacked on previous) | Commits | Tasks | Hand-written lines (lockfile and snapshots excluded) |
+| Slice | Branch (stacked on previous) | Tip | Commits (work units, then review fixes) | Tasks |
 |---|---|---|---|---|
-| S0.06 Test tooling (+ audit fixes 1 to 5) | `feat/s0-06-test-tooling` (from `feat/s0-05-web-skeleton`) | `c07d6fd7` build pnpm 10; `90f529e1` fix api logs/readiness; `255e23b5` feat api problem+json; `9fadc84a` build lint rules; `93675336` test Vitest workspace; `4408b6d8` test Playwright; `65549a73` test vitest-axe; `99753610` docs tasks | 0.16, 0.17, 0.18 | about 667 (over budget, see risks) |
-| S0.07 Database foundation | `feat/s0-07-database-foundation` | `7946997a` Drizzle foundation; `8cbf9266` withTenant; `50ef2e55` RLS catalog; `c4034725` drift check; `28a23a3f` docs tasks | 0.19, 0.20, 0.21, 0.22 | about 730 (over budget, see risks) |
-| S0.08 Local environment and image (+ audit fix 6) | `feat/s0-08-local-env-and-image` | `f35c5aec` esbuild bundle; `99317ac9` Dockerfile; `abe5c3c3` compose; `1906f38b` .env.example; `8bbd9407` dev-setup; `021785d3` docs tasks | 0.23, 0.24, 0.25, 0.26 | about 383 |
-| S0.09 CI and secret scanning | `feat/s0-09-ci-and-secret-scanning` | `22f6dbfb` ci; `b7ebaaf0` gitleaks + lefthook; `a34562a8` renovate; `2a4d01ca` docs tasks | 0.27, 0.28, 0.29 | about 182 |
-| S0.10 Legacy marker, docs, tooling refresh | `docs/s0-10-readme-legacy-markers` | `2ee8225e` README + external deps; `69643e40` LEGACY markers; `d0ea6eb3` ignore agent skills; `33693bb5` config refresh; plus the docs commit that adds this file | 0.30, 0.31, 0.32, 0.33, 0.34 | about 94 |
+| S0.06 Test tooling (+ audit fixes 1 to 5) | `feat/s0-06-test-tooling` (from `feat/s0-05-web-skeleton`) | `08c7612b` | `c07d6fd7` pnpm 10; `90f529e1` api logs/readiness; `255e23b5` problem+json; `9fadc84a` lint rules; `93675336` Vitest; `4408b6d8` Playwright; `65549a73` vitest-axe; `99753610` docs; **fix** `08c7612b` redact x-api-key and token | 0.16, 0.17, 0.18 |
+| S0.07 Database foundation | `feat/s0-07-database-foundation` | `0968a0f0` | `d6411d9b` Drizzle foundation; `0e7dc9fe` withTenant; `37469b7b` RLS catalog; `67321d44` drift check; `3e16de50` docs; **fixes** `d7bec7e1` sorted expectation, `0968a0f0` assert DrizzleQueryError cause | 0.19 to 0.22 |
+| S0.08 Local environment and image (+ audit fix 6) | `feat/s0-08-local-env-and-image` | `aa34a9c9` | `e5ba0416` esbuild bundle; `fc64a630` Dockerfile; `3e81325b` compose; `9a10528c` .env.example; `a0376b56` dev-setup; `d7f52b3a` docs; **fixes** `4d81933d` .dockerignore, `4aea17da` loopback ports + pinned images + bucket retry, `aa34a9c9` infra:up scripts | 0.23 to 0.26 |
+| S0.09 CI and secret scanning | `feat/s0-09-ci-and-secret-scanning` | `71d8a964` | `8e849494` ci; `32547e7d` gitleaks + lefthook; `d023b262` renovate; `5fa4e36f` docs; **fixes** `d6713cbe` SHA-pinned actions + license, `71d8a964` prepare only with .git | 0.27 to 0.29 |
+| S0.10 Legacy marker, docs, tooling refresh | `docs/s0-10-readme-legacy-markers` | see git (the last commit is the docs commit that adds this text) | `2bf7fdb2` README; `90e3231c` LEGACY; `750a6d71` ignore skills in lint/docker; `ca67265d` config refresh; `533ce1bb` progress; **fixes** `8e0fa6f5` ignore AutoSkills output in git, `f2292bfd` GITLEAKS_LICENSE note | 0.30 to 0.34 |
+
+Hand-written lines before the review fixes: S0.06 about 667, S0.07 about 730 (both over the 400 budget, see deviation 10), S0.08 about 383, S0.09 about 182, S0.10 about 94.
 
 ### What was built
 
@@ -96,14 +98,14 @@ Toolchain: Node v24.22.0 (system), `corepack pnpm@10` (10.34.7). Docker CLI pres
 | `node dist/main.js api` from `pnpm deploy --prod --legacy` output (no TS loader, no workspace links) | `/health` 200, `/ready` 503 with `ECONNREFUSED` logged as warn, unknown route 404 problem+json |
 | SQL validation on PGlite (WASM Postgres), scratch only | roles bootstrap and migration 0000 apply; `app_rw` not superuser/BYPASSRLS/owner; extensions present; cross-tenant read returns only own rows; cross-tenant insert blocked; query outside `withTenant` raises; `app_rw` cannot create in `public` |
 
-### Pending verification (could not run here)
+### Pending verification
 
-1. `pnpm test:integration` (roles, `withTenant`, RLS catalog): needs the Docker daemon for Testcontainers. Fails here with "Could not find a working container runtime strategy". Run it once Docker Desktop is up.
-2. `docker build -f infra/Dockerfile -t consultorio-api .` and `docker run ... api` answering `/health`; `docker compose -f infra/docker-compose.yml up -d` reaching healthy (images `minio/minio`, `minio/mc`, `axllent/mailpit` use `:latest`; healthcheck commands are the documented ones but untested).
-3. CI green on a PR and the gitleaks job on a throwaway branch: needs a push.
-4. Branch protection on `master` and the Renovate app: owner actions.
-5. Clean-clone walkthrough of `docs/dev-setup.md` (task 0.26): owner, PR checklist.
-6. Task 0.1: rotate the secrets (owner).
+Everything that needed Docker was run after the first report (see "Review fixes and Docker verification"). Still pending:
+
+1. CI green on a PR and the gitleaks job on a throwaway branch: needs a push (nothing is pushed).
+2. Branch protection on `master` and the Renovate app: owner actions.
+3. Clean-clone walkthrough of `docs/dev-setup.md` (task 0.26): owner, PR checklist.
+4. Task 0.1: rotate the secrets (owner).
 
 ### Batch 2 deviations from design and tasks
 
@@ -115,16 +117,51 @@ Toolchain: Node v24.22.0 (system), `corepack pnpm@10` (10.34.7). Docker CLI pres
 6. `@consultorio/contracts` is a devDependency of `@consultorio/api` (bundled into `dist/main.js`), so `pnpm deploy --prod` ships only third-party runtime dependencies. The API build is an esbuild script rather than tsup.
 7. `minimumReleaseAge: 1440` (one day) was added to `pnpm-workspace.yaml` as a supply-chain guard; the design does not mandate it. It rejected a vitest release published 8 hours earlier, so the api pin is `^5.0.4`/`^5.0.0` style ranges.
 8. `strict_tdd: true` and `apply.tdd: true` are set in `openspec/config.yaml` for Stage 1 onward (task 0.33 recommendation: test-first for domain and security code). The orchestrator may revert this if the owner prefers standard mode.
-9. AutoSkills was run (as allowed): it installed 14 skills (typescript-advanced-types, nodejs-backend-patterns, nodejs-best-practices, vitest, zod, drizzle, react-best-practices, composition-patterns, tailwind-css-patterns, playwright-best-practices, vite, frontend-design, accessibility, seo) for claude-code, opencode and codex. It wrote untracked `.agents/`, `.claude/skills/` and `skills-lock.json` into the repo and refreshed the ignored `.atl/skill-registry.md`. They are NOT committed; they are excluded from Prettier, ESLint and the Docker context.
+9. AutoSkills was run (as allowed): it installed 14 skills (typescript-advanced-types, nodejs-backend-patterns, nodejs-best-practices, vitest, zod, drizzle, react-best-practices, composition-patterns, tailwind-css-patterns, playwright-best-practices, vite, frontend-design, accessibility, seo) for claude-code, opencode and codex. It wrote untracked `.agents/`, `.claude/skills/` and `skills-lock.json` into the repo and refreshed the ignored `.atl/skill-registry.md`. The owner then decided to ignore this output: `.gitignore` lists them (S0.10 fix commit `8e0fa6f5`). ESLint and the Docker context keep their own exclusions because neither reads `.gitignore`; the duplicate Prettier ones were removed because Prettier 3 does.
 10. Slice sizes exceed the 400-line budget: S0.06 about 667 (the pnpm 10 upgrade, logging/problem+json fixes, lint rules and tests were folded in) and S0.07 about 730 (tests and Testcontainers support are most of it). Each is split into work-unit commits that can be promoted to separate PRs if the owner wants.
+
+### Review fixes and Docker verification (after the fresh reviewer verdict FIX FIRST)
+
+Each fix is its own commit in the slice that introduced the problem; descendants were restacked with `git rebase --update-refs` (local branches only, `master` untouched).
+
+| # | Problem | Fix (slice) |
+|---|---|---|
+| 1 | `rls-catalog.test.ts` expected array order was wrong | `d7bec7e1` (S0.07) |
+| 2 | drizzle-orm 0.45 wraps driver errors in `DrizzleQueryError`; the test matched the wrong message | `0968a0f0` (S0.07): assert `cause.code === '42501'` and the RLS message |
+| 3 | `.dockerignore` only matched a root `.env` | `4d81933d` (S0.08): `**/.env`, `**/.env.*`, `!**/.env.example` |
+| 4 | compose ports published on all interfaces | `4aea17da` (S0.08): every port bound to `127.0.0.1` |
+| 5 | Actions pinned to tags | `d6713cbe` (S0.09): SHA plus version comment, `GITLEAKS_LICENSE` passed; README note `f2292bfd` (S0.10) |
+| 6a | `:latest` images | `4aea17da`: postgres 17.11, mailpit v1.31.6, clamav 1.5.4-debian. **MinIO**: `minio/minio` and `minio/mc` no longer exist on Docker Hub or Quay (`:latest` could not even be pulled), so local dev uses the frozen `bitnamilegacy/minio:2025.7.23-debian-12-r5` (also used for the bucket job). It is unmaintained: development only; consider RustFS or SeaweedFS later |
+| 6b | compose ignored the root `.env` | `aa34a9c9` (S0.08): `pnpm infra:up/down/reset` pass `--env-file .env`; documented in `docs/dev-setup.md` |
+| 6c | logger redaction | `08c7612b` (S0.06): `x-api-key` headers and `token` / `*.token` fields |
+| 7 | AutoSkills output untracked | `8e0fa6f5` (S0.10): `.gitignore` |
+| new | Docker build failed: the root `prepare` script ran `lefthook install` with no git | `71d8a964` (S0.09): only runs when a `.git` directory exists |
+| new | The MinIO bucket job raced the Bitnami entrypoint (it restarts MinIO once) | `4aea17da`: the job retries the alias for up to 60 s |
+
+Verification against real Docker (Node v24.22.0, pnpm 10.34.7, Docker engine 29.4.0, gitleaks 8.30.1 from winget):
+
+| Command | Result |
+|---|---|
+| `pnpm test:integration` (first run, before fixes 1 and 2) | 2 failed, 10 passed: exactly the two reviewed assertions |
+| `pnpm test:integration` (after fixes) | exit 0, 3 files, 12 tests: roles, withTenant, RLS catalog on Postgres 17 as `app_rw` |
+| `docker build -f infra/Dockerfile -t consultorio-api .` | first build failed (prepare/lefthook); exit 0 after `71d8a964` |
+| `docker run -p 127.0.0.1:53000:3000 -e DATABASE_URL=... consultorio-api api` | `/health` 200, `/ready` 503, unknown route 404 problem+json, runs as uid 1000 `node`, HEALTHCHECK `healthy` |
+| `docker compose --env-file <test env, alternate ports> -f infra/docker-compose.yml --profile scan --profile app up -d --build` | postgres, minio, mailpit, clamav and the built api all `healthy`; minio-init exited 0 and created the private bucket `consultorio-files` |
+| Fresh volume, `select rolname, rolsuper, rolbypassrls from pg_roles where rolname like 'app_%'` | `app_owner` and `app_rw`, both super=false and bypassrls=false; database owned by `app_owner`; `pnpm --filter @consultorio/api db:migrate` applies migration 0000; the compose `api` answers `/ready` 200 as `app_rw` |
+| Published ports | none outside `127.0.0.1` |
+| `docker compose ... down -v` | all consultorio containers, volumes and network removed |
+| `pnpm install --frozen-lockfile`, `typecheck`, `lint`, `format:check`, `test` (8 files, 39 tests), `build`, `db:check`, `audit --prod --audit-level=high`, `test:e2e` (6 tests) | all exit 0 |
+| `actionlint` on `ci.yml` after pinning | exit 0 |
+
+Notes: the host already runs other containers on ports 5432, 5433 and 9000-9001 (not this project's), so the compose run used a throwaway env file with alternate ports. A stray root `.env` (placeholders copied from `.env.example`, git-ignored) was created during this run and should be deleted by the owner. The pre-commit hook runs on every commit from S0.09 onward; on the earlier branches (S0.06 to S0.08) `lefthook.yml` does not exist yet, so the hook is a no-op there and a manual `gitleaks git --pre-commit --staged` was run before each fix commit instead.
 
 ## Risks and follow-ups
 
 - Task 0.1: the secrets in `BackEnd/.env` remain in git history and must be rotated by the owner before anything is pushed or merged. History rewrite is out of scope.
 - Nothing is pushed. CI, branch protection and Renovate have not run.
-- The pre-commit hook needs `gitleaks` installed locally (Windows: `winget install Gitleaks.Gitleaks`); without it every commit is blocked on purpose. The hook was installed by `pnpm install` (`prepare` script).
-- `gitleaks-action` may require a license for GitHub organization accounts (free for personal accounts).
-- The integration tests were written but not executed against a container; the SQL and RLS behavior were checked on PGlite only. Treat the first real run as a verification step.
+- The pre-commit hook needs `gitleaks` installed locally (Windows: `winget install Gitleaks.Gitleaks`, now done by the owner); without it every commit is blocked on purpose. On Windows the winget folder may be missing from a stale shell PATH. The hook was installed by `pnpm install` (`prepare` script).
+- `gitleaks-action` requires a `GITLEAKS_LICENSE` secret under a GitHub organization (free for personal accounts); documented in the README.
+- The integration tests now pass against a real Postgres 17 container (12 tests).
 - A full-history `gitleaks detect` will report the old committed secrets; PR-range scans do not.
 
 ## Repository migration (clean repository, working name `consultorio`)
@@ -136,3 +173,19 @@ Stage 0 was replayed into a new repository, with the product working name `consu
 - Workspace scope `@aillu/*` is now `@consultorio/*`, and the other `aillu` identifiers (image `consultorio-api`, bucket `consultorio-files`, database `consultorio`, compose project `consultorio`) were renamed the same way. Commands and names quoted in this file use the new names.
 - Commit hashes quoted in this file belong to the source repository and do not exist here.
 - Tasks that only manage in-repo legacy (0.3, 0.4, 0.32 and S2.34) are marked "N/A: legacy lives in a separate repo".
+
+### Re-verification in this repository (tip of `docs/s0-10-readme-legacy-markers`, Node v24.22.0, pnpm 10.34.7)
+
+| Command                                                                                                          | Result                                                                                                                                  |
+| ---------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
+| `pnpm install --frozen-lockfile`                                                                                 | exit 0; `pnpm install --lockfile-only` leaves `pnpm-lock.yaml` unchanged                                                                |
+| `pnpm typecheck`, `pnpm lint`, `pnpm format:check`                                                               | pass                                                                                                                                    |
+| `pnpm test`, `pnpm test:integration`, `pnpm test:e2e`                                                            | 39 unit tests in 8 files, 12 integration tests in 3 files, 6 e2e tests                                                                  |
+| `pnpm build`, `pnpm db:check`, `pnpm audit --prod --audit-level=high`                                            | pass, no findings                                                                                                                       |
+| `docker build -f infra/Dockerfile -t consultorio-api .` and `docker run ... consultorio-api api`                 | `/health` 200, `/ready` 503 without a database, unknown route 404 problem+json, runs as uid 1000, HEALTHCHECK `healthy`               |
+| `docker compose --env-file <alternate ports> -f infra/docker-compose.yml --profile scan --profile app up -d --build --wait`, then `down -v` | postgres, minio, mailpit, clamav and api `healthy`; `app_owner` and `app_rw` are not superuser and cannot bypass RLS; everything removed; `minio-init` exited 0 |
+| `gitleaks git` over the whole history (48 commits)                                                               | no leaks                                                                                                                                |
+
+Fixed in S0.08: `minio-init` used to exit 1 with `Access Denied` on `mc mb`, also in the source repository, while `up --wait` could still look fine. Compose was interpolating `$MINIO_ROOT_USER` and `$MINIO_ROOT_PASSWORD` itself (empty when the env file does not define them) and only `mc alias set` was retried. The job now escapes the shell variables with `$$`, retries alias, bucket and private policy together for about 60 seconds, and exits 1 if that fails. The `api` service waits for the job to complete, so `up --wait` accepts the exit 0. Verified: `minio-init` exits 0, `consultorio-files` exists and is private (anonymous GET returns 403), and a wrong password fails the job with exit 1 after about 60 seconds.
+
+Also fixed in S0.08: `pnpm infra:up` ran `up -d --wait` on the default profile, where Compose v5.1.2 reports a container that exits, even with code 0, as a failure. It now waits for `postgres`, `minio` and `mailpit` and then runs `minio-init` with `docker compose run --rm --no-deps`, so the job exit code is the script exit code. Verified with the script commands against the scratch env file (alternate ports): `infra:up` exit 0 (also when run twice), `infra:down` exit 0 with the volumes kept, `infra:reset` exit 0 with containers, volumes and network gone.
