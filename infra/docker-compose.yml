@@ -62,13 +62,20 @@ services:
       - -c
       - |
         # The Bitnami entrypoint starts MinIO, stops it and starts it again, so the first
-        # health check can pass just before a restart. Retry until the alias answers.
-        for attempt in $(seq 1 30); do
-          mc alias set local http://minio:9000 "$MINIO_ROOT_USER" "$MINIO_ROOT_PASSWORD" && break
+        # health check can pass just before a restart. Retry the whole chain (alias, bucket,
+        # private policy) for about 60 seconds and fail the job if it never succeeds.
+        # Shell variables use $$ so Compose does not interpolate them from its own environment.
+        for attempt in $$(seq 1 30); do
+          if mc alias set local http://minio:9000 "$$MINIO_ROOT_USER" "$$MINIO_ROOT_PASSWORD" &&
+            mc mb --ignore-existing "local/$$S3_BUCKET" &&
+            mc anonymous set none "local/$$S3_BUCKET"; then
+            exit 0
+          fi
+          echo "MinIO is not ready (attempt $$attempt of 30), retrying in 2 seconds" >&2
           sleep 2
-        done &&
-        mc mb --ignore-existing "local/$$S3_BUCKET" &&
-        mc anonymous set none "local/$$S3_BUCKET"
+        done
+        echo "MinIO bucket bootstrap failed after 60 seconds" >&2
+        exit 1
     restart: 'no'
 
   mailpit:
@@ -117,6 +124,10 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      # The bucket job runs once and exits. Depending on its completion lets
+      # "up --wait" treat that exit as success instead of as a failed container.
+      minio-init:
+        condition: service_completed_successfully
 
 volumes:
   postgres-data:
