@@ -19,7 +19,7 @@ corepack enable
 pnpm install
 
 cp .env.example .env            # safe local placeholders, never commit .env
-pnpm infra:up                   # docker compose with the root .env, waits until healthy
+pnpm infra:up                   # starts the services, waits until healthy, then creates the bucket
 
 # create the schema (runs as app_owner)
 pnpm --filter @consultorio/api db:migrate
@@ -32,6 +32,8 @@ pnpm infra:reset                # docker compose down -v: removes containers and
 ```
 
 `pnpm infra:up`, `infra:down` and `infra:reset` wrap `docker compose --env-file .env -f infra/docker-compose.yml ...`. The `--env-file .env` part matters: compose reads variable defaults from the folder of the compose file (`infra/`), so without it your root `.env` (ports, passwords) would be ignored. Every published port is bound to `127.0.0.1` only.
+
+`pnpm infra:up` starts Postgres, MinIO and Mailpit with `up --wait`, then runs the one-shot `minio-init` job with `docker compose run`. The job is run on its own because Compose treats a container that exits, even with code 0, as a failure while it waits. It is safe to run again: an existing bucket is kept.
 
 ## Run the apps
 

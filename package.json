@@ -20,7 +20,7 @@
     "test:e2e": "pnpm -r --if-present run test:e2e",
     "test:coverage": "vitest run --coverage",
     "db:check": "pnpm --filter @consultorio/api db:check",
-    "infra:up": "docker compose --env-file .env -f infra/docker-compose.yml up -d --wait",
+    "infra:up": "docker compose --env-file .env -f infra/docker-compose.yml up -d --wait postgres minio mailpit && docker compose --env-file .env -f infra/docker-compose.yml run --rm --no-deps minio-init",
     "infra:down": "docker compose --env-file .env -f infra/docker-compose.yml down",
     "infra:reset": "docker compose --env-file .env -f infra/docker-compose.yml down -v"
   },
