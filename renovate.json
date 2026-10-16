@@ -3,7 +3,7 @@
   "extends": ["config:recommended", "helpers:pinGitHubActionDigests", ":semanticCommits"],
   "timezone": "America/Argentina/Buenos_Aires",
   "schedule": ["before 6am on monday"],
-  "ignorePaths": ["BackEnd/**", "FrontEnd/**", "openspec/**"],
+  "ignorePaths": ["openspec/**"],
   "minimumReleaseAge": "1 day",
   "packageRules": [
     {

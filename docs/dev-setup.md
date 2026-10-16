@@ -1,6 +1,6 @@
 # Development setup
 
-How to run the new stack (`apps/`, `packages/`, `infra/`) on your machine. The legacy `BackEnd/` and `FrontEnd/` folders are reference only and are not part of this setup.
+How to run the new stack (`apps/`, `packages/`, `infra/`) on your machine. The legacy reference app is not part of this repository or this setup.
 
 ## Prerequisites
 

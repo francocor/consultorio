@@ -59,7 +59,7 @@ Decisions the owner must make before `sdd-apply`:
 | Default rollback | `git revert` of the slice. Migrations are forward-only and expand-only (new tables, columns, functions), so reverting the app code leaves a compatible database. Contract (drop) migrations only ever appear in a later, explicit slice. |
 | Commits | Work-unit commits inside a slice (behavior plus its tests), Conventional Commits, no AI attribution. Never commit by file type. |
 | Parallel | One developer: "parallel" means order-independent, not simultaneous. Each slice lists **Depends**. Slices with no dependency between them can be reordered freely. |
-| Legacy | `BackEnd/` and `FrontEnd/` stay in place and untouched, apart from the marker file in task 0.32, until S2.34. |
+| Legacy | The legacy reference app lives in the separate archived repository `francocor/AppmedicoCMAillu`. This repository holds no legacy code (see S2.34). |
 | Design deviation (flagged) | Pure country validators (DNI, CUIT, matricula format) live in `packages/contracts/src/country/ar/` and are re-exported by `apps/api/src/country/ar/`, so web forms and API share one implementation. Apply may revisit. |
 
 ---
@@ -72,10 +72,10 @@ Goal: a clean repository and a green pipeline, with nothing product-shaped yet. 
 
 Start: current `master`. Done when: ignored files are untracked, local files are intact. Rollback: `git revert` (local files are never touched; secret rotation is forward-only and is NOT reverted).
 
-- [ ] 0.1 **Owner action, manual, do first**: rotate every secret that is in `BackEnd/.env` (database credentials, JWT secret, any API or SMTP keys) and anywhere they were reused. Treat them as compromised because they remain in git history. Record "rotated, date" in the PR description, never the values. [IDA-10] Verify: owner confirms old credentials are revoked.
-- [x] 0.2 Create root `.gitignore`: `node_modules/`, `.env`, `.env.*` with `!.env.example`, `dist/`, `coverage/`, `playwright-report/`, `test-results/`, `*.pem`, `*.pfx`, `*.p12`, `.DS_Store`, `.atl/` (default: ignore the skill-registry cache unless the owner wants it versioned). [IDA-10] Test: `git check-ignore -v BackEnd/.env FrontEnd/node_modules` prints a rule for each.
-- [x] 0.3 Untrack without deleting: first list with `git ls-files | rg "(^|/)node_modules/" | head`, then `git rm -r --cached --quiet BackEnd/node_modules FrontEnd/node_modules` (plus any other tracked `node_modules` found) and `git rm --cached BackEnd/.env`. Never use `rm` or `git rm` without `--cached`. [IDA-10] Test: `git ls-files | rg "node_modules|\.env$"` is empty, and the files still exist on disk.
-- [x] 0.4 Add a note to the PR description: history still contains the old secrets and `node_modules`. Rewriting history (`git filter-repo`) is a separate owner decision and is out of scope. Test: none (documentation).
+- [ ] 0.1 **Owner action, manual, do first**: rotate every secret that is in `BackEnd/.env` of the legacy repository (database credentials, JWT secret, any API or SMTP keys) and anywhere they were reused. Treat them as compromised because they remain in the legacy repository history. Record "rotated, date" in the PR description, never the values. [IDA-10] Verify: owner confirms old credentials are revoked.
+- [x] 0.2 Create root `.gitignore`: `node_modules/`, `.env`, `.env.*` with `!.env.example`, `dist/`, `coverage/`, `playwright-report/`, `test-results/`, `*.pem`, `*.pfx`, `*.p12`, `.DS_Store`, `.atl/` (default: ignore the skill-registry cache unless the owner wants it versioned). [IDA-10] Test: `git check-ignore -v .env node_modules` prints a rule for each.
+- [x] 0.3 N/A: legacy lives in a separate repo (`francocor/AppmedicoCMAillu`, archived). This repository never tracked `node_modules` or `.env`, so there is nothing to untrack.
+- [x] 0.4 N/A: legacy lives in a separate repo (`francocor/AppmedicoCMAillu`, archived). This repository history holds no legacy code, `node_modules` or secrets.
 
 ## S0.02 Commit the SDD artifacts (docs only) `size:exception`
 
@@ -120,17 +120,17 @@ Depends: S0.04, S0.05.
 
 Depends: S0.06.
 
-- [x] 0.19 `apps/api/drizzle.config.ts`, `src/db/schema/index.ts`, migration `src/db/migrations/0000_roles_and_extensions.sql`: roles `app_owner` (migrations) and `app_rw` (runtime, **not** table owner, no `BYPASSRLS`), schema `app` for helper functions, extensions `btree_gist`, `citext`, `pgcrypto`, `pg_trgm`, `unaccent`, default privileges for `app_rw`, `REVOKE CREATE ON SCHEMA public FROM PUBLIC`. [TEN-03] Test: integration asserts `app_rw` is neither owner nor superuser nor `BYPASSRLS`. **Integration run PENDING**: needs the Docker daemon (Testcontainers). SQL and RLS behavior were checked on PGlite.
-- [x] 0.20 `src/platform/db/pool.ts` (owner pool for migrations, `app_rw` pool for runtime) and `src/platform/db/tenant-context.ts` `withTenant(ctx, fn)` exactly as in the design (transaction-local `set_config` for `app.tenant_id`, `app.user_id`, `app.professional_id`). [TEN-02, TEN-03] Test: integration on a probe table inside the test: reads work inside `withTenant`, and outside it `current_setting('app.tenant_id')` raises (fails closed). **Integration run PENDING**: needs the Docker daemon (Testcontainers). SQL and RLS behavior were checked on PGlite.
-- [x] 0.21 `apps/api/test/support/postgres.ts` (Testcontainers Postgres 17 global setup: run migrations as `app_owner`, tests connect as `app_rw`) and `apps/api/test/tenancy/rls-catalog.test.ts`: every table with `tenant_id` must have `ENABLE` + `FORCE` RLS and at least one policy. The test proves itself by creating a deliberately bad table in a scratch schema and asserting it is flagged. [TEN-03] Test: that file. **Integration run PENDING**: needs the Docker daemon (Testcontainers). SQL and RLS behavior were checked on PGlite.
+- [x] 0.19 `apps/api/drizzle.config.ts`, `src/db/schema/index.ts`, migration `src/db/migrations/0000_roles_and_extensions.sql`: roles `app_owner` (migrations) and `app_rw` (runtime, **not** table owner, no `BYPASSRLS`), schema `app` for helper functions, extensions `btree_gist`, `citext`, `pgcrypto`, `pg_trgm`, `unaccent`, default privileges for `app_rw`, `REVOKE CREATE ON SCHEMA public FROM PUBLIC`. [TEN-03] Test: integration asserts `app_rw` is neither owner nor superuser nor `BYPASSRLS`. Verified with `pnpm test:integration` against real Docker (Testcontainers Postgres 17): 3 files, 12 tests pass.
+- [x] 0.20 `src/platform/db/pool.ts` (owner pool for migrations, `app_rw` pool for runtime) and `src/platform/db/tenant-context.ts` `withTenant(ctx, fn)` exactly as in the design (transaction-local `set_config` for `app.tenant_id`, `app.user_id`, `app.professional_id`). [TEN-02, TEN-03] Test: integration on a probe table inside the test: reads work inside `withTenant`, and outside it `current_setting('app.tenant_id')` raises (fails closed). Verified with `pnpm test:integration` against real Docker (Testcontainers Postgres 17): 3 files, 12 tests pass.
+- [x] 0.21 `apps/api/test/support/postgres.ts` (Testcontainers Postgres 17 global setup: run migrations as `app_owner`, tests connect as `app_rw`) and `apps/api/test/tenancy/rls-catalog.test.ts`: every table with `tenant_id` must have `ENABLE` + `FORCE` RLS and at least one policy. The test proves itself by creating a deliberately bad table in a scratch schema and asserting it is flagged. [TEN-03] Test: that file. Verified with `pnpm test:integration` against real Docker (Testcontainers Postgres 17): 3 files, 12 tests pass.
 - [x] 0.22 `scripts/check-migration-drift.ts` (fails when the Drizzle schema and the migration folder disagree), wired to `pnpm db:check`. Test: run against a clean tree passes; a hand-edited schema fails.
 
 ## S0.08 Local environment and image (~300 lines)
 
 Depends: S0.03 (independent of S0.06 and S0.07 except the init script).
 
-- [x] 0.23 `infra/Dockerfile` (multi-stage: deps, build, runtime on a Node 24 slim image, non-root user, tini, `HEALTHCHECK`), `.dockerignore`. Test: `docker build -f infra/Dockerfile .` succeeds and `docker run ... node dist/main.js api` answers `/health`. **Docker run PENDING**: the bundle was verified outside Docker (`pnpm deploy --prod` then `node dist/main.js api` answers `/health`); run `docker build -f infra/Dockerfile -t consultorio-api .` once the daemon is up.
-- [x] 0.24 `infra/docker-compose.yml`: `postgres:17` (mounts `infra/postgres/init/01-roles.sql`), `minio` (+ bucket-creation init), `mailpit`, `clamav` (with healthcheck and a memory note of about 1 GB), named volumes, optional `api` profile. Test: `docker compose config` validates; `docker compose up -d` reaches healthy. `docker compose config` validated; **`up -d` health PENDING** (daemon down). ClamAV sits behind the `scan` profile so the default stack stays light.
+- [x] 0.23 `infra/Dockerfile` (multi-stage: deps, build, runtime on a Node 24 slim image, non-root user, tini, `HEALTHCHECK`), `.dockerignore`. Test: `docker build -f infra/Dockerfile .` succeeds and `docker run ... node dist/main.js api` answers `/health`. Verified: `docker build -f infra/Dockerfile -t consultorio-api .` succeeds; the container runs as `node` (non-root), `/health` answers 200 and the HEALTHCHECK reports healthy.
+- [x] 0.24 `infra/docker-compose.yml`: `postgres:17` (mounts `infra/postgres/init/01-roles.sql`), `minio` (+ bucket-creation init), `mailpit`, `clamav` (with healthcheck and a memory note of about 1 GB), named volumes, optional `api` profile. Test: `docker compose config` validates; `docker compose up -d` reaches healthy. Verified: `pnpm infra:up` (compose with `--env-file .env`) reaches healthy; with `--profile scan --profile app` ClamAV and the api image are healthy too; `01-roles.sql` ran on a fresh volume (app_owner and app_rw, no superuser, no BYPASSRLS). ClamAV stays behind the `scan` profile so the default stack stays light. MinIO runs on the frozen Bitnami build because MinIO stopped publishing community images.
 - [x] 0.25 Root `.env.example` listing every variable with safe placeholders and comments, no secrets. [IDA-10] Test: a unit test in `apps/api` loads `.env.example` through the config schema and passes.
 - [x] 0.26 `docs/dev-setup.md`: prerequisites, `pnpm install`, `docker compose -f infra/docker-compose.yml up -d`, run commands, Mailpit and MinIO console URLs. Test: manual walkthrough from a clean clone listed in the PR checklist. **Clean-clone walkthrough PENDING** (owner, PR checklist).
 
@@ -146,11 +146,11 @@ Depends: S0.06, S0.07, S0.08.
 
 Depends: S0.09.
 
-- [ ] 0.30 Root `README.md` (product overview, layout, links to `docs/dev-setup.md` and `openspec/`). Test: none.
-- [ ] 0.31 `docs/external-dependencies.md` skeleton (AFIP, WhatsApp Business, e-Rx provider, Mercado Pago, legal Q1 and Q7) filled in S1.00. Test: none.
-- [ ] 0.32 This task explicitly allows touching legacy: add `BackEnd/LEGACY.md` and `FrontEnd/LEGACY.md` ("reference only; do not extend; removed after Stage 2; see openspec change `health-practice-saas`"). Legacy is excluded from the workspace, lint and CI, and is NOT moved. Test: `pnpm lint` does not scan legacy folders.
-- [ ] 0.33 Update `openspec/config.yaml` `testing` and `apply.test_command` (runner Vitest, layers unit/integration/e2e true, linter/type checker/formatter true) and re-run `sdd-init` to refresh the cached testing capabilities. Decide whether strict TDD turns on from Stage 1 (recommendation: on for domain and security code). Test: `sdd-init` reports the runner.
-- [ ] 0.34 Stage 0 gate: record the demo evidence (clean `git ls-files`, green pipeline link) in the PR. Test: checklist.
+- [x] 0.30 Root `README.md` (product overview, layout, links to `docs/dev-setup.md` and `openspec/`). Test: none.
+- [x] 0.31 `docs/external-dependencies.md` skeleton (AFIP, WhatsApp Business, e-Rx provider, Mercado Pago, legal Q1 and Q7) filled in S1.00. Test: none.
+- [x] 0.32 N/A: legacy lives in a separate repo (`francocor/AppmedicoCMAillu`, archived). No marker files are needed because there is no legacy code in this repository.
+- [x] 0.33 Update `openspec/config.yaml` `testing` and `apply.test_command` (runner Vitest, layers unit/integration/e2e true, linter/type checker/formatter true) and re-run `sdd-init` to refresh the cached testing capabilities. Decide whether strict TDD turns on from Stage 1 (recommendation: on for domain and security code). Test: `sdd-init` reports the runner.
+- [x] 0.34 Stage 0 gate: record the demo evidence (clean `git ls-files`, green pipeline link) in the PR. Test: checklist. Evidence recorded in `apply-progress.md` (clean `git ls-files`, local verification run). **Green pipeline link PENDING**: nothing is pushed, so CI has not run.
 
 ---
 
@@ -748,14 +748,14 @@ Depends: S2.31. May slip to Stage 3 without blocking the Stage 2 gate. Blocked b
 Depends: S2.31.
 
 - [ ] 2.100 Fresh-context review (`judgment-day`) of scheduling concurrency, clinical access and the documents pipeline; fix findings. Test: review report attached.
-- [ ] 2.101 `docs/legacy-parity.md` mapping legacy domains (auth, pacientes, profesionales, turnos, horarios, atencion, historias clinicas, asistencias) to the new features; facturacion and recetas stay reference-only until Stages 4 and 5 and remain recoverable from the archive tag. Owner signs off. Test: checklist.
+- [ ] 2.101 `docs/legacy-parity.md` mapping legacy domains (auth, pacientes, profesionales, turnos, horarios, atencion, historias clinicas, asistencias) to the new features; facturacion and recetas stay reference-only until Stages 4 and 5 and remain recoverable from the legacy repository. Owner signs off. Test: checklist.
 
-## S2.34 Legacy removal (own commit) `size:exception`
+## S2.34 Legacy removal (N/A: legacy lives in a separate repo)
 
-Depends: S2.33 and owner sign-off. Rollback: `git revert` or `git checkout legacy-archive-v1`.
+Not applicable: the legacy reference app lives in the separate archived repository `francocor/AppmedicoCMAillu`, so there is nothing to tag or remove in this repository. Tasks 2.102 and 2.103 are closed as N/A.
 
-- [ ] 2.102 Tag the last commit that still holds the legacy code: `git tag legacy-archive-v1`, push the tag. Test: `git show legacy-archive-v1:BackEnd/package.json` works.
-- [ ] 2.103 `git rm -r BackEnd FrontEnd` in its own commit (`chore(legacy): remove legacy apps, archived at legacy-archive-v1`); remove legacy references from docs, workspace and CI. Test: `pnpm -r build` and CI green.
+- [x] 2.102 N/A: legacy lives in a separate repo (`francocor/AppmedicoCMAillu`, archived). There is no legacy code here to tag.
+- [x] 2.103 N/A: legacy lives in a separate repo (`francocor/AppmedicoCMAillu`, archived). There is no legacy code here to remove.
 
 ---
 

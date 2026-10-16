@@ -24,12 +24,12 @@ export default defineConfig(
     '**/coverage/**',
     '**/playwright-report/**',
     '**/test-results/**',
-    // Legacy code is reference only and is never linted.
-    'BackEnd/**',
-    'FrontEnd/**',
     // Planning artifacts and local caches.
     'openspec/**',
     '.atl/**',
+    // Agent skills installed by AutoSkills (third-party content).
+    '.agents/**',
+    '.claude/**',
   ]),
 
   js.configs.recommended,

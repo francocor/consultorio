@@ -1,9 +1,6 @@
 packages:
   - 'apps/*'
   - 'packages/*'
-  # Legacy code is reference only and is never part of the workspace.
-  - '!BackEnd'
-  - '!FrontEnd'
 
 # pnpm 10 does not run dependency lifecycle scripts unless allowed here.
 onlyBuiltDependencies:

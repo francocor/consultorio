@@ -1,40 +1,50 @@
 schema: spec-driven
 
 context: |
-  Project: Centro Medico Aillu (engram project: appmedicocmaillu) - medical practice management app.
-  Current code is LEGACY and will be REWRITTEN on a new foundation (domain knowledge + UI design reused)
-  to become a professional multi-specialty health practice SaaS. Target stack: NOT decided yet (decide in sdd-design).
-  Legacy BackEnd: Node, Express 5, mysql2 (raw SQL), JWT issued but never verified, bcrypt/bcryptjs, exceljs, multer. Plain JS (CommonJS-style scripts), no tests/lint/CI.
-  Legacy FrontEnd: React 18, Vite 4, Tailwind 3, shadcn/ui (Radix), react-router-dom 7, plain JS (JSX), jsPDF/xlsx exports. No tests/lint.
-  Legacy domains: auth, pacientes, profesionales, turnos, horarios, atencion, historias clinicas, asistencias, facturacion, recetas.
-  Repo hygiene issues: no .gitignore; node_modules (~18k files) and BackEnd/.env are tracked in git.
-  Testing: none today (strict_tdd false); refresh sdd-init once the rewrite introduces a test runner.
+  Project: consultorio (working name; rewrite of the Centro Medico Aillu app; engram project: appmedicocmaillu) - medical practice management app.
+  The legacy app is REFERENCE ONLY (domain knowledge + UI design). It is not in this repo: it lives in the separate private repo francocor/AppmedicoCMAillu.
+  The rewrite is a professional multi-specialty health practice SaaS. Stack decided in design: TypeScript pnpm monorepo
+  (Node 24, Fastify, PostgreSQL 17 + Drizzle + RLS, pg-boss, React 19 + Vite + Tailwind 4 PWA), packages apps/api, apps/web,
+  packages/contracts, packages/config, infra/.
+  Legacy BackEnd: Node, Express 5, mysql2 (raw SQL), JWT issued but never verified, plain JS, no tests/lint/CI.
+  Legacy FrontEnd: React 18, Vite 4, Tailwind 3, shadcn/ui (Radix), plain JS (JSX), no tests/lint.
+  Repo hygiene (Stage 0, done): .gitignore added. This repo was created clean (no legacy code, node_modules or committed .env), so the old secrets are not in its history; the owner must still rotate them.
+  Testing (refreshed after Stage 0): Vitest (unit, jsdom for web), Testcontainers Postgres 17 (integration), Playwright + axe (e2e), v8 coverage without threshold.
+  Quality: ESLint (typescript-eslint strictTypeChecked), tsc --noEmit, Prettier. CI in GitHub Actions; gitleaks pre-commit and in CI.
 
-strict_tdd: false
+# Turns on for Stage 1 onward (domain and security code is test-first). Stage 0 was delivered in standard mode.
+strict_tdd: true
 
 testing:
-  runner: none
+  runner: vitest
+  # Run from the repo root. Unit: pnpm test. Integration (needs Docker): pnpm test:integration. E2E: pnpm test:e2e.
+  test_command: pnpm test
   layers:
-    unit: false
-    integration: false
-    e2e: false
-  coverage: false
+    unit: true
+    integration: true
+    e2e: true
+  coverage: true
+  coverage_command: pnpm test:coverage
   quality:
-    linter: false
-    type_checker: false
-    formatter: false
-  note: "No test runner, linter, type checker or formatter in legacy code. Re-run sdd-init after the rewrite adds tooling."
+    linter: true
+    type_checker: true
+    formatter: true
+  commands:
+    linter: pnpm lint
+    type_checker: pnpm typecheck
+    formatter: pnpm format:check
+  note: "Vitest 5 with projects (api and contracts in Node, web in jsdom); integration and e2e need Docker and a Playwright Chromium."
 
 rules:
   proposal:
     - Include rollback plan for risky changes
-    - Treat existing BackEnd/ and FrontEnd/ as legacy reference (domain knowledge, UI design), not as code to extend
+    - Treat the legacy app (separate private repo francocor/AppmedicoCMAillu) as reference (domain knowledge, UI design), not as code to extend
   specs:
     - Use Given/When/Then for scenarios
     - Use RFC 2119 keywords (MUST, SHALL, SHOULD, MAY)
     - Cover health-data privacy, authentication/authorization and multi-tenant/multi-specialty concerns explicitly
   design:
-    - Choose the target stack here (not decided yet) and document the decision with rationale and tradeoffs
+    - The target stack is decided (see design.md ADRs); record any change to it as a new ADR with rationale and tradeoffs
     - Include sequence diagrams for complex flows
     - Document architecture decisions with rationale
   tasks:
@@ -42,13 +52,12 @@ rules:
     - Keep tasks completable in one session
     - Include a Review Workload Forecast (400-line budget); delivery_strategy is ask-on-risk
   apply:
-    - Do not modify legacy BackEnd/ or FrontEnd/ unless a task explicitly says so
     - Follow patterns defined in the design phase for the new foundation
-    tdd: false
-    test_command: ""
+    tdd: true
+    test_command: pnpm test
   verify:
-    test_command: ""
-    build_command: ""
+    test_command: pnpm test
+    build_command: pnpm build
     coverage_threshold: 0
   archive:
     - Warn before merging destructive deltas
