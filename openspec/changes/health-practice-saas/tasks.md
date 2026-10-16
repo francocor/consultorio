@@ -394,51 +394,51 @@ Depends: S1.14, S1.08, S1.07.
 
 Depends: S0.05, S1.10, S1.25.
 
-- [ ] 1.96 `apps/web/src/app/{router.tsx,providers.tsx}` (TanStack Router and Query) and `shared/lib/api-client.ts` (fetch, problem+json parsing, request id capture, 401 redirect, 402 sets the read-only state); query cache cleared on logout and tenant switch. [SHL-06, SHL-09] Test: client unit tests per status class.
-- [ ] 1.97 i18n: `app/i18n.ts` (i18next), `locales/es-AR/{common,auth,errors}.json`, error-code to message mapping, `shared/lib/format.ts` (`Intl` es-AR, location time zone, money); ESLint rule against literal JSX strings in the web preset of `packages/config`. [SHL-05] Test: lint fixture with a literal string fails; formatter tests.
-- [ ] 1.98 Boot payload loader and theme injection before first paint (`index.html` inline script, `app/theme-boot.ts`, neutral fallback). [BRD-02] Test: Vitest checks CSS variables; Playwright asserts variables set at `DOMContentLoaded`.
-- [ ] 1.99 Lint rule forbidding `persistQueryClient` and storage of query data. [SHL-09] Test: lint fixture fails.
+- [x] 1.96 `apps/web/src/app/{router.tsx,providers.tsx}` (TanStack Router and Query) and `shared/lib/api-client.ts` (fetch, problem+json parsing, request id capture, 401 redirect, 402 sets the read-only state); query cache cleared on logout and tenant switch. [SHL-06, SHL-09] Test: client unit tests per status class.
+- [x] 1.97 i18n: `app/i18n.ts` (i18next), `locales/es-AR/{common,auth,errors}.json`, error-code to message mapping, `shared/lib/format.ts` (`Intl` es-AR, location time zone, money); ESLint rule against literal JSX strings in the web preset of `packages/config`. [SHL-05] Test: lint fixture with a literal string fails; formatter tests.
+- [x] 1.98 Boot payload loader and theme injection before first paint (`index.html` inline script, `app/theme-boot.ts`, neutral fallback). [BRD-02] Test: Vitest checks CSS variables; Playwright asserts variables set at `DOMContentLoaded`.
+- [x] 1.99 Lint rule forbidding `persistQueryClient` and storage of query data. [SHL-09] Test: lint fixture fails.
 
 ## S1.28 Shared UI and UX states (~400 lines)
 
 Depends: S1.27.
 
-- [ ] 1.100 Run `ui-ux-pro-max --design-system "health clinic SaaS scheduling" -p "Aillu"`, record the result in `docs/design-system.md`, define tokens in `apps/web/src/styles/tokens.css` (slate neutral, blue/teal primary, Inter with tabular numbers, radius up to 8 px, dark mode) and the "Aillu" demo preset in `shared/ui/themes/consultorio.ts`. [BRD-01, SHL-07] Test: contrast check of all token pairs.
-- [ ] 1.101 Add shadcn components into `apps/web/src/shared/ui` (Button, Input, Label, Dialog, Sheet, Select, Tabs, Toast, Table, Skeleton, Badge, Card, rhf Form wrappers). [SHL-07] Test: component smoke tests with axe.
-- [ ] 1.102 State components `EmptyState`, `ErrorState` (retry plus request id), `ForbiddenState`, `OfflineBanner`, `ReadOnlyBanner`, `TwoFactorRequiredState`, `LoadingSkeleton`, plus `StatusBadge` (icon and text) and `SafetyFlag`. [SHL-06, SHL-07] Test: Testing Library plus axe per component.
-- [ ] 1.103 Accessibility utilities: 44 px touch target class, focus ring tokens, `prefers-reduced-motion`. [SHL-07, SHL-02] Test: Playwright smoke at 360 px with axe.
+- [x] 1.100 Run `ui-ux-pro-max --design-system "health clinic SaaS scheduling" -p "Aillu"`, record the result in `docs/design-system.md`, define tokens in `apps/web/src/styles/tokens.css` (slate neutral, blue/teal primary, Inter with tabular numbers, radius up to 8 px, dark mode) and the "Aillu" demo preset in `shared/ui/themes/consultorio.ts`. [BRD-01, SHL-07] Test: contrast check of all token pairs.
+- [x] 1.101 Add shadcn components into `apps/web/src/shared/ui` (Button, Input, Label, Dialog, Sheet, Select, Tabs, Toast, Table, Skeleton, Badge, Card, rhf Form wrappers). [SHL-07] Test: component smoke tests with axe.
+- [x] 1.102 State components `EmptyState`, `ErrorState` (retry plus request id), `ForbiddenState`, `OfflineBanner`, `ReadOnlyBanner`, `TwoFactorRequiredState`, `LoadingSkeleton`, plus `StatusBadge` (icon and text) and `SafetyFlag`. [SHL-06, SHL-07] Test: Testing Library plus axe per component.
+- [x] 1.103 Accessibility utilities: 44 px touch target class, focus ring tokens, `prefers-reduced-motion`. [SHL-07, SHL-02] Test: Playwright smoke at 360 px with axe.
 
 ## S1.29 AppShell, navigation and guards (~400 lines)
 
 Depends: S1.28.
 
-- [ ] 1.104 `app/nav/nav-config.ts` derived from the permission set returned by `GET /auth/me` (professional, reception, owner/admin layouts from design section 8) and `app/guards.tsx` `RequirePermission`. [SHL-01, AUZ-02] Test: unit per role.
-- [ ] 1.105 `app/AppShell.tsx`: collapsible sidebar on desktop, bottom navigation with at most 5 items plus "More" at 360 px, header with tenant name and logo, user menu; scaffolds of the minimal `/portal` and `/book/{slug}` shells. [SHL-01, SHL-02] Test: Playwright nav items per role at 360 and 1280 px.
-- [ ] 1.106 Banner wiring (read-only, offline, 2FA enrollment required) and the `FirstRunSlot` component that renders nothing until Stage 2. [SHL-08, SHL-06] Test: each state renders on the matching signal.
+- [x] 1.104 `app/nav/nav-config.ts` derived from the permission set returned by `GET /auth/me` (professional, reception, owner/admin layouts from design section 8) and `app/guards.tsx` `RequirePermission`. [SHL-01, AUZ-02] Test: unit per role.
+- [x] 1.105 `app/AppShell.tsx`: collapsible sidebar on desktop, bottom navigation with at most 5 items plus "More" at 360 px, header with tenant name and logo, user menu; scaffolds of the minimal `/portal` and `/book/{slug}` shells. [SHL-01, SHL-02] Test: Playwright nav items per role at 360 and 1280 px.
+- [x] 1.106 Banner wiring (read-only, offline, 2FA enrollment required) and the `FirstRunSlot` component that renders nothing until Stage 2. [SHL-08, SHL-06] Test: each state renders on the matching signal.
 
 ## S1.30 PWA (~250 lines)
 
 Depends: S1.29.
 
-- [ ] 1.107 `vite.config.ts` PWA: precache the app shell only, `navigateFallback`, runtime `NetworkOnly` for `/api` and `/files`, manifest from the per-host endpoint, update prompt. [SHL-03, SHL-09] Test: unit check of the generated Workbox config.
-- [ ] 1.108 Playwright: manifest valid and service worker registered; offline shows the banner and never serves cached `/api` data. [SHL-03, SHL-09] Test: that spec.
-- [ ] 1.109 `lighthouserc.json` budget (mobile 4G profile, LCP under 2.5 s, performance at least 0.85) and a CI job. [SHL-04] Test: CI job fails when the budget is broken.
+- [x] 1.107 `vite.config.ts` PWA: precache the app shell only, `navigateFallback`, runtime `NetworkOnly` for `/api` and `/files`, manifest from the per-host endpoint, update prompt. [SHL-03, SHL-09] Test: unit check of the generated Workbox config.
+- [x] 1.108 Playwright: manifest valid and service worker registered; offline shows the banner and never serves cached `/api` data. [SHL-03, SHL-09] Test: that spec.
+- [x] 1.109 `lighthouserc.json` budget (mobile 4G profile, LCP under 2.5 s, performance at least 0.85) and a CI job. [SHL-04] Test: CI job fails when the budget is broken.
 
 ## S1.31 Auth screens (~400 lines)
 
 Depends: S1.29, S1.13, S1.14.
 
-- [ ] 1.110 `features/auth/*`: login, TOTP step, recovery-code entry, forgot and reset password, invitation accept with password-policy hints; generic error copy. [IDA-02, IDA-08, STF-01] Test: component tests.
-- [ ] 1.111 2FA enrollment (QR via `qrcode`, manual key, confirm code, recovery codes shown once with copy/download), grace banner, sessions page with revoke. [IDA-05, IDA-07] Test: component tests.
-- [ ] 1.112 Playwright journeys: login to 2FA to landing; generic lockout message; reset flow reading Mailpit's API; axe on each screen at 360 px. [IDA-02, IDA-04, IDA-08] Test: those specs.
+- [x] 1.110 `features/auth/*`: login, TOTP step, recovery-code entry, forgot and reset password, invitation accept with password-policy hints; generic error copy. [IDA-02, IDA-08, STF-01] Test: component tests.
+- [x] 1.111 2FA enrollment (QR via `qrcode`, manual key, confirm code, recovery codes shown once with copy/download), grace banner, sessions page with revoke. [IDA-05, IDA-07] Test: component tests.
+- [x] 1.112 Playwright journeys: login to 2FA to landing; generic lockout message; reset flow reading Mailpit's API; axe on each screen at 360 px. [IDA-02, IDA-04, IDA-08] Test: those specs.
 
 ## S1.32 Staff screens (~400 lines)
 
 Depends: S1.31, S1.19, S1.18.
 
-- [ ] 1.113 `features/staff/*`: directory, invite dialog (role ceiling), deactivate, location assignment, professional profile form (matricula with jurisdiction, specialties, "unverified" badge), grantable-permission editor (clinical toggles absent). [STF-01, STF-03, STF-04, STF-05, STF-07, AUZ-12] Test: component tests.
-- [ ] 1.114 `features/staff/components/WeeklyHours.tsx` per location (mobile friendly) and `features/settings/locations`. [STF-06, TEN-04] Test: validation messages in Spanish.
-- [ ] 1.115 Playwright: owner invites reception; reception opening the staff page sees the forbidden state. [STF-02] Test: that spec.
+- [x] 1.113 `features/staff/*`: directory, invite dialog (role ceiling), deactivate, location assignment, professional profile form (matricula with jurisdiction, specialties, "unverified" badge), grantable-permission editor (clinical toggles absent). [STF-01, STF-03, STF-04, STF-05, STF-07, AUZ-12] Test: component tests.
+- [x] 1.114 `features/staff/components/WeeklyHours.tsx` per location (mobile friendly) and `features/settings/locations`. [STF-06, TEN-04] Test: validation messages in Spanish.
+- [x] 1.115 Playwright: owner invites reception; reception opening the staff page sees the forbidden state. [STF-02] Test: that spec.
 
 ## S1.33 Patient screens (~400 lines)
 

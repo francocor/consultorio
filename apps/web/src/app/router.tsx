@@ -16,8 +16,8 @@ import { AuditPage } from '../features/audit/AuditPage.js';
 import { AuthLayout } from '../features/auth/AuthLayout.js';
 import { LoginPage } from '../features/auth/LoginPage.js';
 import { PatientsPage } from '../features/patients/PatientsPage.js';
+import { settingsTabsFor } from '../features/settings/settings-tabs.js';
 import { SettingsPage } from '../features/settings/SettingsPage.js';
-import { StaffPage } from '../features/staff/StaffPage.js';
 import { isApiError } from '../shared/lib/api-client.js';
 import { OfflineBanner } from '../shared/ui/states/banners.js';
 import { ErrorState } from '../shared/ui/states/error-state.js';
@@ -180,7 +180,10 @@ function buildRouteTree() {
   const staffRoute = createRoute({
     getParentRoute: () => authedRoute,
     path: '/staff',
-    component: guarded(['staff.manage'], StaffPage),
+    component: guarded(
+      ['staff.manage'],
+      lazyRouteComponent(() => import('../features/staff/StaffPage.js'), 'StaffPage'),
+    ),
   });
 
   const auditRoute = createRoute({
@@ -189,12 +192,28 @@ function buildRouteTree() {
     component: guarded(['audit.read'], AuditPage),
   });
 
+  // Settings has its own frame (the sections) and checks each section on its own.
   const settingsRoute = createRoute({
     getParentRoute: () => authedRoute,
     path: '/settings',
-    component: guarded(
-      ['tenant.settings.manage', 'tenant.branding.manage', 'locations.manage'],
-      SettingsPage,
+    component: SettingsPage,
+  });
+
+  const settingsIndexRoute = createRoute({
+    getParentRoute: () => settingsRoute,
+    path: '/',
+    beforeLoad: ({ context }) => {
+      const first = settingsTabsFor(context.me.permissions)[0];
+      if (first) throw redirect({ to: first.to });
+    },
+  });
+
+  const settingsLocationsRoute = createRoute({
+    getParentRoute: () => settingsRoute,
+    path: '/locations',
+    component: lazyRouteComponent(
+      () => import('../features/settings/LocationsPage.js'),
+      'LocationsPage',
     ),
   });
 
@@ -239,7 +258,7 @@ function buildRouteTree() {
       patientsRoute,
       staffRoute,
       auditRoute,
-      settingsRoute,
+      settingsRoute.addChildren([settingsIndexRoute, settingsLocationsRoute]),
       unknownRoute,
     ]),
     minimalRoute.addChildren([portalRoute, bookingRoute]),
