@@ -55,6 +55,50 @@ describe('finishMigration', () => {
     expect(both).toContain('CREATE POLICY "tenant_isolation" ON "other_table"');
   });
 
+  describe('composite foreign keys', () => {
+    const SOURCE = `CREATE TABLE "child" (
+	"id" uuid PRIMARY KEY NOT NULL,
+	"tenant_id" uuid NOT NULL,
+	"parent_id" uuid NOT NULL,
+	"membership_id" uuid NOT NULL
+);
+--> statement-breakpoint
+CREATE TABLE "parent" (
+	"id" uuid PRIMARY KEY NOT NULL,
+	"tenant_id" uuid NOT NULL
+);
+--> statement-breakpoint
+ALTER TABLE "child" ADD CONSTRAINT "child_tenant_id_fkey" FOREIGN KEY ("tenant_id") REFERENCES "public"."tenant"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "child" ADD CONSTRAINT "child_membership_fkey" FOREIGN KEY ("tenant_id","membership_id") REFERENCES "public"."membership"("tenant_id","id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "child" ADD CONSTRAINT "child_parent_fkey" FOREIGN KEY ("tenant_id","parent_id") REFERENCES "public"."parent"("tenant_id","id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
+CREATE INDEX "child_idx" ON "child" USING btree ("tenant_id");`;
+    const both = finishMigration(SOURCE, ['child', 'parent']);
+
+    it('moves a key to a table that already exists into CREATE TABLE, with its columns', () => {
+      expect(both).toContain(
+        `CONSTRAINT "child_membership_fkey" FOREIGN KEY ("tenant_id","membership_id") REFERENCES "public"."membership"("tenant_id","id")`,
+      );
+      expect(both).not.toContain('ALTER TABLE "child" ADD CONSTRAINT "child_membership_fkey"');
+      expect(both).toMatch(
+        /CREATE TABLE "child" \([\s\S]*child_tenant_id_fkey[\s\S]*child_membership_fkey[\s\S]*\);/,
+      );
+    });
+
+    it('keeps a key between two tables of the same migration as ALTER TABLE', () => {
+      expect(both).toContain(
+        'ALTER TABLE "child" ADD CONSTRAINT "child_parent_fkey" FOREIGN KEY ("tenant_id","parent_id") REFERENCES "public"."parent"("tenant_id","id")',
+      );
+    });
+
+    it('runs the ALTER TABLE of an in-migration key before row level security is forced', () => {
+      const alter = both.indexOf('ADD CONSTRAINT "child_parent_fkey"');
+      const force = both.indexOf('ALTER TABLE "parent" FORCE ROW LEVEL SECURITY');
+
+      expect(alter).toBeGreaterThan(-1);
+      expect(alter).toBeLessThan(force);
+    });
+  });
+
   it('refuses a table that the migration does not create', () => {
     expect(() => finishMigration(GENERATED, ['missing_table'])).toThrow(/missing_table/);
   });

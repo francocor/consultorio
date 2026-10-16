@@ -13,10 +13,14 @@ function escapeRegExp(value: string): string {
 /**
  * Completes a migration that drizzle-kit generated for new tenant tables:
  *
- * 1. Moves each `ALTER TABLE x ADD CONSTRAINT ... FOREIGN KEY ("tenant_id") REFERENCES tenant`
- *    into the `CREATE TABLE`. The `tenant` table has FORCE row level security, so validating
- *    that foreign key afterwards needs a tenant context a migration does not have; a foreign key
- *    declared inline skips the validation scan.
+ * 1. Moves each `ALTER TABLE x ADD CONSTRAINT ... FOREIGN KEY (...) REFERENCES y (...)` into the
+ *    `CREATE TABLE`, when `y` already exists (`tenant`, `membership`, `location`, ...). Those
+ *    tables have FORCE row level security, so validating the key afterwards needs a tenant
+ *    context a migration does not have; a key declared inline skips the validation scan.
+ *    A key between two tables CREATED by this migration stays an ALTER TABLE: neither table has
+ *    row level security yet when it runs, because the policies are appended at the very end.
+ *    (The CREATE TABLE statements are in alphabetical order, so inline keys between them could
+ *    point at a table that does not exist yet.)
  * 2. Appends ENABLE, FORCE and the `tenant_isolation` policy for every listed table.
  */
 export function finishMigration(sql: string, tables: readonly string[]): string {
@@ -29,17 +33,24 @@ export function finishMigration(sql: string, tables: readonly string[]): string 
     }
 
     const alter = new RegExp(
-      `ALTER TABLE "${escapeRegExp(table)}" ADD CONSTRAINT "([^"]+)" FOREIGN KEY \\("tenant_id"\\) REFERENCES "public"\\."tenant"\\("id"\\)[^;]*;(?:${escapeRegExp(BREAKPOINT)})?\\n?`,
+      `ALTER TABLE "${escapeRegExp(table)}" ADD CONSTRAINT "([^"]+)" FOREIGN KEY (\\([^)]*\\)) REFERENCES "public"\\."([^"]+)"(\\([^)]*\\))[^;]*;(?:${escapeRegExp(BREAKPOINT)})?\\n?`,
+      'g',
     );
-    const match = alter.exec(result);
-    if (!match) continue;
-    const name = match[1] ?? '';
-
-    result = result.replace(alter, '');
+    const moved: string[] = [];
+    result = result.replace(
+      alter,
+      (whole, name: string, columns: string, parent: string, parentColumns: string) => {
+        if (tables.includes(parent)) return whole;
+        moved.push(
+          `\tCONSTRAINT "${name}" FOREIGN KEY ${columns} REFERENCES "public"."${parent}"${parentColumns}`,
+        );
+        return '';
+      },
+    );
+    if (moved.length === 0) continue;
     result = result.replace(
       create,
-      (_whole, body: string) =>
-        `CREATE TABLE "${table}" (\n${body},\n\tCONSTRAINT "${name}" FOREIGN KEY ("tenant_id") REFERENCES "public"."tenant"("id")\n);`,
+      (_whole, body: string) => `CREATE TABLE "${table}" (\n${body},\n${moved.join(',\n')}\n);`,
     );
   }
 
