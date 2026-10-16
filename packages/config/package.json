@@ -19,5 +19,8 @@
     "eslint-plugin-react-hooks": "^7.1.1",
     "globals": "^17.13.0",
     "typescript-eslint": "^8.71.2"
+  },
+  "dependencies": {
+    "eslint-import-resolver-typescript": "^4.4.5"
   }
 }
