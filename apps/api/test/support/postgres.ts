@@ -22,6 +22,8 @@ const TEST_QUEUES = [
   { name: 'test.write', options: { retryLimit: 0 } },
   { name: 'test.fail', options: { retryLimit: 0 } },
   { name: 'test.afip', options: { retryLimit: 0 } },
+  { name: 'test.backlog', options: { retryLimit: 0 } },
+  { name: 'test.flaky', options: { retryLimit: 0 } },
 ];
 const ROLES_SQL = new URL('../../../../infra/postgres/init/01-roles.sql', import.meta.url);
 

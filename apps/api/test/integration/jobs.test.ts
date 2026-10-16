@@ -269,6 +269,79 @@ describe('read-only tenants', () => {
   });
 });
 
+describe('throughput', () => {
+  const backlogJob = defineJob<Payload>({
+    name: 'test.backlog',
+    category: 'read',
+    payload: Payload,
+    handler: () => Promise.resolve(),
+  });
+
+  it('drains a backlog of jobs quickly with the production polling interval', async () => {
+    const backlogWorker = createBoss(inject('runtimeUrl'), 'worker');
+    await backlogWorker.start();
+    // The default polling interval (2 s) on purpose: fetching one job per interval would take minutes.
+    await registerJobs(backlogWorker, { db: runtime.db, log: silent }, [backlogJob]);
+
+    await asTenant(runtime, a.id, async (tx) => {
+      for (let i = 0; i < 150; i += 1) {
+        await client.enqueue(tx, 'test.backlog', { tenantId: a.id, label: `backlog-${String(i)}` });
+      }
+    });
+
+    try {
+      const completed = await eventually(async () => {
+        const jobs = await apiBoss.findJobs('test.backlog', { limit: 1000 });
+        const done = jobs.filter((job) => job.state === 'completed').length;
+        return done === 150 ? done : undefined;
+      }, 30_000);
+      expect(completed).toBe(150);
+    } finally {
+      await backlogWorker.stop({ graceful: false });
+    }
+  }, 60_000);
+
+  it('does not let a failing job fail its neighbours in the same batch', async () => {
+    const errors: Record<string, unknown>[] = [];
+    const flaky = defineJob<Payload>({
+      name: 'test.flaky',
+      category: 'write',
+      payload: Payload,
+      handler: ({ payload }) => {
+        if (payload.label.startsWith('bad')) return Promise.reject(new Error('boom'));
+        return Promise.resolve();
+      },
+    });
+    const flakyWorker = createBoss(inject('runtimeUrl'), 'worker');
+    await flakyWorker.start();
+    await registerJobs(
+      flakyWorker,
+      { db: runtime.db, log: { info: () => undefined, error: (object) => errors.push(object) } },
+      [flaky],
+      { pollingIntervalSeconds: 0.5 },
+    );
+    const ids = await asTenant(runtime, a.id, async (tx) => [
+      await client.enqueue(tx, 'test.flaky', { tenantId: a.id, label: 'ok-1' }),
+      await client.enqueue(tx, 'test.flaky', { tenantId: a.id, label: 'bad-1' }),
+      await client.enqueue(tx, 'test.flaky', { tenantId: a.id, label: 'ok-2' }),
+    ]);
+
+    try {
+      await eventually(async () => {
+        const states = await Promise.all(ids.map((id) => stateOf('test.flaky', id ?? '')));
+        return states.every((state) => state !== 'created' && state !== 'active')
+          ? states
+          : undefined;
+      });
+      const states = await Promise.all(ids.map((id) => stateOf('test.flaky', id ?? '')));
+      expect(states).toEqual(['completed', 'failed', 'completed']);
+      expect(errors).toEqual([expect.objectContaining({ job: 'test.flaky', code: 'unknown' })]);
+    } finally {
+      await flakyWorker.stop({ graceful: false });
+    }
+  }, 60_000);
+});
+
 describe('runJob', () => {
   const base = { name: 'test.write', retryCount: 0, enqueuedAt: new Date() };
 
