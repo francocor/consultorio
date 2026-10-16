@@ -183,8 +183,8 @@ Depends: S0.07.
 Depends: S1.01.
 
 - [ ] 1.9 `apps/api/src/platform/country/country-pack.ts` (interface per design section 6, `Result` type, registry `getCountryPack`) and an ESLint boundaries rule that only the registry may import `country/ar`. [CTR-01] Test: lint fixture importing `country/ar` directly fails.
-- [ ] 1.10 `packages/contracts/src/country/ar/identifiers.ts` (DNI normalization and validation, CUIT/CUIL mod-11) re-exported from `apps/api/src/country/ar/`. [CTR-02, CTR-03] Test: table-driven valid/invalid cases including check digits; property test that normalization is idempotent.
-- [ ] 1.11 `.../ar/matricula.ts` (format check per jurisdiction, format only) with the 24 jurisdictions. [CTR-06] Test: table of valid and invalid formats.
+- [x] 1.10 `packages/contracts/src/country/ar/identifiers.ts` (DNI normalization and validation, CUIT/CUIL mod-11) re-exported from `apps/api/src/country/ar/`. [CTR-02, CTR-03] Test: table-driven valid/invalid cases including check digits; property test that normalization is idempotent.
+- [x] 1.11 `.../ar/matricula.ts` (format check per jurisdiction, format only) with the 24 jurisdictions. [CTR-06] Test: table of valid and invalid formats.
 - [ ] 1.12 `country/ar/{defaults,retention,personal-data,legal-adapters}.ts`: es-AR, ARS, `America/Argentina/Buenos_Aires`, 10-year retention, Ley 25.326 consent text keys and rights, declared (type-only) `InvoiceIssuer` and `PrescriptionProvider` ports in `packages/contracts/src/ports.ts`. [CTR-07, CTR-08, CTR-09, CTR-10] Test: defaults and retention constants; adapters are declared but not implemented.
 - [ ] 1.13 `db/schema/platform-catalogs.ts` + migration: `holiday_catalog(country, date, name, kind)` and `payer` (obras sociales and prepagas) as platform tables (no `tenant_id`, writable only by the operator role), plus seed loaders `db/seed/ar-holidays.ts` (2026 to 2028) and `db/seed/ar-payers.json`. [CTR-04, CTR-05] Test: loaders are idempotent; unique `(country, date, name)`.
 
