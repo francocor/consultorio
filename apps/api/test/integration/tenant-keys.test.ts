@@ -13,6 +13,7 @@ import {
 } from '../../src/platform/crypto/key-management.js';
 import { createTenantKeys } from '../../src/platform/crypto/tenant-keys.js';
 import { createRuntimeDb, type DbHandle } from '../../src/platform/db/pool.js';
+import type { Tx } from '../../src/platform/db/tenant-context.js';
 import { asTenant, createTestTenant, type TestTenant } from '../support/tenants.js';
 
 let runtime: DbHandle;
@@ -254,6 +255,83 @@ describe('key rotation readiness', () => {
     );
     expect(readOld.toString()).toBe('written before rotation');
     expect(readNew.toString()).toBe('written after rotation');
+  });
+});
+
+describe('a key that was never committed is never used (security review, finding 6)', () => {
+  const ROLLED_BACK = new Error('rolled back on purpose');
+
+  /** Runs the callback in a transaction that is rolled back by throwing at the end. */
+  async function rolledBack(tenant: TestTenant, fn: (tx: Tx) => Promise<unknown>): Promise<void> {
+    await expect(
+      asTenant(runtime, tenant.id, async (tx) => {
+        await fn(tx);
+        throw ROLLED_BACK;
+      }),
+    ).rejects.toBe(ROLLED_BACK);
+  }
+
+  it('does not remember a first key whose transaction rolled back: data written afterwards stays readable', async () => {
+    const fresh = await createTestTenant(runtime, { slug: 'keys-rollback-create' });
+    const { kms } = countingKms();
+    const keys = createTenantKeys({ kms });
+
+    await rolledBack(fresh, (tx) => keys.ensureTenantKey(tx));
+    expect(await keyRows(fresh)).toHaveLength(0);
+    const blob = await asTenant(runtime, fresh.id, (tx) => keys.encryptField(tx, REF, 'kept'));
+
+    // A process that starts cold knows only what the database holds.
+    const cold = createTenantKeys({ kms });
+    const read = await asTenant(runtime, fresh.id, (tx) => cold.decryptField(tx, REF, blob));
+    expect(read.toString()).toBe('kept');
+    expect(await keyRows(fresh)).toHaveLength(1);
+  });
+
+  it('does not remember a rotation that rolled back: new data keeps using the committed version', async () => {
+    const rotating = await createTestTenant(runtime, { slug: 'keys-rollback-rotate' });
+    const { kms } = countingKms();
+    const keys = createTenantKeys({ kms });
+    await asTenant(runtime, rotating.id, (tx) => keys.ensureTenantKey(tx));
+
+    await rolledBack(rotating, (tx) => keys.rotateTenantKey(tx));
+    const blob = await asTenant(runtime, rotating.id, (tx) =>
+      keys.encryptField(tx, REF, 'still on version one'),
+    );
+
+    expect(blob.readUInt16BE(1)).toBe(1);
+    const cold = createTenantKeys({ kms });
+    const read = await asTenant(runtime, rotating.id, (tx) => cold.decryptField(tx, REF, blob));
+    expect(read.toString()).toBe('still on version one');
+    expect((await keyRows(rotating)).map((row) => [row.version, row.status])).toEqual([
+      [1, 'active'],
+    ]);
+  });
+
+  it('still uses a key it created itself inside the same transaction', async () => {
+    const same = await createTestTenant(runtime, { slug: 'keys-same-tx' });
+    const { kms } = countingKms();
+    const keys = createTenantKeys({ kms });
+
+    const blob = await asTenant(runtime, same.id, async (tx) => {
+      await keys.ensureTenantKey(tx);
+      return keys.encryptField(tx, REF, 'in one transaction');
+    });
+
+    const cold = createTenantKeys({ kms });
+    const read = await asTenant(runtime, same.id, (tx) => cold.decryptField(tx, REF, blob));
+    expect(read.toString()).toBe('in one transaction');
+  });
+
+  it('uses the new key right after a committed rotation, in the same process', async () => {
+    const committed = await createTestTenant(runtime, { slug: 'keys-commit-rotate' });
+    const { kms } = countingKms();
+    const keys = createTenantKeys({ kms });
+    await asTenant(runtime, committed.id, (tx) => keys.ensureTenantKey(tx));
+
+    await asTenant(runtime, committed.id, (tx) => keys.rotateTenantKey(tx));
+    const blob = await asTenant(runtime, committed.id, (tx) => keys.encryptField(tx, REF, 'v2'));
+
+    expect(blob.readUInt16BE(1)).toBe(2);
   });
 });
 
