@@ -202,6 +202,45 @@ export const TENANT_FIXTURES: Record<string, TenantTableFixture> = {
               RETURNING id`,
       ),
   },
+  payer_plan: {
+    insert: (tx, tenantId) =>
+      returningId(
+        tx,
+        sql`INSERT INTO payer_plan (tenant_id, custom_name, plan_name)
+              VALUES (${tenantId}, ${unique('Obra social')}, 'Plan')
+              RETURNING id`,
+      ),
+  },
+  patient_coverage: {
+    insert: async (tx, tenantId, overrides) =>
+      returningId(
+        tx,
+        sql`INSERT INTO patient_coverage (tenant_id, patient_id, payer_plan_id, member_number)
+              VALUES (${tenantId},
+                      ${overrides?.['patient_id'] ?? (await insertPatient(tx, tenantId))},
+                      ${overrides?.['payer_plan_id'] ?? (await returningId(tx, sql`INSERT INTO payer_plan (tenant_id, custom_name) VALUES (${tenantId}, ${unique('Prepaga')}) RETURNING id`))},
+                      '12345')
+              RETURNING id`,
+      ),
+  },
+  data_processing_consent: {
+    insert: async (tx, tenantId, overrides) =>
+      returningId(
+        tx,
+        sql`INSERT INTO data_processing_consent (tenant_id, patient_id, text_key, text_version, recorded_by)
+              VALUES (${tenantId}, ${overrides?.['patient_id'] ?? (await insertPatient(tx, tenantId))}, 'consent.data_processing.ar', '1', ${randomUUID()})
+              RETURNING id`,
+      ),
+  },
+  patient_rights_request: {
+    insert: async (tx, tenantId, overrides) =>
+      returningId(
+        tx,
+        sql`INSERT INTO patient_rights_request (tenant_id, patient_id, kind, requested_by)
+              VALUES (${tenantId}, ${overrides?.['patient_id'] ?? (await insertPatient(tx, tenantId))}, 'access', ${randomUUID()})
+              RETURNING id`,
+      ),
+  },
   professional: {
     insert: async (tx, tenantId, overrides) =>
       returningId(
