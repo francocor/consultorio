@@ -14,9 +14,11 @@ import type { ExportRegistry } from '../tenancy/index.js';
 
 import { createDirectoryService } from './application/directory.js';
 import { exportProfessionals } from './application/export-contributor.js';
+import { createHoursService } from './application/hours.js';
 import { createLifecycleService } from './application/lifecycle.js';
 import { createProfessionalRepo } from './application/professional-repo.js';
 import { createProfileService, type MatriculaRules } from './application/profile.js';
+import { hoursRoutes } from './http/hours-routes.js';
 import { lifecycleRoutes } from './http/lifecycle-routes.js';
 import { profileRoutes } from './http/profile-routes.js';
 
@@ -40,6 +42,7 @@ export interface StaffOptions {
   email: EmailSender;
   /** `https` links unless the deployment is plain-http local development. */
   secureLinks: boolean;
+  clock?: () => Date;
 }
 
 export interface Staff {
@@ -68,11 +71,18 @@ export function createStaff(options: StaffOptions): Staff {
     secureLinks: options.secureLinks,
   });
 
+  const hours = hoursRoutes({
+    withTenant: options.withTenant,
+    auditDeny: options.auditDeny,
+    hours: createHoursService(options.clock ? { clock: options.clock } : {}),
+  });
+
   return {
     professionals: createProfessionalRepo(options.withTenant),
     routes: (app) => {
       profile(app);
       lifecycle(app);
+      hours(app);
     },
   };
 }
