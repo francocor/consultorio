@@ -2,6 +2,7 @@ import { Problem } from '@consultorio/contracts';
 import { describe, expect, it } from 'vitest';
 
 import { buildServer } from '../../main/server.js';
+import { stubAuthz } from '../../testing/authz.js';
 import { testTenancy } from '../../testing/tenancy.js';
 
 import { SESSION_COOKIE } from './session-cookie.js';
@@ -14,7 +15,11 @@ function server() {
     logLevel: 'silent',
     health: { checkDatabase: () => Promise.resolve({ ok: true }) },
     ...testTenancy(),
-    auth: { cookieSecure: true, authenticate: () => Promise.resolve(null) },
+    auth: {
+      authz: stubAuthz,
+      cookieSecure: true,
+      authenticate: () => Promise.resolve(null),
+    },
     routes: [
       (scope) => {
         scope.post('/auth/echo', { config: { readOnly: 'auth', auth: 'public' } }, () => ({

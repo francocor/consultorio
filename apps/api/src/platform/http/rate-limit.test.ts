@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 
 import { buildServer } from '../../main/server.js';
 import type { DeploymentSettings } from '../../modules/tenancy/domain/host.js';
+import { stubAuthz } from '../../testing/authz.js';
 import { TEST_TENANT } from '../../testing/tenancy.js';
 
 import { clientKeyOf, createMemoryRateLimitStore } from './rate-limit.js';
@@ -88,7 +89,11 @@ function server(limits: { client: number; tenant: number }) {
     deployment: multi,
     lookupTenant: (slug) =>
       Promise.resolve([NORTE, SUR].find((tenant) => tenant.slug === slug) ?? null),
-    auth: { cookieSecure: true, authenticate: () => Promise.resolve(null) },
+    auth: {
+      authz: stubAuthz,
+      cookieSecure: true,
+      authenticate: () => Promise.resolve(null),
+    },
     rateLimit: {
       store: createMemoryRateLimitStore(),
       perClient: { max: limits.client, windowMs: 60_000 },

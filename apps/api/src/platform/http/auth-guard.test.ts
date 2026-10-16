@@ -2,6 +2,7 @@ import { Problem } from '@consultorio/contracts';
 import { describe, expect, it } from 'vitest';
 
 import { buildServer } from '../../main/server.js';
+import { stubAuthz } from '../../testing/authz.js';
 import { testTenancy } from '../../testing/tenancy.js';
 
 import {
@@ -29,6 +30,7 @@ function server(options: { known?: string[] } = {}) {
     health: { checkDatabase: () => Promise.resolve({ ok: true }) },
     ...testTenancy(),
     auth: {
+      authz: stubAuthz,
       cookieSecure: true,
       authenticate: (token, tenantId) => {
         calls.push({ token, tenantId });
@@ -40,10 +42,14 @@ function server(options: { known?: string[] } = {}) {
         scope.get('/auth/open', { config: { readOnly: 'read', auth: 'public' } }, () => ({
           open: true,
         }));
-        scope.get('/private/who', { config: { readOnly: 'read', auth: 'session' } }, (request) => ({
-          user: request.session?.userId ?? null,
-          actor: request.auditActor,
-        }));
+        scope.get(
+          '/auth/private/who',
+          { config: { readOnly: 'read', auth: 'session' } },
+          (request) => ({
+            user: request.session?.userId ?? null,
+            actor: request.auditActor,
+          }),
+        );
       },
     ],
   });
@@ -65,7 +71,7 @@ describe('authentication guard', () => {
   it('answers 401 unauthenticated to a protected route with no cookie, and discloses nothing', async () => {
     const { app } = server();
 
-    const response = await app.inject({ url: '/private/who' });
+    const response = await app.inject({ url: '/auth/private/who' });
 
     expect(response.statusCode).toBe(401);
     expect(Problem.parse(response.json())).toMatchObject({ code: 'unauthenticated' });
@@ -76,7 +82,7 @@ describe('authentication guard', () => {
   it('answers 401 to a cookie that is not a valid session and clears it', async () => {
     const { app, calls } = server({ known: [] });
 
-    const response = await app.inject({ url: '/private/who', headers: { cookie: COOKIE } });
+    const response = await app.inject({ url: '/auth/private/who', headers: { cookie: COOKIE } });
 
     expect(response.statusCode).toBe(401);
     expect(response.headers['set-cookie']).toContain('Max-Age=0');
@@ -88,7 +94,7 @@ describe('authentication guard', () => {
     const { app, calls } = server();
 
     const response = await app.inject({
-      url: '/private/who',
+      url: '/auth/private/who',
       headers: { cookie: `${SESSION_COOKIE}=short` },
     });
 
@@ -100,7 +106,7 @@ describe('authentication guard', () => {
   it('attaches the session to the request and fills the audit actor', async () => {
     const { app } = server();
 
-    const response = await app.inject({ url: '/private/who', headers: { cookie: COOKIE } });
+    const response = await app.inject({ url: '/auth/private/who', headers: { cookie: COOKIE } });
 
     expect(response.statusCode).toBe(200);
     expect(response.json<{ user: string; actor: Record<string, unknown> }>()).toMatchObject({

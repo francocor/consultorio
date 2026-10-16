@@ -292,11 +292,11 @@ Depends: S1.12, S1.13.
 
 Depends: S1.01, S1.10.
 
-- [ ] 1.54 `platform/authz/can.ts`: `can(actor, action, resource)` combining RBAC from the catalog with grants limited to `GRANTABLE`; `Actor` type. [AUZ-02, AUZ-15] Test: unit table of role x action; unknown action denies.
-- [ ] 1.55 `platform/authz/guard.ts`: route option `config.permission`; a route with neither a permission nor `public` fails at boot; denials call `auditDeny()` and use the uniform response. [AUZ-02, AUZ-16] Test: `apps/api/test/policy/route-role-matrix.test.ts` generated from the catalog.
-- [ ] 1.56 Admin-denied harness: a test iterating every registered route tagged `clinical.*` asserting 403 for owner/admin plus a deny audit row; proven now with a fixture route, and it covers real routes automatically from Stage 2. [AUZ-04, AUZ-06] Test: that harness.
-- [ ] 1.57 `platform/authz/professional-gate.ts`: derive `professionalId` only from an active professional profile with a recorded valid matricula; an owner who is also a professional gets it through the profile only. [AUZ-04] Test: unit with stubbed repo.
-- [ ] 1.58 Default deny for the `patient` actor class on all staff routes (patient sessions do not exist yet). [AUZ-14] Test: patient actor denied everywhere.
+- [x] 1.54 `platform/authz/can.ts`: `can(actor, action, resource)` combining RBAC from the catalog with grants limited to `GRANTABLE`; `Actor` type. [AUZ-02, AUZ-15] Test: unit table of role x action; unknown action denies.
+- [x] 1.55 `platform/authz/guard.ts`: route option `config.permission`; a route with neither a permission nor `public` fails at boot; denials call `auditDeny()` and use the uniform response. [AUZ-02, AUZ-16] Test: `apps/api/test/policy/route-role-matrix.test.ts` generated from the catalog.
+- [x] 1.56 Admin-denied harness: a test iterating every registered route tagged `clinical.*` asserting 403 for owner/admin plus a deny audit row; proven now with a fixture route, and it covers real routes automatically from Stage 2. [AUZ-04, AUZ-06] Test: that harness.
+- [x] 1.57 `platform/authz/professional-gate.ts`: derive `professionalId` only from an active professional profile with a recorded valid matricula; an owner who is also a professional gets it through the profile only. [AUZ-04] Test: unit with stubbed repo.
+- [x] 1.58 Default deny for the `patient` actor class on all staff routes (patient sessions do not exist yet). [AUZ-14] Test: patient actor denied everywhere.
 
 ## S1.16 Sharing-scope predicate (~300 lines)
 

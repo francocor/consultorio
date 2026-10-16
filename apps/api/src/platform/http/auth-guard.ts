@@ -1,7 +1,8 @@
-import type { Role, SessionScope } from '@consultorio/contracts';
+import { PERMISSIONS, type Permission, type Role, type SessionScope } from '@consultorio/contracts';
 import type { FastifyInstance } from 'fastify';
 
 import { setAuditActor } from '../audit/request-context.js';
+import { registerPermissionGuard, type AuthzOptions } from '../authz/guard.js';
 
 import { AppError } from './problem.js';
 import { clearSessionCookie, readSessionCookie } from './session-cookie.js';
@@ -89,8 +90,13 @@ export function primaryRole(roles: readonly Role[]): Role {
   return ROLE_PRECEDENCE.find((role) => roles.includes(role)) ?? 'patient';
 }
 
+/** Routes where a valid session is enough, with no permission: the user's own sign-in state. */
+const SELF_SERVICE_PREFIX = '/auth/';
+
 export interface AuthGuardOptions {
   authenticate: Authenticate;
+  /** The permission check that runs for routes with `config.permission`. */
+  authz: AuthzOptions;
   /** Adds `Secure` to the cookie it clears. */
   cookieSecure: boolean;
 }
@@ -108,12 +114,37 @@ export function registerAuthGuard(app: FastifyInstance, options: AuthGuardOption
   app.decorate('routeAuth', routeAuth);
   app.decorateRequest('session', null);
 
+  const routePermissions = new Map<string, Permission>();
+  app.decorate('routePermissions', routePermissions);
+
   app.addHook('onRoute', (route) => {
     const auth: unknown = route.config?.auth;
+    const permission: unknown = route.config?.permission;
     const methods = Array.isArray(route.method) ? route.method : [route.method];
+    const label = `${methods.join(',')} ${route.url}`;
+
+    if (permission !== undefined) {
+      if (typeof permission !== 'string' || !PERMISSIONS.some((known) => known === permission)) {
+        throw new Error(`Route ${label} declares a permission that is not in the catalog`);
+      }
+      if (auth === 'public') {
+        throw new Error(`Route ${label} cannot be public and require a permission`);
+      }
+      for (const method of methods) {
+        routeAuth.set(`${method} ${route.url}`, 'session');
+        routePermissions.set(`${method} ${route.url}`, permission as Permission);
+      }
+      return;
+    }
+
     if (!isRouteAuth(auth)) {
       throw new Error(
-        `Route ${methods.join(',')} ${route.url} must declare config.auth ('public' or 'session')`,
+        `Route ${label} must declare config.permission, or config.auth 'public' (or 'session' under ${SELF_SERVICE_PREFIX})`,
+      );
+    }
+    if (auth === 'session' && !route.url.startsWith(SELF_SERVICE_PREFIX)) {
+      throw new Error(
+        `Route ${label} needs a permission: 'session' alone is only for self-service routes under ${SELF_SERVICE_PREFIX}`,
       );
     }
     for (const method of methods) routeAuth.set(`${method} ${route.url}`, auth);
@@ -143,4 +174,7 @@ export function registerAuthGuard(app: FastifyInstance, options: AuthGuardOption
     request.session = session;
     setAuditActor(request, { userId: session.userId, actingRole: primaryRole(session.roles) });
   });
+
+  // After authentication, before the handler: the permission of the route.
+  registerPermissionGuard(app, options.authz);
 }

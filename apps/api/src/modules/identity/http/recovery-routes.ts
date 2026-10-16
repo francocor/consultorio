@@ -2,7 +2,6 @@ import {
   InvitationAcceptRequest,
   PasswordResetCompleteRequest,
   PasswordResetRequest,
-  effectivePermissions,
 } from '@consultorio/contracts';
 import type { FastifyInstance, FastifyRequest } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
@@ -106,16 +105,13 @@ export function recoveryRoutes(deps: RecoveryRoutesDeps) {
     typed.post(
       '/users/:id/password-reset',
       {
-        config: { readOnly: 'auth', auth: 'session' },
+        // Only those who manage staff may trigger it (permission catalog: staff.manage).
+        config: { readOnly: 'auth', permission: 'staff.manage' },
         schema: { params: UserParams, body: NoBody.optional() },
       },
       async (request, reply) => {
         const current = request.session;
         if (!current) throw new AppError('unauthenticated');
-        // Only those who manage staff may trigger it. (The permission guard of S1.15 takes over.)
-        if (!effectivePermissions(current.roles, []).includes('staff.manage')) {
-          throw new AppError('forbidden');
-        }
         // The email goes to the target's own address. The password is never set here.
         const sent = await deps.passwordReset.requestForMember(
           linkContext(request),

@@ -1,4 +1,4 @@
-import type { AuditAction } from '@consultorio/contracts';
+import type { AuditAction, AuditMetadata } from '@consultorio/contracts';
 
 import type { Db } from '../db/pool.js';
 import { createWithTenant } from '../db/tenant-context.js';
@@ -20,6 +20,8 @@ export interface AuditDenyEvent {
   resourceId?: string;
   patientId?: string;
   reason?: string;
+  /** Field names, versions, counts. Never clinical content or secrets (validated). */
+  metadata?: AuditMetadata;
 }
 
 export interface AuditDenyDeps {
