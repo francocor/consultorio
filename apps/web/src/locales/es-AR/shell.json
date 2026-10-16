@@ -32,6 +32,7 @@
   "role.patient": "Paciente",
   "home.welcome": "Bienvenido a {{organization}}",
   "home.signedInAs": "Ingresó como {{roles}}.",
+  "home.search.title": "Buscar un paciente",
   "home.quick.title": "Accesos rápidos",
   "home.quick.patients.title": "Pacientes",
   "home.quick.patients.description": "Busque, registre y administre a los pacientes de la organización.",

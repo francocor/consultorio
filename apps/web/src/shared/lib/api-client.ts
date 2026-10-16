@@ -1,5 +1,6 @@
 import {
   ERROR_CATALOG,
+  PatientSummaryDto,
   Problem,
   errorCodeForStatus,
   type ErrorCode,
@@ -31,6 +32,11 @@ export class ApiError extends Error {
   readonly requestId: string | null;
   readonly fieldErrors: readonly FieldError[];
   readonly retryAfterSeconds: number | null;
+  /**
+   * Members a problem carries besides the standard ones. Only the ones the app knows are kept and
+   * each is validated: today, `existingPatient` of a duplicate-document conflict.
+   */
+  readonly extensions: Readonly<Record<string, unknown>>;
 
   constructor(init: {
     status: number;
@@ -40,6 +46,7 @@ export class ApiError extends Error {
     requestId?: string | null;
     fieldErrors?: readonly FieldError[];
     retryAfterSeconds?: number | null;
+    extensions?: Record<string, unknown>;
   }) {
     super(init.i18nKey);
     this.name = 'ApiError';
@@ -50,6 +57,7 @@ export class ApiError extends Error {
     this.requestId = init.requestId ?? null;
     this.fieldErrors = init.fieldErrors ?? [];
     this.retryAfterSeconds = init.retryAfterSeconds ?? null;
+    this.extensions = init.extensions ?? {};
   }
 }
 
@@ -121,27 +129,44 @@ function filenameOf(response: Response): string | null {
   return match?.[1] ?? null;
 }
 
-async function readProblem(response: Response): Promise<Problem | null> {
+interface ParsedProblem {
+  problem: Problem;
+  extensions: Record<string, unknown>;
+}
+
+/** Reads a problem+json body, keeping the one extension the app knows (a validated patient). */
+async function readProblem(response: Response): Promise<ParsedProblem | null> {
+  let body: unknown;
   try {
-    const result = Problem.safeParse(await response.json());
-    return result.success ? result.data : null;
+    body = await response.json();
   } catch {
     return null;
   }
+  if (typeof body !== 'object' || body === null) return null;
+  const { existingPatient, ...standard } = body as Record<string, unknown>;
+  const parsed = Problem.safeParse(standard);
+  if (!parsed.success) return null;
+  const patient = PatientSummaryDto.safeParse(existingPatient);
+  return {
+    problem: parsed.data,
+    extensions: patient.success ? { existingPatient: patient.data } : {},
+  };
 }
 
 async function errorFrom(response: Response): Promise<ApiError> {
   const headerId = response.headers.get('x-request-id');
   const parsed = await readProblem(response);
   if (parsed) {
+    const { problem } = parsed;
     return new ApiError({
       status: response.status,
       kind: 'problem',
-      code: parsed.code,
-      i18nKey: parsed.i18nKey,
-      requestId: parsed.requestId,
-      fieldErrors: parsed.errors ?? [],
+      code: problem.code,
+      i18nKey: problem.i18nKey,
+      requestId: problem.requestId,
+      fieldErrors: problem.errors ?? [],
       retryAfterSeconds: retryAfter(response),
+      extensions: parsed.extensions,
     });
   }
   const code = errorCodeForStatus(response.status);

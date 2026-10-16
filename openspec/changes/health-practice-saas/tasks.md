@@ -444,8 +444,8 @@ Depends: S1.31, S1.19, S1.18.
 
 Depends: S1.31, S1.20, S1.21, S1.22.
 
-- [ ] 1.116 `features/patients/*`: `PatientPicker` (DNI or name), list, create form with shared Zod DNI/CUIT validation, duplicate-409 flow, deactivate, consent capture prompt. [PAT-01, PAT-02, PAT-04, PAT-08, PAT-10] Test: component tests.
-- [ ] 1.117 Patient detail: demographics, coverage, representative, rights requests, version history, `SafetyFlag` ("see professional" for non-professionals), assignment actions. [PAT-05, PAT-07, PAT-09, PAT-11, PAT-12, AUZ-10] Test: component tests.
+- [x] 1.116 `features/patients/*`: `PatientPicker` (DNI or name), list, create form with shared Zod DNI/CUIT validation, duplicate-409 flow, deactivate, consent capture prompt. [PAT-01, PAT-02, PAT-04, PAT-08, PAT-10] Test: component tests.
+- [x] 1.117 Patient detail: demographics, coverage, representative, rights requests, version history, `SafetyFlag` ("see professional" for non-professionals), assignment actions. [PAT-05, PAT-07, PAT-09, PAT-11, PAT-12, AUZ-10] Test: component tests.
 - [ ] 1.118 Anamnesis form (professional only). Test: Playwright, reception sees no anamnesis, professional does; axe. [PAT-06]
 
 ## S1.34 Audit and settings screens (~350 lines)

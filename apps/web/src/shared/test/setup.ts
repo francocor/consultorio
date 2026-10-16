@@ -1,5 +1,6 @@
 import '@testing-library/jest-dom/vitest';
 import { cleanup } from '@testing-library/react';
+import { toast } from 'sonner';
 import { afterEach } from 'vitest';
 
 import { installZodMessages } from '../lib/zod-i18n.js';
@@ -9,6 +10,8 @@ installZodMessages();
 // Testing Library only registers its automatic cleanup when Vitest globals are enabled.
 afterEach(() => {
   cleanup();
+  // The toast queue is global: one test's message must not be on screen in the next one.
+  toast.dismiss();
 });
 
 /** Defines a browser API jsdom lacks and Radix primitives or our UI call. */

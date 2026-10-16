@@ -1,5 +1,5 @@
 import type { Permission } from '@consultorio/contracts';
-import { Link } from '@tanstack/react-router';
+import { Link, useNavigate } from '@tanstack/react-router';
 import {
   ArrowRight,
   ScrollText,
@@ -16,6 +16,7 @@ import { hasAnyPermission, useMe } from '../../app/session.js';
 import { usePageTitle } from '../../app/use-page-title.js';
 import { Card, CardDescription, CardHeader, CardTitle } from '../../shared/ui/card.js';
 import { PageHeader } from '../../shared/ui/page-header.js';
+import { PatientPicker } from '../patients/components/PatientPicker.js';
 
 interface QuickAction {
   id: 'patients' | 'staff' | 'audit' | 'settings' | 'security';
@@ -47,6 +48,8 @@ export function HomePage() {
 
   const roles = me.roles.map((role) => t(`role.${role}`)).join(', ');
   const actions = QUICK_ACTIONS.filter((action) => hasAnyPermission(me.permissions, action.anyOf));
+  const canSearchPatients = hasAnyPermission(me.permissions, ['patients.read']);
+  const navigate = useNavigate();
 
   return (
     <div>
@@ -54,6 +57,20 @@ export function HomePage() {
         title={t('home.welcome', { organization })}
         description={t('home.signedInAs', { roles })}
       />
+
+      {canSearchPatients ? (
+        <section aria-labelledby="find-patient" className="mb-8 grid gap-2">
+          <h2 id="find-patient" className="font-display text-base font-semibold">
+            {t('home.search.title')}
+          </h2>
+          <PatientPicker
+            className="max-w-xl"
+            onSelect={(patient) => {
+              void navigate({ to: `/patients/${patient.id}` });
+            }}
+          />
+        </section>
+      ) : null}
 
       <section aria-labelledby="quick-actions" className="grid gap-3">
         <h2 id="quick-actions" className="font-display text-base font-semibold">

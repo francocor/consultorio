@@ -136,6 +136,35 @@ describe('api client: error responses', () => {
     expect(failure.retryAfterSeconds).toBe(37);
   });
 
+  it('keeps the existing patient the API names in a duplicate-document conflict', async () => {
+    const existing = {
+      id: '0190a000-0000-7000-8000-0000000000e1',
+      familyName: 'Gómez',
+      givenNames: 'Valentina',
+      birthDate: '1988-05-04',
+      document: { type: 'dni', number: '99000001' },
+      phone: null,
+      status: 'active',
+      hasSafetyFlag: false,
+    };
+    const { client } = clientWith(() => problem(409, 'conflict', { existingPatient: existing }));
+
+    const failure = (await client.post('/patients').catch((e: unknown) => e)) as ApiError;
+
+    expect(failure.code).toBe('conflict');
+    expect(failure.requestId).toBe('req-123');
+    expect(failure.extensions['existingPatient']).toEqual(existing);
+  });
+
+  it('ignores an extension that does not look like a patient summary', async () => {
+    const { client } = clientWith(() => problem(409, 'conflict', { existingPatient: { id: 5 } }));
+
+    const failure = (await client.post('/patients').catch((e: unknown) => e)) as ApiError;
+
+    expect(failure.code).toBe('conflict');
+    expect(failure.extensions['existingPatient']).toBeUndefined();
+  });
+
   it('turns a network failure into an error with status 0 and its own message key', async () => {
     const client = createApiClient({
       fetch: (() => Promise.reject(new TypeError('Failed to fetch'))) as unknown as typeof fetch,

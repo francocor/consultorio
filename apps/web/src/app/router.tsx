@@ -15,7 +15,6 @@ import { lazy, type ComponentType } from 'react';
 import { AuditPage } from '../features/audit/AuditPage.js';
 import { AuthLayout } from '../features/auth/AuthLayout.js';
 import { LoginPage } from '../features/auth/LoginPage.js';
-import { PatientsPage } from '../features/patients/PatientsPage.js';
 import { settingsTabsFor } from '../features/settings/settings-tabs.js';
 import { SettingsPage } from '../features/settings/SettingsPage.js';
 import { isApiError } from '../shared/lib/api-client.js';
@@ -174,7 +173,31 @@ function buildRouteTree() {
   const patientsRoute = createRoute({
     getParentRoute: () => authedRoute,
     path: '/patients',
-    component: guarded(['patients.read'], PatientsPage),
+    component: guarded(
+      ['patients.read'],
+      lazyRouteComponent(() => import('../features/patients/PatientsPage.js'), 'PatientsPage'),
+    ),
+  });
+
+  const newPatientRoute = createRoute({
+    getParentRoute: () => authedRoute,
+    path: '/patients/new',
+    component: guarded(
+      ['patients.write'],
+      lazyRouteComponent(() => import('../features/patients/NewPatientPage.js'), 'NewPatientPage'),
+    ),
+  });
+
+  const patientRoute = createRoute({
+    getParentRoute: () => authedRoute,
+    path: '/patients/$patientId',
+    component: guarded(
+      ['patients.read'],
+      lazyRouteComponent(
+        () => import('../features/patients/PatientDetailPage.js'),
+        'PatientDetailPage',
+      ),
+    ),
   });
 
   const staffRoute = createRoute({
@@ -256,6 +279,8 @@ function buildRouteTree() {
       homeRoute,
       securityRoute,
       patientsRoute,
+      newPatientRoute,
+      patientRoute,
       staffRoute,
       auditRoute,
       settingsRoute.addChildren([settingsIndexRoute, settingsLocationsRoute]),
