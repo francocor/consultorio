@@ -58,7 +58,10 @@ export function recoveryRoutes(deps: RecoveryRoutesDeps) {
 
     typed.post(
       '/auth/password-reset/request',
-      { config: publicConfig, schema: { body: PasswordResetRequest } },
+      {
+        config: { ...publicConfig, audits: ['auth.password.reset_requested'] },
+        schema: { body: PasswordResetRequest },
+      },
       (request, reply) => {
         const context = linkContext(request);
         // The work happens after the answer: how long it takes must not tell whether the account
@@ -72,7 +75,10 @@ export function recoveryRoutes(deps: RecoveryRoutesDeps) {
 
     typed.post(
       '/auth/password-reset/complete',
-      { config: publicConfig, schema: { body: PasswordResetCompleteRequest } },
+      {
+        config: { ...publicConfig, audits: ['auth.password.reset_completed'] },
+        schema: { body: PasswordResetCompleteRequest },
+      },
       async (request, reply) => {
         const context = request.hostContext;
         if (context?.kind !== 'tenant') throw new AppError('bad_request');
@@ -88,7 +94,10 @@ export function recoveryRoutes(deps: RecoveryRoutesDeps) {
 
     typed.post(
       '/auth/invitations/accept',
-      { config: publicConfig, schema: { body: InvitationAcceptRequest } },
+      {
+        config: { ...publicConfig, audits: ['auth.invitation.accepted'] },
+        schema: { body: InvitationAcceptRequest },
+      },
       async (request, reply) => {
         const context = request.hostContext;
         if (context?.kind !== 'tenant') throw new AppError('bad_request');
@@ -106,7 +115,11 @@ export function recoveryRoutes(deps: RecoveryRoutesDeps) {
       '/users/:id/password-reset',
       {
         // Only those who manage staff may trigger it (permission catalog: staff.manage).
-        config: { readOnly: 'auth', permission: 'staff.manage' },
+        config: {
+          audits: ['auth.password.reset_requested'],
+          readOnly: 'auth',
+          permission: 'staff.manage',
+        },
         schema: { params: UserParams, body: NoBody.optional() },
       },
       async (request, reply) => {

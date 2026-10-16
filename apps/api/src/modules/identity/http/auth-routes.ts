@@ -54,6 +54,12 @@ export function authRoutes(deps: AuthRoutesDeps) {
       '/auth/login',
       {
         config: {
+          audits: [
+            'auth.login.success',
+            'auth.login.failed',
+            'auth.login.locked',
+            'auth.account.locked',
+          ],
           readOnly: 'auth',
           auth: 'public',
           ...(deps.loginRateLimit ? { rateLimit: deps.loginRateLimit } : {}),
@@ -93,7 +99,14 @@ export function authRoutes(deps: AuthRoutesDeps) {
 
     typed.post(
       '/auth/logout',
-      { config: { readOnly: 'auth', auth: 'session', allowEnrollmentScope: true } },
+      {
+        config: {
+          audits: ['auth.logout'],
+          readOnly: 'auth',
+          auth: 'session',
+          allowEnrollmentScope: true,
+        },
+      },
       async (request, reply) => {
         const current = request.session;
         if (!current) throw new AppError('unauthenticated');
@@ -193,7 +206,7 @@ export function authRoutes(deps: AuthRoutesDeps) {
     typed.delete(
       '/auth/sessions/:id',
       {
-        config: { readOnly: 'auth', auth: 'session' },
+        config: { audits: ['auth.session.revoked'], readOnly: 'auth', auth: 'session' },
         schema: { params: SessionIdParams },
       },
       async (request, reply) => {

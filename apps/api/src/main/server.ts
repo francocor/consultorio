@@ -9,6 +9,7 @@ import {
   type LookupTenant,
 } from '../modules/tenancy/index.js';
 import { registerRequestContext } from '../platform/audit/request-context.js';
+import { registerRouteAudits } from '../platform/audit/route-audit.js';
 import { createFeatureRegistry, type FeatureKey } from '../platform/features.js';
 import { registerAuthGuard, type AuthGuardOptions } from '../platform/http/auth-guard.js';
 import { registerBackgroundTasks } from '../platform/http/background.js';
@@ -71,6 +72,7 @@ export function buildServer(options: BuildServerOptions): FastifyInstance {
   registerTenantHost(app, createResolveHost(options.deployment, options.lookupTenant));
   // After the host guard (it reads the tenant) and before any route (it checks their categories).
   registerReadOnlyPolicy(app);
+  registerRouteAudits(app);
   if (options.rateLimit) registerRateLimit(app, options.rateLimit);
   if (options.auth) {
     registerOriginCheck(app);

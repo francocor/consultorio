@@ -53,6 +53,12 @@ export function twoFactorRoutes(deps: TwoFactorRoutesDeps) {
       '/auth/2fa',
       {
         config: {
+          audits: [
+            'auth.2fa.verified',
+            'auth.2fa.failed',
+            'auth.2fa.recovery_used',
+            'auth.account.locked',
+          ],
           readOnly: 'auth',
           auth: 'public',
           ...(deps.loginRateLimit ? { rateLimit: deps.loginRateLimit } : {}),
@@ -83,7 +89,12 @@ export function twoFactorRoutes(deps: TwoFactorRoutesDeps) {
     typed.post(
       '/auth/2fa/enroll/start',
       {
-        config: { readOnly: 'auth', auth: 'session', allowEnrollmentScope: true },
+        config: {
+          audits: 'none',
+          readOnly: 'auth',
+          auth: 'session',
+          allowEnrollmentScope: true,
+        },
         schema: {
           body: TwoFactorEnrollStartRequest,
           response: { 200: TwoFactorEnrollStartResponse },
@@ -130,7 +141,12 @@ export function twoFactorRoutes(deps: TwoFactorRoutesDeps) {
     typed.post(
       '/auth/2fa/enroll/confirm',
       {
-        config: { readOnly: 'auth', auth: 'session', allowEnrollmentScope: true },
+        config: {
+          audits: ['auth.2fa.enrolled'],
+          readOnly: 'auth',
+          auth: 'session',
+          allowEnrollmentScope: true,
+        },
         schema: { body: TwoFactorConfirmRequest, response: { 200: RecoveryCodesResponse } },
       },
       async (request, reply) => {
@@ -176,7 +192,7 @@ export function twoFactorRoutes(deps: TwoFactorRoutesDeps) {
     typed.post(
       '/auth/2fa/recovery-codes',
       {
-        config: { readOnly: 'auth', auth: 'session' },
+        config: { audits: ['auth.2fa.recovery_regenerated'], readOnly: 'auth', auth: 'session' },
         schema: { body: ReauthenticateRequest, response: { 200: RecoveryCodesResponse } },
       },
       async (request) => {
@@ -213,7 +229,7 @@ export function twoFactorRoutes(deps: TwoFactorRoutesDeps) {
     typed.post(
       '/auth/2fa/disable',
       {
-        config: { readOnly: 'auth', auth: 'session' },
+        config: { audits: ['auth.2fa.disabled'], readOnly: 'auth', auth: 'session' },
         schema: { body: ReauthenticateRequest },
       },
       async (request, reply) => {
