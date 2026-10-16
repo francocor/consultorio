@@ -1,0 +1,29 @@
+{
+  "name": "health-practice-saas",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Health practice SaaS",
+  "type": "module",
+  "packageManager": "pnpm@8.15.9",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "dev": "pnpm -r --parallel --if-present run dev",
+    "build": "pnpm -r --if-present run build",
+    "typecheck": "pnpm -r --if-present run typecheck",
+    "lint": "eslint .",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "test": "pnpm -r --if-present run test",
+    "test:integration": "pnpm -r --if-present run test:integration",
+    "test:e2e": "pnpm -r --if-present run test:e2e"
+  },
+  "prettier": "@consultorio/config/prettier.config.js",
+  "devDependencies": {
+    "@consultorio/config": "workspace:*",
+    "eslint": "^10",
+    "prettier": "^3",
+    "typescript": "~6.0.3"
+  }
+}

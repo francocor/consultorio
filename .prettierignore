@@ -1,0 +1,15 @@
+# Legacy code is reference only
+BackEnd
+FrontEnd
+
+# Planning artifacts and local caches
+openspec
+.atl
+
+# Generated and build output
+node_modules
+dist
+coverage
+playwright-report
+test-results
+pnpm-lock.yaml

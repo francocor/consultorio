@@ -1,0 +1,6 @@
+packages:
+  - 'apps/*'
+  - 'packages/*'
+  # Legacy code is reference only and is never part of the workspace.
+  - '!BackEnd'
+  - '!FrontEnd'
