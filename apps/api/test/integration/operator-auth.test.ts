@@ -4,6 +4,7 @@ import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, inject, it } from 'vitest';
 
 import { operatorUser, platformAuditEvent } from '../../src/db/schema/operator.js';
+import { createPasswordHasher } from '../../src/modules/identity/index.js';
 import {
   OPERATOR_LOCK_MS,
   OPERATOR_MAX_FAILURES,
@@ -443,5 +444,57 @@ describe('sanity of the harness', () => {
       );
 
     expect(count?.n).toBe(1);
+  });
+});
+
+describe('every way of failing costs one password verification (security review, finding 7)', () => {
+  /** An app whose hasher counts how many times a password is verified. */
+  async function countingApp() {
+    const counted = { verifications: 0 };
+    const real = createPasswordHasher();
+    const hasher = createPasswordHasher({
+      functions: {
+        hash: (password) => real.hash(password),
+        verify: (stored, password) => {
+          counted.verifications += 1;
+          return real.verify(stored, password);
+        },
+      },
+    });
+    const countingClock = createTestClock();
+    const counting = buildTestApplication(runtime, {
+      operator: { database: harness.db, secrets: harness.secrets },
+      clock: countingClock.read,
+      hasher,
+    });
+    await counting.ready();
+    return { counting, counted, countingClock };
+  }
+
+  it('runs one verification for an unknown address, a wrong password and a LOCKED account alike', async () => {
+    const { counting, counted, countingClock } = await countingApp();
+    const operator = await harness.addOperator();
+    for (let attempt = 0; attempt < OPERATOR_MAX_FAILURES; attempt += 1) {
+      await loginOperator(counting, operator, countingClock, { password: 'incorrecta' });
+    }
+    const verificationsOf = async (attempt: () => Promise<unknown>) => {
+      counted.verifications = 0;
+      await attempt();
+      return counted.verifications;
+    };
+
+    const locked = await verificationsOf(() => loginOperator(counting, operator, countingClock));
+    const unknown = await verificationsOf(() =>
+      loginOperator(counting, { ...operator, email: 'nadie@platform.test' }, countingClock),
+    );
+    const other = await harness.addOperator();
+    const wrong = await verificationsOf(() =>
+      loginOperator(counting, other, countingClock, { password: 'incorrecta' }),
+    );
+
+    expect(wrong).toBe(1);
+    expect(unknown).toBe(1);
+    expect(locked).toBe(1);
+    await counting.close();
   });
 });

@@ -87,6 +87,9 @@ export function createOperatorAuth(deps: OperatorAuthDeps): OperatorAuth {
         const actor = { ...meta, operatorId: operator.id };
         const lockActive = operator.lockedUntil !== null && operator.lockedUntil > now;
         if (lockActive) {
+          // A locked account must not answer faster than one that is being checked: the time
+          // would tell an attacker that the address exists and has been hammered.
+          await deps.hasher.verifyOrDummy(null, input.password);
           await writePlatformAudit(tx, {
             action: 'operator.login.locked',
             outcome: 'deny',

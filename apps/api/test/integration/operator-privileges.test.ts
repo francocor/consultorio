@@ -176,3 +176,62 @@ describe('matricula verification through the operator role', () => {
     ).rejects.toThrow();
   });
 });
+
+describe('the operator role reaches no more than it needs (security review, finding 7)', () => {
+  const asOperatorOf = (tenantId: string, statement: ReturnType<typeof sql>) =>
+    harness.db.db.transaction(async (tx) => {
+      await tx.execute(
+        sql`select set_config('app.tenant_id', ${tenantId}, true), set_config('app.user_id', ${tenantId}, true)`,
+      );
+      return tx.execute(statement);
+    });
+
+  const insertKey = (tenantId: string, version: number) =>
+    sql`INSERT INTO tenant_key (tenant_id, purpose, version, kek_id, dek_wrapped, status)
+          VALUES (${tenantId}, 'tenant-dek', ${version}, 'local-v1', decode('00ff', 'hex'),
+                  ${version === 1 ? 'active' : 'retired'})`;
+
+  it('cannot add a data key to an organization that already has members', async () => {
+    const claimed = await createTestTenant(runtime, { slug: 'op-priv-claimed' });
+    await createTestProfessional(runtime, claimed.id);
+
+    await expectPrivilegeError(asOperatorOf(claimed.id, insertKey(claimed.id, 1)), 'claimed');
+  });
+
+  it('can add only the first key of a new organization, never a later version', async () => {
+    const fresh = await createTestTenant(runtime, { slug: 'op-priv-fresh' });
+
+    await expectPrivilegeError(asOperatorOf(fresh.id, insertKey(fresh.id, 2)), 'version two');
+    const first = await asOperatorOf(fresh.id, insertKey(fresh.id, 1));
+    expect(first.rowCount).toBe(1);
+    await expect(asOperatorOf(fresh.id, insertKey(fresh.id, 1))).rejects.toThrow();
+  });
+
+  it('reads the registration of a professional, but not the rest of the profile', async () => {
+    const created = await createTestProfessional(runtime, tenant.id, {
+      matricula: '888111',
+      specialties: ['cardiologia'],
+    });
+
+    const registration = await asOperatorOf(
+      tenant.id,
+      sql`SELECT matricula, matricula_jurisdiction, matricula_status
+            FROM professional WHERE id = ${created.professionalId}`,
+    );
+    expect(registration.rows[0]).toMatchObject({ matricula: '888111' });
+
+    for (const column of ['specialties', 'max_simultaneous']) {
+      await expectPrivilegeError(
+        asOperatorOf(
+          tenant.id,
+          sql`SELECT ${sql.identifier(column)} FROM professional WHERE id = ${created.professionalId}`,
+        ),
+        column,
+      );
+    }
+    await expectPrivilegeError(
+      asOperatorOf(tenant.id, sql`SELECT * FROM professional LIMIT 1`),
+      'select *',
+    );
+  });
+});

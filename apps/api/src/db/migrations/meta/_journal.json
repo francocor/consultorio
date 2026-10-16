@@ -148,6 +148,13 @@
       "when": 1792193277341,
       "tag": "0020_audit_integrity",
       "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "7",
+      "when": 1792193916209,
+      "tag": "0021_operator_least_privilege",
+      "breakpoints": true
     }
   ]
 }
