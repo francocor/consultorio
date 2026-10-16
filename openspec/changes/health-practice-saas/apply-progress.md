@@ -6,7 +6,7 @@ Mode: Standard for Stage 0; **Strict TDD from Stage 1** (`strict_tdd: true` in `
 
 Stage 0: tasks 0.2 to 0.34 done and merged. Task 0.1 (rotate secrets) is a manual owner action and is NOT done.
 
-Stage 1: slices S1.00 to S1.17 done (tasks 1.1 to 1.63, 63 of the 130 tasks of Stage 1). Next: S1.18 (access module: grants, settings, locations). See "Batch 3: Stage 1, slices S1.00 to S1.08" and "Batch 4: Stage 1, slices S1.09 to S1.17" at the end of this file.
+Stage 1: slices S1.00 to S1.26 done (tasks 1.1 to 1.95, 95 of the 130 tasks of Stage 1). Next: S1.27 (web foundation). See "Batch 3: Stage 1, slices S1.00 to S1.08", "Batch 4: Stage 1, slices S1.09 to S1.17" and "Batch 5: Stage 1, slices S1.18 to S1.26" at the end of this file.
 
 ## Batch 1: Stage 0, slices S0.01 to S0.05
 
@@ -419,3 +419,121 @@ RED means the test file was written before the production code it exercises. GRE
 ### Remaining
 
 Slices S1.18 to S1.37 (tasks 1.64 onward). Next: **S1.18 Access module: grants, settings, locations** (it plugs `grants` into `createApplication` and the sharing settings write path), then S1.19 (staff and professionals: plugs `professionals`, sends invitations).
+
+
+## Batch 5: Stage 1, slices S1.18 to S1.26
+
+Mode: **Strict TDD**. Branch `feat/stage-1-secure-core`, same delivery as batches 3 and 4 (work-unit commits, draft PR #14 with `size:exception`, nothing merged). Toolchain: Node v24.22.0, pnpm 10.34.7, Docker engine running (Testcontainers: Postgres 17, MinIO `bitnamilegacy/minio:2025.7.23-debian-12-r5`). Owner asleep, automatic mode: every decision below was taken from the design and specs.
+
+### Commits (in order)
+
+| Slice | Tasks | Commits |
+|---|---|---|
+| S1.18 Access | 1.64 to 1.67 | `ad5676e` finish-migration inlines FKs; `2ca6911` grants + membership locations (0012); `4ee0d1b` grant/revoke API, role-change rules; `704a7ab` settings API; `00944b9` locations API |
+| S1.19 Staff and professionals | 1.68 to 1.71 | `cbd66eb` professional tables + operator-only verification trigger (0013); `6d41867` profile service; `5bb7aa6` invitations, directory, lifecycle; `cf11822` weekly hours |
+| S1.20 Patients core | 1.72 to 1.75 | `74d1ee4` tables (0014); `d483f25` registry API; `e3a178c` search; `8d596f2` minors and representatives |
+| S1.21 Coverage, consent, rights | 1.76 to 1.78 | `c1ae8a7` tables (0015); `55e270c` coverage; `6f1a376` consent; `b4374a6` rights requests |
+| S1.22 Anamnesis, safety flags, assignment | 1.79 to 1.82 | `5cb88ba` anamnesis + flag setter (0016); `7bfa924` anamnesis API; `e35bbbb` assignment API + DTO guard; `dba82a0` guard fix |
+| S1.23 Audit viewer and report | 1.83 to 1.86 | `d4d5bc6` viewer, report, export; `fe68e05` partitions task + runbook; `8763182` coverage policy test |
+| S1.24 Object storage | 1.87 | `d47fb3e` port, fake, S3 adapter against MinIO |
+| S1.25 Branding API | 1.88 to 1.91 | `47fd24c` contrast; `438ae4e` identity API; `10d0a8c` logo upload; `51fbdd4` boot payload and manifest |
+| S1.26 Operator console API | 1.92 to 1.95 | `49b5055` operator tables, platform trail, `app_operator` allowlist (0017); `3c394ce` console API, tenant creation, support grants |
+
+### What was built
+
+- **Access (S1.18).** `permission_grant` (`CHECK permission NOT LIKE 'clinical.%'`) and `membership_location`; grant and revoke API with role-change rules (no self-escalation, ceiling, last owner protected by a row lock, sessions ended on privilege change); settings API (`reception_sees_clinical_metadata`, `clinicalSharing`, `sharedTemplates`, 2FA policy, quiet hours); locations API and the `visibleLocationIds` helper. The helper script `finish-migration.ts` now moves foreign keys to existing FORCE-RLS tables inline into `CREATE TABLE`.
+- **Staff (S1.19).** `professional` and `professional_hours`; the matricula is validated through the country pack; editing it resets to `unverified`; a trigger lets only `current_user = 'app_operator'` set `verified`. Invitations (role ceiling, email), role-aware directory, deactivate and reactivate that keep history. Weekly hours are compared as absolute instants across locations and time zones.
+- **Patients (S1.20 to S1.22).** Registry with partial-unique document deduplication (409 carries `existingPatient`), append-only `patient_version`, accent-insensitive search (generated `search_name` through `app.f_unaccent`, phone digits), minors need a representative and carry `majority_review_on` from the country pack. Payer plans and coverage (edits end the old row and insert a new one), data-processing consent captured at registration (required field `dataProcessingConsent`), revocation and rights requests allowed in a read-only organization (category `patient_protective`). Encrypted versioned anamnesis behind the clinical policies; safety flags (`allergy_on_file`, `anticoagulant_on_file`, `pregnancy`, `implanted_device`) written only by the SECURITY DEFINER function `app.set_patient_safety_flags`, guarded by a trigger and a policy test that no code path sets them. Care assignment API where nobody assigns themselves.
+- **Audit (S1.23).** Viewer with filters and cursor paging, patient access report, streamed CSV/JSON export whose own `audit.exported` entry is written before the first byte, CSV formula-injection guard, partition upkeep as a named platform task (`audit.partitions`, run by the worker at start and nightly), retention runbook. `audit-coverage.test.ts` makes a missing scenario for any audit action a compile error and requires every mutating route to declare `config.audits` (a list of actions or `'none'`).
+- **Object storage (S1.24).** Port with tenant-prefixed keys (`t/{tenantId}/...`, a key outside the tenant is refused), in-memory fake with a shared contract suite, S3 adapter (AWS SDK v3, presigned POST) proven against MinIO. Optional `S3_*` variables, static keys refused in production.
+- **Branding (S1.25).** OKLCH contrast computation (requested color kept, effective color adjusted until 4.5:1, white foreground), `GET|PUT /branding`, `POST /branding/preview`, diff audited. Logo: `PUT|DELETE /branding/logo` with the raw image as body (PNG, JPEG, WebP; SVG and anything else get 415; 512 KB cap; magic-byte sniff; polyglot detection by PNG IEND, JPEG EOI and WebP RIFF size; 2048 px cap; re-encode with `sharp` to a clean PNG of at most 512 px, EXIF gone); versioned key so a new logo is a new URL; the previous object is removed only after the commit. Public `GET /public/branding/logo` (nosniff, `default-src 'none'; sandbox`, immutable cache, optional `?size=192|512` square icon). Without storage the upload answers 503. Public `GET /public/boot` (whitelisted keys only) and per-host `GET /manifest.webmanifest`.
+- **Operator console (S1.26).** `operator_user` (password + mandatory TOTP, no grace period, TOTP secret envelope-encrypted with a per-operator data key wrapped by the key service, lockout after 5 failures for 15 minutes), `operator_session` (`osid` cookie, `SameSite=Strict`, 30 min idle, 8 h absolute), `platform_audit_event` (one global append-only chain sealed by `audit_sealer` with the tenant hashing code, sealed and verified by the worker), `support_grant`. Routes live under `/operator/*`, answer only on the platform host (a tenant host, an unknown host or a deployment without `OPERATOR_DATABASE_URL` gets the same 404 as an unknown route) and are `auth: 'public'` for the global guard because the console has its own guard (`config.operatorAuth` is mandatory at boot). `POST /operator/tenants` creates the tenant (slug generated, random suffix on collision and never revealed, `is_demo` fixed at creation), its data key, default settings and the owner's single-use invitation (by email only, never in the response), audited on both trails. `POST /operator/tenants/:id/owner-invitation` re-sends it while nobody has joined. `POST /operator/tenants/:id/demo-reset` refuses non-demo organizations (409, audited) and calls an injected `DemoResetPort` (503 until S1.36 provides it). The organization's owner opens and closes a support window with `GET|POST /support-grants` and `DELETE /support-grants/:id` (permission `tenant.support.manage`, owner only, 1 to 168 hours); `GET /operator/tenants/:id/support/overview` needs an active, unexpired grant and writes `support.access` to both trails in the same transaction as the read.
+- **The `app_operator` allowlist.** Table privileges on exactly: `tenant` (insert, select of non-sensitive columns, no `settings`, no update), `tenant_key`, `action_token`, `audit_event` (insert only, restricted by policy to `tenant.created` and `support.access`), `location` and `tenant_feature` (select, restricted by a RESTRICTIVE policy to organizations with an active support grant), `professional` (matricula verification columns only), and the operator's own tables. A test lists every table with any privilege and compares it with that list; another proves no patient, clinical, membership, account or scheduling table is touched and that a real read is refused. The operator can issue an invitation only for an organization with no member (`app.tenant_is_unclaimed`), only of kind `staff_invitation`, and the invitation of origin `operator` is accepted for the owner role only and only while the organization has no member.
+
+### TDD Cycle Evidence
+
+RED means the test file was written (or the type/behavior assertion failed) before the production code it exercises. Exceptions are stated in the last column.
+
+| Tasks | Test file(s) | Layer | Notes |
+|---|---|---|---|
+| 1.64 | `access-schema.test.ts`, generated isolation | Integration | RED: schema import failed. The CHECK refuses clinical permissions at the database |
+| 1.65 | `domain/role-change.test.ts`, `grant-rules.test.ts`, `access-grants.test.ts` | Unit + Integration | RED first. The last owner is protected by row locks in the service |
+| 1.66 | `domain/settings.test.ts`, `access-settings.test.ts` | Unit + Integration | RED first. Psychology only by explicit confirmation |
+| 1.67 | `access-locations.test.ts` | Integration | RED first. Reception sees only its locations |
+| 1.68 to 1.70 | `staff-schema.test.ts`, `staff-profile.test.ts`, `staff-lifecycle.test.ts` | Integration | RED first. A tenant user cannot verify a matricula; edit resets; invitation ceiling |
+| 1.71 | `domain/hours.test.ts`, `staff-hours.test.ts` | Unit + Integration | RED first. Overlap across time zones |
+| 1.72, 1.73, 1.75 | `patients-schema.test.ts`, `patients-api.test.ts`, `patients-minors.test.ts`, `domain/majority.test.ts` | Unit + Integration | RED first |
+| 1.74 | `patients-search.test.ts` | Integration | **Deviation:** the search query was implemented before its test; the test (accent-insensitive, 10,000 seeded patients) was written afterwards in the same work unit |
+| 1.76 to 1.78 | `coverage-schema.test.ts`, `patients-coverage.test.ts`, `patients-consent.test.ts`, `patients-rights.test.ts` | Integration | RED first |
+| 1.79 to 1.82 | `anamnesis-schema.test.ts`, `anamnesis-api.test.ts`, `application/safety-flags.test.ts`, `care-assignment-api.test.ts`, `policy/no-safety-flag-setter.test.ts` | Unit + Integration + policy | RED first. Self-assignment is denied: the spec wins over the task text |
+| 1.83 to 1.85 | `audit-viewer.test.ts`, `audit-partitions.test.ts`, `domain/csv.test.ts`, `policy/no-audit-delete.test.ts` | Unit + Integration + policy | RED first |
+| 1.86 | `policy/audit-coverage.test.ts`, `policy/audit-scenarios.ts` | policy | **Honest limit:** the `audits` tag of a route is a declaration checked to exist and to name known actions, not an assertion that the route really writes that entry; the entries themselves are proven by the scenario tests |
+| 1.87 | `platform/storage/object-storage.test.ts`, `adapters/memory-storage`, `storage-s3.test.ts` (MinIO) | Unit + Integration | One contract suite runs against the fake and the S3 adapter |
+| 1.88 | `branding/contrast.test.ts` | Unit + property | fast-check, stable over 8 runs |
+| 1.89 | `branding-api.test.ts` | Integration | 19 tests |
+| 1.90 | `branding/logo.test.ts` (12), `branding-logo.test.ts` (20) | Unit + Integration | Polyglot, oversize, SVG, mismatch, dimensions, EXIF stripped, 503 without storage, hardened headers |
+| 1.91 | `branding-boot.test.ts` | Integration | Only whitelisted keys; two hosts, two themes; platform and unknown hosts 404 |
+| 1.92 | `operator-privileges.test.ts`, generated isolation (fixture `support_grant`), `rls-catalog.test.ts` | Integration | Written with the console tests (the harness needs the module), so the 1.92 commit has no test of its own; the allowlist test and the matricula positive test (a real `app_operator` login verifies) run in the suite |
+| 1.93 | `operator-auth.test.ts` (19) | Integration | Tenant users get 404 on `/operator/*`; uniform failures; replayed code; lockout and unlock; idle expiry; CSRF; secret encrypted at rest and bound to its row; platform chain sealed, verified, tamper detected (and restored) |
+| 1.94 | `domain/slug.test.ts`, `operator-tenants.test.ts` (17) | Unit + Integration | Owner accepts the invitation and signs in; collision invisible; `is_demo` immutable; both trails; reissue; forged invitations refused at the database; demo reset (allow, deny, 404, 503) |
+| 1.95 | `operator-support.test.ts` (15) | Integration | No grant, expired, revoked, other tenant's grant: all denied; each use on both trails; database policy proven without the service |
+
+### Test summary and verification (tip of `feat/stage-1-secure-core`, before this progress commit)
+
+- Unit: **95 files, 1102 tests** (`pnpm test`). Integration: **65 files, 1000 tests** (`pnpm test:integration`, Postgres 17 as `app_rw` and `app_operator`, MinIO container).
+
+| Command | Result |
+|---|---|
+| `corepack pnpm install --frozen-lockfile` | exit 0 |
+| `corepack pnpm typecheck` | exit 0 |
+| `corepack pnpm lint` | exit 0 |
+| `corepack pnpm format:check` | exit 0 |
+| `corepack pnpm test` | 95 files, 1102 tests passed |
+| `corepack pnpm test:integration` | 65 files, 1000 tests passed |
+| `corepack pnpm build` | exit 0 |
+| `corepack pnpm db:check` | "No migration drift." |
+| `corepack pnpm audit --prod --audit-level=high` | no known vulnerabilities |
+| `docker build -f infra/Dockerfile` + smoke run with the production configuration of the CI smoke test | `/health` 200, unknown route 404, `/operator/me` on the platform host 404 (no operator database configured), `sharp` loads and encodes inside the image |
+
+### Bugs found by the tests and fixed in the same slice
+
+1. A test-support helper for the operator emails collided across test files (one shared database): addresses are now random per call.
+2. `platform-catalogs.test.ts` counted every payer of the shared database, so the payers the coverage tests insert broke it (a flaw from S1.21 that only a full run shows): it now counts the seeded payers only.
+3. Drizzle stamps `updated_at` on every update, which the column-level grants of `app_operator` did not cover (matricula verification and the invitation revoke): both grants now include `updated_at`.
+4. A raw `tx.execute` returns timestamps as strings with this driver setup: the support overview parsed a date from a raw query and failed; it converts explicitly.
+
+### Decisions and deviations (all recorded because the owner was asleep)
+
+1. **Routes have no `/api/v1` prefix** (like `/auth/*`); the task text says `/api/v1/...`. The web slices must proxy or rewrite `/api` (the dev server already proxies `/api`; the reverse proxy must strip it). Adding the prefix later is one change in `buildServer`.
+2. **Permissions.** New `staff.directory.read` (every staff role) and `tenant.support.manage` (owner only). The task's `branding.manage` is the catalog's `tenant.branding.manage`.
+3. **Self-assignment is denied** (spec "no one may assign themselves") although task 1.81 says "professional self-assign".
+4. **`audit.partitions`** is a platform scheduled task run by the worker (global, not a per-tenant pg-boss job) because partitions are shared by all tenants.
+5. **Hours date exceptions** are deferred to scheduling (S2.01); S1.19 covers the weekly pattern.
+6. **Database guards.** Matricula verification keys on `current_user = 'app_operator'`; safety flags on `current_user = 'app_owner'` (the definer function runs as the owner).
+7. **S3 variables are optional in production** until Stage 2 documents a bucket; without a bucket logo upload answers 503.
+8. **Anamnesis clinical export contributor** is not registered yet (only administrative ones are); it must exist before Stage 6.
+9. **Author reads of their own entries** after losing the treating relationship remain allowed (the design predicate).
+10. **The audit export lists its own `audit.exported` entry.**
+11. **Organization name in emails** comes from `theme.displayName`, falling back to the slug. The recovery-routes link context still uses the slug and should move to `readOrganizationName`.
+12. **Migrations** 0012 access, 0013 staff, 0014 patients, 0015 coverage and privacy, 0016 anamnesis, 0017 operator. The role `app_operator` is created by `infra/postgres/init/01-roles.sql`: an existing local volume needs `pnpm infra:reset`.
+13. **Operator TOTP secret** uses the key service with a new purpose `operator-dek` and the nil UUID as tenant, one data key per operator, instead of the tenant key table. The TOTP code module moved to `platform/crypto/totp.ts` so the operator module does not import identity internals.
+14. **Operator sign-in is one step** (password and code together), so there is no half-signed-in state. Operators exist only through the bootstrap script `pnpm --filter @consultorio/api operator:create` (password from `OPERATOR_PASSWORD`), never through an endpoint.
+15. **`OPERATOR_DATABASE_URL`** (documented in `.env.example`, compose and `docs/dev-setup.md`) is optional; without it, or in single-tenant mode, the console does not exist. The operator pool has 3 connections.
+16. **Support access shows configuration only** (organization, locations, feature flags). Anything that would read people or care is impossible at the database level, not only in the service.
+17. **The owner invitation of an operator-created tenant** carries `origin: 'operator'`; acceptance skips the inviting-member check only for that origin, only for the owner role, and only while the organization has no member. The operator can revoke older invitations of an unclaimed organization (typo in the address) but nothing else on `action_token`.
+18. **Demo reset** is a port (`DemoResetPort`). The tenant-side `tenant.demo_reset` audit action stays `pending` for S1.36, because the reset deletes the demo organization's own chain; the platform-level entry is written now.
+19. **Prettier and drizzle-kit snapshots.** `prettier --write <directory>` rewrites `migrations/meta/*.json` even though `.prettierignore` lists them (explicit paths override the ignore file). Never pass a directory that contains them; this cost one revert during the batch.
+20. **Known limits:** operator rate limit and lockout are per account in the database but the login rate limit is per process (same as tenants); the platform chain has no external anchor (same limit as the tenant chains, Stage 6); the operator console has no UI (an operator uses the API; the web slice for it is out of Stage 1 scope).
+
+### Attachment points for the web slices (S1.27 onward)
+
+- Auth: `/auth/*` (existing). `/auth/me` now includes the effective permissions (role permissions plus grants). Web routes the emails link to: `/accept-invitation?token=`, `/reset-password?token=`.
+- Settings `/settings`; locations `/locations`, `/members/:id/locations`; grants and roles `/members/:id/grants`, `/members/:id/roles`.
+- Staff `/staff*`, `/professionals/:id/hours`. Patients `/patients*`, `/payer-catalog`, `/payer-plans*`, coverages, consent, rights requests, representatives, assignments, anamnesis (all under `/patients/:id/...`).
+- Audit `/audit-events`, `/audit-events/export`, `/patients/:id/access-report`.
+- Branding `/branding`, `/branding/preview`, `/branding/logo`; public `/public/branding/logo` (optional `?size=192|512`), `/public/boot` (for the theme boot, S1.98), `/manifest.webmanifest`. The product icons `/icons/icon-192.png` and `/icons/icon-512.png` must exist in the web app (the manifest uses them until a logo is uploaded).
+- Support grants (owner) `/support-grants`. Operator `/operator/*` on the platform host only.
+
+### Remaining
+
+Slices S1.27 to S1.37 (tasks 1.96 onward): web foundation, shell, auth screens, then the admin screens, demo scaffold and the Stage 1 gate. The demo reset (S1.36) must implement `DemoResetPort` and pass it as `operator.demoReset` to `createApplication`.

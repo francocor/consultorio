@@ -317,78 +317,78 @@ Depends: S1.16, S1.03.
 
 Depends: S1.15, S1.04.
 
-- [ ] 1.64 `db/schema/access.ts` + migration: `permission_grant` (`CHECK (permission NOT LIKE 'clinical.%')`, scope jsonb), `membership_location`. [AUZ-12, AUZ-13] Test: inserting a `clinical.*` grant fails at the DB.
-- [ ] 1.65 `modules/access`: grant and revoke API (owner/admin only), role-change rules (no self-escalation, no granting above own ceiling, last owner protected, sessions rotated on change), audited. [AUZ-03, AUZ-12] Test: each prohibited path returns 403 with a deny audit row.
-- [ ] 1.66 Org settings API `GET|PATCH /api/v1/settings`: `reception_sees_clinical_metadata`, `clinicalSharing` (default `sharedTemplates`, psychology only by explicit audited choice), `require_2fa`, quiet hours default; every change audited. [AUZ-07, AUZ-11] Test: sharing toggle audited; psychology needs the explicit flag.
-- [ ] 1.67 Location HTTP API (`/api/v1/locations` create, edit, deactivate) and membership-location assignment with a reception location filter helper. [TEN-04, AUZ-13] Test: reception only sees its locations; deactivate keeps history.
+- [x] 1.64 `db/schema/access.ts` + migration: `permission_grant` (`CHECK (permission NOT LIKE 'clinical.%')`, scope jsonb), `membership_location`. [AUZ-12, AUZ-13] Test: inserting a `clinical.*` grant fails at the DB.
+- [x] 1.65 `modules/access`: grant and revoke API (owner/admin only), role-change rules (no self-escalation, no granting above own ceiling, last owner protected, sessions rotated on change), audited. [AUZ-03, AUZ-12] Test: each prohibited path returns 403 with a deny audit row.
+- [x] 1.66 Org settings API `GET|PATCH /api/v1/settings`: `reception_sees_clinical_metadata`, `clinicalSharing` (default `sharedTemplates`, psychology only by explicit audited choice), `require_2fa`, quiet hours default; every change audited. [AUZ-07, AUZ-11] Test: sharing toggle audited; psychology needs the explicit flag.
+- [x] 1.67 Location HTTP API (`/api/v1/locations` create, edit, deactivate) and membership-location assignment with a reception location filter helper. [TEN-04, AUZ-13] Test: reception only sees its locations; deactivate keeps history.
 
 ## S1.19 Staff and professionals (~400 lines)
 
 Depends: S1.18, S1.14, S1.02.
 
-- [ ] 1.68 `db/schema/staff.ts` + migration: `professional` (status, matricula, jurisdiction, `matricula_status`, `verified_by_operator`, `max_simultaneous`, specialties) and `professional_hours` (weekday, start, end, location). A DB trigger blocks `matricula_status = verified` outside an operator context. [STF-03, STF-06, STF-04] Test: tenant users cannot set `verified`.
-- [ ] 1.69 `modules/staff` profile service: matricula validated through CountryPack, editing it resets to `unverified`, uniqueness, multiple specialties. [STF-03, STF-04, TEN-05] Test: edit resets status; duplicate matricula rejected.
-- [ ] 1.70 Staff lifecycle API: invite (role ceiling, `staff_invitation` token + email), directory with role-based visibility, deactivate and reactivate (never delete, revoke sessions), location assignment; all audited. [STF-01, STF-02, STF-05, STF-07, STF-08] Test: reception cannot invite; deactivation revokes sessions.
-- [ ] 1.71 `PUT /professionals/:id/hours` validating overlaps in the location time zone. [STF-06] Test: overlap rejected; edit audited.
+- [x] 1.68 `db/schema/staff.ts` + migration: `professional` (status, matricula, jurisdiction, `matricula_status`, `verified_by_operator`, `max_simultaneous`, specialties) and `professional_hours` (weekday, start, end, location). A DB trigger blocks `matricula_status = verified` outside an operator context. [STF-03, STF-06, STF-04] Test: tenant users cannot set `verified`.
+- [x] 1.69 `modules/staff` profile service: matricula validated through CountryPack, editing it resets to `unverified`, uniqueness, multiple specialties. [STF-03, STF-04, TEN-05] Test: edit resets status; duplicate matricula rejected.
+- [x] 1.70 Staff lifecycle API: invite (role ceiling, `staff_invitation` token + email), directory with role-based visibility, deactivate and reactivate (never delete, revoke sessions), location assignment; all audited. [STF-01, STF-02, STF-05, STF-07, STF-08] Test: reception cannot invite; deactivation revokes sessions.
+- [x] 1.71 `PUT /professionals/:id/hours` validating overlaps in the location time zone. [STF-06] Test: overlap rejected; edit audited.
 
 ## S1.20 Patients core (~400 lines)
 
 Depends: S1.15, S1.02, S1.03.
 
-- [ ] 1.72 `db/schema/patients.ts` + migration: `patient` (partial unique `(tenant_id, national_id_type, national_id) WHERE national_id IS NOT NULL`), `patient_version`, `patient_representative`; RLS tenant-only because demographics are organization-wide. [PAT-01, PAT-02, PAT-11, PAT-12, AUZ-08] Test: two patients without document allowed; duplicate document rejected.
-- [ ] 1.73 `modules/patients` API: create, edit, deactivate (never delete), DNI normalization through CountryPack, duplicate returns 409 with an existing-patient summary, every update writes a `patient_version` and an audit event. [PAT-01, PAT-02, PAT-10, PAT-11] Test: duplicate flow; history contains both versions.
-- [ ] 1.74 `GET /patients?q=` search by name and document (`pg_trgm` + `unaccent`), paginated, minimal columns. [PAT-04] Test: accent-insensitive; 10k seeded rows answer within a generous bound.
-- [ ] 1.75 Minors and representatives: representative record with relation and contact, majority age from CountryPack, `majority_review_on`. [PAT-12] Test: minor requires a representative; the date is computed.
+- [x] 1.72 `db/schema/patients.ts` + migration: `patient` (partial unique `(tenant_id, national_id_type, national_id) WHERE national_id IS NOT NULL`), `patient_version`, `patient_representative`; RLS tenant-only because demographics are organization-wide. [PAT-01, PAT-02, PAT-11, PAT-12, AUZ-08] Test: two patients without document allowed; duplicate document rejected.
+- [x] 1.73 `modules/patients` API: create, edit, deactivate (never delete), DNI normalization through CountryPack, duplicate returns 409 with an existing-patient summary, every update writes a `patient_version` and an audit event. [PAT-01, PAT-02, PAT-10, PAT-11] Test: duplicate flow; history contains both versions.
+- [x] 1.74 `GET /patients?q=` search by name and document (`pg_trgm` + `unaccent`), paginated, minimal columns. [PAT-04] Test: accent-insensitive; 10k seeded rows answer within a generous bound.
+- [x] 1.75 Minors and representatives: representative record with relation and contact, majority age from CountryPack, `majority_review_on`. [PAT-12] Test: minor requires a representative; the date is computed.
 
 ## S1.21 Coverage, consent and rights (~350 lines)
 
 Depends: S1.20.
 
-- [ ] 1.76 `payer_plan` and `patient_coverage` schema + API (member number, validity, primary flag). [PAT-05] Test: one primary per patient; invalid dates rejected.
-- [ ] 1.77 `data_processing_consent` (text version key from CountryPack, granted at, recorded by, revoked at) + API and a mandatory prompt at patient creation. [PAT-08, CTR-10] Test: revocation allowed in a read-only tenant.
-- [ ] 1.78 `patient_rights_request` (access, rectification) + staff API; rectification goes through the versioned update. [PAT-09] Test: allowed in read-only (category 6).
+- [x] 1.76 `payer_plan` and `patient_coverage` schema + API (member number, validity, primary flag). [PAT-05] Test: one primary per patient; invalid dates rejected.
+- [x] 1.77 `data_processing_consent` (text version key from CountryPack, granted at, recorded by, revoked at) + API and a mandatory prompt at patient creation. [PAT-08, CTR-10] Test: revocation allowed in a read-only tenant.
+- [x] 1.78 `patient_rights_request` (access, rectification) + staff API; rectification goes through the versioned update. [PAT-09] Test: allowed in read-only (category 6).
 
 ## S1.22 Anamnesis, safety flags, assignment (~400 lines)
 
 Depends: S1.20, S1.17, S1.08.
 
-- [ ] 1.79 `db/schema/anamnesis.ts`: encrypted versioned `anamnesis` with `clinicalPolicies`; save endpoint for professionals only. [PAT-06, AUZ-04] Test: reception and admin get 403 plus a deny audit row; RLS returns 0 rows.
-- [ ] 1.80 `modules/patients/application/safety-flags.ts`: recompute codes from the structured anamnesis in the same transaction; no endpoint writes `patient.safety_flags`, and a trigger rejects direct updates outside the system function. [PAT-07] Test: no route or contract exposes a setter; reception sees only the "see professional" label.
-- [ ] 1.81 Care assignment API `POST|DELETE /patients/:id/assignments` (professional self-assign or `patients.administer`), audited. [AUZ-10] Test: assignment grants access; removal revokes it only when no other source exists.
-- [ ] 1.82 Contracts guard: `PatientSummaryDto` never carries clinical detail. [PAT-06, AUZ-06] Test: DTO snapshot plus a reception GET of anamnesis returning 403.
+- [x] 1.79 `db/schema/anamnesis.ts`: encrypted versioned `anamnesis` with `clinicalPolicies`; save endpoint for professionals only. [PAT-06, AUZ-04] Test: reception and admin get 403 plus a deny audit row; RLS returns 0 rows.
+- [x] 1.80 `modules/patients/application/safety-flags.ts`: recompute codes from the structured anamnesis in the same transaction; no endpoint writes `patient.safety_flags`, and a trigger rejects direct updates outside the system function. [PAT-07] Test: no route or contract exposes a setter; reception sees only the "see professional" label.
+- [x] 1.81 Care assignment API `POST|DELETE /patients/:id/assignments` (professional self-assign or `patients.administer`), audited. [AUZ-10] Test: assignment grants access; removal revokes it only when no other source exists.
+- [x] 1.82 Contracts guard: `PatientSummaryDto` never carries clinical detail. [PAT-06, AUZ-06] Test: DTO snapshot plus a reception GET of anamnesis returning 403.
 
 ## S1.23 Audit viewer and report (~350 lines)
 
 Depends: S1.07, S1.15.
 
-- [ ] 1.83 `modules/audit` API `GET /audit-events` (filters actor, action, patient, resource, outcome, date; cursor pagination; owner/admin; metadata only). [AUD-06, AUD-07] Test: tenant B cannot see A's events; no clinical content in responses.
-- [ ] 1.84 Patient access report `GET /patients/:id/access-report` and streamed CSV/JSON export, the export itself audited. [AUD-07, AUD-01] Test: report lists reads and writes for the patient.
-- [ ] 1.85 Job `audit.partitions` (ensure the next 3 months) and `docs/runbooks/audit-retention.md` (move partitions older than 2 years to cold storage, retain 10 years, never delete). [AUD-05] Test: partitions exist ahead of time; no code path deletes audit rows.
-- [ ] 1.86 `apps/api/test/policy/audit-coverage.test.ts`: every mandatory event has an integration scenario registered, and a mutating route without an audit assertion tag fails. [AUD-01] Test: that file.
+- [x] 1.83 `modules/audit` API `GET /audit-events` (filters actor, action, patient, resource, outcome, date; cursor pagination; owner/admin; metadata only). [AUD-06, AUD-07] Test: tenant B cannot see A's events; no clinical content in responses.
+- [x] 1.84 Patient access report `GET /patients/:id/access-report` and streamed CSV/JSON export, the export itself audited. [AUD-07, AUD-01] Test: report lists reads and writes for the patient.
+- [x] 1.85 Job `audit.partitions` (ensure the next 3 months) and `docs/runbooks/audit-retention.md` (move partitions older than 2 years to cold storage, retain 10 years, never delete). [AUD-05] Test: partitions exist ahead of time; no code path deletes audit rows.
+- [x] 1.86 `apps/api/test/policy/audit-coverage.test.ts`: every mandatory event has an integration scenario registered, and a mutating route without an audit assertion tag fails. [AUD-01] Test: that file.
 
 ## S1.24 Object storage port and S3 adapter (~300 lines)
 
 Depends: S0.08.
 
-- [ ] 1.87 `platform/storage/object-storage.ts` port (put, get stream, head, presigned POST, move within tenant prefix) with key convention `t/{tenantId}/...`; `adapters/s3/` (AWS SDK v3, MinIO compatible) and an in-memory fake. [DOC-03, BRD-04] Test: integration against MinIO; keys outside the tenant prefix are refused.
+- [x] 1.87 `platform/storage/object-storage.ts` port (put, get stream, head, presigned POST, move within tenant prefix) with key convention `t/{tenantId}/...`; `adapters/s3/` (AWS SDK v3, MinIO compatible) and an in-memory fake. [DOC-03, BRD-04] Test: integration against MinIO; keys outside the tenant prefix are refused.
 
 ## S1.25 Branding API (~350 lines)
 
 Depends: S1.24, S1.18.
 
-- [ ] 1.88 `modules/tenancy/branding/contrast.ts`: OKLCH lightness auto-adjust until WCAG 4.5:1, returns `primary_requested`, `primary_effective` and a warning. [BRD-03] Test: property test that the result is always at least 4.5:1, hue preserved, idempotent.
-- [ ] 1.89 `PUT /api/v1/branding` (name, short name, primary color, radius, heading font from a curated set) with permission `branding.manage`, audited before and after. [BRD-01, BRD-05] Test: reception denied; audit holds the diff.
-- [ ] 1.90 Logo upload: PNG, JPEG or WebP only, magic-byte sniff, 512 KB cap, dimension cap, re-encode with `sharp` to strip metadata, store through the port; SVG rejected. [BRD-04] Test: polyglot, oversize and SVG fixtures rejected.
-- [ ] 1.91 Public `GET /api/v1/boot` by host (name, theme tokens, logo URL, locale, feature flags, deployment mode; no PII) and per-host `GET /manifest.webmanifest`. [BRD-02, SHL-03, SHL-09] Test: unauthenticated response contains only whitelisted keys; two hosts return different themes.
+- [x] 1.88 `modules/tenancy/branding/contrast.ts`: OKLCH lightness auto-adjust until WCAG 4.5:1, returns `primary_requested`, `primary_effective` and a warning. [BRD-03] Test: property test that the result is always at least 4.5:1, hue preserved, idempotent.
+- [x] 1.89 `PUT /api/v1/branding` (name, short name, primary color, radius, heading font from a curated set) with permission `branding.manage`, audited before and after. [BRD-01, BRD-05] Test: reception denied; audit holds the diff.
+- [x] 1.90 Logo upload: PNG, JPEG or WebP only, magic-byte sniff, 512 KB cap, dimension cap, re-encode with `sharp` to strip metadata, store through the port; SVG rejected. [BRD-04] Test: polyglot, oversize and SVG fixtures rejected.
+- [x] 1.91 Public `GET /api/v1/boot` by host (name, theme tokens, logo URL, locale, feature flags, deployment mode; no PII) and per-host `GET /manifest.webmanifest`. [BRD-02, SHL-03, SHL-09] Test: unauthenticated response contains only whitelisted keys; two hosts return different themes.
 
 ## S1.26 Operator console API (~400 lines)
 
 Depends: S1.14, S1.08, S1.07.
 
-- [ ] 1.92 `db/schema/operator.ts` + migration: `operator_user`, `platform_audit_event` (append-only, sealed like tenant audit), `support_grant` (tenant-approved, time-boxed, non-clinical), role `app_operator` with privileges on tenant and platform tables only. [TEN-07] Test: privilege test shows `app_operator` cannot SELECT any clinical or patient table.
-- [ ] 1.93 `modules/operator`: password plus mandatory TOTP without grace, separate `osid` cookie, routes only on `PLATFORM_HOST` (404 elsewhere). [TEN-07, TEN-02] Test: tenant users cannot reach `/operator/*`.
-- [ ] 1.94 `POST /operator/tenants {name, ownerEmail, isDemo?}`: auto-generated slug (random suffix on collision), tenant key, default settings, owner `staff_invitation`; `is_demo` settable only here. `POST /operator/tenants/:id/demo-reset` for demo tenants. All audited at platform level. [ONB-01, TEN-01, DEM-01] Test: slug collision invisible to the caller; `isDemo` cannot change later.
-- [ ] 1.95 Support access: using a `support_grant` requires an active unexpired grant and is audited per use. [TEN-07] Test: no grant means denied; expired grant denied.
+- [x] 1.92 `db/schema/operator.ts` + migration: `operator_user`, `platform_audit_event` (append-only, sealed like tenant audit), `support_grant` (tenant-approved, time-boxed, non-clinical), role `app_operator` with privileges on tenant and platform tables only. [TEN-07] Test: privilege test shows `app_operator` cannot SELECT any clinical or patient table.
+- [x] 1.93 `modules/operator`: password plus mandatory TOTP without grace, separate `osid` cookie, routes only on `PLATFORM_HOST` (404 elsewhere). [TEN-07, TEN-02] Test: tenant users cannot reach `/operator/*`.
+- [x] 1.94 `POST /operator/tenants {name, ownerEmail, isDemo?}`: auto-generated slug (random suffix on collision), tenant key, default settings, owner `staff_invitation`; `is_demo` settable only here. `POST /operator/tenants/:id/demo-reset` for demo tenants. All audited at platform level. [ONB-01, TEN-01, DEM-01] Test: slug collision invisible to the caller; `isDemo` cannot change later.
+- [x] 1.95 Support access: using a `support_grant` requires an active unexpired grant and is audited per use. [TEN-07] Test: no grant means denied; expired grant denied.
 
 ## S1.27 Web foundation (~400 lines)
 
