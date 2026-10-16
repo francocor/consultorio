@@ -76,5 +76,9 @@
   "validation.too_small": "El valor ingresado es demasiado bajo.",
   "validation.too_big": "El valor ingresado es demasiado alto.",
   "validation.invalid": "El valor ingresado no es válido.",
-  "validation.mismatch": "Los valores no coinciden."
+  "validation.mismatch": "Los valores no coinciden.",
+  "pwa.update.title": "Hay una versión nueva",
+  "pwa.update.description": "Actualice para usar las últimas mejoras. La página se volverá a cargar.",
+  "pwa.update.action": "Actualizar",
+  "pwa.update.later": "Más tarde"
 }

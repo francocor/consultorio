@@ -14,10 +14,12 @@ import { lazy, type ComponentType } from 'react';
 
 import { AuditPage } from '../features/audit/AuditPage.js';
 import { AuthLayout } from '../features/auth/AuthLayout.js';
+import { LoginPage } from '../features/auth/LoginPage.js';
 import { PatientsPage } from '../features/patients/PatientsPage.js';
 import { SettingsPage } from '../features/settings/SettingsPage.js';
 import { StaffPage } from '../features/staff/StaffPage.js';
 import { isApiError } from '../shared/lib/api-client.js';
+import { OfflineBanner } from '../shared/ui/states/banners.js';
 import { ErrorState } from '../shared/ui/states/error-state.js';
 import { ListSkeleton } from '../shared/ui/states/loading-skeleton.js';
 
@@ -25,12 +27,24 @@ import { AppShell } from './AppShell.js';
 import { RequirePermission } from './guards.js';
 import { MinimalShell } from './MinimalShell.js';
 import { NotFoundPage } from './NotFoundPage.js';
+import { useAppStatus } from './providers.js';
 import { safeRedirect } from './router-helpers.js';
 import type { AppServices } from './services.js';
 import { meQueryOptions } from './session.js';
 
 export interface RouterContext {
   services: AppServices;
+}
+
+/** The offline banner is global: it shows on every screen, signed in or not. */
+function RootLayout() {
+  const { online } = useAppStatus();
+  return (
+    <>
+      {online ? null : <OfflineBanner />}
+      <Outlet />
+    </>
+  );
 }
 
 function RouteError({ error }: { error: unknown }) {
@@ -58,7 +72,7 @@ function RoutePending() {
 /** One route tree per router, so tests (and a tenant switch) never share route state. */
 function buildRouteTree() {
   const rootRoute = createRootRouteWithContext<RouterContext>()({
-    component: Outlet,
+    component: RootLayout,
     notFoundComponent: NotFoundPage,
   });
 
@@ -76,7 +90,8 @@ function buildRouteTree() {
       redirect: safeRedirect(search['redirect']),
       reason: search['reason'] === 'expired' ? ('expired' as const) : undefined,
     }),
-    component: lazyRouteComponent(() => import('../features/auth/LoginPage.js'), 'LoginPage'),
+    // The landing page of every visitor: eager, so it costs no extra round trip.
+    component: LoginPage,
   });
 
   const forgotRoute = createRoute({

@@ -1,12 +1,24 @@
 import { QueryClientProvider } from '@tanstack/react-query';
 import type { i18n as I18n } from 'i18next';
-import { createContext, use, useEffect, useSyncExternalStore, type ReactNode } from 'react';
+import {
+  Suspense,
+  createContext,
+  lazy,
+  use,
+  useEffect,
+  useSyncExternalStore,
+  type ReactNode,
+} from 'react';
 import { I18nextProvider } from 'react-i18next';
 
 import type { ApiClient } from '../shared/lib/api-client.js';
-import { Toaster } from '../shared/ui/toaster.js';
 
 import type { AppServices, AppStatus } from './services.js';
+
+/** Toasts are not needed to draw the first screen: their code loads right after it. */
+const Toaster = lazy(() =>
+  import('../shared/ui/toaster.js').then((module) => ({ default: module.Toaster })),
+);
 
 const ServicesContext = createContext<AppServices | null>(null);
 
@@ -25,7 +37,9 @@ export function AppProviders({ services, i18n, children }: AppProvidersProps) {
       <I18nextProvider i18n={i18n}>
         <QueryClientProvider client={services.queryClient}>
           {children}
-          <Toaster />
+          <Suspense fallback={null}>
+            <Toaster />
+          </Suspense>
         </QueryClientProvider>
       </I18nextProvider>
     </ServicesContext>

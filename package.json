@@ -30,6 +30,7 @@
   "prettier": "@consultorio/config/prettier.config.js",
   "devDependencies": {
     "@consultorio/config": "workspace:*",
+    "@lhci/cli": "^0.15.1",
     "@types/node": "^24.19.2",
     "@vitest/coverage-v8": "^5.0.4",
     "eslint": "^10",
