@@ -254,11 +254,14 @@ describe('banners wired to real signals', () => {
 });
 
 describe('FirstRunSlot', () => {
-  it('renders nothing until Stage 2 provides the onboarding content', () => {
-    renderInRouter(<FirstRunSlot />);
+  it('renders nothing until Stage 2 provides the onboarding content', async () => {
+    renderInRouter(
+      <div data-testid="slot">
+        <FirstRunSlot />
+      </div>,
+    );
 
-    expect(screen.queryByRole('region')).not.toBeInTheDocument();
-    expect(screen.queryByText(/primeros pasos/i)).not.toBeInTheDocument();
+    expect(await screen.findByTestId('slot')).toBeEmptyDOMElement();
   });
 });
 

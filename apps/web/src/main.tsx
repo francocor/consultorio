@@ -7,7 +7,6 @@ import { AppProviders } from './app/providers.js';
 import { createAppRouter } from './app/router.js';
 import { createAppServices } from './app/services.js';
 import { installZodMessages } from './shared/lib/zod-i18n.js';
-import { Toaster } from './shared/ui/toaster.js';
 
 import './index.css';
 
@@ -25,7 +24,6 @@ createRoot(container).render(
   <StrictMode>
     <AppProviders services={services} i18n={i18n}>
       <RouterProvider router={router} />
-      <Toaster />
     </AppProviders>
   </StrictMode>,
 );

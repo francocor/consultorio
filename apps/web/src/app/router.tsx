@@ -13,6 +13,7 @@ import {
 import { lazy, type ComponentType } from 'react';
 
 import { AuditPage } from '../features/audit/AuditPage.js';
+import { AuthLayout } from '../features/auth/AuthLayout.js';
 import { PatientsPage } from '../features/patients/PatientsPage.js';
 import { SettingsPage } from '../features/settings/SettingsPage.js';
 import { StaffPage } from '../features/staff/StaffPage.js';
@@ -24,18 +25,12 @@ import { AppShell } from './AppShell.js';
 import { RequirePermission } from './guards.js';
 import { MinimalShell } from './MinimalShell.js';
 import { NotFoundPage } from './NotFoundPage.js';
+import { safeRedirect } from './router-helpers.js';
 import type { AppServices } from './services.js';
 import { meQueryOptions } from './session.js';
 
 export interface RouterContext {
   services: AppServices;
-}
-
-/** Only same-origin paths may be a post-sign-in destination (never an open redirect). */
-export function safeRedirect(value: unknown): string | undefined {
-  return typeof value === 'string' && value.startsWith('/') && !value.startsWith('//')
-    ? value
-    : undefined;
 }
 
 function RouteError({ error }: { error: unknown }) {
@@ -67,13 +62,48 @@ function buildRouteTree() {
     notFoundComponent: NotFoundPage,
   });
 
-  const loginRoute = createRoute({
+  // Screens a visitor sees before signing in share one calm frame.
+  const publicRoute = createRoute({
     getParentRoute: () => rootRoute,
+    id: 'public',
+    component: AuthLayout,
+  });
+
+  const loginRoute = createRoute({
+    getParentRoute: () => publicRoute,
     path: '/login',
     validateSearch: (search: Record<string, unknown>) => ({
       redirect: safeRedirect(search['redirect']),
+      reason: search['reason'] === 'expired' ? ('expired' as const) : undefined,
     }),
     component: lazyRouteComponent(() => import('../features/auth/LoginPage.js'), 'LoginPage'),
+  });
+
+  const forgotRoute = createRoute({
+    getParentRoute: () => publicRoute,
+    path: '/forgot-password',
+    component: lazyRouteComponent(
+      () => import('../features/auth/ForgotPasswordPage.js'),
+      'ForgotPasswordPage',
+    ),
+  });
+
+  const resetRoute = createRoute({
+    getParentRoute: () => publicRoute,
+    path: '/reset-password',
+    component: lazyRouteComponent(
+      () => import('../features/auth/ResetPasswordPage.js'),
+      'ResetPasswordPage',
+    ),
+  });
+
+  const invitationRoute = createRoute({
+    getParentRoute: () => publicRoute,
+    path: '/accept-invitation',
+    component: lazyRouteComponent(
+      () => import('../features/auth/AcceptInvitationPage.js'),
+      'AcceptInvitationPage',
+    ),
   });
 
   // Everything below needs a session. The route loads the profile first, so the shell and every
@@ -187,7 +217,7 @@ function buildRouteTree() {
   });
 
   return rootRoute.addChildren([
-    loginRoute,
+    publicRoute.addChildren([loginRoute, forgotRoute, resetRoute, invitationRoute]),
     authedRoute.addChildren([
       homeRoute,
       securityRoute,
@@ -225,7 +255,7 @@ export function createAppRouter({
   // A 401 in the middle of a session: go to sign-in and come back to where the person was.
   services.onSessionEnded(() => {
     const here = safeRedirect(router.state.location.href);
-    void router.navigate({ to: '/login', search: { redirect: here } });
+    void router.navigate({ to: '/login', search: { redirect: here, reason: 'expired' } });
   });
 
   return router;
