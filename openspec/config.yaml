@@ -2,7 +2,7 @@ schema: spec-driven
 
 context: |
   Project: consultorio (working name; rewrite of the Centro Medico Aillu app; engram project: appmedicocmaillu) - medical practice management app.
-  The legacy app is REFERENCE ONLY (domain knowledge + UI design). It is not in this repo: it lives in the separate archived repo francocor/AppmedicoCMAillu.
+  The legacy app is REFERENCE ONLY (domain knowledge + UI design). It is not in this repo: it lives in the separate private repo francocor/AppmedicoCMAillu.
   The rewrite is a professional multi-specialty health practice SaaS. Stack decided in design: TypeScript pnpm monorepo
   (Node 24, Fastify, PostgreSQL 17 + Drizzle + RLS, pg-boss, React 19 + Vite + Tailwind 4 PWA), packages apps/api, apps/web,
   packages/contracts, packages/config, infra/.
@@ -38,7 +38,7 @@ testing:
 rules:
   proposal:
     - Include rollback plan for risky changes
-    - Treat the legacy app (separate archived repo francocor/AppmedicoCMAillu) as reference (domain knowledge, UI design), not as code to extend
+    - Treat the legacy app (separate private repo francocor/AppmedicoCMAillu) as reference (domain knowledge, UI design), not as code to extend
   specs:
     - Use Given/When/Then for scenarios
     - Use RFC 2119 keywords (MUST, SHALL, SHOULD, MAY)

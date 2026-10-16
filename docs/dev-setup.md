@@ -1,6 +1,6 @@
 # Development setup
 
-How to run the new stack (`apps/`, `packages/`, `infra/`) on your machine. The legacy reference app lives in the separate archived repository `francocor/AppmedicoCMAillu` and is not part of this setup.
+How to run the new stack (`apps/`, `packages/`, `infra/`) on your machine. The legacy reference app is not part of this repository or this setup.
 
 ## Prerequisites
 

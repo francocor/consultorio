@@ -25,7 +25,7 @@ The product is delivered in seven demoable stages (0 to 6). The plan, specificat
 
 ## Legacy reference app
 
-This product is the rewrite of the Centro Medico Aillu app. That legacy app is reference material only (domain knowledge and UI design). It is not part of this repository: it lives in the separate, archived repository `francocor/AppmedicoCMAillu`.
+This product replaces an earlier single-clinic app built for Centro Medico Aillu. That legacy app is not part of this repository; it is kept privately as reference material (domain knowledge and UI design).
 
 ## Getting started
 
