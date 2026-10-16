@@ -1,16 +1,17 @@
 import type { Writable } from 'node:stream';
 
+import { fail } from '@consultorio/contracts';
 import type { FastifyInstance } from 'fastify';
 
 import { createAccess, createGrants, createGrantsRepo } from '../modules/access/index.js';
 import type { LockoutPolicy } from '../modules/identity/application/lockout.js';
 import type { PasswordValidator } from '../modules/identity/domain/password-policy.js';
 import { createIdentity, type PasswordHasher } from '../modules/identity/index.js';
+import { createStaff } from '../modules/staff/index.js';
 import { createTenantLookup, type DeploymentSettings } from '../modules/tenancy/index.js';
 import { createAuditDeny } from '../platform/audit/deny.js';
 import { createActorLoader } from '../platform/authz/guard.js';
 import {
-  noProfessionals,
   type MatriculaValidator,
   type ProfessionalRepo,
 } from '../platform/authz/professional-gate.js';
@@ -126,6 +127,17 @@ export function createApplication(options: ApplicationOptions): FastifyInstance 
     },
   });
 
+  const staff = createStaff({
+    withTenant,
+    auditDeny,
+    matriculaRules: (country, jurisdiction, value) => {
+      const found = getCountryPack(country, createCatalogReader(db));
+      return found.ok
+        ? found.value.validateMatricula(jurisdiction, value)
+        : fail('errors.unsupported_country');
+    },
+  });
+
   const server = buildServer({
     ...(options.logLevel === undefined ? {} : { logLevel: options.logLevel }),
     ...(options.logStream ? { logStream: options.logStream } : {}),
@@ -143,14 +155,14 @@ export function createApplication(options: ApplicationOptions): FastifyInstance 
       cookieSecure: options.cookieSecure,
       authz: {
         loadActor: createActorLoader({
-          professionals: options.professionals ?? noProfessionals,
+          professionals: options.professionals ?? staff.professionals,
           grants: grantsRepo,
           validateMatricula,
         }),
         auditDeny,
       },
     },
-    routes: [identity.routes, access.routes, ...(options.modules ?? [])],
+    routes: [identity.routes, access.routes, staff.routes, ...(options.modules ?? [])],
   });
   built.server = server;
   return server;

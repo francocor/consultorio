@@ -60,6 +60,9 @@ export const AUDIT_ACTIONS = [
   // Staff lifecycle.
   'staff.invited',
   'staff.deactivated',
+  'staff.reactivated',
+  'staff.profile_updated',
+  'professional.hours_updated',
   // Exports and archive.
   'export.created',
   'archive.read',

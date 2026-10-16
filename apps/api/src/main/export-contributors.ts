@@ -1,5 +1,6 @@
 import { registerAccessExportContributors } from '../modules/access/index.js';
 import { registerIdentityExportContributors } from '../modules/identity/index.js';
+import { registerStaffExportContributors } from '../modules/staff/index.js';
 import {
   registerTenancyExportContributors,
   type ExportRegistry,
@@ -13,4 +14,5 @@ export function registerAllExportContributors(registry: ExportRegistry): void {
   registerTenancyExportContributors(registry);
   registerIdentityExportContributors(registry);
   registerAccessExportContributors(registry);
+  registerStaffExportContributors(registry);
 }

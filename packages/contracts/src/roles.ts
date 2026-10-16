@@ -47,6 +47,8 @@ export const PERMISSIONS = [
   'tenant.settings.manage',
   'tenant.branding.manage',
   'staff.manage',
+  // Every staff member sees the directory (names, roles, disciplines, locations).
+  'staff.directory.read',
   'permissions.grant',
   'locations.manage',
   'audit.read',
@@ -98,6 +100,7 @@ const ADMINISTRATION = [
   'tenant.settings.manage',
   'tenant.branding.manage',
   'staff.manage',
+  'staff.directory.read',
   'permissions.grant',
   'locations.manage',
   'audit.read',
@@ -123,6 +126,7 @@ export const ROLE_PERMISSIONS: Record<Role, readonly Permission[]> = {
   owner: [...ADMINISTRATION, 'billing.manage'],
   admin: ADMINISTRATION,
   professional: [
+    'staff.directory.read',
     'patients.read',
     'patients.write',
     'patients.safety_flag.read',
@@ -134,6 +138,7 @@ export const ROLE_PERMISSIONS: Record<Role, readonly Permission[]> = {
   ],
   // Reception holds patient administration and the cash register by default.
   reception: [
+    'staff.directory.read',
     'patients.read',
     'patients.write',
     'patients.administer',

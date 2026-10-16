@@ -10,6 +10,7 @@ import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 
 import type { AuthzOptions } from '../../../platform/authz/guard.js';
+import { refuseRequest } from '../../../platform/authz/refuse.js';
 import type { WithTenant } from '../../../platform/db/tenant-context.js';
 import { AppError } from '../../../platform/http/problem.js';
 import type { Grants } from '../application/grants.js';
@@ -34,25 +35,18 @@ export function memberRoutes(deps: MemberRoutesDeps) {
     const typed = app.withTypeProvider<ZodTypeProvider>();
 
     /** Records the refusal on its own connection, then answers the uniform 403. */
-    async function refuse(
+    const refuse = (
       request: FastifyRequest,
       refusal: AccessRefused,
       targetMembershipId: string,
       metadata: Record<string, string> = {},
-    ): Promise<never> {
-      const actor = request.actor;
-      if (actor) {
-        await deps.auditDeny(actor.tenantId, {
-          action: 'access.denied',
-          actor: request.auditActor,
-          resourceType: 'membership',
-          resourceId: targetMembershipId,
-          reason: refusal.reason,
-          metadata,
-        });
-      }
-      throw new AppError('forbidden');
-    }
+    ) =>
+      refuseRequest(deps.auditDeny, request, {
+        reason: refusal.reason,
+        resourceType: 'membership',
+        resourceId: targetMembershipId,
+        metadata,
+      });
 
     typed.get(
       '/members/:membershipId/grants',
