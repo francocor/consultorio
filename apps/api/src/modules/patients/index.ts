@@ -10,7 +10,9 @@ import type { ExportRegistry } from '../tenancy/index.js';
 
 import { exportPatients } from './application/export-contributor.js';
 import { createPatientService, type DocumentRules } from './application/patients.js';
+import { createRepresentativeService } from './application/representatives.js';
 import { patientRoutes } from './http/patient-routes.js';
+import { representativeRoutes } from './http/representative-routes.js';
 
 /** Registers what patients contributes to the cancellation export. */
 export function registerPatientsExportContributors(registry: ExportRegistry): void {
@@ -24,6 +26,8 @@ export interface PatientsOptions {
   auditDeny: AuthzOptions['auditDeny'];
   /** Identity document rules of the organization's country (from its country pack). */
   documents: DocumentRules;
+  /** Age at which a person is no longer a minor, from the country pack. */
+  majorityAge: (country: string) => number;
   clock?: () => Date;
 }
 
@@ -32,9 +36,15 @@ export interface Patients {
 }
 
 export function createPatients(options: PatientsOptions): Patients {
+  const clock = options.clock ? { clock: options.clock } : {};
+  const representatives = createRepresentativeService({
+    majorityAge: options.majorityAge,
+    ...clock,
+  });
   const patients = createPatientService({
     documents: options.documents,
-    ...(options.clock ? { clock: options.clock } : {}),
+    representatives,
+    ...clock,
   });
   const registry = patientRoutes({
     withTenant: options.withTenant,
@@ -42,9 +52,12 @@ export function createPatients(options: PatientsOptions): Patients {
     patients,
   });
 
+  const contacts = representativeRoutes({ withTenant: options.withTenant, representatives });
+
   return {
     routes: (app) => {
       registry(app);
+      contacts(app);
     },
   };
 }

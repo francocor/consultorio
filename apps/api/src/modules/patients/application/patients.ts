@@ -19,6 +19,7 @@ import { AppError } from '../../../platform/http/problem.js';
 import { AccessRefused } from '../../access/index.js';
 
 import { changedFieldsBetween, snapshotOf, toPatientDto, toPatientSummary } from './mapping.js';
+import type { RepresentativeService } from './representatives.js';
 import { searchPatients } from './search.js';
 
 /** Validates and normalizes an identity document with the rules of the organization's country. */
@@ -75,6 +76,7 @@ function sqlState(error: unknown): string | undefined {
 
 export function createPatientService(deps: {
   documents: DocumentRules;
+  representatives: RepresentativeService;
   clock?: () => Date;
 }): PatientService {
   const clock = deps.clock ?? (() => new Date());
@@ -160,6 +162,15 @@ export function createPatientService(deps: {
     async create(tx, input) {
       const { request } = input;
       assertNotFuture(request.birthDate);
+      // A minor is registered with the contact of whoever answers for them.
+      if (
+        deps.representatives.isMinor(request.birthDate, input.country) &&
+        !request.representative
+      ) {
+        throw new AppError('validation_failed', [
+          { path: 'representative', i18nKey: 'patients.minor_needs_representative' },
+        ]);
+      }
       const document =
         request.document === undefined || request.document === null
           ? null
@@ -206,6 +217,14 @@ export function createPatientService(deps: {
         patientId: row.id,
         metadata: { origin: 'staff', hasDocument: document !== null },
       });
+      if (request.representative) {
+        await deps.representatives.add(tx, {
+          actor: input.actor,
+          patientId: row.id,
+          country: input.country,
+          representative: request.representative,
+        });
+      }
 
       // A warning, never a block: same name and birth date as someone already registered.
       const similar = await tx
@@ -293,6 +312,20 @@ export function createPatientService(deps: {
       }
       if (!updated) throw new AppError('not_found');
 
+      if (changed.includes('birthDate')) {
+        // The birth date moved: a patient who is a minor now needs a representative, and the review
+        // dates of the existing ones follow the new date.
+        await deps.representatives.assertCoversMinor(tx, {
+          patientId: updated.id,
+          birthDate: updated.birthDate,
+          country: input.country,
+        });
+        await deps.representatives.recomputeDates(tx, {
+          patientId: updated.id,
+          birthDate: updated.birthDate,
+          country: input.country,
+        });
+      }
       await writeVersion(tx, updated, editor.actor.userId, changed);
       await audit(tx, {
         action: 'patient.updated',

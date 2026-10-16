@@ -35,6 +35,20 @@ export const EmergencyContact = z.strictObject({
 });
 export type EmergencyContact = z.infer<typeof EmergencyContact>;
 
+// Minors and representatives ----------------------------------------------------------------
+
+export const REPRESENTATIVE_RELATIONS = ['mother', 'father', 'guardian', 'other'] as const;
+
+export const RepresentativeInput = z
+  .strictObject({
+    fullName: Name,
+    relation: z.enum(REPRESENTATIVE_RELATIONS),
+    phone: Phone.min(1).optional(),
+    email: z.string().trim().pipe(z.email().max(254)).optional(),
+  })
+  .refine((body) => body.phone !== undefined || body.email !== undefined, 'a way to reach them');
+export type RepresentativeInput = z.infer<typeof RepresentativeInput>;
+
 const demographics = {
   familyName: Name,
   givenNames: Name,
@@ -51,7 +65,11 @@ const demographics = {
   adminNotes: OptionalText(1000).optional(),
 };
 
-export const CreatePatientRequest = z.strictObject(demographics);
+export const CreatePatientRequest = z.strictObject({
+  ...demographics,
+  /** A minor needs one (an administrative contact, never an access). An adult may have one too. */
+  representative: RepresentativeInput.optional(),
+});
 export type CreatePatientRequest = z.infer<typeof CreatePatientRequest>;
 
 export const UpdatePatientRequest = z
@@ -167,20 +185,6 @@ export type PatientVersionDto = z.infer<typeof PatientVersionDto>;
 
 export const PatientHistoryResponse = z.strictObject({ versions: z.array(PatientVersionDto) });
 export type PatientHistoryResponse = z.infer<typeof PatientHistoryResponse>;
-
-// Minors and representatives ----------------------------------------------------------------
-
-export const REPRESENTATIVE_RELATIONS = ['mother', 'father', 'guardian', 'other'] as const;
-
-export const RepresentativeInput = z
-  .strictObject({
-    fullName: Name,
-    relation: z.enum(REPRESENTATIVE_RELATIONS),
-    phone: Phone.min(1).optional(),
-    email: z.string().trim().pipe(z.email().max(254)).optional(),
-  })
-  .refine((body) => body.phone !== undefined || body.email !== undefined, 'a way to reach them');
-export type RepresentativeInput = z.infer<typeof RepresentativeInput>;
 
 export const RepresentativeDto = z.strictObject({
   id: z.uuid(),

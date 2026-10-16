@@ -147,6 +147,10 @@ export function createApplication(options: ApplicationOptions): FastifyInstance 
     withTenant,
     auditDeny,
     ...(options.clock ? { clock: options.clock } : {}),
+    majorityAge: (country) => {
+      const found = getCountryPack(country, createCatalogReader(db));
+      return found.ok ? found.value.majorityAge : 18;
+    },
     documents: (country, type, value) => {
       const found = getCountryPack(country, createCatalogReader(db));
       return found.ok
