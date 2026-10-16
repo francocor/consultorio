@@ -6,7 +6,6 @@ import {
   emailTo,
   linkIn,
   localLink,
-  originOf,
   signInWithForm,
   stack,
   totpCode,
@@ -46,26 +45,8 @@ test('a wrong password and an unknown account get the same message', async ({ pa
   expect(unknownAccount).toBe(wrongPassword);
 });
 
-test('after ten wrong attempts the account is locked and the screen says nothing different', async ({
-  page,
-  request,
-}) => {
-  const email = emailOf('psychology', 'norte');
-  for (let attempt = 0; attempt < 10; attempt += 1) {
-    await request.post(urlOf('norte', '/api/auth/login'), {
-      data: { email, password: `intento-${String(attempt)}-incorrecto` },
-      headers: { origin: originOf('norte') },
-    });
-  }
-
-  // Even the right password is refused now, and the message is the generic one.
-  await signInWithForm(page, 'norte', email);
-
-  const alert = page.getByRole('alert');
-  await expect(alert).toContainText('El correo o la contraseña no son correctos');
-  await expect(alert).not.toContainText(/bloque/i);
-  expect(await axeViolations(page)).toEqual([]);
-});
+// The lock itself (ten failures, the growing delay, the identical answer) depends on the clock, so it
+// is covered where the clock can be controlled: apps/api/test/integration/lockout.test.ts.
 
 test('the second factor: enroll in the account page, then sign in with a code', async ({
   page,

@@ -73,6 +73,69 @@ describe('GET /public/boot', () => {
     });
   });
 
+  it('is revalidated on every load, so a branding change shows on the very next reload', async () => {
+    const first = await get('/public/boot', 'boot-clinic');
+
+    expect(first.headers['cache-control']).toBe('public, no-cache');
+    expect(first.headers['etag']).toMatch(/^"[\w-]{16,}"$/);
+  });
+
+  it('answers 304 to a browser that already has the current look, and the full look once it changed', async () => {
+    const first = await get('/public/boot', 'boot-clinic');
+    const etag = String(first.headers['etag']);
+
+    const unchanged = await app.inject({
+      method: 'GET',
+      url: '/public/boot',
+      headers: { ...browserHeaders('boot-clinic'), 'if-none-match': etag },
+      remoteAddress: '10.98.0.1',
+    });
+    expect(unchanged.statusCode).toBe(304);
+    expect(unchanged.body).toBe('');
+
+    await asTenant(runtime, clinic.id, (tx) =>
+      tx
+        .update(tenantTable)
+        .set({
+          theme: {
+            displayName: 'Centro Norte',
+            shortName: 'Norte',
+            primaryRequested: '#6d28d9',
+            radius: 'lg',
+            headingFont: 'lora',
+            logo: { key: 'ignored', version: 3, width: 100, height: 50 },
+          },
+        })
+        .where(eq(tenantTable.id, clinic.id)),
+    );
+    const changed = await app.inject({
+      method: 'GET',
+      url: '/public/boot',
+      headers: { ...browserHeaders('boot-clinic'), 'if-none-match': etag },
+      remoteAddress: '10.98.0.1',
+    });
+    expect(changed.statusCode).toBe(200);
+    expect(changed.headers['etag']).not.toBe(etag);
+    expect(BootPayload.parse(changed.json()).theme.primary).toBe('#6d28d9');
+
+    // Leave the shared fixture as the other tests expect it.
+    await asTenant(runtime, clinic.id, (tx) =>
+      tx
+        .update(tenantTable)
+        .set({
+          theme: {
+            displayName: 'Centro Norte',
+            shortName: 'Norte',
+            primaryRequested: '#1d4ed8',
+            radius: 'lg',
+            headingFont: 'lora',
+            logo: { key: 'ignored', version: 3, width: 100, height: 50 },
+          },
+        })
+        .where(eq(tenantTable.id, clinic.id)),
+    );
+  });
+
   it('carries nothing but the whitelisted keys and no identifiers', async () => {
     const body = (await get('/public/boot', 'boot-clinic')).json<Record<string, unknown>>();
 

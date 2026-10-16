@@ -1,6 +1,9 @@
+import { createHash } from 'node:crypto';
+
 import { BootPayload, WebManifest } from '@consultorio/contracts';
 import type { FastifyInstance } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
+import { z } from 'zod';
 
 import { SYSTEM_USER_ID, type WithTenant } from '../../../platform/db/tenant-context.js';
 import { AppError } from '../../../platform/http/problem.js';
@@ -30,7 +33,7 @@ export function bootRoutes(deps: BootRoutesDeps) {
       '/public/boot',
       {
         config: { readOnly: 'read', auth: 'public' },
-        schema: { response: { 200: BootPayload } },
+        schema: { response: { 200: BootPayload, 304: z.undefined() } },
       },
       async (request, reply) => {
         const resolved = tenantOf(request);
@@ -38,8 +41,13 @@ export function bootRoutes(deps: BootRoutesDeps) {
           { tenantId: resolved.id, userId: SYSTEM_USER_ID },
           (tx) => deps.boot.boot(tx, resolved),
         );
-        // Short, so a branding change reaches every browser within the minute.
-        return reply.header('cache-control', 'public, max-age=60').send(payload);
+        // Revalidated on every load, never served from the browser's cache: a branding change must
+        // show on the very next reload, and a stale answer would repaint the old look over the new
+        // one remembered by the page. The tag makes the unchanged case a tiny 304.
+        const etag = `"${createHash('sha256').update(JSON.stringify(payload)).digest('base64url').slice(0, 22)}"`;
+        void reply.header('cache-control', 'public, no-cache').header('etag', etag);
+        if (request.headers['if-none-match'] === etag) return reply.code(304).send(undefined);
+        return reply.send(payload);
       },
     );
 

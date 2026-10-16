@@ -17,12 +17,12 @@ const here = dirname(fileURLToPath(import.meta.url));
 const ASSET = resolve(here, '../../../../assets/common-passwords-100k.txt');
 
 const policy = createPasswordPolicy(
-  parseCommonPasswords('password123\nQwerty123456\n  letmein2024  \n'),
+  parseCommonPasswords('password1234\nQwerty123456\n  letmein202412  \n'),
 );
 
 describe('password length', () => {
   it('rejects a password shorter than the minimum, accepts exactly the minimum', () => {
-    const atLimit = 'x7Kq-2mPz9'.slice(0, PASSWORD_MIN_LENGTH);
+    const atLimit = 'x7Kq-2mPz9-Lw4Rt8'.slice(0, PASSWORD_MIN_LENGTH);
     expect(atLimit).toHaveLength(PASSWORD_MIN_LENGTH);
 
     expect(policy.check(atLimit.slice(0, -1))).toEqual({ ok: false, issues: ['too_short'] });
@@ -48,9 +48,9 @@ describe('password length', () => {
 
 describe('common passwords', () => {
   it('rejects a listed password whatever its case and surrounding spaces', () => {
-    expect(policy.check('PASSWORD123')).toEqual({ ok: false, issues: ['common'] });
+    expect(policy.check('PASSWORD1234')).toEqual({ ok: false, issues: ['common'] });
     expect(policy.check('qwerty123456')).toEqual({ ok: false, issues: ['common'] });
-    expect(policy.check('letmein2024')).toEqual({ ok: false, issues: ['common'] });
+    expect(policy.check('letmein202412')).toEqual({ ok: false, issues: ['common'] });
   });
 
   it('accepts a passphrase that is not on the list', () => {
@@ -60,7 +60,7 @@ describe('common passwords', () => {
 
   it('rejects "1234" and its longer cousins, as the spec requires', () => {
     expect(policy.check('1234')).toEqual({ ok: false, issues: ['too_short'] });
-    expect(policy.check('1111111111')).toEqual({ ok: false, issues: ['repeated_character'] });
+    expect(policy.check('111111111111')).toEqual({ ok: false, issues: ['repeated_character'] });
   });
 
   it('reports a single repeated character, and a too-short password by its length alone', () => {
@@ -93,7 +93,7 @@ describe('messages', () => {
       {
         code: 'too_short',
         i18nKey: 'auth.password.too_short',
-        message: expect.stringContaining('al menos 10 caracteres') as string,
+        message: expect.stringContaining('al menos 12 caracteres') as string,
       },
       {
         code: 'common',
@@ -124,19 +124,19 @@ describe('the bundled list', () => {
     const real = createPasswordPolicy(await loadCommonPasswords(ASSET));
 
     expect(real.check('passw0rd12345')).toEqual({ ok: true });
-    expect(real.check('1234567890')).toEqual({ ok: false, issues: ['common'] });
-    expect(real.check('qwertyuiop')).toEqual({ ok: false, issues: ['common'] });
+    expect(real.check('123456789123')).toEqual({ ok: false, issues: ['common'] });
+    expect(real.check('qwertyuiop123')).toEqual({ ok: false, issues: ['common'] });
   });
 });
 
 describe('the validator with the optional breached-password check', () => {
-  const local = createPasswordPolicy(parseCommonPasswords('password123'));
+  const local = createPasswordPolicy(parseCommonPasswords('password1234'));
 
   it('is the local policy alone when no breach check is configured', async () => {
     const validator = createPasswordValidator(local);
 
     expect(await validator.validate('correct horse battery staple')).toEqual({ ok: true });
-    expect(await validator.validate('PASSWORD123')).toEqual({ ok: false, issues: ['common'] });
+    expect(await validator.validate('PASSWORD1234')).toEqual({ ok: false, issues: ['common'] });
   });
 
   it('asks the breach check only about passwords the local policy accepted', async () => {
@@ -153,7 +153,7 @@ describe('the validator with the optional breached-password check', () => {
       issues: ['breached'],
     });
     expect(await validator.validate('a-fresh-unleaked-phrase')).toEqual({ ok: true });
-    expect(await validator.validate('password123')).toEqual({ ok: false, issues: ['common'] });
+    expect(await validator.validate('password1234')).toEqual({ ok: false, issues: ['common'] });
     expect(await validator.validate('short')).toEqual({ ok: false, issues: ['too_short'] });
     expect(asked).toEqual(['leaked-passphrase-2020', 'a-fresh-unleaked-phrase']);
   });
