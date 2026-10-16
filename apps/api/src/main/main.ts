@@ -1,8 +1,9 @@
 import pino from 'pino';
 
 import { createS3ObjectStorage } from '../adapters/s3/index.js';
+import { createOperatorSecrets } from '../modules/operator/index.js';
 import { createTenantKeys } from '../platform/crypto/tenant-keys.js';
-import { createRuntimeDb } from '../platform/db/pool.js';
+import { createOperatorDb, createRuntimeDb } from '../platform/db/pool.js';
 import { createDbProbe } from '../platform/db/probe.js';
 import { startWorker } from '../platform/jobs/worker.js';
 
@@ -35,6 +36,10 @@ function waitForShutdownSignal(): Promise<void> {
 async function runApi(config: Config): Promise<void> {
   const probe = createDbProbe(config.databaseUrl);
   const database = createRuntimeDb(config.databaseUrl);
+  const kms = createKeyManagement(config.kms);
+  const operatorDatabase = config.operatorDatabaseUrl
+    ? createOperatorDb(config.operatorDatabaseUrl)
+    : undefined;
   const email = createConfiguredEmail(config.mail);
   const storage = config.storage ? createS3ObjectStorage(config.storage) : undefined;
   const passwordValidator = await loadPasswordValidator({
@@ -47,15 +52,21 @@ async function runApi(config: Config): Promise<void> {
     deployment: deploymentFromConfig(config),
     trustProxy: config.trustProxy,
     cookieSecure: config.cookieSecure,
-    keys: createTenantKeys({ kms: createKeyManagement(config.kms) }),
+    keys: createTenantKeys({ kms }),
     email: email.sender,
     passwordValidator,
     lockout: config.lockout,
     ...(storage ? { storage } : {}),
+    ...(operatorDatabase
+      ? { operator: { database: operatorDatabase, secrets: createOperatorSecrets(kms) } }
+      : {}),
   });
 
   if (!storage) {
     app.log.warn('S3_BUCKET is not set: logo upload is unavailable');
+  }
+  if (!operatorDatabase) {
+    app.log.warn('OPERATOR_DATABASE_URL is not set: the operator console is disabled');
   }
   if (email.kind === 'fake') {
     app.log.warn('SMTP_HOST is not set: emails (password reset, invitations) are not delivered');
@@ -68,6 +79,7 @@ async function runApi(config: Config): Promise<void> {
   email.close();
   storage?.close();
   await database.close();
+  await operatorDatabase?.close();
   await probe.close();
 }
 

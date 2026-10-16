@@ -93,8 +93,10 @@ export const AUDIT_SCENARIOS: Record<AuditAction, AuditScenario> = {
   'audit.exported': t('audit-viewer.test.ts'),
 
   // Platform operator.
-  'support.access': { pending: 'S1.26 (task 1.95): support access with a grant' },
-  'tenant.created': { pending: 'S1.26 (task 1.94): operator creates a tenant' },
+  'support.access': t('operator-support.test.ts'),
+  'support.grant.created': t('operator-support.test.ts'),
+  'support.grant.revoked': t('operator-support.test.ts'),
+  'tenant.created': t('operator-tenants.test.ts'),
   'tenant.demo_reset': { pending: 'S1.36 (task 1.124): demo reset' },
 
   // Denials.

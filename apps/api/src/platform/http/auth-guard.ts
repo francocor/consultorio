@@ -56,6 +56,8 @@ export const PUBLIC_ROUTE_PREFIXES = [
   '/public/',
   '/files/',
   '/webhooks/',
+  // The platform operator console: it answers only on the platform host and has its own guard.
+  '/operator/',
   // The installable app's manifest: a browser asks for it without credentials.
   '/manifest.webmanifest',
   '/health',

@@ -40,10 +40,18 @@ describe('export registry', () => {
   });
 });
 
+/**
+ * Modules that own no data of any organization. The operator console holds the platform's own
+ * accounts and trail, which are not part of what a tenant takes with it when it leaves; what it
+ * does to an organization is written to that organization's own audit log, which is exported.
+ */
+const PLATFORM_ONLY_MODULES = new Set(['operator']);
+
 describe('every module registers an export contributor (hook for the cancellation export)', () => {
   const modules = readdirSync(MODULES_DIR, { withFileTypes: true })
     .filter((entry) => entry.isDirectory())
     .map((entry) => entry.name)
+    .filter((name) => !PLATFORM_ONLY_MODULES.has(name))
     .sort();
 
   it('finds the modules to check (the guard is not silently empty)', () => {

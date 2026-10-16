@@ -119,6 +119,8 @@ services:
       # cookies, and this stack has no AWS KMS. The image itself is the production build.
       NODE_ENV: development
       DATABASE_URL: postgres://app_rw:app_rw_dev_only@postgres:5432/${POSTGRES_DB:-consultorio}
+      # The operator console login (app_operator). Ignored in single mode.
+      OPERATOR_DATABASE_URL: postgres://app_operator:app_operator_dev_only@postgres:5432/${POSTGRES_DB:-consultorio}
       DEPLOYMENT_MODE: ${DEPLOYMENT_MODE:-multi}
       BASE_DOMAIN: ${BASE_DOMAIN:-localhost}
       PLATFORM_HOST: ${PLATFORM_HOST:-platform.localhost}

@@ -48,6 +48,25 @@ Sensitive fields are encrypted with a per-tenant key that a key-encryption key (
 - **Lockout.** `AUTH_LOCKOUT_MAX_FAILURES` consecutive failures (a wrong password or a wrong second-factor code) lock an account for `AUTH_LOCKOUT_MINUTES`. Short delays apply before the lock.
 - **Second factor.** Owners, admins and professionals have 7 days from their first sign-in to enroll an authenticator app (TOTP); after that their session can only reach the enrollment endpoints. Any authenticator app works in development.
 
+### Logos and object storage
+
+Logo upload stores the image in the S3-compatible bucket. Locally that is MinIO: `pnpm infra:up` creates the bucket named by `S3_BUCKET`, and `.env.example` already points `S3_ENDPOINT` and the keys at it. Without `S3_BUCKET` the API still starts, but `PUT /branding/logo` answers 503 and the public logo route answers 404. Uploads are re-encoded to a clean PNG (metadata stripped, 512 pixels at most), so what the browser later receives is never the file that was uploaded. In production leave `S3_ENDPOINT` and the keys empty: the task role supplies the credentials and the bucket encryption (SSE-KMS) protects the objects.
+
+### The operator console
+
+The platform operator (you, running the platform, not a clinic user) signs in on `platform.localhost`. An operator is not a tenant user: separate accounts, a separate `osid` cookie, a password plus a mandatory authenticator code (no grace period) and a separate audit trail. The console is off until `OPERATOR_DATABASE_URL` is set (`.env.example` has the local value, the `app_operator` login) and exists only in multi mode.
+
+```bash
+# 1. Existing local databases need the app_operator role: pnpm infra:reset, then pnpm infra:up and db:migrate.
+# 2. Create the first operator. The password comes from the environment, never from a flag.
+OPERATOR_PASSWORD='a long passphrase of at least 14 characters'   pnpm --filter @consultorio/api operator:create --email you@example.com --name "Your Name"
+# 3. Add the printed secret to an authenticator app. It is shown once.
+```
+
+With the API running, an operator creates an organization (and optionally marks it as the demo one, which can never change afterwards) with `POST http://platform.localhost:3000/operator/tenants` after `POST /operator/auth/login` (`{"email","password","code"}`). The owner receives an invitation by email (Mailpit, `http://localhost:8025`) pointing at `{slug}.localhost:3000/accept-invitation`. `POST /operator/tenants/{id}/owner-invitation` sends it again while nobody has joined the organization. `POST /operator/tenants/{id}/demo-reset` is wired to the demo module and answers 503 until that module exists.
+
+The operator's database login can touch the tenant row, a few administrative tables and the operator tables, and nothing clinical. Seeing an organization's configuration needs a **support grant**: its owner opens a time-boxed window with `POST /support-grants` (up to 7 days) and can revoke it at any time. Every use of a grant is recorded twice, in the platform trail and in the organization's own audit log.
+
 The API reads the tenant from the host name: `{slug}.localhost` in multi mode (current browsers resolve `*.localhost` to 127.0.0.1) and `platform.localhost` for the operator console.
 
 ## Run the apps

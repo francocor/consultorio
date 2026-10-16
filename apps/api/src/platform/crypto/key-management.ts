@@ -7,7 +7,11 @@
  * encryption context, so a wrapped key issued for one tenant cannot be unwrapped for another.
  */
 
-export type KeyPurpose = 'tenant-dek';
+/**
+ * What a data key is for. `operator-dek` protects the second-factor secret of a platform operator;
+ * it has no tenant, so its context carries the nil UUID.
+ */
+export type KeyPurpose = 'tenant-dek' | 'operator-dek';
 
 export interface KeyContext {
   tenantId: string;

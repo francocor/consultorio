@@ -61,6 +61,8 @@ interface InvitationPayload {
   email: string;
   roles: Role[];
   invitedBy: string;
+  /** `operator`: issued by the platform for the first owner of a new organization. */
+  origin?: 'operator';
   displayName?: string;
 }
 
@@ -77,6 +79,7 @@ function parsePayload(payload: Record<string, unknown>): InvitationPayload | nul
     email,
     roles,
     invitedBy,
+    ...(payload['origin'] === 'operator' ? { origin: 'operator' as const } : {}),
     ...(typeof displayName === 'string' && displayName !== '' ? { displayName } : {}),
   };
 }
@@ -159,20 +162,33 @@ export function createInvitationAcceptance(deps: InvitationAcceptanceDeps): Invi
         const invitation = redeemed ? parsePayload(redeemed.payload) : null;
         if (!invitation) throw new AppError('bad_request');
 
-        const [inviter] = await tx
-          .select({ roles: membership.roles, status: membership.status })
-          .from(membership)
-          .where(
-            and(
-              eq(membership.tenantId, input.tenantId),
-              eq(membership.userId, invitation.invitedBy),
-            ),
-          );
-        if (
-          inviter?.status !== 'active' ||
-          !canGrantRoles(inviter.roles as Role[], invitation.roles)
-        ) {
-          throw new AppError('forbidden');
+        if (invitation.origin === 'operator') {
+          // The platform's invitation for the first owner: there is no inviting member. It opens
+          // the owner role and nothing else, and only while nobody has joined the organization.
+          const [anyone] = await tx
+            .select({ id: membership.id })
+            .from(membership)
+            .where(eq(membership.tenantId, input.tenantId))
+            .limit(1);
+          if (anyone || invitation.roles.length !== 1 || invitation.roles[0] !== 'owner') {
+            throw new AppError('forbidden');
+          }
+        } else {
+          const [inviter] = await tx
+            .select({ roles: membership.roles, status: membership.status })
+            .from(membership)
+            .where(
+              and(
+                eq(membership.tenantId, input.tenantId),
+                eq(membership.userId, invitation.invitedBy),
+              ),
+            );
+          if (
+            inviter?.status !== 'active' ||
+            !canGrantRoles(inviter.roles as Role[], invitation.roles)
+          ) {
+            throw new AppError('forbidden');
+          }
         }
 
         const [existingMembership] = await tx

@@ -9,11 +9,13 @@ import type { ObjectStorage } from '../../platform/storage/object-storage.js';
 
 import { exportOrganization } from './application/export-contributor.js';
 import type { ExportRegistry } from './application/export-registry.js';
+import { createSupportGrants } from './application/support-grants.js';
 import { createBootService, type BootDeps } from './branding/boot.js';
 import { createBrandingService } from './branding/branding.js';
 import { createLogoService } from './branding/logo-service.js';
 import { bootRoutes } from './http/boot-routes.js';
 import { brandingRoutes } from './http/branding-routes.js';
+import { supportRoutes } from './http/support-routes.js';
 
 export { readOrganizationName } from './application/organization-name.js';
 export { assertCanCreateTenant } from './application/create-tenant-policy.js';
@@ -43,6 +45,17 @@ export interface BrandingOptions {
   storage?: ObjectStorage | undefined;
   /** What the public boot payload needs from the deployment. */
   boot: BootDeps;
+}
+
+export interface SupportAccess {
+  routes: (app: FastifyInstance) => void;
+}
+
+/** The organization's side of support access: open and close the window for the platform. */
+export function createSupportAccess(options: { withTenant: WithTenant }): SupportAccess {
+  return {
+    routes: supportRoutes({ withTenant: options.withTenant, grants: createSupportGrants() }),
+  };
 }
 
 export interface Branding {

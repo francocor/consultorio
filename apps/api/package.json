@@ -13,6 +13,7 @@
     "db:migrate": "tsx src/db/migrate-cli.ts",
     "db:generate": "drizzle-kit generate",
     "db:check": "tsx scripts/check-migration-drift.ts",
+    "operator:create": "tsx --env-file-if-exists=../../.env scripts/create-operator.ts",
     "build": "tsx scripts/build.ts"
   },
   "dependencies": {

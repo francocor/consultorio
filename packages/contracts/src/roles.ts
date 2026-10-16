@@ -46,6 +46,8 @@ export const PERMISSIONS = [
   // Organization administration (non-clinical).
   'tenant.settings.manage',
   'tenant.branding.manage',
+  // Opens a time-boxed window for the platform to help with configuration (owner only).
+  'tenant.support.manage',
   'staff.manage',
   // Every staff member sees the directory (names, roles, disciplines, locations).
   'staff.directory.read',
@@ -123,7 +125,7 @@ const ADMINISTRATION = [
 
 export const ROLE_PERMISSIONS: Record<Role, readonly Permission[]> = {
   // Owner and admin are the same non-clinical bundle; only the owner manages the subscription.
-  owner: [...ADMINISTRATION, 'billing.manage'],
+  owner: [...ADMINISTRATION, 'billing.manage', 'tenant.support.manage'],
   admin: ADMINISTRATION,
   professional: [
     'staff.directory.read',

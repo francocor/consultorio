@@ -8,10 +8,16 @@ import { createAudit } from '../modules/audit/index.js';
 import type { LockoutPolicy } from '../modules/identity/application/lockout.js';
 import type { PasswordValidator } from '../modules/identity/domain/password-policy.js';
 import { createIdentity, type PasswordHasher } from '../modules/identity/index.js';
+import {
+  createOperatorConsole,
+  type DemoResetPort,
+  type OperatorSecrets,
+} from '../modules/operator/index.js';
 import { createPatients } from '../modules/patients/index.js';
 import { createStaff } from '../modules/staff/index.js';
 import {
   createBranding,
+  createSupportAccess,
   createTenantLookup,
   type DeploymentSettings,
 } from '../modules/tenancy/index.js';
@@ -59,6 +65,17 @@ export interface ApplicationOptions {
    * that need it then answer "unavailable" instead of failing at startup.
    */
   storage?: ObjectStorage;
+  /**
+   * The platform operator console. Absent when no operator database is configured (and always
+   * absent in single-tenant mode, which has no platform host): `/operator/*` is then a 404.
+   */
+  operator?: {
+    /** The connection of the `app_operator` role. */
+    database: Pick<DbHandle, 'db'>;
+    secrets: OperatorSecrets;
+    /** The privileged reset of a demo organization; the demo module provides it. */
+    demoReset?: DemoResetPort;
+  };
   /** Routes of the capability modules, registered after identity. */
   modules?: readonly FeatureRoutes[];
 }
@@ -180,6 +197,22 @@ export function createApplication(options: ApplicationOptions): FastifyInstance 
   });
 
   const auditViewer = createAudit({ withTenant });
+  const supportAccess = createSupportAccess({ withTenant });
+  const operatorConsole =
+    options.operator && options.deployment.mode === 'multi'
+      ? createOperatorConsole({
+          db: options.operator.database.db,
+          secrets: options.operator.secrets,
+          keys: options.keys,
+          hasher: identity.hasher,
+          email: options.email,
+          baseDomain: options.deployment.baseDomain,
+          secureLinks: options.cookieSecure,
+          loginRateLimit: limits.login,
+          ...(options.operator.demoReset ? { demoReset: options.operator.demoReset } : {}),
+          ...(options.clock ? { clock: options.clock } : {}),
+        })
+      : undefined;
   const branding = createBranding({
     withTenant,
     auditDeny,
@@ -224,6 +257,8 @@ export function createApplication(options: ApplicationOptions): FastifyInstance 
       patients.routes,
       auditViewer.routes,
       branding.routes,
+      supportAccess.routes,
+      ...(operatorConsole ? [operatorConsole.routes] : []),
       ...(options.modules ?? []),
     ],
   });

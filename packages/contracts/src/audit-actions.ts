@@ -73,6 +73,9 @@ export const AUDIT_ACTIONS = [
   'staff.reactivated',
   'staff.profile_updated',
   'professional.hours_updated',
+  // Support access that the organization opens for the platform.
+  'support.grant.created',
+  'support.grant.revoked',
   // Exports and archive.
   'export.created',
   'archive.read',

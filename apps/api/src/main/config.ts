@@ -22,6 +22,11 @@ const envSchema = z
   .object({
     NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
     DATABASE_URL: z.url({ protocol: /^postgres(ql)?$/ }),
+    /**
+     * The login of the platform operator console (role `app_operator`). Without it the console
+     * does not exist: every `/operator/*` path answers 404. Multi-tenant mode only.
+     */
+    OPERATOR_DATABASE_URL: z.url({ protocol: /^postgres(ql)?$/ }).optional(),
     DEPLOYMENT_MODE: z.enum(['multi', 'single']).default('multi'),
     /** multi mode: tenants live at `{slug}.BASE_DOMAIN`. Host name only: no scheme, port or path. */
     BASE_DOMAIN: z.string().regex(HOSTNAME).optional(),
@@ -195,6 +200,8 @@ export interface MailConfig {
 export interface Config {
   readonly nodeEnv: 'development' | 'test' | 'production';
   readonly databaseUrl: string;
+  /** Set when the operator console is enabled (multi-tenant mode and OPERATOR_DATABASE_URL). */
+  readonly operatorDatabaseUrl?: string;
   readonly deploymentMode: 'multi' | 'single';
   /** Set in multi mode. */
   readonly baseDomain?: string;
@@ -251,6 +258,9 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   return {
     nodeEnv: value.NODE_ENV,
     databaseUrl: value.DATABASE_URL,
+    ...(value.OPERATOR_DATABASE_URL === undefined || value.DEPLOYMENT_MODE === 'single'
+      ? {}
+      : { operatorDatabaseUrl: value.OPERATOR_DATABASE_URL }),
     deploymentMode: value.DEPLOYMENT_MODE,
     ...(value.BASE_DOMAIN === undefined ? {} : { baseDomain: value.BASE_DOMAIN }),
     ...(value.PLATFORM_HOST === undefined ? {} : { platformHost: value.PLATFORM_HOST }),

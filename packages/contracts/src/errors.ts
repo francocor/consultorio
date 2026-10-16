@@ -20,8 +20,12 @@ export const ERROR_CATALOG = {
     status: 403,
     i18nKey: 'errors.two_factor_enrollment_required',
   },
+  // Support access needs an active grant from the organization; none is open.
+  support_grant_required: { status: 403, i18nKey: 'errors.support_grant_required' },
   not_found: { status: 404, i18nKey: 'errors.not_found' },
   conflict: { status: 409, i18nKey: 'errors.conflict' },
+  // The action only exists for demo organizations.
+  demo_tenant_required: { status: 409, i18nKey: 'errors.demo_tenant_required' },
   stale_revision: { status: 409, i18nKey: 'errors.stale_revision' },
   unsupported_country: { status: 422, i18nKey: 'errors.unsupported_country' },
   rate_limited: { status: 429, i18nKey: 'errors.rate_limited' },
