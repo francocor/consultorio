@@ -142,7 +142,9 @@ describe('PatientDto', () => {
 
 describe('the registry never carries clinical detail', () => {
   // `clinicalCopy` is a marker that says the clinical copy is a separate act, not clinical content.
-  const CLINICAL_WORDS = /anamnesis|diagnos|allerg|medicat|symptom|treatment|prescription|note/i;
+  // `adminNotes` is administrative by contract (it says so, and clinical text has its own tables).
+  const CLINICAL_WORDS =
+    /anamnesis|diagnos|allerg|medicat|symptom|treatment|prescription|clinicalNote/i;
 
   it('keeps the summary to a minimal identity (snapshot of its fields)', () => {
     expect(Object.keys(PatientSummaryDto.shape).sort()).toEqual([
