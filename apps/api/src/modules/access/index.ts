@@ -11,8 +11,10 @@ import type { ExportRegistry } from '../tenancy/index.js';
 
 import { exportAccess } from './application/export-contributor.js';
 import { createGrants, type Grants } from './application/grants.js';
+import { createLocationService } from './application/locations.js';
 import { createRoleService, type SessionRevoker } from './application/roles.js';
 import { createSettingsService } from './application/settings.js';
+import { locationRoutes } from './http/location-routes.js';
 import { memberRoutes } from './http/member-routes.js';
 import { settingsRoutes } from './http/settings-routes.js';
 
@@ -25,6 +27,8 @@ export { createGrants, createGrantsRepo } from './application/grants.js';
 export type { Grants } from './application/grants.js';
 export { countOtherActiveOwners, loadMember, lockOwnersAnd } from './application/members.js';
 export type { MemberRecord } from './application/members.js';
+export { seesEveryLocation, visibleLocationIds } from './application/locations.js';
+export type { LocationViewer } from './application/locations.js';
 export { AccessRefused } from './application/refusal.js';
 
 export interface AccessOptions {
@@ -33,6 +37,8 @@ export interface AccessOptions {
   /** Ends the sessions of a member whose roles changed. */
   sessions: SessionRevoker;
   grants?: Grants;
+  /** Time zone of a new location without one, from the country of the organization. */
+  defaultTimeZone: (country: string) => string;
 }
 
 export interface Access {
@@ -55,9 +61,16 @@ export function createAccess(options: AccessOptions): Access {
     settings: createSettingsService(),
   });
 
+  const places = locationRoutes({
+    withTenant: options.withTenant,
+    locations: createLocationService(),
+    defaultTimeZone: options.defaultTimeZone,
+  });
+
   return {
     routes: (app) => {
       members(app);
+      places(app);
       settings(app);
     },
   };

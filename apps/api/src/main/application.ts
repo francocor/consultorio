@@ -116,6 +116,14 @@ export function createApplication(options: ApplicationOptions): FastifyInstance 
     auditDeny,
     sessions: identity.sessions,
     grants,
+    defaultTimeZone: (country) => {
+      const found = getCountryPack(country, createCatalogReader(db));
+      return found.ok
+        ? found.value.defaults.timeZone
+        : pack.ok
+          ? pack.value.defaults.timeZone
+          : 'UTC';
+    },
   });
 
   const server = buildServer({
