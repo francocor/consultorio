@@ -87,8 +87,8 @@ describe('SMTP email adapter', () => {
     await sender.send({ to: 'nuevo@nandu.example', ...rendered });
 
     const delivered = (await inbox()).find((message) => message.Subject.includes('Ñandú'));
-    expect(delivered?.Subject).toBe('Te invitaron a unirte a Centro Médico Ñandú');
-    expect((await body(delivered?.ID ?? '')).Text).toContain('Ana Pérez te invitó');
+    expect(delivered?.Subject).toBe('Invitación para unirse a Centro Médico Ñandú');
+    expect((await body(delivered?.ID ?? '')).Text).toContain('La invitación la envió Ana Pérez');
     sender.close();
   });
 

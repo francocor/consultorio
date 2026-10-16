@@ -5,6 +5,18 @@ import { renderInvitationEmail, renderPasswordResetEmail } from './templates.js'
 const LINK = 'https://clinica-sur.consultorio.test/auth/reset?token=abc_DEF-123';
 
 describe('password reset email (es-AR)', () => {
+  it('speaks in neutral Spanish, never in voseo', () => {
+    const email = renderPasswordResetEmail({
+      organizationName: 'Clínica Sur',
+      link: LINK,
+      expiresInMinutes: 30,
+    });
+
+    expect(email.text + email.html).not.toMatch(
+      /\b(restablecé|abrí|elegí|ignorá|copiá|pediste)\b/i,
+    );
+  });
+
   it('names the organization, carries the link and says how long it lasts', () => {
     const email = renderPasswordResetEmail({
       organizationName: 'Clínica Sur',
@@ -12,10 +24,10 @@ describe('password reset email (es-AR)', () => {
       expiresInMinutes: 30,
     });
 
-    expect(email.subject).toBe('Restablecé tu contraseña de Clínica Sur');
+    expect(email.subject).toBe('Restablezca su contraseña de Clínica Sur');
     expect(email.text).toContain(LINK);
     expect(email.text).toContain('30 minutos');
-    expect(email.text).toContain('Si no pediste');
+    expect(email.text).toContain('Si no hizo este pedido');
     expect(email.html).toContain(`href="${LINK}"`);
     expect(email.html).toContain('30 minutos');
   });
@@ -28,7 +40,7 @@ describe('password reset email (es-AR)', () => {
     });
 
     expect(email.text.split(LINK)).toHaveLength(2);
-    expect(email.text.toLowerCase()).not.toContain('tu contraseña es');
+    expect(email.text.toLowerCase()).not.toContain('su contraseña es');
   });
 
   it('escapes the organization name in the HTML (no markup injection)', () => {
@@ -79,11 +91,12 @@ describe('staff invitation email (es-AR)', () => {
       expiresInDays: 7,
     });
 
-    expect(email.subject).toBe('Te invitaron a unirte a Clínica Sur');
+    expect(email.subject).toBe('Invitación para unirse a Clínica Sur');
     expect(email.text).toContain('Ana Pérez');
     expect(email.text).toContain(LINK);
     expect(email.text).toContain('7 días');
-    expect(email.text).toContain('elegir tu contraseña');
+    expect(email.text).toContain('elegir su contraseña');
+    expect(email.text).toContain('La invitación la envió Ana Pérez');
     expect(email.html).toContain(`href="${LINK}"`);
   });
 
@@ -94,7 +107,7 @@ describe('staff invitation email (es-AR)', () => {
       expiresInDays: 1,
     });
 
-    expect(email.text).toContain('Te invitaron a unirte a Clínica Sur.');
+    expect(email.text).toContain('Recibió una invitación para unirse a Clínica Sur.');
     expect(email.text).toContain('1 día.');
     expect(email.text).not.toContain('undefined');
   });

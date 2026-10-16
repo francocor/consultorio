@@ -118,6 +118,20 @@ describe('requesting a reset (identity-access, "Audited, non-enumerating passwor
     expect(Object.keys(known.headers).sort()).toEqual(Object.keys(unknown.headers).sort());
   });
 
+  it('names the organization as people know it, not by its slug', async () => {
+    const branded = await createTestTenant(runtime, {
+      slug: 'reset-branded',
+      theme: { displayName: 'Clínica Ñandú' },
+    });
+    const user = await newUser(branded);
+
+    await requestReset(user.email, 'reset-branded');
+
+    const message = email.lastTo(user.email);
+    expect(message?.subject).toBe('Restablezca su contraseña de Clínica Ñandú');
+    expect(message?.subject).not.toContain('reset-branded');
+  });
+
   it('emails only the account holder, in es-AR, with a single-use link on the tenant host', async () => {
     const user = await newUser();
 
@@ -126,7 +140,7 @@ describe('requesting a reset (identity-access, "Audited, non-enumerating passwor
 
     expect(email.sent).toHaveLength(1);
     const message = email.lastTo(user.email);
-    expect(message?.subject).toContain('Restablecé tu contraseña');
+    expect(message?.subject).toContain('Restablezca su contraseña');
     expect(message?.text).toContain('30 minutos');
     const link = new URL(email.linkIn(message) ?? '');
     expect(link.host).toBe(hostOf('reset-a'));
@@ -389,7 +403,7 @@ describe('POST /users/:id/password-reset (an administrator can only trigger the 
     await app.background.idle();
 
     expect(response.statusCode).toBe(204);
-    expect(email.lastTo(target.email)?.subject).toContain('Restablecé tu contraseña');
+    expect(email.lastTo(target.email)?.subject).toContain('Restablezca su contraseña');
     expect(email.lastTo(boss.email)).toBeUndefined();
     const [row] = await auditRows('auth.password.reset_requested');
     expect(row).toMatchObject({

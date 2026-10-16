@@ -9,6 +9,7 @@ import type { EmailSender } from '../../../platform/mail/email-sender.js';
 import { renderPasswordResetEmail } from '../../../platform/mail/templates.js';
 import type { ActionTokens } from '../../../platform/tokens/index.js';
 import { TOKEN_KIND_REGISTRY } from '../../../platform/tokens/kinds.js';
+import { readOrganizationName } from '../../tenancy/index.js';
 import type { PasswordValidator } from '../domain/password-policy.js';
 import type { PasswordHasher } from '../infrastructure/argon2.js';
 
@@ -107,7 +108,9 @@ export function createPasswordReset(deps: PasswordResetDeps): PasswordReset {
         resourceId: userId,
         metadata: { triggeredBy },
       });
-      return { email: account.email, token: issued.token };
+      // The name people know (its branding), not the slug of its address.
+      const organizationName = (await readOrganizationName(tx)) || context.organizationName;
+      return { email: account.email, token: issued.token, organizationName };
     });
     if (!prepared) return 'not_a_member';
 
@@ -115,7 +118,7 @@ export function createPasswordReset(deps: PasswordResetDeps): PasswordReset {
     await deps.email.send({
       to: prepared.email,
       ...renderPasswordResetEmail({
-        organizationName: context.organizationName,
+        organizationName: prepared.organizationName,
         link,
         expiresInMinutes: TOKEN_KIND_REGISTRY.password_reset.ttlMs / 60_000,
       }),
