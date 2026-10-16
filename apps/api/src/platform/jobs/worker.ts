@@ -1,6 +1,5 @@
-import { sql } from 'drizzle-orm';
-
 import { SEAL_JOB, VERIFY_JOB, createAuditJobs } from '../audit/jobs.js';
+import { ensureAuditPartitions } from '../audit/partitions.js';
 import { createRuntimeDb } from '../db/pool.js';
 import type { Db } from '../db/pool.js';
 import { SYSTEM_USER_ID, createWithTenant } from '../db/tenant-context.js';
@@ -52,11 +51,6 @@ export async function fanOut(
   return tenantIds.length;
 }
 
-/** Keeps the monthly audit partitions ahead of the calendar. Idempotent. */
-export async function ensureAuditPartitions(db: Db): Promise<void> {
-  await db.execute(sql`select app.ensure_audit_partitions(3)`);
-}
-
 /**
  * Starts the `worker` role: the only process that registers job handlers. It seals audit events
  * every few seconds, and every night verifies every chain and makes sure the next audit
@@ -82,7 +76,7 @@ export async function startWorker(options: WorkerOptions): Promise<Worker> {
       ? {}
       : { pollingIntervalSeconds: options.pollingIntervalSeconds },
   );
-  await ensureAuditPartitions(handle.db);
+  await ensureAuditPartitions(handle.db, { metrics });
 
   const report = (what: string) => (error: unknown) => {
     options.log.error(
@@ -102,7 +96,7 @@ export async function startWorker(options: WorkerOptions): Promise<Worker> {
     createDailyTicker({
       hourUtc: options.nightlyHourUtc ?? 3,
       tick: async () => {
-        await ensureAuditPartitions(handle.db);
+        await ensureAuditPartitions(handle.db, { metrics });
         await fanOut(handle.db, client, VERIFY_JOB, { singletonSeconds: 3600 });
       },
       onError: report('nightly audit tasks'),

@@ -1,16 +1,12 @@
 import { sql } from 'drizzle-orm';
 import { afterAll, beforeAll, describe, expect, inject, it } from 'vitest';
 
+import { ensureAuditPartitions } from '../../src/platform/audit/partitions.js';
 import { audit, type AuditActor } from '../../src/platform/audit/writer.js';
 import { createRuntimeDb, type DbHandle } from '../../src/platform/db/pool.js';
 import { createBoss, createJobClient } from '../../src/platform/jobs/boss.js';
 import { listTenantIds } from '../../src/platform/jobs/tenant-scan.js';
-import {
-  ensureAuditPartitions,
-  fanOut,
-  startWorker,
-  type Worker,
-} from '../../src/platform/jobs/worker.js';
+import { fanOut, startWorker, type Worker } from '../../src/platform/jobs/worker.js';
 import { eventually } from '../support/eventually.js';
 import { asTenant, createTestTenant, TEST_USER, type TestTenant } from '../support/tenants.js';
 
