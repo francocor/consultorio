@@ -26,6 +26,8 @@ export const ERROR_CATALOG = {
   unsupported_country: { status: 422, i18nKey: 'errors.unsupported_country' },
   rate_limited: { status: 429, i18nKey: 'errors.rate_limited' },
   internal_error: { status: 500, i18nKey: 'errors.internal_error' },
+  // A capability this deployment does not have configured (for example, no object storage).
+  service_unavailable: { status: 503, i18nKey: 'errors.service_unavailable' },
 } as const satisfies Record<string, { status: number; i18nKey: string }>;
 
 export type ErrorCode = keyof typeof ERROR_CATALOG;

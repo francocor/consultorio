@@ -5,10 +5,12 @@ import type { FastifyInstance } from 'fastify';
 
 import type { AuthzOptions } from '../../platform/authz/guard.js';
 import type { WithTenant } from '../../platform/db/tenant-context.js';
+import type { ObjectStorage } from '../../platform/storage/object-storage.js';
 
 import { exportOrganization } from './application/export-contributor.js';
 import type { ExportRegistry } from './application/export-registry.js';
 import { createBrandingService } from './branding/branding.js';
+import { createLogoService } from './branding/logo-service.js';
 import { brandingRoutes } from './http/branding-routes.js';
 
 export { readOrganizationName } from './application/organization-name.js';
@@ -35,6 +37,8 @@ export function registerTenancyExportContributors(registry: ExportRegistry): voi
 export interface BrandingOptions {
   withTenant: WithTenant;
   auditDeny: AuthzOptions['auditDeny'];
+  /** Where logos are stored. Absent: logo upload answers "unavailable". */
+  storage?: ObjectStorage | undefined;
 }
 
 export interface Branding {
@@ -46,6 +50,7 @@ export function createBranding(options: BrandingOptions): Branding {
   const identity = brandingRoutes({
     withTenant: options.withTenant,
     branding: createBrandingService(),
+    logo: createLogoService({ storage: options.storage }),
   });
   return {
     routes: (app) => {

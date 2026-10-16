@@ -180,7 +180,7 @@ export function createApplication(options: ApplicationOptions): FastifyInstance 
   });
 
   const auditViewer = createAudit({ withTenant });
-  const branding = createBranding({ withTenant, auditDeny });
+  const branding = createBranding({ withTenant, auditDeny, storage: options.storage });
 
   const server = buildServer({
     ...(options.logLevel === undefined ? {} : { logLevel: options.logLevel }),
