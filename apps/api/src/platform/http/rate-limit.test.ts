@@ -210,3 +210,89 @@ describe('rate limiting per client and per tenant', () => {
     await app.close();
   });
 });
+
+describe('a flood of unknown hosts is limited before it costs a database lookup (review finding 8)', () => {
+  function probeServer(limits: { client: number }) {
+    const lookups: string[] = [];
+    const app = buildServer({
+      logLevel: 'silent',
+      health: { checkDatabase: () => Promise.resolve({ ok: true }) },
+      deployment: multi,
+      lookupTenant: (slug) => {
+        lookups.push(slug);
+        return Promise.resolve([NORTE, SUR].find((tenant) => tenant.slug === slug) ?? null);
+      },
+      auth: { authz: stubAuthz, cookieSecure: true, authenticate: () => Promise.resolve(null) },
+      rateLimit: {
+        store: createMemoryRateLimitStore(),
+        perClient: { max: limits.client, windowMs: 60_000 },
+        perTenant: { max: 100_000, windowMs: 60_000 },
+      },
+      routes: [
+        (scope) => {
+          scope.get('/auth/ping', { config: { readOnly: 'read', auth: 'public' } }, () => ({
+            pong: true,
+          }));
+        },
+      ],
+    });
+    return { app, lookups };
+  }
+
+  const probe = (app: ReturnType<typeof probeServer>['app'], slug: string, ip: string) =>
+    app.inject({
+      url: '/auth/ping',
+      headers: { host: `${slug}.consultorio.test` },
+      remoteAddress: ip,
+    });
+
+  it('stops querying for the tenants a client invents once the client is over its allowance', async () => {
+    const { app, lookups } = probeServer({ client: 2 });
+
+    const statuses: number[] = [];
+    for (let i = 0; i < 14; i += 1) {
+      statuses.push((await probe(app, `invented-${String(i)}`, '198.51.100.9')).statusCode);
+    }
+
+    expect(statuses.slice(0, 4)).toEqual([404, 404, 404, 404]);
+    expect(statuses.slice(-4)).toEqual([429, 429, 429, 429]);
+    // Every request that reached the database was counted before it did; the rest were refused.
+    expect(lookups.length).toBeLessThan(14);
+    expect(lookups.length).toBe(statuses.filter((status) => status === 404).length);
+    await app.close();
+  });
+
+  it('answers 429 problem+json with Retry-After, like the other limits', async () => {
+    const { app } = probeServer({ client: 1 });
+
+    let last = await probe(app, 'invented-0', '198.51.100.10');
+    for (let i = 1; i < 10; i += 1)
+      last = await probe(app, `invented-${String(i)}`, '198.51.100.10');
+
+    expect(last.statusCode).toBe(429);
+    expect(Problem.parse(last.json())).toMatchObject({ code: 'rate_limited', status: 429 });
+    expect(Number(last.headers['retry-after'])).toBeGreaterThan(0);
+    await app.close();
+  });
+
+  it('leaves another client alone, and a real tenant of the same client within its own limit', async () => {
+    const { app, lookups } = probeServer({ client: 5 });
+    for (let i = 0; i < 40; i += 1) await probe(app, `invented-${String(i)}`, '198.51.100.11');
+
+    const stranger = await probe(app, 'norte', '198.51.100.12');
+
+    expect(stranger.statusCode).toBe(200);
+    expect(lookups).toContain('norte');
+    await app.close();
+  });
+
+  it('does not slow the probes down: liveness and readiness are never limited', async () => {
+    const { app } = probeServer({ client: 1 });
+    for (let i = 0; i < 20; i += 1) await probe(app, `invented-${String(i)}`, '198.51.100.13');
+
+    const health = await app.inject({ url: '/health', remoteAddress: '198.51.100.13' });
+
+    expect(health.statusCode).toBe(200);
+    await app.close();
+  });
+});

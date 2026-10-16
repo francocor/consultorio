@@ -151,3 +151,42 @@ export function registerRateLimit(app: FastifyInstance, settings: RateLimitSetti
     }
   });
 }
+
+/**
+ * How many times more than its per-tenant allowance a client may send before ANY host is looked
+ * up. A real client of one organization never gets near it; a scan of invented subdomains does.
+ */
+const HOST_PROBE_FACTOR = 4;
+
+/**
+ * Counts every request of a client, whichever host it names, BEFORE the tenant behind the host is
+ * looked up. Without it, a client rotating invented subdomains costs the database one query each
+ * while every per-tenant limit sees nothing (an unknown host has no tenant to count against).
+ * Register it before the tenant host guard. Probes are exempt, and a store failure lets the
+ * request through, like the other limits.
+ */
+export function registerHostProbeLimit(app: FastifyInstance, settings: RateLimitSettings): void {
+  const limit: RateLimit = {
+    max: settings.perClient.max * HOST_PROBE_FACTOR,
+    windowMs: settings.perClient.windowMs,
+  };
+  app.addHook('onRequest', async (request, reply) => {
+    const path = request.url.split('?')[0] ?? request.url;
+    if (EXEMPT.test(path)) return;
+
+    let state: { count: number; resetsInMs: number };
+    try {
+      state = await settings.store.hit(`host-probe|${clientKeyOf(request.ip)}`, limit.windowMs);
+    } catch (error) {
+      request.log.warn(
+        { code: (error as { code?: unknown } | null)?.code },
+        'rate limit store failed',
+      );
+      return;
+    }
+    if (state.count > limit.max) {
+      void reply.header('retry-after', String(Math.max(1, Math.ceil(state.resetsInMs / 1000))));
+      throw new AppError('rate_limited');
+    }
+  });
+}

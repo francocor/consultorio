@@ -20,7 +20,11 @@ import {
   registerProblemHandlers,
   registerRequestId,
 } from '../platform/http/problem.js';
-import { registerRateLimit, type RateLimitSettings } from '../platform/http/rate-limit.js';
+import {
+  registerHostProbeLimit,
+  registerRateLimit,
+  type RateLimitSettings,
+} from '../platform/http/rate-limit.js';
 import { registerSecurityHeaders } from '../platform/http/security-headers.js';
 import { registerTenantHost } from '../platform/http/tenant-host.js';
 import { registerReadOnlyPolicy } from '../platform/read-only/index.js';
@@ -74,6 +78,8 @@ export function buildServer(options: BuildServerOptions): FastifyInstance {
   registerBackgroundTasks(app);
   registerRequestContext(app);
   registerProblemHandlers(app);
+  // Before the host is resolved: an invented subdomain must not cost a database lookup unchecked.
+  if (options.rateLimit) registerHostProbeLimit(app, options.rateLimit);
   registerTenantHost(app, createResolveHost(options.deployment, options.lookupTenant));
   // After the host guard (it reads the tenant) and before any route (it checks their categories).
   registerReadOnlyPolicy(app);
