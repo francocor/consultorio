@@ -84,6 +84,14 @@ export function lifecycleRoutes(deps: LifecycleRoutesDeps) {
         const link = `${deps.secureLinks ? 'https' : 'http'}://${host}${INVITATION_PATH}?token=${prepared.token}`;
         await deps.email.send({
           to: prepared.email,
+          ...(request.hostContext?.kind === 'tenant'
+            ? {
+                tenant: {
+                  id: request.hostContext.tenant.id,
+                  isDemo: request.hostContext.tenant.isDemo,
+                },
+              }
+            : {}),
           ...renderInvitationEmail({
             organizationName: prepared.organizationName,
             ...(prepared.inviterName === null ? {} : { inviterName: prepared.inviterName }),

@@ -31,6 +31,8 @@ export const unavailableDemoReset: DemoResetPort = {
 
 /** What the console needs to send the owner their invitation once the tenant is safely stored. */
 export interface OwnerInvitation {
+  /** The organization the invitation is for: its email goes through the adapter of its kind. */
+  tenant: { id: string; isDemo: boolean };
   token: string;
   expiresAt: Date;
   email: string;
@@ -125,7 +127,13 @@ export function createOperatorTenants(deps: OperatorTenantsDeps): OperatorTenant
 
   async function issueOwnerInvitation(
     tx: Tx,
-    input: { operatorId: string; email: string; slug: string; organizationName: string },
+    input: {
+      operatorId: string;
+      tenant: { id: string; isDemo: boolean };
+      email: string;
+      slug: string;
+      organizationName: string;
+    },
   ): Promise<OwnerInvitation> {
     const email = input.email.trim().toLowerCase();
     const issued = await tokens.issue(tx, {
@@ -136,6 +144,7 @@ export function createOperatorTenants(deps: OperatorTenantsDeps): OperatorTenant
       payload: { email, roles: ['owner'], invitedBy: input.operatorId, origin: 'operator' },
     });
     return {
+      tenant: input.tenant,
       token: issued.token,
       expiresAt: issued.expiresAt,
       email,
@@ -172,6 +181,7 @@ export function createOperatorTenants(deps: OperatorTenantsDeps): OperatorTenant
         await deps.keys.ensureTenantKey(tx);
         const invitation = await issueOwnerInvitation(tx, {
           operatorId: operator.id,
+          tenant: { id: created.id, isDemo: input.isDemo },
           email: input.ownerEmail,
           slug: created.slug,
           organizationName: input.name,
@@ -209,7 +219,7 @@ export function createOperatorTenants(deps: OperatorTenantsDeps): OperatorTenant
     async reissueOwnerInvitation(tenantId, ownerEmail, operator, meta) {
       return deps.run({ tenantId, operatorId: operator.id }, async (tx) => {
         const [row] = await tx
-          .select({ slug: tenant.slug, theme: tenant.theme })
+          .select({ slug: tenant.slug, theme: tenant.theme, isDemo: tenant.isDemo })
           .from(tenant)
           .where(eq(tenant.id, tenantId));
         if (!row) throw new AppError('not_found');
@@ -229,6 +239,7 @@ export function createOperatorTenants(deps: OperatorTenantsDeps): OperatorTenant
           // The database only lets the operator do this while the organization has no member.
           invitation = await issueOwnerInvitation(tx, {
             operatorId: operator.id,
+            tenant: { id: tenantId, isDemo: row.isDemo },
             email: ownerEmail,
             slug: row.slug,
             organizationName: typeof name === 'string' && name !== '' ? name : row.slug,

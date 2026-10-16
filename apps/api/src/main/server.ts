@@ -21,6 +21,7 @@ import {
   registerRequestId,
 } from '../platform/http/problem.js';
 import { registerRateLimit, type RateLimitSettings } from '../platform/http/rate-limit.js';
+import { registerSecurityHeaders } from '../platform/http/security-headers.js';
 import { registerTenantHost } from '../platform/http/tenant-host.js';
 import { registerReadOnlyPolicy } from '../platform/read-only/index.js';
 
@@ -66,6 +67,7 @@ export function buildServer(options: BuildServerOptions): FastifyInstance {
   });
 
   registerRequestId(app);
+  registerSecurityHeaders(app, { secure: options.auth?.cookieSecure ?? false });
   registerBackgroundTasks(app);
   registerRequestContext(app);
   registerProblemHandlers(app);

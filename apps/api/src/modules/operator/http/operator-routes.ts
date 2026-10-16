@@ -133,6 +133,7 @@ export function operatorRoutes(deps: OperatorRoutesDeps) {
       try {
         await deps.email.send({
           to: invitation.email,
+          tenant: invitation.tenant,
           ...renderInvitationEmail({
             organizationName: invitation.organizationName,
             link: `${origin}${INVITATION_PATH}?token=${invitation.token}`,

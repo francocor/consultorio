@@ -63,7 +63,7 @@ OPERATOR_PASSWORD='a long passphrase of at least 14 characters'   pnpm --filter 
 # 3. Add the printed secret to an authenticator app. It is shown once.
 ```
 
-With the API running, an operator creates an organization (and optionally marks it as the demo one, which can never change afterwards) with `POST http://platform.localhost:3000/operator/tenants` after `POST /operator/auth/login` (`{"email","password","code"}`). The owner receives an invitation by email (Mailpit, `http://localhost:8025`) pointing at `{slug}.localhost:3000/accept-invitation`. `POST /operator/tenants/{id}/owner-invitation` sends it again while nobody has joined the organization. `POST /operator/tenants/{id}/demo-reset` is wired to the demo module and answers 503 until that module exists.
+With the API and the web app running, open `http://platform.localhost:5173`: the console asks for the email, the password and the six-digit code of the authenticator (`TOTP_SECRET=... pnpm --filter @consultorio/api operator:code` prints the current code without a phone). From there an operator lists the organizations, creates one (optionally marking it as a demonstration, which can never change afterwards), resends an owner's invitation while nobody has joined, and resets a demonstration organization. The owner receives an invitation by email (Mailpit, `http://localhost:8025`) pointing at `{slug}.localhost:5173/accept-invitation`. The same actions are available as API calls on `platform.localhost:3000` (`POST /operator/auth/login` with `{"email","password","code"}`, then `/operator/tenants`, `/operator/tenants/{id}/owner-invitation` and `/operator/tenants/{id}/demo-reset`). See [demo.md](demo.md) for the demonstration organization and its reset.
 
 The operator's database login can touch the tenant row, a few administrative tables and the operator tables, and nothing clinical. Seeing an organization's configuration needs a **support grant**: its owner opens a time-boxed window with `POST /support-grants` (up to 7 days) and can revoke it at any time. Every use of a grant is recorded twice, in the platform trail and in the organization's own audit log.
 
@@ -78,6 +78,25 @@ pnpm --filter @consultorio/web dev      # web only; /api is proxied to the API
 ```
 
 Check the API: `curl http://localhost:3000/health` answers `{"status":"ok"}`, and `/ready` answers 200 once Postgres is reachable.
+
+## Reverse proxy contract
+
+The web app is a static bundle that talks to the API through one prefix, and a reverse proxy (the Vite dev and preview servers locally, a load balancer or CDN in production) has to honor these rules. The Vite configuration is the reference implementation (`apps/web/vite.config.ts`).
+
+| Request from the browser | The proxy must                                                                                                                                                                                                          |
+| ------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `/api/*`                 | **Strip the `/api` prefix** and forward to the API. The API has no `/api/v1`: its routes are `/auth/login`, `/patients`, `/branding`, ...                                                                               |
+| `/manifest.webmanifest`  | Forward untouched. The API answers with a manifest per host (name, colors, icons of the organization)                                                                                                                   |
+| `/public/branding/logo`  | Forward untouched. It is the public logo of the organization, referenced by the boot payload and the manifest                                                                                                           |
+| Everything else          | Serve the web bundle; unknown paths answer `index.html` (the router handles them)                                                                                                                                       |
+| Any request              | **Preserve the `Host` header** (`changeOrigin: false`). The API resolves the organization from it (`aillu.localhost`, `clinica.example.com`) and rejects a state-changing request whose `Origin` host is not the `Host` |
+
+Other things the deployment must know:
+
+- **One host per organization**, plus `platform.<base domain>` for the operator console. The web app decides it is the console from the first label of the host (`platform`) or from `VITE_PLATFORM_HOST` at build time.
+- **Content Security Policy.** `index.html` carries one small inline script (the theme boot: it paints the organization's colors before the first frame and fetches `/api/public/boot`). A strict `script-src` therefore needs its hash or a nonce; the build prints the script and the plugin `vite/theme-boot-plugin.ts` is the single place that produces it. Everything else is served from the same origin (fonts are self-hosted), so `default-src 'self'` is enough.
+- **Service worker.** `sw.js` must be served from the root with `Cache-Control: no-cache` so a new version reaches people at their next visit; hashed assets under `/assets/` can be cached for a year. The worker never caches `/api/*` or any personal data.
+- **Cookies.** The session cookie `sid` is host-only, `HttpOnly` and `SameSite=Lax`; the operator's `osid` is `SameSite=Strict`. Do not rewrite cookie domains in the proxy.
 
 ## Local services
 
@@ -103,6 +122,9 @@ To try the production image locally: `docker compose --env-file .env -f infra/do
 | `pnpm test:coverage`                         | Same, with a v8 coverage report in `coverage/`               |
 | `pnpm test:integration`                      | Integration tests against a real Postgres 17 (needs Docker)  |
 | `pnpm test:e2e`                              | Builds the web app and runs Playwright on mobile and desktop |
+| `pnpm demo:seed`                             | Seeds the demo organization "aillu" in your local database   |
+| `pnpm demo:reset`                            | Puts a demo organization back to its starting content        |
+| `pnpm demo:stack`                            | A throwaway Docker stack with two demo organizations         |
 | `pnpm build`                                 | Builds the web app and bundles the API into `apps/api/dist`  |
 | `pnpm db:check`                              | Fails when the Drizzle schema and the migrations disagree    |
 | `pnpm --filter @consultorio/api db:generate` | Generates a migration from schema changes                    |

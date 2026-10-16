@@ -49,6 +49,7 @@ export function recoveryRoutes(deps: RecoveryRoutesDeps) {
       const host = request.headers.host ?? '';
       return {
         tenantId: context.tenant.id,
+        isDemo: context.tenant.isDemo,
         // The display name of the organization arrives with branding (S1.25); the slug until then.
         organizationName: context.tenant.slug,
         baseUrl: `${deps.secureLinks ? 'https' : 'http'}://${host}`,

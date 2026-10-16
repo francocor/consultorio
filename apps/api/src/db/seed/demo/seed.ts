@@ -1,6 +1,8 @@
 import { eq, inArray, sql } from 'drizzle-orm';
 
 import type { PasswordHasher } from '../../../modules/identity/infrastructure/argon2.js';
+import { createAnamnesisService } from '../../../modules/patients/application/anamnesis.js';
+import { createAssignmentService } from '../../../modules/patients/application/assignments.js';
 import { snapshotOf } from '../../../modules/patients/application/mapping.js';
 import { audit, type AuditActor } from '../../../platform/audit/writer.js';
 import type { TenantKeys } from '../../../platform/crypto/tenant-keys.js';
@@ -83,8 +85,10 @@ export async function seedDemoTenant(
   deps: DemoSeedDeps,
   tenantId: string,
 ): Promise<DemoSeedResult> {
-  if (deps.environment === 'production') {
-    throw new DemoSeedError('The demo seed never runs in production.');
+  // The documented password is public: with it, the seed never runs in production. A deployed
+  // demo passes freshly generated passwords for every account (see `resetDemoTenant`).
+  if (deps.environment === 'production' && !deps.passwordFor) {
+    throw new DemoSeedError('The demo seed never runs in production with the public password.');
   }
   const data = buildDemoDataset();
   const now = deps.clock();
@@ -172,6 +176,7 @@ export async function seedDemoTenant(
   const receptionActor = actorOf(reception.userId, 'reception');
 
   // 2. The organization's content, as the owner.
+  const professionalIds = new Map<string, string>();
   await deps.withTenant({ tenantId, userId: owner.userId }, async (tx) => {
     await tx
       .update(tenant)
@@ -231,6 +236,7 @@ export async function seedDemoTenant(
       });
       if (!staff.professional) continue;
       const professionalId = uuidv7();
+      professionalIds.set(staff.key, professionalId);
       await tx.insert(professional).values({
         id: professionalId,
         tenantId,
@@ -262,6 +268,7 @@ export async function seedDemoTenant(
   });
 
   // 3. Patients, coverage, consent and representatives, as reception.
+  const patientIds: string[] = [];
   await deps.withTenant({ tenantId, userId: reception.userId }, async (tx) => {
     const payerIds = await payerIdsByCode(
       tx,
@@ -276,7 +283,7 @@ export async function seedDemoTenant(
       await tx.insert(payerPlan).values({ id, tenantId, payerId, planName: plan.planName });
     }
     for (const entry of data.patients) {
-      await insertPatient(tx, {
+      const id = await insertPatient(tx, {
         tenantId,
         entry,
         planIds,
@@ -285,8 +292,44 @@ export async function seedDemoTenant(
         recordedBy: reception.userId,
         actor: receptionActor,
       });
+      patientIds.push(id);
     }
   });
+
+  // 4. Who looks after whom, and what the professionals recorded: reception assigns, the assigned
+  // professional writes the anamnesis (which is what raises the safety alerts).
+  const assignments = createAssignmentService();
+  const anamneses = createAnamnesisService({ keys: deps.keys });
+  for (const entry of data.care) {
+    const patientId = patientIds[entry.patientIndex];
+    const professionalId = professionalIds.get(entry.professional);
+    const person = people.get(entry.professional);
+    if (!patientId || !professionalId || !person) {
+      throw new DemoSeedError(
+        'A care entry points at a patient or professional that is not there.',
+      );
+    }
+    await deps.withTenant({ tenantId, userId: reception.userId }, (tx) =>
+      assignments.assign(tx, {
+        actor: { ...receptionActor, userId: reception.userId },
+        patientId,
+        professionalId,
+      }),
+    );
+    if (!entry.anamnesis) continue;
+    const content = entry.anamnesis;
+    await deps.withTenant(
+      { tenantId, userId: person.userId, actingProfessionalId: professionalId },
+      (tx) =>
+        anamneses.save(tx, {
+          actor: { ...actorOf(person.userId, 'professional'), userId: person.userId },
+          professionalId,
+          patientId,
+          content,
+          expectedVersion: 0,
+        }),
+    );
+  }
 
   return { credentials };
 }
@@ -310,7 +353,7 @@ async function insertPatient(
     recordedBy: string;
     actor: AuditActor;
   },
-): Promise<void> {
+): Promise<string> {
   const { tenantId, entry, now } = input;
   const id = uuidv7();
   const [row] = await tx
@@ -406,4 +449,5 @@ async function insertPatient(
       patientId: id,
     });
   }
+  return id;
 }

@@ -12,6 +12,11 @@ export interface EmailMessage {
   subject: string;
   text: string;
   html?: string;
+  /**
+   * The organization the message is about. The sender that routes by organization needs it: a demo
+   * organization's email never goes through the real provider.
+   */
+  tenant?: { id: string; isDemo: boolean };
 }
 
 export interface EmailSender {

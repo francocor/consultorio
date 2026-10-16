@@ -48,7 +48,8 @@ beforeAll(async () => {
     consentText: { textKey: 'consent.data_processing', version: '1' },
     clock,
   };
-  app = buildTestApplication(runtime, { clock });
+  // The application reads what the seed encrypted, so both share the same key service.
+  app = buildTestApplication(runtime, { clock, keys: deps.keys });
   await app.ready();
 }, 120_000);
 
@@ -81,6 +82,12 @@ describe('seedDemoTenant', () => {
         consents: await count('data_processing_consent'),
         representatives: await count('patient_representative'),
         audit: await count('audit_event'),
+        assignments: await count('care_assignment'),
+        flagged: (
+          await tx.execute<{ n: number }>(
+            sql`SELECT count(*)::int AS n FROM patient WHERE cardinality(safety_flags) > 0`,
+          )
+        ).rows[0]?.n,
       };
     });
     expect(counts.members).toBe(data.staff.length);
@@ -92,6 +99,19 @@ describe('seedDemoTenant', () => {
     expect(counts.consents).toBe(data.patients.filter((p) => p.consent).length);
     expect(counts.representatives).toBe(data.patients.filter((p) => p.representative).length);
     expect(counts.audit).toBeGreaterThan(30);
+    expect(counts.assignments).toBe(data.care.length);
+    // Only the structured facts of the anamnesis raise an alert: allergy, anticoagulant, pregnancy, device.
+    expect(counts.flagged).toBe(
+      data.care.filter(
+        (entry) =>
+          entry.anamnesis &&
+          (entry.anamnesis.allergies.length > 0 ||
+            entry.anamnesis.indicators.anticoagulated ||
+            entry.anamnesis.medications.some((medication) => medication.anticoagulant) ||
+            entry.anamnesis.indicators.pregnant ||
+            entry.anamnesis.indicators.implantedDevice),
+      ).length,
+    );
   }, 120_000);
 
   it('applies the Aillu look and keeps the organization out of billing', async () => {
@@ -236,6 +256,37 @@ describe('signing in to the seeded demo as each role', () => {
     },
     60_000,
   );
+
+  it('the assigned professional reads the anamnesis that was recorded, and reception cannot', async () => {
+    const cardiology = await signIn('cardiologia@demo.invalid');
+    const reception = await signIn('recepcion@demo.invalid');
+    const found = await app.inject({
+      method: 'GET',
+      url: '/patients?q=99000001',
+      headers: { host: `${slug}.consultorio.test`, cookie: cardiology },
+    });
+    const patientId = found.json<{ patients: { id: string; hasSafetyFlag: boolean }[] }>()
+      .patients[0];
+    expect(patientId?.hasSafetyFlag).toBe(true);
+
+    const own = await app.inject({
+      method: 'GET',
+      url: `/patients/${patientId?.id ?? ''}/anamnesis`,
+      headers: { host: `${slug}.consultorio.test`, cookie: cardiology },
+    });
+    const refused = await app.inject({
+      method: 'GET',
+      url: `/patients/${patientId?.id ?? ''}/anamnesis`,
+      headers: { host: `${slug}.consultorio.test`, cookie: reception },
+    });
+
+    expect(own.statusCode).toBe(200);
+    expect(
+      own.json<{ current: { content: { allergies: { substance: string }[] } } }>().current.content
+        .allergies[0]?.substance,
+    ).toBe('Penicilina');
+    expect(refused.statusCode).toBe(403);
+  }, 60_000);
 
   it('a professional gets the clinical permissions of the role', async () => {
     const me = await meOf('cardiologia@demo.invalid');

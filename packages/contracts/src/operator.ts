@@ -18,6 +18,7 @@ export const PLATFORM_AUDIT_ACTIONS = [
   'tenant.created',
   'tenant.owner_invited',
   'tenant.demo_reset',
+  'demo.chain_reset',
   'support.access',
   'support.denied',
   'operator.denied',

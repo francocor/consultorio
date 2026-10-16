@@ -1,4 +1,4 @@
-import { AILLU_PRESET, type Role } from '@consultorio/contracts';
+import { AILLU_PRESET, type AnamnesisContent, type Role } from '@consultorio/contracts';
 
 import { DEMO_ACCOUNTS, DEMO_EMAIL_DOMAIN } from './credentials.js';
 import { createRng, type Rng } from './rng.js';
@@ -61,6 +61,17 @@ export interface DemoPatient {
   };
 }
 
+/**
+ * Who looks after whom: a professional is assigned to a patient (by position in `patients`), and
+ * may have recorded the anamnesis. The anamnesis is what raises the safety alerts reception sees
+ * as "consult the professional".
+ */
+export interface DemoCare {
+  professional: 'cardiology' | 'pediatrics' | 'psychology';
+  patientIndex: number;
+  anamnesis?: AnamnesisContent;
+}
+
 export interface DemoDataset {
   branding: {
     displayName: string;
@@ -74,6 +85,7 @@ export interface DemoDataset {
   /** Payer plans the organization has enabled, from the platform catalog. */
   payerPlans: readonly { payerCode: string; planName: string }[];
   patients: readonly DemoPatient[];
+  care: readonly DemoCare[];
 }
 
 const LOCATIONS: readonly DemoLocation[] = [
@@ -272,6 +284,116 @@ function buildPatients(rng: Rng): DemoPatient[] {
   return patients;
 }
 
+const NONE = { pregnant: false, implantedDevice: false, anticoagulated: false } as const;
+
+/** Positions are those of `PEOPLE` (and the newborn added after them, index 25). */
+const CARE: readonly DemoCare[] = [
+  {
+    professional: 'cardiology',
+    patientIndex: 0,
+    anamnesis: {
+      allergies: [{ substance: 'Penicilina', reaction: 'Urticaria', severity: 'severe' }],
+      medications: [{ name: 'Enalapril', dose: '10 mg por día' }],
+      conditions: [{ name: 'Hipertensión arterial', since: '2019' }],
+      antecedents: 'Madre con diabetes tipo 2. No fuma. Realiza caminatas tres veces por semana.',
+      indicators: NONE,
+    },
+  },
+  {
+    professional: 'cardiology',
+    patientIndex: 1,
+    anamnesis: {
+      allergies: [],
+      medications: [{ name: 'Acenocumarol', dose: '2 mg por día', anticoagulant: true }],
+      conditions: [{ name: 'Fibrilación auricular', since: '2021' }],
+      antecedents: 'Control de anticoagulación cada 30 días. Marcapasos colocado en 2022.',
+      indicators: { pregnant: false, implantedDevice: true, anticoagulated: true },
+    },
+  },
+  {
+    professional: 'cardiology',
+    patientIndex: 2,
+    anamnesis: {
+      allergies: [],
+      medications: [],
+      conditions: [{ name: 'Migraña', since: '2015' }],
+      antecedents: 'Sin antecedentes cardiovasculares. Consulta por control de rutina.',
+      indicators: NONE,
+    },
+  },
+  {
+    professional: 'cardiology',
+    patientIndex: 3,
+    anamnesis: {
+      allergies: [{ substance: 'Ácido acetilsalicílico', severity: 'moderate' }],
+      medications: [{ name: 'Metformina', dose: '850 mg dos veces por día' }],
+      conditions: [{ name: 'Diabetes tipo 2', since: '2012' }],
+      antecedents: 'Control glucémico regular.',
+      indicators: NONE,
+    },
+  },
+  {
+    professional: 'cardiology',
+    patientIndex: 4,
+    anamnesis: {
+      allergies: [],
+      medications: [{ name: 'Ácido fólico', dose: '5 mg por día' }],
+      conditions: [],
+      antecedents: 'Embarazo de 22 semanas, control cardiológico por palpitaciones.',
+      indicators: { pregnant: true, implantedDevice: false, anticoagulated: false },
+    },
+  },
+  { professional: 'cardiology', patientIndex: 8 },
+  {
+    professional: 'pediatrics',
+    patientIndex: 22,
+    anamnesis: {
+      allergies: [
+        { substance: 'Proteína de la leche de vaca', reaction: 'Eccema', severity: 'mild' },
+      ],
+      medications: [],
+      conditions: [],
+      antecedents: 'Lactancia materna hasta los 8 meses. Vacunas al día.',
+      indicators: NONE,
+    },
+  },
+  {
+    professional: 'pediatrics',
+    patientIndex: 23,
+    anamnesis: {
+      allergies: [],
+      medications: [],
+      conditions: [],
+      antecedents: 'Controles de salud al día. Sin antecedentes de relevancia.',
+      indicators: NONE,
+    },
+  },
+  {
+    professional: 'pediatrics',
+    patientIndex: 24,
+    anamnesis: {
+      allergies: [],
+      medications: [{ name: 'Salbutamol', dose: '2 disparos por crisis' }],
+      conditions: [{ name: 'Asma leve', since: '2020' }],
+      antecedents: 'Crisis ocasionales con los cambios de estación.',
+      indicators: NONE,
+    },
+  },
+  { professional: 'pediatrics', patientIndex: 25 },
+  {
+    professional: 'psychology',
+    patientIndex: 6,
+    anamnesis: {
+      allergies: [],
+      medications: [],
+      conditions: [],
+      antecedents: 'Consulta por estrés laboral. Primera entrevista realizada.',
+      indicators: NONE,
+    },
+  },
+  { professional: 'psychology', patientIndex: 7 },
+];
+
 export function buildDemoDataset(): DemoDataset {
   const rng = createRng(SEED);
   return {
@@ -286,5 +408,6 @@ export function buildDemoDataset(): DemoDataset {
     staff: buildStaff(),
     payerPlans: PAYER_PLANS,
     patients: buildPatients(rng),
+    care: CARE,
   };
 }

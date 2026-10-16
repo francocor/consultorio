@@ -7,7 +7,7 @@ import type { StaffRole } from '@consultorio/contracts';
  *
  * The email addresses use the reserved `.invalid` domain (RFC 2606), so nothing sent to them can
  * ever be delivered. A deployed demo organization rotates its passwords on every reset instead
- * (see `rotateDemoPasswords`).
+ * (see `resetDemoTenant`, option `rotateCredentials`).
  */
 export const DEMO_PASSWORD = 'Demo-Aillu-2026-clave';
 

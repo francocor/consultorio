@@ -466,11 +466,11 @@ Depends: S1.26, S1.31.
 
 Depends: S1.26, S1.19, S1.21.
 
-- [ ] 1.123 `db/seed/demo/` deterministic seed runner `seedDemoTenant(tx, tenantId, clock)` (seeded RNG, fixed faker seed): one user per role with role-labelled sign-in, several locations, multi-specialty professionals, reception, patients with coverage, the "Aillu" theme. [DEM-01, DEM-02, DEM-04, DEM-06] Test: two runs produce identical logical content.
-- [ ] 1.124 Migration with `demo_reset(tenant_id)` (`SECURITY DEFINER`, own role, raises unless `is_demo`) that removes demo rows including the demo audit chain; job `demo.reset` re-seeds; writes platform audit `demo.chain_reset` with the last sealed hash; demo credentials rotated on each reset. [DEM-05, DEM-06, DEM-07, TEN-10] Test: refuses a non-demo tenant; tenant roles cannot call it; real tenants' chain still verifies after a reset.
-- [ ] 1.125 `main/adapter-resolver.ts`: per-tenant adapter selection that throws when `tenant.is_demo` and the adapter is not a fake; registry of all ports (email, object storage, key management now). [DEM-03] Test: iterates every registered port.
-- [ ] 1.126 `apps/api/test/policy/no-delete.test.ts`: static scan failing on any `DELETE` or `.delete(` against tenant tables outside the 4 listed exceptions (allowlist file with justification). [TEN-10] Test: that file.
-- [ ] 1.127 Reset timing test (realistic dataset, budget 30 s in CI against the 60 s requirement) and a "module without seed data" gap check. [DEM-05, DEM-04] Test: that file.
+- [x] 1.123 `db/seed/demo/` deterministic seed runner `seedDemoTenant(tx, tenantId, clock)` (seeded RNG, fixed faker seed): one user per role with role-labelled sign-in, several locations, multi-specialty professionals, reception, patients with coverage, the "Aillu" theme. [DEM-01, DEM-02, DEM-04, DEM-06] Test: two runs produce identical logical content.
+- [x] 1.124 Migration with `demo_reset(tenant_id)` (`SECURITY DEFINER`, own role, raises unless `is_demo`) that removes demo rows including the demo audit chain; job `demo.reset` re-seeds (realized as the operator console's port and `pnpm demo:reset`, both run `resetDemoTenant`; a scheduled job needs an operator-role pool in the worker and is deferred to the deployment stage); writes platform audit `demo.chain_reset` with the last sealed hash; demo credentials rotated on each reset. [DEM-05, DEM-06, DEM-07, TEN-10] Test: refuses a non-demo tenant; tenant roles cannot call it; real tenants' chain still verifies after a reset.
+- [x] 1.125 `main/adapter-resolver.ts`: per-tenant adapter selection that throws when `tenant.is_demo` and the adapter is not a fake; registry of all ports (email, object storage, key management now). [DEM-03] Test: iterates every registered port.
+- [x] 1.126 `apps/api/test/policy/no-delete.test.ts`: static scan failing on any `DELETE` or `.delete(` against tenant tables outside the 4 listed exceptions (allowlist file with justification). [TEN-10] Test: that file.
+- [x] 1.127 Reset timing test (realistic dataset, budget 30 s in CI against the 60 s requirement) and a "module without seed data" gap check. [DEM-05, DEM-04] Test: that file.
 
 ## S1.37 Stage 1 gate (~200 lines)
 

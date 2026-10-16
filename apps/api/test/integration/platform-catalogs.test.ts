@@ -50,7 +50,10 @@ describe('holiday_catalog', () => {
             FROM holiday_catalog WHERE country = 'AR' GROUP BY 1 ORDER BY 1`,
     );
 
-    expect(result.rows.map((row) => row.year)).toEqual([2026, 2027, 2028]);
+    // Other suites load the catalogs around today's date too, so the window may start earlier: the
+    // three years the scheduling tests rely on must be there, each with a full calendar.
+    const years = result.rows.map((row) => row.year);
+    expect(years).toEqual(expect.arrayContaining([2026, 2027, 2028]));
     for (const row of result.rows) expect(row.n).toBeGreaterThan(14);
   });
 

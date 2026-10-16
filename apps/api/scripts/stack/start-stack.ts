@@ -13,6 +13,7 @@ import { runMigrations } from '../../src/db/migrate.js';
 import { tenant } from '../../src/db/schema/tenant.js';
 import {
   consentTextFor,
+  createDemoResetPort,
   DEMO_PASSWORD,
   ensureDemoTenant,
   seedDemoTenant,
@@ -154,9 +155,11 @@ export async function startStack(options: StackOptions): Promise<Stack> {
       { ...deps, emailFor: (staff) => staff.email.replace('@', '+norte@') },
       norte.id,
     );
-    await withTenant({ tenantId: norte.id, userId: SYSTEM_USER_ID }, (tx) =>
-      tx.update(tenant).set({ theme: NORTE_THEME }).where(eq(tenant.id, norte.id)),
-    );
+    const applyNorteTheme = () =>
+      withTenant({ tenantId: norte.id, userId: SYSTEM_USER_ID }, (tx) =>
+        tx.update(tenant).set({ theme: NORTE_THEME }).where(eq(tenant.id, norte.id)),
+      );
+    await applyNorteTheme();
 
     const operatorAdmin = createOperatorAdminFor({
       db: operatorDb.db,
@@ -187,7 +190,25 @@ export async function startStack(options: StackOptions): Promise<Stack> {
         perTenant: { max: 100_000, windowMs: 60_000 },
         login: { max: 100_000, timeWindow: 60_000 },
       },
-      operator: { database: operatorDb, secrets: createOperatorSecrets(kms) },
+      operator: {
+        database: operatorDb,
+        secrets: createOperatorSecrets(kms),
+        // The console's "reset demo" button works in the local stack too; the second organization
+        // keeps its own addresses and look through a reset.
+        demoReset: createDemoResetPort({
+          ...deps,
+          operatorDb: operatorDb.db,
+          variantOf: (tenantId) =>
+            tenantId === norte.id
+              ? {
+                  emailFor: (staff) => staff.email.replace('@', '+norte@'),
+                  afterSeed: async () => {
+                    await applyNorteTheme();
+                  },
+                }
+              : undefined,
+        }),
+      },
     });
     await app.listen({ host: '127.0.0.1', port: options.apiPort });
     closers.unshift(() => app.close());

@@ -99,4 +99,46 @@ describe('demo dataset', () => {
       primaryColor: '#03a550',
     });
   });
+
+  it('assigns patients to the professionals and records the clinical story of some of them', () => {
+    const data = buildDemoDataset();
+
+    expect(data.care.length).toBeGreaterThanOrEqual(8);
+    for (const entry of data.care) {
+      expect(data.patients[entry.patientIndex], String(entry.patientIndex)).toBeDefined();
+      expect(
+        data.staff.find((person) => person.key === entry.professional)?.professional,
+        entry.professional,
+      ).toBeDefined();
+    }
+    const professionals = new Set(data.care.map((entry) => entry.professional));
+    expect(professionals).toEqual(new Set(['cardiology', 'pediatrics', 'psychology']));
+    const withAnamnesis = data.care.filter((entry) => entry.anamnesis);
+    expect(withAnamnesis.length).toBeGreaterThanOrEqual(5);
+    // Every kind of safety alert is shown by somebody, and some patients have none.
+    const withFlags = (
+      predicate: (content: NonNullable<(typeof data.care)[number]['anamnesis']>) => boolean,
+    ) => withAnamnesis.some((entry) => entry.anamnesis && predicate(entry.anamnesis));
+    expect(withFlags((content) => content.allergies.length > 0)).toBe(true);
+    expect(withFlags((content) => content.indicators.anticoagulated)).toBe(true);
+    expect(withFlags((content) => content.indicators.pregnant)).toBe(true);
+    expect(withFlags((content) => content.indicators.implantedDevice)).toBe(true);
+    expect(
+      withAnamnesis.some(
+        (entry) =>
+          entry.anamnesis !== undefined &&
+          entry.anamnesis.allergies.length === 0 &&
+          !entry.anamnesis.indicators.pregnant &&
+          !entry.anamnesis.indicators.anticoagulated &&
+          !entry.anamnesis.indicators.implantedDevice,
+      ),
+    ).toBe(true);
+  });
+
+  it('never assigns a patient twice to the same professional', () => {
+    const data = buildDemoDataset();
+    const keys = data.care.map((entry) => `${entry.professional}:${String(entry.patientIndex)}`);
+
+    expect(new Set(keys).size).toBe(keys.length);
+  });
 });

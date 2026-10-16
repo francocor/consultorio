@@ -23,6 +23,8 @@ export const RESET_EMAILS_PER_HOUR = 3;
 
 export interface ResetLinkContext {
   tenantId: string;
+  /** A demo organization's email never goes through the real provider. */
+  isDemo: boolean;
   /** Name of the organization as the email shows it. */
   organizationName: string;
   /** `https://{tenant host}`: the link opens the web app on the tenant's own host. */
@@ -117,6 +119,7 @@ export function createPasswordReset(deps: PasswordResetDeps): PasswordReset {
     const link = `${context.baseUrl}${PASSWORD_RESET_PATH}?token=${prepared.token}`;
     await deps.email.send({
       to: prepared.email,
+      tenant: { id: context.tenantId, isDemo: context.isDemo },
       ...renderPasswordResetEmail({
         organizationName: prepared.organizationName,
         link,

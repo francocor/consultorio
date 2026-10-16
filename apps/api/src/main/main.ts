@@ -1,12 +1,21 @@
+import { randomBytes } from 'node:crypto';
+
 import pino from 'pino';
 
+import { createFakeEmailSender } from '../adapters/fake-email/index.js';
+import { createLocalKeyManagement } from '../adapters/local-kek/index.js';
+import { createMemoryObjectStorage } from '../adapters/memory-storage/index.js';
 import { createS3ObjectStorage } from '../adapters/s3/index.js';
+import { consentTextFor, createDemoResetPort } from '../db/seed/demo/index.js';
+import { createPasswordHasher } from '../modules/identity/index.js';
 import { createOperatorSecrets } from '../modules/operator/index.js';
 import { createTenantKeys } from '../platform/crypto/tenant-keys.js';
 import { createOperatorDb, createRuntimeDb } from '../platform/db/pool.js';
 import { createDbProbe } from '../platform/db/probe.js';
+import { createWithTenant } from '../platform/db/tenant-context.js';
 import { startWorker } from '../platform/jobs/worker.js';
 
+import { createAdapterResolver, createTenantRoutedEmail, fake, real } from './adapter-resolver.js';
 import { createApplication } from './application.js';
 import { loadConfig, type Config } from './config.js';
 import { deploymentFromConfig } from './deployment.js';
@@ -37,11 +46,31 @@ async function runApi(config: Config): Promise<void> {
   const probe = createDbProbe(config.databaseUrl);
   const database = createRuntimeDb(config.databaseUrl);
   const kms = createKeyManagement(config.kms);
+  const keys = createTenantKeys({ kms });
   const operatorDatabase = config.operatorDatabaseUrl
     ? createOperatorDb(config.operatorDatabaseUrl)
     : undefined;
   const email = createConfiguredEmail(config.mail);
   const storage = config.storage ? createS3ObjectStorage(config.storage) : undefined;
+  // Which adapter serves which organization: a demo organization only ever gets the fakes. Email is
+  // routed by organization today; storage and key management are registered so the registry is
+  // complete, and join the routing when their call sites carry the organization.
+  const adapters = createAdapterResolver({
+    email: {
+      real: email.kind === 'smtp' ? real(email.sender) : fake(email.sender),
+      // Outside production the configured SMTP server is a development catcher (Mailpit): a demo
+      // organization's invitations show up there. In production nothing is ever delivered.
+      demo: fake(config.nodeEnv === 'production' ? createFakeEmailSender() : email.sender),
+    },
+    objectStorage: {
+      real: storage ? real(storage) : undefined,
+      demo: fake(createMemoryObjectStorage()),
+    },
+    keyManagement: {
+      real: real(kms),
+      demo: fake(createLocalKeyManagement(randomBytes(32).toString('base64'))),
+    },
+  });
   const passwordValidator = await loadPasswordValidator({
     breachCheck: config.passwordBreachCheck,
   });
@@ -52,13 +81,30 @@ async function runApi(config: Config): Promise<void> {
     deployment: deploymentFromConfig(config),
     trustProxy: config.trustProxy,
     cookieSecure: config.cookieSecure,
-    keys: createTenantKeys({ kms }),
-    email: email.sender,
+    keys,
+    email: createTenantRoutedEmail(adapters),
     passwordValidator,
     lockout: config.lockout,
     ...(storage ? { storage } : {}),
     ...(operatorDatabase
-      ? { operator: { database: operatorDatabase, secrets: createOperatorSecrets(kms) } }
+      ? {
+          operator: {
+            database: operatorDatabase,
+            secrets: createOperatorSecrets(kms),
+            // Resetting a demo organization needs both roles: the operator's to clear it, the
+            // application's to fill it again.
+            demoReset: createDemoResetPort({
+              operatorDb: operatorDatabase.db,
+              withTenant: createWithTenant(database.db),
+              hasher: createPasswordHasher(),
+              keys,
+              consentText: consentTextFor(database.db),
+              clock: () => new Date(),
+              environment: config.nodeEnv,
+              rotateCredentials: config.nodeEnv === 'production',
+            }),
+          },
+        }
       : {}),
   });
 

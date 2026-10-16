@@ -14,3 +14,10 @@ export {
   type SeededCredential,
 } from './seed.js';
 export { snapshotDemoTenant, type DemoSnapshot } from './snapshot.js';
+export {
+  createDemoResetPort,
+  generateDemoPassword,
+  resetDemoTenant,
+  type DemoResetDeps,
+  type DemoResetResult,
+} from './reset.js';

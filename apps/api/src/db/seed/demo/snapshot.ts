@@ -2,6 +2,7 @@ import { asc, eq } from 'drizzle-orm';
 
 import { SYSTEM_USER_ID, type WithTenant } from '../../../platform/db/tenant-context.js';
 import { membershipLocation } from '../../schema/access.js';
+import { careAssignment } from '../../schema/care.js';
 import { patientCoverage, payerPlan } from '../../schema/coverage.js';
 import { membership, userAccount } from '../../schema/identity.js';
 import { patient, patientRepresentative } from '../../schema/patients.js';
@@ -34,6 +35,8 @@ export interface DemoSnapshot {
     coverage: string | null;
     consent: boolean;
     representative: string | null;
+    assignedTo: string[];
+    alerts: string[];
   }[];
 }
 
@@ -81,6 +84,11 @@ export async function snapshotDemoTenant(
       .select({ patientId: dataProcessingConsent.patientId })
       .from(dataProcessingConsent);
     const guardians = await tx.select().from(patientRepresentative);
+    const care = await tx
+      .select({ patientId: careAssignment.patientId, name: membership.displayName })
+      .from(careAssignment)
+      .innerJoin(professional, eq(professional.id, careAssignment.professionalId))
+      .innerJoin(membership, eq(membership.id, professional.membershipId));
 
     return {
       theme: org?.theme ?? {},
@@ -123,6 +131,11 @@ export async function snapshotDemoTenant(
             : null,
           consent: consents.some((entry) => entry.patientId === person.id),
           representative: guardian ? `${guardian.fullName} (${guardian.relation})` : null,
+          assignedTo: care
+            .filter((entry) => entry.patientId === person.id)
+            .map((entry) => entry.name ?? '?')
+            .sort(),
+          alerts: [...person.safetyFlags].sort(),
         };
       }),
     };
