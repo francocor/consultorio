@@ -12,6 +12,26 @@ export interface DemographicsEditor {
   professionalId: string | null;
 }
 
+/** Does this professional treat this patient (an active care relationship)? */
+export async function isTreating(
+  tx: Tx,
+  professionalId: string | null,
+  patientId: string,
+): Promise<boolean> {
+  if (professionalId === null) return false;
+  const [row] = await tx
+    .select({ id: careRelationship.id })
+    .from(careRelationship)
+    .where(
+      and(
+        eq(careRelationship.patientId, patientId),
+        eq(careRelationship.professionalId, professionalId),
+        eq(careRelationship.active, true),
+      ),
+    );
+  return row !== undefined;
+}
+
 /**
  * Demographics and coverage are organization-wide to READ. To WRITE them a professional needs the
  * patient to be theirs (authorization, "Demographics are organization-wide"), unless they hold the
@@ -24,18 +44,6 @@ export async function assertMayWriteDemographics(
   patientId: string,
 ): Promise<void> {
   if (editor.canAdminister) return;
-  if (editor.professionalId !== null) {
-    const [row] = await tx
-      .select({ id: careRelationship.id })
-      .from(careRelationship)
-      .where(
-        and(
-          eq(careRelationship.patientId, patientId),
-          eq(careRelationship.professionalId, editor.professionalId),
-          eq(careRelationship.active, true),
-        ),
-      );
-    if (row) return;
-  }
+  if (await isTreating(tx, editor.professionalId, patientId)) return;
   throw new AccessRefused('patient_edit_not_treating');
 }

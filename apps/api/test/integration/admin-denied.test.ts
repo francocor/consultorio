@@ -98,12 +98,18 @@ async function signedIn(user: TestUser): Promise<string> {
   return sessionCookieOf(response.headers['set-cookie']);
 }
 
+/** A path of a real route, with its parameters filled in by an id nothing owns. */
+const concrete = (url: string) =>
+  url.replace(/:[A-Za-z]+/g, '0190a000-0000-7000-8000-0000000000aa');
+
+/** The request a browser would send, so a mutating route reaches the permission check. */
 const call = (url: string, cookie: string, method = 'GET') =>
   app.inject({
-    method: method as 'GET' | 'HEAD',
-    url,
-    headers: { host: hostOf('admin-denied'), cookie },
+    method: method as 'GET' | 'HEAD' | 'POST' | 'PUT' | 'PATCH' | 'DELETE',
+    url: concrete(url),
+    headers: browserHeaders('admin-denied', cookie),
     remoteAddress: testIp,
+    ...(method === 'GET' || method === 'HEAD' || method === 'DELETE' ? {} : { payload: {} }),
   });
 
 const clinicalRoutes = () =>
@@ -198,8 +204,15 @@ describe('clinical routes refuse everyone who is not a health professional', () 
     const cookie = await signedIn(professional);
 
     for (const [route] of clinicalRoutes()) {
-      const response = await call(route.slice(route.indexOf(' ') + 1), cookie);
-      expect(response.statusCode, route).toBe(200);
+      const space = route.indexOf(' ');
+      const response = await call(route.slice(space + 1), cookie, route.slice(0, space));
+      if (route.includes(' /fixtures/')) {
+        expect(response.statusCode, route).toBe(200);
+      } else {
+        // A real route: the professional is let in (what happens next is the route's business,
+        // such as a missing patient or an empty body), never turned away at the door.
+        expect([401, 403], route).not.toContain(response.statusCode);
+      }
     }
     expect(await denialsOf(professional.id, 'clinical.note.read')).toEqual([]);
   });

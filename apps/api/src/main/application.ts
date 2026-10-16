@@ -147,6 +147,7 @@ export function createApplication(options: ApplicationOptions): FastifyInstance 
     withTenant,
     auditDeny,
     ...(options.clock ? { clock: options.clock } : {}),
+    keys: options.keys,
     consentText: (country) => {
       const found = getCountryPack(country, createCatalogReader(db));
       const consent = found.ok ? found.value.personalData.dataProcessingConsent : undefined;
