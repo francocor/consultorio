@@ -103,6 +103,12 @@ export type StaffMemberDto = z.infer<typeof StaffMemberDto>;
 export const StaffListResponse = z.strictObject({ staff: z.array(StaffMemberDto) });
 export type StaffListResponse = z.infer<typeof StaffListResponse>;
 
+export const StaffStatusResponse = z.strictObject({
+  membershipId: z.uuid(),
+  status: StaffMemberStatus,
+});
+export type StaffStatusResponse = z.infer<typeof StaffStatusResponse>;
+
 /** A person edits their own name; an owner or admin edits anyone's. Nothing privileged is here. */
 export const UpdateStaffProfileRequest = z.strictObject({ displayName: PersonName });
 export type UpdateStaffProfileRequest = z.infer<typeof UpdateStaffProfileRequest>;

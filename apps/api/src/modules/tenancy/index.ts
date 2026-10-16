@@ -4,6 +4,7 @@
 import { exportOrganization } from './application/export-contributor.js';
 import type { ExportRegistry } from './application/export-registry.js';
 
+export { readOrganizationName } from './application/organization-name.js';
 export { assertCanCreateTenant } from './application/create-tenant-policy.js';
 export { createExportRegistry } from './application/export-registry.js';
 export type {

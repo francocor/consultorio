@@ -12,7 +12,11 @@ import { AccessRefused } from './refusal.js';
 
 /** What the role change needs from the session service (ends the sessions of the changed member). */
 export interface SessionRevoker {
-  revokeAllForUser(tx: Tx, userId: string, reason: 'privilege_changed'): Promise<number>;
+  revokeAllForUser(
+    tx: Tx,
+    userId: string,
+    reason: 'privilege_changed' | 'deactivated',
+  ): Promise<number>;
 }
 
 export interface ChangeRolesInput {

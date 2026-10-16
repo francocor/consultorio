@@ -30,6 +30,7 @@ export type { MemberRecord } from './application/members.js';
 export { seesEveryLocation, visibleLocationIds } from './application/locations.js';
 export type { LocationViewer } from './application/locations.js';
 export { AccessRefused } from './application/refusal.js';
+export type { SessionRevoker } from './application/roles.js';
 
 export interface AccessOptions {
   withTenant: WithTenant;

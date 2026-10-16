@@ -130,6 +130,10 @@ export function createApplication(options: ApplicationOptions): FastifyInstance 
   const staff = createStaff({
     withTenant,
     auditDeny,
+    invitations: identity.invitations,
+    sessions: identity.sessions,
+    email: options.email,
+    secureLinks: options.cookieSecure,
     matriculaRules: (country, jurisdiction, value) => {
       const found = getCountryPack(country, createCatalogReader(db));
       return found.ok

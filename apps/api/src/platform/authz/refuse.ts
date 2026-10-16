@@ -1,3 +1,4 @@
+import type { AuditMetadata } from '@consultorio/contracts';
 import type { FastifyRequest } from 'fastify';
 
 import { AppError } from '../http/problem.js';
@@ -11,7 +12,7 @@ export interface Refusal {
   resourceId?: string;
   patientId?: string;
   /** Field names and short scalars only (validated by the audit writer). */
-  metadata?: Record<string, string | number | boolean>;
+  metadata?: AuditMetadata;
 }
 
 /**

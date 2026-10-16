@@ -7,11 +7,17 @@ import type { FastifyInstance } from 'fastify';
 import type { AuthzOptions } from '../../platform/authz/guard.js';
 import type { ProfessionalRepo } from '../../platform/authz/professional-gate.js';
 import type { WithTenant } from '../../platform/db/tenant-context.js';
+import type { EmailSender } from '../../platform/mail/email-sender.js';
+import type { SessionRevoker } from '../access/index.js';
+import type { Invitations } from '../identity/index.js';
 import type { ExportRegistry } from '../tenancy/index.js';
 
+import { createDirectoryService } from './application/directory.js';
 import { exportProfessionals } from './application/export-contributor.js';
+import { createLifecycleService } from './application/lifecycle.js';
 import { createProfessionalRepo } from './application/professional-repo.js';
 import { createProfileService, type MatriculaRules } from './application/profile.js';
+import { lifecycleRoutes } from './http/lifecycle-routes.js';
 import { profileRoutes } from './http/profile-routes.js';
 
 /** Registers what staff contributes to the cancellation export. */
@@ -26,6 +32,14 @@ export interface StaffOptions {
   auditDeny: AuthzOptions['auditDeny'];
   /** Format rules for a registration, from the country pack of the organization. */
   matriculaRules: MatriculaRules;
+  /** Issues the single-use invitation links (identity). */
+  invitations: Invitations;
+  /** Ends the sessions of a member who is deactivated. */
+  sessions: SessionRevoker;
+  /** Sends the invitation emails. */
+  email: EmailSender;
+  /** `https` links unless the deployment is plain-http local development. */
+  secureLinks: boolean;
 }
 
 export interface Staff {
@@ -42,10 +56,23 @@ export function createStaff(options: StaffOptions): Staff {
     profiles,
   });
 
+  const lifecycle = lifecycleRoutes({
+    withTenant: options.withTenant,
+    auditDeny: options.auditDeny,
+    lifecycle: createLifecycleService({
+      invitations: options.invitations,
+      sessions: options.sessions,
+    }),
+    directory: createDirectoryService(),
+    email: options.email,
+    secureLinks: options.secureLinks,
+  });
+
   return {
     professionals: createProfessionalRepo(options.withTenant),
     routes: (app) => {
       profile(app);
+      lifecycle(app);
     },
   };
 }

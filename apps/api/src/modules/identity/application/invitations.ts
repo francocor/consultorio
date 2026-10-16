@@ -22,6 +22,8 @@ export interface IssueInvitationInput {
   roles: readonly Role[];
   /** Who invites, and what they hold: the roles must be inside their ceiling. */
   inviter: { userId: string; roles: readonly Role[] };
+  /** How the invitee will appear in the staff directory of this organization. */
+  displayName?: string;
 }
 
 export interface IssuedInvitation {
@@ -59,6 +61,7 @@ interface InvitationPayload {
   email: string;
   roles: Role[];
   invitedBy: string;
+  displayName?: string;
 }
 
 function isRole(value: unknown): value is Role {
@@ -69,7 +72,13 @@ function parsePayload(payload: Record<string, unknown>): InvitationPayload | nul
   const { email, roles, invitedBy } = payload;
   if (typeof email !== 'string' || typeof invitedBy !== 'string') return null;
   if (!Array.isArray(roles) || !roles.every(isRole)) return null;
-  return { email, roles, invitedBy };
+  const displayName = payload['displayName'];
+  return {
+    email,
+    roles,
+    invitedBy,
+    ...(typeof displayName === 'string' && displayName !== '' ? { displayName } : {}),
+  };
 }
 
 /** One stable id per (organization, address), so a new invitation can cancel the previous one. */
@@ -89,7 +98,12 @@ export function createInvitations(deps: { tokens: ActionTokens; clock?: () => Da
       const issued = await deps.tokens.issue(tx, {
         kind: 'staff_invitation',
         subjectId,
-        payload: { email, roles: [...input.roles], invitedBy: input.inviter.userId },
+        payload: {
+          email,
+          roles: [...input.roles],
+          invitedBy: input.inviter.userId,
+          ...(input.displayName === undefined ? {} : { displayName: input.displayName }),
+        },
       });
       return { token: issued.token, expiresAt: issued.expiresAt };
     },
@@ -177,7 +191,14 @@ export function createInvitationAcceptance(deps: InvitationAcceptanceDeps): Invi
         }
         const [created] = await tx
           .insert(membership)
-          .values({ tenantId: input.tenantId, userId, roles: invitation.roles })
+          .values({
+            tenantId: input.tenantId,
+            userId,
+            roles: invitation.roles,
+            ...(invitation.displayName === undefined
+              ? {}
+              : { displayName: invitation.displayName }),
+          })
           .returning({ id: membership.id });
         await audit(tx, {
           action: 'auth.invitation.accepted',
