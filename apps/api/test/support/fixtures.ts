@@ -39,7 +39,63 @@ export function unique(prefix: string): string {
   return `${prefix}-${String(counter)}`;
 }
 
+/**
+ * A new account, inserted the way the application does it: acting AS that user. The account
+ * policy only accepts the row of `app.user_id`, so the fixture points it at the new id for the
+ * insert and puts the caller's value back afterwards.
+ */
+async function insertUser(tx: Tx): Promise<string> {
+  const id = randomUUID();
+  const previous = await tx.execute<{ value: string }>(
+    sql`select current_setting('app.user_id') as value`,
+  );
+  await tx.execute(sql`select set_config('app.user_id', ${id}, true)`);
+  await tx.execute(
+    sql`INSERT INTO user_account (id, email, password_hash)
+          VALUES (${id}, ${unique('fixture') + '@example.test'}, 'hash')`,
+  );
+  await tx.execute(sql`select set_config('app.user_id', ${previous.rows[0]?.value ?? ''}, true)`);
+  return id;
+}
+
+async function insertMembership(tx: Tx, tenantId: string, userId: string): Promise<string> {
+  return returningId(
+    tx,
+    sql`INSERT INTO membership (tenant_id, user_id, roles)
+          VALUES (${tenantId}, ${userId}, ARRAY['reception']) RETURNING id`,
+  );
+}
+
 export const TENANT_FIXTURES: Record<string, TenantTableFixture> = {
+  membership: {
+    insert: async (tx, tenantId) => insertMembership(tx, tenantId, await insertUser(tx)),
+  },
+  session: {
+    insert: async (tx, tenantId, overrides) => {
+      const userId = await insertUser(tx);
+      const membershipId =
+        overrides?.['membership_id'] ?? (await insertMembership(tx, tenantId, userId));
+      return returningId(
+        tx,
+        sql`INSERT INTO session (tenant_id, user_id, membership_id, token_hash, expires_at)
+              VALUES (${tenantId}, ${userId}, ${membershipId}, ${randomUUID()}, now() + interval '1 day')
+              RETURNING id`,
+      );
+    },
+  },
+  login_challenge: {
+    insert: async (tx, tenantId, overrides) => {
+      const userId = await insertUser(tx);
+      const membershipId =
+        overrides?.['membership_id'] ?? (await insertMembership(tx, tenantId, userId));
+      return returningId(
+        tx,
+        sql`INSERT INTO login_challenge (tenant_id, user_id, membership_id, token_hash, expires_at)
+              VALUES (${tenantId}, ${userId}, ${membershipId}, ${randomUUID()}, now() + interval '5 minutes')
+              RETURNING id`,
+      );
+    },
+  },
   audit_event: {
     insert: (tx, tenantId) =>
       returningId(
