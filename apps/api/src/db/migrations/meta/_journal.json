@@ -113,6 +113,13 @@
       "when": 1792130405491,
       "tag": "0015_coverage_and_privacy",
       "breakpoints": true
+    },
+    {
+      "idx": 16,
+      "version": "7",
+      "when": 1792131074004,
+      "tag": "0016_anamnesis",
+      "breakpoints": true
     }
   ]
 }

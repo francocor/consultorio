@@ -1,10 +1,13 @@
+import { randomUUID } from 'node:crypto';
+
 import { sql } from 'drizzle-orm';
 import type pg from 'pg';
 
 import type { DbHandle } from '../../src/platform/db/pool.js';
+import { createWithTenant, type Tx } from '../../src/platform/db/tenant-context.js';
 
-import type { TenantTableFixture } from './fixtures.js';
-import { asTenant } from './tenants.js';
+import { CLINICAL_AUTHORS, CLINICAL_TABLES, type TenantTableFixture } from './fixtures.js';
+import { asTenant, TEST_USER } from './tenants.js';
 
 /** Tables of the `public` schema that carry a `tenant_id` column (partitions are skipped). */
 export async function listTenantTables(client: pg.ClientBase): Promise<string[]> {
@@ -116,12 +119,23 @@ export async function rowsVisibleTo(
   table: string,
   id?: string,
 ): Promise<number> {
-  const result = await asTenant(runtime, viewer, (tx) =>
+  const count = (tx: Tx) =>
     tx.execute<{ n: number }>(
       id === undefined
         ? sql`SELECT count(*)::int AS n FROM ${sql.identifier(table)}`
         : sql`SELECT count(*)::int AS n FROM ${sql.identifier(table)} WHERE id = ${id}`,
-    ),
-  );
+    );
+  // A clinical table is only readable by a professional: read it as the author of the row.
+  const result = CLINICAL_TABLES.has(table)
+    ? await createWithTenant(runtime.db)(
+        {
+          tenantId: viewer,
+          userId: TEST_USER,
+          actingProfessionalId:
+            (id === undefined ? undefined : CLINICAL_AUTHORS.get(id)) ?? randomUUID(),
+        },
+        count,
+      )
+    : await asTenant(runtime, viewer, count);
   return result.rows[0]?.n ?? -1;
 }

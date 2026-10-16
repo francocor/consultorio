@@ -85,6 +85,15 @@ async function insertPatient(tx: Tx, tenantId: string): Promise<string> {
   );
 }
 
+/**
+ * Tables that hold clinical content. Their rows are only visible to a health professional's
+ * transaction, so the isolation suite reads them acting as the professional who wrote them.
+ */
+export const CLINICAL_TABLES: ReadonlySet<string> = new Set(['anamnesis']);
+
+/** Row id -> professional who authored it, for the clinical fixtures below. */
+export const CLINICAL_AUTHORS = new Map<string, string>();
+
 export const TENANT_FIXTURES: Record<string, TenantTableFixture> = {
   care_assignment: {
     insert: async (tx, tenantId, overrides) =>
@@ -240,6 +249,23 @@ export const TENANT_FIXTURES: Record<string, TenantTableFixture> = {
               VALUES (${tenantId}, ${overrides?.['patient_id'] ?? (await insertPatient(tx, tenantId))}, 'access', ${randomUUID()})
               RETURNING id`,
       ),
+  },
+  anamnesis: {
+    // The clinical policies read the professional of the transaction, so the fixture acts as the author.
+    insert: async (tx, tenantId, overrides) => {
+      const authorId =
+        overrides?.['author_professional_id'] ?? (await insertProfessional(tx, tenantId));
+      await tx.execute(sql`select set_config('app.professional_id', ${authorId}, true)`);
+      const id = await returningId(
+        tx,
+        sql`INSERT INTO anamnesis (tenant_id, patient_id, version, author_professional_id, content_enc)
+              VALUES (${tenantId}, ${overrides?.['patient_id'] ?? (await insertPatient(tx, tenantId))}, 1, ${authorId}, '\\x00'::bytea)
+              RETURNING id`,
+      );
+      await tx.execute(sql`select set_config('app.professional_id', '', true)`);
+      CLINICAL_AUTHORS.set(id, authorId);
+      return id;
+    },
   },
   professional: {
     insert: async (tx, tenantId, overrides) =>
