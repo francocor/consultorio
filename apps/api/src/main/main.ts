@@ -3,6 +3,7 @@ import pino from 'pino';
 import { createTenantLookup } from '../modules/tenancy/index.js';
 import { createRuntimeDb } from '../platform/db/pool.js';
 import { createDbProbe } from '../platform/db/probe.js';
+import { startWorker } from '../platform/jobs/worker.js';
 
 import { loadConfig, type Config } from './config.js';
 import { deploymentFromConfig } from './deployment.js';
@@ -47,11 +48,16 @@ async function runApi(config: Config): Promise<void> {
   await probe.close();
 }
 
-/** Idle stub: the job handlers arrive with pg-boss in a later stage. */
+/**
+ * The only process that registers job handlers and runs the scheduled work: it seals audit
+ * events every few seconds and, every night, verifies every audit chain.
+ */
 async function runWorker(config: Config): Promise<void> {
   const log = pino(buildLoggerOptions(config.logLevel));
-  log.info('worker started (idle, no handlers registered)');
+  const worker = await startWorker({ databaseUrl: config.databaseUrl, log });
+  log.info('worker started');
   await waitForShutdownSignal();
+  await worker.stop();
   log.info('worker stopped');
 }
 

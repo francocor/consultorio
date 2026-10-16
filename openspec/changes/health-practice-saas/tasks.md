@@ -229,7 +229,7 @@ Depends: S1.06.
 
 - [x] 1.29 `platform/jobs/boss.ts` (pg-boss bootstrap, handlers only in the `worker` role), `enqueue(tx, name, payload)` in the caller's transaction, `defineJob()` wrapper that runs in `withTenant`, re-checks tenant status and is idempotent. [TEN-11] Test: integration: a job runs under tenant context; a job for a read-only tenant ends cancelled.
 - [x] 1.30 `platform/audit/sealer.ts` + job `audit.seal` (singleton per tenant, every 5 s; assigns `seq` in `(occurred_at, id)` order; `hash = SHA-256(prev_hash || canonical row)`) and `canonicalize.ts`. [AUD-04] Test: chain is correct after concurrent interleaved inserts; re-run is idempotent.
-- [ ] 1.31 Job `audit.verify` nightly plus seal-lag and `audit_chain_break` metrics. [AUD-04] Test: tamper a row via the owner connection; verify reports the first bad `seq`.
+- [x] 1.31 Job `audit.verify` nightly plus seal-lag and `audit_chain_break` metrics. [AUD-04] Test: tamper a row via the owner connection; verify reports the first bad `seq`.
 
 ## S1.08 Envelope encryption (~350 lines)
 
