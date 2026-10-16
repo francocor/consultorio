@@ -115,9 +115,16 @@ services:
       dockerfile: infra/Dockerfile
     command: ['api']
     environment:
-      NODE_ENV: production
+      # "development" on purpose: production refuses the local key-encryption key and insecure
+      # cookies, and this stack has no AWS KMS. The image itself is the production build.
+      NODE_ENV: development
       DATABASE_URL: postgres://app_rw:app_rw_dev_only@postgres:5432/${POSTGRES_DB:-consultorio}
       DEPLOYMENT_MODE: ${DEPLOYMENT_MODE:-multi}
+      BASE_DOMAIN: ${BASE_DOMAIN:-localhost}
+      PLATFORM_HOST: ${PLATFORM_HOST:-platform.localhost}
+      SINGLE_TENANT_SLUG: ${SINGLE_TENANT_SLUG:-}
+      KMS_PROVIDER: local
+      KMS_LOCAL_KEK_BASE64: ${KMS_LOCAL_KEK_BASE64:-ZGV2X29ubHlfbG9jYWxfa2VrXzAxMjM0NTY3ODlhYmM=}
       LOG_LEVEL: ${LOG_LEVEL:-info}
     ports:
       - '127.0.0.1:${API_PORT:-3000}:3000'
