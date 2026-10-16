@@ -193,7 +193,7 @@ Depends: S1.01.
 Depends: S0.07, S1.01.
 
 - [x] 1.14 `db/schema/_helpers.ts`: `tenantTable()` (UUIDv7 id, `tenant_id NOT NULL`, `UNIQUE (tenant_id, id)`, timestamps), `tenantPolicies(table)` SQL generator (`ENABLE` + `FORCE` + `tenant_isolation`), `platform/db/uuid.ts`. [TEN-01, TEN-03] Test: generated SQL snapshot; integration shows a cross-tenant read returns 0 rows.
-- [ ] 1.15 `db/schema/tenant.ts` + migration `0001_tenancy.sql`: `tenant` (slug, status, `read_only_since`, `is_demo` with an immutability trigger, `billing_exempt`, country, theme, settings), `location` (name, IANA `time_zone`, active), `tenant_feature`. [TEN-01, TEN-04] Test: changing `is_demo` after creation raises.
+- [x] 1.15 `db/schema/tenant.ts` + migration `0001_tenancy.sql`: `tenant` (slug, status, `read_only_since`, `is_demo` with an immutability trigger, `billing_exempt`, country, theme, settings), `location` (name, IANA `time_zone`, active), `tenant_feature`. [TEN-01, TEN-04] Test: changing `is_demo` after creation raises.
 - [ ] 1.16 `apps/api/test/support/fixtures.ts` (per-table fixture registry) and `apps/api/test/tenancy/isolation.generated.test.ts`: for every tenant table, tenant B reads 0 rows of tenant A and a cross-tenant composite FK insert fails; a table with no registered fixture fails the test. [TEN-03] Test: that file.
 
 ## S1.04 Host resolution and deployment mode (~300 lines)

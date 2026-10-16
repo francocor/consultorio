@@ -15,6 +15,13 @@
       "when": 1792117688815,
       "tag": "0001_platform_catalogs",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1792117924993,
+      "tag": "0002_tenancy",
+      "breakpoints": true
     }
   ]
 }
