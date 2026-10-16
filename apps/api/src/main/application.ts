@@ -25,6 +25,7 @@ import { createWithTenant } from '../platform/db/tenant-context.js';
 import type { HealthDeps } from '../platform/http/health.js';
 import { createMemoryRateLimitStore, type RateLimit } from '../platform/http/rate-limit.js';
 import type { EmailSender } from '../platform/mail/email-sender.js';
+import type { ObjectStorage } from '../platform/storage/object-storage.js';
 
 import { buildServer, type FeatureRoutes } from './server.js';
 
@@ -49,6 +50,11 @@ export interface ApplicationOptions {
   limits?: Partial<RequestLimits>;
   /** Professional profiles for the clinical gate. The staff module provides them (S1.19). */
   professionals?: ProfessionalRepo;
+  /**
+   * Object storage (logos, later documents). Absent when no bucket is configured: the features
+   * that need it then answer "unavailable" instead of failing at startup.
+   */
+  storage?: ObjectStorage;
   /** Routes of the capability modules, registered after identity. */
   modules?: readonly FeatureRoutes[];
 }

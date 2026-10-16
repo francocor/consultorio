@@ -38,6 +38,17 @@ const envSchema = z
     KMS_LOCAL_KEK_BASE64: z.string().min(1).optional(),
     AWS_REGION: z.string().min(1).optional(),
     AWS_KMS_KEY_ID: z.string().min(1).optional(),
+    /**
+     * Object storage (logos now, documents later). MinIO locally (S3_ENDPOINT, static keys) or AWS
+     * S3 in production (no endpoint; the task role supplies the credentials).
+     */
+    S3_BUCKET: z.string().min(3).max(63).optional(),
+    S3_ENDPOINT: z.string().optional(),
+    /** Defaults to AWS_REGION, then to us-east-1 (what MinIO expects). */
+    S3_REGION: z.string().min(1).optional(),
+    S3_FORCE_PATH_STYLE: booleanFlag.optional(),
+    S3_ACCESS_KEY_ID: z.string().min(1).optional(),
+    S3_SECRET_ACCESS_KEY: z.string().min(1).optional(),
     /** Transactional email over SMTP: Mailpit locally, the SES SMTP interface in production. */
     SMTP_HOST: z.string().regex(HOSTNAME).optional(),
     SMTP_PORT: z.coerce.number().int().min(1).max(65535).default(1025),
@@ -94,7 +105,42 @@ const envSchema = z
       });
     }
 
+    if (env.S3_BUCKET === undefined) {
+      for (const name of [
+        'S3_ENDPOINT',
+        'S3_REGION',
+        'S3_ACCESS_KEY_ID',
+        'S3_SECRET_ACCESS_KEY',
+      ] as const) {
+        if (env[name] !== undefined) require('S3_BUCKET', `is required when ${name} is set`);
+      }
+    }
+    if (
+      env.S3_ENDPOINT !== undefined &&
+      !/^https?:\/\/[^\s/]+(?::\d+)?\/?$/.test(env.S3_ENDPOINT)
+    ) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['S3_ENDPOINT'],
+        message: 'must be an http(s) URL such as http://localhost:9000',
+      });
+    }
+    if ((env.S3_ACCESS_KEY_ID === undefined) !== (env.S3_SECRET_ACCESS_KEY === undefined)) {
+      ctx.addIssue({
+        code: 'custom',
+        path: [env.S3_ACCESS_KEY_ID === undefined ? 'S3_SECRET_ACCESS_KEY' : 'S3_ACCESS_KEY_ID'],
+        message: 'S3_ACCESS_KEY_ID and S3_SECRET_ACCESS_KEY must be set together',
+      });
+    }
+
     if (env.NODE_ENV === 'production') {
+      if (env.S3_ACCESS_KEY_ID !== undefined) {
+        ctx.addIssue({
+          code: 'custom',
+          path: ['S3_ACCESS_KEY_ID'],
+          message: 'static storage keys are not allowed in production; the task role is used',
+        });
+      }
       require('SMTP_HOST', 'is required in production (transactional email)');
       if (env.SMTP_HOST !== undefined && env.SMTP_SECURITY === 'none') {
         ctx.addIssue({
@@ -127,6 +173,16 @@ export type KmsConfig =
   | { readonly provider: 'local'; readonly kekBase64: string }
   | { readonly provider: 'aws'; readonly region: string; readonly keyId: string };
 
+export interface StorageConfig {
+  readonly bucket: string;
+  readonly region: string;
+  /** Set for MinIO or any S3-compatible service; unset for AWS S3. */
+  readonly endpoint?: string;
+  readonly forcePathStyle: boolean;
+  /** Only for local development; production uses the role of the task. */
+  readonly credentials?: { readonly accessKeyId: string; readonly secretAccessKey: string };
+}
+
 export interface MailConfig {
   readonly host: string;
   readonly port: number;
@@ -149,6 +205,8 @@ export interface Config {
   readonly cookieSecure: boolean;
   readonly trustProxy: boolean;
   readonly kms: KmsConfig;
+  /** Undefined when S3_BUCKET is not set: logo upload and documents are then unavailable. */
+  readonly storage?: StorageConfig;
   /** Undefined when SMTP_HOST is not set (allowed outside production). */
   readonly mail?: MailConfig;
   readonly passwordBreachCheck: boolean;
@@ -202,6 +260,24 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     cookieSecure: value.COOKIE_SECURE ?? value.NODE_ENV === 'production',
     trustProxy: value.TRUST_PROXY,
     kms: kmsFrom(value),
+    ...(value.S3_BUCKET === undefined
+      ? {}
+      : {
+          storage: {
+            bucket: value.S3_BUCKET,
+            region: value.S3_REGION ?? value.AWS_REGION ?? 'us-east-1',
+            ...(value.S3_ENDPOINT === undefined ? {} : { endpoint: value.S3_ENDPOINT }),
+            forcePathStyle: value.S3_FORCE_PATH_STYLE ?? value.S3_ENDPOINT !== undefined,
+            ...(value.S3_ACCESS_KEY_ID === undefined || value.S3_SECRET_ACCESS_KEY === undefined
+              ? {}
+              : {
+                  credentials: {
+                    accessKeyId: value.S3_ACCESS_KEY_ID,
+                    secretAccessKey: value.S3_SECRET_ACCESS_KEY,
+                  },
+                }),
+          },
+        }),
     ...(value.SMTP_HOST === undefined
       ? {}
       : {

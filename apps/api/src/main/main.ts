@@ -1,5 +1,6 @@
 import pino from 'pino';
 
+import { createS3ObjectStorage } from '../adapters/s3/index.js';
 import { createTenantKeys } from '../platform/crypto/tenant-keys.js';
 import { createRuntimeDb } from '../platform/db/pool.js';
 import { createDbProbe } from '../platform/db/probe.js';
@@ -35,6 +36,7 @@ async function runApi(config: Config): Promise<void> {
   const probe = createDbProbe(config.databaseUrl);
   const database = createRuntimeDb(config.databaseUrl);
   const email = createConfiguredEmail(config.mail);
+  const storage = config.storage ? createS3ObjectStorage(config.storage) : undefined;
   const passwordValidator = await loadPasswordValidator({
     breachCheck: config.passwordBreachCheck,
   });
@@ -49,8 +51,12 @@ async function runApi(config: Config): Promise<void> {
     email: email.sender,
     passwordValidator,
     lockout: config.lockout,
+    ...(storage ? { storage } : {}),
   });
 
+  if (!storage) {
+    app.log.warn('S3_BUCKET is not set: logo upload is unavailable');
+  }
   if (email.kind === 'fake') {
     app.log.warn('SMTP_HOST is not set: emails (password reset, invitations) are not delivered');
   }
@@ -60,6 +66,7 @@ async function runApi(config: Config): Promise<void> {
   app.log.info('shutting down');
   await app.close();
   email.close();
+  storage?.close();
   await database.close();
   await probe.close();
 }
