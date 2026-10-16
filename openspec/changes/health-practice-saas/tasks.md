@@ -452,8 +452,8 @@ Depends: S1.31, S1.20, S1.21, S1.22.
 
 Depends: S1.31, S1.23, S1.25, S1.18.
 
-- [ ] 1.119 `features/audit/*`: filterable event table, patient access report, export button. [AUD-06, AUD-07] Test: component tests.
-- [ ] 1.120 `features/settings/branding` (live contrast warning showing requested and effective colors, logo upload, preview) and `features/settings/security` (require 2FA, reception-metadata toggle, sharing toggle with explicit psychology confirmation). [BRD-01, BRD-03, BRD-05, AUZ-07, AUZ-11] Test: component tests.
+- [x] 1.119 `features/audit/*`: filterable event table, patient access report, export button. [AUD-06, AUD-07] Test: component tests.
+- [x] 1.120 `features/settings/branding` (live contrast warning showing requested and effective colors, logo upload, preview) and `features/settings/security` (require 2FA, reception-metadata toggle, sharing toggle with explicit psychology confirmation). [BRD-01, BRD-03, BRD-05, AUZ-07, AUZ-11] Test: component tests.
 - [ ] 1.121 Playwright: a branding change applies after reload without flash; a second tenant keeps its own theme. [BRD-02] Test: that spec.
 
 ## S1.35 Operator console UI (~300 lines)

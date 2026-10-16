@@ -12,7 +12,6 @@ import {
 } from '@tanstack/react-router';
 import { lazy, type ComponentType } from 'react';
 
-import { AuditPage } from '../features/audit/AuditPage.js';
 import { AuthLayout } from '../features/auth/AuthLayout.js';
 import { LoginPage } from '../features/auth/LoginPage.js';
 import { settingsTabsFor } from '../features/settings/settings-tabs.js';
@@ -212,7 +211,10 @@ function buildRouteTree() {
   const auditRoute = createRoute({
     getParentRoute: () => authedRoute,
     path: '/audit',
-    component: guarded(['audit.read'], AuditPage),
+    component: guarded(
+      ['audit.read'],
+      lazyRouteComponent(() => import('../features/audit/AuditPage.js'), 'AuditPage'),
+    ),
   });
 
   // Settings has its own frame (the sections) and checks each section on its own.
@@ -237,6 +239,24 @@ function buildRouteTree() {
     component: lazyRouteComponent(
       () => import('../features/settings/LocationsPage.js'),
       'LocationsPage',
+    ),
+  });
+
+  const settingsBrandingRoute = createRoute({
+    getParentRoute: () => settingsRoute,
+    path: '/branding',
+    component: lazyRouteComponent(
+      () => import('../features/settings/BrandingPage.js'),
+      'BrandingPage',
+    ),
+  });
+
+  const settingsSecurityRoute = createRoute({
+    getParentRoute: () => settingsRoute,
+    path: '/security',
+    component: lazyRouteComponent(
+      () => import('../features/settings/SecurityPage.js'),
+      'SecurityPage',
     ),
   });
 
@@ -283,7 +303,12 @@ function buildRouteTree() {
       patientRoute,
       staffRoute,
       auditRoute,
-      settingsRoute.addChildren([settingsIndexRoute, settingsLocationsRoute]),
+      settingsRoute.addChildren([
+        settingsIndexRoute,
+        settingsLocationsRoute,
+        settingsBrandingRoute,
+        settingsSecurityRoute,
+      ]),
       unknownRoute,
     ]),
     minimalRoute.addChildren([portalRoute, bookingRoute]),
@@ -293,6 +318,25 @@ function buildRouteTree() {
 const LazyBooking = lazy(() =>
   import('../features/booking/BookingPage.js').then((module) => ({ default: module.BookingPage })),
 );
+
+/** The platform host has one screen: the operator console decides between sign-in and content. */
+function buildOperatorRouteTree() {
+  const rootRoute = createRootRouteWithContext<RouterContext>()({
+    component: RootLayout,
+    notFoundComponent: function RedirectHome() {
+      throw redirect({ to: '/' });
+    },
+  });
+  const consoleRoute = createRoute({
+    getParentRoute: () => rootRoute,
+    path: '/',
+    component: lazyRouteComponent(
+      () => import('../features/operator/OperatorConsole.js'),
+      'OperatorConsole',
+    ),
+  });
+  return rootRoute.addChildren([consoleRoute]);
+}
 
 export function createAppRouter({
   services,
@@ -320,4 +364,26 @@ export function createAppRouter({
   return router;
 }
 
+/**
+ * The router of the platform host. The console shows its own sign-in in place when there is no
+ * session, so there is nothing to navigate to when one ends.
+ */
+export function createOperatorRouter({
+  services,
+  history,
+}: {
+  services: AppServices;
+  history?: RouterHistory;
+}) {
+  return createRouter({
+    routeTree: buildOperatorRouteTree(),
+    context: { services },
+    ...(history ? { history } : {}),
+    defaultPendingComponent: RoutePending,
+    defaultErrorComponent: RouteError,
+    defaultPreload: 'intent',
+  });
+}
+
 export type AppRouter = ReturnType<typeof createAppRouter>;
+export type OperatorRouter = ReturnType<typeof createOperatorRouter>;

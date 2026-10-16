@@ -50,7 +50,7 @@ export function AnamnesisTab({ patientId }: { patientId: string }) {
     if (isApiError(anamnesis.error) && anamnesis.error.status === 403) {
       return (
         <EmptyState
-          title={t('anamnesis.noAccess.title')}
+          title={t('anamnesis.noRelationship.title')}
           description={t('anamnesis.noRelationship')}
         />
       );

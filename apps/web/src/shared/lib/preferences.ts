@@ -5,7 +5,10 @@
  */
 import {
   applyColorScheme,
+  applyTheme,
   COLOR_SCHEME_STORAGE_KEY,
+  THEME_STORAGE_PREFIX,
+  type BootTheme,
   type ColorSchemePreference,
 } from './theme-boot.js';
 
@@ -46,5 +49,18 @@ export function writeSidebarCollapsed(collapsed: boolean): void {
     storage()?.setItem(SIDEBAR_KEY, String(collapsed));
   } catch {
     // Not remembering is harmless.
+  }
+}
+
+/**
+ * A new look of the organization (its branding was just saved): applied now and kept for this host,
+ * so the next load paints it from the first frame instead of the previous one.
+ */
+export function rememberTheme(theme: BootTheme): void {
+  applyTheme(document.documentElement, theme);
+  try {
+    storage()?.setItem(`${THEME_STORAGE_PREFIX}${window.location.host}`, JSON.stringify(theme));
+  } catch {
+    // The look still applies to this visit.
   }
 }

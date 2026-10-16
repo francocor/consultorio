@@ -16,7 +16,7 @@ export const API_BASE = '/api';
  * ended. Everywhere else a 401 means the user has to sign in again.
  */
 const CREDENTIAL_ENDPOINTS =
-  /^\/(?:auth\/(?:login|2fa|password-reset|invitations|me)|operator\/auth)/;
+  /^\/(?:auth\/(?:login|2fa|password-reset|invitations|me)|operator\/(?:auth|me))/;
 
 export type ApiErrorKind = 'problem' | 'network' | 'unexpected';
 

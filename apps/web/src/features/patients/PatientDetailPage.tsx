@@ -16,6 +16,7 @@ import { DetailSkeleton } from '../../shared/ui/states/loading-skeleton.js';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../../shared/ui/tabs.js';
 
 import { patientKeys, patientsApi } from './api/patients-api.js';
+import { AccessReportTab } from './components/AccessReportTab.js';
 import { AnamnesisTab } from './components/AnamnesisTab.js';
 import { CareTab } from './components/CareTab.js';
 import { CoverageTab } from './components/CoverageTab.js';
@@ -25,7 +26,7 @@ import { HistoryTab } from './components/HistoryTab.js';
 import { fullNameOf, PatientHeader } from './components/PatientHeader.js';
 import { PrivacyTab } from './components/PrivacyTab.js';
 
-type TabId = 'data' | 'coverage' | 'privacy' | 'history' | 'care' | 'anamnesis';
+type TabId = 'data' | 'coverage' | 'privacy' | 'history' | 'care' | 'anamnesis' | 'access';
 
 /** The record of one patient. The address carries the id; everything else loads from it. */
 export function PatientDetailPage() {
@@ -83,6 +84,7 @@ function PatientRecord({ patientId }: { patientId: string }) {
   const canWrite = hasAnyPermission(me.permissions, ['patients.write']);
   const canAdminister = hasAnyPermission(me.permissions, ['patients.administer']);
   const canReadAnamnesis = hasAnyPermission(me.permissions, ['clinical.anamnesis.read']);
+  const canReadAudit = hasAnyPermission(me.permissions, ['audit.read']);
 
   return (
     <div>
@@ -109,6 +111,9 @@ function PatientRecord({ patientId }: { patientId: string }) {
           {canReadAnamnesis ? (
             <TabsTrigger value="anamnesis">{t('patients:tab.anamnesis')}</TabsTrigger>
           ) : null}
+          {canReadAudit ? (
+            <TabsTrigger value="access">{t('patients:tab.access')}</TabsTrigger>
+          ) : null}
         </TabsList>
         <TabsContent value="data">
           <DataTab patient={record} canWrite={canWrite} />
@@ -128,6 +133,11 @@ function PatientRecord({ patientId }: { patientId: string }) {
         {canReadAnamnesis ? (
           <TabsContent value="anamnesis">
             <AnamnesisTab patientId={record.id} />
+          </TabsContent>
+        ) : null}
+        {canReadAudit ? (
+          <TabsContent value="access">
+            <AccessReportTab patientId={record.id} />
           </TabsContent>
         ) : null}
       </Tabs>

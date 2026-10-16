@@ -2,10 +2,12 @@ import { beforeEach, describe, expect, it } from 'vitest';
 
 import {
   readColorScheme,
+  rememberTheme,
   readSidebarCollapsed,
   writeColorScheme,
   writeSidebarCollapsed,
 } from './preferences.js';
+import { THEME_STORAGE_PREFIX } from './theme-boot.js';
 
 describe('display preferences', () => {
   beforeEach(() => {
@@ -61,5 +63,21 @@ describe('display preferences', () => {
     } finally {
       if (original) Object.defineProperty(window, 'localStorage', original);
     }
+  });
+
+  it('remembers a new theme for this host and applies it at once, so the next load has no flash', () => {
+    const theme = {
+      primary: '#1e40af',
+      primaryForeground: '#ffffff',
+      radius: 'sm',
+      headingFont: 'source_sans',
+    } as const;
+
+    rememberTheme(theme);
+
+    const stored = localStorage.getItem(`${THEME_STORAGE_PREFIX}${window.location.host}`);
+    expect(JSON.parse(stored ?? 'null')).toEqual(theme);
+    expect(document.documentElement.style.getPropertyValue('--primary')).toBe('#1e40af');
+    expect(document.documentElement.style.getPropertyValue('--radius')).toBe('0.25rem');
   });
 });

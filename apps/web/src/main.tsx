@@ -3,8 +3,9 @@ import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 
 import { createI18n } from './app/i18n.js';
+import { onPlatformHost } from './app/platform-host.js';
 import { AppProviders } from './app/providers.js';
-import { createAppRouter } from './app/router.js';
+import { createAppRouter, createOperatorRouter } from './app/router.js';
 import { createAppServices } from './app/services.js';
 import { UpdatePrompt } from './app/UpdatePrompt.js';
 import { installZodMessages } from './shared/lib/zod-i18n.js';
@@ -19,7 +20,9 @@ if (!container) {
 installZodMessages();
 const services = createAppServices({ isOnline: () => navigator.onLine });
 const i18n = createI18n();
-const router = createAppRouter({ services });
+const router = onPlatformHost()
+  ? createOperatorRouter({ services })
+  : createAppRouter({ services });
 
 createRoot(container).render(
   <StrictMode>

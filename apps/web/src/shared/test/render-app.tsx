@@ -11,7 +11,12 @@ import type { ReactElement } from 'react';
 
 import { createI18n } from '../../app/i18n.js';
 import { AppProviders } from '../../app/providers.js';
-import { createAppRouter, type AppRouter } from '../../app/router.js';
+import {
+  createAppRouter,
+  createOperatorRouter,
+  type AppRouter,
+  type OperatorRouter,
+} from '../../app/router.js';
 import { createAppServices, type AppServices } from '../../app/services.js';
 
 import { bootFor } from './fixtures.js';
@@ -22,13 +27,15 @@ export interface RenderAppOptions {
   me?: MeResponse | null;
   boot?: BootPayload;
   path?: string;
+  /** Render the platform operator console instead of an organization's app. */
+  platform?: boolean;
   /** Extra API routes, keyed "METHOD /api/path". */
   routes?: Record<string, FetchHandler | Response>;
 }
 
 export interface RenderedApp extends ReturnType<typeof render> {
   services: AppServices;
-  router: AppRouter;
+  router: AppRouter | OperatorRouter;
   /** Every request the app made, as "METHOD /api/path" without the query string. */
   requests: string[];
   missingKeys: string[];
@@ -81,10 +88,10 @@ function setup(options: RenderAppOptions) {
 /** Renders the whole application (providers, router, shell) with a fake network. */
 export function renderApp(options: RenderAppOptions = {}): RenderedApp {
   const { services, i18n, requests, missingKeys } = setup(options);
-  const router = createAppRouter({
-    services,
-    history: createMemoryHistory({ initialEntries: [options.path ?? '/'] }),
-  });
+  const history = createMemoryHistory({ initialEntries: [options.path ?? '/'] });
+  const router = options.platform
+    ? createOperatorRouter({ services, history })
+    : createAppRouter({ services, history });
   const result = render(
     <AppProviders services={services} i18n={i18n}>
       <RouterProvider router={router} />

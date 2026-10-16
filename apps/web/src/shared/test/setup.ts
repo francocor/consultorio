@@ -1,11 +1,15 @@
 import '@testing-library/jest-dom/vitest';
-import { cleanup } from '@testing-library/react';
+import { cleanup, configure } from '@testing-library/react';
 import { toast } from 'sonner';
 import { afterEach } from 'vitest';
 
 import { installZodMessages } from '../lib/zod-i18n.js';
 
 installZodMessages();
+
+// A lazy screen behind a router can take longer than one second to appear on a busy machine
+// (the whole suite runs in parallel). A wait that is too short is a flaky test, not a fast one.
+configure({ asyncUtilTimeout: 5000 });
 
 // Testing Library only registers its automatic cleanup when Vitest globals are enabled.
 afterEach(() => {

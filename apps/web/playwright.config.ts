@@ -34,11 +34,20 @@ export default defineConfig({
   },
   projects: [
     {
+      // Signs in the platform operator once (second-factor codes cannot be replayed), so the
+      // console specs of both projects share that session.
+      name: 'operator-setup',
+      testMatch: '**/operator.setup.ts',
+      use: { ...devices['Desktop Chrome'], viewport: { width: 1280, height: 800 } },
+    },
+    {
       name: 'desktop',
+      dependencies: ['operator-setup'],
       use: { ...devices['Desktop Chrome'], viewport: { width: 1280, height: 800 } },
     },
     {
       name: 'mobile-360',
+      dependencies: ['operator-setup'],
       testMatch: '**/*.responsive.spec.ts',
       use: {
         ...devices['Desktop Chrome'],
