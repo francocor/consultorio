@@ -10,6 +10,7 @@ import type { WithTenant } from '../../platform/db/tenant-context.js';
 import type { ExportRegistry } from '../tenancy/index.js';
 
 import { createAnamnesisService } from './application/anamnesis.js';
+import { createAssignmentService } from './application/assignments.js';
 import { createConsentService } from './application/consent.js';
 import { createCoverageService } from './application/coverage.js';
 import { exportPatients } from './application/export-contributor.js';
@@ -17,6 +18,7 @@ import { createPatientService, type DocumentRules } from './application/patients
 import { createRepresentativeService } from './application/representatives.js';
 import { createRightsService } from './application/rights.js';
 import { anamnesisRoutes } from './http/anamnesis-routes.js';
+import { assignmentRoutes } from './http/assignment-routes.js';
 import { consentRoutes } from './http/consent-routes.js';
 import { coverageRoutes } from './http/coverage-routes.js';
 import { patientRoutes } from './http/patient-routes.js';
@@ -75,6 +77,11 @@ export function createPatients(options: PatientsOptions): Patients {
     auditDeny: options.auditDeny,
     anamnesis: createAnamnesisService({ keys: options.keys }),
   });
+  const assignments = assignmentRoutes({
+    withTenant: options.withTenant,
+    auditDeny: options.auditDeny,
+    assignments: createAssignmentService(),
+  });
   const coverageService = createCoverageService(clock);
   const coverage = coverageRoutes({
     withTenant: options.withTenant,
@@ -101,6 +108,7 @@ export function createPatients(options: PatientsOptions): Patients {
       consentEndpoints(app);
       rights(app);
       clinical(app);
+      assignments(app);
     },
   };
 }

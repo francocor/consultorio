@@ -2,7 +2,9 @@ import { describe, expect, it } from 'vitest';
 
 import {
   CreatePatientRequest,
+  PatientCopyDto,
   PatientDto,
+  PatientSummaryDto,
   PatientSearchQuery,
   RepresentativeInput,
   UpdatePatientRequest,
@@ -134,6 +136,39 @@ describe('PatientDto', () => {
         'updatedAt',
         'version',
       ].sort(),
+    );
+  });
+});
+
+describe('the registry never carries clinical detail', () => {
+  // `clinicalCopy` is a marker that says the clinical copy is a separate act, not clinical content.
+  const CLINICAL_WORDS = /anamnesis|diagnos|allerg|medicat|symptom|treatment|prescription|note/i;
+
+  it('keeps the summary to a minimal identity (snapshot of its fields)', () => {
+    expect(Object.keys(PatientSummaryDto.shape).sort()).toEqual([
+      'birthDate',
+      'document',
+      'familyName',
+      'givenNames',
+      'hasSafetyFlag',
+      'id',
+      'phone',
+      'status',
+    ]);
+  });
+
+  it.each([
+    ['PatientSummaryDto', PatientSummaryDto],
+    ['PatientDto', PatientDto],
+    ['PatientCopyDto', PatientCopyDto],
+  ])('has no field of %s that names clinical content', (_name, schema) => {
+    expect(Object.keys(schema.shape).filter((key) => CLINICAL_WORDS.test(key))).toEqual([]);
+  });
+
+  it('shows the safety flag only as a yes or no', () => {
+    expect(PatientSummaryDto.shape.hasSafetyFlag.safeParse(true).success).toBe(true);
+    expect(PatientSummaryDto.shape.hasSafetyFlag.safeParse(['allergy_on_file']).success).toBe(
+      false,
     );
   });
 });

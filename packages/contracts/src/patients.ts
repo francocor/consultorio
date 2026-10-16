@@ -292,3 +292,19 @@ export const FulfillRightsResponse = z.strictObject({
   copy: PatientCopyDto.nullable(),
 });
 export type FulfillRightsResponse = z.infer<typeof FulfillRightsResponse>;
+
+// Explicit assignment ------------------------------------------------------------------------
+
+export const CreateAssignmentRequest = z.strictObject({ professionalId: z.uuid() });
+export type CreateAssignmentRequest = z.infer<typeof CreateAssignmentRequest>;
+
+export const AssignmentDto = z.strictObject({
+  professionalId: z.uuid(),
+  professionalName: z.string().nullable(),
+  assignedBy: z.uuid(),
+  assignedAt: z.iso.datetime(),
+});
+export type AssignmentDto = z.infer<typeof AssignmentDto>;
+
+export const AssignmentListResponse = z.strictObject({ assignments: z.array(AssignmentDto) });
+export type AssignmentListResponse = z.infer<typeof AssignmentListResponse>;

@@ -103,7 +103,10 @@ export function createAnamnesisService(deps: { keys: TenantKeys }): AnamnesisSer
         resourceType: 'anamnesis',
         ...(row ? { resourceId: row.id } : {}),
         patientId: input.patientId,
-        ...(treating ? {} : { reason: 'shared' }),
+        // Only a read that rests on the sharing scope is marked as shared.
+        ...(treating || row?.authorProfessionalId === input.professionalId
+          ? {}
+          : { reason: 'shared' }),
         metadata: { version: row?.version ?? 0 },
       });
       return { current: row ? await open(tx, row) : null };
