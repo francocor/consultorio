@@ -5,14 +5,22 @@ import { membership, userAccount } from '../../../db/schema/identity.js';
 import { audit, type AuditActor } from '../../../platform/audit/writer.js';
 import { SYSTEM_USER_ID, type Tx, type WithTenant } from '../../../platform/db/tenant-context.js';
 import { primaryRole } from '../../../platform/http/auth-guard.js';
+import { clientKeyOf } from '../../../platform/http/rate-limit.js';
 import type { PasswordHasher } from '../infrastructure/argon2.js';
 
+import type { AttemptThrottle } from './attempt-throttle.js';
+import type { Lockout } from './lockout.js';
 import type { IssuedSession, SessionService } from './sessions.js';
 
 export interface LoginDeps {
   withTenant: WithTenant;
   hasher: PasswordHasher;
   sessions: SessionService;
+  lockout: Lockout;
+  /** Failures of identifiers that have no account on the tenant: they get the same delays. */
+  accountThrottle: AttemptThrottle;
+  /** Failures per client address. */
+  clientThrottle: AttemptThrottle;
   clock?: () => Date;
 }
 
@@ -80,6 +88,7 @@ async function findCandidate(
 }
 
 export function createLoginService(deps: LoginDeps): LoginService {
+  const { lockout } = deps;
   const clock = deps.clock ?? (() => new Date());
 
   async function recordFailure(
@@ -88,6 +97,11 @@ export function createLoginService(deps: LoginDeps): LoginService {
     candidate: Candidate | null,
     reason: LoginFailureReason,
   ): Promise<void> {
+    if (candidate) {
+      await lockout.recordFailure(tx, candidate.userId, 'password', input.actor, {
+        charged: true,
+      });
+    }
     await audit(tx, {
       action: 'auth.login.failed',
       outcome: 'deny',
@@ -99,36 +113,53 @@ export function createLoginService(deps: LoginDeps): LoginService {
   return {
     async login(input) {
       const email = input.email.trim();
+      const clientKey = clientKeyOf(input.actor.ip ?? 'unknown');
+      const identifierKey = `${input.tenantId}|${email.toLowerCase()}`;
       const candidate = await findCandidate(deps.withTenant, input.tenantId, email);
 
-      // Exactly one Argon2 verification whether or not the account exists on this tenant.
+      // 1. The gate. Nothing about the password is looked at until the attempt is allowed.
+      let allowed = !deps.clientThrottle.check(clientKey).blocked;
+      if (allowed && candidate) {
+        const reservation = await deps.withTenant(
+          { tenantId: input.tenantId, userId: candidate.userId },
+          (tx) => lockout.reserveAttempt(tx, candidate.userId, input.actor),
+        );
+        allowed = reservation.kind === 'proceed';
+      } else if (allowed) {
+        allowed = !deps.accountThrottle.check(identifierKey).blocked;
+      }
+
+      // 2. Exactly one Argon2 verification on every path, so timing does not tell the paths apart.
+      // A refused attempt verifies against a dummy hash and can never succeed.
       const passwordMatches = await deps.hasher.verifyOrDummy(
-        candidate?.passwordHash,
+        allowed ? candidate?.passwordHash : null,
         input.password,
       );
+      if (!allowed) return { kind: 'failed' };
 
+      // 3. The verdict.
       const actingUser = candidate?.userId ?? SYSTEM_USER_ID;
       return deps.withTenant({ tenantId: input.tenantId, userId: actingUser }, async (tx) => {
         if (!candidate || !passwordMatches) {
+          if (!candidate) deps.accountThrottle.recordFailure(identifierKey);
+          deps.clientThrottle.recordFailure(clientKey);
           await recordFailure(tx, input, candidate, 'bad_credentials');
           return { kind: 'failed' };
         }
         if (!candidate.membershipActive) {
+          deps.clientThrottle.recordFailure(clientKey);
           await recordFailure(tx, input, candidate, 'inactive_membership');
           return { kind: 'failed' };
         }
 
-        const now = clock();
+        // The first successful sign-in starts the two-factor grace period.
         await tx
           .update(userAccount)
           .set({
-            // The first successful sign-in starts the two-factor grace period.
-            firstSignInAt: sql`coalesce(${userAccount.firstSignInAt}, ${now.toISOString()}::timestamptz)`,
-            failedLogins: 0,
-            lastFailedAt: null,
-            lockedUntil: null,
+            firstSignInAt: sql`coalesce(${userAccount.firstSignInAt}, ${clock().toISOString()}::timestamptz)`,
           })
           .where(eq(userAccount.id, candidate.userId));
+        await lockout.reset(tx, candidate.userId);
 
         // A new sign-in replaces the session of the cookie it came with.
         if (input.previousToken) {

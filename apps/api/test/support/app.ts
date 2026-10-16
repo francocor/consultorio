@@ -34,6 +34,12 @@ export function buildTestApplication(
     },
     cookieSecure: true,
     trustProxy: false,
+    // Tests sign in many times from one address; the limits have their own tests.
+    limits: {
+      perClient: { max: 100_000, windowMs: 60_000 },
+      perTenant: { max: 100_000, windowMs: 60_000 },
+      login: { max: 100_000, timeWindow: 60_000 },
+    },
     ...overrides,
   });
 }

@@ -37,6 +37,7 @@ async function runApi(config: Config): Promise<void> {
     deployment: deploymentFromConfig(config),
     trustProxy: config.trustProxy,
     cookieSecure: config.cookieSecure,
+    lockout: config.lockout,
   });
 
   await app.listen({ host: config.host, port: config.port });

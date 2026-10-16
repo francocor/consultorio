@@ -28,6 +28,8 @@ export interface AuthRoutesDeps {
   login: LoginService;
   sessions: SessionService;
   cookieSecure: boolean;
+  /** Sign-in attempts per client address and tenant. */
+  loginRateLimit?: { max: number; timeWindow: number };
 }
 
 const SessionIdParams = z.strictObject({ id: z.uuid() });
@@ -44,7 +46,11 @@ export function authRoutes(deps: AuthRoutesDeps) {
     typed.post(
       '/auth/login',
       {
-        config: { readOnly: 'auth', auth: 'public' },
+        config: {
+          readOnly: 'auth',
+          auth: 'public',
+          ...(deps.loginRateLimit ? { rateLimit: deps.loginRateLimit } : {}),
+        },
         schema: { body: LoginRequest, response: { 200: LoginResponse } },
       },
       async (request, reply) => {

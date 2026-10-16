@@ -36,6 +36,10 @@ const envSchema = z
     KMS_LOCAL_KEK_BASE64: z.string().min(1).optional(),
     AWS_REGION: z.string().min(1).optional(),
     AWS_KMS_KEY_ID: z.string().min(1).optional(),
+    /** Consecutive failed sign-ins (wrong password or second-factor code) that lock an account. */
+    AUTH_LOCKOUT_MAX_FAILURES: z.coerce.number().int().min(1).max(100).default(10),
+    /** How long a locked account stays locked. */
+    AUTH_LOCKOUT_MINUTES: z.coerce.number().int().min(1).max(1440).default(15),
     LOG_LEVEL: z.enum(LOG_LEVELS).default('info'),
     HOST: z.string().min(1).default('0.0.0.0'),
     PORT: z.coerce.number().int().min(1).max(65535).default(3000),
@@ -109,6 +113,7 @@ export interface Config {
   readonly cookieSecure: boolean;
   readonly trustProxy: boolean;
   readonly kms: KmsConfig;
+  readonly lockout: { readonly maxFailures: number; readonly lockMs: number };
   readonly logLevel: (typeof LOG_LEVELS)[number];
   readonly host: string;
   readonly port: number;
@@ -158,6 +163,10 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     cookieSecure: value.COOKIE_SECURE ?? value.NODE_ENV === 'production',
     trustProxy: value.TRUST_PROXY,
     kms: kmsFrom(value),
+    lockout: {
+      maxFailures: value.AUTH_LOCKOUT_MAX_FAILURES,
+      lockMs: value.AUTH_LOCKOUT_MINUTES * 60_000,
+    },
     logLevel: value.LOG_LEVEL,
     host: value.HOST,
     port: value.PORT,

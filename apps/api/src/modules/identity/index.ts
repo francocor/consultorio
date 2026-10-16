@@ -6,7 +6,9 @@ import { SYSTEM_USER_ID, type WithTenant } from '../../platform/db/tenant-contex
 import type { Authenticate } from '../../platform/http/auth-guard.js';
 import type { ExportRegistry } from '../tenancy/index.js';
 
+import { createAttemptThrottle } from './application/attempt-throttle.js';
 import { exportStaff } from './application/export-contributor.js';
+import { createLockout, DEFAULT_LOCKOUT, type LockoutPolicy } from './application/lockout.js';
 import { createLoginService, type LoginService } from './application/login.js';
 import { createSessionService, type SessionService } from './application/sessions.js';
 import { authRoutes } from './http/auth-routes.js';
@@ -26,6 +28,8 @@ export interface IdentityOptions {
   cookieSecure: boolean;
   clock?: () => Date;
   hasher?: PasswordHasher;
+  lockout?: LockoutPolicy;
+  loginRateLimit?: { max: number; timeWindow: number };
 }
 
 export interface Identity {
@@ -41,10 +45,22 @@ export interface Identity {
 export function createIdentity(options: IdentityOptions): Identity {
   const hasher = options.hasher ?? createPasswordHasher();
   const sessions = createSessionService(options.clock ? { clock: options.clock } : {});
+  const policy = options.lockout ?? DEFAULT_LOCKOUT;
+  const clock = options.clock ? { clock: options.clock } : {};
+  const lockout = createLockout({ policy, ...clock });
   const login = createLoginService({
     withTenant: options.withTenant,
     hasher,
     sessions,
+    lockout,
+    // Unknown identifiers meet the same delays and the same lock as real accounts.
+    accountThrottle: createAttemptThrottle({
+      lockAfter: policy.maxFailures,
+      lockMs: policy.lockMs,
+      ...clock,
+    }),
+    // A clinic shares one address, so a client is only delayed, and only after many failures.
+    clientThrottle: createAttemptThrottle({ freeFailures: 10, ...clock }),
     ...(options.clock ? { clock: options.clock } : {}),
   });
 
@@ -60,6 +76,7 @@ export function createIdentity(options: IdentityOptions): Identity {
       login,
       sessions,
       cookieSecure: options.cookieSecure,
+      ...(options.loginRateLimit ? { loginRateLimit: options.loginRateLimit } : {}),
     }),
   };
 }
