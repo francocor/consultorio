@@ -147,6 +147,14 @@ export function createApplication(options: ApplicationOptions): FastifyInstance 
     withTenant,
     auditDeny,
     ...(options.clock ? { clock: options.clock } : {}),
+    consentText: (country) => {
+      const found = getCountryPack(country, createCatalogReader(db));
+      const consent = found.ok ? found.value.personalData.dataProcessingConsent : undefined;
+      return {
+        textKey: consent?.textKey ?? 'consent.data_processing',
+        version: consent?.version ?? '1',
+      };
+    },
     majorityAge: (country) => {
       const found = getCountryPack(country, createCatalogReader(db));
       return found.ok ? found.value.majorityAge : 18;

@@ -42,6 +42,7 @@ afterAll(async () => {
 async function register(body: Record<string, unknown>, slug = 'patients-search', by = reception) {
   const response = await clientFor(app, slug).post('/patients', by, {
     birthDate: '1985-03-02',
+    dataProcessingConsent: true,
     ...body,
   });
   expect(response.statusCode).toBe(201);

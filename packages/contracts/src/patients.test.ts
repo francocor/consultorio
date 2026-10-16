@@ -8,7 +8,12 @@ import {
   UpdatePatientRequest,
 } from './patients.js';
 
-const BASE = { familyName: 'Pérez', givenNames: 'Ana María', birthDate: '1990-05-17' };
+const BASE = {
+  familyName: 'Pérez',
+  givenNames: 'Ana María',
+  birthDate: '1990-05-17',
+  dataProcessingConsent: true,
+};
 
 describe('CreatePatientRequest', () => {
   it('registers a patient with only a name and a birth date (no document)', () => {
@@ -118,6 +123,7 @@ describe('PatientDto', () => {
         'email',
         'familyName',
         'givenNames',
+        'consentStatus',
         'hasSafetyFlag',
         'id',
         'noDocument',

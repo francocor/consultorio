@@ -20,7 +20,10 @@ function sexOf(row: PatientRow): PatientDto['sex'] {
   }
 }
 
-export function toPatientDto(row: PatientRow): PatientDto {
+export function toPatientDto(
+  row: PatientRow,
+  consentStatus: PatientDto['consentStatus'],
+): PatientDto {
   const document = documentOf(row);
   return {
     id: row.id,
@@ -42,6 +45,7 @@ export function toPatientDto(row: PatientRow): PatientDto {
     origin: row.origin === 'online' ? 'online' : 'staff',
     // Only THAT a flag exists. What it is about stays with the professionals.
     hasSafetyFlag: row.safetyFlags.length > 0,
+    consentStatus,
     version: row.version,
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),

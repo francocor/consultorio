@@ -69,6 +69,7 @@ async function patientId(): Promise<string> {
     familyName: `Cobertura${String(counter)}`,
     givenNames: 'Paciente',
     birthDate: '1980-02-02',
+    dataProcessingConsent: true,
   });
   return response.json<CreatePatientResponse>().patient.id;
 }

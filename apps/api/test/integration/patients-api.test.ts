@@ -75,7 +75,12 @@ afterAll(async () => {
   await runtime.close();
 });
 
-const PERSON = { familyName: 'Pérez', givenNames: 'Ana María', birthDate: '1990-05-17' };
+const PERSON = {
+  familyName: 'Pérez',
+  givenNames: 'Ana María',
+  birthDate: '1990-05-17',
+  dataProcessingConsent: true,
+};
 let dniCounter = 31_000_000;
 const nextDni = () => String((dniCounter += 1));
 

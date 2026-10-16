@@ -67,6 +67,11 @@ const demographics = {
 
 export const CreatePatientRequest = z.strictObject({
   ...demographics,
+  /**
+   * The consent prompt of the registration (Ley 25.326). It has to be answered: `true` records the
+   * consent with the text version of the country, `false` saves the patient flagged as missing it.
+   */
+  dataProcessingConsent: z.boolean(),
   /** A minor needs one (an administrative contact, never an access). An adult may have one too. */
   representative: RepresentativeInput.optional(),
 });
@@ -131,6 +136,8 @@ export const PatientDto = z.strictObject({
   status: z.enum(PATIENT_STATUSES),
   origin: z.enum(PATIENT_ORIGINS),
   hasSafetyFlag: z.boolean(),
+  /** `missing` warns staff and blocks non-essential messages to the patient. */
+  consentStatus: z.enum(['granted', 'revoked', 'missing']),
   version: z.number().int(),
   createdAt: z.iso.datetime(),
   updatedAt: z.iso.datetime(),
@@ -203,3 +210,27 @@ export const RepresentativeListResponse = z.strictObject({
   representatives: z.array(RepresentativeDto),
 });
 export type RepresentativeListResponse = z.infer<typeof RepresentativeListResponse>;
+
+// Data-processing consent -------------------------------------------------------------------
+
+export const CONSENT_STATUSES = ['granted', 'revoked', 'missing'] as const;
+
+export const ConsentRecordDto = z.strictObject({
+  id: z.uuid(),
+  textKey: z.string(),
+  textVersion: z.string(),
+  grantedAt: z.iso.datetime(),
+  recordedBy: z.uuid(),
+  revokedAt: z.iso.datetime().nullable(),
+  revokedBy: z.uuid().nullable(),
+});
+export type ConsentRecordDto = z.infer<typeof ConsentRecordDto>;
+
+export const ConsentResponse = z.strictObject({
+  status: z.enum(CONSENT_STATUSES),
+  /** The live consent, or the latest revoked one; null when the patient never consented. */
+  current: ConsentRecordDto.nullable(),
+  /** Every consent ever recorded, oldest first: a revocation never erases the past. */
+  history: z.array(ConsentRecordDto),
+});
+export type ConsentResponse = z.infer<typeof ConsentResponse>;

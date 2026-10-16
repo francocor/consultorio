@@ -16,6 +16,7 @@ import { audit, type AuditActor } from '../../../platform/audit/writer.js';
 import type { Tx } from '../../../platform/db/tenant-context.js';
 import { AppError } from '../../../platform/http/problem.js';
 
+import type { ConsentService } from './consent.js';
 import { changedFieldsBetween, snapshotOf, toPatientDto, toPatientSummary } from './mapping.js';
 import type { RepresentativeService } from './representatives.js';
 import { searchPatients } from './search.js';
@@ -72,6 +73,7 @@ function sqlState(error: unknown): string | undefined {
 export function createPatientService(deps: {
   documents: DocumentRules;
   representatives: RepresentativeService;
+  consent: ConsentService;
   clock?: () => Date;
 }): PatientService {
   const clock = deps.clock ?? (() => new Date());
@@ -219,7 +221,18 @@ export function createPatientService(deps: {
         )
         .orderBy(asc(patient.createdAt), asc(patient.id))
         .limit(5);
-      return { patient: toPatientDto(row), possibleDuplicates: similar.map(toPatientSummary) };
+      // The answer to the consent prompt of the registration.
+      if (request.dataProcessingConsent) {
+        await deps.consent.record(tx, {
+          actor: input.actor,
+          patientId: row.id,
+          country: input.country,
+        });
+      }
+      return {
+        patient: toPatientDto(row, request.dataProcessingConsent ? 'granted' : 'missing'),
+        possibleDuplicates: similar.map(toPatientSummary),
+      };
     },
 
     async get(tx, input) {
@@ -233,7 +246,7 @@ export function createPatientService(deps: {
         resourceId: row.id,
         patientId: row.id,
       });
-      return toPatientDto(row);
+      return toPatientDto(row, await deps.consent.statusOf(tx, row.id));
     },
 
     async update(tx, input) {
@@ -273,7 +286,7 @@ export function createPatientService(deps: {
 
       const before = snapshotOf(row);
       const changed = changedFieldsBetween(before, snapshotOf({ ...row, ...values }));
-      if (changed.length === 0) return toPatientDto(row);
+      if (changed.length === 0) return toPatientDto(row, await deps.consent.statusOf(tx, row.id));
 
       let updated: PatientRow | undefined;
       try {
@@ -313,12 +326,14 @@ export function createPatientService(deps: {
         // Field names and the version, never the values.
         metadata: { fields: changed, version: updated.version },
       });
-      return toPatientDto(updated);
+      return toPatientDto(updated, await deps.consent.statusOf(tx, updated.id));
     },
 
     async setStatus(tx, input) {
       const row = await lock(tx, input.id);
-      if (row.status === input.status) return toPatientDto(row);
+      if (row.status === input.status) {
+        return toPatientDto(row, await deps.consent.statusOf(tx, row.id));
+      }
       const [updated] = await tx
         .update(patient)
         .set({ status: input.status, version: row.version + 1 })
@@ -334,7 +349,7 @@ export function createPatientService(deps: {
         resourceId: updated.id,
         patientId: updated.id,
       });
-      return toPatientDto(updated);
+      return toPatientDto(updated, await deps.consent.statusOf(tx, updated.id));
     },
 
     async history(tx, id) {

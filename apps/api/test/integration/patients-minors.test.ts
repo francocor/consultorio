@@ -53,7 +53,12 @@ function bornYearsAgo(years: number, extraDays = 0): string {
 const MOTHER = { fullName: 'Rosa Gómez', relation: 'mother', phone: '11 4444-5555' };
 
 const register = (body: Record<string, unknown>, by: TestSession = reception) =>
-  api.post('/patients', by, { familyName: 'Gómez', givenNames: 'Tomás', ...body });
+  api.post('/patients', by, {
+    familyName: 'Gómez',
+    givenNames: 'Tomás',
+    dataProcessingConsent: true,
+    ...body,
+  });
 
 async function auditRows(
   patientId: string,
