@@ -41,6 +41,8 @@ describe('checkMigrationDrift', () => {
       [
         "import { pgTable, uuid } from 'drizzle-orm/pg-core';",
         '',
+        // Everything committed, plus one table nobody turned into a migration.
+        `export * from '${join(apiRoot, 'src/db/schema/index.ts').replaceAll('\\', '/')}';`,
         "export const hand_edited = pgTable('hand_edited', { id: uuid('id').primaryKey() });",
         '',
       ].join('\n'),

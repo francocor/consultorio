@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { z } from 'zod';
 
 import { buildServer } from '../../main/server.js';
+import { testTenancy } from '../../testing/tenancy.js';
 
 import { AppError, denied, forbidden } from './problem.js';
 
@@ -10,6 +11,7 @@ function server() {
   const app = buildServer({
     logLevel: 'silent',
     health: { checkDatabase: () => Promise.resolve({ ok: true }) },
+    ...testTenancy(),
   });
   app.get('/read-only', () => {
     throw new AppError('tenant_read_only');

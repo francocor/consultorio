@@ -200,10 +200,10 @@ Depends: S0.07, S1.01.
 
 Depends: S1.03.
 
-- [ ] 1.17 `modules/tenancy/application/resolve-tenant.ts` and `platform/http/tenant-host.ts` preHandler: multi mode resolves `{slug}.BASE_DOMAIN`; `PLATFORM_HOST` selects the operator context; unknown host returns the generic 404; single mode pins `SINGLE_TENANT_SLUG`. [TEN-02, TEN-06] Test: host matrix; spoofed `X-Tenant-Id` header ignored.
+- [x] 1.17 `modules/tenancy/application/resolve-tenant.ts` and `platform/http/tenant-host.ts` preHandler: multi mode resolves `{slug}.BASE_DOMAIN`; `PLATFORM_HOST` selects the operator context; unknown host returns the generic 404; single mode pins `SINGLE_TENANT_SLUG`. [TEN-02, TEN-06] Test: host matrix; spoofed `X-Tenant-Id` header ignored.
 - [ ] 1.18 Contracts guard `apps/api/test/policy/no-tenant-in-contracts.test.ts`: fails if any request schema in `packages/contracts` declares `tenantId`. [TEN-02] Test: that file.
-- [ ] 1.19 `platform/features.ts`: feature registry; `DEPLOYMENT_MODE=single` disables signup and subscription routes; the same build boots in both modes from env only. [TEN-06] Test: boot in both modes; signup route absent in single mode.
-- [ ] 1.20 `modules/tenancy/application/export-registry.ts`: `registerExportContributor(kind: 'administrative' | 'clinical', name, fn)`; a test asserts every module registers a contributor. This is only the hook for the cancellation export built in Stage 6. [TEN-08] Test: registry unit test.
+- [x] 1.19 `platform/features.ts`: feature registry; `DEPLOYMENT_MODE=single` disables signup and subscription routes; the same build boots in both modes from env only. [TEN-06] Test: boot in both modes; signup route absent in single mode.
+- [x] 1.20 `modules/tenancy/application/export-registry.ts`: `registerExportContributor(kind: 'administrative' | 'clinical', name, fn)`; a test asserts every module registers a contributor. This is only the hook for the cancellation export built in Stage 6. [TEN-08] Test: registry unit test.
 
 ## S1.05 Read-only policy skeleton (~300 lines)
 
