@@ -18,6 +18,7 @@ import {
   registerProblemHandlers,
   registerRequestId,
 } from '../platform/http/problem.js';
+import { registerRateLimit, type RateLimitSettings } from '../platform/http/rate-limit.js';
 import { registerTenantHost } from '../platform/http/tenant-host.js';
 import { registerReadOnlyPolicy } from '../platform/read-only/index.js';
 
@@ -45,6 +46,8 @@ export interface BuildServerOptions {
    * application always supplies it (see `createApplication`); only tests of unrelated pieces omit it.
    */
   auth?: AuthGuardOptions;
+  /** Request limits per client and per tenant. Registered before authentication. */
+  rateLimit?: RateLimitSettings;
   /** Routes of the capabilities every deployment has (identity, access, ...). */
   routes?: readonly FeatureRoutes[];
 }
@@ -66,6 +69,7 @@ export function buildServer(options: BuildServerOptions): FastifyInstance {
   registerTenantHost(app, createResolveHost(options.deployment, options.lookupTenant));
   // After the host guard (it reads the tenant) and before any route (it checks their categories).
   registerReadOnlyPolicy(app);
+  if (options.rateLimit) registerRateLimit(app, options.rateLimit);
   if (options.auth) {
     registerOriginCheck(app);
     registerAuthGuard(app, options.auth);
