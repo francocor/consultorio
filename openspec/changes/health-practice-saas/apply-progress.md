@@ -254,7 +254,7 @@ Layers: Unit (Vitest, no Docker), Integration (Vitest + Testcontainers, runs as 
 ### Test summary
 
 - Unit: **45 files, 414 tests** (`pnpm test`).
-- Integration: **16 files, 187 tests** (`pnpm test:integration`, Postgres 17 container, runtime role `app_rw`).
+- Integration: **16 files, 189 tests** (`pnpm test:integration`, Postgres 17 container, runtime role `app_rw`).
 - Layers used: unit, integration, one ESLint-API lint test. No e2e test was added (no UI yet).
 - Property tests: 3 (fast-check) on identifiers.
 - Pure functions created: about 20 (validators, canonicalization, host classification, job gate, matricula, holidays).
@@ -268,9 +268,10 @@ Layers: Unit (Vitest, no Docker), Integration (Vitest + Testcontainers, runs as 
 | `corepack pnpm lint` | exit 0 |
 | `corepack pnpm format:check` | exit 0 |
 | `corepack pnpm test` | 45 files, 414 tests passed |
-| `corepack pnpm test:integration` | 16 files, 187 tests passed |
+| `corepack pnpm test:integration` | 16 files, 189 tests passed |
 | `corepack pnpm build` | exit 0 (api bundle, web with PWA) |
 | `corepack pnpm db:check` | "No migration drift." |
+| CI on PR #14 (draft) | all 6 checks green: typecheck/lint/unit/build, integration (Postgres 17), Docker image smoke test, Playwright, dependency audit, gitleaks |
 | `docker build -f infra/Dockerfile -t consultorio-api:stage1 .` | exit 0; the container answers `/health` 200 with `x-request-id`, an unknown host gets the generic 404 problem+json, and a production config with the local KEK exits 1 naming `KMS_PROVIDER` |
 
 ### Decisions and deviations (all recorded because the owner was asleep)
@@ -293,7 +294,8 @@ Layers: Unit (Vitest, no Docker), Integration (Vitest + Testcontainers, runs as 
 16. **Sealer role.** `audit_sealer` is created by `infra/postgres/init/01-roles.sql` (cluster level) and granted to `app_rw` WITH SET, WITHOUT INHERIT. **Existing local Postgres volumes must be recreated** (`pnpm infra:reset`) or migration 0004 stops with a clear message.
 17. **Tooling added:** `scripts/tenant-policies.ts` (prints the RLS SQL) and `scripts/finish-migration.ts` (inlines tenant foreign keys and appends the policies). The drift test was updated: its synthetic schema now re-exports the committed schema plus one extra table.
 18. **Inline foreign keys to `tenant`.** `tenant` has FORCE row level security, so `ALTER TABLE ... ADD FOREIGN KEY ... REFERENCES tenant` fails in a migration (the validation scan has no tenant context). Foreign keys to `tenant` are declared inside `CREATE TABLE` (done by `finish-migration.ts`). Documented in the migrations.
-19. **Known limits stated in code:** removing only the newest sealed audit rows leaves a shorter consistent chain (needs the external anchor planned for Stage 6); the host guard queries the database on every request (no cache yet, to keep read-only changes immediate); the audit sealer fan-out lists every tenant every 5 s (fine for a pilot, needs a smarter trigger at scale).
+19. **CI follow-ups found by the first push (PR #14).** (a) The CI image smoke test ran the production image with only `DATABASE_URL`; it now passes the production configuration (domains and AWS KMS settings, nothing contacts AWS at startup). (b) The worker end-to-end test timed out in CI: the jobs stayed `created` because each worker fetched ONE job per polling interval (2 s in production), so with a few dozen tenants the per-tenant seal queue starved the newest tenants. `registerJobs` now fetches batches of 20 with `burstWhenBatchFull`, settles every job on its own (`perJobResults`: one failing job no longer fails its neighbours) and logs failures by error code. Regression tests: a 150-job backlog is drained with the production polling interval (it fails with the old settings: verified), and a mixed batch settles as completed/failed/completed. After the fixes all six CI checks pass. A timeout in the worker test also prints the sealed counts and job states.
+20. **Known limits stated in code:** removing only the newest sealed audit rows leaves a shorter consistent chain (needs the external anchor planned for Stage 6); the host guard queries the database on every request (no cache yet, to keep read-only changes immediate); the audit sealer fan-out lists every tenant every 5 s (fine for a pilot, needs a smarter trigger at scale).
 
 ### Files changed in this batch (main areas)
 
