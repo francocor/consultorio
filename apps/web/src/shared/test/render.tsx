@@ -11,6 +11,16 @@ export function urlOf(input: string | URL | Request): string {
   return input instanceof URL ? input.href : input.url;
 }
 
+/** The JSON body of a request a test's fake server received. */
+export function jsonBody(init: RequestInit): unknown {
+  return typeof init.body === 'string' ? (JSON.parse(init.body) as unknown) : undefined;
+}
+
+/** The raw text body of a request. */
+export function bodyText(init: RequestInit): string {
+  return typeof init.body === 'string' ? init.body : '';
+}
+
 export type FetchHandler = (url: string, init: RequestInit) => Response | Promise<Response>;
 
 /** A `fetch` for tests: routes by "METHOD /api/path"; anything unhandled is a loud failure. */
@@ -74,6 +84,7 @@ export function renderWithApp(ui: ReactElement, options: RenderOptions = {}): Ap
     createAppServices({
       fetch: options.fetch ?? fakeFetch({}),
       isOnline: () => true,
+      retry: () => false,
     });
   const result = render(
     <AppProviders services={services} i18n={i18n}>

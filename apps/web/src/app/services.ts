@@ -64,6 +64,8 @@ export interface AppServices {
 export interface AppServicesOptions {
   fetch?: typeof fetch;
   isOnline?: () => boolean;
+  /** Whether a failed query is tried again. Tests turn retries off so failures show at once. */
+  retry?: (failureCount: number, error: unknown) => boolean;
 }
 
 /** Client errors (4xx) are answers, not outages: retrying them only delays the message. */
@@ -85,7 +87,7 @@ export function createAppServices(options: AppServicesOptions = {}): AppServices
       queries: {
         staleTime: 30_000,
         gcTime: 5 * 60_000,
-        retry: shouldRetry,
+        retry: options.retry ?? shouldRetry,
         refetchOnWindowFocus: true,
       },
     },

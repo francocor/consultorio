@@ -30,13 +30,16 @@ export function NavLink({
       className={cn(
         'group touch-target-md flex items-center rounded-md text-sm font-medium transition-colors',
         'text-sidebar-foreground hover:bg-accent hover:text-accent-foreground',
-        'data-[status=active]:bg-primary-soft data-[status=active]:text-primary-ink',
+        'data-[status=active]:bg-primary-soft data-[status=active]:font-semibold data-[status=active]:text-foreground',
         layout === 'side' && 'gap-3 px-3',
         layout === 'stacked' && 'min-w-0 flex-1 flex-col justify-center gap-0.5 px-1 py-1 text-xs',
         hideLabel && 'justify-center px-0',
       )}
     >
-      <Icon className="size-5 shrink-0" aria-hidden="true" />
+      <Icon
+        className="size-5 shrink-0 group-data-[status=active]:text-primary-ink"
+        aria-hidden="true"
+      />
       <span className={cn(hideLabel && 'sr-only', layout === 'stacked' && 'max-w-full truncate')}>
         {label}
       </span>

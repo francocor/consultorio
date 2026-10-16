@@ -4,6 +4,7 @@ import { createContext, use, useEffect, useSyncExternalStore, type ReactNode } f
 import { I18nextProvider } from 'react-i18next';
 
 import type { ApiClient } from '../shared/lib/api-client.js';
+import { Toaster } from '../shared/ui/toaster.js';
 
 import type { AppServices, AppStatus } from './services.js';
 
@@ -22,7 +23,10 @@ export function AppProviders({ services, i18n, children }: AppProvidersProps) {
   return (
     <ServicesContext value={services}>
       <I18nextProvider i18n={i18n}>
-        <QueryClientProvider client={services.queryClient}>{children}</QueryClientProvider>
+        <QueryClientProvider client={services.queryClient}>
+          {children}
+          <Toaster />
+        </QueryClientProvider>
       </I18nextProvider>
     </ServicesContext>
   );

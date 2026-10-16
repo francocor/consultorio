@@ -68,6 +68,7 @@ function setup(options: RenderAppOptions) {
   const services = createAppServices({
     fetch: createRecordingFetch(defaultRoutes(options), requests),
     isOnline: () => true,
+    retry: () => false,
   });
   const i18n = createI18n({
     onMissing: (key) => {

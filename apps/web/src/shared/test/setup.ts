@@ -2,6 +2,10 @@ import '@testing-library/jest-dom/vitest';
 import { cleanup } from '@testing-library/react';
 import { afterEach } from 'vitest';
 
+import { installZodMessages } from '../lib/zod-i18n.js';
+
+installZodMessages();
+
 // Testing Library only registers its automatic cleanup when Vitest globals are enabled.
 afterEach(() => {
   cleanup();
