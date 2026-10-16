@@ -10,13 +10,14 @@ import { afterAll, beforeAll, describe, expect, inject, it } from 'vitest';
 
 import { auditEvent } from '../../src/db/schema/audit.js';
 import { sealTenant } from '../../src/platform/audit/sealer.js';
-import { createRuntimeDb, type DbHandle } from '../../src/platform/db/pool.js';
+import { createRuntimeDb, createSealerDb, type DbHandle } from '../../src/platform/db/pool.js';
 import { buildTestApplication } from '../support/app.js';
 import { clientFor, signInAs, TEST_PASSWORD, type TestSession } from '../support/session.js';
 import { asTenant, createTestTenant, type TestTenant } from '../support/tenants.js';
 import { createTestUser } from '../support/users.js';
 
 let runtime: DbHandle;
+let sealer: DbHandle;
 let app: FastifyInstance;
 let api: ReturnType<typeof clientFor>;
 let tenant: TestTenant;
@@ -30,6 +31,7 @@ let counter = 95_000;
 
 beforeAll(async () => {
   runtime = createRuntimeDb(inject('runtimeUrl'));
+  sealer = createSealerDb(inject('sealerUrl'));
   tenant = await createTestTenant(runtime, { slug: 'audit-viewer' });
   other = await createTestTenant(runtime, { slug: 'audit-viewer-b' });
   app = buildTestApplication(runtime);
@@ -55,6 +57,7 @@ beforeAll(async () => {
 afterAll(async () => {
   await app.close();
   await runtime.close();
+  await sealer.close();
 });
 
 let patientCounter = 0;
@@ -112,7 +115,7 @@ describe('GET /audit-events', () => {
     const before = (
       await sealedApi.get('/audit-events?action=setting.changed', owner2)
     ).json<AuditListResponse>();
-    await asTenant(runtime, sealed.id, (tx) => sealTenant(tx, { graceMs: 0 }));
+    await asTenant(sealer, sealed.id, (tx) => sealTenant(tx, { graceMs: 0 }));
     const after = (
       await sealedApi.get('/audit-events?action=setting.changed', owner2)
     ).json<AuditListResponse>();

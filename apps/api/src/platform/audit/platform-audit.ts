@@ -95,8 +95,9 @@ const DEFAULT_GRACE_MS = 2000;
 const DEFAULT_BATCH = 500;
 
 /**
- * Seals the pending platform events, in `(occurred_at, id)` order. Runs as `audit_sealer`, the only
- * role the append-only trigger lets fill the seal columns, and takes an advisory lock so two
+ * Seals the pending platform events, in `(occurred_at, id)` order. Runs on the sealer's own connection
+ * (`createSealerDb`, the `audit_sealer` login only the worker holds), the only role the append-only
+ * trigger lets fill the seal columns, and takes an advisory lock so two
  * sealers cannot number the same events.
  */
 export async function sealPlatformAudit(
@@ -106,43 +107,38 @@ export async function sealPlatformAudit(
   const graceMs = options.graceMs ?? DEFAULT_GRACE_MS;
   const batch = options.batchSize ?? DEFAULT_BATCH;
 
-  await tx.execute(sql`SET LOCAL ROLE audit_sealer`);
-  try {
-    await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended('audit.seal.platform', 0))`);
+  await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended('audit.seal.platform', 0))`);
 
-    const last = await tx.execute<{ lastSeq: string; hash: string }>(
-      sql`SELECT seq::text AS "lastSeq", hash
-            FROM platform_audit_event
-           WHERE seq IS NOT NULL
-           ORDER BY seq DESC
-           LIMIT 1`,
+  const last = await tx.execute<{ lastSeq: string; hash: string }>(
+    sql`SELECT seq::text AS "lastSeq", hash
+          FROM platform_audit_event
+         WHERE seq IS NOT NULL
+         ORDER BY seq DESC
+         LIMIT 1`,
+  );
+  let seq = Number(last.rows[0]?.lastSeq ?? 0);
+  let previous = last.rows[0]?.hash ?? GENESIS_HASH;
+
+  const pending = await tx.execute<RawChainRow>(
+    sql`SELECT ${PLATFORM_COLUMNS}
+          FROM platform_audit_event
+         WHERE seq IS NULL
+           AND occurred_at <= clock_timestamp() - make_interval(secs => ${graceMs / 1000})
+         ORDER BY occurred_at, id
+         LIMIT ${batch}`,
+  );
+
+  for (const row of pending.rows) {
+    seq += 1;
+    const hash = hashEvent(previous, toCanonical(row, seq));
+    await tx.execute(
+      sql`UPDATE platform_audit_event
+             SET seq = ${seq}, prev_hash = ${previous}, hash = ${hash}
+           WHERE id = ${row.id}::uuid AND seq IS NULL`,
     );
-    let seq = Number(last.rows[0]?.lastSeq ?? 0);
-    let previous = last.rows[0]?.hash ?? GENESIS_HASH;
-
-    const pending = await tx.execute<RawChainRow>(
-      sql`SELECT ${PLATFORM_COLUMNS}
-            FROM platform_audit_event
-           WHERE seq IS NULL
-             AND occurred_at <= clock_timestamp() - make_interval(secs => ${graceMs / 1000})
-           ORDER BY occurred_at, id
-           LIMIT ${batch}`,
-    );
-
-    for (const row of pending.rows) {
-      seq += 1;
-      const hash = hashEvent(previous, toCanonical(row, seq));
-      await tx.execute(
-        sql`UPDATE platform_audit_event
-               SET seq = ${seq}, prev_hash = ${previous}, hash = ${hash}
-             WHERE id = ${row.id}::uuid AND seq IS NULL`,
-      );
-      previous = hash;
-    }
-    return { sealed: pending.rows.length, lastSeq: seq };
-  } finally {
-    await tx.execute(sql`RESET ROLE`);
+    previous = hash;
   }
+  return { sealed: pending.rows.length, lastSeq: seq };
 }
 
 /** Re-walks the platform chain from sequence 1 and reports the first place it breaks. */
@@ -155,36 +151,31 @@ export async function verifyPlatformChain(
   let previous = GENESIS_HASH;
   let verified = 0;
 
-  await tx.execute(sql`SET LOCAL ROLE audit_sealer`);
-  try {
-    for (;;) {
-      const page = await tx.execute<RawChainRow>(
-        sql`SELECT ${PLATFORM_COLUMNS}
-              FROM platform_audit_event
-             WHERE seq IS NOT NULL AND seq >= ${expectedSeq}
-             ORDER BY seq
-             LIMIT ${pageSize}`,
-      );
-      if (page.rows.length === 0) return { ok: true, verified };
+  for (;;) {
+    const page = await tx.execute<RawChainRow>(
+      sql`SELECT ${PLATFORM_COLUMNS}
+            FROM platform_audit_event
+           WHERE seq IS NOT NULL AND seq >= ${expectedSeq}
+           ORDER BY seq
+           LIMIT ${pageSize}`,
+    );
+    if (page.rows.length === 0) return { ok: true, verified };
 
-      for (const row of page.rows) {
-        const seq = Number(row.seqNo);
-        const broken = (reason: ChainBreakReason, at: number): VerifyResult => ({
-          ok: false,
-          firstBadSeq: at,
-          reason,
-          verified,
-        });
-        if (seq !== expectedSeq) return broken('gap', expectedSeq);
-        if (row.prevHash !== previous) return broken('prev_hash_mismatch', seq);
-        const recomputed = hashEvent(previous, toCanonical(row, seq));
-        if (row.hash !== recomputed) return broken('hash_mismatch', seq);
-        previous = recomputed;
-        expectedSeq = seq + 1;
-        verified += 1;
-      }
+    for (const row of page.rows) {
+      const seq = Number(row.seqNo);
+      const broken = (reason: ChainBreakReason, at: number): VerifyResult => ({
+        ok: false,
+        firstBadSeq: at,
+        reason,
+        verified,
+      });
+      if (seq !== expectedSeq) return broken('gap', expectedSeq);
+      if (row.prevHash !== previous) return broken('prev_hash_mismatch', seq);
+      const recomputed = hashEvent(previous, toCanonical(row, seq));
+      if (row.hash !== recomputed) return broken('hash_mismatch', seq);
+      previous = recomputed;
+      expectedSeq = seq + 1;
+      verified += 1;
     }
-  } finally {
-    await tx.execute(sql`RESET ROLE`);
   }
 }

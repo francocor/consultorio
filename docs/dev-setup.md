@@ -33,6 +33,8 @@ Compose creates the `app_owner`, `app_rw`, `app_operator` and `audit_sealer` dat
 pnpm infra:reset                # docker compose down -v: removes containers and volumes
 ```
 
+**The audit sealer is a login of its own.** `audit_sealer` is the only role that may fill the hash chain (`seq`, `prev_hash`, `hash`) of the audit trails, and only the worker connects as it (`AUDIT_SEALER_DATABASE_URL`; the worker refuses to start without it, and the API should not have it). Neither `app_rw` nor `app_operator` can switch to it, so a compromised API connection can neither read the platform trail nor forge a seal; and no role but the sealer can INSERT an event that already carries a seal (migration 0020). A database created before migration 0020 whose `app_rw` membership of `audit_sealer` was granted by a superuser needs `REVOKE audit_sealer FROM app_rw;` as a superuser (the migration says so); local databases: `pnpm infra:reset`. In production the infrastructure provisions the role with a managed secret.
+
 `pnpm infra:up`, `infra:down` and `infra:reset` wrap `docker compose --env-file .env -f infra/docker-compose.yml ...`. The `--env-file .env` part matters: compose reads variable defaults from the folder of the compose file (`infra/`), so without it your root `.env` (ports, passwords) would be ignored. Every published port is bound to `127.0.0.1` only.
 
 `pnpm infra:up` starts Postgres, MinIO and Mailpit with `up --wait`, then runs the one-shot `minio-init` job with `docker compose run`. The job is run on its own because Compose treats a container that exits, even with code 0, as a failure while it waits. It is safe to run again: an existing bucket is kept.

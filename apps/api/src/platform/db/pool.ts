@@ -36,6 +36,15 @@ export function createOperatorDb(operatorDatabaseUrl: string): DbHandle {
 }
 
 /**
+ * Sealer pool: connects as `audit_sealer`, a login of its own that only the worker holds. It can
+ * fill the seal columns of audit events and read the trails it seals, and nothing else: the API
+ * process never has this login, so a flaw in the tenant API cannot rewrite or read the trails.
+ */
+export function createSealerDb(sealerDatabaseUrl: string): DbHandle {
+  return open(sealerDatabaseUrl, 2);
+}
+
+/**
  * Owner pool: connects as `app_owner`. Used only to run migrations and by test setup, never by
  * request handling, because the owner is the one role that could be exempted from policies.
  */

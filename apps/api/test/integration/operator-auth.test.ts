@@ -10,7 +10,7 @@ import {
   OPERATOR_SESSION_IDLE_MS,
 } from '../../src/modules/operator/application/auth.js';
 import { sealPlatformAudit, verifyPlatformChain } from '../../src/platform/audit/platform-audit.js';
-import { createRuntimeDb, type DbHandle } from '../../src/platform/db/pool.js';
+import { createRuntimeDb, createSealerDb, type DbHandle } from '../../src/platform/db/pool.js';
 import { browserHeaders, buildTestApplication } from '../support/app.js';
 import {
   codeFor,
@@ -28,12 +28,14 @@ import { createTestTenant } from '../support/tenants.js';
 import { createTestUser } from '../support/users.js';
 
 let runtime: DbHandle;
+let sealer: DbHandle;
 let harness: OperatorHarness;
 let app: FastifyInstance;
 let clock: TestClock;
 
 beforeAll(async () => {
   runtime = createRuntimeDb(inject('runtimeUrl'));
+  sealer = createSealerDb(inject('sealerUrl'));
   harness = createOperatorHarness();
   clock = createTestClock();
   app = buildTestApplication(runtime, {
@@ -47,6 +49,7 @@ afterAll(async () => {
   await app.close();
   await harness.close();
   await runtime.close();
+  await sealer.close();
 });
 
 const events = (operator: TestOperator) =>
@@ -373,9 +376,9 @@ describe('the platform trail is append-only and sealed', () => {
     await loginOperator(app, operator, clock, { password: 'incorrecta' });
     await loginOperator(app, operator, clock);
 
-    const sealed = await runtime.db.transaction((tx) => sealPlatformAudit(tx, { graceMs: 0 }));
+    const sealed = await sealer.db.transaction((tx) => sealPlatformAudit(tx, { graceMs: 0 }));
     expect(sealed.sealed).toBeGreaterThan(0);
-    expect(await runtime.db.transaction((tx) => verifyPlatformChain(tx))).toMatchObject({
+    expect(await sealer.db.transaction((tx) => verifyPlatformChain(tx))).toMatchObject({
       ok: true,
     });
 
@@ -416,7 +419,7 @@ describe('the platform trail is append-only and sealed', () => {
     await setReason('tampered');
     let broken;
     try {
-      broken = await runtime.db.transaction((tx) => verifyPlatformChain(tx));
+      broken = await sealer.db.transaction((tx) => verifyPlatformChain(tx));
     } finally {
       await setReason(null);
     }

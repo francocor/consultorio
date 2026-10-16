@@ -1,3 +1,4 @@
+import { SYSTEM_USER_ID, type WithTenant } from '../db/tenant-context.js';
 import { JobPayload } from '../jobs/boss.js';
 import { defineJob, type WorkerLog } from '../jobs/define-job.js';
 import type { Metrics } from '../metrics.js';
@@ -9,6 +10,11 @@ export const SEAL_JOB = 'audit.seal';
 export const VERIFY_JOB = 'audit.verify';
 
 export interface AuditJobDeps {
+  /**
+   * `withTenant` on the SEALER's connection (`createSealerDb`): sealing runs there, not in the
+   * transaction of the job, because only the `audit_sealer` login may fill the seal columns.
+   */
+  sealer: WithTenant;
   metrics: Metrics;
   log: WorkerLog;
   /** See `SealOptions.graceMs`. */
@@ -24,11 +30,15 @@ export function createAuditJobs(deps: AuditJobDeps) {
     name: SEAL_JOB,
     category: 'audit_write',
     payload: JobPayload,
-    handler: async ({ tx }) => {
-      await sealTenant(tx, {
-        metrics: deps.metrics,
-        ...(deps.graceMs === undefined ? {} : { graceMs: deps.graceMs }),
-      });
+    handler: async ({ tenantId }) => {
+      // Sealing only touches unsealed rows, so a redelivery after a failure in the job's own
+      // transaction repeats it harmlessly.
+      await deps.sealer({ tenantId, userId: SYSTEM_USER_ID }, (sealerTx) =>
+        sealTenant(sealerTx, {
+          metrics: deps.metrics,
+          ...(deps.graceMs === undefined ? {} : { graceMs: deps.graceMs }),
+        }),
+      );
     },
   });
 

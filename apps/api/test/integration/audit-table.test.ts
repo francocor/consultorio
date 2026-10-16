@@ -2,16 +2,18 @@ import { sql } from 'drizzle-orm';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, inject, it } from 'vitest';
 
-import { createRuntimeDb, type DbHandle } from '../../src/platform/db/pool.js';
+import { createRuntimeDb, createSealerDb, type DbHandle } from '../../src/platform/db/pool.js';
 import { asTenant, createTestTenant, TEST_USER, type TestTenant } from '../support/tenants.js';
 
 let runtime: DbHandle;
+let sealer: DbHandle;
 let owner: pg.Client;
 let a: TestTenant;
 let b: TestTenant;
 
 beforeAll(async () => {
   runtime = createRuntimeDb(inject('runtimeUrl'));
+  sealer = createSealerDb(inject('sealerUrl'));
   owner = new pg.Client({ connectionString: inject('ownerUrl') });
   await owner.connect();
   a = await createTestTenant(runtime, { slug: 'audit-a' });
@@ -20,6 +22,7 @@ beforeAll(async () => {
 
 afterAll(async () => {
   await runtime.close();
+  await sealer.close();
   await owner.end();
 });
 
@@ -204,8 +207,7 @@ describe('append-only triggers', () => {
   it('lets the audit_sealer role fill seq, prev_hash and hash once', async () => {
     const id = await insertEvent(a.id, 'auth.login.success');
 
-    await asTenant(runtime, a.id, async (tx) => {
-      await tx.execute(sql`SET LOCAL ROLE audit_sealer`);
+    await asTenant(sealer, a.id, async (tx) => {
       const result = await tx.execute(
         sql`UPDATE audit_event
                SET seq = 1, prev_hash = ${GENESIS}, hash = ${'a'.repeat(64)}
@@ -226,16 +228,14 @@ describe('append-only triggers', () => {
 
   it('refuses a second fill of an already sealed row', async () => {
     const id = await insertEvent(a.id, 'auth.logout');
-    await asTenant(runtime, a.id, async (tx) => {
-      await tx.execute(sql`SET LOCAL ROLE audit_sealer`);
+    await asTenant(sealer, a.id, async (tx) => {
       await tx.execute(
         sql`UPDATE audit_event SET seq = 2, prev_hash = ${GENESIS}, hash = ${'b'.repeat(64)} WHERE id = ${id}`,
       );
     });
 
     await expect(
-      asTenant(runtime, a.id, async (tx) => {
-        await tx.execute(sql`SET LOCAL ROLE audit_sealer`);
+      asTenant(sealer, a.id, async (tx) => {
         await tx.execute(
           sql`UPDATE audit_event SET seq = 3, prev_hash = ${GENESIS}, hash = ${'c'.repeat(64)} WHERE id = ${id}`,
         );
@@ -249,8 +249,7 @@ describe('append-only triggers', () => {
     const id = await insertEvent(a.id, 'auth.login.failed');
 
     await expect(
-      asTenant(runtime, a.id, async (tx) => {
-        await tx.execute(sql`SET LOCAL ROLE audit_sealer`);
+      asTenant(sealer, a.id, async (tx) => {
         await tx.execute(
           sql`UPDATE audit_event SET seq = 9, prev_hash = ${GENESIS}, hash = ${'d'.repeat(64)}, outcome = 'allow' WHERE id = ${id}`,
         );
@@ -262,8 +261,7 @@ describe('append-only triggers', () => {
     const id = await insertEvent(a.id, 'auth.login.locked');
 
     await expect(
-      asTenant(runtime, a.id, async (tx) => {
-        await tx.execute(sql`SET LOCAL ROLE audit_sealer`);
+      asTenant(sealer, a.id, async (tx) => {
         await tx.execute(sql`UPDATE audit_event SET seq = 10 WHERE id = ${id}`);
       }),
     ).rejects.toThrow();
@@ -273,14 +271,12 @@ describe('append-only triggers', () => {
     await insertEvent(a.id);
 
     await expect(
-      asTenant(runtime, a.id, async (tx) => {
-        await tx.execute(sql`SET LOCAL ROLE audit_sealer`);
+      asTenant(sealer, a.id, async (tx) => {
         await tx.execute(sql`DELETE FROM audit_event`);
       }),
     ).rejects.toMatchObject({ cause: { code: '42501' } });
     await expect(
-      asTenant(runtime, a.id, async (tx) => {
-        await tx.execute(sql`SET LOCAL ROLE audit_sealer`);
+      asTenant(sealer, a.id, async (tx) => {
         await tx.execute(
           sql`INSERT INTO audit_event (tenant_id, action, outcome) VALUES (${a.id}, 'access.denied', 'deny')`,
         );

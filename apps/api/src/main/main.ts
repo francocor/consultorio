@@ -17,7 +17,7 @@ import { startWorker } from '../platform/jobs/worker.js';
 
 import { createAdapterResolver, createTenantRoutedEmail, fake, real } from './adapter-resolver.js';
 import { createApplication } from './application.js';
-import { loadConfig, type Config } from './config.js';
+import { ConfigError, loadConfig, type Config } from './config.js';
 import { deploymentFromConfig } from './deployment.js';
 import { createConfiguredEmail } from './email.js';
 import { createKeyManagement } from './key-management.js';
@@ -110,6 +110,11 @@ async function runApi(config: Config): Promise<void> {
       : {}),
   });
 
+  if (config.auditSealerDatabaseUrl !== undefined) {
+    app.log.warn(
+      'AUDIT_SEALER_DATABASE_URL is set on the API process: only the worker should hold the audit sealer login',
+    );
+  }
   if (!storage) {
     app.log.warn('S3_BUCKET is not set: logo upload is unavailable');
   }
@@ -137,7 +142,16 @@ async function runApi(config: Config): Promise<void> {
  */
 async function runWorker(config: Config): Promise<void> {
   const log = pino(buildLoggerOptions(config.logLevel));
-  const worker = await startWorker({ databaseUrl: config.databaseUrl, log });
+  if (config.auditSealerDatabaseUrl === undefined) {
+    throw new ConfigError(
+      'Invalid environment configuration. AUDIT_SEALER_DATABASE_URL: is required for the worker (the audit_sealer login seals and verifies the audit trails)',
+    );
+  }
+  const worker = await startWorker({
+    databaseUrl: config.databaseUrl,
+    sealerDatabaseUrl: config.auditSealerDatabaseUrl,
+    log,
+  });
   log.info('worker started');
   await waitForShutdownSignal();
   await worker.stop();

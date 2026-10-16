@@ -40,6 +40,12 @@ const envSchema = z
      * does not exist: every `/operator/*` path answers 404. Multi-tenant mode only.
      */
     OPERATOR_DATABASE_URL: z.url({ protocol: /^postgres(ql)?$/ }).optional(),
+    /**
+     * The login of the audit sealer (role `audit_sealer`): the only role that may fill the hash
+     * chain of the audit trails. Only the worker process needs it, and the worker refuses to start
+     * without it. The API process should not have it.
+     */
+    AUDIT_SEALER_DATABASE_URL: z.url({ protocol: /^postgres(ql)?$/ }).optional(),
     DEPLOYMENT_MODE: z.enum(['multi', 'single']).default('multi'),
     /** multi mode: tenants live at `{slug}.BASE_DOMAIN`. Host name only: no scheme, port or path. */
     BASE_DOMAIN: z.string().regex(HOSTNAME).optional(),
@@ -251,6 +257,8 @@ export interface Config {
   readonly databaseUrl: string;
   /** Set when the operator console is enabled (multi-tenant mode and OPERATOR_DATABASE_URL). */
   readonly operatorDatabaseUrl?: string;
+  /** Set for the worker: the `audit_sealer` login that seals and verifies the audit trails. */
+  readonly auditSealerDatabaseUrl?: string;
   readonly deploymentMode: 'multi' | 'single';
   /** Set in multi mode. */
   readonly baseDomain?: string;
@@ -319,6 +327,9 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   return {
     nodeEnv: value.NODE_ENV,
     databaseUrl: value.DATABASE_URL,
+    ...(value.AUDIT_SEALER_DATABASE_URL === undefined
+      ? {}
+      : { auditSealerDatabaseUrl: value.AUDIT_SEALER_DATABASE_URL }),
     ...(value.OPERATOR_DATABASE_URL === undefined || value.DEPLOYMENT_MODE === 'single'
       ? {}
       : { operatorDatabaseUrl: value.OPERATOR_DATABASE_URL }),

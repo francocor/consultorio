@@ -19,12 +19,18 @@ import { createPasswordHasher } from '../../src/modules/identity/infrastructure/
 import { sealTenant } from '../../src/platform/audit/sealer.js';
 import { verifyTenantChain } from '../../src/platform/audit/verify.js';
 import { createTenantKeys } from '../../src/platform/crypto/tenant-keys.js';
-import { createOwnerDb, createRuntimeDb, type DbHandle } from '../../src/platform/db/pool.js';
+import {
+  createOwnerDb,
+  createRuntimeDb,
+  createSealerDb,
+  type DbHandle,
+} from '../../src/platform/db/pool.js';
 import { createWithTenant } from '../../src/platform/db/tenant-context.js';
 import { createOperatorHarness, type OperatorHarness } from '../support/operator.js';
 import { asTenant, createTestTenant } from '../support/tenants.js';
 
 let runtime: DbHandle;
+let sealer: DbHandle;
 let operator: OperatorHarness;
 let deps: DemoSeedDeps;
 const clock = () => new Date('2026-03-02T12:00:00Z');
@@ -62,6 +68,7 @@ beforeAll(async () => {
   await seedPlatformCatalogs(owner.db);
   await owner.close();
   runtime = createRuntimeDb(inject('runtimeUrl'));
+  sealer = createSealerDb(inject('sealerUrl'));
   operator = createOperatorHarness();
   deps = {
     withTenant: createWithTenant(runtime.db),
@@ -75,6 +82,7 @@ beforeAll(async () => {
 afterAll(async () => {
   await operator.close();
   await runtime.close();
+  await sealer.close();
 });
 
 describe('app.demo_reset', () => {
@@ -145,7 +153,7 @@ describe('app.demo_reset', () => {
   it('returns the last sealed hash of the trail it removed', async () => {
     const id = await demoTenant('reset-last-hash');
     await seedDemoTenant(deps, id);
-    await asTenant(runtime, id, (tx) => sealTenant(tx, { graceMs: 0 }));
+    await asTenant(sealer, id, (tx) => sealTenant(tx, { graceMs: 0 }));
 
     const outcome = await callReset(id);
 
@@ -158,8 +166,8 @@ describe('app.demo_reset', () => {
     const other = await demoTenant('reset-other');
     await seedDemoTenant(deps, wiped);
     await seedDemoTenant(deps, other);
-    await asTenant(runtime, other, (tx) => sealTenant(tx, { graceMs: 0 }));
-    await asTenant(runtime, wiped, (tx) => sealTenant(tx, { graceMs: 0 }));
+    await asTenant(sealer, other, (tx) => sealTenant(tx, { graceMs: 0 }));
+    await asTenant(sealer, wiped, (tx) => sealTenant(tx, { graceMs: 0 }));
     const before = await snapshotDemoTenant(deps.withTenant, other);
 
     await callReset(wiped);
@@ -172,11 +180,11 @@ describe('app.demo_reset', () => {
   it('a reseeded organization has a fresh trail that verifies from the start', async () => {
     const id = await demoTenant('reset-reseeded');
     await seedDemoTenant(deps, id);
-    await asTenant(runtime, id, (tx) => sealTenant(tx, { graceMs: 0 }));
+    await asTenant(sealer, id, (tx) => sealTenant(tx, { graceMs: 0 }));
     await callReset(id);
 
     await seedDemoTenant(deps, id);
-    await asTenant(runtime, id, (tx) => sealTenant(tx, { graceMs: 0 }));
+    await asTenant(sealer, id, (tx) => sealTenant(tx, { graceMs: 0 }));
 
     const chain = await asTenant(runtime, id, (tx) => verifyTenantChain(tx));
     expect(chain.ok).toBe(true);
@@ -215,7 +223,7 @@ describe('resetDemoTenant', () => {
   it('records the discontinuity of the trail in the platform trail, with the last hash', async () => {
     const id = await demoTenant('reset-platform-audit');
     await seedDemoTenant(deps, id);
-    await asTenant(runtime, id, (tx) => sealTenant(tx, { graceMs: 0 }));
+    await asTenant(sealer, id, (tx) => sealTenant(tx, { graceMs: 0 }));
 
     const result = await resetDemoTenant(port(), id, { operatorId: null });
 

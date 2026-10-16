@@ -245,3 +245,20 @@ describe('key management configuration', () => {
     expect(message).not.toContain(LOCAL_KEK);
   });
 });
+
+describe('audit sealer login', () => {
+  it('is optional for the config (only the worker needs it) and kept as given', () => {
+    const url = 'postgres://audit_sealer:placeholder@localhost:5432/app';
+
+    expect(loadConfig(multi).auditSealerDatabaseUrl).toBeUndefined();
+    expect(loadConfig({ ...multi, AUDIT_SEALER_DATABASE_URL: url }).auditSealerDatabaseUrl).toBe(
+      url,
+    );
+  });
+
+  it('rejects a value that is not a postgres URL, naming the variable', () => {
+    expect(() => loadConfig({ ...multi, AUDIT_SEALER_DATABASE_URL: 'https://x.test' })).toThrow(
+      /AUDIT_SEALER_DATABASE_URL/,
+    );
+  });
+});

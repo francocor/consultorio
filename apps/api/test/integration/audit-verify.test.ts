@@ -6,12 +6,14 @@ import { createAuditJobs } from '../../src/platform/audit/jobs.js';
 import { sealTenant } from '../../src/platform/audit/sealer.js';
 import { verifyTenantChain } from '../../src/platform/audit/verify.js';
 import { audit, type AuditActor } from '../../src/platform/audit/writer.js';
-import { createRuntimeDb, type DbHandle } from '../../src/platform/db/pool.js';
+import { createRuntimeDb, createSealerDb, type DbHandle } from '../../src/platform/db/pool.js';
+import { createWithTenant } from '../../src/platform/db/tenant-context.js';
 import { runJob } from '../../src/platform/jobs/define-job.js';
 import { createMetrics } from '../../src/platform/metrics.js';
 import { asTenant, createTestTenant, TEST_USER, type TestTenant } from '../support/tenants.js';
 
 let runtime: DbHandle;
+let sealer: DbHandle;
 let owner: pg.Client;
 
 const ACTOR: AuditActor = {
@@ -24,12 +26,14 @@ const ACTOR: AuditActor = {
 
 beforeAll(async () => {
   runtime = createRuntimeDb(inject('runtimeUrl'));
+  sealer = createSealerDb(inject('sealerUrl'));
   owner = new pg.Client({ connectionString: inject('ownerUrl') });
   await owner.connect();
 });
 
 afterAll(async () => {
   await runtime.close();
+  await sealer.close();
   await owner.end();
 });
 
@@ -46,7 +50,7 @@ async function chainOf(slug: string, count: number): Promise<TestTenant> {
       }),
     );
   }
-  await asTenant(runtime, tenant.id, (tx) => sealTenant(tx, { graceMs: 0 }));
+  await asTenant(sealer, tenant.id, (tx) => sealTenant(tx, { graceMs: 0 }));
   return tenant;
 }
 
@@ -186,7 +190,7 @@ describe('audit.verify job and metrics', () => {
   it('counts no chain break for an intact chain', async () => {
     const tenant = await chainOf('verify-job-ok', 5);
     const metrics = createMetrics();
-    const { verify: job } = createAuditJobs({ metrics, log });
+    const { verify: job } = createAuditJobs({ sealer: createWithTenant(sealer.db), metrics, log });
 
     const result = await runJob(runtime.db, job, {
       ...base,
@@ -203,7 +207,7 @@ describe('audit.verify job and metrics', () => {
     const tenant = await chainOf('verify-job-break', 6);
     await tamper(tenant, `UPDATE audit_event SET action = 'auth.logout' WHERE seq = 4`);
     const metrics = createMetrics();
-    const { verify: job } = createAuditJobs({ metrics, log });
+    const { verify: job } = createAuditJobs({ sealer: createWithTenant(sealer.db), metrics, log });
 
     const result = await runJob(runtime.db, job, {
       ...base,
@@ -227,7 +231,7 @@ describe('audit.verify job and metrics', () => {
       ),
     );
     const metrics = createMetrics();
-    const { verify: job } = createAuditJobs({ metrics, log });
+    const { verify: job } = createAuditJobs({ sealer: createWithTenant(sealer.db), metrics, log });
 
     const result = await runJob(runtime.db, job, {
       ...base,

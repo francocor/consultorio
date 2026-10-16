@@ -9,12 +9,14 @@ import {
 } from '../../src/platform/audit/chain.js';
 import { sealTenant } from '../../src/platform/audit/sealer.js';
 import { audit, type AuditActor } from '../../src/platform/audit/writer.js';
-import { createRuntimeDb, type DbHandle } from '../../src/platform/db/pool.js';
+import { createRuntimeDb, createSealerDb, type DbHandle } from '../../src/platform/db/pool.js';
 import { createWithTenant } from '../../src/platform/db/tenant-context.js';
 import { createMetrics } from '../../src/platform/metrics.js';
 import { asTenant, createTestTenant, TEST_USER, type TestTenant } from '../support/tenants.js';
 
 let runtime: DbHandle;
+/** The `audit_sealer` login: the only connection that may fill the seal columns. */
+let sealer: DbHandle;
 let a: TestTenant;
 let b: TestTenant;
 
@@ -28,12 +30,14 @@ const ACTOR: AuditActor = {
 
 beforeAll(async () => {
   runtime = createRuntimeDb(inject('runtimeUrl'));
+  sealer = createSealerDb(inject('sealerUrl'));
   a = await createTestTenant(runtime, { slug: 'sealer-a' });
   b = await createTestTenant(runtime, { slug: 'sealer-b' });
 });
 
 afterAll(async () => {
   await runtime.close();
+  await sealer.close();
 });
 
 async function record(tenantId: string, label: string): Promise<void> {
@@ -68,7 +72,7 @@ async function unsealedCount(tenantId: string): Promise<number> {
 }
 
 function seal(tenantId: string, options: Parameters<typeof sealTenant>[1] = { graceMs: 0 }) {
-  return asTenant(runtime, tenantId, (tx) => sealTenant(tx, options));
+  return asTenant(sealer, tenantId, (tx) => sealTenant(tx, options));
 }
 
 /** Recomputes the whole chain from the rows and compares every stored value. */
@@ -237,13 +241,18 @@ describe('audit sealer', () => {
     expect(afterSeal).toBe(0);
   });
 
-  it('restores the role it switched to, so the transaction continues as app_rw', async () => {
-    const role = await asTenant(runtime, a.id, async (tx) => {
+  it('runs on the sealer login, and the runtime login cannot seal at all', async () => {
+    await record(a.id, 'login-check');
+    const user = await asTenant(sealer, a.id, async (tx) => {
       await sealTenant(tx, { graceMs: 0 });
       const result = await tx.execute<{ user: string }>(sql`SELECT current_user AS "user"`);
       return result.rows[0]?.user;
     });
+    await record(a.id, 'login-check-2');
 
-    expect(role).toBe('app_rw');
+    expect(user).toBe('audit_sealer');
+    await expect(
+      asTenant(runtime, a.id, (tx) => sealTenant(tx, { graceMs: 0 })),
+    ).rejects.toMatchObject({ cause: { code: '42501' } });
   });
 });

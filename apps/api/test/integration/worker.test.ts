@@ -92,6 +92,7 @@ describe('worker role: sealing end to end', () => {
   it('seals new audit events of every tenant by itself, shortly after they are written', async () => {
     worker = await startWorker({
       databaseUrl: inject('runtimeUrl'),
+      sealerDatabaseUrl: inject('sealerUrl'),
       log: { info: () => undefined, error: (o) => errors.push(o) },
       sealIntervalMs: 300,
       sealGraceMs: 100,

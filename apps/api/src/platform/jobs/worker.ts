@@ -1,7 +1,7 @@
 import { SEAL_JOB, VERIFY_JOB, createAuditJobs } from '../audit/jobs.js';
 import { ensureAuditPartitions } from '../audit/partitions.js';
 import { sealPlatformAudit, verifyPlatformChain } from '../audit/platform-audit.js';
-import { createRuntimeDb } from '../db/pool.js';
+import { createRuntimeDb, createSealerDb } from '../db/pool.js';
 import type { Db } from '../db/pool.js';
 import { SYSTEM_USER_ID, createWithTenant } from '../db/tenant-context.js';
 import { createMetrics, type Metrics } from '../metrics.js';
@@ -13,6 +13,11 @@ import { createDailyTicker, createTicker, type Ticker } from './ticker.js';
 
 export interface WorkerOptions {
   databaseUrl: string;
+  /**
+   * The `audit_sealer` login. Only the worker holds it: sealing and verifying the audit trails
+   * happens on this connection, never on the one the API uses.
+   */
+  sealerDatabaseUrl: string;
   log: WorkerLog;
   metrics?: Metrics;
   /** How often new audit events are sealed. Defaults to 5 seconds (design, ADR-005). */
@@ -60,11 +65,13 @@ export async function fanOut(
 export async function startWorker(options: WorkerOptions): Promise<Worker> {
   const metrics = options.metrics ?? createMetrics();
   const handle = createRuntimeDb(options.databaseUrl);
+  const sealerHandle = createSealerDb(options.sealerDatabaseUrl);
   const boss = createBoss(options.databaseUrl, 'worker');
   const client = createJobClient(boss);
 
   await boss.start();
   const audit = createAuditJobs({
+    sealer: createWithTenant(sealerHandle.db),
     metrics,
     log: options.log,
     ...(options.sealGraceMs === undefined ? {} : { graceMs: options.sealGraceMs }),
@@ -98,7 +105,7 @@ export async function startWorker(options: WorkerOptions): Promise<Worker> {
     createTicker({
       intervalMs: options.sealIntervalMs ?? 5000,
       tick: async () => {
-        await handle.db.transaction((tx) =>
+        await sealerHandle.db.transaction((tx) =>
           sealPlatformAudit(
             tx,
             options.sealGraceMs === undefined ? {} : { graceMs: options.sealGraceMs },
@@ -112,7 +119,7 @@ export async function startWorker(options: WorkerOptions): Promise<Worker> {
       tick: async () => {
         await ensureAuditPartitions(handle.db, { metrics });
         await fanOut(handle.db, client, VERIFY_JOB, { singletonSeconds: 3600 });
-        const platform = await handle.db.transaction((tx) => verifyPlatformChain(tx));
+        const platform = await sealerHandle.db.transaction((tx) => verifyPlatformChain(tx));
         metrics.gauge('platform_audit_chain_verified_events', platform.verified);
         if (!platform.ok) {
           metrics.increment('platform_audit_chain_break_total');
@@ -133,6 +140,7 @@ export async function startWorker(options: WorkerOptions): Promise<Worker> {
       await Promise.all(tickers.map((ticker) => ticker.stop()));
       await boss.stop({ graceful: true, timeout: 10_000 });
       await handle.close();
+      await sealerHandle.close();
     },
   };
 }

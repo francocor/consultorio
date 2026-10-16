@@ -112,6 +112,7 @@ export async function startStack(options: StackOptions): Promise<Stack> {
     const ownerUrl = url('app_owner', 'app_owner_dev_only');
     const runtimeUrl = url('app_rw', 'app_rw_dev_only');
     const operatorUrl = url('app_operator', 'app_operator_dev_only');
+    const sealerUrl = url('audit_sealer', 'audit_sealer_dev_only');
 
     log('Migrating');
     await runMigrations(ownerUrl);
@@ -220,6 +221,7 @@ export async function startStack(options: StackOptions): Promise<Stack> {
     if (options.withWorker !== false) {
       worker = await startWorker({
         databaseUrl: runtimeUrl,
+        sealerDatabaseUrl: sealerUrl,
         log: pino({ level: 'warn' }),
         sealGraceMs: 500,
         sealIntervalMs: 1500,
