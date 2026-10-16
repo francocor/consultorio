@@ -47,6 +47,11 @@ export const userAccount = pgTable(
     passwordChangedAt: timestamp('password_changed_at', { withTimezone: true }),
     /** Field-encrypted TOTP secret (envelope encryption, bound to this row). Null until enrollment starts. */
     totpSecretEnc: bytea('totp_secret_enc'),
+    /**
+     * A secret being enrolled or replaced, not yet confirmed. The active secret keeps working until
+     * the user proves the new one with a code, so abandoning a replacement never locks them out.
+     */
+    totpPendingEnc: bytea('totp_pending_enc'),
     /** Tenant whose data key encrypted the secret (an account may sign in to several tenants). */
     totpTenantId: uuid('totp_tenant_id'),
     /** Set when the first code was verified; until then the enrollment is pending. */

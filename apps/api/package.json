@@ -18,6 +18,8 @@
   "dependencies": {
     "@aws-sdk/client-kms": "^3.1152.0",
     "@node-rs/argon2": "^2.2.2",
+    "@oslojs/encoding": "^1.1.0",
+    "@oslojs/otp": "^1.1.0",
     "drizzle-orm": "^0.45.4",
     "fastify": "^5.12.7",
     "fastify-type-provider-zod": "^7.0.0",

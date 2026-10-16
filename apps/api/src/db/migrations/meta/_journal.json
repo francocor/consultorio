@@ -71,6 +71,13 @@
       "when": 1792123561989,
       "tag": "0009_action_token",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1792123960083,
+      "tag": "0010_totp_pending",
+      "breakpoints": true
     }
   ]
 }
