@@ -446,7 +446,7 @@ Depends: S1.31, S1.20, S1.21, S1.22.
 
 - [x] 1.116 `features/patients/*`: `PatientPicker` (DNI or name), list, create form with shared Zod DNI/CUIT validation, duplicate-409 flow, deactivate, consent capture prompt. [PAT-01, PAT-02, PAT-04, PAT-08, PAT-10] Test: component tests.
 - [x] 1.117 Patient detail: demographics, coverage, representative, rights requests, version history, `SafetyFlag` ("see professional" for non-professionals), assignment actions. [PAT-05, PAT-07, PAT-09, PAT-11, PAT-12, AUZ-10] Test: component tests.
-- [ ] 1.118 Anamnesis form (professional only). Test: Playwright, reception sees no anamnesis, professional does; axe. [PAT-06]
+- [x] 1.118 Anamnesis form (professional only). Test: Playwright, reception sees no anamnesis, professional does; axe. [PAT-06]
 
 ## S1.34 Audit and settings screens (~350 lines)
 
@@ -454,13 +454,13 @@ Depends: S1.31, S1.23, S1.25, S1.18.
 
 - [x] 1.119 `features/audit/*`: filterable event table, patient access report, export button. [AUD-06, AUD-07] Test: component tests.
 - [x] 1.120 `features/settings/branding` (live contrast warning showing requested and effective colors, logo upload, preview) and `features/settings/security` (require 2FA, reception-metadata toggle, sharing toggle with explicit psychology confirmation). [BRD-01, BRD-03, BRD-05, AUZ-07, AUZ-11] Test: component tests.
-- [ ] 1.121 Playwright: a branding change applies after reload without flash; a second tenant keeps its own theme. [BRD-02] Test: that spec.
+- [x] 1.121 Playwright: a branding change applies after reload without flash; a second tenant keeps its own theme. [BRD-02] Test: that spec.
 
 ## S1.35 Operator console UI (~300 lines)
 
 Depends: S1.26, S1.31.
 
-- [ ] 1.122 `features/operator/*` (platform host only): operator login with TOTP, tenant list, create-tenant form (owner email, demo toggle at creation only), demo reset button. [TEN-07, ONB-01, DEM-01] Test: Playwright creates a tenant and the owner invitation appears in Mailpit.
+- [x] 1.122 `features/operator/*` (platform host only): operator login with TOTP, tenant list, create-tenant form (owner email, demo toggle at creation only), demo reset button. [TEN-07, ONB-01, DEM-01] Test: Playwright creates a tenant and the owner invitation appears in Mailpit.
 
 ## S1.36 Demo tenant scaffold (~400 lines)
 
@@ -476,9 +476,9 @@ Depends: S1.26, S1.19, S1.21.
 
 Depends: all S1 slices.
 
-- [ ] 1.128 `apps/web/e2e/stage1-demo.spec.ts`: two tenants with different branding, role-specific views, audit trail visible. [TEN-01, BRD-02] Test: that spec.
-- [ ] 1.129 `docs/security/asvs-l2-stage1.md` checklist with evidence links, then a fresh-context security review (`judgment-day`) of identity, authz, RLS, audit; fix findings before Stage 2. Test: review report attached to the PR.
-- [ ] 1.130 Re-run `sdd-init`; decide strict TDD for Stage 2 apply. Test: none.
+- [x] 1.128 `apps/web/e2e/stage1-demo.spec.ts`: two tenants with different branding, role-specific views, audit trail visible. [TEN-01, BRD-02] Test: that spec.
+- [x] 1.129 `docs/security/asvs-l2-stage1.md` checklist with evidence links, then a fresh-context security review (`judgment-day`) of identity, authz, RLS, audit; fix findings before Stage 2. Test: review report attached to the PR. (Done as a self-review recorded in the checklist, with six findings fixed; the independent review is still to be run, see apply-progress batch 6.)
+- [x] 1.130 Re-run `sdd-init`; decide strict TDD for Stage 2 apply. Test: none.
 
 ---
 

@@ -255,7 +255,7 @@ describe('completing a reset', () => {
     const token = tokenFrom(user.email);
 
     const weak = await complete(token, '1234');
-    const common = await complete(token, 'password123');
+    const common = await complete(token, 'password1234');
     const good = await complete(token);
 
     expect(weak.statusCode).toBe(400);

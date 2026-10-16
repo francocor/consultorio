@@ -9,7 +9,7 @@ installZodMessages();
 
 // A lazy screen behind a router can take longer than one second to appear on a busy machine
 // (the whole suite runs in parallel). A wait that is too short is a flaky test, not a fast one.
-configure({ asyncUtilTimeout: 5000 });
+configure({ asyncUtilTimeout: 15_000 });
 
 // Testing Library only registers its automatic cleanup when Vitest globals are enabled.
 afterEach(() => {
