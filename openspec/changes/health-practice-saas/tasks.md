@@ -302,8 +302,8 @@ Depends: S1.01, S1.10.
 
 Depends: S1.15.
 
-- [ ] 1.59 `platform/authz/sharing-scope.ts`: `readable(entry, actor, ctx)` per design 4.2 (author, treating, `author_only`, prescriptions never follow sharing, inclusion list `sharedTemplates`); `treating()` behind a port. [AUZ-11, AUZ-09] Test: see 1.60.
-- [ ] 1.60 Table-driven and fast-check tests (author, treating, shared, `author_only`, D17 prescription, psychology excluded by default, new templates never auto-added) and a helper marking shared reads `reason = 'shared'`. [AUZ-11] Test: that file.
+- [x] 1.59 `platform/authz/sharing-scope.ts`: `readable(entry, actor, ctx)` per design 4.2 (author, treating, `author_only`, prescriptions never follow sharing, inclusion list `sharedTemplates`); `treating()` behind a port. [AUZ-11, AUZ-09] Test: see 1.60.
+- [x] 1.60 Table-driven and fast-check tests (author, treating, shared, `author_only`, D17 prescription, psychology excluded by default, new templates never auto-added) and a helper marking shared reads `reason = 'shared'`. [AUZ-11] Test: that file.
 
 ## S1.17 SQL clinical backstop and care tables (~400 lines)
 

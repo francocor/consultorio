@@ -99,6 +99,9 @@ importers:
       esbuild:
         specifier: ^0.28.2
         version: 0.28.2
+      fast-check:
+        specifier: ^4.10.2
+        version: 4.10.2
       testcontainers:
         specifier: ^12.2.1
         version: 12.2.1
