@@ -41,6 +41,13 @@ pnpm infra:reset                # docker compose down -v: removes containers and
 
 Sensitive fields are encrypted with a per-tenant key that a key-encryption key (KEK) wraps. In development the KEK is `KMS_LOCAL_KEK_BASE64` from `.env.example`: a public placeholder, so anything you encrypt locally can be decrypted by anyone with this repository. Production refuses the local KEK and uses AWS KMS (`KMS_PROVIDER=aws`).
 
+### Sign-in, second factor and email
+
+- **Email.** Password reset links and staff invitations go through SMTP. With `pnpm infra:up` running and `SMTP_HOST=localhost` (the default of `.env.example`) every message lands in Mailpit at `http://localhost:8025`; nothing leaves your machine. Without `SMTP_HOST` the API keeps messages in memory, delivers nothing and logs a warning at startup. Production requires `SMTP_HOST` and refuses `SMTP_SECURITY=none`.
+- **Passwords.** New passwords are checked against the common-password list in `apps/api/assets` (the API stops at startup if it cannot find it). `AUTH_BREACH_CHECK=true` also asks a breach range API about the first five characters of the password hash; the password never leaves the server.
+- **Lockout.** `AUTH_LOCKOUT_MAX_FAILURES` consecutive failures (a wrong password or a wrong second-factor code) lock an account for `AUTH_LOCKOUT_MINUTES`. Short delays apply before the lock.
+- **Second factor.** Owners, admins and professionals have 7 days from their first sign-in to enroll an authenticator app (TOTP); after that their session can only reach the enrollment endpoints. Any authenticator app works in development.
+
 The API reads the tenant from the host name: `{slug}.localhost` in multi mode (current browsers resolve `*.localhost` to 127.0.0.1) and `platform.localhost` for the operator console.
 
 ## Run the apps

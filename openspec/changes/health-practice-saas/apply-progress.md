@@ -6,7 +6,7 @@ Mode: Standard for Stage 0; **Strict TDD from Stage 1** (`strict_tdd: true` in `
 
 Stage 0: tasks 0.2 to 0.34 done and merged. Task 0.1 (rotate secrets) is a manual owner action and is NOT done.
 
-Stage 1: slices S1.00 to S1.08 done (tasks 1.1 to 1.34, 34 of 34). Next: S1.09 (identity schema and password policy). See "Batch 3: Stage 1, slices S1.00 to S1.08" at the end of this file.
+Stage 1: slices S1.00 to S1.17 done (tasks 1.1 to 1.63, 63 of the 130 tasks of Stage 1). Next: S1.18 (access module: grants, settings, locations). See "Batch 3: Stage 1, slices S1.00 to S1.08" and "Batch 4: Stage 1, slices S1.09 to S1.17" at the end of this file.
 
 ## Batch 1: Stage 0, slices S0.01 to S0.05
 
@@ -301,6 +301,121 @@ Layers: Unit (Vitest, no Docker), Integration (Vitest + Testcontainers, runs as 
 
 `packages/contracts/src` (errors, roles, route-category, result, ports, audit-actions, country/ar), `packages/config/eslint/base.js`, `apps/api/src/{main,platform,modules/tenancy,country/ar,adapters,db}`, `apps/api/test/{integration,tenancy,policy,support}`, `apps/api/scripts`, `infra/{docker-compose.yml,postgres/init/01-roles.sql}`, `.env.example`, `docs/{external-dependencies,dev-setup}.md`, `openspec/.../tasks.md`.
 
+### Remaining after batch 3
+
+Slices S1.09 to S1.37 (tasks 1.35 onward). Batch 4 (below) did S1.09 to S1.17.
+
+## Batch 4: Stage 1, slices S1.09 to S1.17
+
+Mode: **Strict TDD**. Branch `feat/stage-1-secure-core`, same delivery as batch 3 (work-unit commits, one draft PR #14 with `size:exception`, nothing merged). Toolchain: Node v24.22.0, pnpm 10.34.7, Docker engine running (Testcontainers: Postgres 17, Mailpit v1.31.6). Owner asleep, automatic mode: every decision below was taken from the design and specs.
+
+### Commits (in order)
+
+| Slice | Tasks | Commits |
+|---|---|---|
+| S1.09 Identity schema, password policy | 1.35 to 1.37 | `bd0c959` accounts, memberships, sessions, recovery codes + RLS (migration 0007); `a38665c` password policy + bundled list; `77449f4` argon2id with dummy verification |
+| S1.10 Sessions and login | 1.38 to 1.41 | `11dc0af` sessions (migration 0008); `a6f0034` cookie, auth guard, Origin check; `ca6acb7` login, logout, me, sessions routes, `createApplication` |
+| S1.11 Lockout and throttling | 1.42 to 1.44 | `96bdbdf` rate limits; `48c7ceb` lockout, backoff, throttles |
+| S1.12 Action tokens, email | 1.45, 1.46 | `3366a95` tokens (migration 0009); `fb8a4de` email port, SMTP + fake adapters, templates, SMTP config |
+| S1.13 Two-factor | 1.47 to 1.50 | `ee4b12a` TOTP, recovery codes, service (migration 0010); `04c914c` login flow, enrollment scope, routes |
+| S1.14 Reset and invitations | 1.51 to 1.53 | `90f8d99` field errors, background tasks, breach check; `76c8519` reset, admin reset, invitations |
+| S1.15 Authorization engine | 1.54 to 1.58 | `113a25a` `can()` and the professional gate; `44787a8` permission guard, role matrix and admin-denied harness |
+| S1.16 Sharing-scope predicate | 1.59, 1.60 | `ddf9a39` |
+| S1.17 SQL backstop and care tables | 1.61 to 1.63 | `c0b9353` care tables, functions (migration 0011); `3e43aa6` clinical policies helper, sharing settings per transaction, agreement test |
+
+### What was built
+
+- **Identity data.** `user_account` (global, citext email, no `tenant_id`), `membership`, `session`, `login_challenge`, `recovery_code`. `user_account` is protected by its own policies: readable if you ARE the user or the account has a membership in your tenant; insert and update only for the account the transaction acts as; the login lookup is the SECURITY DEFINER function `app.lookup_user_for_login(email)` (minimal columns, and a policy for `app_owner` only, so `app_rw` cannot read accounts directly). `app.revoke_user_sessions` (migration 0008) ends the sessions of the acting user in every tenant.
+- **Passwords.** Argon2id (OWASP baseline), `verifyOrDummy` (exactly one verification on every path), policy of 10 to 128 characters, bundled NCSC top-100k list (`apps/api/assets`), rejection of a single repeated character and of the account email, optional k-anonymity breach check behind `AUTH_BREACH_CHECK` (off).
+- **Sessions and HTTP.** Opaque 256-bit token, SHA-256 at rest, cookie `sid` `HttpOnly; Secure; SameSite=Lax; Path=/` with no Domain, idle 12 h and absolute 7 days, rotation on login and on privilege change. Authentication guard: every route declares `config.auth` or `config.permission`, otherwise it fails at boot. Origin check on every non-GET request (a request with a session cookie and no Origin is refused). `createApplication` is the composition both `main` and the tests build.
+- **Lockout.** Gate before credentials, attempt charged BEFORE the password is verified (parallel guesses cannot exceed the limit), 10 failures lock for 15 minutes (both configurable by env), backoff 1 s doubling to 5 min after the third failure, per-account in-memory throttle for unknown identifiers so they behave like real accounts, per-address delay (only delays, after 10 failures), dummy verification on refused paths, audit `auth.account.locked|unlocked`, `auth.login.locked`.
+- **Rate limit.** Per client address and per tenant, behind a store interface (in-memory), route-level overrides, `Retry-After`, probes exempt.
+- **Tokens and email.** `action_token` (SHA-256 at rest, atomic single-use redeem, session binding, per-kind lifetime, canonical kinds with only the four account kinds enabled). Email port, SMTP adapter (Mailpit locally, SES SMTP in production), in-memory fake, es-AR templates for reset and invitation. Production requires `SMTP_HOST` and TLS.
+- **Second factor.** TOTP (RFC 6238 vectors pass) with the secret encrypted by the tenant data key, replay block by last used step (atomic), ten hashed recovery codes, pending enrollment that never disables the working factor, challenge of 5 minutes and 5 attempts, wrong or reused codes count toward the same lock, mandatory for owner/admin/professional with a 7-day grace from the first sign-in then an enrollment-scoped session (403 `two_factor_enrollment_required` everywhere else), reception optional unless `tenant.settings.require_2fa`, password asked again to replace the factor or regenerate codes, mandatory roles cannot disable it.
+- **Reset and invitations.** Reset request answers 204 for everyone and works after the response (background task), at most 3 emails per account per hour, 30-minute single-use token, weak passwords do not burn the token, completion ends every session in every tenant, lifts a lock, signs nobody in and does not bypass 2FA. `POST /users/:id/password-reset` (permission `staff.manage`) only sends the email. Invitations: ceiling per inviter role (admin cannot invite owners), re-checked when accepted, an existing account is linked without touching its password, 7-day single-use link.
+- **Authorization.** `can(actor, action, resource)` over the catalog (grants limited to `GRANTABLE`, clinical needs the professional gate, unknown action or malformed actor denies, cross-tenant denies, patient class denied on every staff action), `deriveProfessionalId` (active profile + recorded valid matricula only), permission guard with uniform 403 and `auditDeny` on its own connection, `routePermissions` registry, role x permission matrix over HTTP generated from the catalog, admin-denied harness over every `clinical.*` route.
+- **Sharing scope.** Pure predicate with the `treating()` port, inclusion list, prescriptions never shared (D17), psychology off by default, new templates never auto-added, `sharedReadAuditReason`. SQL mirror `app.clinical_readable` + `clinicalPolicies(table)` helper (RESTRICTIVE `clinical_professionals_only` and `clinical_scope`); `withTenant` loads the sharing settings once per professional transaction; sharing defaults to OFF when not loaded. A fast-check property test runs the TypeScript predicate and the SQL function on 150 random combinations.
+- **Care tables.** `care_assignment` (ended, never deleted), `care_relationship` with the generated `active` flag, writable only through SECURITY DEFINER functions called by triggers (`app.care_set_assigned`, `app.care_adjust` for the Stage 2 triggers).
+
+### TDD Cycle Evidence
+
+RED means the test file was written before the production code it exercises. GREEN is the file-level run that followed. "Triangulated" means at least two cases with different inputs or a generated table.
+
+| Task | Test file(s) | Layer | RED | GREEN | Triangulation |
+|---|---|---|---|---|---|
+| 1.35 | `test/integration/identity-schema.test.ts`, generated `isolation.generated.test.ts` | Integration | written first (import of the schema failed) | green, 49 tests with the generated suite | readable through membership, own row, two tenants, update of a colleague, no delete, citext duplicate, lookup function columns, role and status checks, recovery code owner |
+| 1.36 | `modules/identity/domain/password-policy.test.ts`, `breached-passwords.test.ts` | Unit | written first | green | length boundaries (9/10, 128/129), emoji count, list hit with case and spaces, passphrases, email part, real 100k list, breach prefix only |
+| 1.37 | `infrastructure/argon2.test.ts` | Unit | written first | green | spy counts: known, unknown, undefined hash, dummy built once, real library |
+| 1.38 | `sessions.test.ts` (unit), `test/integration/sessions.test.ts`, `platform/http/session-cookie.test.ts` | Unit + Integration | written first | green (one test corrected: it spaced uses beyond the idle window) | fake clock at idle and absolute limits, rotation, revoke all, revoke everywhere as the acting user only, cookie flags matrix |
+| 1.39 | `test/integration/auth-routes.test.ts`, `packages/contracts/src/auth.test.ts` | Integration + Unit | written first | green | wrong password vs unknown email equal, deactivated, other host, cookie replay on another tenant, rotation, sessions list and revoke, 404 for another user's session |
+| 1.40 | `platform/http/auth-guard.test.ts`, `csrf-origin.test.ts`, `test/policy/public-routes.test.ts` | Unit + policy | written first | green | public prefix table (8 allowed, 9 refused), boot failure without declaration, Origin matrix (5 hostile origins), cookie without Origin |
+| 1.41 | `auth-routes.test.ts` (audit section) | Integration | written first | green | success, failure with known and unknown account, no password, no email |
+| 1.42 | `lockout.test.ts` (unit, 21), `attempt-throttle.test.ts`, `test/integration/lockout.test.ts` | Unit + Integration | written first | green after two test fixes (per-test client address) | 10 failures lock, 11th with right password 401, unlock after exactly 15 minutes, last second still locked, backoff table, parallel 25 guesses |
+| 1.43 | `platform/http/rate-limit.test.ts`, `test/integration/login-rate-limit.test.ts` | Unit + Integration | written first | green | 429 after the limit, per tenant, per address, tenant-wide, route override, probes exempt, IPv6 /64 |
+| 1.44 | `lockout.test.ts` (integration) | Integration | written first | green | locked account vs unknown email: same body, status and header names; one verification per path |
+| 1.45 | `platform/tokens/kinds.test.ts`, `test/integration/action-tokens.test.ts` | Unit + Integration | written first | green | 12 simultaneous redemptions, one winner; expiry boundary; wrong kind keeps the token; other tenant; revoke; inspect; session binding |
+| 1.46 | `platform/mail/templates.test.ts`, `adapters/fake-email/fake-email.test.ts`, `test/integration/smtp-email.test.ts` | Unit + Integration | written first | green (Mailpit container) | HTML escaping, javascript: link refused, singular/plural, accents survive SMTP, delivery failure without leaking |
+| 1.47 | `application/totp.test.ts`, `test/integration/two-factor.test.ts` | Unit + Integration | written first | green | six RFC 6238 vectors, drift window, replay, spaces, malformed codes; encrypted at rest; concurrent replay; other tenant's key |
+| 1.48 | `recovery-codes.test.ts`, `two-factor.test.ts` | Unit + Integration | written first | green | ten distinct, no confusable characters, any typing style, single use, regenerate, hashes only |
+| 1.49 | `test/integration/two-factor-routes.test.ts`, `two-factor-policy.test.ts` | Unit + Integration | written first | green after a lock test fix and a real bug (below) | role x grace x enrolled matrix, enrollment scope 403, challenge single use, 5 minutes, 5 attempts, 10 wrong codes lock |
+| 1.50 | `two-factor-routes.test.ts` (audit) | Integration | written first | green | enrolled, verified, failed, recovery used, regenerated, disabled |
+| 1.51 | `test/integration/password-reset.test.ts` | Integration | written first | green | non-enumeration, 3 per hour, older links cancelled, reuse, 30 minutes, weak password keeps the link, all sessions ended in two tenants, 2FA kept, lock lifted |
+| 1.52 | `password-reset.test.ts` (admin), `packages/contracts/src/auth-recovery.test.ts` | Integration + Unit | written first | green | reception 403, other tenant 404, body with password 400, contract scan: only five request schemas carry a password and none names a user |
+| 1.53 | `test/integration/invitation-accept.test.ts`, `domain/invitation-ceiling.test.ts` | Integration + Unit | written first | green | roles equal invited, expired, inviter demoted or deactivated, existing account keeps its password, already member 409 |
+| 1.54 | `platform/authz/can.test.ts` | Unit | written first | green | every non-patient role against every non-clinical permission, grants, unknown action, malformed actor, cross tenant, patient class |
+| 1.55 | `platform/authz/guard.test.ts`, `test/policy/route-role-matrix.test.ts` | Unit + policy | written first | green | 3 staff roles x 34 permissions over HTTP, boot rules, denial audited, recording failure still denies |
+| 1.56 | `test/integration/admin-denied.test.ts` | Integration | written first | green after a harness fix (Fastify registers HEAD for every GET) | owner, admin, reception on every clinical route: 403, uniform body, one audit row per denial |
+| 1.57 | `platform/authz/professional-gate.test.ts` | Unit | written first | green | six invalid profiles, three roles without the professional role, repository failure |
+| 1.58 | `can.test.ts`, `guard.test.ts` | Unit | written first | green | every staff permission denied to the patient class, disguised patient, portal permission kept |
+| 1.59 / 1.60 | `platform/authz/sharing-scope.test.ts` | Unit + property | written first | green | table cases per rule plus five fast-check properties |
+| 1.61 | `test/integration/care-relationship.test.ts` | Integration | written first | green after a real bug (below) | assignment, removal, re-assignment, one live per pair, direct writes refused, functions not callable, counters with a Stage 2 style trigger |
+| 1.62 | `db/schema/_helpers.test.ts`, `clinical-backstop.test.ts` | Unit + Integration | written first | green | SQL text of both policies, quoting, constant template kind |
+| 1.63 | `test/integration/clinical-backstop.test.ts` | Integration + property | written first | green | admin 0 rows, non-treating 0, treating 1, author_only, sharing on/off, immediate effect, prescription, damaged settings; SQL vs TypeScript on 150 random cases |
+
+### Test summary and verification (tip of `feat/stage-1-secure-core`)
+
+- Unit: **76 files, 766 tests** (`pnpm test`, includes contracts and policy tests). Integration: **33 files, 432 tests** (`pnpm test:integration`, Postgres 17 as `app_rw`, Mailpit container).
+- Layers: unit, integration, policy (route enumeration), property (fast-check, 6 properties). No e2e added (no UI yet).
+
+| Command | Result |
+|---|---|
+| `corepack pnpm install --frozen-lockfile` | exit 0 |
+| `corepack pnpm typecheck` | exit 0 |
+| `corepack pnpm lint` | exit 0 |
+| `corepack pnpm format:check` | exit 0 |
+| `corepack pnpm test` | 76 files, 766 tests passed |
+| `corepack pnpm test:integration` | 33 files, 432 tests passed |
+| `corepack pnpm build` | exit 0 |
+| `corepack pnpm db:check` | "No migration drift." |
+| `corepack pnpm audit --prod --audit-level=high` | no known vulnerabilities |
+| `docker build -f infra/Dockerfile -t consultorio-api:stage1b .` + run with the production configuration of the CI smoke test | `/health` 200, unknown route 404, the common-password list is found in `/app/assets`; without `SMTP_HOST` the process exits naming `SMTP_HOST` |
+
+### Bugs found by the tests and fixed in the same slice
+
+1. **2FA step throttled right after a correct password.** The password attempt is charged before it is verified; the refund after a correct password left `last_failed_at` at "now", so after three earlier typos the code step was refused by the backoff. Fixed: the second-factor step is gated by the lock only (the backoff does not apply once the password was proven) and the refund restores the previous `last_failed_at`. Regression test: "does not make a user wait after earlier typos".
+2. **`app_rw` could call the maintenance functions of the care relationship.** `REVOKE ... FROM PUBLIC` is not enough here because the default privileges of schema `app` give `app_rw` EXECUTE on every new function. Fixed with `REVOKE ... FROM PUBLIC, app_rw` (the triggers run them as the owner). Test: direct calls fail.
+3. A challenge test spaced attempts beyond the 5-minute challenge life and proved nothing; rewritten to use short spacing and a fresh challenge per attempt.
+
+### Decisions and deviations (all recorded because the owner was asleep)
+
+1. **Table name `user_account`** (not `user`): `user` is a reserved word. `session.tenant_id` IS the task's `active_tenant_id`.
+2. **Migrations** 0007 identity, 0008 session revocation, 0009 action token, 0010 `totp_pending_enc` column, 0011 care and clinical backstop. All foreign keys to RLS tables are inline in `CREATE TABLE` (same reason as batch 3). `care_relationship` and `care_assignment` have no foreign keys to `patient` and `professional` yet (the tables arrive in S1.19 and S1.20, which must add the composite keys; if the validation scan needs a tenant context, use `NOT VALID` or `NO FORCE` around the statement).
+3. **`@fastify/rate-limit` was NOT used.** The plugin adds its limiter as a per-route hook, which runs after application-level hooks, so it cannot protect the session lookup of the auth guard, and registering a plugin is asynchronous so a route added right after `buildServer` could miss it. `platform/http/rate-limit.ts` is a synchronous `onRequest` hook over a `RateLimitStore` interface, with the same behavior the task lists (per address and per tenant, separate buckets, store interface, 429 with `Retry-After`). It was installed, tried and removed.
+4. **Pre-charge lockout.** The attempt is charged before the password is verified and refunded on a right password that needs a second factor. This is what makes parallel guesses count; it is more than the task text, which only lists the counter.
+5. **2FA secret per account, encrypted with the tenant key of the tenant where it was enrolled** (`totp_tenant_id`), because the account is global but keys are per tenant; another tenant reads it through a short transaction on the enrolling tenant. A pending secret lives in `totp_pending_enc` so a replacement never disables the working factor.
+6. **Recovery codes** are 16 symbols of a 31-symbol alphabet (about 79 bits) hashed with SHA-256, shown once.
+7. **Reset flows.** The reset request does its work in a background task after answering 204 (equal timing for known and unknown accounts); the tasks are awaited when the server closes and failures are logged by error code. At most 3 reset emails per account per hour. The link base is the tenant host of the request (`/reset-password?token=`, `/accept-invitation?token=` are the web routes S1.31 must provide). The organization name in the emails is the tenant slug until branding (S1.25) gives a display name.
+8. **Invitation ceiling** (not specified in detail): owner may invite any staff role, admin may invite admin, professional and reception but not owner, nobody else may invite; re-checked when the invitation is accepted. The invitation is issued by `identity.invitations.issue` (S1.19 will call it and send the email). An existing account is linked to the new tenant without touching its password and without signing in.
+9. **Routes without a permission** must live under `/auth/` (self-service) or be `public`; a policy exists at boot. `POST /users/:id/password-reset` uses `staff.manage`.
+10. **`createApplication` options** `professionals`, `grants` and `modules` are the extension points for S1.18, S1.19 and the later capabilities. Until they exist nobody passes the professional gate and no grants apply (fail closed).
+11. **`withTenant` loads the sharing settings** (`app.clinical_sharing`, `app.shared_templates`) only for transactions with an `actingProfessionalId`, one extra statement per such transaction. Without them sharing is off.
+12. **`app.clinical_readable` template convention:** the note's template name; `NULL` for the entries under the general ceiling; `'prescription'` for prescriptions (excluded from sharing even if listed). `sqlTemplateKind()` maps TypeScript entries to it and the agreement test covers it. The RESTRICTIVE policies apply to reads and writes; author-only write rules stay in the services and in the Stage 2 triggers.
+13. **Session mismatch audit.** A cookie replayed on another tenant's host simply finds no session (RLS) and gets 401. It is not written as `cross_tenant.denied` because the session cannot be looked up across tenants without another definer function. Cookies are host-only, so this only happens with a stolen cookie.
+14. **Environment variables added** (all documented in `.env.example`, validated by tests): `AUTH_LOCKOUT_MAX_FAILURES`, `AUTH_LOCKOUT_MINUTES`, `AUTH_BREACH_CHECK`, `SMTP_HOST`, `SMTP_PORT`, `SMTP_SECURITY`, `SMTP_USER`, `SMTP_PASSWORD`, `MAIL_FROM`. `SMTP_HOST` is required in production (with `starttls` or `tls`); the CI image smoke test and the compose `api` service were updated. `.env.example` was edited with placeholders only; no `.env` file was read or written.
+15. **Dockerfile** copies `apps/api/assets` (the common-password list) to `/app/assets`; the API stops at startup if it cannot find it.
+16. **Data asset licence.** `common-passwords-100k.txt` is the NCSC list distributed by SecLists (MIT); see `apps/api/assets/README.md`.
+17. **Known limits:** the in-memory throttles and rate limits are per process (move to the store interface backed by Postgres or Valkey at two instances); a client address that fails more than 10 times is delayed up to 5 minutes (a clinic sharing one address could be delayed by one noisy user); the admin reset route sends the email inside the request, so an SMTP outage answers 500 to the administrator.
+
 ### Remaining
 
-Slices S1.09 to S1.37 (tasks 1.35 onward). Next: **S1.09 Identity schema and password policy** (tasks 1.35 to 1.37 in `tasks.md`).
+Slices S1.18 to S1.37 (tasks 1.64 onward). Next: **S1.18 Access module: grants, settings, locations** (it plugs `grants` into `createApplication` and the sharing settings write path), then S1.19 (staff and professionals: plugs `professionals`, sends invitations).
