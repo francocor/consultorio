@@ -162,6 +162,40 @@ export const TENANT_FIXTURES: Record<string, TenantTableFixture> = {
               RETURNING id`,
       ),
   },
+  permission_grant: {
+    insert: async (tx, tenantId, overrides) => {
+      const membershipId =
+        overrides?.['membership_id'] ??
+        (await insertMembership(tx, tenantId, await insertUser(tx)));
+      return returningId(
+        tx,
+        sql`INSERT INTO permission_grant (tenant_id, membership_id, permission, granted_by)
+              VALUES (${tenantId}, ${membershipId}, 'cash.operate', ${randomUUID()})
+              RETURNING id`,
+      );
+    },
+  },
+  membership_location: {
+    insert: async (tx, tenantId, overrides) => {
+      const membershipId =
+        overrides?.['membership_id'] ??
+        (await insertMembership(tx, tenantId, await insertUser(tx)));
+      const locationId =
+        overrides?.['location_id'] ??
+        (await returningId(
+          tx,
+          sql`INSERT INTO location (tenant_id, name, time_zone)
+                VALUES (${tenantId}, ${unique('Location')}, 'America/Argentina/Buenos_Aires')
+                RETURNING id`,
+        ));
+      return returningId(
+        tx,
+        sql`INSERT INTO membership_location (tenant_id, membership_id, location_id)
+              VALUES (${tenantId}, ${membershipId}, ${locationId})
+              RETURNING id`,
+      );
+    },
+  },
   tenant_feature: {
     insert: (tx, tenantId) =>
       returningId(
