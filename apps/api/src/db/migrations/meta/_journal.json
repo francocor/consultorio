@@ -64,6 +64,13 @@
       "when": 1792122850250,
       "tag": "0008_session_revocation",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1792123561989,
+      "tag": "0009_action_token",
+      "breakpoints": true
     }
   ]
 }

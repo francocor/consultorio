@@ -67,6 +67,15 @@ async function insertMembership(tx: Tx, tenantId: string, userId: string): Promi
 }
 
 export const TENANT_FIXTURES: Record<string, TenantTableFixture> = {
+  action_token: {
+    insert: (tx, tenantId) =>
+      returningId(
+        tx,
+        sql`INSERT INTO action_token (tenant_id, kind, token_hash, subject_id, expires_at)
+              VALUES (${tenantId}, 'password_reset', ${randomUUID()}, ${randomUUID()}, now() + interval '30 minutes')
+              RETURNING id`,
+      ),
+  },
   membership: {
     insert: async (tx, tenantId) => insertMembership(tx, tenantId, await insertUser(tx)),
   },
