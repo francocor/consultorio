@@ -12,7 +12,9 @@ import type { ExportRegistry } from '../tenancy/index.js';
 import { exportAccess } from './application/export-contributor.js';
 import { createGrants, type Grants } from './application/grants.js';
 import { createRoleService, type SessionRevoker } from './application/roles.js';
+import { createSettingsService } from './application/settings.js';
 import { memberRoutes } from './http/member-routes.js';
+import { settingsRoutes } from './http/settings-routes.js';
 
 /** Registers what access contributes to the cancellation export. */
 export function registerAccessExportContributors(registry: ExportRegistry): void {
@@ -48,9 +50,15 @@ export function createAccess(options: AccessOptions): Access {
     roles,
   });
 
+  const settings = settingsRoutes({
+    withTenant: options.withTenant,
+    settings: createSettingsService(),
+  });
+
   return {
     routes: (app) => {
       members(app);
+      settings(app);
     },
   };
 }
