@@ -31,6 +31,15 @@ export function unique(prefix: string): string {
 }
 
 export const TENANT_FIXTURES: Record<string, TenantTableFixture> = {
+  audit_event: {
+    insert: (tx, tenantId) =>
+      returningId(
+        tx,
+        sql`INSERT INTO audit_event (tenant_id, action, outcome)
+              VALUES (${tenantId}, 'access.denied', 'deny')
+              RETURNING id`,
+      ),
+  },
   location: {
     insert: (tx, tenantId) =>
       returningId(

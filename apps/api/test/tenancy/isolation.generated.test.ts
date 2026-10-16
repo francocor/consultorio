@@ -25,6 +25,16 @@ const catalog = new pg.Client({ connectionString: inject('ownerUrl') });
 await catalog.connect();
 const TABLES = await listTenantTables(catalog);
 const COMPOSITE_FKS = await listCompositeTenantForeignKeys(catalog);
+/** Tables on which the runtime role has no UPDATE privilege (audit trail). */
+const APPEND_ONLY = new Set(
+  (
+    await catalog.query<{ table: string }>(
+      `SELECT t AS "table" FROM unnest($1::text[]) AS t
+        WHERE NOT has_table_privilege('app_rw', t, 'UPDATE')`,
+      [TABLES],
+    )
+  ).rows.map((row) => row.table),
+);
 await catalog.end();
 
 let runtime: DbHandle;
@@ -80,12 +90,16 @@ describe('tenant isolation, generated from the catalog', () => {
     it('stops tenant B from updating or moving a row of tenant A', async () => {
       const fixture = fixtureFor(table, TENANT_FIXTURES);
       const id = await asTenant(runtime, a.id, (tx) => fixture.insert(tx, a.id));
-
-      const touched = await asTenant(runtime, b.id, (tx) =>
+      const update = asTenant(runtime, b.id, (tx) =>
         tx.execute(sql`UPDATE ${sql.identifier(table)} SET tenant_id = ${b.id} WHERE id = ${id}`),
       );
 
-      expect(touched.rowCount).toBe(0);
+      if (APPEND_ONLY.has(table)) {
+        // Append-only tables give the runtime role no UPDATE at all: denied before any row is seen.
+        await expect(update).rejects.toMatchObject({ cause: { code: '42501' } });
+      } else {
+        expect((await update).rowCount).toBe(0);
+      }
       expect(await rowsVisibleTo(runtime, a.id, table, id)).toBe(1);
     });
   });
