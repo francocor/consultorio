@@ -8,9 +8,11 @@ import type { AuthzOptions } from '../../platform/authz/guard.js';
 import type { WithTenant } from '../../platform/db/tenant-context.js';
 import type { ExportRegistry } from '../tenancy/index.js';
 
+import { createCoverageService } from './application/coverage.js';
 import { exportPatients } from './application/export-contributor.js';
 import { createPatientService, type DocumentRules } from './application/patients.js';
 import { createRepresentativeService } from './application/representatives.js';
+import { coverageRoutes } from './http/coverage-routes.js';
 import { patientRoutes } from './http/patient-routes.js';
 import { representativeRoutes } from './http/representative-routes.js';
 
@@ -53,11 +55,17 @@ export function createPatients(options: PatientsOptions): Patients {
   });
 
   const contacts = representativeRoutes({ withTenant: options.withTenant, representatives });
+  const coverage = coverageRoutes({
+    withTenant: options.withTenant,
+    auditDeny: options.auditDeny,
+    coverage: createCoverageService(clock),
+  });
 
   return {
     routes: (app) => {
       registry(app);
       contacts(app);
+      coverage(app);
     },
   };
 }

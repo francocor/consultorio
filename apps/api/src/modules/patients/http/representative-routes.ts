@@ -3,13 +3,15 @@ import {
   RepresentativeInput,
   RepresentativeListResponse,
 } from '@consultorio/contracts';
-import type { FastifyInstance, FastifyRequest } from 'fastify';
+import type { FastifyInstance } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 
 import type { WithTenant } from '../../../platform/db/tenant-context.js';
 import { AppError } from '../../../platform/http/problem.js';
 import type { RepresentativeService } from '../application/representatives.js';
+
+import { tenantOf } from './editor.js';
 
 export interface RepresentativeRoutesDeps {
   withTenant: WithTenant;
@@ -18,12 +20,6 @@ export interface RepresentativeRoutesDeps {
 
 const PatientParams = z.strictObject({ id: z.uuid() });
 const RepresentativeParams = z.strictObject({ id: z.uuid(), representativeId: z.uuid() });
-
-function countryOf(request: FastifyRequest): string {
-  const context = request.hostContext;
-  if (context?.kind !== 'tenant') throw new AppError('unauthenticated');
-  return context.tenant.country;
-}
 
 /**
  * Representatives of a patient: administrative contacts of a minor (patients, "Minors and
@@ -45,7 +41,7 @@ export function representativeRoutes(deps: RepresentativeRoutesDeps) {
         return deps.withTenant({ tenantId: actor.tenantId, userId: actor.userId }, (tx) =>
           deps.representatives.list(tx, {
             patientId: request.params.id,
-            country: countryOf(request),
+            country: tenantOf(request).country,
           }),
         );
       },
@@ -74,7 +70,7 @@ export function representativeRoutes(deps: RepresentativeRoutesDeps) {
             deps.representatives.add(tx, {
               actor: { ...request.auditActor, userId: actor.userId },
               patientId: request.params.id,
-              country: countryOf(request),
+              country: tenantOf(request).country,
               representative: request.body,
             }),
         );
@@ -100,7 +96,7 @@ export function representativeRoutes(deps: RepresentativeRoutesDeps) {
             actor: { ...request.auditActor, userId: actor.userId },
             patientId: request.params.id,
             representativeId: request.params.representativeId,
-            country: countryOf(request),
+            country: tenantOf(request).country,
           }),
         );
         return reply.code(204).send();

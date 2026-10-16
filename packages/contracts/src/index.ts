@@ -4,6 +4,7 @@ export * from './auth.js';
 export * from './auth-recovery.js';
 export * from './country/ar/index.js';
 export * from './country/catalog.js';
+export * from './coverage.js';
 export * from './errors.js';
 export * from './health.js';
 export * from './patients.js';

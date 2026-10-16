@@ -11,16 +11,15 @@ import type {
 } from '@consultorio/contracts';
 import { and, asc, eq, ne, sql } from 'drizzle-orm';
 
-import { careRelationship } from '../../../db/schema/care.js';
 import { patient, patientVersion, type PatientRow } from '../../../db/schema/patients.js';
 import { audit, type AuditActor } from '../../../platform/audit/writer.js';
 import type { Tx } from '../../../platform/db/tenant-context.js';
 import { AppError } from '../../../platform/http/problem.js';
-import { AccessRefused } from '../../access/index.js';
 
 import { changedFieldsBetween, snapshotOf, toPatientDto, toPatientSummary } from './mapping.js';
 import type { RepresentativeService } from './representatives.js';
 import { searchPatients } from './search.js';
+import { assertMayWriteDemographics, type DemographicsEditor } from './write-access.js';
 
 /** Validates and normalizes an identity document with the rules of the organization's country. */
 export type DocumentRules = (
@@ -37,12 +36,8 @@ export class DuplicatePatient extends Error {
   }
 }
 
-export interface PatientEditor {
+export interface PatientEditor extends DemographicsEditor {
   actor: AuditActor & { userId: string };
-  /** Holds patient administration (role or grant): may edit any patient. */
-  canAdminister: boolean;
-  /** Set only for a professional with a valid profile. */
-  professionalId: string | null;
 }
 
 export interface PatientService {
@@ -141,21 +136,6 @@ export function createPatientService(deps: {
       changedFields,
       snapshot: snapshotOf(row),
     });
-  }
-
-  async function isTreating(tx: Tx, patientId: string, professionalId: string | null) {
-    if (professionalId === null) return false;
-    const [row] = await tx
-      .select({ id: careRelationship.id })
-      .from(careRelationship)
-      .where(
-        and(
-          eq(careRelationship.patientId, patientId),
-          eq(careRelationship.professionalId, professionalId),
-          eq(careRelationship.active, true),
-        ),
-      );
-    return row !== undefined;
   }
 
   return {
@@ -259,11 +239,7 @@ export function createPatientService(deps: {
     async update(tx, input) {
       const row = await lock(tx, input.id);
       const { editor, request } = input;
-      // Demographics are organization-wide to READ; to WRITE a professional needs the patient to be
-      // theirs (authorization, "Demographics are organization-wide"), unless they administer patients.
-      if (!editor.canAdminister && !(await isTreating(tx, row.id, editor.professionalId))) {
-        throw new AccessRefused('patient_edit_not_treating');
-      }
+      await assertMayWriteDemographics(tx, editor, row.id);
       if (request.expectedVersion !== undefined && request.expectedVersion !== row.version) {
         throw new AppError('stale_revision');
       }

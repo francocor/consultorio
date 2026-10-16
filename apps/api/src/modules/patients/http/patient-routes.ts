@@ -6,7 +6,6 @@ import {
   PatientSearchQuery,
   PatientSearchResponse,
   UpdatePatientRequest,
-  effectivePermissions,
 } from '@consultorio/contracts';
 import type { FastifyInstance, FastifyRequest } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
@@ -19,6 +18,8 @@ import { AppError, conflictWith } from '../../../platform/http/problem.js';
 import { AccessRefused } from '../../access/index.js';
 import { DuplicatePatient, type PatientService } from '../application/patients.js';
 
+import { demographicsEditor, tenantOf } from './editor.js';
+
 export interface PatientRoutesDeps {
   withTenant: WithTenant;
   auditDeny: AuthzOptions['auditDeny'];
@@ -26,12 +27,6 @@ export interface PatientRoutesDeps {
 }
 
 const PatientParams = z.strictObject({ id: z.uuid() });
-
-function tenantOf(request: FastifyRequest) {
-  const context = request.hostContext;
-  if (context?.kind !== 'tenant') throw new AppError('unauthenticated');
-  return context.tenant;
-}
 
 /**
  * Patient registry routes. Demographics are organization-wide: anyone on the staff reads them.
@@ -144,10 +139,7 @@ export function patientRoutes(deps: PatientRoutesDeps) {
             deps.patients.update(tx, {
               editor: {
                 actor: { ...request.auditActor, userId: actor.userId },
-                canAdminister: effectivePermissions(actor.roles, actor.grants).includes(
-                  'patients.administer',
-                ),
-                professionalId: actor.professionalId,
+                ...demographicsEditor(actor),
               },
               country: tenantOf(request).country,
               id: request.params.id,
