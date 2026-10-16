@@ -16,6 +16,7 @@ import {
 import { createRuntimeDb, type DbHandle } from '../../src/platform/db/pool.js';
 import { createWithTenant } from '../../src/platform/db/tenant-context.js';
 import { asTenant, createTestTenant, type TestTenant } from '../support/tenants.js';
+import { createTestProfessional } from '../support/users.js';
 
 /**
  * The SQL backstop of clinical access (ADR-002, ADR-003), exercised on test-only tables that carry
@@ -43,6 +44,8 @@ beforeAll(async () => {
   await owner.connect();
   a = await createTestTenant(runtime, { slug: 'backstop-a' });
   b = await createTestTenant(runtime, { slug: 'backstop-b' });
+  // Real profiles behind the ids the tests use (the care tables key on the profile).
+  for (const id of [ME, COLLEAGUE, OTHER]) await createTestProfessional(runtime, a.id, { id });
 
   const tables = [
     // A note: carries its template.

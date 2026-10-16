@@ -6,6 +6,11 @@
 --   app_rw     is what the API and worker connect as. It does NOT own any table, so
 --              FORCE ROW LEVEL SECURITY applies to it, and it has no BYPASSRLS.
 --
+-- a third login role for the platform operator console:
+--   app_operator  what the operator console connects as. It may touch the tenant row, the platform
+--                 tables and a few administrative tables of a tenant, and NO clinical or patient
+--                 table. Its privileges are granted by the migrations of the operator console.
+--
 -- and one role nobody logs in as:
 --   audit_sealer  the only role allowed to fill the hash-chain columns of audit_event. The
 --                 sealer job switches to it with SET LOCAL ROLE. app_rw may SET it but does not
@@ -25,6 +30,11 @@ BEGIN
       NOSUPERUSER NOCREATEROLE NOCREATEDB NOBYPASSRLS NOREPLICATION;
   END IF;
 
+  IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'app_operator') THEN
+    CREATE ROLE app_operator LOGIN PASSWORD 'app_operator_dev_only'
+      NOSUPERUSER NOCREATEROLE NOCREATEDB NOBYPASSRLS NOREPLICATION;
+  END IF;
+
   IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'audit_sealer') THEN
     CREATE ROLE audit_sealer NOLOGIN NOSUPERUSER NOCREATEROLE NOCREATEDB NOBYPASSRLS NOREPLICATION;
   END IF;
@@ -32,6 +42,6 @@ BEGIN
 
   -- The owner needs to create extensions and schemas in this database.
   EXECUTE format('ALTER DATABASE %I OWNER TO app_owner', current_database());
-  EXECUTE format('GRANT CONNECT ON DATABASE %I TO app_rw', current_database());
+  EXECUTE format('GRANT CONNECT ON DATABASE %I TO app_rw, app_operator', current_database());
 END
 $$;

@@ -1,8 +1,10 @@
 import { randomUUID } from 'node:crypto';
 
 import type { Role } from '@consultorio/contracts';
+import { eq } from 'drizzle-orm';
 
 import { membership, userAccount } from '../../src/db/schema/identity.js';
+import { professional } from '../../src/db/schema/staff.js';
 import { createPasswordHasher } from '../../src/modules/identity/infrastructure/argon2.js';
 import type { DbHandle } from '../../src/platform/db/pool.js';
 import { createWithTenant } from '../../src/platform/db/tenant-context.js';
@@ -86,4 +88,41 @@ export async function addTestMembership(
     tx.insert(membership).values({ id: membershipId, tenantId, userId, roles: [...roles] }),
   );
   return membershipId;
+}
+
+/**
+ * A health professional: a user with the professional role and a profile. The profile id can be
+ * chosen, so a test that needs a known professional id gets a real row behind it (the care tables
+ * point at the profile with a composite foreign key).
+ */
+export async function createTestProfessional(
+  handle: DbHandle,
+  tenantId: string,
+  options: { id?: string; matricula?: string; jurisdiction?: string; specialties?: string[] } = {},
+): Promise<TestUser & { professionalId: string }> {
+  const user = await createTestUser(handle, tenantId, { roles: ['professional'] });
+  const professionalId = options.id ?? uuidv7();
+  await createWithTenant(handle.db)({ tenantId, userId: user.id }, (tx) =>
+    tx.insert(professional).values({
+      id: professionalId,
+      tenantId,
+      membershipId: user.membershipId,
+      matricula: options.matricula ?? String(100000 + counter),
+      matriculaJurisdiction: options.jurisdiction ?? 'AR-B',
+      specialties: options.specialties ?? ['general'],
+    }),
+  );
+  return { ...user, professionalId };
+}
+
+/** Makes sure a professional profile with this id exists in the tenant (idempotent). */
+export async function ensureTestProfessional(
+  handle: DbHandle,
+  tenantId: string,
+  id: string,
+): Promise<void> {
+  const found = await createWithTenant(handle.db)({ tenantId, userId: uuidv7() }, (tx) =>
+    tx.select({ id: professional.id }).from(professional).where(eq(professional.id, id)),
+  );
+  if (found.length === 0) await createTestProfessional(handle, tenantId, { id });
 }

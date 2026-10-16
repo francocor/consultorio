@@ -7,5 +7,6 @@ export * from './care.js';
 export * from './identity.js';
 export * from './jobs.js';
 export * from './platform-catalogs.js';
+export * from './staff.js';
 export * from './tenant-key.js';
 export * from './tenant.js';

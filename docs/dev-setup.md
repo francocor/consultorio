@@ -27,7 +27,7 @@ pnpm --filter @consultorio/api db:migrate
 
 `db:migrate` applies the SQL migrations and then installs (or upgrades) the pg-boss job tables and queues, both as `app_owner`. Run it again after every `git pull` that adds a migration.
 
-Compose creates the `app_owner`, `app_rw` and `audit_sealer` database roles on the first start of the Postgres volume. If you change `infra/postgres/init/01-roles.sql` (the `audit_sealer` role arrived with the audit trail), recreate the volume:
+Compose creates the `app_owner`, `app_rw`, `app_operator` and `audit_sealer` database roles on the first start of the Postgres volume. If you change `infra/postgres/init/01-roles.sql` (`audit_sealer` arrived with the audit trail and `app_operator`, the role of the operator console, with the staff tables), recreate the volume:
 
 ```bash
 pnpm infra:reset                # docker compose down -v: removes containers and volumes

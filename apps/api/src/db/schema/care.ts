@@ -10,6 +10,7 @@ import {
 } from 'drizzle-orm/pg-core';
 
 import { tenantTable } from './_helpers.js';
+import { professional } from './staff.js';
 import { tenant } from './tenant.js';
 
 /**
@@ -18,8 +19,8 @@ import { tenant } from './tenant.js';
  * with patient administration) creates it; a professional can never assign a patient to
  * themselves. Assignments are ended, not deleted, so the history stays.
  *
- * `patient_id` and `professional_id` are plain columns until the patient and professional tables
- * exist (S1.19, S1.20), which add the composite foreign keys `(tenant_id, x_id)`.
+ * `professional_id` has its composite foreign key since S1.19; `patient_id` gets its own with the
+ * patient table (S1.20).
  */
 export const careAssignment = tenantTable(
   'care_assignment',
@@ -36,6 +37,11 @@ export const careAssignment = tenantTable(
       name: 'care_assignment_tenant_id_fkey',
       columns: [table.tenantId],
       foreignColumns: [tenant.id],
+    }),
+    foreignKey({
+      name: 'care_assignment_professional_fkey',
+      columns: [table.tenantId, table.professionalId],
+      foreignColumns: [professional.tenantId, professional.id],
     }),
     // One live assignment per pair; a removed one can be assigned again later.
     uniqueIndex('care_assignment_live_idx')
@@ -72,6 +78,11 @@ export const careRelationship = tenantTable(
       name: 'care_relationship_tenant_id_fkey',
       columns: [table.tenantId],
       foreignColumns: [tenant.id],
+    }),
+    foreignKey({
+      name: 'care_relationship_professional_fkey',
+      columns: [table.tenantId, table.professionalId],
+      foreignColumns: [professional.tenantId, professional.id],
     }),
     uniqueIndex('care_relationship_pair_key').on(
       table.tenantId,

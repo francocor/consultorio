@@ -12,6 +12,10 @@ declare module 'vitest' {
     ownerUrl: string;
     /** Connection string for `app_rw`, the role the application runs as. */
     runtimeUrl: string;
+    /** Connection string for `app_operator`, the role of the operator console. */
+    operatorUrl: string;
+    /** Container superuser: only for tests that act as a role the application cannot become. */
+    adminUrl: string;
   }
 }
 
@@ -47,11 +51,14 @@ export default async function setup(project: TestProject): Promise<() => Promise
     `postgres://${user}:${password}@${container.getHost()}:${String(container.getPort())}/${DATABASE}`;
   const ownerUrl = url('app_owner', 'app_owner_dev_only');
   const runtimeUrl = url('app_rw', 'app_rw_dev_only');
+  const operatorUrl = url('app_operator', 'app_operator_dev_only');
 
   await runMigrations(ownerUrl, TEST_QUEUES);
 
   project.provide('ownerUrl', ownerUrl);
   project.provide('runtimeUrl', runtimeUrl);
+  project.provide('operatorUrl', operatorUrl);
+  project.provide('adminUrl', container.getConnectionUri());
 
   return async () => {
     await container.stop();

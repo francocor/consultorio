@@ -89,6 +89,8 @@ export const membership = tenantTable(
     userId: uuid('user_id').notNull(),
     roles: text('roles').array().notNull(),
     status: text('status').notNull().default('active'),
+    /** How the member appears in the staff directory. Per organization: a person may use another name elsewhere. */
+    displayName: text('display_name'),
   },
   (table) => [
     foreignKey({

@@ -7,6 +7,7 @@ import { afterAll, beforeAll, describe, expect, inject, it } from 'vitest';
 import { careAssignment, careRelationship } from '../../src/db/schema/care.js';
 import { createRuntimeDb, type DbHandle } from '../../src/platform/db/pool.js';
 import { asTenant, createTestTenant, type TestTenant } from '../support/tenants.js';
+import { ensureTestProfessional } from '../support/users.js';
 
 let runtime: DbHandle;
 let owner: pg.Client;
@@ -29,8 +30,11 @@ afterAll(async () => {
 
 const ADMIN = '0190a000-0000-7000-8000-0000000000c1';
 
-function pair() {
-  return { patientId: randomUUID(), professionalId: randomUUID() };
+/** A patient id and a professional that really exists (the care tables key on the profile). */
+async function pair(tenant: TestTenant = a) {
+  const professionalId = randomUUID();
+  await ensureTestProfessional(runtime, tenant.id, professionalId);
+  return { patientId: randomUUID(), professionalId };
 }
 
 const assign = (tenant: TestTenant, ids: { patientId: string; professionalId: string }) =>
@@ -56,7 +60,7 @@ const relationship = (tenant: TestTenant, ids: { patientId: string; professional
 
 describe('an explicit assignment (authorization, "Explicit patient assignment")', () => {
   it('makes the relationship active: the professional now treats the patient', async () => {
-    const ids = pair();
+    const ids = await pair();
     expect(await relationship(a, ids)).toBeUndefined();
 
     await assign(a, ids);
@@ -70,7 +74,7 @@ describe('an explicit assignment (authorization, "Explicit patient assignment")'
   });
 
   it('ending the assignment ends the relationship at once, and keeps the history', async () => {
-    const ids = pair();
+    const ids = await pair();
     const id = await assign(a, ids);
 
     await asTenant(runtime, a.id, (tx) =>
@@ -88,7 +92,7 @@ describe('an explicit assignment (authorization, "Explicit patient assignment")'
   });
 
   it('can be assigned again after it was removed', async () => {
-    const ids = pair();
+    const ids = await pair();
     const first = await assign(a, ids);
     await asTenant(runtime, a.id, (tx) =>
       tx.update(careAssignment).set({ removedAt: new Date() }).where(eq(careAssignment.id, first)),
@@ -100,7 +104,7 @@ describe('an explicit assignment (authorization, "Explicit patient assignment")'
   });
 
   it('allows one live assignment per pair', async () => {
-    const ids = pair();
+    const ids = await pair();
     await assign(a, ids);
 
     await expect(assign(a, ids)).rejects.toMatchObject({ cause: { code: '23505' } });
@@ -108,8 +112,8 @@ describe('an explicit assignment (authorization, "Explicit patient assignment")'
 
   it('keeps assignments of different professionals for one patient apart', async () => {
     const patientId = randomUUID();
-    const first = { patientId, professionalId: randomUUID() };
-    const second = { patientId, professionalId: randomUUID() };
+    const first = { patientId, professionalId: (await pair()).professionalId };
+    const second = { patientId, professionalId: (await pair()).professionalId };
     await assign(a, first);
 
     expect((await relationship(a, first))?.active).toBe(true);
@@ -117,7 +121,7 @@ describe('an explicit assignment (authorization, "Explicit patient assignment")'
   });
 
   it('is invisible to another organization', async () => {
-    const ids = pair();
+    const ids = await pair();
     await assign(a, ids);
 
     expect(await relationship(b, ids)).toBeUndefined();
@@ -126,12 +130,13 @@ describe('an explicit assignment (authorization, "Explicit patient assignment")'
 
 describe('only the database functions write the relationship', () => {
   it('refuses a direct insert, update or delete by the runtime role', async () => {
-    const ids = pair();
+    const ids = await pair();
     await assign(a, ids);
+    const another = await pair();
 
     await expect(
       asTenant(runtime, a.id, (tx) =>
-        tx.insert(careRelationship).values({ tenantId: a.id, ...pair(), assigned: true }),
+        tx.insert(careRelationship).values({ tenantId: a.id, ...another, assigned: true }),
       ),
     ).rejects.toMatchObject({ cause: { code: '42501' } });
     await expect(
@@ -151,7 +156,7 @@ describe('only the database functions write the relationship', () => {
   });
 
   it('refuses to call the maintenance functions directly', async () => {
-    const ids = pair();
+    const ids = await pair();
 
     await expect(
       asTenant(runtime, a.id, (tx) =>
@@ -175,7 +180,7 @@ describe('only the database functions write the relationship', () => {
   });
 
   it('refuses to delete an assignment: it is ended, not erased', async () => {
-    const id = await assign(a, pair());
+    const id = await assign(a, await pair());
 
     await expect(
       asTenant(runtime, a.id, (tx) => tx.delete(careAssignment).where(eq(careAssignment.id, id))),
@@ -218,7 +223,7 @@ describe('the counters Stage 2 triggers will maintain (appointments and encounte
 
   it('counts qualifying appointments, and the relationship is active while any exists', async () => {
     await createStandIn();
-    const ids = pair();
+    const ids = await pair();
     const book = () =>
       asTenant(runtime, a.id, (tx) =>
         tx.execute(
@@ -242,7 +247,7 @@ describe('the counters Stage 2 triggers will maintain (appointments and encounte
 
   it('stays active through an assignment even when the appointments are gone, and never goes below zero', async () => {
     await createStandIn();
-    const ids = pair();
+    const ids = await pair();
     await assign(a, ids);
     await asTenant(runtime, a.id, (tx) =>
       tx.execute(
@@ -265,7 +270,7 @@ describe('the counters Stage 2 triggers will maintain (appointments and encounte
   });
 
   it('refuses to adjust the relationship of another tenant', async () => {
-    const ids = pair();
+    const ids = await pair();
 
     await expect(
       owner.query('BEGIN').then(async () => {

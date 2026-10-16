@@ -66,23 +66,33 @@ async function insertMembership(tx: Tx, tenantId: string, userId: string): Promi
   );
 }
 
+async function insertProfessional(tx: Tx, tenantId: string): Promise<string> {
+  const membershipId = await insertMembership(tx, tenantId, await insertUser(tx));
+  return returningId(
+    tx,
+    sql`INSERT INTO professional (tenant_id, membership_id, specialties)
+          VALUES (${tenantId}, ${membershipId}, ARRAY['general'])
+          RETURNING id`,
+  );
+}
+
 export const TENANT_FIXTURES: Record<string, TenantTableFixture> = {
   care_assignment: {
-    insert: (tx, tenantId) =>
+    insert: async (tx, tenantId, overrides) =>
       returningId(
         tx,
         sql`INSERT INTO care_assignment (tenant_id, patient_id, professional_id, assigned_by)
-              VALUES (${tenantId}, ${randomUUID()}, ${randomUUID()}, ${randomUUID()})
+              VALUES (${tenantId}, ${randomUUID()}, ${overrides?.['professional_id'] ?? (await insertProfessional(tx, tenantId))}, ${randomUUID()})
               RETURNING id`,
       ),
   },
   care_relationship: {
     // The runtime role cannot write this table: the relationship appears through an assignment.
-    insert: async (tx, tenantId) => {
+    insert: async (tx, tenantId, overrides) => {
       const patientId = randomUUID();
       await tx.execute(
         sql`INSERT INTO care_assignment (tenant_id, patient_id, professional_id, assigned_by)
-              VALUES (${tenantId}, ${patientId}, ${randomUUID()}, ${randomUUID()})`,
+              VALUES (${tenantId}, ${patientId}, ${overrides?.['professional_id'] ?? (await insertProfessional(tx, tenantId))}, ${randomUUID()})`,
       );
       return returningId(tx, sql`SELECT id FROM care_relationship WHERE patient_id = ${patientId}`);
     },
@@ -161,6 +171,35 @@ export const TENANT_FIXTURES: Record<string, TenantTableFixture> = {
               VALUES (${tenantId}, ${unique('Location')}, 'America/Argentina/Buenos_Aires')
               RETURNING id`,
       ),
+  },
+  professional: {
+    insert: async (tx, tenantId, overrides) =>
+      returningId(
+        tx,
+        sql`INSERT INTO professional (tenant_id, membership_id, specialties)
+              VALUES (${tenantId}, ${overrides?.['membership_id'] ?? (await insertMembership(tx, tenantId, await insertUser(tx)))}, ARRAY['general'])
+              RETURNING id`,
+      ),
+  },
+  professional_hours: {
+    insert: async (tx, tenantId, overrides) => {
+      const professionalId =
+        overrides?.['professional_id'] ?? (await insertProfessional(tx, tenantId));
+      const locationId =
+        overrides?.['location_id'] ??
+        (await returningId(
+          tx,
+          sql`INSERT INTO location (tenant_id, name, time_zone)
+                VALUES (${tenantId}, ${unique('Location')}, 'America/Argentina/Buenos_Aires')
+                RETURNING id`,
+        ));
+      return returningId(
+        tx,
+        sql`INSERT INTO professional_hours (tenant_id, professional_id, location_id, weekday, start_minute, end_minute)
+              VALUES (${tenantId}, ${professionalId}, ${locationId}, 1, 540, 780)
+              RETURNING id`,
+      );
+    },
   },
   permission_grant: {
     insert: async (tx, tenantId, overrides) => {
