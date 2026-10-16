@@ -172,9 +172,9 @@ Runs in parallel with everything. Done when each dependency has an owner, a date
 
 Depends: S0.07.
 
-- [ ] 1.4 `packages/contracts/src/errors.ts`: problem+json schema (RFC 9457), error code enum with i18n keys, `requestId`. [AUZ-16] Test: schema accepts and rejects fixtures.
-- [ ] 1.5 `packages/contracts/src/roles.ts`: roles (`owner`, `admin`, `professional`, `reception`, `patient`), `PERMISSIONS`, `ROLE_PERMISSIONS`, `GRANTABLE` (override hours, register past, delegated calendar, cash operate, patients administer). [AUZ-01, AUZ-05, AUZ-12] Test: `roles.test.ts` fails if any non-professional role or `GRANTABLE` contains `clinical.*`, and if `owner` or `admin` holds any clinical permission.
-- [ ] 1.6 `packages/contracts/src/route-category.ts`: read-only categories (the 9 allowlist items plus `write`). [TEN-11] Test: enum snapshot.
+- [x] 1.4 `packages/contracts/src/errors.ts`: problem+json schema (RFC 9457), error code enum with i18n keys, `requestId`. [AUZ-16] Test: schema accepts and rejects fixtures.
+- [x] 1.5 `packages/contracts/src/roles.ts`: roles (`owner`, `admin`, `professional`, `reception`, `patient`), `PERMISSIONS`, `ROLE_PERMISSIONS`, `GRANTABLE` (override hours, register past, delegated calendar, cash operate, patients administer). [AUZ-01, AUZ-05, AUZ-12] Test: `roles.test.ts` fails if any non-professional role or `GRANTABLE` contains `clinical.*`, and if `owner` or `admin` holds any clinical permission.
+- [x] 1.6 `packages/contracts/src/route-category.ts`: read-only categories (the 9 allowlist items plus `write`). [TEN-11] Test: enum snapshot.
 - [ ] 1.7 `apps/api/src/platform/http/problem.ts`: Fastify error handler to problem+json, request-id plugin, uniform `denied()` helper (same body for forbidden and not found where the resource is tenant-scoped). [AUZ-16] Test: unknown error returns 500 without stack or internals; denied helper bodies are identical.
 - [ ] 1.8 Extend `main/config.ts`: `DEPLOYMENT_MODE`, `SINGLE_TENANT_SLUG`, `BASE_DOMAIN`, `PLATFORM_HOST`, cookie settings, KMS settings; fail fast. [TEN-06, IDA-10] Test: single mode without slug fails to start.
 

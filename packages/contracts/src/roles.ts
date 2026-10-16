@@ -1,0 +1,170 @@
+/**
+ * Roles and the permission catalog. This is CODE, not data (ADR-003): no tenant setting, grant or
+ * screen can add a permission to a role, and the clinical group exists only for professionals.
+ * `roles.test.ts` fails the build if that ever stops being true.
+ */
+
+/** A user may hold several roles in one organization (an owner who is also a professional). */
+export const ROLES = ['owner', 'admin', 'professional', 'reception', 'patient'] as const;
+export type Role = (typeof ROLES)[number];
+
+export const PERMISSIONS = [
+  // Organization administration (non-clinical).
+  'tenant.settings.manage',
+  'tenant.branding.manage',
+  'staff.manage',
+  'permissions.grant',
+  'locations.manage',
+  'audit.read',
+  'audit.export',
+  'reports.read',
+  'billing.manage',
+  // Patients (demographics are organization-wide).
+  'patients.read',
+  'patients.write',
+  'patients.administer',
+  'patients.safety_flag.read',
+  // Scheduling.
+  'scheduling.read',
+  'scheduling.book',
+  'scheduling.checkin',
+  'scheduling.override_hours',
+  'scheduling.register_past',
+  'scheduling.delegated_calendar',
+  // Money.
+  'payments.read',
+  'payments.write',
+  'cash.operate',
+  // Clinical content: professionals only, and never grantable.
+  'clinical.note.read',
+  'clinical.note.write',
+  'clinical.note.sign',
+  'clinical.note.mark_error',
+  'clinical.addendum.create',
+  'clinical.anamnesis.read',
+  'clinical.anamnesis.write',
+  'clinical.document.read',
+  'clinical.prescription.read',
+  'clinical.search',
+  // Patient portal.
+  'portal.self.read',
+  'portal.appointment.cancel',
+] as const;
+export type Permission = (typeof PERMISSIONS)[number];
+
+export type ClinicalPermission = Extract<Permission, `clinical.${string}`>;
+
+export function isClinicalPermission(permission: string): permission is ClinicalPermission {
+  return permission.startsWith('clinical.');
+}
+
+const CLINICAL: readonly ClinicalPermission[] = PERMISSIONS.filter(isClinicalPermission);
+
+const ADMINISTRATION = [
+  'tenant.settings.manage',
+  'tenant.branding.manage',
+  'staff.manage',
+  'permissions.grant',
+  'locations.manage',
+  'audit.read',
+  'audit.export',
+  'reports.read',
+  'patients.read',
+  'patients.write',
+  'patients.administer',
+  'patients.safety_flag.read',
+  'scheduling.read',
+  'scheduling.book',
+  'scheduling.checkin',
+  'scheduling.override_hours',
+  'scheduling.register_past',
+  'scheduling.delegated_calendar',
+  'payments.read',
+  'payments.write',
+  'cash.operate',
+] as const satisfies readonly Permission[];
+
+export const ROLE_PERMISSIONS: Record<Role, readonly Permission[]> = {
+  // Owner and admin are the same non-clinical bundle; only the owner manages the subscription.
+  owner: [...ADMINISTRATION, 'billing.manage'],
+  admin: ADMINISTRATION,
+  professional: [
+    'patients.read',
+    'patients.write',
+    'patients.safety_flag.read',
+    'scheduling.read',
+    'scheduling.book',
+    'scheduling.checkin',
+    'payments.read',
+    ...CLINICAL,
+  ],
+  // Reception holds patient administration and the cash register by default.
+  reception: [
+    'patients.read',
+    'patients.write',
+    'patients.administer',
+    'patients.safety_flag.read',
+    'scheduling.read',
+    'scheduling.book',
+    'scheduling.checkin',
+    'payments.read',
+    'payments.write',
+    'cash.operate',
+  ],
+  patient: ['portal.self.read', 'portal.appointment.cancel'],
+};
+
+/**
+ * The only permissions an owner/admin can hand out per user (`permission_grant`). Non-clinical by
+ * construction; the database repeats the rule with `CHECK (permission NOT LIKE 'clinical.%')`.
+ */
+export const GRANTABLE = [
+  'scheduling.override_hours',
+  'scheduling.register_past',
+  'scheduling.delegated_calendar',
+  'cash.operate',
+  'patients.administer',
+] as const satisfies readonly Permission[];
+export type GrantablePermission = (typeof GRANTABLE)[number];
+
+function isGrantable(permission: string): permission is GrantablePermission {
+  return GRANTABLE.some((grantable) => grantable === permission);
+}
+
+/** Effective permissions = role permissions + (grants that are inside GRANTABLE). */
+export function effectivePermissions(
+  roles: readonly Role[],
+  grants: readonly string[],
+): Permission[] {
+  const result = new Set<Permission>(roles.flatMap((role) => ROLE_PERMISSIONS[role]));
+  for (const grant of grants) {
+    if (isGrantable(grant)) result.add(grant);
+  }
+  return [...result];
+}
+
+export interface ClinicalLeak {
+  where: string;
+  permission: string;
+}
+
+/**
+ * Finds clinical permissions held by any role other than `professional`, or listed as grantable.
+ * The catalog test asserts this is empty, and asserts the function does detect a corrupted catalog.
+ */
+export function findClinicalLeaks(
+  rolePermissions: Record<Role, readonly string[]>,
+  grantable: readonly string[],
+): ClinicalLeak[] {
+  const leaks: ClinicalLeak[] = [];
+  for (const role of ROLES) {
+    if (role === 'professional') continue;
+    for (const permission of rolePermissions[role]) {
+      if (isClinicalPermission(permission)) leaks.push({ where: `role:${role}`, permission });
+    }
+  }
+  for (const permission of grantable) {
+    if (isClinicalPermission(permission)) leaks.push({ where: 'grantable', permission });
+  }
+  return leaks;
+}
