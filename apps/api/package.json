@@ -19,7 +19,9 @@
     "demo:seed": "tsx --env-file-if-exists=../../.env scripts/demo-seed.ts",
     "demo:reset": "tsx --env-file-if-exists=../../.env scripts/demo-reset.ts",
     "e2e:stack": "tsx scripts/e2e-stack.ts --port 3100 --info ../web/e2e/.stack/info.json",
-    "demo:stack": "tsx scripts/e2e-stack.ts --port 3000 --banner"
+    "demo:stack": "tsx scripts/e2e-stack.ts --port 3000 --minio-port 9100 --banner",
+    "backup:local": "tsx scripts/backup-local.ts",
+    "bench:clinical": "tsx scripts/bench-clinical-readable.ts"
   },
   "dependencies": {
     "@aws-sdk/client-kms": "^3.1152.0",
