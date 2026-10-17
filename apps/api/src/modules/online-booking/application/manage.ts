@@ -266,6 +266,7 @@ export async function rescheduleManaged(
       actor: PUBLIC_ACTOR,
       auditActor: { ...context.actor, userId: null },
       now: context.now,
+      actorKind: 'patient',
     });
   } catch (error) {
     // Outside working hours, in a block or on a holiday: simply not available.
@@ -375,6 +376,7 @@ export async function cancelManaged(
     now: context.now,
     expectedVersion: peek.version,
     cancellation: { cancelledBy: 'patient', reasonCode: 'patient_request' },
+    actorKind: 'patient',
   });
   return {
     appointment: {

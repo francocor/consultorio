@@ -52,6 +52,8 @@ export async function actForPatient(
       auditActor: { ...input.actor, userId: SYSTEM_USER_ID },
       now: input.now,
       expectedVersion: input.appointment.version,
+      // The patient acted, with their link or a reply: the history says so.
+      actorKind: 'patient',
       ...(input.action === 'cancel'
         ? { cancellation: { cancelledBy: 'patient', reasonCode: 'patient_request' } as const }
         : {}),

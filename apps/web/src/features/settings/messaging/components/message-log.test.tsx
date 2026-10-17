@@ -38,6 +38,7 @@ const entry = (overrides: Partial<CalendarEntryDto> = {}): CalendarEntryDto => (
   patientName: 'Ana Pérez',
   typeName: 'Consulta',
   typeColor: null,
+  mode: 'in_person',
   ...overrides,
 });
 

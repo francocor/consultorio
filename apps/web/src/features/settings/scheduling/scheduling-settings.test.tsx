@@ -432,6 +432,7 @@ describe('blocks', () => {
                 patientName: 'Gómez, Valentina',
                 typeName: 'Control',
                 typeColor: null,
+                mode: 'in_person',
               },
             ],
             blocks: [],

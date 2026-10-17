@@ -1,5 +1,5 @@
 import { fireEvent, screen, within } from '@testing-library/react';
-import { CircleCheck, Clock } from 'lucide-react';
+import { CircleCheck, Clock, Video } from 'lucide-react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { a11yViolations } from '../../test/a11y.js';
@@ -59,6 +59,36 @@ function props(overrides: Partial<CalendarViewProps> = {}): CalendarViewProps {
 
 afterEach(() => {
   vi.restoreAllMocks();
+});
+
+describe('the marker of an event', () => {
+  const marked = [
+    event({ id: 'v1', marker: { icon: Video, label: 'Virtual' } }),
+    event({ id: 'p1', resourceId: 'beto', title: 'Ríos, Tomás' }),
+  ];
+
+  it('puts the word in the accessible name of the card and an icon on it, in the grid', () => {
+    renderWithApp(<CalendarView {...props({ events: marked })} />);
+
+    const virtual = screen.getByRole('button', { name: /Gómez/ });
+
+    expect(virtual).toHaveAccessibleName(/Virtual/);
+    expect(within(virtual).getByTestId('event-marker')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Ríos/ })).not.toHaveAccessibleName(/Virtual/);
+    expect(screen.queryAllByTestId('event-marker')).toHaveLength(1);
+  });
+
+  it('shows the word as a visible badge in the agenda list', () => {
+    renderWithApp(<CalendarView {...props({ events: marked, presentation: 'list' })} />);
+
+    expect(screen.getByText('Virtual')).toBeVisible();
+  });
+
+  it('has no accessibility violations with the marker', async () => {
+    const { container } = renderWithApp(<CalendarView {...props({ events: marked })} />);
+
+    expect(await a11yViolations(container)).toEqual([]);
+  });
 });
 
 describe('the day view with a column per professional', () => {

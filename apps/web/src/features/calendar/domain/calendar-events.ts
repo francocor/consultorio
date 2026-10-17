@@ -15,6 +15,7 @@ import {
   Stethoscope,
   UserRoundCheck,
   UserRoundX,
+  Video,
   type LucideIcon,
 } from 'lucide-react';
 
@@ -69,6 +70,10 @@ export function toCalendarEvent(entry: CalendarEntryDto, options: EventOptions):
     accent: entry.typeColor,
     muted: entry.status === 'cancelled' || entry.status === 'no_show',
     ...(notes.length > 0 ? { note: notes.join('. ') } : {}),
+    // A video visit is marked with an icon and the word, so nobody walks to a room for it.
+    ...(entry.mode === 'virtual'
+      ? { marker: { icon: Video, label: t('scheduling:event.virtual') } }
+      : {}),
     movable: options.canMove && canRescheduleStatus(entry.status),
   };
 }

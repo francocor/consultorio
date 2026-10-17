@@ -416,7 +416,7 @@ describe('moving an appointment', () => {
 
   /** What the API answers with: the appointment, without the names the feed adds. */
   function asAppointment(entry: object) {
-    const names = new Set(['patientName', 'typeName', 'typeColor']);
+    const names = new Set(['patientName', 'typeName', 'typeColor', 'mode']);
     return Object.fromEntries(Object.entries(entry).filter(([key]) => !names.has(key)));
   }
 

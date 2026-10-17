@@ -5,12 +5,12 @@ import type {
   PublicHoldDto,
   PublicManageDto,
 } from '@consultorio/contracts';
-import { eq } from 'drizzle-orm';
+import { asc, eq } from 'drizzle-orm';
 import { afterAll, beforeAll, describe, expect, inject, it } from 'vitest';
 
 import { auditEvent } from '../../src/db/schema/audit.js';
 import { message } from '../../src/db/schema/notifications.js';
-import { appointment, slotHold } from '../../src/db/schema/scheduling.js';
+import { appointment, appointmentEvent, slotHold } from '../../src/db/schema/scheduling.js';
 import { tenant } from '../../src/db/schema/tenant.js';
 import { createRuntimeDb, type DbHandle } from '../../src/platform/db/pool.js';
 import {
@@ -234,6 +234,46 @@ describe('cancelling by the link', () => {
       canChange: false,
     });
     expect(again.statusCode).toBe(404);
+  });
+});
+
+/** Who each change in the history of an appointment is attributed to, oldest first. */
+const historyOf = (appointmentId: string) =>
+  world.inTenant((tx) =>
+    tx
+      .select({ kind: appointmentEvent.kind, actorKind: appointmentEvent.actorKind })
+      .from(appointmentEvent)
+      .where(eq(appointmentEvent.appointmentId, appointmentId))
+      .orderBy(asc(appointmentEvent.createdAt), asc(appointmentEvent.id)),
+  );
+
+describe('who the history says made the change', () => {
+  it('attributes the booking and the cancellation made by the link to the patient', async () => {
+    const mine = await booked();
+
+    expect((await cancel(mine.visitor, mine.token)).statusCode).toBe(200);
+
+    expect(await historyOf(mine.appointmentId)).toEqual([
+      { kind: 'created', actorKind: 'patient' },
+      { kind: 'status_changed', actorKind: 'patient' },
+    ]);
+  });
+
+  it('attributes a move made by the link to the patient, and one made by reception to staff', async () => {
+    const mine = await booked();
+    const byLink = new Date(Date.parse(mine.hold.startsAt) + 60 * 60_000).toISOString();
+    expect((await reschedule(world.visitor(), mine.token, byLink)).statusCode).toBe(200);
+    const history = await historyOf(mine.appointmentId);
+    const staffMove = await world.act({ id: mine.appointmentId }, 'reschedule', world.reception, {
+      local: { date: world.monday(week + 30), time: '10:00' },
+    });
+    expect(staffMove.statusCode, staffMove.body).toBe(200);
+
+    expect(history.at(-1)).toEqual({ kind: 'rescheduled', actorKind: 'patient' });
+    expect((await historyOf(mine.appointmentId)).at(-1)).toEqual({
+      kind: 'rescheduled',
+      actorKind: 'staff',
+    });
   });
 });
 

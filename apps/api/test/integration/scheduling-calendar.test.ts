@@ -1,5 +1,6 @@
 import type {
   AppointmentDto,
+  AppointmentTypeDto,
   AuditAction,
   CalendarEntryDto,
   CalendarResponse,
@@ -104,6 +105,7 @@ describe('the day view of a location', () => {
       status: 'scheduled',
       startsAt: created.startsAt,
       typeName: 'Consulta',
+      mode: 'in_person',
     });
     expect(entry?.patientName).toMatch(/^Paciente\d+, Nombre$/);
     expect(Object.keys(entry ?? {}).sort()).toEqual(
@@ -116,6 +118,7 @@ describe('the day view of a location', () => {
         'identityConfirmation',
         'identityConfirmed',
         'locationId',
+        'mode',
         'outOfHours',
         'patientId',
         'patientName',
@@ -130,6 +133,25 @@ describe('the day view of a location', () => {
         'version',
       ].sort(),
     );
+  });
+
+  it('marks an appointment of a virtual type as virtual, in the feed and in its detail', async () => {
+    const virtual = (
+      await world.api.post('/appointment-types', world.owner, {
+        name: 'Consulta virtual',
+        durationMinutes: 30,
+        mode: 'virtual',
+      })
+    ).json<AppointmentTypeDto>().id;
+    const created = await world.book(15, '09:00', { appointmentTypeId: virtual });
+
+    const entry = (await feed(window(15))).appointments.find(
+      (candidate) => candidate.id === created.id,
+    );
+    const detail = await world.api.get(`/appointments/${created.id}`, world.reception);
+
+    expect(entry?.mode).toBe('virtual');
+    expect(detail.json<CalendarEntryDto>().mode).toBe('virtual');
   });
 
   it('keeps cancelled appointments visible with their status, and never lists a hold', async () => {

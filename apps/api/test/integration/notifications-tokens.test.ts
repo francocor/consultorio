@@ -254,6 +254,7 @@ describe('confirming', () => {
         .select({
           kind: appointmentEvent.kind,
           to: appointmentEvent.toStatus,
+          actorKind: appointmentEvent.actorKind,
           at: appointmentEvent.createdAt,
         })
         .from(appointmentEvent)
@@ -265,7 +266,8 @@ describe('confirming', () => {
         ),
     );
     expect(history).toHaveLength(1);
-    expect(history[0]).toMatchObject({ to: 'confirmed' });
+    // Reception did not press the button: the patient did, with their link.
+    expect(history[0]).toMatchObject({ to: 'confirmed', actorKind: 'patient' });
     expect(history[0]?.at).toBeInstanceOf(Date);
     const audits = await scheduling.inTenant((tx) =>
       tx

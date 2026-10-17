@@ -123,6 +123,11 @@ export interface TransitionInput {
    * only in a solo practice (D18).
    */
   confirmIdentity?: boolean | undefined;
+  /**
+   * Who the history says made the change. `patient` for what a patient does with their own link
+   * (confirm, cancel); the default is `staff`.
+   */
+  actorKind?: 'staff' | 'patient';
 }
 
 /**
@@ -193,7 +198,7 @@ export async function transitionAppointment(
     fromStatus: record.status,
     toStatus: target,
     actorUserId: input.actor.userId,
-    actorKind: 'staff',
+    actorKind: input.actorKind ?? 'staff',
     ...(input.cancellation
       ? {
           details: {
@@ -403,6 +408,8 @@ export interface RescheduleInput {
   auditActor: AuditActor;
   now: Date;
   authorizeLocation?: LocationAuthorizer;
+  /** `patient` for a move the patient made with their own link; the default is `staff`. */
+  actorKind?: 'staff' | 'patient';
 }
 
 /**
@@ -509,7 +516,7 @@ export async function rescheduleAppointment(
     fromStatus: record.status,
     toStatus: record.status,
     actorUserId: input.actor.userId,
-    actorKind: 'staff',
+    actorKind: input.actorKind ?? 'staff',
     details: {
       fromStartsAt: record.startsAt.toISOString(),
       fromEndsAt: record.endsAt.toISOString(),

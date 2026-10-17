@@ -84,6 +84,8 @@ export interface SlotProps {
   'patient-detail-tab': { patientId: string };
   /** A section inside a settings page. */
   'settings-section': { area: SettingsArea };
+  /** Beside an appointment of the professional's day ("Hoy"): quick actions such as joining a call. */
+  'today-appointment': { appointment: CalendarEntryDto; readOnly: boolean };
 }
 
 export type SlotName = keyof SlotProps;

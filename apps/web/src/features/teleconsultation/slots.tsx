@@ -10,6 +10,12 @@ const VideoSessionPanel = lazySlot<SlotProps['appointment-drawer']>(() =>
   })),
 );
 
+const VideoJoinButton = lazySlot<SlotProps['today-appointment']>(() =>
+  import('./components/VideoJoinButton.js').then((module) => ({
+    default: module.VideoJoinButton,
+  })),
+);
+
 const VideoSettings = lazySlot<SlotProps['settings-section']>(() =>
   import('./components/VideoSettingsSection.js').then((module) => ({
     default: ({ area }) => (SETTINGS_AREAS.includes(area) ? <module.VideoSettingsSection /> : null),
@@ -20,10 +26,13 @@ const VideoSettings = lazySlot<SlotProps['settings-section']>(() =>
  * What the teleconsultation feature mounts inside screens that other features own:
  *
  * - the video panel of the appointment drawer (virtual marker, link state, Join, manual link);
+ * - the "join" button beside a virtual appointment of the professional's day;
  * - the video section of the scheduling settings, for whoever manages the organization.
  */
 const slots: readonly (
-  SlotContribution<'appointment-drawer'> | SlotContribution<'settings-section'>
+  | SlotContribution<'appointment-drawer'>
+  | SlotContribution<'settings-section'>
+  | SlotContribution<'today-appointment'>
 )[] = [
   {
     slot: 'appointment-drawer',
@@ -31,6 +40,13 @@ const slots: readonly (
     order: 20,
     anyOf: ['scheduling.read'],
     Component: VideoSessionPanel,
+  },
+  {
+    slot: 'today-appointment',
+    id: 'teleconsultation.join',
+    order: 20,
+    anyOf: ['scheduling.read'],
+    Component: VideoJoinButton,
   },
   {
     slot: 'settings-section',

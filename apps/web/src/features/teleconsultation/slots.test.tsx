@@ -33,6 +33,7 @@ const appointment = {
   patientName: 'Gómez, Valentina',
   typeName: 'Consulta virtual',
   typeColor: null,
+  mode: 'virtual' as const,
 };
 
 const hostRoute: FeatureRoute = {
@@ -111,9 +112,10 @@ function openAs(roles: Parameters<typeof meFor>[0]) {
 }
 
 describe('what the teleconsultation feature registers', () => {
-  it('registers a piece for the appointment drawer and one for the scheduling settings', () => {
+  it('registers a piece for the appointment drawer, one beside the appointments of the day and one for the scheduling settings', () => {
     expect(slots.map((piece) => [piece.slot, piece.id])).toEqual([
       ['appointment-drawer', 'teleconsultation.video-session'],
+      ['today-appointment', 'teleconsultation.join'],
       ['settings-section', 'teleconsultation.settings'],
     ]);
   });

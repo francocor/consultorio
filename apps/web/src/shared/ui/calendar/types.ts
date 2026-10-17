@@ -42,6 +42,8 @@ export interface CalendarEvent {
   muted?: boolean;
   /** Extra words for the accessible name, such as "identidad sin confirmar". */
   note?: string;
+  /** A mark that sets the event apart (a video visit): an icon on the card AND a word. */
+  marker?: { icon: LucideIcon; label: string };
   /** Whether it may be dragged to another time or column. */
   movable?: boolean;
 }

@@ -116,6 +116,12 @@ export function AgendaList({
                             <Icon aria-hidden="true" />
                             {event.statusLabel}
                           </Badge>
+                          {event.marker ? (
+                            <Badge tone="info">
+                              <event.marker.icon aria-hidden="true" />
+                              {event.marker.label}
+                            </Badge>
+                          ) : null}
                           {event.note ? (
                             <span className="text-xs text-muted-foreground">{event.note}</span>
                           ) : null}

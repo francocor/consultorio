@@ -1,6 +1,6 @@
 import { z } from 'zod';
 
-import { BlockDto, HolidayDto } from './scheduling-config.js';
+import { APPOINTMENT_MODES, BlockDto, HolidayDto } from './scheduling-config.js';
 
 /**
  * Contracts of scheduling: appointments, booking, the attendance lifecycle, the reception
@@ -573,6 +573,8 @@ export const CalendarEntryDto = AppointmentDto.extend({
   patientName: z.string(),
   typeName: z.string(),
   typeColor: z.string().nullable(),
+  /** Whether the visit is in person or by video: the calendar marks the virtual ones. */
+  mode: z.enum(APPOINTMENT_MODES),
 });
 export type CalendarEntryDto = z.infer<typeof CalendarEntryDto>;
 

@@ -87,7 +87,7 @@ function problem(status: number, code: string, extra: Record<string, unknown> = 
 
 /** What the API answers with: the appointment, without the names the feed adds. */
 function appointmentOf(overrides: Record<string, unknown>) {
-  const names = new Set(['patientName', 'typeName', 'typeColor']);
+  const names = new Set(['patientName', 'typeName', 'typeColor', 'mode']);
   const base = Object.fromEntries(Object.entries(entry()).filter(([key]) => !names.has(key)));
   return { ...base, ...overrides };
 }

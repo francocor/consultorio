@@ -39,6 +39,7 @@ const entry: CalendarEntryDto = {
   patientName: 'Gómez, Valentina',
   typeName: 'Consulta virtual',
   typeColor: null,
+  mode: 'virtual',
 };
 
 const summary = (overrides: Partial<VideoSessionSummary> = {}): VideoSessionSummary => ({
