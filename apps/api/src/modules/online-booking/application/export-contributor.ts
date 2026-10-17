@@ -1,7 +1,27 @@
+import { asc } from 'drizzle-orm';
+
+import { bookingLink } from '../../../db/schema/online-booking.js';
 import type { ExportContributor } from '../../tenancy/index.js';
 
 /**
- * Administrative export part owned by online-booking (public booking links, holds and verified submissions). Nothing is stored yet, so the part is empty;
- * the public booking track (track B, S3.07 to S3.10) fills it in when it adds its tables.
+ * Administrative export part owned by online-booking: the public booking links, which professional
+ * each belongs to and what it exposes. The unverified submissions and their one-time codes are not
+ * exported: they are encrypted, transient (deleted after 24 hours) and about people who are not
+ * patients of the organization.
  */
-export const exportOnlineBooking: ExportContributor = () => Promise.resolve({});
+export const exportOnlineBooking: ExportContributor = async ({ tx }) => {
+  const links = await tx
+    .select({
+      id: bookingLink.id,
+      professionalId: bookingLink.professionalId,
+      slug: bookingLink.slug,
+      enabled: bookingLink.enabled,
+      locationIds: bookingLink.locationIds,
+      typeIds: bookingLink.typeIds,
+      regeneratedAt: bookingLink.regeneratedAt,
+      createdAt: bookingLink.createdAt,
+    })
+    .from(bookingLink)
+    .orderBy(asc(bookingLink.createdAt), asc(bookingLink.id));
+  return { bookingLinks: links };
+};

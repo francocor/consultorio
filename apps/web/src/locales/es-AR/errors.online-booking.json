@@ -1,0 +1,5 @@
+{
+  "booking_challenge_failed": "No pudimos comprobar que la solicitud la hace una persona. Intente nuevamente.",
+  "booking_code_invalid": "El código no es válido o ya venció. Revise el correo o pida uno nuevo.",
+  "booking_limit_reached": "No podemos tomar esta reserva por internet. Comuníquese con el consultorio."
+}

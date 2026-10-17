@@ -21,7 +21,8 @@ import { MODULE_WIRINGS } from './index.js';
 const MODULES_DIR = fileURLToPath(new URL('../../modules/', import.meta.url));
 
 const context = {
-  config: {} as never,
+  // Only what the adapter slots read: the customer slot of the bot challenge depends on it.
+  config: { providers: { botChallenge: 'local' } } as never,
   db: {} as never,
 };
 
@@ -68,11 +69,12 @@ describe('the module wiring (every shared registration, in one place per module)
     expect(Object.keys(registry).sort()).toEqual([...ADAPTER_PORTS].sort());
   });
 
-  it('does nothing observable yet: the skeletons register no route of their own', async () => {
+  it('only adds routes: every route of the application without the modules is still there', async () => {
     const without = await routesOf(createApp([]));
     const withModules = await routesOf(createApp(MODULE_WIRINGS));
 
-    expect(withModules).toEqual(without);
+    // The tracks of Stage 3 fill their modules in, so the second list grows; it never loses one.
+    expect(withModules).toEqual(expect.arrayContaining(without));
   });
 });
 
@@ -82,11 +84,11 @@ function createApp(wiring: typeof MODULE_WIRINGS) {
   return buildTestApplication(db, { wiring });
 }
 
-async function routesOf(app: ReturnType<typeof createApp>): Promise<string> {
+async function routesOf(app: ReturnType<typeof createApp>): Promise<string[]> {
   await app.ready();
-  const printed = app.printRoutes({ commonPrefix: false });
+  const routes = [...app.routeCategories.keys()];
   await app.close();
-  return printed;
+  return routes;
 }
 
 describe('the simulator console entries of the modules', () => {

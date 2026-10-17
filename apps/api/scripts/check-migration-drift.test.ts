@@ -142,7 +142,10 @@ describe('the migration tools together (two tracks, one merge)', () => {
     expect(
       (await checkMigrationDrift({ schemaFile: schemaA, migrationsDir: a, scratchDir })).drift,
     ).toBe(false);
-    expect(await readFile(join(a, '0320_track_a_table.sql'), 'utf8')).toContain('"track_a_table"');
+    // The tracks keep adding real migrations to their ranges, so the number is read, not assumed.
+    const tagA = (await readFolder(a)).journal.entries.at(-1)?.tag ?? '';
+    expect(tagA).toMatch(/^032\d_track_a_table$/);
+    expect(await readFile(join(a, `${tagA}.sql`), 'utf8')).toContain('"track_a_table"');
 
     // Track B does the same, at the same time, from the same base.
     const b = await copyOfMigrations();
@@ -162,11 +165,15 @@ describe('the migration tools together (two tracks, one merge)', () => {
     });
 
     // The merge: B's files and journal entry land after A's.
-    await cp(join(b, '0340_track_b_table.sql'), join(a, '0340_track_b_table.sql'));
-    await cp(join(b, 'meta', '0340_snapshot.json'), join(a, 'meta', '0340_snapshot.json'));
-    const mergedJournal = (await readFolder(a)).journal;
     const entryB = (await readFolder(b)).journal.entries.at(-1);
     if (!entryB) throw new Error('track B has no entry');
+    const numberB = entryB.tag.slice(0, 4);
+    await cp(join(b, `${entryB.tag}.sql`), join(a, `${entryB.tag}.sql`));
+    await cp(
+      join(b, 'meta', `${numberB}_snapshot.json`),
+      join(a, 'meta', `${numberB}_snapshot.json`),
+    );
+    const mergedJournal = (await readFolder(a)).journal;
     mergedJournal.entries.push({ ...entryB, idx: mergedJournal.entries.length });
     await writeJournal(a, mergedJournal);
 
@@ -178,8 +185,9 @@ describe('the migration tools together (two tracks, one merge)', () => {
 
     const report = await restampFolder(a, { refresh: { schemaFile: merged, scratchDir } });
 
-    expect(report.restamped).toEqual(['0340_track_b_table']);
-    expect(report.relinked).toEqual(['0340']);
+    expect(entryB.tag).toMatch(/^034\d_track_b_table$/);
+    expect(report.restamped).toEqual([entryB.tag]);
+    expect(report.relinked).toEqual([numberB]);
     expect(report.refreshedSnapshot).toBe(true);
     const after = await checkMigrationDrift({ schemaFile: merged, migrationsDir: a, scratchDir });
     expect(after.problems).toEqual([]);
