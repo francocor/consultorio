@@ -26,6 +26,16 @@ async function insertMessage(
 
 export const fixtures: Record<string, TenantTableFixture> = {
   message: { insert: insertMessage },
+  channel_preference: {
+    insert: async (tx, tenantId, overrides) =>
+      returningId(
+        tx,
+        sql`INSERT INTO channel_preference (tenant_id, patient_id, channel, state, source)
+              VALUES (${tenantId}, ${overrides?.['patient_id'] ?? (await insertPatient(tx, tenantId))},
+                      'email', 'opted_out', 'email_link')
+              RETURNING id`,
+      ),
+  },
   message_attempt: {
     insert: async (tx, tenantId, overrides) =>
       returningId(

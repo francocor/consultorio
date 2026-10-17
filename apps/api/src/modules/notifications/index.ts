@@ -12,12 +12,20 @@ import type { TenantKeys } from '../../platform/crypto/tenant-keys.js';
 import type { WithTenant } from '../../platform/db/tenant-context.js';
 import type { AppointmentEvents } from '../../platform/events/appointment-events.js';
 import type { JobClient } from '../../platform/jobs/boss.js';
-import type { ExportRegistry } from '../tenancy/index.js';
+import { createTokenRoutes, registerTokenHandler } from '../../platform/public/token-router.js';
+import { createActionTokens } from '../../platform/tokens/index.js';
+import { readOrganizationName, type ExportRegistry } from '../tenancy/index.js';
 
 import type { TenantRef } from './application/deps.js';
 import { exportNotifications } from './application/export-contributor.js';
 import { createReminderPlanner } from './application/plan-reminders.js';
+import { createLinkRevoker } from './application/revoke-links.js';
 import { createWorklist } from './application/worklist.js';
+import {
+  createCancelHandler,
+  createConfirmHandler,
+  createOptOutHandler,
+} from './http/token-handlers.js';
 
 export type {
   WebhookHeaders,
@@ -74,17 +82,36 @@ export interface Notifications {
 }
 
 export function createNotifications(options: NotificationsOptions): Notifications {
+  const clock = options.clock ?? (() => new Date());
+  const tokens = createActionTokens({ clock });
+
+  // The links of reminders: what each kind does, and the revocation of the old ones on a change.
+  const handlerDeps = { keys: options.keys, events: options.events };
+  registerTokenHandler('appointment_confirm', createConfirmHandler(handlerDeps));
+  registerTokenHandler('appointment_cancel', createCancelHandler(handlerDeps));
+  registerTokenHandler('notification_opt_out', createOptOutHandler());
+  const revoker = createLinkRevoker(tokens);
+  options.events.subscribe((tx, event) => revoker.handle(tx, event));
+
   if (options.jobs) {
     const planner = createReminderPlanner({
       jobs: options.jobs,
-      clock: options.clock ?? (() => new Date()),
+      clock,
       worklist: createWorklist({ keys: options.keys }),
       whatsappAvailable: options.whatsappAvailable ?? (() => true),
     });
     // Synchronous and in the transaction of the appointment write (see the event bus).
     options.events.subscribe((tx, event) => planner.handle(tx, event));
   }
-  return { options, routes: () => undefined };
+  return {
+    options,
+    routes: createTokenRoutes({
+      withTenant: options.withTenant,
+      tokens,
+      clock,
+      organizationName: readOrganizationName,
+    }),
+  };
 }
 
 export { createReminderPlanner } from './application/plan-reminders.js';

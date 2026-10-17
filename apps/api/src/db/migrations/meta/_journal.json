@@ -316,6 +316,13 @@
       "when": 1792245273482,
       "tag": "0320_notifications_core",
       "breakpoints": true
+    },
+    {
+      "idx": 45,
+      "version": "7",
+      "when": 1792246641823,
+      "tag": "0321_channel_preference",
+      "breakpoints": true
     }
   ]
 }

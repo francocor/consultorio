@@ -45,3 +45,17 @@ export function cancelReasonForAppointment(input: {
   if (moved || appointment.patientId !== message.patientId) return 'appointment_changed';
   return null;
 }
+
+/**
+ * Whether a patient may still cancel by the link in a reminder: until `deadlineHours` before the
+ * start (the organization's deadline for changes by link), never at or after the start. Past the
+ * deadline the patient is asked to contact the organization.
+ */
+export function withinCancelDeadline(input: {
+  now: Date;
+  startsAt: Date;
+  deadlineHours: number;
+}): boolean {
+  const limit = input.startsAt.getTime() - input.deadlineHours * 3_600_000;
+  return input.now.getTime() <= limit && input.now.getTime() < input.startsAt.getTime();
+}

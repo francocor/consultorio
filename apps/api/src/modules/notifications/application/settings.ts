@@ -1,9 +1,11 @@
 import {
   DEFAULT_INTEGRATION_SETTINGS,
   DEFAULT_NOTIFICATION_SETTINGS,
+  DEFAULT_ONLINE_BOOKING_SETTINGS,
   DEFAULT_QUIET_HOURS,
   IntegrationSettings,
   NotificationSettings,
+  OnlineBookingSettings,
   QuietHours,
 } from '@consultorio/contracts';
 
@@ -16,6 +18,8 @@ export interface MessagingSettings {
   quietHours: QuietHours;
   /** The WhatsApp switch of the organization. */
   whatsappEnabled: boolean;
+  /** Until this many hours before the start a patient may cancel by link (`onlineBooking`). */
+  cancelDeadlineHours: number;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -47,11 +51,17 @@ export function readMessagingSettings(stored: Record<string, unknown>): Messagin
     stored['integrations'],
     DEFAULT_INTEGRATION_SETTINGS,
   );
+  const booking = section(
+    (value) => OnlineBookingSettings.safeParse(value),
+    stored['onlineBooking'],
+    DEFAULT_ONLINE_BOOKING_SETTINGS,
+  );
   const quiet = QuietHours.safeParse(stored['quiet_hours']);
   return {
     notifications,
     quietHours: quiet.success ? quiet.data : DEFAULT_QUIET_HOURS,
     whatsappEnabled: integrations.whatsapp,
+    cancelDeadlineHours: booking.rescheduleDeadlineHours,
   };
 }
 

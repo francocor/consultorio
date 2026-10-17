@@ -7,6 +7,8 @@ import { hashAddress } from '../domain/address.js';
 import type { ChannelFacts } from '../domain/channel-policy.js';
 import { normalizeWhatsAppNumber } from '../domain/phone.js';
 
+import { loadPreferences } from './preferences.js';
+
 /** Failure reasons that say the address itself is bad, as opposed to a problem of the moment. */
 const CONTACT_FAILURES = ['not_on_whatsapp', 'invalid_number', 'mailbox_unavailable'] as const;
 
@@ -55,16 +57,14 @@ async function unreachableChannels(
   };
 }
 
-/**
- * Loads a patient for a message. The channel preferences of the patient (opt-in and opt-out) are
- * joined here too, in the slice that records them.
- */
+/** Loads a patient for a message: how to reach them, what they allowed and what already failed. */
 export async function loadRecipient(tx: Tx, patientId: string): Promise<Recipient | null> {
   const contact = await readPatientContact(tx, patientId);
   if (!contact) return null;
   const email = cleanEmail(contact.email);
   const phone = contact.phone === null ? null : normalizeWhatsAppNumber(contact.phone);
   const unreachable = await unreachableChannels(tx, patientId, { email, phone });
+  const preferences = await loadPreferences(tx, patientId);
   return {
     patientId,
     givenNames: contact.givenNames,
@@ -73,8 +73,8 @@ export async function loadRecipient(tx: Tx, patientId: string): Promise<Recipien
     facts: {
       email,
       phone,
-      emailPreference: 'default',
-      whatsappPreference: 'none',
+      emailPreference: preferences.email,
+      whatsappPreference: preferences.whatsapp,
       emailUnreachable: unreachable.email,
       whatsappUnreachable: unreachable.whatsapp,
     },

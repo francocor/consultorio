@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { cancelReasonForAppointment } from './validity.js';
+import { cancelReasonForAppointment, withinCancelDeadline } from './validity.js';
 
 const now = new Date('2031-05-11T10:00:00.000Z');
 const startsAt = new Date('2031-05-12T13:00:00.000Z');
@@ -92,5 +92,43 @@ describe('cancelReasonForAppointment', () => {
         appointmentBound: false,
       }),
     ).toBeNull();
+  });
+});
+
+describe('withinCancelDeadline', () => {
+  const start = new Date('2031-05-12T13:00:00.000Z');
+  const hoursBefore = (hours: number) => new Date(start.getTime() - hours * 3_600_000);
+
+  it('lets a patient cancel by link until the deadline before the start', () => {
+    expect(withinCancelDeadline({ now: hoursBefore(13), startsAt: start, deadlineHours: 12 })).toBe(
+      true,
+    );
+    expect(withinCancelDeadline({ now: hoursBefore(12), startsAt: start, deadlineHours: 12 })).toBe(
+      true,
+    );
+  });
+
+  it('closes the link once the deadline has passed, and after the start', () => {
+    expect(
+      withinCancelDeadline({
+        now: new Date(hoursBefore(12).getTime() + 1),
+        startsAt: start,
+        deadlineHours: 12,
+      }),
+    ).toBe(false);
+    expect(withinCancelDeadline({ now: hoursBefore(1), startsAt: start, deadlineHours: 12 })).toBe(
+      false,
+    );
+    expect(withinCancelDeadline({ now: start, startsAt: start, deadlineHours: 0 })).toBe(false);
+  });
+
+  it('with no deadline the link works until the start', () => {
+    expect(
+      withinCancelDeadline({
+        now: new Date(start.getTime() - 1),
+        startsAt: start,
+        deadlineHours: 0,
+      }),
+    ).toBe(true);
   });
 });
