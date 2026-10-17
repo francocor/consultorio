@@ -6,7 +6,9 @@ Mode: Standard for Stage 0; **Strict TDD from Stage 1** (`strict_tdd: true` in `
 
 Stage 0: tasks 0.2 to 0.34 done and merged. Task 0.1 (rotate secrets) is a manual owner action and is NOT done.
 
-Stage 1: slices S1.00 to S1.37 done (tasks 1.1 to 1.130, all 130 tasks of Stage 1), and the independent security review of 1.129 has been run and its ten findings handled (batch 7). Next: the owner's review of PR #14 (and the confirmation of decision D19), then Stage 2. See batches 3 to 7 at the end of this file.
+Stage 1: slices S1.00 to S1.37 done (tasks 1.1 to 1.130, all 130 tasks of Stage 1), and the independent security review of 1.129 has been run and its ten findings handled (batch 7). Next: the owner's review of PR #14 (and the confirmation of decision D19). See batches 3 to 7 below.
+
+Stage 2: slices S2.01 to S2.11 done (tasks 2.1 to 2.33, the scheduling backend), branch `feat/stage-2-practice-core` stacked on `feat/stage-1-secure-core`. Next: S2.12 onward (scheduling web, then clinical). See batch 8 at the end of this file.
 
 ## Batch 1: Stage 0, slices S0.01 to S0.05
 
@@ -736,3 +738,115 @@ The first full `pnpm test` run (while the integration suite was running) timed o
 - The worker holds `app_rw` and `audit_sealer`. Production must provision the `audit_sealer` login and make the proxy send `dist/content-security-policy.txt`.
 - Nothing was verified in CI (never polled). Lighthouse was not re-run (the local browser would not start under `lhci`).
 - The two ESLint-based unit tests (`web-lint-rules`, `country-isolation`) exceed 120 seconds when the whole monorepo runs while Docker is busy; they pass alone in about 35 seconds.
+
+## Batch 8: Stage 2, slices S2.01 to S2.11 (the scheduling backend)
+
+Strict TDD. Branch `feat/stage-2-practice-core` (from `feat/stage-1-secure-core`), one work-unit commit per slice step with the slice id in the subject, automatic mode, delivery `size:exception` (about 50k added lines including generated migration metadata and tests; the production code is a fraction of that), draft PR to `feat/stage-1-secure-core`, merged after PR #14. No merge, CI not polled.
+
+### Commits (in order)
+
+| Slice | Commits | Tasks |
+|---|---|---|
+| S2.01 Appointment types, blocks, days off | `78b4ab7` tables, `6e1fd5a` time zones (task 2.9 pulled forward: weekly blocks need them), `58333b0` services, routes, holiday calendar, hours for a range of dates, operator catalog | 2.1 to 2.3, 2.9 |
+| S2.02 Appointment and occupancy schema | `4a6f848` tables, exclusion constraint, sync triggers; `9084cf7` concurrency | 2.4 to 2.6 |
+| S2.03 Lanes and time zones | `50b3a0d` | 2.7, 2.8 |
+| S2.04 Booking service | `2edbb46` working windows, free slots, ports and the in-memory fake; `3742449` booking and `POST /appointments` | 2.10 to 2.12 |
+| S2.05 Lifecycle | `d7d2062` state machine; `d7af008` transitions, reschedule, reassign, correct, read-only | 2.13 to 2.16 |
+| S2.06 Worklist | `a1cdd31` worklist; `2d1d454` module boundaries lint | 2.17 to 2.19 |
+| S2.07 Identity confirmation | `ca6104d` rules; `9608d9e` review, confirmation, detach | 2.20 to 2.23 |
+| S2.08 Care relationship | `7428236` | 2.24, 2.25 |
+| S2.09 Slot holds | `3afe4a3` | 2.26, 2.27 |
+| S2.10 Availability and series | `93354dc` | 2.28, 2.29 |
+| S2.11 Authorization, audit, read-only | `13e6ae6` calendar scope in `can()`; `9a6c44e` scope on every route, calendar feed, detail, read-only matrix; `222c784` demo agenda; `fbfb628` es-AR labels; `85193b3` export contributor; one test fix for the catalog check | 2.30 to 2.33 |
+
+### What was built
+
+- **Schema** (migrations 0023 to 0027, hand-completed with `finish-migration`): `appointment_type`, `schedule_block`, `tenant_day_off`, `professional_hours_exception`; `appointment`, `appointment_event`, `slot_hold`, `slot_occupancy` (one conflict surface with a `btree_gist` exclusion constraint per tenant, professional, lane and range, DEFERRABLE) with definer sync triggers and a lane-capacity constraint trigger; `worklist_item`; `app.recompute_care_relationship` and `app.care_adjust` fed by a trigger on the appointment; `holiday_catalog.removed_at`.
+- **Domain** (pure, unit tested): time zones with DST (luxon), holidays, lanes (greedy re-lane), working windows, free slots, the eight-status state machine, identity-confirmation rules.
+- **Application**: types, blocks, days off, hours periods, placement (`planSlot`/`applyPlan` shared by booking, reschedule, correction, holds and series), booking, lifecycle, identity, history, worklist, holds and the `hold.expire` job, availability, recurring series, calendar, administrative export contributor. Ports and an in-memory fake keep the use cases unit-testable.
+- **HTTP**: config routes, appointment routes, worklist routes, planning routes (availability, holds, series, calendar); `409 slot_taken` carries the conflict and the next free slots, `409 slot_no_longer_available`, `409 stale_revision` on a stale `version`.
+- **Authorization**: scheduling permissions, calendar scope for professionals (own calendar unless one is delegated) in `can()`, reception filtered by its locations, read-only matrix (cancel allowed, book and reschedule refused with 402), `AUDIT_ACTIONS` for every scheduling action and the audit-scenario coverage.
+- **Lint**: modules reach each other only through `index.ts` (policy plus a fixture test).
+- **Demo seed**: types, one block, one day off, one special-hours period and appointments over the previous, current and next week with every status, booked through the same use cases; one booking made by the cardiologist for an existing patient shows the identity review in the worklist.
+- **Web**: es-AR labels for the new audit actions and messages for the two new error codes (no scheduling screens yet).
+
+### TDD Cycle Evidence
+
+| Task | Test file(s) | Layer | RED | GREEN | Triangulation |
+|---|---|---|---|---|---|
+| 2.1 | `scheduling-config-schema.test.ts`, generated isolation suite | Integration | written first (tables missing) | green | CHECKs (duration, buffer, color, interval); the NULL-safe CHECK found a real hole (see bugs); isolation of the tables |
+| 2.2 | `scheduling-config-api.test.ts`, `scheduling-config.test.ts` (contracts) | Integration + unit | written first | green | CRUD, deactivate not delete, denials per role, audit rows, 409 stale |
+| 2.3 | `operator-holidays.test.ts`, `domain/holidays.test.ts`, `operator-privileges.test.ts` | Integration + unit | written first | green | moved holiday visible without a release, soft remove, operator only, forbidden columns |
+| 2.4, 2.5 | `scheduling-schema.test.ts` | Integration | written first | green | transition table of every status against occupancy, holds, buffer range, lane capacity, isolation |
+| 2.6 | `scheduling-concurrency.test.ts` | Integration | written first | green | N parallel connections, exactly one winner and `23P01` for the rest, back-to-back allowed |
+| 2.7, 2.8 | `domain/lanes.test.ts` | Unit + property | written first | green | tables plus fast-check: never over capacity, no overlap per lane, re-lane fits whenever feasible |
+| 2.9 | `domain/time.test.ts` | Unit | written first | green | spring-forward gap, fall-back overlap, Argentina (no DST) and a DST zone |
+| 2.10 to 2.12 | `domain/working-hours.test.ts`, `domain/free-slots.test.ts`, `application/book-appointment.test.ts`, `scheduling-booking.test.ts` | Unit + integration | written first | green | golden path, overlap, buffer, hours, block, holiday, hold, capacity, other location, past date, override, 402, next slots |
+| 2.13 to 2.16 | `domain/appointment-state-machine.test.ts`, `application/lifecycle.test.ts`, `scheduling-lifecycle.test.ts` | Unit + integration | written first | green | exhaustive pair test, each transition, version conflict, reschedule keeps the old slot until committed, read-only matrix |
+| 2.17, 2.18 | `scheduling-worklist.test.ts` | Integration | written first | green | six kinds, invalid kind refused, location filter, encrypted detail, resolve and dismiss audited |
+| 2.19 | `module-boundaries.test.ts` + fixtures | Lint | written first | green | internal import fails, `index.ts` import passes |
+| 2.20 to 2.23 | `domain/identity-confirmation.test.ts`, `application/identity.test.ts`, `scheduling-identity.test.ts` | Unit + integration | written first | green | truth table of D14 and D18, own professional refused, solo practice only at in-person check-in, detach leaves the matched record untouched |
+| 2.24, 2.25 | `scheduling-care-relationship.test.ts` | Integration | written first | green | real clinical policies on a test table: unconfirmed gives nothing, confirmation gives access, confirmed no-show counts, unconfirmed no-show does not, cancelled and pending do not |
+| 2.26, 2.27 | `application/holds.test.ts`, `scheduling-holds.test.ts` | Unit + integration | written first | green | per-source bound, expiry (lazy and job), invalidation, conversion, capacity-1 rule, override then confirm gives 409 |
+| 2.28, 2.29 | `application/availability.test.ts`, `application/series.test.ts`, `scheduling-availability.test.ts` | Unit + integration | written first | green | hours minus blocks, holidays and occupancy, buffer, dry run and commit, one conflict skipped, independent cancel |
+| 2.30 | `platform/authz/calendar-scope.test.ts`, `application/scope.test.ts`, `scheduling-scope.test.ts` | Unit + integration | written first | green | own calendar, delegated calendar by professional, reception by location |
+| 2.31 to 2.33 | `scheduling-calendar.test.ts`, `scheduling-lifecycle.test.ts`, audit coverage, `route-categories` | Integration | written first | green | feed has no clinical field, read-only matrix, every action in the catalogue has a scenario |
+| (demo) | `db/seed/demo/schedule.test.ts` (13), `demo-seed.test.ts`, `demo-coverage.test.ts` | Unit + integration | written first (the coverage test failed on `slot_hold` until it got a reason) | green | every status present, children to pediatrics, nothing on the day off or inside the block, a self-booked visit opens the identity review |
+| (export) | `scheduling-export.test.ts`, `export-registry.test.ts` | Integration + unit | RED from the existing guard (module without a contributor) | green | own organization only, no encrypted or clinical field |
+
+### Test summary and verification (tip of `feat/stage-2-practice-core`, Node 24, pnpm 10.34.7, Docker running)
+
+| Command | Result |
+|---|---|
+| `corepack pnpm install --frozen-lockfile` | exit 0 |
+| `corepack pnpm typecheck` | exit 0 (contracts, api, web) |
+| `corepack pnpm lint` | exit 0 |
+| `corepack pnpm format:check` | exit 0 |
+| `corepack pnpm test` | **165 files, 2149 tests passed** (it was 146 files, 1693 tests) |
+| `corepack pnpm test:integration` | **90 files, 1386 tests passed** (it was 75 files, 1105 tests). The full run found one failure (`platform-catalogs`, see bugs); after the fix that file passes alone (18 tests) |
+| `corepack pnpm build` | exit 0 |
+| `corepack pnpm db:check` | "No migration drift." (migrations 0023 to 0027) |
+| `corepack pnpm test:e2e` | **112 passed** (about 2.1 minutes). Two earlier attempts failed on a sign-in and on the Postgres health check while another worktree (`consultorio-wt-docs`) was running its own integration tests and containers on the same machine; run alone the suite passes |
+
+### Bugs found by the tests and fixed in the same slice
+
+- A CHECK on a nullable column was satisfied by NULL (`NULL > 0` is unknown, not false); the constraint now says `IS NOT NULL AND ...` and migration 0023 was regenerated before it was committed.
+- An import cycle between holds and booking: the shared helpers (`typeOffered`, `SlotNoLongerAvailableError`) moved to `placement.ts`.
+- Sessions in the integration worlds expired when a test moved the clock; the application takes a `schedulingClock` option so tests can move scheduling time without moving session time.
+- The full integration suite found that `platform-catalogs` required every year of the shared holiday catalog to be full, while the operator suite adds a few holidays to 2031. The check now covers the seeded years 2026 to 2028.
+
+### Decisions and deviations (all recorded; automatic mode)
+
+1. **One conflict surface.** `slot_occupancy` is the only table the exclusion constraint lives on. Appointments and active holds are mirrored into it by SECURITY DEFINER triggers (`pg_temp` last in the search path, closed by default, EXECUTE granted explicitly). The constraint is DEFERRABLE so a reschedule can move an appointment inside one transaction.
+2. **Lanes are capacity.** `professional.max_simultaneous` is the number of lanes; a re-lane is greedy and runs under the per-professional `FOR UPDATE` lock that serializes the writes of one professional. Public flows use capacity 1 (`requireNoActiveOverlap`).
+3. **Buffer inside the range.** The occupied range is `[start, end + buffer)`: the exclusion constraint needs no special case and back-to-back appointments stay allowed.
+4. **Holds expire lazily and by job.** Under the lock, stale holds are expired before a booking looks at the schedule (correct without the job); `hold.expire` (every 60 s through the new tenant-job ticker) keeps the table tidy.
+5. **Reschedule is an event, not a status.** `appointment_event.kind = rescheduled`; the eight statuses stay as designed.
+6. **Identity (D14, D18).** Initial value: confirmed unless an existing patient is matched online, or the booking actor is the appointment's own professional. Who may confirm: staff other than the appointment's professional; the sole active professional of a practice may self-confirm only through the in-person check-in action; the worklist refuses the own professional. The care-relationship trigger counts only confirmed appointments.
+7. **Task 2.9 pulled forward** into S2.01 (weekly blocks need time zone conversion). The hours-for-a-range-of-dates feature (`professional_hours_exception`) is also in S2.01; the design lists it with working hours.
+8. **Holiday catalog is soft-removed** (`removed_at`) so a mistaken holiday can be retracted without a release; an organization's own day off is separate (`tenant_day_off`). The operator API is platform-audited.
+9. **Optimistic concurrency.** Every mutating appointment route takes `version`; a stale one is `409 stale_revision`. A taken slot is `409 slot_taken` with the conflict and `nextSlots`; an invalidated hold is `409 slot_no_longer_available`.
+10. **ESLint boundaries.** The policy is expressed with `boundaries/dependencies` (`disallow` to another module's file unless it is `index.ts`); a `relationship` filter proved unnecessary because imports inside the same module are already allowed.
+11. **Export contributor.** The existing guard (a test that every module registers an export contributor) failed for `scheduling`; `modules/scheduling/application/export-contributor.ts` exports types, appointments with their history, blocks, days off and special-hours periods. Slot holds, the occupancy index and the worklist are not exported (derived, transient, or an operational queue with encrypted detail).
+12. **Demo agenda** is a pure function of the dataset and of "now" (`buildDemoSchedule`), so the calendar always shows today; the seed books through `bookAppointment` and `transitionAppointment` with permissive actors instead of inserting rows, which keeps every trigger and invariant in play. The one self-booked visit shows the identity review.
+13. **Commit attribution.** No AI attribution lines were added to commits or to the PR, as the owner's standing rule requires.
+
+### Attachment points for the scheduling web slices (S2.12 onward)
+
+Routes (under `/api/v1`, session cookie, `Origin` checked; contracts in `packages/contracts/src/scheduling.ts` and `scheduling-config.ts`; the exact paths are in `apps/api/src/modules/scheduling/http/`):
+
+- Calendar: `GET /appointments?from&to&professionalIds&locationId` returns `CalendarResponse` (`CalendarEntryDto`, administrative fields only, already filtered by the actor's calendar scope and locations); `GET /appointments/:id` returns `AppointmentDto` (including `identityConfirmation` and `version`).
+- Booking and lifecycle: `POST /appointments` (`BookAppointmentRequest`); `GET /appointments/:id/history`; the actions are `POST /appointments/:id/{confirm,check-in,start,attend,no-show,approve,cancel,correct,reschedule,detach-patient}` (reassigning a professional is a `reschedule` that changes `professionalId`); each takes `version`. Conflicts: `409 slot_taken` (extension `SlotConflictExtension`: `conflict`, `nextSlots`), `409 slot_no_longer_available`, `409 stale_revision`; a read-only tenant gets `402 tenant_read_only` (except cancel).
+- Availability and series: `GET /availability?professionalId&from&to&typeId` (`AvailabilityResponse`); `POST /appointments/series` (dry run and commit with a skip list); holds are `/slot-holds` (create, release, convert).
+- Worklist: `GET /worklist` (filtered by the user's locations, `WORKLIST_KINDS`), `POST /worklist/:id/{resolve,dismiss,confirm-identity}`; permission `worklist.manage`.
+- Settings: appointment types, schedule blocks, days off, holidays by year and per-professional hours periods (permission `scheduling.configure`).
+- Web catalogs already in place: es-AR audit labels (`locales/es-AR/audit.json`) and `errors.slot_taken`, `errors.slot_no_longer_available` (`locales/es-AR/errors.json`). The scheduling screens need a new `scheduling.json` namespace.
+- Demo: reception and owner see the full agenda, each professional sees their own calendar; the identity review item is in the worklist.
+
+### Remaining
+
+- S2.12 to S2.34 (scheduling web, clinical, documents, onboarding, gate and legacy removal).
+- The frontend does not use the new routes yet; none of the scheduling API was exercised from a browser (the Playwright demo specs still pass against the extended seed).
+- Reminders, the waitlist and public booking (Stage 3) will add worklist items through `worklist.openItem`; the kinds already exist.
+- `slot_hold` has no demo row (listed with a reason in the coverage test).
+- Nothing was verified in CI (never polled).
