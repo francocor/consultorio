@@ -1,5 +1,6 @@
 import { z } from 'zod';
 
+import { readProviderConfig, type ProviderConfig } from './config-providers.js';
 import { readScannerConfig, type ScannerConfig } from './config-scanner.js';
 import { parseTrustProxy, type TrustProxySetting } from './trust-proxy.js';
 
@@ -281,6 +282,8 @@ export interface Config {
   readonly scanner?: ScannerConfig;
   /** Undefined when SMTP_HOST is not set (allowed outside production). */
   readonly mail?: MailConfig;
+  /** Which provider serves WhatsApp, video and the bot challenge (see config-providers.ts). */
+  readonly providers: ProviderConfig;
   readonly passwordBreachCheck: boolean;
   readonly lockout: { readonly maxFailures: number; readonly lockMs: number };
   readonly logLevel: (typeof LOG_LEVELS)[number];
@@ -336,6 +339,12 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     const problems = scanner.problems.map((problem) => `${problem.path}: ${problem.message}`);
     throw new ConfigError(`Invalid environment configuration. ${problems.join('; ')}`);
   }
+  // The provider variables have their own small schema too; production refuses a simulator.
+  const providers = readProviderConfig(withoutEmptyValues(env), { nodeEnv: value.NODE_ENV });
+  if (providers.config === undefined) {
+    const problems = providers.problems.map((problem) => `${problem.path}: ${problem.message}`);
+    throw new ConfigError(`Invalid environment configuration. ${problems.join('; ')}`);
+  }
   return {
     nodeEnv: value.NODE_ENV,
     databaseUrl: value.DATABASE_URL,
@@ -387,6 +396,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
             from: value.MAIL_FROM,
           },
         }),
+    providers: providers.config,
     passwordBreachCheck: value.AUTH_BREACH_CHECK,
     lockout: {
       maxFailures: value.AUTH_LOCKOUT_MAX_FAILURES,
