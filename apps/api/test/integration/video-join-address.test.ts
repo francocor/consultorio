@@ -104,7 +104,19 @@ describe('the address a reminder carries for a virtual appointment', () => {
 
     if (address.kind !== 'link') throw new Error('expected a link');
     // A 30-minute appointment: the window closes 60 minutes after its end (90 after the start). The
-    // kind caps a token at three days, so reminders sent a day ahead carry a link that still works.
+    // kind allows 15 days, so even a reminder sent 14 days ahead carries a link that still works.
+    expect(address.expiresAt.getTime()).toBe(start + 90 * MINUTE + 12 * HOUR);
+  });
+
+  it('is not cut short for a reminder that goes out 14 days ahead, the longest lead time', async () => {
+    const created = await world.bookVirtual(nextWeek(), '09:00');
+    await world.runVideoJobs();
+    const start = new Date(created.startsAt).getTime();
+    world.setVideoNow(new Date(start - 14 * 24 * HOUR));
+
+    const address = await resolve(created.id);
+
+    if (address.kind !== 'link') throw new Error('expected a link');
     expect(address.expiresAt.getTime()).toBe(start + 90 * MINUTE + 12 * HOUR);
   });
 

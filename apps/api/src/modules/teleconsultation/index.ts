@@ -28,6 +28,7 @@ import { videoRoutes } from './http/video-routes.js';
 
 export type { VideoLinkProvider, VideoRoom } from './application/ports.js';
 export type { VideoJoinAddress, VideoJoinUrlResolver } from './application/join-address.js';
+export { createJoinUrlResolver } from './application/join-address.js';
 export { devVideoRoutes, type DevVideoControls } from './http/dev-routes.js';
 export { createVideoLinkCreateJob };
 export { VIDEO_LINK_CREATE_JOB } from './application/video-sessions.js';

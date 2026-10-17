@@ -15,6 +15,7 @@ import { createDocuments } from '../modules/documents/index.js';
 import type { LockoutPolicy } from '../modules/identity/application/lockout.js';
 import type { PasswordValidator } from '../modules/identity/domain/password-policy.js';
 import { createIdentity, type PasswordHasher } from '../modules/identity/index.js';
+import { createVideoJoinRegistry } from '../modules/notifications/index.js';
 import {
   createOnboarding,
   createWizardGate,
@@ -350,6 +351,7 @@ export function createApplication(options: ApplicationOptions): FastifyInstance 
   // The links' registry belongs to one application: it starts empty, so a capability that claims
   // a kind another one already took fails here instead of silently replacing it.
   resetTokenHandlers();
+  const videoJoin = createVideoJoinRegistry();
   const wired = (options.wiring ?? []).map((wiring) =>
     wiring.create({
       withTenant,
@@ -360,6 +362,7 @@ export function createApplication(options: ApplicationOptions): FastifyInstance 
       rateLimitStore,
       appointmentEvents,
       worklist: scheduling.worklist,
+      videoJoin,
       ...(options.clock ? { clock: options.clock } : {}),
       ...(options.storage ? { storage: options.storage } : {}),
       ...(options.jobs ? { jobs: options.jobs } : {}),

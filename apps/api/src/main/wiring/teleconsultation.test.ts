@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { DEFAULT_MANUAL_LINK_DOMAINS } from '../../adapters/video-local/index.js';
+import { createVideoJoinRegistry } from '../../modules/notifications/index.js';
 import { VideoProviderUnavailableError } from '../../modules/teleconsultation/application/ports.js';
 import { loadConfig } from '../config.js';
 
@@ -95,5 +96,23 @@ describe('the video slot of the adapter registry', () => {
     });
 
     expect(slot.real?.adapter.name).toBe('unavailable');
+  });
+});
+
+describe('the join address that reminders carry', () => {
+  it('is registered by the worker part of the module, which is where reminders are rendered', () => {
+    const videoJoin = createVideoJoinRegistry();
+
+    teleconsultationWiring.worker?.({
+      config: loadConfig(env),
+      adapters: {} as never,
+      email: {} as never,
+      videoJoin,
+    });
+
+    // The slot is taken: a second resolver would be refused.
+    expect(() =>
+      videoJoin.register({ resolve: () => Promise.resolve({ kind: 'closed' }) }),
+    ).toThrow(/already registered/);
   });
 });

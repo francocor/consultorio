@@ -30,6 +30,7 @@ import { createConfiguredEmail } from '../../src/main/email.js';
 import { loadPasswordValidator } from '../../src/main/password-validator.js';
 import { MODULE_WIRINGS, combineWorkerContributions } from '../../src/main/wiring/index.js';
 import { createPasswordHasher } from '../../src/modules/identity/index.js';
+import { createVideoJoinRegistry } from '../../src/modules/notifications/index.js';
 import { createOperatorAdminFor, createOperatorSecrets } from '../../src/modules/operator/index.js';
 import { holdExpireJob } from '../../src/modules/scheduling/index.js';
 import { createTenantKeys } from '../../src/platform/crypto/tenant-keys.js';
@@ -311,6 +312,7 @@ export async function startStack(options: StackOptions): Promise<Stack> {
 
     let worker: Awaited<ReturnType<typeof startWorker>> | undefined;
     if (options.withWorker !== false) {
+      const videoJoin = createVideoJoinRegistry();
       worker = await startWorker({
         databaseUrl: runtimeUrl,
         sealerDatabaseUrl: sealerUrl,
@@ -321,7 +323,7 @@ export async function startStack(options: StackOptions): Promise<Stack> {
           { tenantJobs: [{ definition: holdExpireJob, everyMs: 60_000 }] },
           documentWorker({ storage, scanner, email: email.sender }),
           ...MODULE_WIRINGS.map(
-            (module) => module.worker?.({ config, adapters, email: email.sender }) ?? {},
+            (module) => module.worker?.({ config, adapters, email: email.sender, videoJoin }) ?? {},
           ),
         ]),
       });

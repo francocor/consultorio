@@ -21,6 +21,12 @@ export interface AppointmentFacts {
   appointmentTypeName: string | null;
 }
 
+/**
+ * What a message says about the video call of a virtual appointment. The address is the platform
+ * join address (never the provider's room); `pending` says the link will be sent separately.
+ */
+export type VideoNote = { kind: 'link'; url: string } | { kind: 'pending' };
+
 /** The organization's neutral-wording switches (`settings.notifications`). */
 export interface Wording {
   hideProfessional: boolean;

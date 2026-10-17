@@ -41,6 +41,7 @@ import { loadRecipient, type Recipient } from './recipients.js';
 import { renderMessage, type RenderedMessage } from './render.js';
 import { loadMessagingSettings, type MessagingSettings } from './settings.js';
 import { recordWhatsappUsage, UNLIMITED_QUOTA, whatsappQuotaAvailable } from './usage.js';
+import { videoNoteOf } from './video-join.js';
 
 /**
  * Delivery of one queued message, in three steps so that the provider is never called inside a
@@ -316,6 +317,12 @@ export function prepareDelivery(
             startsAt: appointment.startsAt,
           })
         : undefined;
+    // A virtual appointment says how to get into the call, or that the link follows.
+    const video = appointment.virtual
+      ? videoNoteOf(
+          (await deps.videoJoin?.resolve(tx, appointment.id)) ?? { kind: 'pending' as const },
+        )
+      : undefined;
     const rendered = renderMessage({
       kind,
       channel,
@@ -333,6 +340,7 @@ export function prepareDelivery(
         hideAppointmentType: settings.notifications.hideAppointmentType,
       },
       ...(links ? { links } : {}),
+      ...(video ? { video } : {}),
     });
 
     return {

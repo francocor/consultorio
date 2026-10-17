@@ -17,16 +17,15 @@ import {
 import { createTenantKeys } from '../../platform/crypto/tenant-keys.js';
 import { createRuntimeDb } from '../../platform/db/pool.js';
 import { createWithTenant } from '../../platform/db/tenant-context.js';
-import { createPublicOrigins } from '../../platform/http/public-origin.js';
 import { fanOut } from '../../platform/jobs/worker.js';
 import type { WorkerJobContext } from '../../platform/jobs/worker.js';
 import { adapterOfSetting } from '../../platform/local-providers/dev-routes.js';
 import { createActionTokens } from '../../platform/tokens/index.js';
 import { fake } from '../adapter-resolver.js';
 import type { Config } from '../config.js';
-import { deploymentFromConfig } from '../deployment.js';
 import { createKeyManagement } from '../key-management.js';
 
+import { originsFromConfig } from './origins.js';
 import type { ModuleWiring } from './types.js';
 
 /**
@@ -128,15 +127,12 @@ export const notificationsWiring: ModuleWiring = {
       // Without a resolver (some tests) WhatsApp is assumed to exist; the send job checks again.
       whatsappAvailable: (tenant) =>
         context.adapters ? context.adapters.forTenant(tenant, 'whatsapp') !== undefined : true,
+      videoJoin: context.videoJoin.resolver,
       ...(context.clock ? { clock: context.clock } : {}),
     }),
-  worker: ({ config, adapters, clock }) => {
+  worker: ({ config, adapters, clock, videoJoin }) => {
     const now = clock ?? (() => new Date());
-    const origins = createPublicOrigins(deploymentFromConfig(config), {
-      secure: config.cookieSecure,
-      ...(config.publicUrl === undefined ? {} : { publicUrl: config.publicUrl }),
-      ...(config.publicPort === undefined ? {} : { port: config.publicPort }),
-    });
+    const origins = originsFromConfig(config);
     const keys = createTenantKeys({ kms: createKeyManagement(config.kms) });
     const jobsOf = ({ client, db }: Pick<WorkerJobContext, 'client' | 'db'>) =>
       createNotificationJobs({
@@ -152,6 +148,8 @@ export const notificationsWiring: ModuleWiring = {
         origins,
         tokens: createActionTokens({ clock: now }),
         worklist: createWorklist({ keys }),
+        // Reminders of a virtual appointment carry the join address teleconsultation registered.
+        videoJoin: videoJoin.resolver,
       });
     return {
       jobs: (context) => jobsOf(context).all,

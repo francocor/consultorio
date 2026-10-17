@@ -1,3 +1,4 @@
+import type { VideoJoinRegistry } from '../../modules/notifications/index.js';
 import type { WorklistService } from '../../modules/scheduling/index.js';
 import type { AuthzOptions } from '../../platform/authz/guard.js';
 import type { TenantKeys } from '../../platform/crypto/tenant-keys.js';
@@ -43,6 +44,11 @@ export interface WiringContext {
   appointmentEvents: AppointmentEvents;
   /** The reception worklist of scheduling (`openItem`). */
   worklist: WorklistService;
+  /**
+   * Where teleconsultation hands notifications the resolver of the join address that reminders of
+   * a virtual appointment carry. One per application.
+   */
+  videoJoin: VideoJoinRegistry;
 }
 
 /** What the module needs to fill its slots of the adapter registry. */
@@ -63,6 +69,8 @@ export interface WorkerWiringContext {
   adapters: AdapterResolver;
   email: EmailSender;
   clock?: () => Date;
+  /** The same registry for every module of this worker process. */
+  videoJoin: VideoJoinRegistry;
 }
 
 /** Jobs, scheduled tasks and per-organization ticks a module adds to the worker process. */

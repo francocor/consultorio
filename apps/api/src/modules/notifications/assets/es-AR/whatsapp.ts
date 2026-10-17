@@ -23,9 +23,21 @@ type Vars = Readonly<Record<string, string>>;
 function appointmentLines(vars: Vars): string {
   const lines = [`Fecha: ${vars['date'] ?? ''}`, `Hora: ${vars['time'] ?? ''}`];
   lines.push(`Lugar: ${vars['place'] ?? ''}`);
+  if (vars['mode'] !== undefined) lines.push(`Modalidad: ${vars['mode']}`);
   if (vars['professional'] !== undefined) lines.push(`Profesional: ${vars['professional']}`);
   if (vars['type'] !== undefined) lines.push(`Tipo de turno: ${vars['type']}`);
   return lines.join('\n');
+}
+
+/** How to get into the video call, or that the link follows; nothing for an in-person appointment. */
+function videoLine(vars: Vars): string[] {
+  if (vars['mode'] === undefined) return [];
+  const url = vars['joinUrl'];
+  return [
+    url === undefined
+      ? 'El enlace de la videollamada se enviará por separado.'
+      : `Para conectarse, abra este enlace unos minutos antes del turno: ${url}`,
+  ];
 }
 
 const BODIES: Record<WhatsAppTemplateKey, (vars: Vars) => string> = {
@@ -33,12 +45,14 @@ const BODIES: Record<WhatsAppTemplateKey, (vars: Vars) => string> = {
     [
       `Hola ${vars['name'] ?? ''}, le recordamos su turno en ${vars['organization'] ?? ''}.`,
       appointmentLines(vars),
+      ...videoLine(vars),
       'Responda 1 para confirmar o 2 para cancelar. Responda BAJA para dejar de recibir estos mensajes.',
     ].join('\n\n'),
   appointment_confirmation: (vars) =>
     [
       `Hola ${vars['name'] ?? ''}, registramos su turno en ${vars['organization'] ?? ''}.`,
       appointmentLines(vars),
+      ...videoLine(vars),
       'Responda 2 si necesita cancelarlo. Responda BAJA para dejar de recibir estos mensajes.',
     ].join('\n\n'),
   waitlist_offer: (vars) =>

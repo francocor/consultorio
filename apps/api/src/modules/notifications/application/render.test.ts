@@ -229,6 +229,78 @@ describe('renderMessage for WhatsApp', () => {
   });
 });
 
+describe('renderMessage for a video consultation', () => {
+  const join = 'https://aillu.example.test/public/v/JOIN';
+
+  it('writes the join address into the email, as text and as a link, and names the mode', () => {
+    const rendered = email({ video: { kind: 'link', url: join } });
+
+    expect(rendered.text).toContain('Modalidad: Videollamada');
+    expect(rendered.text).toContain(join);
+    expect(rendered.html).toContain(`href="${join}"`);
+    expect(rendered.html).toContain('Unirse a la videollamada');
+    // The other links are still there.
+    expect(rendered.text).toContain('https://aillu.example.test/public/t/CONFIRM');
+  });
+
+  it('says the link follows when the room does not exist yet, instead of inventing one', () => {
+    const rendered = email({ video: { kind: 'pending' } });
+
+    expect(rendered.text).toContain('Modalidad: Videollamada');
+    expect(rendered.text).toContain('le enviaremos el enlace por separado');
+    expect(rendered.text).not.toContain('/public/v/');
+    expect(rendered.html).not.toContain('Unirse a la videollamada');
+  });
+
+  it('writes nothing about video for an in-person appointment', () => {
+    const rendered = email();
+
+    expect(rendered.text).not.toContain('Modalidad');
+    expect(rendered.text).not.toContain('videollamada');
+    expect(rendered.html).not.toContain('videollamada');
+  });
+
+  it('carries the link in a confirmation too', () => {
+    const rendered = email({ kind: 'confirmation', video: { kind: 'link', url: join } });
+
+    expect(rendered.text).toContain(join);
+  });
+
+  it('refuses a join address that is not a web link', () => {
+    expect(() => email({ video: { kind: 'link', url: 'javascript:alert(1)' } })).toThrow('http(s)');
+  });
+
+  it('passes the join address to the WhatsApp template as a variable, and the mode', () => {
+    const rendered = renderMessage({
+      kind: 'reminder',
+      channel: 'whatsapp',
+      facts,
+      wording: showAll,
+      video: { kind: 'link', url: join },
+    });
+
+    expect(rendered.channel === 'whatsapp' && rendered.vars).toMatchObject({
+      mode: 'Videollamada',
+      joinUrl: join,
+    });
+  });
+
+  it('marks a WhatsApp message whose link follows with the mode and no address', () => {
+    const rendered = renderMessage({
+      kind: 'reminder',
+      channel: 'whatsapp',
+      facts,
+      wording: showAll,
+      video: { kind: 'pending' },
+    });
+
+    expect(rendered.channel === 'whatsapp' && rendered.vars).toMatchObject({
+      mode: 'Videollamada',
+    });
+    expect(rendered.channel === 'whatsapp' && rendered.vars).not.toHaveProperty('joinUrl');
+  });
+});
+
 describe('the render input has no clinical fields', () => {
   it('rejects, at compile time, a field that is not administrative', () => {
     const withDiagnosis = renderMessage({

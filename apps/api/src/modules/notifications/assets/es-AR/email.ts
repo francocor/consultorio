@@ -1,6 +1,6 @@
 import type { AppointmentMessageKind } from '@consultorio/contracts';
 
-import type { MessageVars } from '../../domain/content.js';
+import type { MessageVars, VideoNote } from '../../domain/content.js';
 
 /**
  * The email templates (es-AR) for the three messages of an appointment. The organization is a
@@ -26,7 +26,42 @@ export interface EmailParts {
   actions: { sentence: string; label: string; url: string }[];
 }
 
+/** What a message of an appointment says about its video call: the way in, or that it follows. */
+function videoParts(video: VideoNote | undefined): {
+  action?: EmailParts['actions'][number];
+  note?: string;
+} {
+  if (video === undefined) return {};
+  if (video.kind === 'pending') {
+    return { note: 'La consulta es por videollamada y le enviaremos el enlace por separado.' };
+  }
+  return {
+    action: {
+      sentence:
+        'La consulta es por videollamada. Para conectarse, abra este enlace unos minutos antes del turno:',
+      label: 'Unirse a la videollamada',
+      url: video.url,
+    },
+  };
+}
+
 export function emailParts(
+  kind: AppointmentMessageKind,
+  vars: MessageVars,
+  links: EmailLinks,
+  video?: VideoNote,
+): EmailParts {
+  const parts = appointmentEmailParts(kind, vars, links);
+  if (kind === 'waitlist_offer') return parts;
+  const { action, note } = videoParts(video);
+  return {
+    ...parts,
+    intro: note === undefined ? parts.intro : `${parts.intro} ${note}`,
+    actions: action === undefined ? parts.actions : [action, ...parts.actions],
+  };
+}
+
+function appointmentEmailParts(
   kind: AppointmentMessageKind,
   vars: MessageVars,
   links: EmailLinks,

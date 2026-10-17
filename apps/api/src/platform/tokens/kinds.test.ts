@@ -67,6 +67,18 @@ describe('action token kinds (design 4.5)', () => {
     }
   });
 
+  it('lets a video join link live as long as the longest reminder lead time needs', () => {
+    // Reminders go out up to 14 days ahead (the contracts cap), and the link stays known 12 hours
+    // after the join window, which closes an hour after the end of the appointment.
+    const longestLead = 14 * 24 * HOUR;
+    const afterTheStart = 12 * HOUR + 8 * HOUR + HOUR;
+
+    expect(TOKEN_KIND_REGISTRY.video_join.ttlMs).toBe(15 * 24 * HOUR);
+    expect(TOKEN_KIND_REGISTRY.video_join.ttlMs).toBeGreaterThanOrEqual(
+      longestLead + afterTheStart,
+    );
+  });
+
   it('binds a document download to a session, for five minutes, once', () => {
     expect(TOKEN_KIND_REGISTRY.document_download).toMatchObject({
       ttlMs: 5 * MINUTE,

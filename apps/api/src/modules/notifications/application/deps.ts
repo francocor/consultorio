@@ -8,6 +8,7 @@ import type { ActionTokens } from '../../../platform/tokens/index.js';
 
 import type { WhatsAppSender } from './ports.js';
 import type { QuotaPolicy } from './usage.js';
+import type { VideoJoinResolver } from './video-join.js';
 
 /** The organization a message is about; a demo organization never reaches a real provider. */
 export interface TenantRef {
@@ -58,4 +59,9 @@ export interface MessagingDeps {
   worklist: Worklist;
   /** The plan's WhatsApp quota. Absent: no quota, everything is allowed and counted. */
   quota?: QuotaPolicy;
+  /**
+   * The join address of a virtual appointment, for the messages that carry it. Absent (a process
+   * where teleconsultation is not wired): such a message says the link follows.
+   */
+  videoJoin?: VideoJoinResolver;
 }

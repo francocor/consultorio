@@ -12,6 +12,7 @@ import {
   describeAppointment,
   type AppointmentFacts,
   type MessageVars,
+  type VideoNote,
   type Wording,
 } from '../domain/content.js';
 
@@ -28,6 +29,8 @@ export interface RenderInput {
   wording: Wording;
   /** Email only. WhatsApp replies with fixed options instead of links. */
   links?: EmailLinks;
+  /** The video call of a virtual appointment: its join address, or that the link follows. */
+  video?: VideoNote;
 }
 
 export interface RenderedEmail {
@@ -51,6 +54,9 @@ const TEMPLATE_OF_KIND: Record<AppointmentMessageKind, WhatsAppTemplateKey> = {
   waitlist_offer: 'waitlist_offer',
 };
 
+/** The word for the mode of a video consultation, in the details of every message. */
+const VIDEO_MODE = 'Videollamada';
+
 const HTML_ESCAPES: Record<string, string> = {
   '&': '&amp;',
   '<': '&lt;',
@@ -68,12 +74,13 @@ function assertWebLink(link: string): void {
   if (!/^https?:\/\/[^\s"'<>]+$/i.test(link)) throw new Error('The email link must be http(s)');
 }
 
-function detailRows(vars: MessageVars): [string, string][] {
+function detailRows(vars: MessageVars, video: VideoNote | undefined): [string, string][] {
   const rows: [string, string][] = [
     ['Fecha', vars.date],
     ['Hora', vars.time],
     ['Lugar', vars.place],
   ];
+  if (video !== undefined) rows.push(['Modalidad', VIDEO_MODE]);
   if (vars.professional !== undefined) rows.push(['Profesional', vars.professional]);
   if (vars.type !== undefined) rows.push(['Tipo de turno', vars.type]);
   return rows;
@@ -81,11 +88,18 @@ function detailRows(vars: MessageVars): [string, string][] {
 
 function renderEmail(input: RenderInput, vars: MessageVars): RenderedEmail {
   const links = input.links ?? {};
-  for (const link of [links.confirmUrl, links.cancelUrl, links.offerUrl, links.optOutUrl]) {
+  const joinUrl = input.video?.kind === 'link' ? input.video.url : undefined;
+  for (const link of [
+    links.confirmUrl,
+    links.cancelUrl,
+    links.offerUrl,
+    links.optOutUrl,
+    joinUrl,
+  ]) {
     if (link !== undefined) assertWebLink(link);
   }
-  const parts = emailParts(input.kind, vars, links);
-  const rows = detailRows(vars);
+  const parts = emailParts(input.kind, vars, links, input.video);
+  const rows = detailRows(vars, input.video);
   const optOut =
     links.optOutUrl === undefined
       ? undefined
@@ -137,6 +151,11 @@ function renderWhatsApp(input: RenderInput, vars: MessageVars): RenderedWhatsApp
   };
   if (vars.professional !== undefined) out['professional'] = vars.professional;
   if (vars.type !== undefined) out['type'] = vars.type;
+  if (input.video !== undefined) out['mode'] = VIDEO_MODE;
+  if (input.video?.kind === 'link') {
+    assertWebLink(input.video.url);
+    out['joinUrl'] = input.video.url;
+  }
   return { channel: 'whatsapp', templateKey: TEMPLATE_OF_KIND[input.kind], vars: out };
 }
 

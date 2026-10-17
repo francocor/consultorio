@@ -4,6 +4,7 @@ import { createFakeScanner } from '../adapters/fake-scanner/index.js';
 import { createS3ObjectStorage } from '../adapters/s3/index.js';
 import { consentTextFor, createDemoResetPort } from '../db/seed/demo/index.js';
 import { createPasswordHasher } from '../modules/identity/index.js';
+import { createVideoJoinRegistry } from '../modules/notifications/index.js';
 import { createOperatorSecrets } from '../modules/operator/index.js';
 import { holdExpireJob } from '../modules/scheduling/index.js';
 import { createTenantKeys } from '../platform/crypto/tenant-keys.js';
@@ -179,6 +180,8 @@ async function runWorker(config: Config): Promise<void> {
       wiring: MODULE_WIRINGS,
     }),
   );
+  // One registry for the process: teleconsultation fills it, notifications asks it.
+  const videoJoin = createVideoJoinRegistry();
   const worker = await startWorker({
     databaseUrl: config.databaseUrl,
     sealerDatabaseUrl: config.auditSealerDatabaseUrl,
@@ -188,7 +191,7 @@ async function runWorker(config: Config): Promise<void> {
       { tenantJobs: [{ definition: holdExpireJob, everyMs: 60_000 }] },
       ...(storage ? [documentWorker({ storage, scanner, email: email.sender })] : []),
       ...MODULE_WIRINGS.map(
-        (module) => module.worker?.({ config, adapters, email: email.sender }) ?? {},
+        (module) => module.worker?.({ config, adapters, email: email.sender, videoJoin }) ?? {},
       ),
     ]),
   });

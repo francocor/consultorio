@@ -10,15 +10,18 @@ import {
   createUnavailableVideoLinkProvider,
 } from '../../adapters/video-local/index.js';
 import {
+  createJoinUrlResolver,
   createTeleconsultation,
   createVideoLinkCreateJob,
   devVideoRoutes,
   type DevVideoControls,
 } from '../../modules/teleconsultation/index.js';
 import { adapterOfSetting } from '../../platform/local-providers/dev-routes.js';
+import { createActionTokens } from '../../platform/tokens/index.js';
 import { fake, real, type AdapterRegistry } from '../adapter-resolver.js';
 import type { ProviderConfig } from '../config-providers.js';
 
+import { originsFromConfig } from './origins.js';
 import type { ModuleWiring } from './types.js';
 
 /**
@@ -111,7 +114,20 @@ export const teleconsultationWiring: ModuleWiring = {
       ...(context.clock ? { clock: context.clock } : {}),
     });
     consoleControls.bind(module.devControls);
+    // Reminders of a virtual appointment carry this address (notifications asks for it).
+    context.videoJoin.register(module.joinUrlResolver);
     return module;
   },
-  worker: ({ adapters }) => ({ jobs: () => [createVideoLinkCreateJob({ adapters })] }),
+  worker: ({ config, adapters, clock, videoJoin }) => {
+    const now = clock ?? (() => new Date());
+    // The worker renders the reminders, so it needs the resolver too (it has no module instance).
+    videoJoin.register(
+      createJoinUrlResolver({
+        tokens: createActionTokens({ clock: now }),
+        origins: originsFromConfig(config),
+        clock: now,
+      }),
+    );
+    return { jobs: () => [createVideoLinkCreateJob({ adapters })] };
+  },
 };

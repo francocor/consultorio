@@ -25,6 +25,7 @@ import { createReminderPlanner } from './application/plan-reminders.js';
 import type { WhatsAppSender } from './application/ports.js';
 import { createLinkRevoker } from './application/revoke-links.js';
 import { UNLIMITED_QUOTA, type QuotaPolicy } from './application/usage.js';
+import type { VideoJoinResolver } from './application/video-join.js';
 import { createWorklist, createWorklistFromService } from './application/worklist.js';
 import { channelRoutes } from './http/channel-routes.js';
 import { messageRoutes } from './http/message-routes.js';
@@ -94,6 +95,8 @@ export interface NotificationsOptions {
   email?: EmailSender | undefined;
   /** The plan's WhatsApp quota (Stage 6 supplies it). Absent: no quota, everything counted. */
   quota?: QuotaPolicy | undefined;
+  /** The join address of virtual appointments (teleconsultation registers it). */
+  videoJoin?: VideoJoinResolver | undefined;
 }
 
 const NO_CHANNELS: Channels = { email: () => undefined, whatsapp: () => undefined };
@@ -144,6 +147,7 @@ export function createNotifications(options: NotificationsOptions): Notification
           tokens,
           worklist,
           ...(options.quota ? { quota: options.quota } : {}),
+          ...(options.videoJoin ? { videoJoin: options.videoJoin } : {}),
         }
       : undefined;
 
@@ -193,6 +197,8 @@ export function createNotifications(options: NotificationsOptions): Notification
   };
 }
 
+export { createVideoJoinRegistry } from './application/video-join.js';
+export type { VideoJoin, VideoJoinRegistry, VideoJoinResolver } from './application/video-join.js';
 export { UNLIMITED_QUOTA } from './application/usage.js';
 export type { QuotaPolicy } from './application/usage.js';
 export { createReminderPlanner } from './application/plan-reminders.js';
