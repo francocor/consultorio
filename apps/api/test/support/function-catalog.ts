@@ -52,10 +52,17 @@ export async function listDefinerFunctions(
   }));
 }
 
-/** True when the function pins a search path that starts with `pg_catalog` and has no `pg_temp` first. */
+/**
+ * True when the function pins a search path that starts with `pg_catalog` (so nobody can shadow a
+ * built-in) and ends with `pg_temp` (so the session's temporary schema, which PostgreSQL searches
+ * FIRST for relations unless it is named, cannot shadow a table the function reads).
+ */
 export function pinsSearchPath(config: readonly string[]): boolean {
   const entry = config.find((option) => option.startsWith('search_path='));
   if (entry === undefined) return false;
-  const first = entry.slice('search_path='.length).split(',')[0]?.trim();
-  return first === 'pg_catalog';
+  const schemas = entry
+    .slice('search_path='.length)
+    .split(',')
+    .map((schema) => schema.trim());
+  return schemas[0] === 'pg_catalog' && schemas[schemas.length - 1] === 'pg_temp';
 }

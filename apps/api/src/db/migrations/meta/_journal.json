@@ -155,6 +155,13 @@
       "when": 1792193916209,
       "tag": "0021_operator_least_privilege",
       "breakpoints": true
+    },
+    {
+      "idx": 22,
+      "version": "7",
+      "when": 1792196995807,
+      "tag": "0022_definer_pg_temp",
+      "breakpoints": true
     }
   ]
 }

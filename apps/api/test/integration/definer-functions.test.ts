@@ -50,7 +50,7 @@ describe('SECURITY DEFINER functions in schema app', () => {
     expect(found.map((fn) => fn.signature).sort()).toEqual(Object.keys(ALLOWED).sort());
   });
 
-  it('pins the search path to pg_catalog first, so an object in another schema cannot shadow one', async () => {
+  it('pins the search path: pg_catalog first and pg_temp last, so neither a schema nor a temporary table can shadow', async () => {
     const found = await listDefinerFunctions(owner, 'app', CHECKED_ROLES);
 
     expect(found.length).toBeGreaterThan(0);
@@ -81,7 +81,7 @@ describe('SECURITY DEFINER functions in schema app', () => {
   it('makes a new function in schema app unusable by anyone until a migration grants it', async () => {
     await owner.query(
       `CREATE FUNCTION app.zz_scratch_definer() RETURNS integer
-         LANGUAGE sql SECURITY DEFINER SET search_path = pg_catalog AS 'SELECT 1'`,
+         LANGUAGE sql SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS 'SELECT 1'`,
     );
     try {
       const found = await listDefinerFunctions(owner, 'app', CHECKED_ROLES);
