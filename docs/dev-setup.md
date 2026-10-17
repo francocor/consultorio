@@ -85,13 +85,14 @@ Check the API: `curl http://localhost:3000/health` answers `{"status":"ok"}`, an
 
 The web app is a static bundle that talks to the API through one prefix, and a reverse proxy (the Vite dev and preview servers locally, a load balancer or CDN in production) has to honor these rules. The Vite configuration is the reference implementation (`apps/web/vite.config.ts`).
 
-| Request from the browser | The proxy must                                                                                                                                                                                                          |
-| ------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `/api/*`                 | **Strip the `/api` prefix** and forward to the API. The API has no `/api/v1`: its routes are `/auth/login`, `/patients`, `/branding`, ...                                                                               |
-| `/manifest.webmanifest`  | Forward untouched. The API answers with a manifest per host (name, colors, icons of the organization)                                                                                                                   |
-| `/public/branding/logo`  | Forward untouched. It is the public logo of the organization, referenced by the boot payload and the manifest                                                                                                           |
-| Everything else          | Serve the web bundle; unknown paths answer `index.html` (the router handles them)                                                                                                                                       |
-| Any request              | **Preserve the `Host` header** (`changeOrigin: false`). The API resolves the organization from it (`aillu.localhost`, `clinica.example.com`) and rejects a state-changing request whose `Origin` host is not the `Host` |
+| Request from the browser     | The proxy must                                                                                                                                                                                                          |
+| ---------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `/api/*`                     | **Strip the `/api` prefix** and forward to the API. The API has no `/api/v1`: its routes are `/auth/login`, `/patients`, `/branding`, ...                                                                               |
+| `/manifest.webmanifest`      | Forward untouched. The API answers with a manifest per host (name, colors, icons of the organization)                                                                                                                   |
+| `/public/branding/logo`      | Forward untouched. It is the public logo of the organization, referenced by the boot payload and the manifest                                                                                                           |
+| `/public/t/*`, `/public/v/*` | Forward untouched. They are the pages of the links in reminders and waitlist offers and the video join address, rendered by the API (Stage 3)                                                                           |
+| Everything else              | Serve the web bundle; unknown paths answer `index.html` (the router handles them)                                                                                                                                       |
+| Any request                  | **Preserve the `Host` header** (`changeOrigin: false`). The API resolves the organization from it (`aillu.localhost`, `clinica.example.com`) and rejects a state-changing request whose `Origin` host is not the `Host` |
 
 Other things the deployment must know:
 

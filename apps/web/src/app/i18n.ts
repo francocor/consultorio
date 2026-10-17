@@ -2,20 +2,8 @@ import { AR_VALIDATION_MESSAGES_ES_AR } from '@consultorio/contracts';
 import { createInstance, type i18n as I18n } from 'i18next';
 import { initReactI18next } from 'react-i18next';
 
-import audit from '../locales/es-AR/audit.json';
-import auth from '../locales/es-AR/auth.json';
-import clinical from '../locales/es-AR/clinical.json';
-import common from '../locales/es-AR/common.json';
-import documents from '../locales/es-AR/documents.json';
-import errors from '../locales/es-AR/errors.json';
-import onboarding from '../locales/es-AR/onboarding.json';
-import operator from '../locales/es-AR/operator.json';
-import patients from '../locales/es-AR/patients.json';
-import scheduling from '../locales/es-AR/scheduling.json';
-import settings from '../locales/es-AR/settings.json';
-import shell from '../locales/es-AR/shell.json';
-import staff from '../locales/es-AR/staff.json';
 import { LOCALE } from '../shared/lib/format.js';
+import { LOCALE_RESOURCES } from '../shared/lib/locale-files.js';
 import { NAMESPACES, type Namespace } from '../shared/lib/translate.js';
 
 /**
@@ -29,22 +17,8 @@ const country = Object.fromEntries(
   ]),
 );
 
-const RESOURCES = {
-  audit,
-  auth,
-  clinical,
-  common,
-  country,
-  documents,
-  errors,
-  onboarding,
-  operator,
-  patients,
-  scheduling,
-  settings,
-  shell,
-  staff,
-} as const satisfies Record<Namespace, Record<string, string>>;
+/** Every catalog file of `locales/es-AR` (a feature adds its own file) and the country validators. */
+const RESOURCES: Record<Namespace, Record<string, string>> = { ...LOCALE_RESOURCES, country };
 
 export type { Namespace };
 

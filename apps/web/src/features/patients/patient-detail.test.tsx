@@ -1,7 +1,9 @@
+import type { Permission } from '@consultorio/contracts';
 import { screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it } from 'vitest';
 
+import { createRegistry } from '../../app/registry.js';
 import { a11yViolations } from '../../shared/test/a11y.js';
 import { bootFor, meFor } from '../../shared/test/fixtures.js';
 import { renderApp } from '../../shared/test/render-app.js';
@@ -200,5 +202,66 @@ describe('patient record: deactivating', () => {
     await waitFor(() => {
       expect(calls).toBe(1);
     });
+  });
+});
+
+describe('patient record: tabs that features register (slot patient-detail-tab)', () => {
+  const registry = (anyOf?: readonly Permission[]) =>
+    createRegistry({
+      routes: {},
+      nav: {},
+      slots: {
+        '../features/messaging/slots.tsx': {
+          default: [
+            {
+              slot: 'patient-detail-tab',
+              id: 'channels',
+              labelKey: 'patients:tab.coverage',
+              ...(anyOf ? { anyOf } : {}),
+              Component: ({ patientId }: { patientId: string }) => <p>Channels of {patientId}</p>,
+            },
+          ],
+        },
+      },
+    });
+
+  it('adds a tab after the record tabs, with the id of the patient, and switches to it', async () => {
+    const user = userEvent.setup();
+    renderApp({
+      me: meFor(['reception']),
+      path: `/patients/${ID}`,
+      boot: bootFor('Centro Médico Aillu'),
+      registry: registry(),
+      routes: {
+        [`GET /api/patients/${ID}`]: () => jsonResponse(patient()),
+        [`GET /api/patients/${ID}/representatives`]: () =>
+          jsonResponse({ minor: false, representatives: [] }),
+      },
+    });
+    await screen.findByRole('heading', { level: 1, name: 'Valentina Gómez' });
+
+    const tabs = screen.getAllByRole('tab');
+    expect(tabs).toHaveLength(7);
+    await user.click(tabs.at(-1) as HTMLElement);
+
+    expect(await screen.findByText(`Channels of ${ID}`)).toBeInTheDocument();
+  });
+
+  it('leaves the tab out for a user without the permission the feature asks for', async () => {
+    renderApp({
+      me: meFor(['reception']),
+      path: `/patients/${ID}`,
+      boot: bootFor('Centro Médico Aillu'),
+      registry: registry(['booking.manage']),
+      routes: {
+        [`GET /api/patients/${ID}`]: () => jsonResponse(patient()),
+        [`GET /api/patients/${ID}/representatives`]: () =>
+          jsonResponse({ minor: false, representatives: [] }),
+      },
+    });
+    await screen.findByRole('heading', { level: 1, name: 'Valentina Gómez' });
+
+    // The six tabs of the record for reception, and none added.
+    expect(screen.getAllByRole('tab')).toHaveLength(6);
   });
 });

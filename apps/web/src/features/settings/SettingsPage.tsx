@@ -2,23 +2,25 @@ import { Link, Outlet } from '@tanstack/react-router';
 import { useTranslation } from 'react-i18next';
 
 import { RequirePermission } from '../../app/guards.js';
+import { useServices } from '../../app/providers.js';
 import { useMe } from '../../app/session.js';
 import { usePageTitle } from '../../app/use-page-title.js';
 import { cn } from '../../shared/lib/cn.js';
 import { Button } from '../../shared/ui/button.js';
 import { PageHeader } from '../../shared/ui/page-header.js';
 
-import { SETTINGS_TABS, settingsTabsFor } from './settings-tabs.js';
+import { allSettingsTabs, settingsTabsFor } from './settings-tabs.js';
 
 /** The frame of Settings: the title and the sections this person may open. */
 export function SettingsPage() {
   const { t } = useTranslation('settings');
   usePageTitle(t('title'));
   const me = useMe();
-  const tabs = settingsTabsFor(me.permissions);
+  const { registry } = useServices();
+  const tabs = settingsTabsFor(me.permissions, registry.settingsTabs);
 
   return (
-    <RequirePermission anyOf={SETTINGS_TABS.map((tab) => tab.permission)}>
+    <RequirePermission anyOf={allSettingsTabs(registry.settingsTabs).map((tab) => tab.permission)}>
       <PageHeader
         title={t('title')}
         description={t('description')}
@@ -42,7 +44,7 @@ export function SettingsPage() {
                   'data-[status=active]:border-primary data-[status=active]:text-foreground',
                 )}
               >
-                {t(`tab.${tab.id}`)}
+                {t(tab.labelKey)}
               </Link>
             </li>
           ))}

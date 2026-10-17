@@ -11,6 +11,7 @@ import { FirstRunSlot } from './FirstRunSlot.js';
 import { buildNav } from './nav/nav-config.js';
 import { NavLink } from './NavLink.js';
 import { OrgBrand } from './OrgBrand.js';
+import { useServices } from './providers.js';
 import { useMe } from './session.js';
 import { StatusBanners } from './StatusBanners.js';
 import { UserMenu } from './UserMenu.js';
@@ -23,7 +24,12 @@ import { UserMenu } from './UserMenu.js';
 export function AppShell() {
   const { t } = useTranslation(['shell', 'common']);
   const me = useMe();
-  const items = buildNav({ permissions: me.permissions, roles: me.roles });
+  const { registry } = useServices();
+  const items = buildNav({
+    permissions: me.permissions,
+    roles: me.roles,
+    contributed: registry.navItems,
+  });
   const [collapsed, setCollapsed] = useState(readSidebarCollapsed);
 
   function toggle() {
