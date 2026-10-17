@@ -365,6 +365,13 @@
       "when": 1792249322567,
       "tag": "0370_video_session",
       "breakpoints": true
+    },
+    {
+      "idx": 52,
+      "version": "7",
+      "when": 1792259062490,
+      "tag": "0360_waitlist",
+      "breakpoints": true
     }
   ]
 }
