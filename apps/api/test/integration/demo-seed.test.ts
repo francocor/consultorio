@@ -170,6 +170,29 @@ describe('seedDemoTenant', () => {
     expect(rows.setup?.daysOff).toBe(1);
   }, 120_000);
 
+  it('records the clinical story: notes per specialty, a draft, an addendum, an entry in error, one restricted', async () => {
+    const id = await newDemoTenant('seed-clinical');
+    const data = buildDemoDataset();
+
+    await seedDemoTenant(deps, id);
+
+    const snapshot = await snapshotDemoTenant(deps.withTenant, id);
+    expect(snapshot.notes).toHaveLength(data.notes.length);
+    const byAuthor = (specialty: string) =>
+      snapshot.notes.filter((note) => note.specialties.includes(specialty));
+    expect(
+      byAuthor('Cardiología').filter((note) => note.status === 'signed').length,
+    ).toBeGreaterThanOrEqual(3);
+    expect(byAuthor('Pediatría').every((note) => note.template === 'general')).toBe(true);
+    expect(byAuthor('Psicología').every((note) => note.template === 'psychology')).toBe(true);
+    expect(snapshot.notes.filter((note) => note.status === 'draft')).toHaveLength(
+      data.notes.filter((note) => note.state === 'draft').length,
+    );
+    expect(snapshot.notes.some((note) => note.addenda > 0)).toBe(true);
+    expect(snapshot.notes.some((note) => note.status === 'entered_in_error')).toBe(true);
+    expect(snapshot.notes.some((note) => note.visibility === 'author_only')).toBe(true);
+  }, 120_000);
+
   it('applies the Aillu look and keeps the organization out of billing', async () => {
     const id = await newDemoTenant('seed-look');
 

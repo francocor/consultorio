@@ -5,6 +5,7 @@ import type { FastifyInstance } from 'fastify';
 
 import { createAccess, createGrants, createGrantsRepo } from '../modules/access/index.js';
 import { createAudit } from '../modules/audit/index.js';
+import { createClinical, type AppointmentLookup } from '../modules/clinical/index.js';
 import { createDocuments } from '../modules/documents/index.js';
 import type { LockoutPolicy } from '../modules/identity/application/lockout.js';
 import type { PasswordValidator } from '../modules/identity/domain/password-policy.js';
@@ -98,6 +99,14 @@ export interface ApplicationOptions {
     secrets: OperatorSecrets;
     /** The privileged reset of a demo organization; the demo module provides it. */
     demoReset?: DemoResetPort;
+  };
+  /** Clinical records: only a test lowers the search cap (default 2,000 entries). */
+  clinical?: {
+    searchCap?: number;
+    /** Finds an appointment, to check the one an encounter is opened from (the agenda provides it). */
+    appointments?: AppointmentLookup;
+    /** The per-user allowance of the record search (default 30 a minute). */
+    searchRateLimit?: RateLimit;
   };
   /** Routes of the capability modules, registered after identity. */
   modules?: readonly FeatureRoutes[];
@@ -243,6 +252,18 @@ export function createApplication(options: ApplicationOptions): FastifyInstance 
     ...(options.clock ? { clock: options.clock } : {}),
   });
 
+  const clinical = createClinical({
+    withTenant,
+    auditDeny,
+    keys: options.keys,
+    ...(options.clinical?.searchCap === undefined ? {} : { searchCap: options.clinical.searchCap }),
+    ...(options.clinical?.appointments ? { appointments: options.clinical.appointments } : {}),
+    rateLimit: {
+      store: rateLimitStore,
+      ...(options.clinical?.searchRateLimit ? { search: options.clinical.searchRateLimit } : {}),
+    },
+  });
+
   const auditViewer = createAudit({ withTenant });
   const supportAccess = createSupportAccess({ withTenant });
   const operatorConsole =
@@ -304,6 +325,7 @@ export function createApplication(options: ApplicationOptions): FastifyInstance 
       patients.routes,
       scheduling.routes,
       documents.routes,
+      clinical.routes,
       auditViewer.routes,
       branding.routes,
       supportAccess.routes,

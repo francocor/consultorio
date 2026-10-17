@@ -36,15 +36,15 @@ export const AUDIT_SCENARIOS: Record<AuditAction, AuditScenario> = {
   'auth.portal.sign_in': { pending: 'Stage 5: patient portal sign-in by one-time code' },
 
   // Clinical records.
-  'clinical.note.read': { pending: 'Stage 2 (S2.17 to S2.21): clinical notes' },
-  'clinical.note.created': { pending: 'Stage 2 (S2.18): draft and sign' },
-  'clinical.note.updated': { pending: 'Stage 2 (S2.18): draft and sign' },
-  'clinical.note.signed': { pending: 'Stage 2 (S2.18): draft and sign' },
-  'clinical.note.amended': { pending: 'Stage 2 (S2.19): addenda' },
-  'clinical.note.entered_in_error': { pending: 'Stage 2 (S2.19): entered in error' },
+  'clinical.note.read': t('clinical-notes-api.test.ts'),
+  'clinical.note.created': t('clinical-notes-api.test.ts'),
+  'clinical.note.updated': t('clinical-notes-api.test.ts'),
+  'clinical.note.signed': t('clinical-notes-api.test.ts'),
+  'clinical.note.amended': t('clinical-addenda.test.ts'),
+  'clinical.note.entered_in_error': t('clinical-addenda.test.ts'),
   'clinical.anamnesis.read': t('anamnesis-api.test.ts'),
   'clinical.anamnesis.updated': t('anamnesis-api.test.ts'),
-  'clinical.search': { pending: 'Stage 2 (S2.21): per-patient clinical search' },
+  'clinical.search': t('clinical-search.test.ts'),
 
   // Documents.
   'document.uploaded': t('documents-uploads.test.ts'),

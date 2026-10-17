@@ -4,6 +4,7 @@ import { initReactI18next } from 'react-i18next';
 
 import audit from '../locales/es-AR/audit.json';
 import auth from '../locales/es-AR/auth.json';
+import clinical from '../locales/es-AR/clinical.json';
 import common from '../locales/es-AR/common.json';
 import documents from '../locales/es-AR/documents.json';
 import errors from '../locales/es-AR/errors.json';
@@ -30,6 +31,7 @@ const country = Object.fromEntries(
 const RESOURCES = {
   audit,
   auth,
+  clinical,
   common,
   country,
   documents,

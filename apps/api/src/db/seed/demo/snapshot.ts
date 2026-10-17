@@ -3,6 +3,7 @@ import { asc, eq } from 'drizzle-orm';
 import { SYSTEM_USER_ID, type WithTenant } from '../../../platform/db/tenant-context.js';
 import { membershipLocation } from '../../schema/access.js';
 import { careAssignment } from '../../schema/care.js';
+import { addendum, clinicalNote } from '../../schema/clinical.js';
 import { patientCoverage, payerPlan } from '../../schema/coverage.js';
 import { membership, userAccount } from '../../schema/identity.js';
 import { patient, patientRepresentative } from '../../schema/patients.js';
@@ -38,12 +39,77 @@ export interface DemoSnapshot {
     assignedTo: string[];
     alerts: string[];
   }[];
+  /** The clinical notes, as each author sees them (the content itself is encrypted and not compared). */
+  notes: {
+    author: string;
+    specialties: string[];
+    patient: string;
+    template: string;
+    status: string;
+    visibility: string;
+    addenda: number;
+  }[];
 }
 
 export async function snapshotDemoTenant(
   withTenant: WithTenant,
   tenantId: string,
 ): Promise<DemoSnapshot> {
+  const staff = await withTenant({ tenantId, userId: SYSTEM_USER_ID }, (tx) =>
+    tx
+      .select({
+        id: professional.id,
+        specialties: professional.specialties,
+        name: membership.displayName,
+        userId: membership.userId,
+      })
+      .from(professional)
+      .innerJoin(membership, eq(membership.id, professional.membershipId)),
+  );
+  // Clinical rows are visible only to the professional who wrote them (or treats the patient), so
+  // each author's notes are read as that author.
+  const notes: DemoSnapshot['notes'] = [];
+  for (const author of staff) {
+    const rows = await withTenant(
+      { tenantId, userId: author.userId, actingProfessionalId: author.id },
+      async (tx) => {
+        const written = await tx
+          .select({
+            id: clinicalNote.id,
+            status: clinicalNote.status,
+            template: clinicalNote.templateKind,
+            visibility: clinicalNote.visibility,
+            family: patient.familyName,
+            given: patient.givenNames,
+          })
+          .from(clinicalNote)
+          .innerJoin(patient, eq(patient.id, clinicalNote.patientId))
+          .where(eq(clinicalNote.authorProfessionalId, author.id));
+        const extra = await tx.select({ noteId: addendum.noteId }).from(addendum);
+        return written.map((row) => ({
+          ...row,
+          addenda: extra.filter((entry) => entry.noteId === row.id).length,
+        }));
+      },
+    );
+    for (const row of rows) {
+      notes.push({
+        author: author.name ?? '?',
+        specialties: [...author.specialties],
+        patient: `${row.family}, ${row.given}`,
+        template: row.template,
+        status: row.status,
+        visibility: row.visibility,
+        addenda: row.addenda,
+      });
+    }
+  }
+  notes.sort((a, b) =>
+    `${a.author}|${a.patient}|${a.template}|${a.status}`.localeCompare(
+      `${b.author}|${b.patient}|${b.template}|${b.status}`,
+    ),
+  );
+
   return withTenant({ tenantId, userId: SYSTEM_USER_ID }, async (tx) => {
     const [org] = await tx
       .select({ theme: tenant.theme })
@@ -138,6 +204,7 @@ export async function snapshotDemoTenant(
           alerts: [...person.safetyFlags].sort(),
         };
       }),
+      notes,
     };
   });
 }

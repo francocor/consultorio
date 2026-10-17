@@ -191,6 +191,10 @@ function buildRouteTree() {
   const patientRoute = createRoute({
     getParentRoute: () => authedRoute,
     path: '/patients/$patientId',
+    // `?tab=chart` opens the clinical chart (links from a note come back to it).
+    validateSearch: (search: Record<string, unknown>) => ({
+      tab: search['tab'] === 'chart' ? ('chart' as const) : undefined,
+    }),
     component: guarded(
       ['patients.read'],
       lazyRouteComponent(
@@ -234,6 +238,42 @@ function buildRouteTree() {
     component: guarded(
       ['worklist.manage'],
       lazyRouteComponent(() => import('../features/worklist/WorklistPage.js'), 'WorklistPage'),
+    ),
+  });
+
+  // Clinical records: professionals only (reception, owner and admin see the "no access" screen).
+  const noteRoute = createRoute({
+    getParentRoute: () => authedRoute,
+    path: '/notes/$noteId',
+    component: guarded(
+      ['clinical.note.read'],
+      lazyRouteComponent(() => import('../features/clinical/NotePage.js'), 'NotePage'),
+    ),
+  });
+
+  const newEncounterRoute = createRoute({
+    getParentRoute: () => authedRoute,
+    path: '/encounters/new',
+    validateSearch: (search: Record<string, unknown>) => ({
+      patientId: typeof search['patientId'] === 'string' ? search['patientId'] : undefined,
+      appointmentId:
+        typeof search['appointmentId'] === 'string' ? search['appointmentId'] : undefined,
+    }),
+    component: guarded(
+      ['clinical.note.write'],
+      lazyRouteComponent(
+        () => import('../features/clinical/NewEncounterPage.js'),
+        'NewEncounterPage',
+      ),
+    ),
+  });
+
+  const draftsRoute = createRoute({
+    getParentRoute: () => authedRoute,
+    path: '/drafts',
+    component: guarded(
+      ['clinical.note.write'],
+      lazyRouteComponent(() => import('../features/clinical/DraftsPage.js'), 'DraftsPage'),
     ),
   });
 
@@ -352,6 +392,9 @@ function buildRouteTree() {
       todayRoute,
       checkInRoute,
       worklistRoute,
+      noteRoute,
+      newEncounterRoute,
+      draftsRoute,
       staffRoute,
       auditRoute,
       settingsRoute.addChildren([

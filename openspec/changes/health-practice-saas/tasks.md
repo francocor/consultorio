@@ -616,69 +616,69 @@ Depends: S2.12.
 
 Depends: S1.17, S1.22, S2.08.
 
-- [ ] 2.47 `db/schema/clinical.ts` + migration: `encounter`, `clinical_note`, `note_version`, `addendum`, all with `clinicalPolicies`, composite FKs, `REVOKE DELETE`. [CLN-01, CLN-03, CLN-04, CLN-05] Test: isolation suite; `app_rw` cannot delete.
-- [ ] 2.48 Triggers: signed content immutable, `visibility` change blocked after draft, `addendum` insert-only, `entered_in_error` keeps content. [CLN-03, CLN-04, AUZ-11] Test: each rejected as `app_rw`.
-- [ ] 2.49 Encounter trigger feeding `care_relationship` (extends task 2.24). [AUZ-09] Test: an encounter creates the relationship.
-- [ ] 2.50 Register clinical tables in the isolation fixtures and audit-coverage registry. [TEN-03, CLN-12] Test: both suites green.
+- [x] 2.47 `db/schema/clinical.ts` + migration: `encounter`, `clinical_note`, `note_version`, `addendum`, all with `clinicalPolicies`, composite FKs, `REVOKE DELETE`. [CLN-01, CLN-03, CLN-04, CLN-05] Test: isolation suite; `app_rw` cannot delete.
+- [x] 2.48 Triggers: signed content immutable, `visibility` change blocked after draft, `addendum` insert-only, `entered_in_error` keeps content. [CLN-03, CLN-04, AUZ-11] Test: each rejected as `app_rw`. (Done in migration 0061; errors use the codes 23000 for immutability, 23503 for a mismatch with the parent and 42501 for the wrong actor; deletes and truncates are refused even for the owner, except the demo reset.)
+- [x] 2.49 Encounter trigger feeding `care_relationship` (extends task 2.24). [AUZ-09] Test: an encounter creates the relationship. (Done: an encounter counts at once; an entry marked in error stops counting, so a note opened on the wrong patient does not keep access. Deviation from the text, recorded in apply-progress-stage2-clinical.md.)
+- [x] 2.50 Register clinical tables in the isolation fixtures and audit-coverage registry. [TEN-03, CLN-12] Test: both suites green.
 
 ## S2.18 Draft and sign (~400 lines)
 
 Depends: S2.17.
 
-- [ ] 2.51 `modules/clinical/domain/note.ts` state machine and `application/save-draft.ts` (encrypt with the tenant DEK, `draft_revision` compare-and-set, `409 stale_revision`). [CLN-03] Test: stale save rejected.
-- [ ] 2.52 `application/sign-note.ts`: insert `note_version` with SHA-256 content hash, status `signed`, audit `clinical.note.signed`; author only, professional gate required. [CLN-03, CLN-05] Test: second sign fails; hash matches content.
-- [ ] 2.53 Routes `POST /encounters`, `PUT /encounters/:id/note/draft`, `POST /notes/:id/sign`, `GET /notes/:id` (decrypt and audit every read) with permission `clinical.note.write|read`. [CLN-01, CLN-02, CLN-12] Test: golden path.
-- [ ] 2.54 Access tests: owner/admin get 403 plus a deny audit row, reception denied, direct SQL returns 0 rows, other professional without relationship denied; the admin-denied harness (task 1.56) now covers real routes. [CLN-02] Test: that file.
+- [x] 2.51 `modules/clinical/domain/note.ts` state machine and `application/save-draft.ts` (encrypt with the tenant DEK, `draft_revision` compare-and-set, `409 stale_revision`). [CLN-03] Test: stale save rejected.
+- [x] 2.52 `application/sign-note.ts`: insert `note_version` with SHA-256 content hash, status `signed`, audit `clinical.note.signed`; author only, professional gate required. [CLN-03, CLN-05] Test: second sign fails; hash matches content.
+- [x] 2.53 Routes `POST /encounters`, `PUT /encounters/:id/note/draft`, `POST /notes/:id/sign`, `GET /notes/:id` (decrypt and audit every read) with permission `clinical.note.write|read`. [CLN-01, CLN-02, CLN-12] Test: golden path.
+- [x] 2.54 Access tests: owner/admin get 403 plus a deny audit row, reception denied, direct SQL returns 0 rows, other professional without relationship denied; the admin-denied harness (task 1.56) now covers real routes. [CLN-02] Test: that file.
 
 ## S2.19 Addenda, errors, history (~400 lines)
 
 Depends: S2.18.
 
-- [ ] 2.55 `application/add-addendum.ts`: treating professionals only; kinds `correction` and `rectification`; a read-only tenant allows `rectification` only (D16); shared readers get 403 plus a deny audit. [CLN-04, TEN-11] Test: scenarios from the spec.
-- [ ] 2.56 `mark-entered-in-error` (author or another treating professional, reason required, content kept, hidden from the default timeline). [CLN-04] Test: content still readable in history.
-- [ ] 2.57 `GET /notes/:id/versions` returning signed versions and addenda in order with hashes. [CLN-05] Test: order and hashes.
-- [ ] 2.58 Shared-read audit with reason `shared`. [CLN-12, AUZ-11] Test: audit row has the reason.
+- [x] 2.55 `application/add-addendum.ts`: treating professionals only; kinds `correction` and `rectification`; a read-only tenant allows `rectification` only (D16); shared readers get 403 plus a deny audit. [CLN-04, TEN-11] Test: scenarios from the spec.
+- [x] 2.56 `mark-entered-in-error` (author or another treating professional, reason required, content kept, hidden from the default timeline). [CLN-04] Test: content still readable in history.
+- [x] 2.57 `GET /notes/:id/versions` returning signed versions and addenda in order with hashes. [CLN-05] Test: order and hashes.
+- [x] 2.58 Shared-read audit with reason `shared`. [CLN-12, AUZ-11] Test: audit row has the reason.
 
 ## S2.20 Specialty templates (~400 lines)
 
 Depends: S2.18.
 
-- [ ] 2.59 `packages/contracts/src/clinical-templates/` Zod schemas for general, psychology, physiotherapy, nutrition and odontogram payloads plus the template registry. [CLN-06, CLN-07, CLN-08, CLN-09, CLN-10] Test: valid and invalid fixtures per template.
-- [ ] 2.60 `modules/clinical/domain/templates.ts`: validate content by `templateKind` on save and sign; default `sharedTemplates` consumption. [CLN-06] Test: unknown kind rejected.
-- [ ] 2.61 Odontogram data model (FDI numbering, surfaces, conditions) validation. [CLN-07] Test: invalid tooth number rejected.
-- [ ] 2.62 Psychology exclusion from default sharing verified end to end. [CLN-08] Test: psychology note invisible to a sharing-scope reader by default.
+- [x] 2.59 `packages/contracts/src/clinical-templates/` Zod schemas for general, psychology, physiotherapy, nutrition and odontogram payloads plus the template registry. [CLN-06, CLN-07, CLN-08, CLN-09, CLN-10] Test: valid and invalid fixtures per template.
+- [x] 2.60 `modules/clinical/domain/templates.ts`: validate content by `templateKind` on save and sign; default `sharedTemplates` consumption. [CLN-06] Test: unknown kind rejected. (Done by the contract registry: the service calls `validateDraftContent` and `validateSignContent` of `@consultorio/contracts`, the same schemas the form uses, so there is no separate `domain/templates.ts`.)
+- [x] 2.61 Odontogram data model (FDI numbering, surfaces, conditions) validation. [CLN-07] Test: invalid tooth number rejected.
+- [x] 2.62 Psychology exclusion from default sharing verified end to end. [CLN-08] Test: psychology note invisible to a sharing-scope reader by default.
 
 ## S2.21 Timeline, search, retention (~400 lines)
 
 Depends: S2.19.
 
-- [ ] 2.63 `GET /patients/:id/clinical/timeline` (newest first, `entered_in_error` hidden unless requested, only readable entries, link to anamnesis). [CLN-11, CLN-02] Test: hidden by default; shown on request.
-- [ ] 2.64 `GET /patients/:id/clinical/search?q=&from=&to=`: decrypt in memory, normalize (NFD, lowercase), substring match, cap of 2,000 entries, audit per entry returned. [CLN-02, CLN-11, CLN-12] Test: accent-insensitive; beyond the cap requires a range; one DEK unwrap per request.
-- [ ] 2.65 pino redaction test proving clinical routes never log bodies. [CLN-11, SHL-09] Test: log capture.
-- [ ] 2.66 Retention: clinical data stays readable in a read-only tenant and after deactivation; register the clinical export contributor (per professional). [CLN-13, TEN-08] Test: read-only tenant can read; `REVOKE DELETE` verified.
+- [x] 2.63 `GET /patients/:id/clinical/timeline` (newest first, `entered_in_error` hidden unless requested, only readable entries, link to anamnesis). [CLN-11, CLN-02] Test: hidden by default; shown on request.
+- [x] 2.64 `GET /patients/:id/clinical/search?q=&from=&to=`: decrypt in memory, normalize (NFD, lowercase), substring match, cap of 2,000 entries, audit per entry returned. [CLN-02, CLN-11, CLN-12] Test: accent-insensitive; beyond the cap requires a range; one DEK unwrap per request.
+- [x] 2.65 pino redaction test proving clinical routes never log bodies. [CLN-11, SHL-09] Test: log capture.
+- [x] 2.66 Retention: clinical data stays readable in a read-only tenant and after deactivation; register the clinical export contributor (per professional). [CLN-13, TEN-08] Test: read-only tenant can read; `REVOKE DELETE` verified.
 
 ## S2.22 Clinical editor UI (~400 lines)
 
 Depends: S2.21, S2.15.
 
-- [ ] 2.67 `features/clinical/components/ClinicalEditor` (template-driven, react-hook-form with contract schemas, debounced autosave with a "Saved" indicator, stale-revision prompt, sign confirmation warning about immutability). [CLN-01, CLN-03] Test: component tests.
-- [ ] 2.68 Encounter screen opened from Today and the appointment drawer; `author_only` toggle available at creation and while draft only. [CLN-03, CLN-02] Test: toggle disabled after signing.
-- [ ] 2.69 Playwright: autosave, stale 409 with two tabs, signed note locked. [CLN-03] Test: that spec.
+- [x] 2.67 `features/clinical/components/ClinicalEditor` (template-driven, react-hook-form with contract schemas, debounced autosave with a "Saved" indicator, stale-revision prompt, sign confirmation warning about immutability). [CLN-01, CLN-03] Test: component tests.
+- [x] 2.68 Encounter screen opened from Today and the appointment drawer; `author_only` toggle available at creation and while draft only. [CLN-03, CLN-02] Test: toggle disabled after signing. (Done: the encounter screen is `/notes/:id`, opened from the patient chart, the drafts view and `/encounters/new?patientId=&appointmentId=`, which is the link Today and the appointment drawer will use once scheduling lands.)
+- [x] 2.69 Playwright: autosave, stale 409 with two tabs, signed note locked. [CLN-03] Test: that spec.
 
 ## S2.23 Specialty UIs and odontogram (~400 lines)
 
 Depends: S2.22.
 
-- [ ] 2.70 `features/clinical/templates/{psychology,physiotherapy,nutrition}` components. [CLN-08, CLN-09, CLN-10] Test: component tests.
-- [ ] 2.71 `Odontogram` component (SVG, keyboard accessible, FDI, mobile friendly). [CLN-07] Test: component plus axe.
+- [x] 2.70 `features/clinical/templates/{psychology,physiotherapy,nutrition}` components. [CLN-08, CLN-09, CLN-10] Test: component tests.
+- [x] 2.71 `Odontogram` component (SVG, keyboard accessible, FDI, mobile friendly). [CLN-07] Test: component plus axe.
 
 ## S2.24 Chart, search and addenda UI (~350 lines)
 
 Depends: S2.22.
 
-- [ ] 2.72 Patient chart tab: timeline, anamnesis link, `entered_in_error` styling, versions drawer. [CLN-11, CLN-05] Test: component tests.
-- [ ] 2.73 `ClinicalSearch` (per patient, date range, snippets) and the professional's "Drafts" view. [CLN-02, CLN-11] Test: component tests.
-- [ ] 2.74 Addendum and entered-in-error dialogs (reason required); reception and admin see the forbidden state. [CLN-04, CLN-02] Test: Playwright role matrix.
+- [x] 2.72 Patient chart tab: timeline, anamnesis link, `entered_in_error` styling, versions drawer. [CLN-11, CLN-05] Test: component tests.
+- [x] 2.73 `ClinicalSearch` (per patient, date range, snippets) and the professional's "Drafts" view. [CLN-02, CLN-11] Test: component tests.
+- [x] 2.74 Addendum and entered-in-error dialogs (reason required); reception and admin see the forbidden state. [CLN-04, CLN-02] Test: Playwright role matrix.
 
 ## S2.25 Malware scanner and file sniffing (~300 lines)
 

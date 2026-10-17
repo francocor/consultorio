@@ -40,6 +40,10 @@ const ALLOWED: Record<string, readonly string[]> = {
   // Mirror appointments and holds into the occupancy (S2.02); only their triggers call them.
   'app.sync_appointment_occupancy()': [],
   'app.sync_hold_occupancy()': [],
+  // Clinical triggers (Stage 2) that feed the care relationship: an encounter counts, an entry
+  // marked in error stops counting. The runtime role writes the encounter, never this table.
+  'app.clinical_footprint_mark()': [],
+  'app.clinical_note_care_sync()': [],
 };
 
 let owner: pg.Client;

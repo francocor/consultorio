@@ -1,7 +1,8 @@
 import { defineConfig, devices } from '@playwright/test';
 
-const WEB_PORT = 4173;
-const API_PORT = 3100;
+// The ports can be overridden when several checkouts run the suite on one machine.
+const WEB_PORT = Number(process.env['E2E_WEB_PORT'] ?? 4173);
+const API_PORT = Number(process.env['E2E_API_PORT'] ?? 3100);
 
 /**
  * End-to-end tests run against the REAL stack: the built web app served by `vite preview` (with

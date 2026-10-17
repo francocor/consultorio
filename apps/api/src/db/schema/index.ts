@@ -5,6 +5,7 @@ export * from './anamnesis.js';
 export * from './action-token.js';
 export * from './audit.js';
 export * from './care.js';
+export * from './clinical.js';
 export * from './coverage.js';
 export * from './documents.js';
 export * from './identity.js';

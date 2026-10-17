@@ -122,10 +122,82 @@ async function insertAppointmentRow(
  * Tables that hold clinical content. Their rows are only visible to a health professional's
  * transaction, so the isolation suite reads them acting as the professional who wrote them.
  */
-export const CLINICAL_TABLES: ReadonlySet<string> = new Set(['anamnesis']);
+export const CLINICAL_TABLES: ReadonlySet<string> = new Set([
+  'anamnesis',
+  'encounter',
+  'clinical_note',
+  'note_version',
+  'addendum',
+]);
 
 /** Row id -> professional who authored it, for the clinical fixtures below. */
 export const CLINICAL_AUTHORS = new Map<string, string>();
+
+/** Runs `fn` acting as a health professional (the clinical policies and triggers need one). */
+async function actingAs<T>(tx: Tx, professionalId: string, fn: () => Promise<T>): Promise<T> {
+  await tx.execute(sql`select set_config('app.professional_id', ${professionalId}, true)`);
+  // No `finally`: after an error the transaction is aborted and the original error must surface.
+  const result = await fn();
+  await tx.execute(sql`select set_config('app.professional_id', '', true)`);
+  return result;
+}
+
+/** An encounter written by `authorId` for a new patient; returns both ids. */
+async function insertEncounter(
+  tx: Tx,
+  tenantId: string,
+  authorId: string,
+  patientId?: string,
+): Promise<{ encounterId: string; patientId: string }> {
+  const patient = patientId ?? (await insertPatient(tx, tenantId));
+  const encounterId = await actingAs(tx, authorId, () =>
+    returningId(
+      tx,
+      sql`INSERT INTO encounter (tenant_id, patient_id, author_professional_id, template_kind)
+            VALUES (${tenantId}, ${patient}, ${authorId}, 'general') RETURNING id`,
+    ),
+  );
+  return { encounterId, patientId: patient };
+}
+
+/** The draft note of an encounter, written by `authorId`. Overrides replace foreign key columns. */
+async function insertNote(
+  tx: Tx,
+  tenantId: string,
+  opened: { encounterId: string; patientId: string },
+  authorId: string,
+  overrides?: Readonly<Record<string, string>>,
+): Promise<string> {
+  const noteAuthor = overrides?.['author_professional_id'] ?? authorId;
+  return actingAs(tx, noteAuthor, () =>
+    returningId(
+      tx,
+      sql`INSERT INTO clinical_note (tenant_id, encounter_id, patient_id, author_professional_id, template_kind, template_version)
+            VALUES (${tenantId}, ${overrides?.['encounter_id'] ?? opened.encounterId}, ${overrides?.['patient_id'] ?? opened.patientId}, ${noteAuthor}, 'general', 1)
+            RETURNING id`,
+    ),
+  );
+}
+
+async function insertVersion(
+  tx: Tx,
+  tenantId: string,
+  note: { noteId: string; patientId: string },
+  authorId: string,
+  overrides?: Readonly<Record<string, string>>,
+): Promise<string> {
+  const versionAuthor = overrides?.['author_professional_id'] ?? authorId;
+  return actingAs(tx, versionAuthor, () =>
+    returningId(
+      tx,
+      sql`INSERT INTO note_version (tenant_id, note_id, patient_id, author_professional_id, visibility,
+                                    template_kind, template_version, version_no, content_enc, content_hash)
+            VALUES (${tenantId}, ${overrides?.['note_id'] ?? note.noteId}, ${overrides?.['patient_id'] ?? note.patientId},
+                    ${versionAuthor}, 'default', 'general', 1, 1, ${Buffer.from([1])}, ${'b'.repeat(64)})
+            RETURNING id`,
+    ),
+  );
+}
 
 export const TENANT_FIXTURES: Record<string, TenantTableFixture> = {
   care_assignment: {
@@ -291,6 +363,86 @@ export const TENANT_FIXTURES: Record<string, TenantTableFixture> = {
               VALUES (${tenantId}, 'Ayuda con la configuración', now() + interval '1 hour', ${randomUUID()})
               RETURNING id`,
       ),
+  },
+  encounter: {
+    insert: async (tx, tenantId, overrides) => {
+      const authorId =
+        overrides?.['author_professional_id'] ?? (await insertProfessional(tx, tenantId));
+      const patientId = overrides?.['patient_id'] ?? (await insertPatient(tx, tenantId));
+      const id = await actingAs(tx, authorId, () =>
+        returningId(
+          tx,
+          sql`INSERT INTO encounter (tenant_id, patient_id, author_professional_id, template_kind)
+                VALUES (${tenantId}, ${patientId}, ${authorId}, 'general') RETURNING id`,
+        ),
+      );
+      CLINICAL_AUTHORS.set(id, authorId);
+      return id;
+    },
+  },
+  clinical_footprint: {
+    // The runtime role cannot write this table: the footprint appears with the first note.
+    insert: async (tx, tenantId, overrides) => {
+      const authorId = await insertProfessional(tx, tenantId);
+      const patientId = overrides?.['patient_id'] ?? (await insertPatient(tx, tenantId));
+      const opened = await insertEncounter(tx, tenantId, authorId, patientId);
+      await insertNote(tx, tenantId, opened, authorId);
+      return returningId(
+        tx,
+        sql`SELECT id FROM clinical_footprint WHERE patient_id = ${patientId}`,
+      );
+    },
+  },
+  clinical_note: {
+    insert: async (tx, tenantId, overrides) => {
+      const authorId = await insertProfessional(tx, tenantId);
+      const opened = await insertEncounter(tx, tenantId, authorId);
+      const id = await insertNote(tx, tenantId, opened, authorId, overrides);
+      CLINICAL_AUTHORS.set(id, overrides?.['author_professional_id'] ?? authorId);
+      return id;
+    },
+  },
+  note_version: {
+    insert: async (tx, tenantId, overrides) => {
+      const authorId = await insertProfessional(tx, tenantId);
+      const opened = await insertEncounter(tx, tenantId, authorId);
+      const noteId = await insertNote(tx, tenantId, opened, authorId);
+      const id = await insertVersion(
+        tx,
+        tenantId,
+        { noteId, patientId: opened.patientId },
+        authorId,
+        overrides,
+      );
+      CLINICAL_AUTHORS.set(id, overrides?.['author_professional_id'] ?? authorId);
+      return id;
+    },
+  },
+  addendum: {
+    insert: async (tx, tenantId, overrides) => {
+      const authorId = await insertProfessional(tx, tenantId);
+      const opened = await insertEncounter(tx, tenantId, authorId);
+      const noteId = await insertNote(tx, tenantId, opened, authorId);
+      await insertVersion(tx, tenantId, { noteId, patientId: opened.patientId }, authorId);
+      await actingAs(tx, authorId, () =>
+        tx.execute(
+          sql`UPDATE clinical_note SET status = 'signed', signed_at = now(), draft_content_enc = NULL WHERE id = ${noteId}`,
+        ),
+      );
+      const actor = overrides?.['author_professional_id'] ?? authorId;
+      const id = await actingAs(tx, actor, () =>
+        returningId(
+          tx,
+          sql`INSERT INTO addendum (tenant_id, note_id, patient_id, author_professional_id, visibility,
+                                    template_kind, kind, reason_enc, content_enc)
+                VALUES (${tenantId}, ${overrides?.['note_id'] ?? noteId}, ${overrides?.['patient_id'] ?? opened.patientId},
+                        ${actor}, 'default', 'general', 'correction', ${Buffer.from([1])}, ${Buffer.from([1])})
+                RETURNING id`,
+        ),
+      );
+      CLINICAL_AUTHORS.set(id, actor);
+      return id;
+    },
   },
   anamnesis: {
     // The clinical policies read the professional of the transaction, so the fixture acts as the author.

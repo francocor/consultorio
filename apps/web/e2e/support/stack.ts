@@ -16,7 +16,7 @@ interface StackInfo {
   operator: { email: string; password: string; totpSecret: string };
 }
 
-export const WEB_PORT = 4173;
+export const WEB_PORT = Number(process.env['E2E_WEB_PORT'] ?? 4173);
 
 export const stack: StackInfo = JSON.parse(
   readFileSync(resolve(import.meta.dirname, '../.stack/info.json'), 'utf8'),

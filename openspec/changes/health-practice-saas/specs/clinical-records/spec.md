@@ -42,6 +42,38 @@ A health professional MUST be able to create an encounter note for a patient of 
 
 ---
 
+### Requirement: Opening an encounter needs a care relationship
+
+A professional MUST NOT create the care relationship by opening an encounter. Opening an encounter for a patient MUST require that the professional already has an active care relationship with the patient from another source: an appointment with confirmed identity, an explicit care assignment, or an earlier SIGNED encounter. The one exception is a patient with no clinical footprint, meaning no clinical notes, no anamnesis, no clinical documents and no care relationship with any professional; any professional MAY open the first encounter for such a patient. A draft encounter MUST NOT count as a care source until its note is signed, and an entry marked in error MUST stop counting as one. When an encounter names an appointment, the appointment MUST belong to the same patient and the same professional, and a deployment that cannot check appointments MUST refuse the link. The rule MUST be enforced by the service and by the database. A refusal MUST answer 403 and write a deny audit entry that names the patient. (Decision D20, orchestrator decision pending owner confirmation.)
+
+#### Scenario: A professional cannot read a record by opening an encounter
+- GIVEN patient P has signed notes by professional A and professional B has no care relationship with P
+- WHEN B opens an encounter for P
+- THEN the request is refused with 403, no encounter exists, and the refusal is audited with the reason "encounter_requires_relationship"
+- AND B still cannot read P's notes, add an addendum or mark an entry in error
+
+#### Scenario: An assignment or a signed encounter allows it
+- GIVEN professional A is assigned to patient P, or A has a signed encounter with P
+- WHEN A opens another encounter for P
+- THEN the encounter is created
+
+#### Scenario: A first encounter for a new patient
+- GIVEN a patient with no notes, no anamnesis, no documents and no care relationship
+- WHEN any professional opens an encounter for the patient
+- THEN the encounter is created
+
+#### Scenario: A draft is not a care source
+- GIVEN professional A opened a draft for a new patient P and has not signed it
+- WHEN professional B opens an encounter for P
+- THEN the request is refused, and A has no care relationship with P until the note is signed
+
+#### Scenario: Appointment of another patient or professional
+- GIVEN an appointment that belongs to another patient, or to another professional
+- WHEN a professional opens an encounter linked to it
+- THEN the request is refused and audited with the reason "appointment_mismatch"
+
+---
+
 ### Requirement: Clinical access restriction
 
 Only users holding a health-professional role MUST be able to read the content of clinical entries. A non-clinical owner/admin MUST NEVER read clinical content on any path (screen, search, export, report, API), and no organization setting SHALL grant it. Reception MUST NEVER read clinical content, titles, diagnoses or snippets. A user who is both owner/admin and professional MUST read clinical data only through the professional role and its rules. By default a professional MUST read clinical records only of patients they treat, where "treating professional" and "care relationship" are defined by `authorization`. The care relationship MUST come only from these sources: (1) an appointment with the professional whose identity is confirmed and whose status is scheduled, confirmed, checked in, in progress, attended or no-show; (2) an encounter by the professional; (3) an explicit assignment. Pending-approval, cancelled and identity-unconfirmed appointments MUST NOT create one. If the organization enables sharing, other professionals of the organization MAY read the records read-only, within the sharing scope and per-entry visibility defined by `authorization` (including the default exclusion of psychology entries and entries restricted to their author), and every such shared read MUST be audited with a distinct marker. Demographics are not clinical content and are organization-wide. The platform operator MUST NOT have default access; any support access MUST be explicit, time-boxed and audited.
@@ -93,7 +125,7 @@ Only users holding a health-professional role MUST be able to read the content o
 
 ### Requirement: Draft, signing and immutability
 
-An encounter MUST start as a draft. A draft MAY be edited only by its author. Retaining intermediate draft revisions is optional (MAY); what is mandatory is that the content at the moment of signing is retained in full and that the draft carries a revision marker used to detect concurrent edits. Signing MUST be performed by the author, MUST record the signer, the server time and the template version, and MUST make the entry immutable. A signed entry MUST NOT be modifiable or deletable by any role, via any path, including the platform operator. The system SHOULD require a recent re-authentication to sign (see `identity-access`). The system MUST reject a signature on an entry that is empty of required fields defined by its template. Concurrent edits to the same draft MUST be detected and the later saving session MUST be warned and not overwrite silently.
+An encounter MUST start as a draft. A draft MAY be edited only by its author. Retaining intermediate draft revisions is optional (MAY); what is mandatory is that the content at the moment of signing is retained in full and that the draft carries a revision marker used to detect concurrent edits. Signing MUST be performed by the author, MUST record the signer, the server time and the template version, and MUST make the entry immutable. A signed entry MUST NOT be modifiable or deletable by any role, via any path, including the platform operator. The system SHOULD require a recent re-authentication to sign (see `identity-access`). The system MUST reject a signature on an entry that is empty of required fields defined by its template. Concurrent edits to the same draft MUST be detected and the later saving session MUST be warned and not overwrite silently. A signature request MUST name the draft revision the author saw, and the system MUST refuse one that does not name it or names an older revision.
 
 #### Scenario: Sign a draft
 - GIVEN a complete draft by professional P
@@ -116,6 +148,11 @@ An encounter MUST start as a draft. A draft MAY be edited only by its author. Re
 - WHEN the author tries to sign
 - THEN signing is rejected and the missing field is indicated
 
+#### Scenario: Signing without naming the revision
+- GIVEN a draft with saved content
+- WHEN the author sends a signature request that does not name the revision they saw
+- THEN the request is rejected and the draft is unchanged
+
 #### Scenario: Concurrent draft edits
 - GIVEN the same draft open in two sessions by the author
 - WHEN the second session saves after the first already saved
@@ -125,7 +162,7 @@ An encounter MUST start as a draft. A draft MAY be edited only by its author. Re
 
 ### Requirement: Addenda and corrections
 
-A treating professional (care relationship, see `authorization`) MUST be able to add an addendum to a signed entry. Shared access is read-only: a professional who can read the entry only because of organization-wide sharing MUST NOT be able to add an addendum. An addendum MUST be a separate, signed-on-save entry linked to the original, with its own author, server timestamp and a mandatory reason. The original entry and all previous addenda MUST remain unchanged and visible, and the entry view MUST present the original together with its addenda in chronological order. An addendum itself MUST be immutable; corrections to it are made with a further addendum. If an entry was created on the wrong patient or is invalid as a whole, its author, or another treating professional, MUST be able to mark it "entered in error" with a reason. "Entered in error" is a status of the entry (alongside draft and signed) recorded as a history event; the entry MUST stay retained and readable by authorized professionals but MUST be excluded from the default timeline and from exports unless explicitly included. Marking an entry in error MUST NOT alter its content.
+A treating professional (care relationship, see `authorization`) MUST be able to add an addendum to a signed entry. Shared access is read-only: a professional who can read the entry only because of organization-wide sharing MUST NOT be able to add an addendum. An addendum MUST be a separate, signed-on-save entry linked to the original, with its own author, server timestamp and a mandatory reason. The original entry and all previous addenda MUST remain unchanged and visible, and the entry view MUST present the original together with its addenda in chronological order. An addendum itself MUST be immutable; corrections to it are made with a further addendum. If an entry was created on the wrong patient or is invalid as a whole, its author, or another treating professional, MUST be able to mark it "entered in error" with a reason. "Entered in error" is a status of the entry (alongside draft and signed) recorded as a history event; the entry MUST stay retained and readable by authorized professionals but MUST be excluded from the default timeline and from exports unless explicitly included. Marking an entry in error MUST NOT alter its content, except that the working copy of a draft that was never signed MUST be discarded, so that a draft opened on the wrong patient does not stay readable. The reasons of an addendum and of an "entered in error" mark MUST be stored encrypted, like the content they explain.
 
 #### Scenario: Correct a diagnosis with an addendum
 - GIVEN a signed encounter with diagnosis "A"
@@ -147,6 +184,11 @@ A treating professional (care relationship, see `authorization`) MUST be able to
 - GIVEN sharing is on and P3 can read the record only through sharing
 - WHEN P3 tries to add an addendum to P1's signed entry
 - THEN the action is denied and audited
+
+#### Scenario: Draft opened on the wrong patient
+- GIVEN a draft with text, opened on patient X by mistake
+- WHEN its author marks it "entered in error"
+- THEN the text of the draft is discarded and no professional can read it afterwards
 
 #### Scenario: Entry on the wrong patient
 - GIVEN a signed encounter recorded on patient X by mistake
@@ -290,6 +332,11 @@ Search over clinical content MUST be per patient: it is offered inside one patie
 - GIVEN a professional with many patients
 - WHEN they look for a way to search all patients' notes for "hypertension"
 - THEN no such search exists on any screen or API
+
+#### Scenario: Search is rate limited per user
+- GIVEN a professional who has used up the allowance of record searches in the current window
+- WHEN they search again
+- THEN the request is refused with 429 and a retry-after header, and other users are not affected
 
 #### Scenario: Reception cannot search clinical content
 - GIVEN a reception user

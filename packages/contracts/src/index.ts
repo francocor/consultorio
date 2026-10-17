@@ -7,6 +7,8 @@ export * from './auth.js';
 export * from './auth-recovery.js';
 export * from './branding-presets.js';
 export * from './branding.js';
+export * from './clinical-templates/index.js';
+export * from './clinical.js';
 export * from './country/ar/index.js';
 export * from './country/catalog.js';
 export * from './coverage.js';

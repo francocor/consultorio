@@ -218,6 +218,27 @@
       "when": 1792224778157,
       "tag": "0030_document_appointment_fk",
       "breakpoints": true
+    },
+    {
+      "idx": 31,
+      "version": "7",
+      "when": 1792227200000,
+      "tag": "0031_clinical",
+      "breakpoints": true
+    },
+    {
+      "idx": 32,
+      "version": "7",
+      "when": 1792227201000,
+      "tag": "0032_clinical_triggers",
+      "breakpoints": true
+    },
+    {
+      "idx": 33,
+      "version": "7",
+      "when": 1792227202000,
+      "tag": "0033_clinical_d20",
+      "breakpoints": true
     }
   ]
 }
