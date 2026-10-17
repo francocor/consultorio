@@ -9,14 +9,13 @@ export const isAdministrative = (actor: Actor) =>
 /**
  * Whether looking at this professional's calendar is a look at somebody else's: a professional
  * reading a colleague's calendar that was delegated to them (scheduling, "Scheduling authorization
- * and audit"). Administrative staff are not audited for their ordinary work.
+ * and audit"). Administrative staff are not audited for their ordinary work. The own calendar is
+ * the member's own profile whatever the clinical gate says: a member without a recorded matricula
+ * still reads a delegated calendar, and that look is as audited as any other.
  */
 export function viewsOthersCalendar(actor: Actor, professionalId: string): boolean {
-  return (
-    !isAdministrative(actor) &&
-    actor.professionalId !== null &&
-    actor.professionalId !== professionalId
-  );
+  const own = actor.ownProfessionalId ?? actor.professionalId;
+  return !isAdministrative(actor) && own !== professionalId;
 }
 
 export type DelegatedView = 'appointment' | 'history' | 'availability';
