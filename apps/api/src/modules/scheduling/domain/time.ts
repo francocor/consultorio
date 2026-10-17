@@ -158,3 +158,35 @@ export function addLocalDays(zone: string, instant: Date, days: number): Date {
 export function elapsedMinutes(from: Date, to: Date): number {
   return Math.round((to.getTime() - from.getTime()) / MINUTE_MS);
 }
+
+/**
+ * The instant of a minute of a local day (0 to 1440; 1440 is the start of the next day). Used to
+ * turn working hours, which are minutes in the location's zone, into instants. A minute that is
+ * skipped by daylight saving time maps to the moment the clocks jump (so an interval never starts
+ * or ends in thin air); a repeated minute maps to its first occurrence unless `prefer` says second.
+ */
+export function instantAtLocalMinute(
+  zone: string,
+  date: string,
+  minute: number,
+  prefer: Occurrence = 'first',
+): Date {
+  if (minute >= 1440) return dayBounds(zone, date).end;
+  const hours = String(Math.floor(minute / 60)).padStart(2, '0');
+  const minutes = String(minute % 60).padStart(2, '0');
+  const resolution = resolveLocal(zone, { date, time: `${hours}:${minutes}` });
+  const choice = chooseOccurrence(resolution, prefer);
+  if (choice.ok) return choice.instant;
+
+  // Skipped by the clocks: walk forward from the last instant that still showed an earlier time
+  // until the offset changes. The gap is at most a couple of hours.
+  const { year, month, day } = parseDate(date);
+  const naive = Date.UTC(year, month - 1, day, 0, minute);
+  const before = offsetAt(zone, naive - 2 * DAY_MS);
+  let instant =
+    naive - Math.max(before, offsetAt(zone, naive + 2 * DAY_MS)) * MINUTE_MS - 3 * 60 * MINUTE_MS;
+  for (let step = 0; step < 24 * 60 && offsetAt(zone, instant) === before; step += 1) {
+    instant += MINUTE_MS;
+  }
+  return new Date(instant);
+}

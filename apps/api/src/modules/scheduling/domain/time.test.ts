@@ -6,6 +6,7 @@ import {
   chooseOccurrence,
   dayBounds,
   elapsedMinutes,
+  instantAtLocalMinute,
   isKnownZone,
   localParts,
   resolveLocal,
@@ -172,6 +173,32 @@ describe('addLocalDays', () => {
     const start = new Date('2026-07-14T13:00:00.000Z');
 
     expect(iso(addLocalDays(BUENOS_AIRES, start, 7))).toBe('2026-07-21T13:00:00.000Z');
+  });
+});
+
+describe('instantAtLocalMinute', () => {
+  it('reads a minute of the local day', () => {
+    expect(iso(instantAtLocalMinute(MADRID, '2026-07-15', 600))).toBe('2026-07-15T08:00:00.000Z');
+    expect(iso(instantAtLocalMinute(BUENOS_AIRES, '2026-07-14', 0))).toBe(
+      '2026-07-14T03:00:00.000Z',
+    );
+  });
+
+  it('reads minute 1440 as the start of the next local day', () => {
+    expect(iso(instantAtLocalMinute(MADRID, '2026-03-29', 1440))).toBe('2026-03-29T22:00:00.000Z');
+  });
+
+  it('takes the transition itself when the minute falls in the skipped hour', () => {
+    // Madrid skips 02:00-03:00 on 2026-03-29: the clocks jump at 01:00 UTC.
+    expect(iso(instantAtLocalMinute(MADRID, '2026-03-29', 150))).toBe('2026-03-29T01:00:00.000Z');
+    expect(iso(instantAtLocalMinute(MADRID, '2026-03-29', 120))).toBe('2026-03-29T01:00:00.000Z');
+  });
+
+  it('takes the first occurrence of a repeated minute unless told otherwise', () => {
+    expect(iso(instantAtLocalMinute(MADRID, '2026-10-25', 150))).toBe('2026-10-25T00:30:00.000Z');
+    expect(iso(instantAtLocalMinute(MADRID, '2026-10-25', 150, 'second'))).toBe(
+      '2026-10-25T01:30:00.000Z',
+    );
   });
 });
 
