@@ -113,7 +113,7 @@ p{margin:0 0 1rem}
   const styleHash = createHash('sha256').update(css).digest('base64');
 
   const notice = withNotice
-    ? `<aside class="notice" aria-labelledby="notice-title"><h2 id="notice-title">${escapeHtml(COPY.noticeLabel)}</h2><p>${escapeHtml(COPY.notice)}</p></aside>`
+    ? `<section class="notice" aria-labelledby="notice-title"><h2 id="notice-title">${escapeHtml(COPY.noticeLabel)}</h2><p>${escapeHtml(COPY.notice)}</p></section>`
     : '';
 
   const html = `<!doctype html>
