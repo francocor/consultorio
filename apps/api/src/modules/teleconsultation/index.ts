@@ -21,6 +21,7 @@ import { createVideoLinkCreateJob } from './application/create-room-job.js';
 import { exportTeleconsultation } from './application/export-contributor.js';
 import { createSessionSubscriber } from './application/video-sessions.js';
 import { publicJoinRoutes } from './http/public-join.js';
+import { videoRoutes } from './http/video-routes.js';
 
 export type { VideoLinkProvider, VideoRoom } from './application/ports.js';
 export { createVideoLinkCreateJob };
@@ -65,9 +66,17 @@ export function createTeleconsultation(options: TeleconsultationOptions): Teleco
     clock,
   });
 
+  const staff = videoRoutes({
+    withTenant: options.withTenant,
+    auditDeny: options.auditDeny,
+    adapters: options.adapters,
+    clock,
+  });
+
   return {
     options,
     routes: (app) => {
+      staff(app);
       publicJoin(app);
     },
   };
