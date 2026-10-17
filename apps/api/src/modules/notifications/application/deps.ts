@@ -7,6 +7,7 @@ import type { EmailSender } from '../../../platform/mail/email-sender.js';
 import type { ActionTokens } from '../../../platform/tokens/index.js';
 
 import type { WhatsAppSender } from './ports.js';
+import type { QuotaPolicy } from './usage.js';
 
 /** The organization a message is about; a demo organization never reaches a real provider. */
 export interface TenantRef {
@@ -55,4 +56,6 @@ export interface MessagingDeps {
   origins: PublicOrigins;
   tokens: ActionTokens;
   worklist: Worklist;
+  /** The plan's WhatsApp quota. Absent: no quota, everything is allowed and counted. */
+  quota?: QuotaPolicy;
 }

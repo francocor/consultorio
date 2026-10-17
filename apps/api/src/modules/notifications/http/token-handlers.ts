@@ -5,9 +5,10 @@ import type {
   TokenHandler,
   TokenPage,
 } from '../../../platform/public/token-router.js';
+import { readPatientContact } from '../../patients/index.js';
 import { loadAppointment, type AppointmentContext } from '../application/context.js';
 import { actForPatient, type PatientActionDeps } from '../application/patient-actions.js';
-import { recordOptOut } from '../application/preferences.js';
+import { recordOptIn, recordOptOut } from '../application/preferences.js';
 import { loadMessagingSettings } from '../application/settings.js';
 import { formatDate, formatTime } from '../domain/content.js';
 import { withinCancelDeadline } from '../domain/validity.js';
@@ -181,6 +182,42 @@ export function createOptOutHandler(): TokenHandler {
       return {
         title: 'Listo: no recibirá más mensajes',
         message: `Dejamos de enviarle mensajes por ${CHANNEL_NAME[channel]}. Si cambia de opinión, avise en la recepción.`,
+      };
+    },
+  };
+}
+
+/**
+ * The link of the email that asks a patient to accept WhatsApp. It is how the opt-in "by the
+ * patient on an email link" is recorded; a WhatsApp message can never do it.
+ */
+export function createWhatsappOptInHandler(): TokenHandler {
+  return {
+    // Opting in is not a protective action: a read-only organization sends no WhatsApp at all.
+    allowedWhenReadOnly: false,
+    audits: ['notification.optin.recorded'],
+    async describe(context) {
+      if (!(await readPatientContact(context.tx, context.subjectId))) return null;
+      return {
+        title: 'Aceptar recordatorios por WhatsApp',
+        message:
+          'Recibirá por WhatsApp los recordatorios y las confirmaciones de sus turnos. Podrá dejar de recibirlos cuando quiera respondiendo BAJA a cualquiera de los mensajes.',
+        action: { label: 'Aceptar recordatorios por WhatsApp' },
+      };
+    },
+    async perform(context) {
+      if (!(await readPatientContact(context.tx, context.subjectId))) return null;
+      if (!(await context.redeem())) return null;
+      await recordOptIn(context.tx, {
+        patientId: context.subjectId,
+        channel: 'whatsapp',
+        source: 'patient_email_link',
+        actor: context.actor,
+      });
+      return {
+        title: 'Listo: recibirá recordatorios por WhatsApp',
+        message:
+          'Puede dejar de recibirlos cuando quiera respondiendo BAJA a cualquiera de los mensajes.',
       };
     },
   };

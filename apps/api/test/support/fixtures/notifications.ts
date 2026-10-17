@@ -1,6 +1,12 @@
 import { sql } from 'drizzle-orm';
 
-import { insertPatient, returningId, unique, type TenantTableFixture } from '../fixture-helpers.js';
+import {
+  insertPatient,
+  insertProfessional,
+  returningId,
+  unique,
+  type TenantTableFixture,
+} from '../fixture-helpers.js';
 
 /**
  * Fixtures of the tables of messaging (track A): one valid row per table, for the generated
@@ -26,6 +32,29 @@ async function insertMessage(
 
 export const fixtures: Record<string, TenantTableFixture> = {
   message: { insert: insertMessage },
+  whatsapp_usage_event: {
+    insert: async (tx, tenantId, overrides) =>
+      returningId(
+        tx,
+        sql`INSERT INTO whatsapp_usage_event (tenant_id, message_id, professional_id, period)
+              VALUES (${tenantId},
+                      ${overrides?.['message_id'] ?? (await insertMessage(tx, tenantId))},
+                      ${overrides?.['professional_id'] ?? (await insertProfessional(tx, tenantId))},
+                      '2031-05')
+              RETURNING id`,
+      ),
+  },
+  whatsapp_usage_alert: {
+    insert: async (tx, tenantId, overrides) =>
+      returningId(
+        tx,
+        sql`INSERT INTO whatsapp_usage_alert (tenant_id, professional_id, period, threshold)
+              VALUES (${tenantId},
+                      ${overrides?.['professional_id'] ?? (await insertProfessional(tx, tenantId))},
+                      '2031-05', 80)
+              RETURNING id`,
+      ),
+  },
   message_event: {
     insert: async (tx, tenantId, overrides) =>
       returningId(

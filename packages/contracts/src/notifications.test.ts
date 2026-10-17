@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest';
 
 import { AUDIT_ACTIONS } from './audit-actions.js';
+import { ERROR_CATALOG } from './errors.js';
 import {
+  AppointmentMessagesResponse,
   APPOINTMENT_MESSAGE_KINDS,
   DEFAULT_NOTIFICATION_SETTINGS,
   EMAIL_ONLY_MESSAGE_KINDS,
@@ -9,13 +11,18 @@ import {
   MESSAGE_CHANNELS,
   MESSAGE_FAILURE_REASONS,
   MESSAGE_KINDS,
+  MAX_MANUAL_RESENDS,
   MESSAGE_STATUSES,
   NOTIFICATION_AUDIT_ACTIONS,
+  NOTIFICATION_ERRORS,
   NotificationSettings,
+  ResendMessageRequest,
   SimulatorInboundRequest,
   SimulatorModeRequest,
   SimulatorStatusRequest,
   SimulatorUnreachableRequest,
+  UsageResponse,
+  USAGE_WARNING_PERCENT,
 } from './notifications.js';
 
 describe('notification catalogues', () => {
@@ -131,5 +138,60 @@ describe('the shapes of the WhatsApp simulator console', () => {
       unreachable: true,
     });
     expect(SimulatorUnreachableRequest.safeParse({ number: '+5491144445555' }).success).toBe(false);
+  });
+});
+
+describe('the channel, usage and message log shapes', () => {
+  it('catalogs the errors of the module with a status and an es-AR message key', () => {
+    expect(Object.keys(NOTIFICATION_ERRORS).sort()).toEqual([
+      'channel_opted_out',
+      'patient_without_email',
+      'patient_without_phone',
+      'resend_limit_reached',
+      'resend_unavailable',
+    ]);
+    for (const [code, entry] of Object.entries(NOTIFICATION_ERRORS)) {
+      expect(entry.i18nKey, code).toBe(`errors.${code}`);
+    }
+    expect(ERROR_CATALOG.channel_opted_out.status).toBe(409);
+  });
+
+  it('reads the usage of a month as counts per professional, with the state of the quota', () => {
+    const parsed = UsageResponse.parse({
+      period: '2031-05',
+      professionals: [
+        {
+          professionalId: '0190a000-0000-7000-8000-000000000001',
+          name: null,
+          count: 12,
+          limit: null,
+          state: 'unlimited',
+        },
+        {
+          professionalId: '0190a000-0000-7000-8000-000000000002',
+          name: 'Dra. Ríos',
+          count: 170,
+          limit: 200,
+          state: 'warning',
+        },
+      ],
+    });
+
+    expect(parsed.professionals.map((entry) => entry.state)).toEqual(['unlimited', 'warning']);
+    expect(UsageResponse.safeParse({ period: '2031-5', professionals: [] }).success).toBe(false);
+    expect(USAGE_WARNING_PERCENT).toBe(80);
+  });
+
+  it('allows three manual resends per appointment and no more in the log', () => {
+    expect(MAX_MANUAL_RESENDS).toBe(3);
+    expect(
+      AppointmentMessagesResponse.safeParse({
+        messages: [],
+        noAutomatedReminders: false,
+        resendsLeft: 4,
+      }).success,
+    ).toBe(false);
+    expect(ResendMessageRequest.parse({ channel: 'email' })).toEqual({ channel: 'email' });
+    expect(ResendMessageRequest.safeParse({ channel: 'sms' }).success).toBe(false);
   });
 });

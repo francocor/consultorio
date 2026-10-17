@@ -145,3 +145,31 @@ export async function recordOptIn(
   });
   return { recorded: true };
 }
+
+/** The latest event of a channel, for a screen that shows where a choice came from. */
+export async function describeChannel(
+  tx: Tx,
+  patientId: string,
+  channel: MessageChannel,
+): Promise<{
+  state: 'opted_in' | 'opted_out' | null;
+  source: string | null;
+  recordedAt: Date | null;
+}> {
+  const [latest] = await tx
+    .select({
+      state: channelPreference.state,
+      source: channelPreference.source,
+      recordedAt: channelPreference.createdAt,
+    })
+    .from(channelPreference)
+    .where(and(eq(channelPreference.patientId, patientId), eq(channelPreference.channel, channel)))
+    .orderBy(desc(channelPreference.createdAt), desc(channelPreference.id))
+    .limit(1);
+  if (!latest) return { state: null, source: null, recordedAt: null };
+  return {
+    state: latest.state === 'opted_out' ? 'opted_out' : 'opted_in',
+    source: latest.source,
+    recordedAt: latest.recordedAt,
+  };
+}

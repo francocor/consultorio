@@ -114,6 +114,7 @@ export const notificationsWiring: ModuleWiring = {
       keys: context.keys,
       jobs: context.jobs,
       origins: context.origins,
+      email: context.email,
       worklist: context.worklist,
       // The webhook is verified by the customer provider; the resolver hands it out for any
       // organization that is not a demo.

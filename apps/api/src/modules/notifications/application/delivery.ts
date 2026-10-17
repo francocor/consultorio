@@ -40,6 +40,7 @@ import {
 import { loadRecipient, type Recipient } from './recipients.js';
 import { renderMessage, type RenderedMessage } from './render.js';
 import { loadMessagingSettings, type MessagingSettings } from './settings.js';
+import { recordWhatsappUsage, UNLIMITED_QUOTA, whatsappQuotaAvailable } from './usage.js';
 
 /**
  * Delivery of one queued message, in three steps so that the provider is never called inside a
@@ -125,11 +126,24 @@ interface Situation {
   settings: MessagingSettings;
 }
 
-function channelOptions(deps: MessagingDeps, situation: Pick<Situation, 'tenant' | 'settings'>) {
+async function channelOptions(
+  deps: MessagingDeps,
+  tx: Tx,
+  situation: Pick<Situation, 'tenant' | 'settings'>,
+  professionalId: string | null,
+) {
   return {
     whatsappEnabled:
       situation.settings.whatsappEnabled && deps.channels.whatsapp(situation.tenant) !== undefined,
-    whatsappQuotaAvailable: true,
+    // A message with no professional (an offer, a notice) is not counted against anybody's quota.
+    whatsappQuotaAvailable:
+      professionalId === null ||
+      (await whatsappQuotaAvailable(
+        deps.quota ?? UNLIMITED_QUOTA,
+        tx,
+        professionalId,
+        deps.clock(),
+      )),
   };
 }
 
@@ -228,7 +242,11 @@ export function prepareDelivery(
       return { kind: 'settled' };
     }
     const situation: Situation = { state, tenant, appointment, recipient, settings };
-    const decision = selectChannels(kind, recipient.facts, channelOptions(deps, situation));
+    const decision = selectChannels(
+      kind,
+      recipient.facts,
+      await channelOptions(deps, tx, situation, row.professionalId),
+    );
     const sender =
       channel === 'email' ? deps.channels.email(tenant) : deps.channels.whatsapp(tenant);
 
@@ -394,7 +412,7 @@ async function continueAfterFailure(
   const decision = selectChannels(
     kind,
     recipient.facts,
-    channelOptions(deps, { tenant, settings }),
+    await channelOptions(deps, tx, { tenant, settings }, row.professionalId),
   );
   const fallback = await queueFallback(deps, tx, row, decision);
   if (fallback !== null || row.appointmentId === null) return;
@@ -482,6 +500,19 @@ export async function completeDelivery(
             : { providerMessageId: result.providerMessageId }),
         })
         .where(and(eq(message.id, send.messageId), eq(message.status, 'queued')));
+      // The provider took a WhatsApp message: it counts against its professional, once.
+      if (send.channel === 'whatsapp' && send.professionalId !== null) {
+        await recordWhatsappUsage(
+          { quota: deps.quota ?? UNLIMITED_QUOTA, channels: deps.channels },
+          tx,
+          {
+            messageId: send.messageId,
+            professionalId: send.professionalId,
+            now,
+            tenant: send.tenant,
+          },
+        );
+      }
       return;
     case 'retryable': {
       const retryAt = nextRetryAt(now, send.attemptNo, send.startsAt);

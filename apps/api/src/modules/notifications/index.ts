@@ -13,6 +13,7 @@ import type { WithTenant } from '../../platform/db/tenant-context.js';
 import type { AppointmentEvents } from '../../platform/events/appointment-events.js';
 import type { PublicOrigins } from '../../platform/http/public-origin.js';
 import type { JobClient } from '../../platform/jobs/boss.js';
+import type { EmailSender } from '../../platform/mail/email-sender.js';
 import { createTokenRoutes, registerTokenHandler } from '../../platform/public/token-router.js';
 import { createActionTokens } from '../../platform/tokens/index.js';
 import type { WorklistService } from '../scheduling/index.js';
@@ -23,12 +24,16 @@ import { exportNotifications } from './application/export-contributor.js';
 import { createReminderPlanner } from './application/plan-reminders.js';
 import type { WhatsAppSender } from './application/ports.js';
 import { createLinkRevoker } from './application/revoke-links.js';
+import { UNLIMITED_QUOTA, type QuotaPolicy } from './application/usage.js';
 import { createWorklist, createWorklistFromService } from './application/worklist.js';
+import { channelRoutes } from './http/channel-routes.js';
 import {
   createCancelHandler,
   createConfirmHandler,
   createOptOutHandler,
+  createWhatsappOptInHandler,
 } from './http/token-handlers.js';
+import { usageRoutes } from './http/usage-routes.js';
 import { whatsappWebhookRoutes } from './http/whatsapp-webhook.js';
 
 export type {
@@ -84,6 +89,10 @@ export interface NotificationsOptions {
   worklist?: WorklistService | undefined;
   /** Where emailed links point. */
   origins?: PublicOrigins | undefined;
+  /** Sends the emails the API itself sends (the WhatsApp opt-in request). */
+  email?: EmailSender | undefined;
+  /** The plan's WhatsApp quota (Stage 6 supplies it). Absent: no quota, everything counted. */
+  quota?: QuotaPolicy | undefined;
 }
 
 const NO_CHANNELS: Channels = { email: () => undefined, whatsapp: () => undefined };
@@ -104,6 +113,7 @@ export function createNotifications(options: NotificationsOptions): Notification
   registerTokenHandler('appointment_confirm', createConfirmHandler(handlerDeps));
   registerTokenHandler('appointment_cancel', createCancelHandler(handlerDeps));
   registerTokenHandler('notification_opt_out', createOptOutHandler());
+  registerTokenHandler('whatsapp_opt_in', createWhatsappOptInHandler());
   const revoker = createLinkRevoker(tokens);
   options.events.subscribe((tx, event) => revoker.handle(tx, event));
 
@@ -132,6 +142,7 @@ export function createNotifications(options: NotificationsOptions): Notification
           origins: options.origins,
           tokens,
           worklist,
+          ...(options.quota ? { quota: options.quota } : {}),
         }
       : undefined;
 
@@ -147,14 +158,34 @@ export function createNotifications(options: NotificationsOptions): Notification
     inbound: { keys: options.keys, events: options.events, channels, worklist, clock },
     reactions,
   });
+  const staffRoutes = [
+    usageRoutes({
+      withTenant: options.withTenant,
+      quota: options.quota ?? UNLIMITED_QUOTA,
+      clock,
+    }),
+    ...(options.email && options.origins
+      ? [
+          channelRoutes({
+            withTenant: options.withTenant,
+            tokens,
+            email: options.email,
+            origins: options.origins,
+          }),
+        ]
+      : []),
+  ];
   return {
     options,
     routes: (app) => {
       tokenRoutes(app);
       webhookRoutes(app);
+      for (const routes of staffRoutes) routes(app);
     },
   };
 }
 
+export { UNLIMITED_QUOTA } from './application/usage.js';
+export type { QuotaPolicy } from './application/usage.js';
 export { createReminderPlanner } from './application/plan-reminders.js';
 export type { PlannerDeps, ReminderPlanner } from './application/plan-reminders.js';

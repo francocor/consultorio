@@ -77,10 +77,16 @@ export type MessageStatus = (typeof MESSAGE_STATUSES)[number];
  * the API catalog (errors.ts); the messages go in `locales/es-AR/errors.notifications.json`, keyed by the
  * code. The track adds its codes here.
  */
-export const NOTIFICATION_ERRORS = {} as const satisfies Record<
-  string,
-  { status: number; i18nKey: string }
->;
+export const NOTIFICATION_ERRORS = {
+  /** Only the patient can switch back on a channel the patient switched off. */
+  channel_opted_out: { status: 409, i18nKey: 'errors.channel_opted_out' },
+  patient_without_email: { status: 422, i18nKey: 'errors.patient_without_email' },
+  patient_without_phone: { status: 422, i18nKey: 'errors.patient_without_phone' },
+  /** Three manual resends per appointment. */
+  resend_limit_reached: { status: 409, i18nKey: 'errors.resend_limit_reached' },
+  /** The appointment is over, or the channel cannot be used for this patient. */
+  resend_unavailable: { status: 409, i18nKey: 'errors.resend_unavailable' },
+} as const satisfies Record<string, { status: number; i18nKey: string }>;
 
 /** Audit actions of messaging. They are registered in the shared catalogue (`audit-actions.ts`). */
 export const NOTIFICATION_AUDIT_ACTIONS = [
@@ -174,3 +180,89 @@ export const SimulatorEventResponse = z.strictObject({
   delivered: z.boolean(),
 });
 export type SimulatorEventResponse = z.infer<typeof SimulatorEventResponse>;
+
+// Channel choices of a patient (reception) -----------------------------------------------------
+
+/** A channel as the patient left it: the choice in force and where and when it was recorded. */
+export const ChannelStateDto = z.strictObject({
+  /** `default`: email nobody switched off. `none`: WhatsApp nobody switched on. */
+  state: z.enum(['default', 'none', 'opted_in', 'opted_out']),
+  source: z.string().nullable(),
+  recordedAt: z.iso.datetime().nullable(),
+});
+export type ChannelStateDto = z.infer<typeof ChannelStateDto>;
+
+export const PatientChannelsResponse = z.strictObject({
+  email: ChannelStateDto,
+  whatsapp: ChannelStateDto,
+  /** Whether the record has an email, and a phone that can be read as a mobile number. */
+  hasEmail: z.boolean(),
+  hasMobile: z.boolean(),
+});
+export type PatientChannelsResponse = z.infer<typeof PatientChannelsResponse>;
+
+export const ChannelParams = z.strictObject({
+  id: z.uuid(),
+  channel: z.enum(MESSAGE_CHANNELS),
+});
+export type ChannelParams = z.infer<typeof ChannelParams>;
+
+// WhatsApp usage per professional (administration) ---------------------------------------------
+
+export const USAGE_STATES = ['unlimited', 'ok', 'warning', 'exhausted'] as const;
+export type UsageState = (typeof USAGE_STATES)[number];
+
+/** Share of the monthly quota at which the owner is warned, and at which the quota is spent. */
+export const USAGE_WARNING_PERCENT = 80;
+
+export const ProfessionalUsageDto = z.strictObject({
+  professionalId: z.uuid(),
+  /** Null when the member has no display name. */
+  name: z.string().nullable(),
+  /** WhatsApp messages the provider accepted this month. Counts only: no patient, no text. */
+  count: z.int().nonnegative(),
+  /** The monthly quota of the plan; null when there is none to apply. */
+  limit: z.int().positive().nullable(),
+  state: z.enum(USAGE_STATES),
+});
+export type ProfessionalUsageDto = z.infer<typeof ProfessionalUsageDto>;
+
+export const UsageResponse = z.strictObject({
+  /** `YYYY-MM` (UTC). */
+  period: z.string().regex(/^\d{4}-\d{2}$/),
+  professionals: z.array(ProfessionalUsageDto),
+});
+export type UsageResponse = z.infer<typeof UsageResponse>;
+
+// The message log of an appointment ------------------------------------------------------------
+
+export const MessageLogEntryDto = z.strictObject({
+  id: z.uuid(),
+  kind: z.enum(MESSAGE_KINDS),
+  channel: z.enum(MESSAGE_CHANNELS),
+  status: z.enum(MESSAGE_STATUSES),
+  /** `manual` for a resend that a person asked for. */
+  trigger: z.enum(['automatic', 'manual']),
+  cancelReason: z.enum(MESSAGE_CANCEL_REASONS).nullable(),
+  failureReason: z.enum(MESSAGE_FAILURE_REASONS).nullable(),
+  sendAt: z.iso.datetime(),
+  sentAt: z.iso.datetime().nullable(),
+  deliveredAt: z.iso.datetime().nullable(),
+  readAt: z.iso.datetime().nullable(),
+  attempts: z.int().nonnegative(),
+});
+export type MessageLogEntryDto = z.infer<typeof MessageLogEntryDto>;
+
+/** Manual resends allowed per appointment (spec "Audit and access to notification data"). */
+export const MAX_MANUAL_RESENDS = 3;
+
+export const AppointmentMessagesResponse = z.strictObject({
+  messages: z.array(MessageLogEntryDto),
+  /** True when reception has an open "reminder not sent" item: no automated reminders go out. */
+  noAutomatedReminders: z.boolean(),
+  resendsLeft: z.int().min(0).max(MAX_MANUAL_RESENDS),
+});
+export type AppointmentMessagesResponse = z.infer<typeof AppointmentMessagesResponse>;
+
+export const ResendMessageRequest = z.strictObject({ channel: z.enum(MESSAGE_CHANNELS) });
+export type ResendMessageRequest = z.infer<typeof ResendMessageRequest>;

@@ -18,6 +18,6 @@ export const NOTIFICATION_SCENARIOS: Record<
   },
   'notification.resend': { pending: 'S3.06 (task 3.31): manual resend of a message' },
   'notification.integration.changed': {
-    pending: 'S3.05 (task 3.29): the WhatsApp integration switch',
+    test: 'apps/api/test/integration/notifications-integration.test.ts',
   },
 };
