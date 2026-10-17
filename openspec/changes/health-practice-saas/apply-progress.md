@@ -1018,3 +1018,166 @@ CI was not run or polled from here. Lighthouse was not run.
 - `encounter_id` still has no foreign key: it arrives with the clinical merge (the next migration number is 0031 or later; the clinical and onboarding branches renumber at their merges).
 - The e2e stack still has an in-memory storage whose upload URL a browser cannot reach and does not run the document jobs, so there is no Playwright spec for documents (documents deviation 13).
 - Migration 0030 takes a short exclusive lock on `appointment` and `document` (it lifts and restores FORCE ROW LEVEL SECURITY). Harmless before the first deployment; plan it for a quiet moment afterwards.
+
+## Stage 2 integration 2: clinical, onboarding and the plan, then the close of Stage 2 (S2.31 to S2.33)
+
+Three finished branches were merged into `feat/stage-2-practice-core` (tip before: `8287601`) with `git merge --no-ff`, in this order, and then Part B (S2.31 to S2.33, adapted local-first) was built on top. The per-track reports stay as they are and hold the detail of each track: `apply-progress-stage2-clinical.md` (S2.17 to S2.24, decision D20 and the security review fixes), `apply-progress-stage2-onboarding.md` (S2.29, S2.30), `apply-progress-stage2-documents.md` and `apply-progress-stage2-schedfix.md` (merged in integration 1). Mode: automatic, strict TDD for new behavior, `size:exception` (work-unit commits, no merge to main, CI not polled).
+
+### What was merged
+
+| Order | Branch                                                        | Merge commit | Notes                                                                                                                                                                                                       |
+| ----- | ------------------------------------------------------------- | ------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1     | `feat/stage-2-clinical` (`2192bc9`, based on the Stage 1 tip) | `071beba`    | Textual conflicts in `_journal.json`, `application.ts`, `export-contributors.ts`, `definer-functions.test.ts`, `demo-seed.test.ts`, `seed.ts`, `router.tsx`, `PatientDetailPage.tsx` and `translate.ts`      |
+| 2     | `feat/stage-2-onboarding` (`b6bcc8e`, based on `28ba4cf`)     | `6d7f780`    | Conflicts in `_journal.json`, `application.ts`, `export-contributors.ts`, `router.tsx`, `translate.ts`, `docs/demo.md`, `playwright.config.ts` and `e2e/support/stack.ts`                                   |
+| 3     | `docs/refine-stages-3-6` (`32ff16f`, docs only)               | `a27a5e5`    | No conflict: it only touches `tasks.md`; git merged the Stage 3 to 6 detail with the Stage 0 to 2 checkbox states of this branch (258 checked tasks before and after)                                       |
+
+### Conflict resolutions
+
+- `migrations/meta/_journal.json`: this branch's entries up to idx 30, then the new ones appended with strictly increasing `when` (see the sequence below).
+- `main/application.ts`: `createScheduling`, `createDocuments`, `createClinical` and `createOnboarding` are all built, and `scheduling.routes`, `documents.routes`, `clinical.routes`, `onboarding.routes` are all registered; the options keep both `clinical` and `onboardingCapabilities`.
+- `export-contributors.ts`, `definer-functions.test.ts`, `demo-seed.test.ts`, `seed.ts`: both sides kept (the clinical notes step now follows the agenda step in the seed).
+- `router.tsx`: the scheduling routes (`/calendar`, `/today`, `/check-in`, `/worklist`), the clinical routes (`/notes/$noteId`, `/encounters/new`, `/drafts`) and the onboarding wizard guard.
+- `PatientDetailPage.tsx`: the "Documentos" tab and the "Historia clínica" (`chart`) tab both exist; `TabId` has both.
+- `web/shared/lib/translate.ts` (git sees it as binary because of the NUL in the `MISSING` sentinel): took this branch's version and added the `clinical` and `onboarding` namespaces; the NUL is preserved.
+- `playwright.config.ts` and `e2e/support/stack.ts`: both tracks added `E2E_WEB_PORT`/`E2E_API_PORT`; kept one copy.
+- `roles.test.ts` merged cleanly but was wrong: `GRANTABLE` has 7 entries, not 6 (found by running the test, then fixed).
+
+### Migrations: one linear sequence
+
+0000 to 0030 are untouched (`git diff` on them is empty).
+
+| File                     | Journal idx | `when`        | Origin                                                                  |
+| ------------------------ | ----------- | ------------- | ----------------------------------------------------------------------- |
+| `0031_clinical`          | 31          | 1792227200000 | clinical `0060_clinical` (renumbered, SQL unchanged apart from a comment) |
+| `0032_clinical_triggers` | 32          | 1792227201000 | clinical `0061_clinical_triggers` (renumbered)                          |
+| `0033_clinical_d20`      | 33          | 1792227202000 | clinical `0062_clinical_d20` (renumbered)                               |
+| `0034_encounter_links`   | 34          | 1792227670766 | NEW: composite foreign keys and the encounter guard (see D20 wiring)    |
+| `0035_onboarding_state`  | 35          | 1792227671766 | onboarding `0070_onboarding_state` (renumbered)                         |
+
+Snapshots: the track snapshots described their own base, so each one was rebuilt on this branch's chain: the difference between the track's snapshot and the one before it (tables that changed or were added) was applied on top of the previous snapshot of this chain, with a new `id` and `prevId` set to the previous `id`. `0034_snapshot.json` was generated by drizzle-kit. Checks: the journal `idx` are sequential, the `when` values strictly increase, the `prevId` chain is unbroken over 36 snapshots, and `pnpm db:check` reports "No migration drift."
+
+### D20 wiring (strict TDD)
+
+Both modules are in one application now, so the clinical module no longer receives a test double for the agenda:
+
+- `scheduling.findCareSourceAppointment(tx, id)` (new, `application/care-source.ts`) is the port the composition root hands to `createClinical` (`options.clinical.appointments` is kept only as a test override). `open()` refuses, with a 403 and a deny audit entry naming the patient: an unknown appointment, or one of another patient or professional, or a cancelled or pending-approval one (`appointment_mismatch`), and one whose identity nobody confirmed (`appointment_identity_unconfirmed`, new). The care relationship itself needed no change: the scheduling trigger already feeds `care_relationship` from appointments with confirmed identity, and both the service and `encounter_guard` read `is_treating`, so an appointment with confirmed identity is a valid source and an unconfirmed one is not.
+- Migration `0034_encounter_links`: composite FK `encounter (tenant_id, appointment_id)` to `appointment`, composite FK `document (tenant_id, encounter_id)` to `encounter`, and `encounter_guard` replaced: for a named appointment it needs the same patient and professional (otherwise 23503, like the note guard for a parent that does not match, which keeps the generated isolation suite meaningful) and a confirmed identity and a counting status (otherwise 42501). The gotcha of integration 1 applies: FORCE row level security is lifted on `document`, `encounter` and `appointment` for the length of the `ADD CONSTRAINT` statements and put back, inside the migration transaction.
+- RED then GREEN: `clinical-appointments.test.ts` (8 cases) failed first with 5 of 8 red (the unconfirmed appointment was accepted, the foreign key did not exist, the encounter linked to a stranger's appointment). It covers the three cases asked for: confirmed identity then open is allowed (with and without naming the appointment, and the encounter carries the appointment); an unconfirmed booking (the professional booking themselves) is refused with a 403 and the deny audit, and it is allowed once reception confirms the identity at check-in; another professional's appointment is refused. Plus the database: the guard rejects another professional's or another patient's appointment (23503) and an unconfirmed one (42501), and the two foreign keys exist.
+- Tests adapted to the FK: the fake `AppointmentLookup` maps in `clinical-notes-api` and `clinical-encounter-access` are gone (random appointment ids can no longer be inserted); the `encounter` and `document` fixtures honor the new overrides; `clinical-schema` and `documents-schema` assert the foreign keys.
+- UI, the "Iniciar consulta" entry point. For the appointment's own professional (clinical write permission, confirmed identity, not read-only), `domain/consultation.ts` decides: a patient "En sala" gets the existing call-in button, which now also opens `/encounters/new?patientId=&appointmentId=` after the appointment moves to "En consulta"; an appointment in progress gets a link to the same page. Both in the drawer (agenda) and in "Hoy" (`StartConsultation`). Everyone else sees the unchanged buttons. The new-encounter page loads the appointment, shows "Turno: type", ties the encounter to it and starts the reason of the note from the type of the appointment (general and odontology templates); an appointment of another patient in the address is dropped with a message. Tests first for each: drawer (a table of who is offered it), Today (link and navigation), chart (prefill and foreign appointment).
+- The demo seed opens its consultations from appointments (see S2.31).
+
+### D21, the authorization spec and the onboarding link
+
+- `GRANTABLE` has 7: `scheduling.override_hours`, `scheduling.override_hold`, `scheduling.register_past`, `scheduling.delegated_calendar`, `cash.operate`, `patients.administer`, `onboarding.manage`. `design.md` (grantable toggles table) and the authorization spec (grantable requirement and a scenario: running the first run needs its own permission; an admin holds it only by grant) were updated.
+- Decision D21 (orchestrator, pending owner confirmation) is in `proposal.md` (new section "Stage 2 integration: decisions D20 and D21", which also records D20): during the first-run wizard an active owner may add the `professional` role to themselves exactly once, audited as `role.changed` with `via: onboarding`; the path closes when the wizard finishes. The authorization spec's "No self-assignment" requirement has the exception and a scenario; the tenant-onboarding spec's initial-roles requirement states the narrow path and a scenario for the closing. The code already behaved this way (the onboarding track tests it); nothing was changed in it.
+- The clinical-records spec got the two new scenarios (identity unconfirmed, identity confirmed) and the extended requirement.
+- "Ir a la agenda" and the checklist item "first appointment" link to `/calendar`, which is the real scheduling route (`router.tsx`). A new test, `app/onboarding-links.test.ts`, keeps every address the first run links to (`/calendar`, `/patients/new`, `/onboarding` and each `CHECKLIST_LINKS` entry) a route of the application. `MeResponse.needsWizard` is required and every builder compiles (typecheck is the proof; `meFor` sets it).
+
+### S2.31: Stage 2 end to end and demo data
+
+- **2.94 Demo seed** (`db/seed/demo/stage2.ts`, `seed.ts`, `snapshot.ts`, `reset.ts`): after the agenda and the first notes, the cardiologist and the pediatrician open encounters FROM the attended and in-progress appointments (D20), write and sign the notes (one visit stays in progress with its note as a draft, one signed note gets an addendum); then eight documents go through the real upload service, a direct put to the quarantine key (the browser's part) and the real scan job with the fake scanner: three administrative by reception, four clinical by the professionals attached to a visit (one linked to the encounter and the appointment) and one EICAR file that shows a rejection. The seed takes an optional `documents: { storage, scanner }`; the CLI `demo:seed`/`demo:reset` and the deployed reset pass the S3 storage when `S3_BUCKET` is set. `NO_SEED_DATA.document` is removed and `demo-coverage` proves every table has data. The reset removes the files from the bucket after the database reset succeeds and stores new ones (test: another organization's objects are untouched).
+- **2.95 e2e**: the Playwright stack (`scripts/stack/start-stack.ts`) now starts MinIO (fixed host port through `--minio-port`/`E2E_MINIO_PORT`, because the web's Content Security Policy must name the storage origin: `CSP_CONNECT_SOURCES`), the queue client of the API and the worker with the document jobs and hold expiry. `stage2-solo.spec.ts` (360 px): the operator creates the organization, the owner takes the invitation from Mailpit, signs in, uses the quick setup, registers the first patient and books the first appointment; the time from the first sign-in is recorded as an annotation (5.2 seconds in the final run, budget 10 minutes). `stage2-center.spec.ts`: reception registers, books, confirms and checks in; the cardiologist calls the patient in from the agenda, the encounter opens tied to the appointment with the reason prefilled, writes, signs, adds an addendum, finishes the visit, uploads a lab result (scanned by the worker, shown "Disponible", downloaded) and the EICAR file (refused with its reason, no download button); reception does not see the clinical documents and uploads an identity copy; the API refuses reception the signed note; the owner of the demo organization is not sent to the wizard. Axe runs on every new screen. `calendar.day.spec.ts` follows the new call-in behavior.
+- **A real defect found by the journey and fixed test-first**: `DocumentsTab` rendered the dialogs as siblings after a body that changes between the empty state and the list, so when the first uploaded file turned the empty list into a list, React rebuilt the upload dialog and the person lost the summary. A component test that makes the list go from empty to non-empty failed first; the dialogs now follow the body at a fixed position.
+- **2.96 Reset timing with Stage 2 data**: `demo reset took 4,749 ms` (budget 30 s in CI, requirement 60 s), with the agenda, the consultations and the documents; the same run proves the logical content equal to a first seed.
+- **2.97 Benchmark**: `pnpm --filter @consultorio/api bench:clinical`; `docs/perf/clinical-readable.md`. With 102,000 notes a patient's chart answers in 1.0 ms at p95 with the policies on (0.8 ms without), the drafts in 0.8 ms and a 2,000-entry chart in 25.7 ms; the plan is an index scan on the existing index. No index change was needed.
+
+### S2.32: delivery pipeline and backups (local-first)
+
+- **2.99** `pnpm backup:local` (`backup`, `verify`, `restore`; `apps/api/scripts/backup/`): a custom-format `pg_dump` run inside the database container, a checksummed copy of the bucket through the S3 API, a manifest written last; `verify`/`restore` refuse a changed backup before creating anything; a restore only ever creates a NEW database (an existing name is refused) and puts the objects in the named bucket. Tests: `manifest.test.ts` (5, unit) and `backup-restore.test.ts` (3, integration on throwaway Postgres and MinIO: isolation across two organizations on the restored copy, the same FORCE row level security and policies as the source, the PDF byte for byte, refusal over an existing database and of a tampered dump). It was also run for real against the compose services on private ports (`demo:seed` with a bucket, backup, verify, restore into `consultorio_restore` with 26 patients, 8 documents and 17 notes, the refusal over `consultorio`), then torn down. `docs/runbooks/backup-restore.md` has the production design (PITR, weekly dump, the KEK that must be escrowed apart) and the quarterly drill checklist.
+- **2.98 deferred (owner action)**: the cloud account, region (Q1), registry and the GitHub environments do not exist, so no workflow was written that could not run. `docs/runbooks/deploy.md` records what is ready (image, smoke test, migrations as a one-off) and what the owner must provide. Nothing depends on it.
+
+### S2.33: Stage 2 gate
+
+| Item                                                                                                                | Result                                                                                                                                                                                                                                                                                                                                                                                                           |
+| ------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Everything the gate defines (typecheck, lint, format, unit, integration, build, db:check, e2e, Docker image, smoke) | Green, see "Verification"                                                                                                                                                                                                                                                                                                                                                                                        |
+| 2.100 fresh-context review (`judgment-day`)                                                                         | **Not done by the executor** (an executor cannot open a fresh context). While integrating, the three areas were re-read and these were found and fixed: an encounter could name an appointment that did not exist or belonged to someone else (no foreign key, no guard), an unconfirmed appointment was not refused, the upload dialog defect and the stale `GRANTABLE` test. The independent review stays for the orchestrator to launch; its report goes in the PR |
+| 2.101 `docs/legacy-parity.md`                                                                                       | Written; the owner's sign-off is pending                                                                                                                                                                                                                                                                                                                                                                         |
+| Success: a solo professional books a first appointment within 10 minutes                                            | Met and automated: `stage2-solo.spec.ts`, 5.2 s of automation at 360 px                                                                                                                                                                                                                                                                                                                                          |
+| Success: a center runs a full day                                                                                   | Met and automated: `stage2-center.spec.ts` (three roles; scheduling, clinical, documents), plus `calendar.day.spec.ts`                                                                                                                                                                                                                                                                                            |
+| Success: reception books an existing patient in 30 s or less                                                        | `calendar.booking.spec.ts` (6 actions, 30 s) passes                                                                                                                                                                                                                                                                                                                                                              |
+| Success: usable at 360 px, installable PWA                                                                          | `*.responsive.spec.ts` and `pwa.spec.ts` pass, axe on every journey                                                                                                                                                                                                                                                                                                                                              |
+| Success: p75 load under 2.5 s on 4G                                                                                 | NOT verified locally: Lighthouse CI cannot start Chrome on this Windows machine (`spawn UNKNOWN` from chrome-launcher, also with the Playwright Chromium); it is a CI job and stays unverified here                                                                                                                                                                                                              |
+| Success: 100% of clinical reads and writes audited, no signed entry editable, a non-clinical admin denied           | The clinical, audit-scenario and access suites pass (`clinical-*`, `audit-scenarios`)                                                                                                                                                                                                                                                                                                                            |
+| Success: the demo resets in under a minute with data in every module                                                | 4.7 s with Stage 2 data; `demo-coverage`                                                                                                                                                                                                                                                                                                                                                                         |
+| Success: legacy archived or removed                                                                                 | N/A in this repository (tasks 2.102 and 2.103); the parity document is written                                                                                                                                                                                                                                                                                                                                   |
+
+### Verification
+
+Node v24.22.0, pnpm 10.34.7 via corepack, Docker Desktop shared with other projects (their containers were not touched).
+
+| Command                                                                         | After Part A (merges, D20, D21)                          | After Part B (tip of the branch)                                                   |
+| ------------------------------------------------------------------------------- | -------------------------------------------------------- | ---------------------------------------------------------------------------------- |
+| `corepack pnpm install --frozen-lockfile`                                       | exit 0                                                   | exit 0                                                                             |
+| `typecheck` / `lint` / `format:check`                                           | exit 0                                                   | exit 0                                                                             |
+| `corepack pnpm test`                                                            | 228 files, 2,984 tests passed                            | **229 files, 2,990 tests passed**                                                  |
+| `corepack pnpm test:integration`                                                | 117 files, 1,805 passed, 4 skipped (the slow ClamAV suite) | **118 files, 1,811 passed, 4 skipped**                                           |
+| `corepack pnpm build`                                                           | exit 0                                                   | exit 0                                                                             |
+| `corepack pnpm db:check`                                                        | No migration drift                                       | No migration drift                                                                 |
+| `test:e2e` (fresh stack, private ports, `--workers=3`)                          | 168 passed (ports 3410/4410)                             | **170 passed, 0 flaky** (ports 3430/4430, MinIO 9430)                              |
+| Docker build and smoke (`/health`, production configuration of the CI smoke test) | built, `{"status":"ok"}` (private port)                  | built, `{"status":"ok"}` (private port)                                            |
+| `pnpm demo:stack` and sign-in                                                   | started, signed in as the owner                          | started (MinIO on 9100), signed in as the cardiologist; stopped by the PID I started, containers gone |
+
+No test needed a re-run for an infrastructure reason in the final runs. CI was not run or polled.
+
+### TDD cycle evidence (new behavior)
+
+| Task                        | Test                                                  | RED                                                                                                             | GREEN                                                  |
+| --------------------------- | ----------------------------------------------------- | --------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------ |
+| D20 appointment source      | `clinical-appointments.test.ts`                       | 5 of 8 failed (no FK, no identity check, a stranger's appointment accepted)                                    | 8 of 8 after migration 0034, the lookup and the rule   |
+| "Iniciar consulta"          | `appointment-drawer.test.tsx`, `today-page.test.tsx`  | 3 failed (no link, no navigation)                                                                               | green after `StartConsultation`                        |
+| Prefill from the appointment | `clinical-chart.test.tsx`                            | 2 failed                                                                                                        | green after `NewEncounterPage`/`NewEncounterForm`      |
+| Onboarding links            | `onboarding-links.test.ts`                            | a guard for an existing property: it passed at once                                                             | n/a                                                    |
+| Grantable list              | `roles.test.ts`                                       | failed (7 is not 6)                                                                                             | green                                                  |
+| Demo documents              | `demo-coverage` (entry removed), `demo-seed` (2 tests) | coverage failed: `document` has no data and no reason                                                          | green after `stage2.ts`                                |
+| Reset takes the files out   | `demo-reset.test.ts`                                  | failed (14 objects instead of 7)                                                                                | green after the reset change                           |
+| Upload dialog defect        | `documents.test.tsx`                                  | failed (summary lost)                                                                                           | green after the fix                                    |
+| Backup and restore          | `manifest.test.ts`, `backup-restore.test.ts`          | **deviation**: the library was written before its tests (tooling); both passed at their first run and the drill was repeated for real on compose | green                          |
+| Benchmark                   | script                                                | n/a (a measurement tool, checked at 5,000 and at 102,000 notes)                                                 | n/a                                                    |
+
+### Deviations and decisions
+
+1. The snapshot chain was rebuilt from each track's delta rather than regenerated, because drizzle-kit can only describe the current schema; the final `db:check` proves the last snapshot equals the schema.
+2. The `AppointmentLookup` port now returns `identityConfirmed` and `counts`; the "unconfirmed" refusal is a separate reason from "mismatch" so the deny audit tells them apart. Opening an encounter WITHOUT naming the appointment for a patient with no clinical footprint and no relationship is still allowed under D20 (a brand-new patient); naming an unconfirmed appointment is refused. Closing that gap would be a product decision for the owner.
+3. "Iniciar consulta" turns the call-in button of a professional into call-in plus navigation; reception and other roles keep the old button. The label stays "Iniciar consulta" because existing tests and the demo script use it.
+4. The Playwright stack fixes the MinIO host port (default 9190 for the suite, 9100 for `demo:stack`) because the web build names the origin in its CSP; two runs on one machine need different `E2E_MINIO_PORT`.
+5. The e2e stack is heavier (one more container, the worker with the document jobs); a run takes about 2.5 minutes with three workers.
+6. `.gitignore` gained `/backups/`.
+
+### Risks and follow-ups
+
+- 2.100 (independent review) and the owner's sign-off of the legacy parity are open; D20 and D21 need the owner's confirmation.
+- Lighthouse CI was not run here (see the gate table).
+- The deployed demo reset now writes files to the real bucket under the demo organization's prefix with the fake scanner; confirm that is wanted when the demo is first deployed.
+- Production still requires ClamAV with a bucket; the fake scanner is for development and the demo only.
+- Migration 0034 takes a short exclusive lock on `document`, `encounter` and `appointment` (FORCE row level security is lifted and restored); plan it for a quiet moment after the first deployment, like 0030.
+- The `tenantJobs` and `jobs`/`schedules` worker hooks still coexist (integration 1).
+- CI never ran on this branch.
+
+### Local run and demo (updated)
+
+```bash
+corepack pnpm install --frozen-lockfile
+# the demo in one terminal (Docker is the only requirement); the banner prints the exact command for the web app
+pnpm demo:stack
+# in a second terminal:
+CSP_CONNECT_SOURCES=http://localhost:9100 API_PROXY_TARGET=http://127.0.0.1:3000 pnpm --filter @consultorio/web dev
+# open http://aillu.localhost:5173   (password for every account: Demo-Aillu-2026-clave)
+#   propietaria@ administracion@ recepcion@ recepcion.norte@ cardiologia@ pediatria@ psicologia@  (all @demo.invalid)
+# mail: the Mailpit address in the banner; platform console: http://platform.localhost:5173 (operator in the banner)
+
+# your own data (survives restarts): pnpm infra:up; pnpm --filter @consultorio/api db:migrate; pnpm demo:seed; pnpm dev
+# (with S3_BUCKET set, demo:seed also uploads and scans the demo documents)
+
+pnpm backup:local                                   # back up the local database and bucket
+pnpm backup:local verify backups/<folder>
+pnpm backup:local restore backups/<folder> --into consultorio_restore --bucket consultorio-restore
+pnpm --filter @consultorio/api bench:clinical       # the clinical RLS benchmark (100,000 notes)
+
+# the browser suite, on private ports when another run holds the defaults
+cd apps/web && pnpm exec vite build
+E2E_WEB_PORT=4310 E2E_API_PORT=3310 E2E_MINIO_PORT=9310 pnpm exec playwright test --workers=3
+```
+
+A good path to show: `docs/demo.md`, item 5 "A day in the center".
