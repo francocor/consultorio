@@ -46,6 +46,10 @@ export const AUDIT_SCENARIOS: Record<AuditAction, AuditScenario> = {
   'clinical.anamnesis.updated': t('anamnesis-api.test.ts'),
   'clinical.search': { pending: 'Stage 2 (S2.21): per-patient clinical search' },
 
+  // Documents.
+  'document.uploaded': t('documents-uploads.test.ts'),
+  'document.scanned': t('documents-scan.test.ts'),
+
   // Patient identity data.
   'patient.created': t('patients-api.test.ts'),
   'patient.updated': t('patients-api.test.ts'),

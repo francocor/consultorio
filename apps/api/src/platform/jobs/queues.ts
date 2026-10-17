@@ -20,4 +20,10 @@ export const QUEUES: readonly QueueDefinition[] = [
   { name: 'audit.seal', options: { retryLimit: 2, retryDelay: 5, expireInSeconds: 120 } },
   // Nightly re-walk of every tenant's chain.
   { name: 'audit.verify', options: { retryLimit: 1, retryDelay: 60, expireInSeconds: 1800 } },
+  // Scans an uploaded document (sniff, hash, malware scan). A scanner that cannot be reached is not
+  // a failure of the job: the job queues itself again with a delay, so the document stays
+  // quarantined until it has really been scanned.
+  { name: 'document.scan', options: { retryLimit: 3, retryDelay: 60, expireInSeconds: 600 } },
+  // Marks uploads nobody confirmed as abandoned and removes their orphan objects.
+  { name: 'document.cleanup', options: { retryLimit: 1, retryDelay: 300, expireInSeconds: 600 } },
 ];

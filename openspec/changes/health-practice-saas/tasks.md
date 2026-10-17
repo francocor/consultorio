@@ -684,16 +684,16 @@ Depends: S2.22.
 
 Depends: S1.24.
 
-- [ ] 2.75 `platform/scanning/malware-scanner.ts` port, `adapters/clamav/clamd-client.ts` (INSTREAM over TCP, timeouts, chunking) and a fake scanner that flags the EICAR string. [DOC-02] Test: unit against a fake clamd server; integration with the compose ClamAV (slow tag).
-- [ ] 2.76 `platform/files/sniff.ts`: magic-byte detection for PDF, JPEG, PNG, WebP, text and DOCX; reject executables, scripts and archives. [DOC-02] Test: polyglot and renamed-executable fixtures.
+- [x] 2.75 `platform/scanning/malware-scanner.ts` port, `adapters/clamav/clamd-client.ts` (INSTREAM over TCP, timeouts, chunking) and a fake scanner that flags the EICAR string. [DOC-02] Test: unit against a fake clamd server; integration with the compose ClamAV (slow tag).
+- [x] 2.76 `platform/files/sniff.ts`: magic-byte detection for PDF, JPEG, PNG, WebP, text and DOCX; reject executables, scripts and archives. [DOC-02] Test: polyglot and renamed-executable fixtures.
 
 ## S2.26 Upload pipeline (~400 lines)
 
 Depends: S2.25, S2.17.
 
-- [ ] 2.77 `db/schema/documents.ts` + migration (status `quarantined|available|rejected|hidden`, sha256, scan result, category, encounter/appointment link, replacement link) with RLS and classification. [DOC-01, DOC-04, DOC-05] Test: isolation suite.
-- [ ] 2.78 `POST /documents/uploads` returning a presigned POST (20 MB `content-length-range`, content type), at most 10 files per request, tenant and uploader from the session, key `t/{tenantId}/quarantine/{uuid}`; a patient of another tenant returns not found. [DOC-01, DOC-02, DOC-03] Test: 11 files rejected, cross-tenant 404.
-- [ ] 2.79 Job `document.scan`: sniff, hash, stream to ClamAV, fail closed with backoff and an alert after 1 hour; clean moves to `t/{tenantId}/docs/{uuid}` and becomes `available`; infected or wrong type becomes `rejected` and the uploader is notified. [DOC-02, DOC-06] Test: EICAR rejected, scanner down stays quarantined, renamed executable rejected.
+- [x] 2.77 `db/schema/documents.ts` + migration (status `quarantined|available|rejected|hidden`, sha256, scan result, category, encounter/appointment link, replacement link) with RLS and classification. [DOC-01, DOC-04, DOC-05] Test: isolation suite.
+- [x] 2.78 `POST /documents/uploads` returning a presigned POST (20 MB `content-length-range`, content type), at most 10 files per request, tenant and uploader from the session, key `t/{tenantId}/quarantine/{uuid}`; a patient of another tenant returns not found. [DOC-01, DOC-02, DOC-03] Test: 11 files rejected, cross-tenant 404.
+- [x] 2.79 Job `document.scan`: sniff, hash, stream to ClamAV, fail closed with backoff and an alert after 1 hour; clean moves to `t/{tenantId}/docs/{uuid}` and becomes `available`; infected or wrong type becomes `rejected` and the uploader is notified. [DOC-02, DOC-06] Test: EICAR rejected, scanner down stays quarantined, renamed executable rejected.
 
 ## S2.27 Download and lifecycle (~400 lines)
 

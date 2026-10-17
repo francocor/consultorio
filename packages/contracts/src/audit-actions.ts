@@ -34,6 +34,9 @@ export const AUDIT_ACTIONS = [
   'clinical.anamnesis.read',
   'clinical.anamnesis.updated',
   'clinical.search',
+  // Documents: attachments of a patient (uploads, downloads, hiding, reclassifying).
+  'document.uploaded',
+  'document.scanned',
   // Patient identity data.
   'patient.created',
   'patient.updated',

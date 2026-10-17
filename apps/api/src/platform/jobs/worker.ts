@@ -7,7 +7,7 @@ import { SYSTEM_USER_ID, createWithTenant } from '../db/tenant-context.js';
 import { createMetrics, type Metrics } from '../metrics.js';
 
 import { createBoss, createJobClient, type JobClient } from './boss.js';
-import { registerJobs, type WorkerLog } from './define-job.js';
+import { registerJobs, type JobDefinition, type WorkerLog } from './define-job.js';
 import { listTenantIds } from './tenant-scan.js';
 import { createDailyTicker, createTicker, type Ticker } from './ticker.js';
 
@@ -28,6 +28,29 @@ export interface WorkerOptions {
   pollingIntervalSeconds?: number;
   /** UTC hour of the nightly verification and partition upkeep. Defaults to 3. */
   nightlyHourUtc?: number;
+  /**
+   * Jobs of the capability modules, built by the composition root with what the worker owns: the
+   * queue client (to enqueue follow-ups), the metrics and the log. The platform knows no module.
+   */
+  jobs?: (context: WorkerJobContext) => readonly JobDefinition[];
+  /**
+   * Scheduled work of the capability modules, built the same way. Each task runs on an interval
+   * and a failure is logged, never fatal.
+   */
+  schedules?: (context: WorkerJobContext) => readonly WorkerSchedule[];
+}
+
+export interface WorkerJobContext {
+  client: JobClient;
+  db: Db;
+  metrics: Metrics;
+  log: WorkerLog;
+}
+
+export interface WorkerSchedule {
+  name: string;
+  intervalMs: number;
+  run(): Promise<void>;
 }
 
 export interface Worker {
@@ -76,10 +99,11 @@ export async function startWorker(options: WorkerOptions): Promise<Worker> {
     log: options.log,
     ...(options.sealGraceMs === undefined ? {} : { graceMs: options.sealGraceMs }),
   });
+  const context: WorkerJobContext = { client, db: handle.db, metrics, log: options.log };
   await registerJobs(
     boss,
     { db: handle.db, log: options.log },
-    [audit.seal, audit.verify],
+    [audit.seal, audit.verify, ...(options.jobs?.(context) ?? [])],
     options.pollingIntervalSeconds === undefined
       ? {}
       : { pollingIntervalSeconds: options.pollingIntervalSeconds },
@@ -94,6 +118,13 @@ export async function startWorker(options: WorkerOptions): Promise<Worker> {
   };
 
   const tickers: Ticker[] = [
+    ...(options.schedules?.(context) ?? []).map((schedule) =>
+      createTicker({
+        intervalMs: schedule.intervalMs,
+        tick: () => schedule.run(),
+        onError: report(schedule.name),
+      }),
+    ),
     createTicker({
       intervalMs: options.sealIntervalMs ?? 5000,
       tick: async () => {

@@ -56,7 +56,7 @@ CREATE INDEX "document_patient_idx" ON "document" USING btree ("tenant_id","pati
 CREATE INDEX "document_scan_backlog_idx" ON "document" USING btree ("tenant_id","upload_completed_at") WHERE "document"."status" = 'quarantined' and "document"."upload_completed_at" is not null;--> statement-breakpoint
 CREATE INDEX "document_unfinished_idx" ON "document" USING btree ("tenant_id","created_at") WHERE "document"."upload_completed_at" is null and "document"."abandoned_at" is null;--> statement-breakpoint
 CREATE INDEX "document_sha256_idx" ON "document" USING btree ("tenant_id","patient_id","sha256") WHERE "document"."sha256" is not null;--> statement-breakpoint
-CREATE INDEX "document_replaces_idx" ON "document" USING btree ("tenant_id","replaces_document_id") WHERE "document"."replaces_document_id" is not null;
+CREATE UNIQUE INDEX "document_replaces_live_key" ON "document" USING btree ("tenant_id","replaces_document_id") WHERE "document"."replaces_document_id" is not null and "document"."status" <> 'rejected' and "document"."abandoned_at" is null;
 --> statement-breakpoint
 ALTER TABLE "document" ENABLE ROW LEVEL SECURITY;
 --> statement-breakpoint

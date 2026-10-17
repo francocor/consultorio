@@ -115,6 +115,8 @@ Other things the deployment must know:
 
 Start the virus scanner only when working on uploads: `docker compose --env-file .env -f infra/docker-compose.yml --profile scan up -d clamav`.
 
+**Documents and the scanner.** Every uploaded document is scanned before anyone can download it, and the worker does the scanning. Two variables point it at `clamd`: `CLAMAV_HOST` (for the local container, `127.0.0.1`) and `CLAMAV_PORT` (default `3310`, the same variable the compose file uses to publish the container). Without `CLAMAV_HOST` outside production the worker uses a fake scanner that only flags the EICAR test string, so the upload flow can be tried without ClamAV. In production a bucket (`S3_BUCKET`) without `CLAMAV_HOST` is a startup error: with no scanner every upload would wait in quarantine forever. If the scanner stops answering, documents simply stay quarantined and are retried with a growing delay; after an hour of waiting the worker logs an error. The slow test against a real ClamAV only runs with `SLOW_TESTS=1` (`SLOW_TESTS=1 pnpm test:integration -- clamav`); it needs the image `clamav/clamav` and takes one to three minutes to start.
+
 To try the production image locally: `docker compose --env-file .env -f infra/docker-compose.yml --profile app up --build`.
 
 ## Everyday commands

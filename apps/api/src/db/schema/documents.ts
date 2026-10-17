@@ -15,6 +15,7 @@ import {
   integer,
   text,
   timestamp,
+  uniqueIndex,
   uuid,
   type AnyPgColumn,
 } from 'drizzle-orm/pg-core';
@@ -172,9 +173,12 @@ export const document = tenantTable(
     index('document_sha256_idx')
       .on(table.tenantId, table.patientId, table.sha256)
       .where(sql`${table.sha256} is not null`),
-    index('document_replaces_idx')
+    // One live replacement per document: a second upload of "the next version" is a conflict.
+    uniqueIndex('document_replaces_live_key')
       .on(table.tenantId, table.replacesDocumentId)
-      .where(sql`${table.replacesDocumentId} is not null`),
+      .where(
+        sql`${table.replacesDocumentId} is not null and ${table.status} <> 'rejected' and ${table.abandonedAt} is null`,
+      ),
   ],
 );
 

@@ -1,5 +1,5 @@
 {
-  "id": "0d763005-c6b9-4c28-a8ca-8e9350007c6c",
+  "id": "d3d32d51-8745-4bf7-8357-ddcf69e13eba",
   "prevId": "9e74effd-c1bb-4065-bc5b-b85e8e7c36b9",
   "version": "7",
   "dialect": "postgresql",
@@ -1992,8 +1992,8 @@
           "method": "btree",
           "with": {}
         },
-        "document_replaces_idx": {
-          "name": "document_replaces_idx",
+        "document_replaces_live_key": {
+          "name": "document_replaces_live_key",
           "columns": [
             {
               "expression": "tenant_id",
@@ -2008,8 +2008,8 @@
               "nulls": "last"
             }
           ],
-          "isUnique": false,
-          "where": "\"document\".\"replaces_document_id\" is not null",
+          "isUnique": true,
+          "where": "\"document\".\"replaces_document_id\" is not null and \"document\".\"status\" <> 'rejected' and \"document\".\"abandoned_at\" is null",
           "concurrently": false,
           "method": "btree",
           "with": {}

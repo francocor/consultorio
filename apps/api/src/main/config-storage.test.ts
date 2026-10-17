@@ -43,7 +43,11 @@ describe('object storage configuration', () => {
   });
 
   it('reads AWS S3 settings: the region of the deployment, the role credentials, no endpoint', () => {
-    const config = loadConfig({ ...production, S3_BUCKET: 'consultorio-prod-files' });
+    const config = loadConfig({
+      ...production,
+      S3_BUCKET: 'consultorio-prod-files',
+      CLAMAV_HOST: 'clamav.internal',
+    });
 
     expect(config.storage).toEqual({
       bucket: 'consultorio-prod-files',
