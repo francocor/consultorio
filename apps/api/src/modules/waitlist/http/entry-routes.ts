@@ -4,6 +4,7 @@ import {
   SetWaitlistPriorityRequest,
   UpdateWaitlistEntryRequest,
   WaitlistEntryDetailResponse,
+  WaitlistCallListResponse,
   WaitlistEntryDto,
   WaitlistListQuery,
   WaitlistListResponse,
@@ -14,6 +15,7 @@ import { z } from 'zod';
 
 import type { Tx, WithTenant } from '../../../platform/db/tenant-context.js';
 import { AppError, conflictWith } from '../../../platform/http/problem.js';
+import { listCalls } from '../application/calls-view.js';
 import {
   closeEntry,
   createEntry,
@@ -122,6 +124,24 @@ export function entryRoutes(deps: EntryRoutesDeps) {
           (tx) => listEntries(tx, request.query),
         );
         return { entries };
+      },
+    );
+
+    // Registered before `/waitlist/:id`: "to-call" is not an entry id.
+    typed.get(
+      '/waitlist/to-call',
+      {
+        config: { readOnly: 'read', permission: 'waitlist.manage' },
+        schema: { response: { 200: WaitlistCallListResponse } },
+      },
+      (request) => {
+        const actor = actorOf(request);
+        return deps.withTenant({ tenantId: actor.tenantId, userId: actor.userId }, (tx) =>
+          listCalls(tx, {
+            now: deps.clock(),
+            viewer: { roles: actor.roles, membershipId: actor.membershipId },
+          }),
+        );
       },
     );
 
