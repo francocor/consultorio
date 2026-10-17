@@ -276,6 +276,7 @@ export function BookingFlow({
                         })
                       }
                       timeZone={place.timeZone}
+                      waitlistPath={`/book/${encodeURIComponent(slug)}/p/${encodeURIComponent(professional.slug)}/waitlist?type=${encodeURIComponent(typeId)}&location=${encodeURIComponent(locationId)}`}
                       pending={hold.isPending}
                       onPick={(slot) => {
                         hold.mutate(slot);

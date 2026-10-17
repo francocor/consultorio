@@ -932,7 +932,7 @@ Start: S3.12, S3.10. Done when: reception manages entries and the public can joi
 
 - [x] 3.59 `features/waitlist/*`: list with filters, add dialog with `PatientPicker` and an explicit offers opt-in checkbox (staff records it), pause, edit preferences, close with reason; "close this entry?" prompt in a slot of the booking dialog after a matching direct booking. [WTL-01, WTL-05] Test: component tests plus axe.
 - [x] 3.60 Reception panel for the `waitlist_manual_contact` worklist kind: freed slot plus matching entries to call, entries flagged after three expired offers. [WTL-02, WTL-03] Test: component test.
-- [ ] 3.61 Public join page `features/public-booking/waitlist/*` (consent, offers opt-in, channels, OTP) and `e2e/stage3-waitlist.spec.ts`: cancel an appointment, offer arrives in Mailpit, accept by link, appointment booked, entry closed. [OBK-06, WTL-03] Test: that spec.
+- [x] 3.61 Public join page `features/public-booking/waitlist/*` (consent, offers opt-in, channels, OTP) and `e2e/stage3-waitlist.spec.ts`: cancel an appointment, offer arrives in Mailpit, accept by link, appointment booked, entry closed. [OBK-06, WTL-03] Test: that spec.
 
 ## S3.14 Teleconsultation backend (~400) [Track D]
 
