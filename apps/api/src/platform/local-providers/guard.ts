@@ -18,12 +18,15 @@ export interface ProviderSelection {
   video: 'local' | 'jaas' | 'off';
   /** `BOT_CHALLENGE`: the bot challenge of the public forms. */
   botChallenge: 'local' | 'turnstile';
+  /** `AFIP_PROVIDER`: the issuer of electronic invoices (Stage 4). */
+  afip: 'local' | 'afip' | 'off';
 }
 
 const VARIABLE_OF: Record<keyof ProviderSelection, string> = {
   whatsapp: 'WHATSAPP_PROVIDER',
   video: 'VIDEO_PROVIDER',
   botChallenge: 'BOT_CHALLENGE',
+  afip: 'AFIP_PROVIDER',
 };
 
 /** The names of the variables whose value is a local simulator, in a stable order. */
