@@ -30,6 +30,9 @@ const ALLOWED: Record<string, readonly string[]> = {
   'app.care_adjust(uuid,uuid,uuid,integer,integer)': [],
   'app.care_assignment_sync()': [],
   'app.care_set_assigned(uuid,uuid,uuid,boolean)': [],
+  // The appointment source of the care relationship (S2.08); only its trigger calls them.
+  'app.recompute_care_relationship(uuid,uuid,uuid)': [],
+  'app.appointment_care_sync()': [],
   // Mirror appointments and holds into the occupancy (S2.02); only their triggers call them.
   'app.sync_appointment_occupancy()': [],
   'app.sync_hold_occupancy()': [],

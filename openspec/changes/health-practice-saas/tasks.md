@@ -548,8 +548,8 @@ Depends: S2.06, S2.05.
 
 Depends: S2.02, S1.17.
 
-- [ ] 2.24 Migration: trigger on `appointment` and function `app.recompute_care_relationship` counting only statuses scheduled, confirmed, checked_in, in_progress, attended, no_show with `identity_confirmed = true` (never pending_approval or cancelled). The encounter trigger comes with the clinical schema (task 2.52). [AUZ-09, SCH-11] Test: see 2.25.
-- [ ] 2.25 Integration matrix with the `test_clinical_item` fixture and real RLS: unconfirmed online match gives no access; confirmation gives access; confirmed no-show counts; unconfirmed no-show does not; pending_approval and cancelled do not; reassignment moves the relationship. [AUZ-09, SCH-11] Test: that file.
+- [x] 2.24 Migration: trigger on `appointment` and function `app.recompute_care_relationship` counting only statuses scheduled, confirmed, checked_in, in_progress, attended, no_show with `identity_confirmed = true` (never pending_approval or cancelled). The encounter trigger comes with the clinical schema (task 2.52). [AUZ-09, SCH-11] Test: see 2.25.
+- [x] 2.25 Integration matrix with the `test_clinical_item` fixture and real RLS: unconfirmed online match gives no access; confirmation gives access; confirmed no-show counts; unconfirmed no-show does not; pending_approval and cancelled do not; reassignment moves the relationship. [AUZ-09, SCH-11] Test: that file.
 
 ## S2.09 Slot holds (~300 lines)
 
