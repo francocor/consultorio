@@ -239,6 +239,17 @@ export async function transitionAppointment(
     });
   }
   if (input.action === 'cancel') await dismissWorklistItems(ports, record.id, input.auditActor);
+  // Approving is the decision the pending approval was waiting for.
+  if (input.action === 'approve') {
+    await ports.closeWorklistItem({
+      kind: 'pending_approval',
+      subjectType: 'appointment',
+      subjectId: record.id,
+      status: 'resolved',
+      resolution: 'approved',
+      actor: input.auditActor,
+    });
+  }
   return updated;
 }
 

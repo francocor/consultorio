@@ -8,6 +8,7 @@ import { and, desc, eq, sql } from 'drizzle-orm';
 import { afterAll, beforeAll, describe, expect, inject, it } from 'vitest';
 
 import { auditEvent } from '../../src/db/schema/audit.js';
+import { appointment } from '../../src/db/schema/scheduling.js';
 import { tenant as tenantTable } from '../../src/db/schema/tenant.js';
 import { worklistItem } from '../../src/db/schema/worklist.js';
 import { createWorklistService } from '../../src/modules/scheduling/application/worklist.js';
@@ -200,9 +201,8 @@ describe('GET /worklist', () => {
     expect(kinds.has('pending_approval')).toBe(true);
     expect(kinds.has('waitlist_manual_contact')).toBe(true);
     const approval = response.items.find((item) => item.subjectId === created.id);
-    expect(approval?.actions).toEqual(
-      expect.arrayContaining(['open_appointment', 'approve', 'dismiss']),
-    );
+    // A pending approval ends with a decision on the appointment, never with a plain close.
+    expect(approval?.actions).toEqual(['open_appointment', 'approve']);
   });
 
   it('shows only administrative data of the appointment an item is about', async () => {
@@ -311,6 +311,54 @@ describe('resolving and dismissing', () => {
 
     expect(resolve.statusCode).toBe(409);
     expect(dismiss.statusCode).toBe(409);
+  });
+
+  it('leaves a pending approval to the decision on the appointment, not to a plain resolve or dismiss (JD-S2 S8)', async () => {
+    const { id } = await open({ kind: 'pending_approval' });
+
+    const resolve = await world.api.post(`/worklist/${id}/resolve`, world.admin, {});
+    const dismiss = await world.api.post(`/worklist/${id}/dismiss`, world.admin, {});
+
+    expect(resolve.statusCode).toBe(409);
+    expect(dismiss.statusCode).toBe(409);
+    const [row] = await world.inTenant((tx) =>
+      tx.select().from(worklistItem).where(eq(worklistItem.id, id)),
+    );
+    expect(row?.status).toBe('open');
+  });
+
+  it('closes the pending approval when the appointment is approved, and when it is cancelled', async () => {
+    const pending = async (weeksAfter: number) => {
+      const created = await world.book(weeksAfter, '10:00');
+      await world.inTenant((tx) =>
+        tx
+          .update(appointment)
+          .set({ status: 'pending_approval' })
+          .where(eq(appointment.id, created.id)),
+      );
+      const { id } = await open({ kind: 'pending_approval', subjectId: created.id });
+      return { created, itemId: id };
+    };
+    const approved = await pending(50);
+    const cancelled = await pending(51);
+
+    await world.act(approved.created, 'approve', world.reception, {});
+    await world.act(cancelled.created, 'cancel', world.reception, {
+      cancelledBy: 'organization',
+      reasonCode: 'other',
+    });
+
+    const closed = await world.inTenant((tx) =>
+      tx.select().from(worklistItem).where(eq(worklistItem.kind, 'pending_approval')),
+    );
+    expect(closed.find((item) => item.id === approved.itemId)).toMatchObject({
+      status: 'resolved',
+      resolution: 'approved',
+    });
+    expect(closed.find((item) => item.id === cancelled.itemId)).toMatchObject({
+      status: 'dismissed',
+      resolution: 'appointment_cancelled',
+    });
   });
 
   it('is refused to a professional and to an unknown id', async () => {
