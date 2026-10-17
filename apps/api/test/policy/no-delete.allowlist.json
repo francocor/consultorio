@@ -1,0 +1,38 @@
+{
+  "description": "The only places that may delete rows. Tenant data is deactivated, ended or revoked, never deleted (tenancy, \"No deletion\"). Each entry says why, and the test fails when an entry no longer matches anything, so this list cannot rot.",
+  "code": [
+    {
+      "file": "src/modules/identity/application/two-factor.ts",
+      "table": "recoveryCode",
+      "why": "A recovery code is a single-use credential. Enrolling again or regenerating replaces the whole set; the previous codes stop working and keep no history worth keeping (the event is audited)."
+    }
+  ],
+  "sql": [
+    {
+      "file": "src/db/migrations/0018_demo_reset.sql",
+      "why": "app.demo_reset: the one function that clears a demo organization. It refuses unless the organization is flagged is_demo and can only be executed by the operator console's role."
+    }
+  ],
+  "ephemeralTables": [
+    {
+      "table": "action_token",
+      "why": "One-time links (invitations, password resets) expire; spent and expired rows can be pruned."
+    },
+    {
+      "table": "job_execution",
+      "why": "The idempotence marker of a background job; it only needs to outlive redelivery."
+    },
+    {
+      "table": "login_challenge",
+      "why": "A pending second-factor step that lasts minutes."
+    },
+    {
+      "table": "recovery_code",
+      "why": "See the code entry above: the set is replaced as a whole."
+    },
+    {
+      "table": "session",
+      "why": "A browser session ends and is cleaned up; its audit entries remain."
+    }
+  ]
+}

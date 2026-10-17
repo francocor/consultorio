@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { captureLogs } from '../testing/log-capture.js';
+import { testTenancy } from '../testing/tenancy.js';
 
 import { serializeRequest, stripQuery } from './logger.js';
 import { buildServer } from './server.js';
@@ -37,6 +38,7 @@ describe('request logging', () => {
       logLevel: 'info',
       logStream: logs.stream,
       health: { checkDatabase: () => Promise.resolve({ ok: true }) },
+      ...testTenancy(),
     });
 
     await app.inject({ method: 'GET', url: '/health?token=action-token-123&q=maria' });
@@ -56,6 +58,7 @@ describe('request logging', () => {
       logLevel: 'info',
       logStream: logs.stream,
       health: { checkDatabase: () => Promise.resolve({ ok: true }) },
+      ...testTenancy(),
     });
     await app.ready();
 

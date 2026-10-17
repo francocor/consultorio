@@ -25,3 +25,7 @@ test-results/
 .agents/
 .claude/skills/
 skills-lock.json
+
+# Connection details of the throwaway end-to-end stack (public development values)
+apps/web/e2e/.stack/
+.lighthouseci/

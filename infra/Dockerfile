@@ -34,6 +34,8 @@ WORKDIR /app
 COPY --from=build --chown=node:node /prod/package.json ./package.json
 COPY --from=build --chown=node:node /prod/node_modules ./node_modules
 COPY --from=build --chown=node:node /repo/apps/api/dist ./dist
+# Data the API reads at startup (the common-password list). It stops if it cannot find it.
+COPY --from=build --chown=node:node /repo/apps/api/assets ./assets
 
 USER node
 EXPOSE 3000

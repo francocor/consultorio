@@ -1,3 +1,5 @@
+import { fileURLToPath } from 'node:url';
+
 import js from '@eslint/js';
 import { defineConfig, globalIgnores } from 'eslint/config';
 import boundaries from 'eslint-plugin-boundaries';
@@ -15,7 +17,8 @@ import tseslint from 'typescript-eslint';
  * - React files (`.jsx`, `.tsx`) also get the React hooks rules and the JSX accessibility rules.
  * - Import order is enforced everywhere.
  * - `eslint-plugin-boundaries` is registered with the repo layout elements. Its dependency rules
- *   stay off until the first modules exist (Stage 1) and are switched on there.
+ *   are switched on with a default of "allow" and the policies listed below; policies are added as
+ *   the modules that need them appear.
  */
 export default defineConfig(
   globalIgnores([
@@ -30,6 +33,8 @@ export default defineConfig(
     // Agent skills installed by AutoSkills (third-party content).
     '.agents/**',
     '.claude/**',
+    // Deliberately wrong code that tests lint with `ignore: false`.
+    '**/__fixtures__/**',
   ]),
 
   js.configs.recommended,
@@ -49,6 +54,21 @@ export default defineConfig(
       boundaries,
     },
     settings: {
+      // Boundaries resolves imports like the compiler does, so `./x.js` finds `./x.ts`.
+      'import/resolver': {
+        typescript: {
+          project: ['apps/*/tsconfig.json', 'packages/*/tsconfig.json'],
+          noWarnOnMultipleProjects: true,
+        },
+      },
+      // Element patterns are relative to the repository root, whatever the working directory is
+      // (editors and test runners start ESLint from a package folder).
+      'boundaries/root-path': fileURLToPath(new URL('../../../', import.meta.url)),
+      // File categories: patterns here match single files, unlike elements which match folders.
+      'boundaries/files': [
+        // The one file allowed to import `country/ar`.
+        { category: 'country-registry', pattern: 'apps/api/src/platform/country/country-pack.ts' },
+      ],
       'boundaries/elements': [
         { type: 'api-module', pattern: 'apps/api/src/modules/*', capture: ['module'] },
         { type: 'api-platform', pattern: 'apps/api/src/platform/**' },
@@ -69,8 +89,26 @@ export default defineConfig(
         },
       ],
       'import-x/no-duplicates': 'error',
-      // Switched on in Stage 1 once modules exist.
-      'boundaries/dependencies': 'off',
+      'boundaries/dependencies': [
+        'error',
+        {
+          default: 'allow',
+          policies: [
+            // Country isolation (country-rules-ar): core code never imports the Argentina rules.
+            // It asks the CountryPack, and only the registry builds it. Later policies override
+            // earlier ones, so the two allows below are exceptions to the first.
+            { disallow: { to: { element: { type: 'api-country' } } } },
+            {
+              from: { file: { categories: 'country-registry' } },
+              allow: { to: { element: { type: 'api-country' } } },
+            },
+            {
+              from: { element: { type: 'api-country' } },
+              allow: { to: { element: { type: 'api-country' } } },
+            },
+          ],
+        },
+      ],
       '@typescript-eslint/consistent-type-imports': [
         'error',
         { prefer: 'type-imports', fixStyle: 'inline-type-imports' },

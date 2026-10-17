@@ -50,8 +50,18 @@ jobs:
         run: docker build -f infra/Dockerfile -t consultorio-api:ci .
       - name: Smoke test /health
         run: |
+          # The image runs with NODE_ENV=production, so this uses the production configuration:
+          # AWS KMS and SMTP settings (nothing contacts them at startup) and the multi-tenant domains.
           docker run -d --name api -p 3000:3000 \
             -e DATABASE_URL=postgres://unused:unused@127.0.0.1:1/unused \
+            -e DEPLOYMENT_MODE=multi \
+            -e BASE_DOMAIN=smoke.test \
+            -e PLATFORM_HOST=platform.smoke.test \
+            -e KMS_PROVIDER=aws \
+            -e AWS_REGION=sa-east-1 \
+            -e AWS_KMS_KEY_ID=alias/smoke-test \
+            -e SMTP_HOST=smtp.smoke.test \
+            -e SMTP_SECURITY=starttls \
             consultorio-api:ci api
           for attempt in $(seq 1 20); do
             if curl -fsS http://127.0.0.1:3000/health; then exit 0; fi
@@ -63,11 +73,12 @@ jobs:
   e2e:
     name: End-to-end (Playwright)
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - uses: ./.github/actions/setup-workspace
       - run: pnpm --filter @consultorio/web exec playwright install --with-deps chromium
+      # Starts the whole stack with Docker (Postgres, Mailpit, API, worker) and runs the browser suite.
       - run: pnpm test:e2e
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: failure()
@@ -75,6 +86,18 @@ jobs:
           name: playwright-report
           path: apps/web/playwright-report
           retention-days: 7
+
+  lighthouse:
+    name: Performance budget (Lighthouse)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: ./.github/actions/setup-workspace
+      - run: pnpm --filter @consultorio/web build
+      # lighthouserc.json: mobile, 4G with a 4x slower CPU. The job fails when LCP is over 2.5 s,
+      # performance is under 0.85, accessibility is under 0.95 or the layout shifts too much.
+      - run: pnpm exec lhci autorun
 
   audit:
     name: Dependency audit

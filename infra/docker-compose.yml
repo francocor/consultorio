@@ -1,10 +1,21 @@
+# ====================================================================================================
+#  DEVELOPMENT ONLY. DO NOT DEPLOY THIS FILE. DO NOT POINT IT AT REAL DATA.
+#
+#  Every credential in it is a public throwaway default (postgres_dev_only, minio_dev_only_secret,
+#  app_rw_dev_only, ...), the key-encryption key of the `api` service is the public development
+#  placeholder, and MinIO and Mailpit have no authentication worth the name. Anyone who has read this
+#  repository knows all of them. The application refuses to start in production with the local key
+#  (KMS_PROVIDER=local) and with insecure cookies, which is the safety net, not a licence to reuse
+#  these values: production roles, secrets and keys come from the infrastructure (AWS KMS, a secrets
+#  store), never from here.
+# ====================================================================================================
+#
 # Local development services. Run from the repository root with the root .env as the interpolation
 # source (compose reads .env from the compose file's folder by default, which is infra/):
 #   docker compose --env-file .env -f infra/docker-compose.yml up -d
 # or use the shortcuts: pnpm infra:up, pnpm infra:down, pnpm infra:reset.
 #
-# Everything here is for development only: the credentials are throwaway defaults and every
-# published port is bound to 127.0.0.1, so nothing is reachable from the network.
+# Every published port is bound to 127.0.0.1, so nothing is reachable from the network.
 # Nothing in this file is used in production.
 
 name: consultorio
@@ -115,9 +126,26 @@ services:
       dockerfile: infra/Dockerfile
     command: ['api']
     environment:
-      NODE_ENV: production
+      # "development" on purpose: production refuses the local key-encryption key and insecure
+      # cookies, and this stack has no AWS KMS. The image itself is the production build.
+      NODE_ENV: development
       DATABASE_URL: postgres://app_rw:app_rw_dev_only@postgres:5432/${POSTGRES_DB:-consultorio}
+      # The operator console login (app_operator). Ignored in single mode.
+      OPERATOR_DATABASE_URL: postgres://app_operator:app_operator_dev_only@postgres:5432/${POSTGRES_DB:-consultorio}
       DEPLOYMENT_MODE: ${DEPLOYMENT_MODE:-multi}
+      BASE_DOMAIN: ${BASE_DOMAIN:-localhost}
+      PLATFORM_HOST: ${PLATFORM_HOST:-platform.localhost}
+      SINGLE_TENANT_SLUG: ${SINGLE_TENANT_SLUG:-}
+      # Single mode only: the origin that emailed links point at.
+      PUBLIC_URL: ${PUBLIC_URL:-}
+      SMTP_HOST: mailpit
+      SMTP_PORT: 1025
+      S3_BUCKET: ${S3_BUCKET:-consultorio-files}
+      S3_ENDPOINT: http://minio:9000
+      S3_ACCESS_KEY_ID: ${MINIO_ROOT_USER:-minio_dev}
+      S3_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD:-minio_dev_only_secret}
+      KMS_PROVIDER: local
+      KMS_LOCAL_KEK_BASE64: ${KMS_LOCAL_KEK_BASE64:-ZGV2X29ubHlfbG9jYWxfa2VrXzAxMjM0NTY3ODlhYmM=}
       LOG_LEVEL: ${LOG_LEVEL:-info}
     ports:
       - '127.0.0.1:${API_PORT:-3000}:3000'

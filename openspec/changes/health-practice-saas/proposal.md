@@ -250,6 +250,14 @@ These product-owner decisions answer the second gate review (`gate-review-2.md`)
 | D17 | Prescriptions and sharing | Prescriptions do not follow organization sharing. Only the prescriber and the patient's treating professionals can read them. |
 | D18 | Solo practice identity confirmation | When an organization has exactly one active professional and no other active staff (no reception and no other admin who could confirm), that professional may confirm the identity themselves at in-person check-in, after seeing the patient and the ID document. The confirmation is audited with a distinct "self_confirmed" marker. When the organization has other staff, D14 applies unchanged. Rationale: D14 protects clinical history from *other* professionals of the same organization, and a one-professional organization has none. If staff join later, existing self-confirmations stay valid and new confirmations follow D14. |
 
+## Stage 1 security review: decision D19 (decided by the orchestrator in automatic mode, pending owner confirmation)
+
+This decision answers finding 3 of the Stage 1 security review. It was taken by the orchestrator while the owner was away and **must be confirmed or amended by the owner**.
+
+| # | Topic | Decision |
+|---|---|---|
+| D19 | Who brings professionals in | Only the **owner** can invite or create users with the `professional` role, or grant the `professional` role to an existing member. Admins can invite reception and admin only. A patient assignment made by a non-clinical actor (someone who does not hold the `professional` role) to a professional added in the last 7 days writes a distinct `assignment.review_flag` audit event next to the ordinary `assignment.created`. D1 stays as it is: an unverified matricula is enough for clinical work. Rationale: an admin who could create a professional account with an arbitrary matricula and then assign patients to it would hold a second, clinical account, which defeats the rule that admins never read clinical records. The owner already controls the organization, so the insider risk is bounded to the owner. An admin still manages the professionals who already exist: edits their other roles, deactivates and reactivates them. |
+
 Decisions D1–D13 supersede the earlier assumptions that the WhatsApp quota size and the archive access procedure were left to design: the quota is fixed by D6, and archive access follows D7 and D13.
 
 No other open product questions remain. These details are left to sdd-design:

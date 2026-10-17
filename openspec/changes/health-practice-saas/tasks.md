@@ -162,321 +162,323 @@ Goal: two isolated, branded tenants with role-specific views and an audit trail.
 
 Runs in parallel with everything. Done when each dependency has an owner, a date and a status in `docs/external-dependencies.md`.
 
-- [ ] 1.1 Start AFIP/ARCA certificate and homologation access request (needed by Stage 4). Record the date. Test: none.
-- [ ] 1.2 Start Meta WhatsApp Business verification for the platform WABA and choose the e-Rx provider (Q3) (needed by Stages 3 and 5). Test: none.
-- [ ] 1.3 Request legal review of hosting and the AAIP model clauses (Q1) and of governance-mode erasure (Q7, D13). Test: none.
+> Local-first note (owner decision, 2026-10-15): the real requests are deferred. S1.00 is done as documentation: every dependency has an owner and the status `deferred`, and the file names the fake adapter the code uses meanwhile. The dates are filled when the owner files each request.
+
+- [x] 1.1 Start AFIP/ARCA certificate and homologation access request (needed by Stage 4). Record the date. Test: none.
+- [x] 1.2 Start Meta WhatsApp Business verification for the platform WABA and choose the e-Rx provider (Q3) (needed by Stages 3 and 5). Test: none.
+- [x] 1.3 Request legal review of hosting and the AAIP model clauses (Q1) and of governance-mode erasure (Q7, D13). Test: none.
 
 ## S1.01 Contracts, errors and permission catalog (~350 lines)
 
 Depends: S0.07.
 
-- [ ] 1.4 `packages/contracts/src/errors.ts`: problem+json schema (RFC 9457), error code enum with i18n keys, `requestId`. [AUZ-16] Test: schema accepts and rejects fixtures.
-- [ ] 1.5 `packages/contracts/src/roles.ts`: roles (`owner`, `admin`, `professional`, `reception`, `patient`), `PERMISSIONS`, `ROLE_PERMISSIONS`, `GRANTABLE` (override hours, register past, delegated calendar, cash operate, patients administer). [AUZ-01, AUZ-05, AUZ-12] Test: `roles.test.ts` fails if any non-professional role or `GRANTABLE` contains `clinical.*`, and if `owner` or `admin` holds any clinical permission.
-- [ ] 1.6 `packages/contracts/src/route-category.ts`: read-only categories (the 9 allowlist items plus `write`). [TEN-11] Test: enum snapshot.
-- [ ] 1.7 `apps/api/src/platform/http/problem.ts`: Fastify error handler to problem+json, request-id plugin, uniform `denied()` helper (same body for forbidden and not found where the resource is tenant-scoped). [AUZ-16] Test: unknown error returns 500 without stack or internals; denied helper bodies are identical.
-- [ ] 1.8 Extend `main/config.ts`: `DEPLOYMENT_MODE`, `SINGLE_TENANT_SLUG`, `BASE_DOMAIN`, `PLATFORM_HOST`, cookie settings, KMS settings; fail fast. [TEN-06, IDA-10] Test: single mode without slug fails to start.
+- [x] 1.4 `packages/contracts/src/errors.ts`: problem+json schema (RFC 9457), error code enum with i18n keys, `requestId`. [AUZ-16] Test: schema accepts and rejects fixtures.
+- [x] 1.5 `packages/contracts/src/roles.ts`: roles (`owner`, `admin`, `professional`, `reception`, `patient`), `PERMISSIONS`, `ROLE_PERMISSIONS`, `GRANTABLE` (override hours, register past, delegated calendar, cash operate, patients administer). [AUZ-01, AUZ-05, AUZ-12] Test: `roles.test.ts` fails if any non-professional role or `GRANTABLE` contains `clinical.*`, and if `owner` or `admin` holds any clinical permission.
+- [x] 1.6 `packages/contracts/src/route-category.ts`: read-only categories (the 9 allowlist items plus `write`). [TEN-11] Test: enum snapshot.
+- [x] 1.7 `apps/api/src/platform/http/problem.ts`: Fastify error handler to problem+json, request-id plugin, uniform `denied()` helper (same body for forbidden and not found where the resource is tenant-scoped). [AUZ-16] Test: unknown error returns 500 without stack or internals; denied helper bodies are identical.
+- [x] 1.8 Extend `main/config.ts`: `DEPLOYMENT_MODE`, `SINGLE_TENANT_SLUG`, `BASE_DOMAIN`, `PLATFORM_HOST`, cookie settings, KMS settings; fail fast. [TEN-06, IDA-10] Test: single mode without slug fails to start.
 
 ## S1.02 Country pack AR (~400 lines)
 
 Depends: S1.01.
 
-- [ ] 1.9 `apps/api/src/platform/country/country-pack.ts` (interface per design section 6, `Result` type, registry `getCountryPack`) and an ESLint boundaries rule that only the registry may import `country/ar`. [CTR-01] Test: lint fixture importing `country/ar` directly fails.
-- [ ] 1.10 `packages/contracts/src/country/ar/identifiers.ts` (DNI normalization and validation, CUIT/CUIL mod-11) re-exported from `apps/api/src/country/ar/`. [CTR-02, CTR-03] Test: table-driven valid/invalid cases including check digits; property test that normalization is idempotent.
-- [ ] 1.11 `.../ar/matricula.ts` (format check per jurisdiction, format only) with the 24 jurisdictions. [CTR-06] Test: table of valid and invalid formats.
-- [ ] 1.12 `country/ar/{defaults,retention,personal-data,legal-adapters}.ts`: es-AR, ARS, `America/Argentina/Buenos_Aires`, 10-year retention, Ley 25.326 consent text keys and rights, declared (type-only) `InvoiceIssuer` and `PrescriptionProvider` ports in `packages/contracts/src/ports.ts`. [CTR-07, CTR-08, CTR-09, CTR-10] Test: defaults and retention constants; adapters are declared but not implemented.
-- [ ] 1.13 `db/schema/platform-catalogs.ts` + migration: `holiday_catalog(country, date, name, kind)` and `payer` (obras sociales and prepagas) as platform tables (no `tenant_id`, writable only by the operator role), plus seed loaders `db/seed/ar-holidays.ts` (2026 to 2028) and `db/seed/ar-payers.json`. [CTR-04, CTR-05] Test: loaders are idempotent; unique `(country, date, name)`.
+- [x] 1.9 `apps/api/src/platform/country/country-pack.ts` (interface per design section 6, `Result` type, registry `getCountryPack`) and an ESLint boundaries rule that only the registry may import `country/ar`. [CTR-01] Test: lint fixture importing `country/ar` directly fails.
+- [x] 1.10 `packages/contracts/src/country/ar/identifiers.ts` (DNI normalization and validation, CUIT/CUIL mod-11) re-exported from `apps/api/src/country/ar/`. [CTR-02, CTR-03] Test: table-driven valid/invalid cases including check digits; property test that normalization is idempotent.
+- [x] 1.11 `.../ar/matricula.ts` (format check per jurisdiction, format only) with the 24 jurisdictions. [CTR-06] Test: table of valid and invalid formats.
+- [x] 1.12 `country/ar/{defaults,retention,personal-data,legal-adapters}.ts`: es-AR, ARS, `America/Argentina/Buenos_Aires`, 10-year retention, Ley 25.326 consent text keys and rights, declared (type-only) `InvoiceIssuer` and `PrescriptionProvider` ports in `packages/contracts/src/ports.ts`. [CTR-07, CTR-08, CTR-09, CTR-10] Test: defaults and retention constants; adapters are declared but not implemented.
+- [x] 1.13 `db/schema/platform-catalogs.ts` + migration: `holiday_catalog(country, date, name, kind)` and `payer` (obras sociales and prepagas) as platform tables (no `tenant_id`, writable only by the operator role), plus seed loaders `db/seed/ar-holidays.ts` (2026 to 2028) and `db/seed/ar-payers.json`. [CTR-04, CTR-05] Test: loaders are idempotent; unique `(country, date, name)`.
 
 ## S1.03 Tenant schema, RLS helper, isolation suite (~400 lines)
 
 Depends: S0.07, S1.01.
 
-- [ ] 1.14 `db/schema/_helpers.ts`: `tenantTable()` (UUIDv7 id, `tenant_id NOT NULL`, `UNIQUE (tenant_id, id)`, timestamps), `tenantPolicies(table)` SQL generator (`ENABLE` + `FORCE` + `tenant_isolation`), `platform/db/uuid.ts`. [TEN-01, TEN-03] Test: generated SQL snapshot; integration shows a cross-tenant read returns 0 rows.
-- [ ] 1.15 `db/schema/tenant.ts` + migration `0001_tenancy.sql`: `tenant` (slug, status, `read_only_since`, `is_demo` with an immutability trigger, `billing_exempt`, country, theme, settings), `location` (name, IANA `time_zone`, active), `tenant_feature`. [TEN-01, TEN-04] Test: changing `is_demo` after creation raises.
-- [ ] 1.16 `apps/api/test/support/fixtures.ts` (per-table fixture registry) and `apps/api/test/tenancy/isolation.generated.test.ts`: for every tenant table, tenant B reads 0 rows of tenant A and a cross-tenant composite FK insert fails; a table with no registered fixture fails the test. [TEN-03] Test: that file.
+- [x] 1.14 `db/schema/_helpers.ts`: `tenantTable()` (UUIDv7 id, `tenant_id NOT NULL`, `UNIQUE (tenant_id, id)`, timestamps), `tenantPolicies(table)` SQL generator (`ENABLE` + `FORCE` + `tenant_isolation`), `platform/db/uuid.ts`. [TEN-01, TEN-03] Test: generated SQL snapshot; integration shows a cross-tenant read returns 0 rows.
+- [x] 1.15 `db/schema/tenant.ts` + migration `0001_tenancy.sql`: `tenant` (slug, status, `read_only_since`, `is_demo` with an immutability trigger, `billing_exempt`, country, theme, settings), `location` (name, IANA `time_zone`, active), `tenant_feature`. [TEN-01, TEN-04] Test: changing `is_demo` after creation raises.
+- [x] 1.16 `apps/api/test/support/fixtures.ts` (per-table fixture registry) and `apps/api/test/tenancy/isolation.generated.test.ts`: for every tenant table, tenant B reads 0 rows of tenant A and a cross-tenant composite FK insert fails; a table with no registered fixture fails the test. [TEN-03] Test: that file.
 
 ## S1.04 Host resolution and deployment mode (~300 lines)
 
 Depends: S1.03.
 
-- [ ] 1.17 `modules/tenancy/application/resolve-tenant.ts` and `platform/http/tenant-host.ts` preHandler: multi mode resolves `{slug}.BASE_DOMAIN`; `PLATFORM_HOST` selects the operator context; unknown host returns the generic 404; single mode pins `SINGLE_TENANT_SLUG`. [TEN-02, TEN-06] Test: host matrix; spoofed `X-Tenant-Id` header ignored.
-- [ ] 1.18 Contracts guard `apps/api/test/policy/no-tenant-in-contracts.test.ts`: fails if any request schema in `packages/contracts` declares `tenantId`. [TEN-02] Test: that file.
-- [ ] 1.19 `platform/features.ts`: feature registry; `DEPLOYMENT_MODE=single` disables signup and subscription routes; the same build boots in both modes from env only. [TEN-06] Test: boot in both modes; signup route absent in single mode.
-- [ ] 1.20 `modules/tenancy/application/export-registry.ts`: `registerExportContributor(kind: 'administrative' | 'clinical', name, fn)`; a test asserts every module registers a contributor. This is only the hook for the cancellation export built in Stage 6. [TEN-08] Test: registry unit test.
+- [x] 1.17 `modules/tenancy/application/resolve-tenant.ts` and `platform/http/tenant-host.ts` preHandler: multi mode resolves `{slug}.BASE_DOMAIN`; `PLATFORM_HOST` selects the operator context; unknown host returns the generic 404; single mode pins `SINGLE_TENANT_SLUG`. [TEN-02, TEN-06] Test: host matrix; spoofed `X-Tenant-Id` header ignored.
+- [x] 1.18 Contracts guard `apps/api/test/policy/no-tenant-in-contracts.test.ts`: fails if any request schema in `packages/contracts` declares `tenantId`. [TEN-02] Test: that file.
+- [x] 1.19 `platform/features.ts`: feature registry; `DEPLOYMENT_MODE=single` disables signup and subscription routes; the same build boots in both modes from env only. [TEN-06] Test: boot in both modes; signup route absent in single mode.
+- [x] 1.20 `modules/tenancy/application/export-registry.ts`: `registerExportContributor(kind: 'administrative' | 'clinical', name, fn)`; a test asserts every module registers a contributor. This is only the hook for the cancellation export built in Stage 6. [TEN-08] Test: registry unit test.
 
 ## S1.05 Read-only policy skeleton (~300 lines)
 
 Depends: S1.01, S1.04.
 
-- [ ] 1.21 `platform/read-only/index.ts`: route option `config.readOnly: Category`; an `onRoute` hook throws at boot when a route has no category; `onRequest` returns `402 tenant_read_only` for non-allowlisted routes of a read-only tenant; public booking and waitlist prefixes render the generic "not available" response instead. [TEN-11] Test: inject matrix, one case per category.
-- [ ] 1.22 `platform/read-only/jobs.ts` `assertTenantWritable(job, enqueuedAt)` (only `afip.issue` enqueued before `read_only_since` may run). [TEN-11] Test: unit cases.
-- [ ] 1.23 `apps/api/test/policy/route-categories.test.ts`: enumerates registered routes and fails if one has no category. [TEN-11] Test: that file.
+- [x] 1.21 `platform/read-only/index.ts`: route option `config.readOnly: Category`; an `onRoute` hook throws at boot when a route has no category; `onRequest` returns `402 tenant_read_only` for non-allowlisted routes of a read-only tenant; public booking and waitlist prefixes render the generic "not available" response instead. [TEN-11] Test: inject matrix, one case per category.
+- [x] 1.22 `platform/read-only/jobs.ts` `assertTenantWritable(job, enqueuedAt)` (only `afip.issue` enqueued before `read_only_since` may run). [TEN-11] Test: unit cases.
+- [x] 1.23 `apps/api/test/policy/route-categories.test.ts`: enumerates registered routes and fails if one has no category. [TEN-11] Test: that file.
 
 ## S1.06 Audit writer (~400 lines)
 
 Depends: S1.03.
 
-- [ ] 1.24 `db/schema/audit.ts` + migration: `audit_event` partitioned by month with the columns from design section 3.6, indexes on tenant+time, tenant+patient, tenant+actor, RLS, `app_rw` gets only INSERT and SELECT, function `app.ensure_audit_partitions(n)`. [AUD-03, AUD-04] Test: partitions are created; grants verified.
-- [ ] 1.25 Triggers: reject `DELETE`; reject `UPDATE` except filling `seq`, `prev_hash`, `hash` from NULL by role `audit_sealer`. [AUD-04] Test: `app_rw` update and delete fail; sealer fills once and a second fill fails.
-- [ ] 1.26 `platform/audit/writer.ts` `audit(tx, event)` (same transaction, fail-closed) and `packages/contracts/src/audit-actions.ts` (typed action catalogue; metadata schema rejects clinical content keys). [AUD-01, AUD-02, AUD-03] Test: a forced audit failure aborts the business write (row absent).
-- [ ] 1.27 `platform/audit/deny.ts` `auditDeny()` on a separate connection in its own transaction. [AUD-01, AUD-02] Test: the deny row persists although the business transaction rolled back.
-- [ ] 1.28 Request context plugin filling actor, acting role, ip, user agent and request id into `RequestContext` for audit. [AUD-03] Test: inject check of captured fields.
+- [x] 1.24 `db/schema/audit.ts` + migration: `audit_event` partitioned by month with the columns from design section 3.6, indexes on tenant+time, tenant+patient, tenant+actor, RLS, `app_rw` gets only INSERT and SELECT, function `app.ensure_audit_partitions(n)`. [AUD-03, AUD-04] Test: partitions are created; grants verified.
+- [x] 1.25 Triggers: reject `DELETE`; reject `UPDATE` except filling `seq`, `prev_hash`, `hash` from NULL by role `audit_sealer`. [AUD-04] Test: `app_rw` update and delete fail; sealer fills once and a second fill fails.
+- [x] 1.26 `platform/audit/writer.ts` `audit(tx, event)` (same transaction, fail-closed) and `packages/contracts/src/audit-actions.ts` (typed action catalogue; metadata schema rejects clinical content keys). [AUD-01, AUD-02, AUD-03] Test: a forced audit failure aborts the business write (row absent).
+- [x] 1.27 `platform/audit/deny.ts` `auditDeny()` on a separate connection in its own transaction. [AUD-01, AUD-02] Test: the deny row persists although the business transaction rolled back.
+- [x] 1.28 Request context plugin filling actor, acting role, ip, user agent and request id into `RequestContext` for audit. [AUD-03] Test: inject check of captured fields.
 
 ## S1.07 Jobs platform and audit sealer (~400 lines)
 
 Depends: S1.06.
 
-- [ ] 1.29 `platform/jobs/boss.ts` (pg-boss bootstrap, handlers only in the `worker` role), `enqueue(tx, name, payload)` in the caller's transaction, `defineJob()` wrapper that runs in `withTenant`, re-checks tenant status and is idempotent. [TEN-11] Test: integration: a job runs under tenant context; a job for a read-only tenant ends cancelled.
-- [ ] 1.30 `platform/audit/sealer.ts` + job `audit.seal` (singleton per tenant, every 5 s; assigns `seq` in `(occurred_at, id)` order; `hash = SHA-256(prev_hash || canonical row)`) and `canonicalize.ts`. [AUD-04] Test: chain is correct after concurrent interleaved inserts; re-run is idempotent.
-- [ ] 1.31 Job `audit.verify` nightly plus seal-lag and `audit_chain_break` metrics. [AUD-04] Test: tamper a row via the owner connection; verify reports the first bad `seq`.
+- [x] 1.29 `platform/jobs/boss.ts` (pg-boss bootstrap, handlers only in the `worker` role), `enqueue(tx, name, payload)` in the caller's transaction, `defineJob()` wrapper that runs in `withTenant`, re-checks tenant status and is idempotent. [TEN-11] Test: integration: a job runs under tenant context; a job for a read-only tenant ends cancelled.
+- [x] 1.30 `platform/audit/sealer.ts` + job `audit.seal` (singleton per tenant, every 5 s; assigns `seq` in `(occurred_at, id)` order; `hash = SHA-256(prev_hash || canonical row)`) and `canonicalize.ts`. [AUD-04] Test: chain is correct after concurrent interleaved inserts; re-run is idempotent.
+- [x] 1.31 Job `audit.verify` nightly plus seal-lag and `audit_chain_break` metrics. [AUD-04] Test: tamper a row via the owner connection; verify reports the first bad `seq`.
 
 ## S1.08 Envelope encryption (~350 lines)
 
 Depends: S1.03.
 
-- [ ] 1.32 `platform/crypto/aes-gcm.ts` (AES-256-GCM, random 96-bit nonce, AAD binding tenant, table, column, row id; versioned format). [IDA-05, PAT-06] Test: round trip; tamper and AAD mismatch throw; nonces never repeat.
-- [ ] 1.33 `platform/crypto/key-management.ts` port + `adapters/local-kek/` (dev, test) + `adapters/aws-kms/` (encryption context carries tenant id). [IDA-05] Test: local adapter; AWS adapter against a mocked client.
-- [ ] 1.34 `db/schema/tenant-key.ts` + migration; `platform/crypto/tenant-keys.ts` (create DEK at tenant creation, unwrap cache with TTL, `encryptField`/`decryptField`). [IDA-05, PAT-06] Test: tenant A cannot decrypt tenant B data; cache expiry; creation is idempotent.
+- [x] 1.32 `platform/crypto/aes-gcm.ts` (AES-256-GCM, random 96-bit nonce, AAD binding tenant, table, column, row id; versioned format). [IDA-05, PAT-06] Test: round trip; tamper and AAD mismatch throw; nonces never repeat.
+- [x] 1.33 `platform/crypto/key-management.ts` port + `adapters/local-kek/` (dev, test) + `adapters/aws-kms/` (encryption context carries tenant id). [IDA-05] Test: local adapter; AWS adapter against a mocked client.
+- [x] 1.34 `db/schema/tenant-key.ts` + migration; `platform/crypto/tenant-keys.ts` (create DEK at tenant creation, unwrap cache with TTL, `encryptField`/`decryptField`). [IDA-05, PAT-06] Test: tenant A cannot decrypt tenant B data; cache expiry; creation is idempotent.
 
 ## S1.09 Identity schema and password policy (~350 lines)
 
 Depends: S1.03, S1.08.
 
-- [ ] 1.35 `db/schema/identity.ts` + migration: `user` (global, citext email, `password_hash`, encrypted `totp_secret`, `first_sign_in_at`, `failed_logins`, `locked_until`), `membership` (tenant, roles, status), `session`, `login_challenge`, `recovery_code`. `user` is readable only through membership of the current tenant or the login lookup function `app.lookup_user_for_login(email)` (SECURITY DEFINER, minimal columns). [IDA-02, TEN-01] Test: tenant B context cannot read tenant A's users.
-- [ ] 1.36 `modules/identity/domain/password-policy.ts` and the bundled list `apps/api/assets/common-passwords-100k.txt` loaded at boot (data asset, outside the line budget); optional breached-password range check behind a flag. [IDA-03] Test: rejects common passwords, accepts a passphrase, length boundaries.
-- [ ] 1.37 `modules/identity/infrastructure/argon2.ts` (`@node-rs/argon2`) with `verifyOrDummy` so unknown users take the same path. [IDA-02] Test: unknown and known users call the same verify path (spy count).
+- [x] 1.35 `db/schema/identity.ts` + migration: `user` (global, citext email, `password_hash`, encrypted `totp_secret`, `first_sign_in_at`, `failed_logins`, `locked_until`), `membership` (tenant, roles, status), `session`, `login_challenge`, `recovery_code`. `user` is readable only through membership of the current tenant or the login lookup function `app.lookup_user_for_login(email)` (SECURITY DEFINER, minimal columns). [IDA-02, TEN-01] Test: tenant B context cannot read tenant A's users.
+- [x] 1.36 `modules/identity/domain/password-policy.ts` and the bundled list `apps/api/assets/common-passwords-100k.txt` loaded at boot (data asset, outside the line budget); optional breached-password range check behind a flag. [IDA-03] Test: rejects common passwords, accepts a passphrase, length boundaries.
+- [x] 1.37 `modules/identity/infrastructure/argon2.ts` (`@node-rs/argon2`) with `verifyOrDummy` so unknown users take the same path. [IDA-02] Test: unknown and known users call the same verify path (spy count).
 
 ## S1.10 Sessions and login (~400 lines)
 
 Depends: S1.09, S1.06.
 
-- [ ] 1.38 `modules/identity/application/sessions.ts` and `platform/http/session-cookie.ts`: opaque 256-bit token, SHA-256 at rest, `HttpOnly; Secure; SameSite=Lax`, idle 12 h and absolute 7 days (staff), rotation on login and privilege change, `active_tenant_id`. [IDA-07] Test: expiry with a fake clock; rotation on login.
-- [ ] 1.39 Routes `POST /auth/login`, `POST /auth/logout`, `GET /auth/me`, `GET|DELETE /auth/sessions` with contracts in `packages/contracts/src/auth.ts`; host and session tenant mismatch returns 401; unknown identifiers get identical responses. [IDA-02, IDA-07, TEN-02] Test: integration login, logout, revoke, mismatch.
-- [ ] 1.40 `platform/http/auth-guard.ts` (every route requires a session unless it is declared public under the allowed prefixes of design 4.5) and `csrf-origin.ts` (`Origin` check on non-GET). [IDA-01] Test: boot-time test enumerates routes and fails on an unauthenticated route outside the allowlist; cross-origin POST returns 403.
-- [ ] 1.41 Audit hooks `auth.login.success|failure`, `auth.logout`, `auth.session.revoked`. [IDA-09] Test: events present with required fields.
+- [x] 1.38 `modules/identity/application/sessions.ts` and `platform/http/session-cookie.ts`: opaque 256-bit token, SHA-256 at rest, `HttpOnly; Secure; SameSite=Lax`, idle 12 h and absolute 7 days (staff), rotation on login and privilege change, `active_tenant_id`. [IDA-07] Test: expiry with a fake clock; rotation on login.
+- [x] 1.39 Routes `POST /auth/login`, `POST /auth/logout`, `GET /auth/me`, `GET|DELETE /auth/sessions` with contracts in `packages/contracts/src/auth.ts`; host and session tenant mismatch returns 401; unknown identifiers get identical responses. [IDA-02, IDA-07, TEN-02] Test: integration login, logout, revoke, mismatch.
+- [x] 1.40 `platform/http/auth-guard.ts` (every route requires a session unless it is declared public under the allowed prefixes of design 4.5) and `csrf-origin.ts` (`Origin` check on non-GET). [IDA-01] Test: boot-time test enumerates routes and fails on an unauthenticated route outside the allowlist; cross-origin POST returns 403.
+- [x] 1.41 Audit hooks `auth.login.success|failure`, `auth.logout`, `auth.session.revoked`. [IDA-09] Test: events present with required fields.
 
 ## S1.11 Lockout and throttling (~350 lines)
 
 Depends: S1.10.
 
-- [ ] 1.42 `modules/identity/application/lockout.ts`: counter, lock after 10 consecutive failures for 15 minutes (configurable), exponential backoff per account and IP, lock checked before credentials, `recordFailure(kind)` reusable by 2FA. [IDA-04] Test: 10 failures lock; the 11th with the correct password is still 401 generic; unlock after the window.
-- [ ] 1.43 `platform/http/rate-limit.ts` (`@fastify/rate-limit` per IP and per tenant, store behind an interface). [IDA-04, IDA-01] Test: 429 after the limit; separate buckets per tenant.
-- [ ] 1.44 Audit `auth.account.locked|unlocked`, `auth.login.locked`; identical response body and timing class for unknown identifiers. [IDA-09, IDA-04] Test: unknown versus known account responses equal.
+- [x] 1.42 `modules/identity/application/lockout.ts`: counter, lock after 10 consecutive failures for 15 minutes (configurable), exponential backoff per account and IP, lock checked before credentials, `recordFailure(kind)` reusable by 2FA. [IDA-04] Test: 10 failures lock; the 11th with the correct password is still 401 generic; unlock after the window.
+- [x] 1.43 `platform/http/rate-limit.ts` (`@fastify/rate-limit` per IP and per tenant, store behind an interface). [IDA-04, IDA-01] Test: 429 after the limit; separate buckets per tenant.
+- [x] 1.44 Audit `auth.account.locked|unlocked`, `auth.login.locked`; identical response body and timing class for unknown identifiers. [IDA-09, IDA-04] Test: unknown versus known account responses equal.
 
 ## S1.12 Action tokens and transactional email (~350 lines)
 
 Depends: S1.03.
 
-- [ ] 1.45 `db/schema/action-token.ts` + `platform/tokens/index.ts`: `issue(kind, subject, opts)` returns the raw token once; SHA-256 at rest; `redeem()` is an atomic `UPDATE ... RETURNING` with max uses, expiry per kind and optional session binding; canonical kind registry (only account kinds enabled now). [IDA-08, STF-01] Test: single use under concurrency, expired, wrong kind, hash at rest.
-- [ ] 1.46 `platform/mail/email-sender.ts` port, `adapters/smtp/` (Mailpit locally, SES SMTP in production), `adapters/fake-email/` (in memory), es-AR templates for invitation and reset. The native SES API adapter arrives with `notifications` in Stage 3. [IDA-08] Test: fake captures messages; SMTP adapter against Mailpit (integration).
+- [x] 1.45 `db/schema/action-token.ts` + `platform/tokens/index.ts`: `issue(kind, subject, opts)` returns the raw token once; SHA-256 at rest; `redeem()` is an atomic `UPDATE ... RETURNING` with max uses, expiry per kind and optional session binding; canonical kind registry (only account kinds enabled now). [IDA-08, STF-01] Test: single use under concurrency, expired, wrong kind, hash at rest.
+- [x] 1.46 `platform/mail/email-sender.ts` port, `adapters/smtp/` (Mailpit locally, SES SMTP in production), `adapters/fake-email/` (in memory), es-AR templates for invitation and reset. The native SES API adapter arrives with `notifications` in Stage 3. [IDA-08] Test: fake captures messages; SMTP adapter against Mailpit (integration).
 
 ## S1.13 Two-factor authentication (~400 lines)
 
 Depends: S1.11, S1.08, S1.12.
 
-- [ ] 1.47 `modules/identity/application/totp.ts` (`@oslojs/otp`): enrollment with encrypted secret, verify with +-1 step, last-used-step replay block. [IDA-05] Test: RFC 6238 vectors, replay rejected, drift window.
-- [ ] 1.48 Recovery codes: generate 10, store hashed, single use, regenerate. [IDA-05] Test: reuse fails; hashes only at rest.
-- [ ] 1.49 Login 2FA flow: `login_challenge` (5 min, max 5 attempts), `POST /auth/2fa`, wrong or reused code counts toward lockout, mandatory for professionals and owners/admins with a 7-day grace from `first_sign_in_at`, then an enrollment-scoped session; optional for reception unless `settings.require_2fa`. [IDA-05, IDA-04] Test: role x grace x enrolled matrix; an enrollment-scoped session gets 403 `two_factor_enrollment_required` everywhere else.
-- [ ] 1.50 Audit `auth.2fa.enrolled|verified|failed|recovery_used`. [IDA-09] Test: events emitted.
+- [x] 1.47 `modules/identity/application/totp.ts` (`@oslojs/otp`): enrollment with encrypted secret, verify with +-1 step, last-used-step replay block. [IDA-05] Test: RFC 6238 vectors, replay rejected, drift window.
+- [x] 1.48 Recovery codes: generate 10, store hashed, single use, regenerate. [IDA-05] Test: reuse fails; hashes only at rest.
+- [x] 1.49 Login 2FA flow: `login_challenge` (5 min, max 5 attempts), `POST /auth/2fa`, wrong or reused code counts toward lockout, mandatory for professionals and owners/admins with a 7-day grace from `first_sign_in_at`, then an enrollment-scoped session; optional for reception unless `settings.require_2fa`. [IDA-05, IDA-04] Test: role x grace x enrolled matrix; an enrollment-scoped session gets 403 `two_factor_enrollment_required` everywhere else.
+- [x] 1.50 Audit `auth.2fa.enrolled|verified|failed|recovery_used`. [IDA-09] Test: events emitted.
 
 ## S1.14 Password reset and invitation acceptance (~350 lines)
 
 Depends: S1.12, S1.13.
 
-- [ ] 1.51 `POST /auth/password-reset/request` (always the same response, email only) and `/complete` (token 30 min, single use, policy check, revokes all sessions, does not bypass 2FA, audited). [IDA-08] Test: non-enumeration, reuse fails, sessions revoked.
-- [ ] 1.52 Admin-triggered reset `POST /users/:id/password-reset` only sends the email and never sets a password. [IDA-08, AUZ-03] Test: no endpoint accepts a password for another user.
-- [ ] 1.53 `POST /auth/invitations/accept {token, password}`: creates the user or links an existing user to a new membership with the invited roles, within the inviter's ceiling. [STF-01, ONB-01] Test: roles granted equal roles invited; expired token fails.
+- [x] 1.51 `POST /auth/password-reset/request` (always the same response, email only) and `/complete` (token 30 min, single use, policy check, revokes all sessions, does not bypass 2FA, audited). [IDA-08] Test: non-enumeration, reuse fails, sessions revoked.
+- [x] 1.52 Admin-triggered reset `POST /users/:id/password-reset` only sends the email and never sets a password. [IDA-08, AUZ-03] Test: no endpoint accepts a password for another user.
+- [x] 1.53 `POST /auth/invitations/accept {token, password}`: creates the user or links an existing user to a new membership with the invited roles, within the inviter's ceiling. [STF-01, ONB-01] Test: roles granted equal roles invited; expired token fails.
 
 ## S1.15 Authorization engine (~400 lines)
 
 Depends: S1.01, S1.10.
 
-- [ ] 1.54 `platform/authz/can.ts`: `can(actor, action, resource)` combining RBAC from the catalog with grants limited to `GRANTABLE`; `Actor` type. [AUZ-02, AUZ-15] Test: unit table of role x action; unknown action denies.
-- [ ] 1.55 `platform/authz/guard.ts`: route option `config.permission`; a route with neither a permission nor `public` fails at boot; denials call `auditDeny()` and use the uniform response. [AUZ-02, AUZ-16] Test: `apps/api/test/policy/route-role-matrix.test.ts` generated from the catalog.
-- [ ] 1.56 Admin-denied harness: a test iterating every registered route tagged `clinical.*` asserting 403 for owner/admin plus a deny audit row; proven now with a fixture route, and it covers real routes automatically from Stage 2. [AUZ-04, AUZ-06] Test: that harness.
-- [ ] 1.57 `platform/authz/professional-gate.ts`: derive `professionalId` only from an active professional profile with a recorded valid matricula; an owner who is also a professional gets it through the profile only. [AUZ-04] Test: unit with stubbed repo.
-- [ ] 1.58 Default deny for the `patient` actor class on all staff routes (patient sessions do not exist yet). [AUZ-14] Test: patient actor denied everywhere.
+- [x] 1.54 `platform/authz/can.ts`: `can(actor, action, resource)` combining RBAC from the catalog with grants limited to `GRANTABLE`; `Actor` type. [AUZ-02, AUZ-15] Test: unit table of role x action; unknown action denies.
+- [x] 1.55 `platform/authz/guard.ts`: route option `config.permission`; a route with neither a permission nor `public` fails at boot; denials call `auditDeny()` and use the uniform response. [AUZ-02, AUZ-16] Test: `apps/api/test/policy/route-role-matrix.test.ts` generated from the catalog.
+- [x] 1.56 Admin-denied harness: a test iterating every registered route tagged `clinical.*` asserting 403 for owner/admin plus a deny audit row; proven now with a fixture route, and it covers real routes automatically from Stage 2. [AUZ-04, AUZ-06] Test: that harness.
+- [x] 1.57 `platform/authz/professional-gate.ts`: derive `professionalId` only from an active professional profile with a recorded valid matricula; an owner who is also a professional gets it through the profile only. [AUZ-04] Test: unit with stubbed repo.
+- [x] 1.58 Default deny for the `patient` actor class on all staff routes (patient sessions do not exist yet). [AUZ-14] Test: patient actor denied everywhere.
 
 ## S1.16 Sharing-scope predicate (~300 lines)
 
 Depends: S1.15.
 
-- [ ] 1.59 `platform/authz/sharing-scope.ts`: `readable(entry, actor, ctx)` per design 4.2 (author, treating, `author_only`, prescriptions never follow sharing, inclusion list `sharedTemplates`); `treating()` behind a port. [AUZ-11, AUZ-09] Test: see 1.60.
-- [ ] 1.60 Table-driven and fast-check tests (author, treating, shared, `author_only`, D17 prescription, psychology excluded by default, new templates never auto-added) and a helper marking shared reads `reason = 'shared'`. [AUZ-11] Test: that file.
+- [x] 1.59 `platform/authz/sharing-scope.ts`: `readable(entry, actor, ctx)` per design 4.2 (author, treating, `author_only`, prescriptions never follow sharing, inclusion list `sharedTemplates`); `treating()` behind a port. [AUZ-11, AUZ-09] Test: see 1.60.
+- [x] 1.60 Table-driven and fast-check tests (author, treating, shared, `author_only`, D17 prescription, psychology excluded by default, new templates never auto-added) and a helper marking shared reads `reason = 'shared'`. [AUZ-11] Test: that file.
 
 ## S1.17 SQL clinical backstop and care tables (~400 lines)
 
 Depends: S1.16, S1.03.
 
-- [ ] 1.61 `db/schema/care.ts` + migration: `care_assignment`, `care_relationship` (patient, professional, qualifying appointments, encounters, assigned, generated `active`); trigger from `care_assignment`. Appointment and encounter triggers arrive in Stage 2. [AUZ-09, AUZ-10] Test: assignment makes the relationship active.
-- [ ] 1.62 SQL `app.clinical_readable(patient_id, author_professional_id, visibility, template_kind)` and `clinicalPolicies(table)` helper creating the RESTRICTIVE `clinical_professionals_only` and `clinical_scope` policies; extend `withTenant` to load sharing settings once per transaction. [AUZ-04, AUZ-11] Test: see 1.63.
-- [ ] 1.63 Integration tests on a test-only table `test_clinical_item`: admin sees 0 rows; non-treating professional 0; treating 1; `author_only`; sharing on and off; prescription excluded (D17); and a property test that the TS predicate (1.59) and the SQL function agree on random actor/entry combinations. [AUZ-04, AUZ-09, AUZ-11] Test: that file.
+- [x] 1.61 `db/schema/care.ts` + migration: `care_assignment`, `care_relationship` (patient, professional, qualifying appointments, encounters, assigned, generated `active`); trigger from `care_assignment`. Appointment and encounter triggers arrive in Stage 2. [AUZ-09, AUZ-10] Test: assignment makes the relationship active.
+- [x] 1.62 SQL `app.clinical_readable(patient_id, author_professional_id, visibility, template_kind)` and `clinicalPolicies(table)` helper creating the RESTRICTIVE `clinical_professionals_only` and `clinical_scope` policies; extend `withTenant` to load sharing settings once per transaction. [AUZ-04, AUZ-11] Test: see 1.63.
+- [x] 1.63 Integration tests on a test-only table `test_clinical_item`: admin sees 0 rows; non-treating professional 0; treating 1; `author_only`; sharing on and off; prescription excluded (D17); and a property test that the TS predicate (1.59) and the SQL function agree on random actor/entry combinations. [AUZ-04, AUZ-09, AUZ-11] Test: that file.
 
 ## S1.18 Access module: grants, settings, locations (~400 lines)
 
 Depends: S1.15, S1.04.
 
-- [ ] 1.64 `db/schema/access.ts` + migration: `permission_grant` (`CHECK (permission NOT LIKE 'clinical.%')`, scope jsonb), `membership_location`. [AUZ-12, AUZ-13] Test: inserting a `clinical.*` grant fails at the DB.
-- [ ] 1.65 `modules/access`: grant and revoke API (owner/admin only), role-change rules (no self-escalation, no granting above own ceiling, last owner protected, sessions rotated on change), audited. [AUZ-03, AUZ-12] Test: each prohibited path returns 403 with a deny audit row.
-- [ ] 1.66 Org settings API `GET|PATCH /api/v1/settings`: `reception_sees_clinical_metadata`, `clinicalSharing` (default `sharedTemplates`, psychology only by explicit audited choice), `require_2fa`, quiet hours default; every change audited. [AUZ-07, AUZ-11] Test: sharing toggle audited; psychology needs the explicit flag.
-- [ ] 1.67 Location HTTP API (`/api/v1/locations` create, edit, deactivate) and membership-location assignment with a reception location filter helper. [TEN-04, AUZ-13] Test: reception only sees its locations; deactivate keeps history.
+- [x] 1.64 `db/schema/access.ts` + migration: `permission_grant` (`CHECK (permission NOT LIKE 'clinical.%')`, scope jsonb), `membership_location`. [AUZ-12, AUZ-13] Test: inserting a `clinical.*` grant fails at the DB.
+- [x] 1.65 `modules/access`: grant and revoke API (owner/admin only), role-change rules (no self-escalation, no granting above own ceiling, last owner protected, sessions rotated on change), audited. [AUZ-03, AUZ-12] Test: each prohibited path returns 403 with a deny audit row.
+- [x] 1.66 Org settings API `GET|PATCH /api/v1/settings`: `reception_sees_clinical_metadata`, `clinicalSharing` (default `sharedTemplates`, psychology only by explicit audited choice), `require_2fa`, quiet hours default; every change audited. [AUZ-07, AUZ-11] Test: sharing toggle audited; psychology needs the explicit flag.
+- [x] 1.67 Location HTTP API (`/api/v1/locations` create, edit, deactivate) and membership-location assignment with a reception location filter helper. [TEN-04, AUZ-13] Test: reception only sees its locations; deactivate keeps history.
 
 ## S1.19 Staff and professionals (~400 lines)
 
 Depends: S1.18, S1.14, S1.02.
 
-- [ ] 1.68 `db/schema/staff.ts` + migration: `professional` (status, matricula, jurisdiction, `matricula_status`, `verified_by_operator`, `max_simultaneous`, specialties) and `professional_hours` (weekday, start, end, location). A DB trigger blocks `matricula_status = verified` outside an operator context. [STF-03, STF-06, STF-04] Test: tenant users cannot set `verified`.
-- [ ] 1.69 `modules/staff` profile service: matricula validated through CountryPack, editing it resets to `unverified`, uniqueness, multiple specialties. [STF-03, STF-04, TEN-05] Test: edit resets status; duplicate matricula rejected.
-- [ ] 1.70 Staff lifecycle API: invite (role ceiling, `staff_invitation` token + email), directory with role-based visibility, deactivate and reactivate (never delete, revoke sessions), location assignment; all audited. [STF-01, STF-02, STF-05, STF-07, STF-08] Test: reception cannot invite; deactivation revokes sessions.
-- [ ] 1.71 `PUT /professionals/:id/hours` validating overlaps in the location time zone. [STF-06] Test: overlap rejected; edit audited.
+- [x] 1.68 `db/schema/staff.ts` + migration: `professional` (status, matricula, jurisdiction, `matricula_status`, `verified_by_operator`, `max_simultaneous`, specialties) and `professional_hours` (weekday, start, end, location). A DB trigger blocks `matricula_status = verified` outside an operator context. [STF-03, STF-06, STF-04] Test: tenant users cannot set `verified`.
+- [x] 1.69 `modules/staff` profile service: matricula validated through CountryPack, editing it resets to `unverified`, uniqueness, multiple specialties. [STF-03, STF-04, TEN-05] Test: edit resets status; duplicate matricula rejected.
+- [x] 1.70 Staff lifecycle API: invite (role ceiling, `staff_invitation` token + email), directory with role-based visibility, deactivate and reactivate (never delete, revoke sessions), location assignment; all audited. [STF-01, STF-02, STF-05, STF-07, STF-08] Test: reception cannot invite; deactivation revokes sessions.
+- [x] 1.71 `PUT /professionals/:id/hours` validating overlaps in the location time zone. [STF-06] Test: overlap rejected; edit audited.
 
 ## S1.20 Patients core (~400 lines)
 
 Depends: S1.15, S1.02, S1.03.
 
-- [ ] 1.72 `db/schema/patients.ts` + migration: `patient` (partial unique `(tenant_id, national_id_type, national_id) WHERE national_id IS NOT NULL`), `patient_version`, `patient_representative`; RLS tenant-only because demographics are organization-wide. [PAT-01, PAT-02, PAT-11, PAT-12, AUZ-08] Test: two patients without document allowed; duplicate document rejected.
-- [ ] 1.73 `modules/patients` API: create, edit, deactivate (never delete), DNI normalization through CountryPack, duplicate returns 409 with an existing-patient summary, every update writes a `patient_version` and an audit event. [PAT-01, PAT-02, PAT-10, PAT-11] Test: duplicate flow; history contains both versions.
-- [ ] 1.74 `GET /patients?q=` search by name and document (`pg_trgm` + `unaccent`), paginated, minimal columns. [PAT-04] Test: accent-insensitive; 10k seeded rows answer within a generous bound.
-- [ ] 1.75 Minors and representatives: representative record with relation and contact, majority age from CountryPack, `majority_review_on`. [PAT-12] Test: minor requires a representative; the date is computed.
+- [x] 1.72 `db/schema/patients.ts` + migration: `patient` (partial unique `(tenant_id, national_id_type, national_id) WHERE national_id IS NOT NULL`), `patient_version`, `patient_representative`; RLS tenant-only because demographics are organization-wide. [PAT-01, PAT-02, PAT-11, PAT-12, AUZ-08] Test: two patients without document allowed; duplicate document rejected.
+- [x] 1.73 `modules/patients` API: create, edit, deactivate (never delete), DNI normalization through CountryPack, duplicate returns 409 with an existing-patient summary, every update writes a `patient_version` and an audit event. [PAT-01, PAT-02, PAT-10, PAT-11] Test: duplicate flow; history contains both versions.
+- [x] 1.74 `GET /patients?q=` search by name and document (`pg_trgm` + `unaccent`), paginated, minimal columns. [PAT-04] Test: accent-insensitive; 10k seeded rows answer within a generous bound.
+- [x] 1.75 Minors and representatives: representative record with relation and contact, majority age from CountryPack, `majority_review_on`. [PAT-12] Test: minor requires a representative; the date is computed.
 
 ## S1.21 Coverage, consent and rights (~350 lines)
 
 Depends: S1.20.
 
-- [ ] 1.76 `payer_plan` and `patient_coverage` schema + API (member number, validity, primary flag). [PAT-05] Test: one primary per patient; invalid dates rejected.
-- [ ] 1.77 `data_processing_consent` (text version key from CountryPack, granted at, recorded by, revoked at) + API and a mandatory prompt at patient creation. [PAT-08, CTR-10] Test: revocation allowed in a read-only tenant.
-- [ ] 1.78 `patient_rights_request` (access, rectification) + staff API; rectification goes through the versioned update. [PAT-09] Test: allowed in read-only (category 6).
+- [x] 1.76 `payer_plan` and `patient_coverage` schema + API (member number, validity, primary flag). [PAT-05] Test: one primary per patient; invalid dates rejected.
+- [x] 1.77 `data_processing_consent` (text version key from CountryPack, granted at, recorded by, revoked at) + API and a mandatory prompt at patient creation. [PAT-08, CTR-10] Test: revocation allowed in a read-only tenant.
+- [x] 1.78 `patient_rights_request` (access, rectification) + staff API; rectification goes through the versioned update. [PAT-09] Test: allowed in read-only (category 6).
 
 ## S1.22 Anamnesis, safety flags, assignment (~400 lines)
 
 Depends: S1.20, S1.17, S1.08.
 
-- [ ] 1.79 `db/schema/anamnesis.ts`: encrypted versioned `anamnesis` with `clinicalPolicies`; save endpoint for professionals only. [PAT-06, AUZ-04] Test: reception and admin get 403 plus a deny audit row; RLS returns 0 rows.
-- [ ] 1.80 `modules/patients/application/safety-flags.ts`: recompute codes from the structured anamnesis in the same transaction; no endpoint writes `patient.safety_flags`, and a trigger rejects direct updates outside the system function. [PAT-07] Test: no route or contract exposes a setter; reception sees only the "see professional" label.
-- [ ] 1.81 Care assignment API `POST|DELETE /patients/:id/assignments` (professional self-assign or `patients.administer`), audited. [AUZ-10] Test: assignment grants access; removal revokes it only when no other source exists.
-- [ ] 1.82 Contracts guard: `PatientSummaryDto` never carries clinical detail. [PAT-06, AUZ-06] Test: DTO snapshot plus a reception GET of anamnesis returning 403.
+- [x] 1.79 `db/schema/anamnesis.ts`: encrypted versioned `anamnesis` with `clinicalPolicies`; save endpoint for professionals only. [PAT-06, AUZ-04] Test: reception and admin get 403 plus a deny audit row; RLS returns 0 rows.
+- [x] 1.80 `modules/patients/application/safety-flags.ts`: recompute codes from the structured anamnesis in the same transaction; no endpoint writes `patient.safety_flags`, and a trigger rejects direct updates outside the system function. [PAT-07] Test: no route or contract exposes a setter; reception sees only the "see professional" label.
+- [x] 1.81 Care assignment API `POST|DELETE /patients/:id/assignments` (professional self-assign or `patients.administer`), audited. [AUZ-10] Test: assignment grants access; removal revokes it only when no other source exists.
+- [x] 1.82 Contracts guard: `PatientSummaryDto` never carries clinical detail. [PAT-06, AUZ-06] Test: DTO snapshot plus a reception GET of anamnesis returning 403.
 
 ## S1.23 Audit viewer and report (~350 lines)
 
 Depends: S1.07, S1.15.
 
-- [ ] 1.83 `modules/audit` API `GET /audit-events` (filters actor, action, patient, resource, outcome, date; cursor pagination; owner/admin; metadata only). [AUD-06, AUD-07] Test: tenant B cannot see A's events; no clinical content in responses.
-- [ ] 1.84 Patient access report `GET /patients/:id/access-report` and streamed CSV/JSON export, the export itself audited. [AUD-07, AUD-01] Test: report lists reads and writes for the patient.
-- [ ] 1.85 Job `audit.partitions` (ensure the next 3 months) and `docs/runbooks/audit-retention.md` (move partitions older than 2 years to cold storage, retain 10 years, never delete). [AUD-05] Test: partitions exist ahead of time; no code path deletes audit rows.
-- [ ] 1.86 `apps/api/test/policy/audit-coverage.test.ts`: every mandatory event has an integration scenario registered, and a mutating route without an audit assertion tag fails. [AUD-01] Test: that file.
+- [x] 1.83 `modules/audit` API `GET /audit-events` (filters actor, action, patient, resource, outcome, date; cursor pagination; owner/admin; metadata only). [AUD-06, AUD-07] Test: tenant B cannot see A's events; no clinical content in responses.
+- [x] 1.84 Patient access report `GET /patients/:id/access-report` and streamed CSV/JSON export, the export itself audited. [AUD-07, AUD-01] Test: report lists reads and writes for the patient.
+- [x] 1.85 Job `audit.partitions` (ensure the next 3 months) and `docs/runbooks/audit-retention.md` (move partitions older than 2 years to cold storage, retain 10 years, never delete). [AUD-05] Test: partitions exist ahead of time; no code path deletes audit rows.
+- [x] 1.86 `apps/api/test/policy/audit-coverage.test.ts`: every mandatory event has an integration scenario registered, and a mutating route without an audit assertion tag fails. [AUD-01] Test: that file.
 
 ## S1.24 Object storage port and S3 adapter (~300 lines)
 
 Depends: S0.08.
 
-- [ ] 1.87 `platform/storage/object-storage.ts` port (put, get stream, head, presigned POST, move within tenant prefix) with key convention `t/{tenantId}/...`; `adapters/s3/` (AWS SDK v3, MinIO compatible) and an in-memory fake. [DOC-03, BRD-04] Test: integration against MinIO; keys outside the tenant prefix are refused.
+- [x] 1.87 `platform/storage/object-storage.ts` port (put, get stream, head, presigned POST, move within tenant prefix) with key convention `t/{tenantId}/...`; `adapters/s3/` (AWS SDK v3, MinIO compatible) and an in-memory fake. [DOC-03, BRD-04] Test: integration against MinIO; keys outside the tenant prefix are refused.
 
 ## S1.25 Branding API (~350 lines)
 
 Depends: S1.24, S1.18.
 
-- [ ] 1.88 `modules/tenancy/branding/contrast.ts`: OKLCH lightness auto-adjust until WCAG 4.5:1, returns `primary_requested`, `primary_effective` and a warning. [BRD-03] Test: property test that the result is always at least 4.5:1, hue preserved, idempotent.
-- [ ] 1.89 `PUT /api/v1/branding` (name, short name, primary color, radius, heading font from a curated set) with permission `branding.manage`, audited before and after. [BRD-01, BRD-05] Test: reception denied; audit holds the diff.
-- [ ] 1.90 Logo upload: PNG, JPEG or WebP only, magic-byte sniff, 512 KB cap, dimension cap, re-encode with `sharp` to strip metadata, store through the port; SVG rejected. [BRD-04] Test: polyglot, oversize and SVG fixtures rejected.
-- [ ] 1.91 Public `GET /api/v1/boot` by host (name, theme tokens, logo URL, locale, feature flags, deployment mode; no PII) and per-host `GET /manifest.webmanifest`. [BRD-02, SHL-03, SHL-09] Test: unauthenticated response contains only whitelisted keys; two hosts return different themes.
+- [x] 1.88 `modules/tenancy/branding/contrast.ts`: OKLCH lightness auto-adjust until WCAG 4.5:1, returns `primary_requested`, `primary_effective` and a warning. [BRD-03] Test: property test that the result is always at least 4.5:1, hue preserved, idempotent.
+- [x] 1.89 `PUT /api/v1/branding` (name, short name, primary color, radius, heading font from a curated set) with permission `branding.manage`, audited before and after. [BRD-01, BRD-05] Test: reception denied; audit holds the diff.
+- [x] 1.90 Logo upload: PNG, JPEG or WebP only, magic-byte sniff, 512 KB cap, dimension cap, re-encode with `sharp` to strip metadata, store through the port; SVG rejected. [BRD-04] Test: polyglot, oversize and SVG fixtures rejected.
+- [x] 1.91 Public `GET /api/v1/boot` by host (name, theme tokens, logo URL, locale, feature flags, deployment mode; no PII) and per-host `GET /manifest.webmanifest`. [BRD-02, SHL-03, SHL-09] Test: unauthenticated response contains only whitelisted keys; two hosts return different themes.
 
 ## S1.26 Operator console API (~400 lines)
 
 Depends: S1.14, S1.08, S1.07.
 
-- [ ] 1.92 `db/schema/operator.ts` + migration: `operator_user`, `platform_audit_event` (append-only, sealed like tenant audit), `support_grant` (tenant-approved, time-boxed, non-clinical), role `app_operator` with privileges on tenant and platform tables only. [TEN-07] Test: privilege test shows `app_operator` cannot SELECT any clinical or patient table.
-- [ ] 1.93 `modules/operator`: password plus mandatory TOTP without grace, separate `osid` cookie, routes only on `PLATFORM_HOST` (404 elsewhere). [TEN-07, TEN-02] Test: tenant users cannot reach `/operator/*`.
-- [ ] 1.94 `POST /operator/tenants {name, ownerEmail, isDemo?}`: auto-generated slug (random suffix on collision), tenant key, default settings, owner `staff_invitation`; `is_demo` settable only here. `POST /operator/tenants/:id/demo-reset` for demo tenants. All audited at platform level. [ONB-01, TEN-01, DEM-01] Test: slug collision invisible to the caller; `isDemo` cannot change later.
-- [ ] 1.95 Support access: using a `support_grant` requires an active unexpired grant and is audited per use. [TEN-07] Test: no grant means denied; expired grant denied.
+- [x] 1.92 `db/schema/operator.ts` + migration: `operator_user`, `platform_audit_event` (append-only, sealed like tenant audit), `support_grant` (tenant-approved, time-boxed, non-clinical), role `app_operator` with privileges on tenant and platform tables only. [TEN-07] Test: privilege test shows `app_operator` cannot SELECT any clinical or patient table.
+- [x] 1.93 `modules/operator`: password plus mandatory TOTP without grace, separate `osid` cookie, routes only on `PLATFORM_HOST` (404 elsewhere). [TEN-07, TEN-02] Test: tenant users cannot reach `/operator/*`.
+- [x] 1.94 `POST /operator/tenants {name, ownerEmail, isDemo?}`: auto-generated slug (random suffix on collision), tenant key, default settings, owner `staff_invitation`; `is_demo` settable only here. `POST /operator/tenants/:id/demo-reset` for demo tenants. All audited at platform level. [ONB-01, TEN-01, DEM-01] Test: slug collision invisible to the caller; `isDemo` cannot change later.
+- [x] 1.95 Support access: using a `support_grant` requires an active unexpired grant and is audited per use. [TEN-07] Test: no grant means denied; expired grant denied.
 
 ## S1.27 Web foundation (~400 lines)
 
 Depends: S0.05, S1.10, S1.25.
 
-- [ ] 1.96 `apps/web/src/app/{router.tsx,providers.tsx}` (TanStack Router and Query) and `shared/lib/api-client.ts` (fetch, problem+json parsing, request id capture, 401 redirect, 402 sets the read-only state); query cache cleared on logout and tenant switch. [SHL-06, SHL-09] Test: client unit tests per status class.
-- [ ] 1.97 i18n: `app/i18n.ts` (i18next), `locales/es-AR/{common,auth,errors}.json`, error-code to message mapping, `shared/lib/format.ts` (`Intl` es-AR, location time zone, money); ESLint rule against literal JSX strings in the web preset of `packages/config`. [SHL-05] Test: lint fixture with a literal string fails; formatter tests.
-- [ ] 1.98 Boot payload loader and theme injection before first paint (`index.html` inline script, `app/theme-boot.ts`, neutral fallback). [BRD-02] Test: Vitest checks CSS variables; Playwright asserts variables set at `DOMContentLoaded`.
-- [ ] 1.99 Lint rule forbidding `persistQueryClient` and storage of query data. [SHL-09] Test: lint fixture fails.
+- [x] 1.96 `apps/web/src/app/{router.tsx,providers.tsx}` (TanStack Router and Query) and `shared/lib/api-client.ts` (fetch, problem+json parsing, request id capture, 401 redirect, 402 sets the read-only state); query cache cleared on logout and tenant switch. [SHL-06, SHL-09] Test: client unit tests per status class.
+- [x] 1.97 i18n: `app/i18n.ts` (i18next), `locales/es-AR/{common,auth,errors}.json`, error-code to message mapping, `shared/lib/format.ts` (`Intl` es-AR, location time zone, money); ESLint rule against literal JSX strings in the web preset of `packages/config`. [SHL-05] Test: lint fixture with a literal string fails; formatter tests.
+- [x] 1.98 Boot payload loader and theme injection before first paint (`index.html` inline script, `app/theme-boot.ts`, neutral fallback). [BRD-02] Test: Vitest checks CSS variables; Playwright asserts variables set at `DOMContentLoaded`.
+- [x] 1.99 Lint rule forbidding `persistQueryClient` and storage of query data. [SHL-09] Test: lint fixture fails.
 
 ## S1.28 Shared UI and UX states (~400 lines)
 
 Depends: S1.27.
 
-- [ ] 1.100 Run `ui-ux-pro-max --design-system "health clinic SaaS scheduling" -p "Aillu"`, record the result in `docs/design-system.md`, define tokens in `apps/web/src/styles/tokens.css` (slate neutral, blue/teal primary, Inter with tabular numbers, radius up to 8 px, dark mode) and the "Aillu" demo preset in `shared/ui/themes/consultorio.ts`. [BRD-01, SHL-07] Test: contrast check of all token pairs.
-- [ ] 1.101 Add shadcn components into `apps/web/src/shared/ui` (Button, Input, Label, Dialog, Sheet, Select, Tabs, Toast, Table, Skeleton, Badge, Card, rhf Form wrappers). [SHL-07] Test: component smoke tests with axe.
-- [ ] 1.102 State components `EmptyState`, `ErrorState` (retry plus request id), `ForbiddenState`, `OfflineBanner`, `ReadOnlyBanner`, `TwoFactorRequiredState`, `LoadingSkeleton`, plus `StatusBadge` (icon and text) and `SafetyFlag`. [SHL-06, SHL-07] Test: Testing Library plus axe per component.
-- [ ] 1.103 Accessibility utilities: 44 px touch target class, focus ring tokens, `prefers-reduced-motion`. [SHL-07, SHL-02] Test: Playwright smoke at 360 px with axe.
+- [x] 1.100 Run `ui-ux-pro-max --design-system "health clinic SaaS scheduling" -p "Aillu"`, record the result in `docs/design-system.md`, define tokens in `apps/web/src/styles/tokens.css` (slate neutral, blue/teal primary, Inter with tabular numbers, radius up to 8 px, dark mode) and the "Aillu" demo preset in `shared/ui/themes/consultorio.ts`. [BRD-01, SHL-07] Test: contrast check of all token pairs.
+- [x] 1.101 Add shadcn components into `apps/web/src/shared/ui` (Button, Input, Label, Dialog, Sheet, Select, Tabs, Toast, Table, Skeleton, Badge, Card, rhf Form wrappers). [SHL-07] Test: component smoke tests with axe.
+- [x] 1.102 State components `EmptyState`, `ErrorState` (retry plus request id), `ForbiddenState`, `OfflineBanner`, `ReadOnlyBanner`, `TwoFactorRequiredState`, `LoadingSkeleton`, plus `StatusBadge` (icon and text) and `SafetyFlag`. [SHL-06, SHL-07] Test: Testing Library plus axe per component.
+- [x] 1.103 Accessibility utilities: 44 px touch target class, focus ring tokens, `prefers-reduced-motion`. [SHL-07, SHL-02] Test: Playwright smoke at 360 px with axe.
 
 ## S1.29 AppShell, navigation and guards (~400 lines)
 
 Depends: S1.28.
 
-- [ ] 1.104 `app/nav/nav-config.ts` derived from the permission set returned by `GET /auth/me` (professional, reception, owner/admin layouts from design section 8) and `app/guards.tsx` `RequirePermission`. [SHL-01, AUZ-02] Test: unit per role.
-- [ ] 1.105 `app/AppShell.tsx`: collapsible sidebar on desktop, bottom navigation with at most 5 items plus "More" at 360 px, header with tenant name and logo, user menu; scaffolds of the minimal `/portal` and `/book/{slug}` shells. [SHL-01, SHL-02] Test: Playwright nav items per role at 360 and 1280 px.
-- [ ] 1.106 Banner wiring (read-only, offline, 2FA enrollment required) and the `FirstRunSlot` component that renders nothing until Stage 2. [SHL-08, SHL-06] Test: each state renders on the matching signal.
+- [x] 1.104 `app/nav/nav-config.ts` derived from the permission set returned by `GET /auth/me` (professional, reception, owner/admin layouts from design section 8) and `app/guards.tsx` `RequirePermission`. [SHL-01, AUZ-02] Test: unit per role.
+- [x] 1.105 `app/AppShell.tsx`: collapsible sidebar on desktop, bottom navigation with at most 5 items plus "More" at 360 px, header with tenant name and logo, user menu; scaffolds of the minimal `/portal` and `/book/{slug}` shells. [SHL-01, SHL-02] Test: Playwright nav items per role at 360 and 1280 px.
+- [x] 1.106 Banner wiring (read-only, offline, 2FA enrollment required) and the `FirstRunSlot` component that renders nothing until Stage 2. [SHL-08, SHL-06] Test: each state renders on the matching signal.
 
 ## S1.30 PWA (~250 lines)
 
 Depends: S1.29.
 
-- [ ] 1.107 `vite.config.ts` PWA: precache the app shell only, `navigateFallback`, runtime `NetworkOnly` for `/api` and `/files`, manifest from the per-host endpoint, update prompt. [SHL-03, SHL-09] Test: unit check of the generated Workbox config.
-- [ ] 1.108 Playwright: manifest valid and service worker registered; offline shows the banner and never serves cached `/api` data. [SHL-03, SHL-09] Test: that spec.
-- [ ] 1.109 `lighthouserc.json` budget (mobile 4G profile, LCP under 2.5 s, performance at least 0.85) and a CI job. [SHL-04] Test: CI job fails when the budget is broken.
+- [x] 1.107 `vite.config.ts` PWA: precache the app shell only, `navigateFallback`, runtime `NetworkOnly` for `/api` and `/files`, manifest from the per-host endpoint, update prompt. [SHL-03, SHL-09] Test: unit check of the generated Workbox config.
+- [x] 1.108 Playwright: manifest valid and service worker registered; offline shows the banner and never serves cached `/api` data. [SHL-03, SHL-09] Test: that spec.
+- [x] 1.109 `lighthouserc.json` budget (mobile 4G profile, LCP under 2.5 s, performance at least 0.85) and a CI job. [SHL-04] Test: CI job fails when the budget is broken.
 
 ## S1.31 Auth screens (~400 lines)
 
 Depends: S1.29, S1.13, S1.14.
 
-- [ ] 1.110 `features/auth/*`: login, TOTP step, recovery-code entry, forgot and reset password, invitation accept with password-policy hints; generic error copy. [IDA-02, IDA-08, STF-01] Test: component tests.
-- [ ] 1.111 2FA enrollment (QR via `qrcode`, manual key, confirm code, recovery codes shown once with copy/download), grace banner, sessions page with revoke. [IDA-05, IDA-07] Test: component tests.
-- [ ] 1.112 Playwright journeys: login to 2FA to landing; generic lockout message; reset flow reading Mailpit's API; axe on each screen at 360 px. [IDA-02, IDA-04, IDA-08] Test: those specs.
+- [x] 1.110 `features/auth/*`: login, TOTP step, recovery-code entry, forgot and reset password, invitation accept with password-policy hints; generic error copy. [IDA-02, IDA-08, STF-01] Test: component tests.
+- [x] 1.111 2FA enrollment (QR via `qrcode`, manual key, confirm code, recovery codes shown once with copy/download), grace banner, sessions page with revoke. [IDA-05, IDA-07] Test: component tests.
+- [x] 1.112 Playwright journeys: login to 2FA to landing; generic lockout message; reset flow reading Mailpit's API; axe on each screen at 360 px. [IDA-02, IDA-04, IDA-08] Test: those specs.
 
 ## S1.32 Staff screens (~400 lines)
 
 Depends: S1.31, S1.19, S1.18.
 
-- [ ] 1.113 `features/staff/*`: directory, invite dialog (role ceiling), deactivate, location assignment, professional profile form (matricula with jurisdiction, specialties, "unverified" badge), grantable-permission editor (clinical toggles absent). [STF-01, STF-03, STF-04, STF-05, STF-07, AUZ-12] Test: component tests.
-- [ ] 1.114 `features/staff/components/WeeklyHours.tsx` per location (mobile friendly) and `features/settings/locations`. [STF-06, TEN-04] Test: validation messages in Spanish.
-- [ ] 1.115 Playwright: owner invites reception; reception opening the staff page sees the forbidden state. [STF-02] Test: that spec.
+- [x] 1.113 `features/staff/*`: directory, invite dialog (role ceiling), deactivate, location assignment, professional profile form (matricula with jurisdiction, specialties, "unverified" badge), grantable-permission editor (clinical toggles absent). [STF-01, STF-03, STF-04, STF-05, STF-07, AUZ-12] Test: component tests.
+- [x] 1.114 `features/staff/components/WeeklyHours.tsx` per location (mobile friendly) and `features/settings/locations`. [STF-06, TEN-04] Test: validation messages in Spanish.
+- [x] 1.115 Playwright: owner invites reception; reception opening the staff page sees the forbidden state. [STF-02] Test: that spec.
 
 ## S1.33 Patient screens (~400 lines)
 
 Depends: S1.31, S1.20, S1.21, S1.22.
 
-- [ ] 1.116 `features/patients/*`: `PatientPicker` (DNI or name), list, create form with shared Zod DNI/CUIT validation, duplicate-409 flow, deactivate, consent capture prompt. [PAT-01, PAT-02, PAT-04, PAT-08, PAT-10] Test: component tests.
-- [ ] 1.117 Patient detail: demographics, coverage, representative, rights requests, version history, `SafetyFlag` ("see professional" for non-professionals), assignment actions. [PAT-05, PAT-07, PAT-09, PAT-11, PAT-12, AUZ-10] Test: component tests.
-- [ ] 1.118 Anamnesis form (professional only). Test: Playwright, reception sees no anamnesis, professional does; axe. [PAT-06]
+- [x] 1.116 `features/patients/*`: `PatientPicker` (DNI or name), list, create form with shared Zod DNI/CUIT validation, duplicate-409 flow, deactivate, consent capture prompt. [PAT-01, PAT-02, PAT-04, PAT-08, PAT-10] Test: component tests.
+- [x] 1.117 Patient detail: demographics, coverage, representative, rights requests, version history, `SafetyFlag` ("see professional" for non-professionals), assignment actions. [PAT-05, PAT-07, PAT-09, PAT-11, PAT-12, AUZ-10] Test: component tests.
+- [x] 1.118 Anamnesis form (professional only). Test: Playwright, reception sees no anamnesis, professional does; axe. [PAT-06]
 
 ## S1.34 Audit and settings screens (~350 lines)
 
 Depends: S1.31, S1.23, S1.25, S1.18.
 
-- [ ] 1.119 `features/audit/*`: filterable event table, patient access report, export button. [AUD-06, AUD-07] Test: component tests.
-- [ ] 1.120 `features/settings/branding` (live contrast warning showing requested and effective colors, logo upload, preview) and `features/settings/security` (require 2FA, reception-metadata toggle, sharing toggle with explicit psychology confirmation). [BRD-01, BRD-03, BRD-05, AUZ-07, AUZ-11] Test: component tests.
-- [ ] 1.121 Playwright: a branding change applies after reload without flash; a second tenant keeps its own theme. [BRD-02] Test: that spec.
+- [x] 1.119 `features/audit/*`: filterable event table, patient access report, export button. [AUD-06, AUD-07] Test: component tests.
+- [x] 1.120 `features/settings/branding` (live contrast warning showing requested and effective colors, logo upload, preview) and `features/settings/security` (require 2FA, reception-metadata toggle, sharing toggle with explicit psychology confirmation). [BRD-01, BRD-03, BRD-05, AUZ-07, AUZ-11] Test: component tests.
+- [x] 1.121 Playwright: a branding change applies after reload without flash; a second tenant keeps its own theme. [BRD-02] Test: that spec.
 
 ## S1.35 Operator console UI (~300 lines)
 
 Depends: S1.26, S1.31.
 
-- [ ] 1.122 `features/operator/*` (platform host only): operator login with TOTP, tenant list, create-tenant form (owner email, demo toggle at creation only), demo reset button. [TEN-07, ONB-01, DEM-01] Test: Playwright creates a tenant and the owner invitation appears in Mailpit.
+- [x] 1.122 `features/operator/*` (platform host only): operator login with TOTP, tenant list, create-tenant form (owner email, demo toggle at creation only), demo reset button. [TEN-07, ONB-01, DEM-01] Test: Playwright creates a tenant and the owner invitation appears in Mailpit.
 
 ## S1.36 Demo tenant scaffold (~400 lines)
 
 Depends: S1.26, S1.19, S1.21.
 
-- [ ] 1.123 `db/seed/demo/` deterministic seed runner `seedDemoTenant(tx, tenantId, clock)` (seeded RNG, fixed faker seed): one user per role with role-labelled sign-in, several locations, multi-specialty professionals, reception, patients with coverage, the "Aillu" theme. [DEM-01, DEM-02, DEM-04, DEM-06] Test: two runs produce identical logical content.
-- [ ] 1.124 Migration with `demo_reset(tenant_id)` (`SECURITY DEFINER`, own role, raises unless `is_demo`) that removes demo rows including the demo audit chain; job `demo.reset` re-seeds; writes platform audit `demo.chain_reset` with the last sealed hash; demo credentials rotated on each reset. [DEM-05, DEM-06, DEM-07, TEN-10] Test: refuses a non-demo tenant; tenant roles cannot call it; real tenants' chain still verifies after a reset.
-- [ ] 1.125 `main/adapter-resolver.ts`: per-tenant adapter selection that throws when `tenant.is_demo` and the adapter is not a fake; registry of all ports (email, object storage, key management now). [DEM-03] Test: iterates every registered port.
-- [ ] 1.126 `apps/api/test/policy/no-delete.test.ts`: static scan failing on any `DELETE` or `.delete(` against tenant tables outside the 4 listed exceptions (allowlist file with justification). [TEN-10] Test: that file.
-- [ ] 1.127 Reset timing test (realistic dataset, budget 30 s in CI against the 60 s requirement) and a "module without seed data" gap check. [DEM-05, DEM-04] Test: that file.
+- [x] 1.123 `db/seed/demo/` deterministic seed runner `seedDemoTenant(tx, tenantId, clock)` (seeded RNG, fixed faker seed): one user per role with role-labelled sign-in, several locations, multi-specialty professionals, reception, patients with coverage, the "Aillu" theme. [DEM-01, DEM-02, DEM-04, DEM-06] Test: two runs produce identical logical content.
+- [x] 1.124 Migration with `demo_reset(tenant_id)` (`SECURITY DEFINER`, own role, raises unless `is_demo`) that removes demo rows including the demo audit chain; job `demo.reset` re-seeds (realized as the operator console's port and `pnpm demo:reset`, both run `resetDemoTenant`; a scheduled job needs an operator-role pool in the worker and is deferred to the deployment stage); writes platform audit `demo.chain_reset` with the last sealed hash; demo credentials rotated on each reset. [DEM-05, DEM-06, DEM-07, TEN-10] Test: refuses a non-demo tenant; tenant roles cannot call it; real tenants' chain still verifies after a reset.
+- [x] 1.125 `main/adapter-resolver.ts`: per-tenant adapter selection that throws when `tenant.is_demo` and the adapter is not a fake; registry of all ports (email, object storage, key management now). [DEM-03] Test: iterates every registered port.
+- [x] 1.126 `apps/api/test/policy/no-delete.test.ts`: static scan failing on any `DELETE` or `.delete(` against tenant tables outside the 4 listed exceptions (allowlist file with justification). [TEN-10] Test: that file.
+- [x] 1.127 Reset timing test (realistic dataset, budget 30 s in CI against the 60 s requirement) and a "module without seed data" gap check. [DEM-05, DEM-04] Test: that file.
 
 ## S1.37 Stage 1 gate (~200 lines)
 
 Depends: all S1 slices.
 
-- [ ] 1.128 `apps/web/e2e/stage1-demo.spec.ts`: two tenants with different branding, role-specific views, audit trail visible. [TEN-01, BRD-02] Test: that spec.
-- [ ] 1.129 `docs/security/asvs-l2-stage1.md` checklist with evidence links, then a fresh-context security review (`judgment-day`) of identity, authz, RLS, audit; fix findings before Stage 2. Test: review report attached to the PR.
-- [ ] 1.130 Re-run `sdd-init`; decide strict TDD for Stage 2 apply. Test: none.
+- [x] 1.128 `apps/web/e2e/stage1-demo.spec.ts`: two tenants with different branding, role-specific views, audit trail visible. [TEN-01, BRD-02] Test: that spec.
+- [x] 1.129 `docs/security/asvs-l2-stage1.md` checklist with evidence links, then a fresh-context security review (`judgment-day`) of identity, authz, RLS, audit; fix findings before Stage 2. Test: review report attached to the PR. (Done: a self-review recorded in the checklist, then the independent fresh-context review of the backend, whose ten findings are fixed or already satisfied, each with a test written first, see apply-progress batch 7 and the checklist section "Independent security review". Decision D19 is pending the owner's confirmation.)
+- [x] 1.130 Re-run `sdd-init`; decide strict TDD for Stage 2 apply. Test: none.
 
 ---
 

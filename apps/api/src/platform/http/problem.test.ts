@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import { buildServer } from '../../main/server.js';
 import { captureLogs } from '../../testing/log-capture.js';
+import { testTenancy } from '../../testing/tenancy.js';
 
 import { PROBLEM_CONTENT_TYPE, type ProblemBody } from './problem.js';
 
@@ -13,11 +14,12 @@ function serverWithFailingRoutes(logStream?: ReturnType<typeof captureLogs>['str
     logLevel: logStream ? 'info' : 'silent',
     ...(logStream ? { logStream } : {}),
     health: { checkDatabase: () => Promise.resolve({ ok: true }) },
+    ...testTenancy(),
   });
-  app.get('/boom', () => {
+  app.get('/boom', { config: { readOnly: 'read' } }, () => {
     throw new Error(LEAKY_MESSAGE);
   });
-  app.get('/conflict', () => {
+  app.get('/conflict', { config: { readOnly: 'read' } }, () => {
     throw Object.assign(new Error(LEAKY_MESSAGE), { statusCode: 409 });
   });
   return app;

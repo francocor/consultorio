@@ -3,10 +3,15 @@ import { parseEnv } from 'node:util';
 
 import { describe, expect, it } from 'vitest';
 
+import { omit } from '../testing/omit.js';
+
 import { ConfigError, ENV_VARIABLES, loadConfig } from './config.js';
 
 const validEnv = {
   DATABASE_URL: 'postgres://app_rw:placeholder@localhost:5432/app',
+  BASE_DOMAIN: 'localhost',
+  PLATFORM_HOST: 'platform.localhost',
+  KMS_LOCAL_KEK_BASE64: Buffer.alloc(32, 1).toString('base64'),
 };
 
 describe('loadConfig', () => {
@@ -28,6 +33,13 @@ describe('loadConfig', () => {
       ...validEnv,
       NODE_ENV: 'production',
       DEPLOYMENT_MODE: 'single',
+      SINGLE_TENANT_SLUG: 'centro',
+      PUBLIC_URL: 'https://agenda.centro.example',
+      KMS_PROVIDER: 'aws',
+      AWS_REGION: 'sa-east-1',
+      AWS_KMS_KEY_ID: 'alias/test',
+      SMTP_HOST: 'smtp.example.test',
+      SMTP_SECURITY: 'starttls',
       LOG_LEVEL: 'warn',
       PORT: '8080',
     });
@@ -41,8 +53,10 @@ describe('loadConfig', () => {
   });
 
   it('fails to start when DATABASE_URL is missing', () => {
-    expect(() => loadConfig({})).toThrow(ConfigError);
-    expect(() => loadConfig({})).toThrow(/DATABASE_URL/);
+    const rest = omit(validEnv, 'DATABASE_URL');
+
+    expect(() => loadConfig(rest)).toThrow(ConfigError);
+    expect(() => loadConfig(rest)).toThrow(/DATABASE_URL/);
   });
 
   it('fails on an unknown deployment mode', () => {
@@ -54,7 +68,7 @@ describe('loadConfig', () => {
 
     let message = '';
     try {
-      loadConfig({ DATABASE_URL: secretUrl, PORT: 'not-a-port-secret' });
+      loadConfig({ ...validEnv, DATABASE_URL: secretUrl, PORT: 'not-a-port-secret' });
     } catch (error) {
       message = error instanceof Error ? error.message : '';
     }

@@ -79,6 +79,32 @@ A user MUST NOT be able to grant themselves a role or permission, or change thei
 - WHEN the change is saved
 - THEN an audit entry records actor, subject, previous and new roles
 
+### Requirement: Only the owner brings professionals in (D19)
+
+Only an owner MUST be able to invite or create a user with the `professional` role, or grant the `professional` role to an existing member. An admin MUST be able to invite and assign reception and admin only. An admin MUST remain able to manage the professionals who already exist (edit their other roles, deactivate, reactivate), because the ceiling limits what a person can hand out, not whom they look after. This decision is pending confirmation by the owner of the product.
+
+#### Scenario: Admin invites a professional
+- GIVEN an admin
+- WHEN the admin invites a user with the professional role
+- THEN the system refuses and audits the denial
+- AND no email is sent
+
+#### Scenario: Admin grants the professional role to a colleague
+- GIVEN an admin and a reception user
+- WHEN the admin adds the professional role to that user
+- THEN the system refuses and audits the denial
+- AND the roles of the user do not change
+
+#### Scenario: Owner brings a professional in
+- GIVEN an owner
+- WHEN the owner invites a user with the professional role, or adds the role to a member
+- THEN the system accepts
+
+#### Scenario: Admin manages an existing professional
+- GIVEN a professional who already works in the organization
+- WHEN an admin deactivates the professional or changes their other roles
+- THEN the system accepts, and the professional role cannot be added back by the admin once removed
+
 ### Requirement: Clinical notes readable by health professionals only (hard rule)
 
 Only health professionals MUST be able to read the content of clinical notes. A non-clinical owner/admin MUST NEVER be able to read clinical note content. No organization setting, sharing option, grantable permission, support grant, role combination or operator action MAY grant this access. The rule MUST hold on every path, including search, export, report, print, preview, notification content, attachments and API responses.
@@ -246,6 +272,13 @@ An owner/admin or a user holding the patient-administration permission MUST be a
 - GIVEN professional B with no care relationship with patient P
 - WHEN B attempts to assign P to themselves
 - THEN the action is denied and audited
+
+#### Scenario: Assignment to a recently added professional is flagged (D19)
+- GIVEN professional A was added to the organization less than 7 days ago
+- WHEN a user who does not hold the professional role assigns a patient to A
+- THEN the assignment is created as usual
+- AND a distinct `assignment.review_flag` audit event is written next to `assignment.created`
+- AND no such event is written for a professional added 7 days ago or more, or when the actor is a professional
 
 #### Scenario: Assignment removed
 - GIVEN professional A treats patient P only through an explicit assignment

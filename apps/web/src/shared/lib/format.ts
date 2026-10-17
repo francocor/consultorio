@@ -1,0 +1,134 @@
+/**
+ * Locale-aware formatting for the whole app. Everything goes through `Intl` with `es-AR`, and
+ * dates and times are shown in the time zone of the location (never the browser's), so a
+ * professional travelling or a misconfigured device does not move an appointment.
+ */
+
+export const LOCALE = 'es-AR';
+export const DEFAULT_TIME_ZONE = 'America/Argentina/Buenos_Aires';
+
+export interface DateFormatOptions {
+  timeZone?: string;
+}
+
+const MISSING = '-';
+
+function toDate(value: string | Date | null | undefined): Date | null {
+  if (value === null || value === undefined) return null;
+  const date = value instanceof Date ? value : new Date(value);
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
+/** A date-only value (a birth date) is a calendar day, not an instant: it must not shift by zone. */
+function toCalendarDay(value: string | null | undefined): Date | null {
+  if (value === null || value === undefined) return null;
+  const match = /^(\d{4})-(\d{2})-(\d{2})/.exec(value);
+  if (!match) return null;
+  const date = new Date(Date.UTC(Number(match[1]), Number(match[2]) - 1, Number(match[3])));
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
+function dateFormatter(options: Intl.DateTimeFormatOptions, zone: string | undefined) {
+  return new Intl.DateTimeFormat(LOCALE, { timeZone: zone ?? DEFAULT_TIME_ZONE, ...options });
+}
+
+/** `04/03/2026` */
+export function formatDate(
+  value: string | Date | null | undefined,
+  options: DateFormatOptions = {},
+): string {
+  const date = toDate(value);
+  return date
+    ? dateFormatter({ day: '2-digit', month: '2-digit', year: 'numeric' }, options.timeZone).format(
+        date,
+      )
+    : MISSING;
+}
+
+/** `23:30` (24-hour clock) */
+export function formatTime(
+  value: string | Date | null | undefined,
+  options: DateFormatOptions = {},
+): string {
+  const date = toDate(value);
+  return date
+    ? dateFormatter(
+        { hour: '2-digit', minute: '2-digit', hourCycle: 'h23' },
+        options.timeZone,
+      ).format(date)
+    : MISSING;
+}
+
+/** `04/03/2026, 23:30` */
+export function formatDateTime(
+  value: string | Date | null | undefined,
+  options: DateFormatOptions = {},
+): string {
+  const date = toDate(value);
+  return date
+    ? dateFormatter(
+        {
+          day: '2-digit',
+          month: '2-digit',
+          year: 'numeric',
+          hour: '2-digit',
+          minute: '2-digit',
+          hourCycle: 'h23',
+        },
+        options.timeZone,
+      ).format(date)
+    : MISSING;
+}
+
+/** A birth date or another calendar day, shown without time zone conversion. */
+export function formatCalendarDay(value: string | null | undefined): string {
+  const date = toCalendarDay(value);
+  return date
+    ? new Intl.DateTimeFormat(LOCALE, {
+        timeZone: 'UTC',
+        day: '2-digit',
+        month: '2-digit',
+        year: 'numeric',
+      }).format(date)
+    : MISSING;
+}
+
+/** `$ 1.234,50` */
+export function formatMoney(amount: number, currency = 'ARS'): string {
+  return new Intl.NumberFormat(LOCALE, { style: 'currency', currency }).format(amount);
+}
+
+export function formatNumber(value: number): string {
+  return new Intl.NumberFormat(LOCALE).format(value);
+}
+
+export type DocumentKind = 'dni' | 'passport' | 'cuit';
+
+/** Groups an identity document the way people write it: `12.345.678`, `20-12345678-6`. */
+export function formatDocument(kind: DocumentKind, value: string): string {
+  if (kind === 'passport') return value.toUpperCase();
+  const digits = value.replace(/\D/g, '');
+  if (kind === 'cuit') {
+    return digits.length === 11
+      ? `${digits.slice(0, 2)}-${digits.slice(2, 10)}-${digits.slice(10)}`
+      : digits;
+  }
+  return digits.replace(/\B(?=(\d{3})+(?!\d))/g, '.');
+}
+
+/** `36 años`, or `3 meses` for a child under one year. Empty when the birth date is unknown. */
+export function formatAge(birthDate: string | null | undefined, now: Date = new Date()): string {
+  const born = toCalendarDay(birthDate);
+  if (!born) return '';
+  let months =
+    (now.getUTCFullYear() - born.getUTCFullYear()) * 12 + (now.getUTCMonth() - born.getUTCMonth());
+  if (now.getUTCDate() < born.getUTCDate()) months -= 1;
+  if (months < 0) return '';
+  const unit = months < 12 ? 'month' : 'year';
+  const value = months < 12 ? months : Math.floor(months / 12);
+  return new Intl.NumberFormat(LOCALE, {
+    style: 'unit',
+    unit,
+    unitDisplay: 'long',
+  }).format(value);
+}

@@ -8,7 +8,7 @@ Users, professional profiles, matricula, specialties, locations and working hour
 
 ### Requirement: Staff invitation and lifecycle
 
-An owner/admin MUST be able to invite staff by email, assign roles, and deactivate or reactivate staff. Invitations MUST be delivered by email only, be single-use and expiring. Reception and other non-professional staff MUST be assigned to one or more locations (membership, see `authorization`). Staff MUST NOT be hard-deleted; deactivated staff MUST keep their historical records and authorship. Seats for reception and admin are unlimited.
+An owner/admin MUST be able to invite staff by email, assign roles, and deactivate or reactivate staff. Only the owner MAY invite a user with the professional role (D19); an admin invites reception and admin only. Invitations MUST be delivered by email only, be single-use and expiring. Reception and other non-professional staff MUST be assigned to one or more locations (membership, see `authorization`). Staff MUST NOT be hard-deleted; deactivated staff MUST keep their historical records and authorship. Seats for reception and admin are unlimited.
 
 #### Scenario: Invite and accept
 - GIVEN an owner invites a reception user
@@ -26,6 +26,18 @@ An owner/admin MUST be able to invite staff by email, assign roles, and deactiva
 - THEN past entries still show that professional as author
 - AND the professional can no longer sign in
 
+#### Scenario: Only the owner invites a professional (D19)
+- GIVEN an admin and an owner
+- WHEN the admin invites a user with the professional role
+- THEN the system refuses and audits the denial
+- AND the same invitation made by the owner is accepted
+- AND an admin can still invite reception and admin users
+
+#### Scenario: Admin deactivates a departing professional
+- GIVEN a professional who is leaving the organization
+- WHEN an admin deactivates the professional
+- THEN the system accepts, because deactivation is management of an existing member and not a grant of a role
+
 #### Scenario: Cross-tenant invitation
 - GIVEN an email already belongs to a user in organization 2
 - WHEN organization 1 invites the same email
@@ -33,7 +45,7 @@ An owner/admin MUST be able to invite staff by email, assign roles, and deactiva
 
 ### Requirement: Only authorized users manage staff
 
-Only owner/admin MAY create, edit, deactivate staff or assign roles. A user MAY edit their own non-privileged profile fields (name, contact, password), but MUST NOT change their own roles, organization, granted permissions, matricula verification status or active state.
+Only owner/admin MAY create, edit, deactivate staff or assign roles, except that only the owner MAY invite or create a user with the professional role or add the professional role to a member (D19). A user MAY edit their own non-privileged profile fields (name, contact, password), but MUST NOT change their own roles, organization, granted permissions, matricula verification status or active state.
 
 #### Scenario: Professional edits own role
 - GIVEN a professional

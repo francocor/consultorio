@@ -8,6 +8,160 @@
       "when": 1792105438731,
       "tag": "0000_roles_and_extensions",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1792117688815,
+      "tag": "0001_platform_catalogs",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1792117924993,
+      "tag": "0002_tenancy",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1792118369482,
+      "tag": "0003_host_lookup",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1792118990823,
+      "tag": "0004_audit",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1792119462059,
+      "tag": "0005_jobs_and_platform_scope",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1792120221579,
+      "tag": "0006_tenant_key",
+      "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1792121922039,
+      "tag": "0007_identity",
+      "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1792122850250,
+      "tag": "0008_session_revocation",
+      "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1792123561989,
+      "tag": "0009_action_token",
+      "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1792123960083,
+      "tag": "0010_totp_pending",
+      "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1792126162016,
+      "tag": "0011_care",
+      "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1792127345949,
+      "tag": "0012_access",
+      "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "7",
+      "when": 1792128508420,
+      "tag": "0013_staff",
+      "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "7",
+      "when": 1792129681029,
+      "tag": "0014_patients",
+      "breakpoints": true
+    },
+    {
+      "idx": 15,
+      "version": "7",
+      "when": 1792130405491,
+      "tag": "0015_coverage_and_privacy",
+      "breakpoints": true
+    },
+    {
+      "idx": 16,
+      "version": "7",
+      "when": 1792131074004,
+      "tag": "0016_anamnesis",
+      "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "7",
+      "when": 1792133854625,
+      "tag": "0017_operator",
+      "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "7",
+      "when": 1792185647621,
+      "tag": "0018_demo_reset",
+      "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "7",
+      "when": 1792192850337,
+      "tag": "0019_definer_privileges",
+      "breakpoints": true
+    },
+    {
+      "idx": 20,
+      "version": "7",
+      "when": 1792193277341,
+      "tag": "0020_audit_integrity",
+      "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "7",
+      "when": 1792193916209,
+      "tag": "0021_operator_least_privilege",
+      "breakpoints": true
+    },
+    {
+      "idx": 22,
+      "version": "7",
+      "when": 1792196995807,
+      "tag": "0022_definer_pg_temp",
+      "breakpoints": true
     }
   ]
 }

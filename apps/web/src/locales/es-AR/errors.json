@@ -1,0 +1,22 @@
+{
+  "bad_request": "La solicitud no es válida. Revise los datos e intente nuevamente.",
+  "validation_failed": "Algunos datos no son válidos. Revise los campos marcados.",
+  "unauthenticated": "Su sesión no está iniciada o ya venció. Inicie sesión nuevamente.",
+  "tenant_read_only": "La organización está en modo de solo lectura. Puede consultar la información, pero no modificarla.",
+  "forbidden": "No tiene permiso para realizar esta acción.",
+  "two_factor_required": "Esta acción requiere la verificación en dos pasos.",
+  "two_factor_enrollment_required": "Active la verificación en dos pasos para continuar.",
+  "support_grant_required": "No hay un acceso de soporte vigente para esta organización.",
+  "not_found": "No encontramos lo que busca. Puede que ya no exista o que no esté disponible para usted.",
+  "conflict": "Esta acción entra en conflicto con el estado actual. Actualice la página e intente nuevamente.",
+  "demo_tenant_required": "Esta acción solo está disponible en organizaciones de demostración.",
+  "stale_revision": "Otra persona modificó este registro. Actualice para ver la versión más reciente.",
+  "unsupported_country": "El país de esta organización todavía no es compatible.",
+  "rate_limited": "Hubo demasiados intentos. Espere un momento e intente nuevamente.",
+  "internal_error": "Ocurrió un problema de nuestro lado. Intente nuevamente en unos minutos.",
+  "service_unavailable": "Este servicio no está disponible en este momento.",
+  "field_invalid": "Revise este dato.",
+  "network": "No pudimos conectarnos. Revise su conexión a internet e intente nuevamente.",
+  "unexpected_response": "Recibimos una respuesta inesperada. Intente nuevamente.",
+  "request_id": "Código de referencia: {{id}}"
+}

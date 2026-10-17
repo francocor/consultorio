@@ -1,0 +1,99 @@
+/*
+ * Design tokens (see docs/design-system.md).
+ *
+ * Semantic variables in the shadcn convention. Components never use a raw color: they read these.
+ * A tenant overrides only --primary, --primary-foreground, --ring, --radius and --font-heading
+ * (inline on <html>, from the boot payload). Every foreground/background pair below is checked by
+ * tokens.test.ts against WCAG 2.2 AA (4.5:1 for text, 3:1 for the edges of controls).
+ */
+:root {
+  /* Surfaces: a calm clinical neutral (slate), borders over shadows. */
+  --background: #f8fafc;
+  --foreground: #0f172a;
+  --card: #ffffff;
+  --card-foreground: #0f172a;
+  --popover: #ffffff;
+  --popover-foreground: #0f172a;
+  --muted: #f1f5f9;
+  --muted-foreground: #475569;
+  --secondary: #e8eef5;
+  --secondary-foreground: #0f172a;
+  --accent: #e6f4f1;
+  --accent-foreground: #134e4a;
+  --border: #dbe3ec;
+  /* The edge of an input must reach 3:1 against the surface (WCAG 1.4.11). */
+  --input: #75859b;
+
+  /* Brand: teal by default, replaced per tenant. */
+  --primary: #0f766e;
+  --primary-foreground: #ffffff;
+  --primary-ink: var(--primary);
+  --ring: var(--primary);
+
+  /* Status: always paired with an icon and text, never color alone. */
+  --destructive: #b91c1c;
+  --destructive-foreground: #ffffff;
+  --success: #15803d;
+  --success-foreground: #ffffff;
+  --success-soft: #e7f6ec;
+  --success-soft-foreground: #14532d;
+  --warning: #b45309;
+  --warning-foreground: #ffffff;
+  --warning-soft: #fef3c7;
+  --warning-soft-foreground: #78350f;
+  --info: #1d4ed8;
+  --info-foreground: #ffffff;
+  --info-soft: #e3ecfd;
+  --info-soft-foreground: #1e3a8a;
+  --danger-soft: #fde8e8;
+  --danger-soft-foreground: #7f1d1d;
+
+  /* Navigation. */
+  --sidebar: #ffffff;
+  --sidebar-foreground: #1e293b;
+  --sidebar-border: #dbe3ec;
+
+  --radius: 0.375rem;
+  --font-heading: 'Inter Variable', ui-sans-serif, system-ui, sans-serif;
+}
+
+.dark {
+  --background: #0b1220;
+  --foreground: #e2e8f0;
+  --card: #111a2c;
+  --card-foreground: #e2e8f0;
+  --popover: #111a2c;
+  --popover-foreground: #e2e8f0;
+  --muted: #17223a;
+  --muted-foreground: #9fb0c6;
+  --secondary: #1b2740;
+  --secondary-foreground: #e2e8f0;
+  --accent: #12332f;
+  --accent-foreground: #b6ece4;
+  --border: #243350;
+  --input: #6f8098;
+
+  /* On a dark surface the brand color is used as ink in a lighter mix so text stays readable. */
+  --primary-ink: color-mix(in oklab, var(--primary) 45%, white);
+
+  --destructive: #dc2626;
+  --destructive-foreground: #ffffff;
+  --success: #16a34a;
+  --success-foreground: #04230f;
+  --success-soft: #0f2a1b;
+  --success-soft-foreground: #bbf7d0;
+  --warning: #d97706;
+  --warning-foreground: #1c0f00;
+  --warning-soft: #33250a;
+  --warning-soft-foreground: #fde68a;
+  --info: #3b82f6;
+  --info-foreground: #04122e;
+  --info-soft: #11224a;
+  --info-soft-foreground: #bfdbfe;
+  --danger-soft: #3a1414;
+  --danger-soft-foreground: #fecaca;
+
+  --sidebar: #0e1626;
+  --sidebar-foreground: #cbd5e1;
+  --sidebar-border: #1d2a44;
+}

@@ -5,6 +5,7 @@ import { describe, expect, it } from 'vitest';
 
 import { buildServer } from '../../main/server.js';
 import { captureLogs } from '../../testing/log-capture.js';
+import { testTenancy } from '../../testing/tenancy.js';
 import type { DbCheckResult } from '../db/probe.js';
 
 function testServer(checkDatabase: () => Promise<DbCheckResult>, logStream?: Writable) {
@@ -12,6 +13,7 @@ function testServer(checkDatabase: () => Promise<DbCheckResult>, logStream?: Wri
     logLevel: logStream ? 'info' : 'silent',
     ...(logStream ? { logStream } : {}),
     health: { checkDatabase },
+    ...testTenancy(),
   });
 }
 
