@@ -175,7 +175,7 @@ export function ChartTab({ patientId, canWrite, onOpenAnamnesis }: ChartTabProps
           </p>
           <p className="text-sm">
             {anamnesis ? (
-              <Button variant="link" onClick={onOpenAnamnesis}>
+              <Button variant="outline" size="sm" onClick={onOpenAnamnesis}>
                 {t('clinical:chart.anamnesis.link', { version: anamnesis.version })}
               </Button>
             ) : (

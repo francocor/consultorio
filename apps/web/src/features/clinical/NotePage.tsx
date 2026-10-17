@@ -89,7 +89,7 @@ function NoteScreen({ noteId }: { noteId: string }) {
         to="/patients/$patientId"
         params={{ patientId: current.patientId }}
         search={{ tab: 'chart' }}
-        className={cn(buttonVariants({ variant: 'link' }), 'mb-3 gap-1')}
+        className={cn(buttonVariants({ variant: 'ghost', size: 'sm' }), 'mb-3 -ml-3 gap-1')}
       >
         <ArrowLeft aria-hidden="true" />
         {t('clinical:editor.back')}
