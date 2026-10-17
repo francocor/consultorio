@@ -221,7 +221,7 @@ describe('the WhatsApp loop on the local simulator', () => {
         message.templateKey === 'optout_ack',
     );
     expect(acknowledgments).toHaveLength(1);
-    expect(acknowledgments[0]?.body).toContain('no le enviaremos más mensajes por WhatsApp');
+    expect(acknowledgments[0]?.body).toContain('no le enviará más mensajes por WhatsApp');
   });
 
   it('fails the message from the console and the reminder falls back to email', async () => {

@@ -386,6 +386,13 @@
       "when": 1792269103791,
       "tag": "0391_video_link_followup",
       "breakpoints": true
+    },
+    {
+      "idx": 55,
+      "version": "7",
+      "when": 1792279787360,
+      "tag": "0392_message_lookup_definer",
+      "breakpoints": true
     }
   ]
 }

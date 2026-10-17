@@ -41,10 +41,16 @@ export type WhatsAppEvent =
   | {
       kind: 'inbound';
       eventId: string;
-      /** The sender's number in E.164 form. */
+      /** The sender's number: E.164, or the digits the provider sends without the "+". */
       from: string;
       text: string;
       occurredAt: Date;
+      /**
+       * The provider id of the message the patient replied to, when the reply carries it (the
+       * "reply context" of the provider). It is the one thing that says WHICH organization a reply
+       * is about when several have written to the number.
+       */
+      contextMessageId?: string;
     };
 
 export type WebhookHeaders = Readonly<Record<string, string | string[] | undefined>>;

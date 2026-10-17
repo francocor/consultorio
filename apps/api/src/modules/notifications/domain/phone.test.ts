@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { normalizeWhatsAppNumber } from './phone.js';
+import { normalizeInboundNumber, normalizeWhatsAppNumber } from './phone.js';
 
 describe('normalizeWhatsAppNumber', () => {
   it.each([
@@ -36,5 +36,26 @@ describe('normalizeWhatsAppNumber', () => {
 
   it('keeps the reserved test prefix, which the local simulator treats as not on WhatsApp', () => {
     expect(normalizeWhatsAppNumber('+999 100 2000')).toBe('+9991002000');
+  });
+});
+
+describe('normalizeInboundNumber', () => {
+  it.each([
+    ['5491144445555', '+5491144445555'],
+    ['541144445555', '+5491144445555'],
+    ['+5491144445555', '+5491144445555'],
+    // The provider sends the number as digits with the country code and no plus.
+    ['14155550100', '+14155550100'],
+    ['34612345678', '+34612345678'],
+    ['598 99 123 456', '+59899123456'],
+    ['59899123456', '+59899123456'],
+    // A foreign number that looks like an Argentine national form is still foreign.
+    ['3225551234', '+3225551234'],
+  ])('reads %s as %s', (raw, expected) => {
+    expect(normalizeInboundNumber(raw)).toBe(expected);
+  });
+
+  it.each(['', 'abc', '12345', '1234567890123456'])('gives up on %j', (raw) => {
+    expect(normalizeInboundNumber(raw)).toBeNull();
   });
 });

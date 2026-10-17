@@ -53,3 +53,20 @@ export function normalizeWhatsAppNumber(raw: string): string | null {
   const national = withoutMobilePrefix(digits.replace(/^0/, ''));
   return NATIONAL_NUMBER.test(national) ? `+549${national}` : null;
 }
+
+/**
+ * The sender of a reply, as the provider gives it: always the full international number, written
+ * as digits with no "+" (`14155550100`), so a number from any country is a number. Argentine forms
+ * (`541144445555`, which lacks the mobile 9) are completed by `normalizeWhatsAppNumber`; a number
+ * that is not Argentine is never read as an Argentine national form, which would invent a number
+ * nobody has. Null only when the text cannot be a phone number at all.
+ */
+export function normalizeInboundNumber(raw: string): string | null {
+  const digits = digitsOf(raw);
+  if (digits === '') return null;
+  if (raw.trim().startsWith('+') || digits.startsWith(COUNTRY_CODE)) {
+    const known = normalizeWhatsAppNumber(raw);
+    if (known !== null) return known;
+  }
+  return international(digits);
+}

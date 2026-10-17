@@ -42,6 +42,7 @@ const InboundEvent = z.object({
   from: z.string().min(1),
   text: z.string(),
   occurredAt: z.coerce.date(),
+  contextMessageId: z.string().min(1).optional(),
 });
 
 function headerValue(headers: WebhookHeaders, name: string): string | undefined {
@@ -92,7 +93,9 @@ export function createFakeWhatsAppSender(options: { appSecret?: string } = {}): 
           return [errorCode === undefined ? rest : { ...rest, errorCode }];
         }
         const inbound = InboundEvent.safeParse(candidate);
-        return inbound.success ? [inbound.data] : [];
+        if (!inbound.success) return [];
+        const { contextMessageId, ...rest } = inbound.data;
+        return [contextMessageId === undefined ? rest : { ...rest, contextMessageId }];
       });
     },
     clear() {
