@@ -132,3 +132,36 @@ export function formatAge(birthDate: string | null | undefined, now: Date = new 
     unitDisplay: 'long',
   }).format(value);
 }
+
+function dayParts(date: string, options: Intl.DateTimeFormatOptions): Record<string, string> {
+  const day = toCalendarDay(date);
+  if (!day) return {};
+  const parts = new Intl.DateTimeFormat(LOCALE, { timeZone: 'UTC', ...options }).formatToParts(day);
+  return Object.fromEntries(parts.map((part) => [part.type, part.value]));
+}
+
+/** `sábado 17 de octubre` for a calendar day (`YYYY-MM-DD`). */
+export function formatDayLong(date: string): string {
+  const parts = dayParts(date, { weekday: 'long', day: 'numeric', month: 'long' });
+  return parts['weekday']
+    ? `${parts['weekday']} ${parts['day'] ?? ''} de ${parts['month'] ?? ''}`
+    : MISSING;
+}
+
+/** `17 oct` */
+export function formatDayShort(date: string): string {
+  const parts = dayParts(date, { day: 'numeric', month: 'short' });
+  return parts['day'] ? `${parts['day']} ${(parts['month'] ?? '').replace('.', '')}` : MISSING;
+}
+
+/** `sáb` */
+export function formatWeekdayShort(date: string): string {
+  const parts = dayParts(date, { weekday: 'short' });
+  return (parts['weekday'] ?? MISSING).replace('.', '');
+}
+
+/** `octubre de 2026` */
+export function formatMonthYear(date: string): string {
+  const parts = dayParts(date, { month: 'long', year: 'numeric' });
+  return parts['month'] ? `${parts['month']} de ${parts['year'] ?? ''}` : MISSING;
+}

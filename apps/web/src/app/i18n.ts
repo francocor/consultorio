@@ -8,6 +8,7 @@ import common from '../locales/es-AR/common.json';
 import errors from '../locales/es-AR/errors.json';
 import operator from '../locales/es-AR/operator.json';
 import patients from '../locales/es-AR/patients.json';
+import scheduling from '../locales/es-AR/scheduling.json';
 import settings from '../locales/es-AR/settings.json';
 import shell from '../locales/es-AR/shell.json';
 import staff from '../locales/es-AR/staff.json';
@@ -33,6 +34,7 @@ const RESOURCES = {
   errors,
   operator,
   patients,
+  scheduling,
   settings,
   shell,
   staff,
