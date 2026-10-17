@@ -20,6 +20,7 @@ import type { ExportRegistry } from '../tenancy/index.js';
 import { createVideoLinkCreateJob } from './application/create-room-job.js';
 import { exportTeleconsultation } from './application/export-contributor.js';
 import { createSessionSubscriber } from './application/video-sessions.js';
+import { publicJoinRoutes } from './http/public-join.js';
 
 export type { VideoLinkProvider, VideoRoom } from './application/ports.js';
 export { createVideoLinkCreateJob };
@@ -57,5 +58,17 @@ export function createTeleconsultation(options: TeleconsultationOptions): Teleco
     createSessionSubscriber({ jobs: options.jobs, adapters: options.adapters, tokens, clock }),
   );
 
-  return { options, routes: () => undefined };
+  const publicJoin = publicJoinRoutes({
+    withTenant: options.withTenant,
+    tokens,
+    adapters: options.adapters,
+    clock,
+  });
+
+  return {
+    options,
+    routes: (app) => {
+      publicJoin(app);
+    },
+  };
 }

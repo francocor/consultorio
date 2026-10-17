@@ -152,3 +152,15 @@ export async function writeVideoRoom(
 ): Promise<void> {
   await tx.update(appointment).set({ videoRoom: room }).where(eq(appointment.id, appointmentId));
 }
+
+/** The name and the color the pages shown to patients carry. */
+export async function readBrand(tx: Tx): Promise<{ organization: string; accent: string }> {
+  const [row] = await tx.select({ slug: tenant.slug, theme: tenant.theme }).from(tenant);
+  if (!row) return { organization: '', accent: '' };
+  const name = row.theme['displayName'];
+  const accent = row.theme['primaryEffective'];
+  return {
+    organization: typeof name === 'string' && name.trim() !== '' ? name.trim() : row.slug,
+    accent: typeof accent === 'string' ? accent : '',
+  };
+}

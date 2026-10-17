@@ -59,6 +59,7 @@ export interface VideoWorld extends SchedulingHttpWorld {
   virtual: string;
   /** The clock of the video module (the join window), apart from the scheduling clock. */
   setVideoNow(date: Date): void;
+  videoNow(): Date;
   /** Books a virtual appointment on the Monday `weeksAfter` weeks after 2031-05-12. */
   bookVirtual(weeksAfter: number, time: string): Promise<AppointmentDto>;
   /** Runs the `video.link.create` jobs that are waiting. */
@@ -138,6 +139,7 @@ export async function createVideoWorld(
     setVideoNow: (date: Date) => {
       videoNow = date;
     },
+    videoNow: () => videoNow,
     bookVirtual: (weeksAfter: number, time: string) =>
       base.book(weeksAfter, time, { appointmentTypeId: virtual }),
     runVideoJobs: () => runPending(runtime.db, jobs, [jobDefinition]),
