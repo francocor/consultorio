@@ -27,8 +27,7 @@ export interface WaitlistOfferDelivered {
  * `none` when no channel is left. Runs inside the transaction of the `waitlist.offer` job.
  *
  * This is the port to the notifications module. The module's own `deliverWaitlistOffer` is the
- * implementation; `main/wiring/waitlist.ts` is the one place that connects them. Until it is
- * connected the wiring uses a plain email stand-in (`createEmailOfferDelivery`).
+ * implementation; `main/wiring/waitlist.ts` is the one place that connects them.
  */
 export type DeliverWaitlistOffer = (
   tx: Tx,

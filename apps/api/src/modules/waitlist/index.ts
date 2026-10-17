@@ -37,7 +37,6 @@ export type {
   WaitlistOfferDelivered,
   WaitlistOfferDelivery,
 } from './application/ports.js';
-export { createEmailOfferDelivery } from './application/offer-email.js';
 export { WAITLIST_EXPIRE_JOB, WAITLIST_OFFER_JOB } from './application/offers.js';
 export { WAITLIST_MATCH_JOB } from './application/trigger.js';
 

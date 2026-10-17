@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { createFakeEmailSender } from '../../adapters/fake-email/index.js';
+import { createVideoJoinRegistry } from '../../modules/notifications/index.js';
 import {
   WAITLIST_EXPIRE_JOB,
   WAITLIST_MATCH_JOB,
@@ -25,6 +26,7 @@ function contribution() {
     config: loadConfig(env),
     adapters: { forTenant: () => undefined },
     email: createFakeEmailSender(),
+    videoJoin: createVideoJoinRegistry(),
   });
 }
 

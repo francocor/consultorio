@@ -1,11 +1,9 @@
 import { eq, sql } from 'drizzle-orm';
 import { afterAll, beforeAll, beforeEach, describe, expect, inject, it } from 'vitest';
 
-import { createFakeEmailSender } from '../../src/adapters/fake-email/index.js';
 import { tenant } from '../../src/db/schema/tenant.js';
 import {
   closeEntriesOfOptedOutPatient,
-  createEmailOfferDelivery,
   waitlistOutcomes,
 } from '../../src/modules/waitlist/index.js';
 import { createRuntimeDb, type DbHandle } from '../../src/platform/db/pool.js';
@@ -137,90 +135,6 @@ describe('a patient who asks to stop', () => {
     expect(closed).toBe(0);
     expect(await world.entryRow(stays?.id ?? '')).toMatchObject({ status: 'active' });
     expect(await world.entryRow(gone.id)).toMatchObject({ close_reason: 'cancelled' });
-  });
-});
-
-describe('the channel an offer may use', () => {
-  const email = createFakeEmailSender();
-  const deliver = createEmailOfferDelivery({ email });
-
-  async function offerFor(patientId: string) {
-    const weeks = nextWeek();
-    await world.advance(MINUTE);
-    const entry = await world.join(patientId);
-    await world.cancel(await world.book(weeks, '10:00'));
-    await world.run('waitlist.match');
-    const [offer] = await world.offersOf(entry.id);
-    return {
-      offerId: String(offer?.['id']),
-      patientId,
-      professionalId: String(offer?.['professional_id']),
-      locationId: String(offer?.['location_id']),
-      startsAt: new Date(offer?.['starts_at'] as string),
-      endsAt: new Date(offer?.['ends_at'] as string),
-      expiresAt: new Date(offer?.['expires_at'] as string),
-      offerTokenUrl: `https://waitlist-fairness.consultorio.test/public/t/${'a'.repeat(43)}`,
-    };
-  }
-
-  it('sends the offer by email to the address on file, with the link, and says which channel it used', async () => {
-    email.clear();
-    const input = await offerFor(await world.patient());
-
-    const result = await world.inTenant((tx) => deliver(tx, input));
-
-    expect(result.channel).toBe('email');
-    expect(email.sent).toHaveLength(1);
-    const message = email.sent[0];
-    expect(message?.to).toMatch(/^espera\d+@example\.test$/);
-    expect(message?.text).toContain(input.offerTokenUrl);
-    expect(message?.text).toContain('Centro');
-    expect(message?.tenant).toEqual({ id: world.tenant.id, isDemo: false });
-  });
-
-  it('skips a channel the patient opted out of: nothing is sent', async () => {
-    email.clear();
-    const patientId = await world.patient();
-    const input = await offerFor(patientId);
-    await world.inTenant((tx) =>
-      tx.execute(
-        sql`INSERT INTO channel_preference (tenant_id, patient_id, channel, state, source)
-              VALUES (${world.tenant.id}, ${patientId}, 'email', 'opted_out', 'email_link')`,
-      ),
-    );
-
-    const result = await world.inTenant((tx) => deliver(tx, input));
-
-    expect(result).toEqual({ channel: 'none', messageId: null });
-    expect(email.sent).toEqual([]);
-  });
-
-  it('cannot reach a patient with no address', async () => {
-    email.clear();
-    const input = await offerFor(await world.patient({ email: false }));
-
-    const result = await world.inTenant((tx) => deliver(tx, input));
-
-    expect(result.channel).toBe('none');
-    expect(email.sent).toEqual([]);
-  });
-
-  it('names the professional only when the organization does', async () => {
-    email.clear();
-    const input = await offerFor(await world.patient());
-    await world.inTenant((tx) =>
-      tx.execute(
-        sql`UPDATE membership SET display_name = 'Dra. Ríos' WHERE id = ${world.doctor.membershipId}`,
-      ),
-    );
-
-    await world.inTenant((tx) => deliver(tx, input));
-    await world.api.patch('/settings', world.owner, { notifications: { hideProfessional: true } });
-    await world.inTenant((tx) => deliver(tx, input));
-    await world.api.patch('/settings', world.owner, { notifications: { hideProfessional: false } });
-
-    expect(email.sent[0]?.text).toContain('Dra. Ríos');
-    expect(email.sent[1]?.text).not.toContain('Dra. Ríos');
   });
 });
 

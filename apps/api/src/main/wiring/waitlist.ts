@@ -1,9 +1,9 @@
 import { DEFAULT_WAITLIST_SETTINGS, WaitlistSettings } from '@consultorio/contracts';
 
+import { deliverWaitlistOffer, offerQuietHoursEnd } from '../../modules/notifications/index.js';
 import { createSchedulingPorts } from '../../modules/scheduling/index.js';
 import {
   WAITLIST_EXPIRE_JOB,
-  createEmailOfferDelivery,
   createWaitlist,
   createWaitlistJobs,
 } from '../../modules/waitlist/index.js';
@@ -11,7 +11,6 @@ import { createTenantKeys } from '../../platform/crypto/tenant-keys.js';
 import { createPublicOrigins } from '../../platform/http/public-origin.js';
 import { fanOut } from '../../platform/jobs/worker.js';
 import { createActionTokens } from '../../platform/tokens/index.js';
-import { createTenantRoutedEmail } from '../adapter-resolver.js';
 import { deploymentFromConfig } from '../deployment.js';
 import { createKeyManagement } from '../key-management.js';
 
@@ -26,10 +25,11 @@ const SWEEP_EVERY_MS = 60_000;
  * freed slot starts a match, a taken one ends the offers for it) and adds its jobs to the worker.
  * The waitlist owns no external provider, so it has no adapter slot.
  *
- * Offers go out through `DeliverWaitlistOffer`. The notifications module's `deliverWaitlistOffer`
- * is the real one (it picks WhatsApp or email by the patient's opt-ins and preferences); until it
- * is connected here, `createEmailOfferDelivery` sends a plain email. Connecting it is the one line
- * marked below.
+ * Offers go out through `DeliverWaitlistOffer`, which here is the notifications module's
+ * `deliverWaitlistOffer`: it picks WhatsApp or email by the patient's opt-ins and preferences, logs
+ * the message and sends nothing in quiet hours. The module binds its queue and providers to that
+ * function when it is built (`bindOfferDelivery`), in the API process and in the worker, so the
+ * worker's notifications wiring must be part of the same process (`MODULE_WIRINGS` is).
  */
 export const waitlistWiring: ModuleWiring = {
   settingsSections: [
@@ -50,7 +50,7 @@ export const waitlistWiring: ModuleWiring = {
       adapters: context.adapters,
       ...(context.clock ? { clock: context.clock } : {}),
     }),
-  worker: ({ config, adapters, clock }) => {
+  worker: ({ config, clock }) => {
     const now = clock ?? (() => new Date());
     const origins = createPublicOrigins(deploymentFromConfig(config), {
       secure: config.cookieSecure,
@@ -58,8 +58,6 @@ export const waitlistWiring: ModuleWiring = {
       ...(config.publicPort === undefined ? {} : { port: config.publicPort }),
     });
     const keys = createTenantKeys({ kms: createKeyManagement(config.kms) });
-    // A demonstration organization's email goes to the fake, like every other message.
-    const email = createTenantRoutedEmail(adapters);
     return {
       jobs: ({ client }) =>
         Object.values(
@@ -69,11 +67,9 @@ export const waitlistWiring: ModuleWiring = {
             clock: now,
             tokens: createActionTokens({ clock: now }),
             origins,
-            // CONNECT AT MERGE: replace with the notifications module's `deliverWaitlistOffer`.
-            deliver: createEmailOfferDelivery({ email }),
-            // CONNECT AT MERGE: pass the notifications module's `offerQuietHoursEnd` as
-            // `quietHoursEnd`, so an offer is put off to the end of quiet hours (not counted as a
-            // failed delivery). Without it the waitlist relies on its own deferral at match time.
+            deliver: deliverWaitlistOffer,
+            // An offer is put off to the end of quiet hours, which is not a failed delivery.
+            quietHoursEnd: offerQuietHoursEnd,
           }),
         ),
       schedules: ({ client, db }) => [
