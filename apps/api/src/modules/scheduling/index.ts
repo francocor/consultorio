@@ -13,6 +13,7 @@ import { createAppointmentTypeService } from './application/appointment-types.js
 import { createBlockService } from './application/blocks.js';
 import { createHolidayService } from './application/holidays.js';
 import { createHoursPeriodService } from './application/hours-periods.js';
+import { appointmentRoutes } from './http/appointment-routes.js';
 import { configRoutes } from './http/config-routes.js';
 
 export interface SchedulingOptions {
@@ -36,9 +37,16 @@ export function createScheduling(options: SchedulingOptions): Scheduling {
     hoursPeriods: createHoursPeriodService(options.clock ? { clock: options.clock } : {}),
   });
 
+  const appointments = appointmentRoutes({
+    withTenant: options.withTenant,
+    auditDeny: options.auditDeny,
+    clock: options.clock ?? (() => new Date()),
+  });
+
   return {
     routes: (app) => {
       config(app);
+      appointments(app);
     },
   };
 }

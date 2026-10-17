@@ -90,6 +90,10 @@ export const AUDIT_SCENARIOS: Record<AuditAction, AuditScenario> = {
   'professional.hours_period_set': t('scheduling-config-api.test.ts'),
   'professional.hours_period_removed': t('scheduling-config-api.test.ts'),
 
+  // Appointments.
+  'appointment.created': t('scheduling-booking.test.ts'),
+  'appointment.overridden': t('scheduling-booking.test.ts'),
+
   // Scheduling setup.
   'appointment_type.created': t('scheduling-config-api.test.ts'),
   'appointment_type.updated': t('scheduling-config-api.test.ts'),

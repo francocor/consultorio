@@ -75,6 +75,10 @@ export const AUDIT_ACTIONS = [
   'staff.reactivated',
   'staff.profile_updated',
   'professional.hours_updated',
+  // Appointments (administrative data only). Every status change, override and calendar view of
+  // another professional is recorded (scheduling, "Scheduling authorization and audit").
+  'appointment.created',
+  'appointment.overridden',
   // Scheduling setup: what can be booked, when the calendar is closed, hours for a range of dates.
   'appointment_type.created',
   'appointment_type.updated',

@@ -514,9 +514,9 @@ Depends: S2.02.
 
 Depends: S2.03, S2.01.
 
-- [ ] 2.10 `application/book-appointment.ts` inside `withTenant`: read-only check, lock the professional row `FOR UPDATE`, expire stale holds, validate working hours, blocks, holidays, overlap at another location, past-date rule (`scheduling.register_past`), out-of-hours override with reason (`scheduling.override_hours`), lane assignment, `23P01` mapped to `409 slot_taken`. [SCH-03, SCH-04, SCH-06] Test: unit with ports stubbed.
-- [ ] 2.11 `domain/free-slots.ts` used for the 409 body (next free slots). [SCH-03, SCH-04] Test: next slots exclude blocks and occupancy.
-- [ ] 2.12 `POST /api/v1/appointments` with contracts in `packages/contracts/src/scheduling.ts`; writes `appointment_event` and audit `appointment.created`. [SCH-03, SCH-06, SCH-07, SCH-14] Test: integration: golden path, overlap, capacity 2, out-of-hours with and without grant, block, holiday, other-location overlap, buffer.
+- [x] 2.10 `application/book-appointment.ts` inside `withTenant`: read-only check, lock the professional row `FOR UPDATE`, expire stale holds, validate working hours, blocks, holidays, overlap at another location, past-date rule (`scheduling.register_past`), out-of-hours override with reason (`scheduling.override_hours`), lane assignment, `23P01` mapped to `409 slot_taken`. [SCH-03, SCH-04, SCH-06] Test: unit with ports stubbed.
+- [x] 2.11 `domain/free-slots.ts` used for the 409 body (next free slots). [SCH-03, SCH-04] Test: next slots exclude blocks and occupancy.
+- [x] 2.12 `POST /api/v1/appointments` with contracts in `packages/contracts/src/scheduling.ts`; writes `appointment_event` and audit `appointment.created`. [SCH-03, SCH-06, SCH-07, SCH-14] Test: integration: golden path, overlap, capacity 2, out-of-hours with and without grant, block, holiday, other-location overlap, buffer.
 
 ## S2.05 Lifecycle: statuses, reschedule, cancel (~400 lines)
 

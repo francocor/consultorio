@@ -107,6 +107,19 @@ export function conflictWith(
 }
 
 /**
+ * A 409 with a specific code and extra members (`slot_taken`: the taken range and the next free
+ * times). The extra members are chosen by the caller's code, never copied from input.
+ */
+export function conflictCode(
+  request: FastifyRequest,
+  reply: FastifyReply,
+  code: 'slot_taken' | 'slot_no_longer_available',
+  extra: Record<string, unknown> = {},
+): FastifyReply {
+  return sendProblem(request, reply, code, { extra });
+}
+
+/**
  * Denial of a capability, such as a clinical route for a user without clinical access. It names no
  * resource, so a plain 403 reveals nothing about any record.
  */

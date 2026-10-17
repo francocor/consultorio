@@ -41,40 +41,30 @@ export function createHolidayService(): HolidayService {
     const country = org?.country ?? 'AR';
     // `to` is inclusive; the queries are half-open.
     const end = nextDay(to);
-    const [catalog, daysOff] = await Promise.all([
-      tx
-        .select({
-          date: holidayCatalog.date,
-          name: holidayCatalog.name,
-          kind: holidayCatalog.kind,
-        })
-        .from(holidayCatalog)
-        .where(
-          and(
-            eq(holidayCatalog.country, country),
-            isNull(holidayCatalog.removedAt),
-            gte(holidayCatalog.date, from),
-            lt(holidayCatalog.date, end),
-          ),
-        )
-        .orderBy(asc(holidayCatalog.date), asc(holidayCatalog.name)),
-      tx
-        .select({
-          id: tenantDayOff.id,
-          day: tenantDayOff.day,
-          name: tenantDayOff.name,
-          locationId: tenantDayOff.locationId,
-        })
-        .from(tenantDayOff)
-        .where(
-          and(
-            isNull(tenantDayOff.removedAt),
-            gte(tenantDayOff.day, from),
-            lt(tenantDayOff.day, end),
-          ),
-        )
-        .orderBy(asc(tenantDayOff.day), asc(tenantDayOff.id)),
-    ]);
+    const catalog = await tx
+      .select({ date: holidayCatalog.date, name: holidayCatalog.name, kind: holidayCatalog.kind })
+      .from(holidayCatalog)
+      .where(
+        and(
+          eq(holidayCatalog.country, country),
+          isNull(holidayCatalog.removedAt),
+          gte(holidayCatalog.date, from),
+          lt(holidayCatalog.date, end),
+        ),
+      )
+      .orderBy(asc(holidayCatalog.date), asc(holidayCatalog.name));
+    const daysOff = await tx
+      .select({
+        id: tenantDayOff.id,
+        day: tenantDayOff.day,
+        name: tenantDayOff.name,
+        locationId: tenantDayOff.locationId,
+      })
+      .from(tenantDayOff)
+      .where(
+        and(isNull(tenantDayOff.removedAt), gte(tenantDayOff.day, from), lt(tenantDayOff.day, end)),
+      )
+      .orderBy(asc(tenantDayOff.day), asc(tenantDayOff.id));
     return mergeHolidays(
       catalog.map((holiday) => ({
         date: holiday.date,
