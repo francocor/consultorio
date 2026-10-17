@@ -2,6 +2,7 @@ import { WIZARD_STEPS, WizardAnswers, type WizardStep } from '@consultorio/contr
 import { sql } from 'drizzle-orm';
 
 import { onboardingState, type OnboardingStateRow } from '../../../db/schema/onboarding.js';
+import { tenant } from '../../../db/schema/tenant.js';
 import type { Tx } from '../../../platform/db/tenant-context.js';
 import type { WizardRecord } from '../domain/wizard.js';
 
@@ -93,4 +94,19 @@ export async function saveStored(tx: Tx, patch: StatePatch): Promise<void> {
 export async function isWizardCompleted(tx: Tx): Promise<boolean> {
   const [row] = await tx.select({ at: onboardingState.wizardCompletedAt }).from(onboardingState);
   return row?.at != null;
+}
+
+/** How long after its creation an organization can still add the professional role to its owner. */
+export const SELF_ROLE_WINDOW_DAYS = 30;
+
+/**
+ * Whether the owner can still add the professional role to themselves (D21): while the wizard is
+ * not finished AND the organization is young. Without the age limit an organization that never
+ * finished the wizard (or never started it) would keep the door open for ever.
+ */
+export async function isSelfRoleOpen(tx: Tx, now: Date): Promise<boolean> {
+  if (await isWizardCompleted(tx)) return false;
+  const [row] = await tx.select({ createdAt: tenant.createdAt }).from(tenant);
+  if (!row) return false;
+  return now.getTime() - row.createdAt.getTime() < SELF_ROLE_WINDOW_DAYS * 24 * 60 * 60 * 1000;
 }
