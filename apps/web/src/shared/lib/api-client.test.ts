@@ -165,6 +165,65 @@ describe('api client: error responses', () => {
     expect(failure.extensions['existingPatient']).toBeUndefined();
   });
 
+  describe('scheduling conflicts', () => {
+    const conflict = { startsAt: '2026-10-17T13:00:00.000Z', endsAt: '2026-10-17T13:30:00.000Z' };
+    const nextSlots = [
+      { startsAt: '2026-10-17T13:30:00.000Z', endsAt: '2026-10-17T14:00:00.000Z' },
+      { startsAt: '2026-10-17T14:00:00.000Z', endsAt: '2026-10-17T14:30:00.000Z' },
+    ];
+
+    it('keeps the taken time and the next free times of a slot_taken conflict', async () => {
+      const { client } = clientWith(() => problem(409, 'slot_taken', { conflict, nextSlots }));
+
+      const failure = (await client.post('/appointments').catch((e: unknown) => e)) as ApiError;
+
+      expect(failure.code).toBe('slot_taken');
+      expect(failure.i18nKey).toBe('errors.slot_taken');
+      expect(failure.extensions['slotConflict']).toEqual({ conflict, nextSlots });
+    });
+
+    it('still reports slot_taken when the answer carries no extension', async () => {
+      const { client } = clientWith(() => problem(409, 'slot_taken'));
+
+      const failure = (await client.post('/appointments').catch((e: unknown) => e)) as ApiError;
+
+      expect(failure.code).toBe('slot_taken');
+      expect(failure.extensions['slotConflict']).toBeUndefined();
+    });
+
+    it('drops a malformed extension without losing the error code', async () => {
+      const { client } = clientWith(() =>
+        problem(409, 'slot_taken', { conflict, nextSlots: [{ startsAt: 5 }] }),
+      );
+
+      const failure = (await client.post('/appointments').catch((e: unknown) => e)) as ApiError;
+
+      expect(failure.code).toBe('slot_taken');
+      expect(failure.extensions['slotConflict']).toBeUndefined();
+    });
+
+    it('keeps the sessions of a series that conflict', async () => {
+      const occurrences = [
+        {
+          index: 1,
+          startsAt: conflict.startsAt,
+          endsAt: conflict.endsAt,
+          status: 'ok',
+          reason: null,
+        },
+        { index: 2, startsAt: null, endsAt: null, status: 'conflict', reason: 'blocked' },
+      ];
+      const { client } = clientWith(() => problem(409, 'conflict', { occurrences }));
+
+      const failure = (await client
+        .post('/appointments/series')
+        .catch((e: unknown) => e)) as ApiError;
+
+      expect(failure.code).toBe('conflict');
+      expect(failure.extensions['seriesConflict']).toEqual({ occurrences });
+    });
+  });
+
   it('turns a network failure into an error with status 0 and its own message key', async () => {
     const client = createApiClient({
       fetch: (() => Promise.reject(new TypeError('Failed to fetch'))) as unknown as typeof fetch,

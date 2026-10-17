@@ -2,6 +2,8 @@ import {
   ERROR_CATALOG,
   PatientSummaryDto,
   Problem,
+  SeriesConflictExtension,
+  SlotConflictExtension,
   errorCodeForStatus,
   type ErrorCode,
   type FieldError,
@@ -34,7 +36,9 @@ export class ApiError extends Error {
   readonly retryAfterSeconds: number | null;
   /**
    * Members a problem carries besides the standard ones. Only the ones the app knows are kept and
-   * each is validated: today, `existingPatient` of a duplicate-document conflict.
+   * each is validated: `existingPatient` of a duplicate-document conflict, `slotConflict` (the
+   * taken time and the next free times) of a booking that lost the slot, and `seriesConflict`
+   * (the sessions of a series that cannot be created).
    */
   readonly extensions: Readonly<Record<string, unknown>>;
 
@@ -134,7 +138,7 @@ interface ParsedProblem {
   extensions: Record<string, unknown>;
 }
 
-/** Reads a problem+json body, keeping the one extension the app knows (a validated patient). */
+/** Reads a problem+json body, keeping the extensions the app knows (each one validated). */
 async function readProblem(response: Response): Promise<ParsedProblem | null> {
   let body: unknown;
   try {
@@ -143,13 +147,22 @@ async function readProblem(response: Response): Promise<ParsedProblem | null> {
     return null;
   }
   if (typeof body !== 'object' || body === null) return null;
-  const { existingPatient, ...standard } = body as Record<string, unknown>;
+  const { existingPatient, conflict, nextSlots, occurrences, ...standard } = body as Record<
+    string,
+    unknown
+  >;
   const parsed = Problem.safeParse(standard);
   if (!parsed.success) return null;
   const patient = PatientSummaryDto.safeParse(existingPatient);
+  const slot = SlotConflictExtension.safeParse({ conflict, nextSlots });
+  const series = SeriesConflictExtension.safeParse({ occurrences });
   return {
     problem: parsed.data,
-    extensions: patient.success ? { existingPatient: patient.data } : {},
+    extensions: {
+      ...(patient.success ? { existingPatient: patient.data } : {}),
+      ...(slot.success ? { slotConflict: slot.data } : {}),
+      ...(series.success ? { seriesConflict: series.data } : {}),
+    },
   };
 }
 
