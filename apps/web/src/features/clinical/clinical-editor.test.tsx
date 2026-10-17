@@ -45,6 +45,15 @@ function open(
   return current;
 }
 
+/**
+ * Puts a text in one go (a paste), so a slow machine cannot split it into two autosaves: the tests
+ * that count the saves would otherwise depend on how fast the keyboard is simulated.
+ */
+async function write(user: ReturnType<typeof userEvent.setup>, field: HTMLElement, text: string) {
+  await user.click(field);
+  await user.paste(text);
+}
+
 describe('the editor of a draft', () => {
   it('opens the template of the note with its required field marked, and says it is saved', async () => {
     const { routes } = server(draftNote({ content: { reasonForConsultation: 'Control' } }));
@@ -64,11 +73,11 @@ describe('the editor of a draft', () => {
     const { state, routes } = server();
     open(routes);
 
-    await user.type(await screen.findByLabelText(/Motivo de la consulta/), 'Dolor de cabeza');
+    await write(user, await screen.findByLabelText(/Motivo de la consulta/), 'Dolor de cabeza');
     await waitFor(() => {
       expect(state.saves).toHaveLength(1);
     });
-    await user.type(screen.getByLabelText('Síntomas o hallazgos'), 'Desde hace dos días');
+    await write(user, screen.getByLabelText('Síntomas o hallazgos'), 'Desde hace dos días');
     await waitFor(() => {
       expect(state.saves).toHaveLength(2);
     });
@@ -95,7 +104,7 @@ describe('the editor of a draft', () => {
 
     const weight = await screen.findByLabelText(/Peso \(kg\)/);
     await user.clear(weight);
-    await user.type(weight, '-5');
+    await user.paste('-5');
 
     await waitFor(() => {
       expect(
