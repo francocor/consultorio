@@ -61,7 +61,9 @@ async function signed(
     content,
     baseRevision: 0,
   });
-  const response = await world.api.post(`/notes/${draft.id}/sign`, by.session, {});
+  const response = await world.api.post(`/notes/${draft.id}/sign`, by.session, {
+    expectedRevision: 1,
+  });
   if (response.statusCode !== 200)
     throw new Error(`could not sign: ${String(response.statusCode)}`);
   return response.json<NoteDto>();
@@ -82,7 +84,7 @@ async function rows(action: AuditAction, patientId: string) {
 
 describe('the timeline of a patient', () => {
   it('lists the signed entries newest first, with their addenda attached and a headline', async () => {
-    const patientId = await world.patient([colleague]);
+    const patientId = await world.patient([author, colleague]);
     const first = await signed(author, patientId, { reasonForConsultation: 'Primera consulta' });
     const second = await signed(colleague, patientId, {
       reasonForConsultation: 'Segunda consulta',
@@ -138,7 +140,7 @@ describe('the timeline of a patient', () => {
   });
 
   it('shows only the entries the reader may read, and counts nothing it hides', async () => {
-    const patientId = await world.patient([colleague]);
+    const patientId = await world.patient([author, colleague]);
     const visible = await signed(author, patientId, { reasonForConsultation: 'Visible' });
     await signed(
       author,
@@ -252,7 +254,7 @@ describe('the timeline of a patient', () => {
   });
 
   it('tells a treating professional of an empty record that there is nothing yet, and 404s an unknown patient', async () => {
-    const patientId = await world.patient([colleague]);
+    const patientId = await world.patient([author, colleague]);
 
     const empty = await timeline(patientId, colleague);
     const missing = await timeline('0190a000-0000-7000-8000-0000000000aa', colleague);
@@ -264,7 +266,7 @@ describe('the timeline of a patient', () => {
 
 describe('the drafts of a professional', () => {
   it('lists the own drafts with the patient, newest first, and no draft of a colleague', async () => {
-    const patientId = await world.patient();
+    const patientId = await world.patient([author]);
     const mine = await world.open(author, patientId);
     await world.open(colleague, await world.patient());
     await signed(author, patientId);

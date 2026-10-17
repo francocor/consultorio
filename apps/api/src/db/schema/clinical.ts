@@ -34,9 +34,9 @@ const TEMPLATE_KIND_PATTERN = '^[a-z][a-z_]{0,39}$';
 const VISIBILITIES = "('default', 'author_only')";
 
 /**
- * One consultation of one patient by one professional. It exists as soon as the professional
- * opens it, and the insert is what makes the professional a treating one (source 2 of the care
- * relationship, trigger `encounter_care_sync`).
+ * One consultation of one patient by one professional. Opening one needs a care relationship that
+ * comes from elsewhere (decision D20, trigger `encounter_guard`), and only when its note is SIGNED
+ * does it count as a care source itself (source 2, trigger `clinical_note_care_sync`).
  *
  * `appointment_id` is an extension point: scheduling links an encounter to its appointment, but
  * the `appointment` table does not exist on this branch, so there is no foreign key yet.
@@ -104,7 +104,8 @@ export const clinicalNote = tenantTable(
     draftContentEnc: bytea('draft_content_enc'),
     /** Set by the database when the author signs; the signer is always the author. */
     signedAt: timestamp('signed_at', { withTimezone: true }),
-    errorReason: text('error_reason'),
+    /** Why it was marked in error, encrypted like the content (bound to this row). */
+    errorReasonEnc: bytea('error_reason_enc'),
     /** The professional who marked the entry in error (the author or another treating one). */
     errorMarkedBy: uuid('error_marked_by'),
     errorMarkedAt: timestamp('error_marked_at', { withTimezone: true }),
@@ -142,22 +143,24 @@ export const clinicalNote = tenantTable(
     ),
     check('clinical_note_template_version_check', sql`${table.templateVersion} >= 1`),
     check('clinical_note_draft_revision_check', sql`${table.draftRevision} >= 0`),
-    // The shape of each status, so a row cannot be half signed or half in error.
+    // The shape of each status, so a row cannot be half signed or half in error. An entry marked in
+    // error that was never signed (a draft opened on the wrong patient) keeps no working copy.
     check(
       'clinical_note_state_check',
       sql`(
         (${table.status} = 'draft'
           and ${table.signedAt} is null
-          and ${table.errorReason} is null and ${table.errorMarkedBy} is null
+          and ${table.errorReasonEnc} is null and ${table.errorMarkedBy} is null
           and ${table.errorMarkedAt} is null)
         or (${table.status} = 'signed'
           and ${table.signedAt} is not null
           and ${table.draftContentEnc} is null
-          and ${table.errorReason} is null and ${table.errorMarkedBy} is null
+          and ${table.errorReasonEnc} is null and ${table.errorMarkedBy} is null
           and ${table.errorMarkedAt} is null)
         or (${table.status} = 'entered_in_error'
-          and length(btrim(${table.errorReason})) between 1 and 500
-          and ${table.errorMarkedBy} is not null and ${table.errorMarkedAt} is not null)
+          and ${table.errorReasonEnc} is not null
+          and ${table.errorMarkedBy} is not null and ${table.errorMarkedAt} is not null
+          and ${table.draftContentEnc} is null)
       )`,
     ),
     index('clinical_note_patient_idx').on(table.tenantId, table.patientId, table.createdAt),
@@ -240,7 +243,8 @@ export const addendum = tenantTable(
     visibility: text('visibility').notNull(),
     templateKind: text('template_kind').notNull(),
     kind: text('kind').notNull(),
-    reason: text('reason').notNull(),
+    /** Why the addendum was written, encrypted like its text (bound to this row). */
+    reasonEnc: bytea('reason_enc').notNull(),
     contentEnc: bytea('content_enc').notNull(),
   },
   (table) => [
@@ -266,9 +270,34 @@ export const addendum = tenantTable(
     }),
     check('addendum_visibility_check', sql`${table.visibility} in ${sql.raw(VISIBILITIES)}`),
     check('addendum_kind_check', sql`${table.kind} in ('correction', 'rectification')`),
-    check('addendum_reason_check', sql`length(btrim(${table.reason})) between 1 and 500`),
     index('addendum_note_idx').on(table.tenantId, table.noteId, table.createdAt),
     index('addendum_patient_idx').on(table.tenantId, table.patientId),
+  ],
+);
+
+/**
+ * "Somebody has written about this patient": one row per patient, created by the first note or the
+ * first anamnesis (triggers, migration 0062). It has no clinical content and is readable by every
+ * professional of the organization, because the question it answers ("may a first encounter be
+ * opened without a care relationship?") has to be answered by a transaction that cannot read the
+ * notes of others. The runtime role cannot write it. Documents classified as clinical will mark it
+ * too when that module lands.
+ */
+export const clinicalFootprint = tenantTable(
+  'clinical_footprint',
+  { patientId: uuid('patient_id').notNull() },
+  (table) => [
+    foreignKey({
+      name: 'clinical_footprint_tenant_id_fkey',
+      columns: [table.tenantId],
+      foreignColumns: [tenant.id],
+    }),
+    foreignKey({
+      name: 'clinical_footprint_patient_fkey',
+      columns: [table.tenantId, table.patientId],
+      foreignColumns: [patient.tenantId, patient.id],
+    }),
+    uniqueIndex('clinical_footprint_patient_key').on(table.tenantId, table.patientId),
   ],
 );
 

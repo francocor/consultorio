@@ -44,7 +44,7 @@ beforeAll(async () => {
     content: GENERAL,
     baseRevision: 0,
   });
-  await world.api.post(`/notes/${draft.id}/sign`, author.session, {});
+  await world.api.post(`/notes/${draft.id}/sign`, author.session, { expectedRevision: 1 });
   note = draft;
 });
 
@@ -67,7 +67,7 @@ function routes(noteId: string, encounterId: string, forPatient: string) {
       url: `/encounters/${encounterId}/note/draft`,
       payload: { content: {}, baseRevision: 0 },
     },
-    { method: 'POST', url: `/notes/${noteId}/sign`, payload: {} },
+    { method: 'POST', url: `/notes/${noteId}/sign`, payload: { expectedRevision: 1 } },
     { method: 'GET', url: `/notes/${noteId}/versions` },
     {
       method: 'POST',
@@ -186,7 +186,7 @@ describe('a professional with no relationship to the patient', () => {
 
   it('cannot sign, edit, annotate, mark or list the history of the entry', async () => {
     const attempts = [
-      world.api.post(`/notes/${note.id}/sign`, stranger.session, {}),
+      world.api.post(`/notes/${note.id}/sign`, stranger.session, { expectedRevision: 1 }),
       world.api.put(`/encounters/${note.encounterId}/note/draft`, stranger.session, {
         content: {},
         baseRevision: 0,

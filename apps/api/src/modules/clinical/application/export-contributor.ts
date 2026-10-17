@@ -5,7 +5,7 @@ import { clinicalNote } from '../../../db/schema/clinical.js';
 import type { TenantKeys } from '../../../platform/crypto/tenant-keys.js';
 import type { ExportContributor } from '../../tenancy/index.js';
 
-import { loadDetails, openAddendum, openContent } from './repo.js';
+import { loadDetails, openAddendum, openAddendumReason, openContent } from './repo.js';
 
 /**
  * The clinical part of the cancellation export (clinical-records, "Retention and availability";
@@ -56,7 +56,7 @@ export function exportClinical(keys?: TenantKeys): ExportContributor {
         addenda.push({
           id: row.id,
           kind: row.kind,
-          reason: row.reason,
+          reason: await openAddendumReason(keys, tx, row),
           text: await openAddendum(keys, tx, row),
           authorProfessionalId: row.authorProfessionalId,
           createdAt: row.createdAt,

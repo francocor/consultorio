@@ -372,7 +372,9 @@ export async function seedDemoTenant(
       }),
     );
     if (entry.state === 'draft') continue;
-    await deps.withTenant(context, (tx) => notes.sign(tx, caller, { noteId: opened.id }));
+    await deps.withTenant(context, (tx) =>
+      notes.sign(tx, caller, { noteId: opened.id, expectedRevision: 1 }),
+    );
     if (entry.addendum) {
       const addendum = entry.addendum;
       await deps.withTenant(context, (tx) =>

@@ -11,7 +11,7 @@ import type { ExportRegistry } from '../tenancy/index.js';
 
 import { createAmendmentService } from './application/amendments.js';
 import { exportClinical } from './application/export-contributor.js';
-import { createNoteService } from './application/notes.js';
+import { createNoteService, type AppointmentLookup } from './application/notes.js';
 import { createSearchService } from './application/search.js';
 import { createTimelineService } from './application/timeline.js';
 import { amendmentRoutes } from './http/amendment-routes.js';
@@ -37,7 +37,15 @@ export interface ClinicalOptions {
   keys: TenantKeys;
   /** Entries searched at once (default 2,000, design 4.3). Tests lower it. */
   searchCap?: number;
+  /**
+   * Finds an appointment by id, to check that an encounter opened from one belongs to the same
+   * patient and professional. The agenda provides it; until it does, no encounter can name an
+   * appointment.
+   */
+  appointments?: AppointmentLookup;
 }
+
+export type { AppointmentLookup } from './application/notes.js';
 
 export interface Clinical {
   routes: (app: FastifyInstance) => void;
@@ -46,7 +54,10 @@ export interface Clinical {
 export function createClinical(options: ClinicalOptions): Clinical {
   const deps = { withTenant: options.withTenant, auditDeny: options.auditDeny };
   const { keys } = options;
-  const notes = noteRoutes({ ...deps, notes: createNoteService({ keys }) });
+  const notes = noteRoutes({
+    ...deps,
+    notes: createNoteService({ keys, appointments: options.appointments }),
+  });
   const amendments = amendmentRoutes({ ...deps, amendments: createAmendmentService({ keys }) });
   const record = timelineRoutes({
     ...deps,

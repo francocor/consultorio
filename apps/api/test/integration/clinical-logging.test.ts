@@ -48,7 +48,7 @@ afterAll(async () => {
 
 describe('what the server writes to its log', () => {
   it('never contains the words of a note, an addendum, a search or an error mark', async () => {
-    const patientId = await world.patient([colleague]);
+    const patientId = await world.patient([author, colleague]);
     const draft = await world.open(author, patientId);
     const saved = await world.api.put(
       `/encounters/${draft.encounterId}/note/draft`,
@@ -58,7 +58,9 @@ describe('what the server writes to its log', () => {
         baseRevision: 0,
       },
     );
-    const signed = await world.api.post(`/notes/${draft.id}/sign`, author.session, {});
+    const signed = await world.api.post(`/notes/${draft.id}/sign`, author.session, {
+      expectedRevision: 1,
+    });
     await world.api.get(`/notes/${draft.id}`, colleague.session);
     await world.api.post(`/notes/${draft.id}/addenda`, colleague.session, {
       kind: 'correction',

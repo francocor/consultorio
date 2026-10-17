@@ -5,7 +5,7 @@ import type { FastifyInstance } from 'fastify';
 
 import { createAccess, createGrants, createGrantsRepo } from '../modules/access/index.js';
 import { createAudit } from '../modules/audit/index.js';
-import { createClinical } from '../modules/clinical/index.js';
+import { createClinical, type AppointmentLookup } from '../modules/clinical/index.js';
 import type { LockoutPolicy } from '../modules/identity/application/lockout.js';
 import type { PasswordValidator } from '../modules/identity/domain/password-policy.js';
 import { createIdentity, type PasswordHasher } from '../modules/identity/index.js';
@@ -88,7 +88,11 @@ export interface ApplicationOptions {
     demoReset?: DemoResetPort;
   };
   /** Clinical records: only a test lowers the search cap (default 2,000 entries). */
-  clinical?: { searchCap?: number };
+  clinical?: {
+    searchCap?: number;
+    /** Finds an appointment, to check the one an encounter is opened from (the agenda provides it). */
+    appointments?: AppointmentLookup;
+  };
   /** Routes of the capability modules, registered after identity. */
   modules?: readonly FeatureRoutes[];
 }
@@ -222,6 +226,7 @@ export function createApplication(options: ApplicationOptions): FastifyInstance 
     auditDeny,
     keys: options.keys,
     ...(options.clinical?.searchCap === undefined ? {} : { searchCap: options.clinical.searchCap }),
+    ...(options.clinical?.appointments ? { appointments: options.clinical.appointments } : {}),
   });
 
   const auditViewer = createAudit({ withTenant });

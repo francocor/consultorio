@@ -20,12 +20,16 @@ import { NoteConflict, NoteDenied, refusedEntry } from './errors.js';
 import { readReason, type Caller } from './notes.js';
 import {
   ADDENDUM_FIELD,
+  ADDENDUM_REASON_FIELD,
+  ERROR_REASON_FIELD,
   addendaOf,
   authorOf,
   findNote,
   namesOf,
   noteToDto,
   openAddendum,
+  openAddendumReason,
+  openErrorReason,
 } from './repo.js';
 
 export interface AmendmentService {
@@ -71,6 +75,11 @@ export function createAmendmentService(deps: { keys: TenantKeys }): AmendmentSer
         { ...ADDENDUM_FIELD, rowId: id },
         canonicalJson({ text: request.text }),
       );
+      const reasonBlob = await keys.encryptField(
+        tx,
+        { ...ADDENDUM_REASON_FIELD, rowId: id },
+        request.reason,
+      );
       await tx.insert(addendum).values({
         id,
         tenantId: sql`current_setting('app.tenant_id')::uuid`,
@@ -80,7 +89,7 @@ export function createAmendmentService(deps: { keys: TenantKeys }): AmendmentSer
         visibility: note.visibility,
         templateKind: note.templateKind,
         kind: request.kind,
-        reason: request.reason,
+        reasonEnc: reasonBlob,
         contentEnc: blob,
       });
       await audit(tx, {
@@ -111,9 +120,16 @@ export function createAmendmentService(deps: { keys: TenantKeys }): AmendmentSer
           : isAuthor || (await isTreating(tx, caller.professionalId, note.patientId));
       if (!allowed) throw new NoteDenied('error_not_allowed', refusedEntry(note));
 
+      // A draft that was never signed has nothing worth keeping: its working copy is dropped, so
+      // it cannot stay readable to the colleagues who treat the patient (the database insists).
+      const reasonBlob = await keys.encryptField(
+        tx,
+        { ...ERROR_REASON_FIELD, rowId: note.id },
+        request.reason,
+      );
       const [updated] = await tx
         .update(clinicalNote)
-        .set({ status: 'entered_in_error', errorReason: request.reason })
+        .set({ status: 'entered_in_error', errorReasonEnc: reasonBlob, draftContentEnc: null })
         .where(and(eq(clinicalNote.id, note.id), eq(clinicalNote.status, note.status)))
         .returning({ id: clinicalNote.id });
       if (!updated) throw new NoteConflict('note_changed', refusedEntry(note));
@@ -157,12 +173,13 @@ export function createAmendmentService(deps: { keys: TenantKeys }): AmendmentSer
       }));
       for (const row of addenda) {
         const text = await openAddendum(keys, tx, row);
+        const reason = await openAddendumReason(keys, tx, row);
         items.push({
           type: 'addendum',
           id: row.id,
           kind: row.kind === 'rectification' ? 'rectification' : 'correction',
-          reason: row.reason,
-          contentHash: contentHash({ kind: row.kind, reason: row.reason, text }),
+          reason,
+          contentHash: contentHash({ kind: row.kind, reason, text }),
           author: authorOf(names, row.authorProfessionalId),
           at: row.createdAt.toISOString(),
         });
@@ -170,7 +187,7 @@ export function createAmendmentService(deps: { keys: TenantKeys }): AmendmentSer
       if (note.status === 'entered_in_error' && note.errorMarkedBy && note.errorMarkedAt) {
         items.push({
           type: 'entered_in_error',
-          reason: note.errorReason ?? '',
+          reason: (await openErrorReason(keys, tx, note)) ?? '',
           author: authorOf(names, note.errorMarkedBy),
           at: note.errorMarkedAt.toISOString(),
         });

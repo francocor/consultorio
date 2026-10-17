@@ -82,7 +82,9 @@ async function signed(
     content,
     baseRevision: 0,
   });
-  const response = await world.api.post(`/notes/${draft.id}/sign`, by.session, {});
+  const response = await world.api.post(`/notes/${draft.id}/sign`, by.session, {
+    expectedRevision: 1,
+  });
   return response.json<NoteDto>();
 }
 
@@ -130,7 +132,7 @@ describe('searching one patient', () => {
   });
 
   it('finds a term that is only in an addendum', async () => {
-    const patientId = await world.patient([colleague]);
+    const patientId = await world.patient([author, colleague]);
     const note = await signed(author, patientId, { reasonForConsultation: 'Control' });
     await world.api.post(`/notes/${note.id}/addenda`, colleague.session, {
       kind: 'correction',
@@ -145,7 +147,7 @@ describe('searching one patient', () => {
   });
 
   it('honors visibility: an entry restricted to its author is not returned and not counted', async () => {
-    const patientId = await world.patient([colleague]);
+    const patientId = await world.patient([author, colleague]);
     await signed(
       author,
       patientId,

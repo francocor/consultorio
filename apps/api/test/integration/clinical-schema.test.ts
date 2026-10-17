@@ -38,6 +38,15 @@ beforeAll(async () => {
   author = (await createTestProfessional(runtime, a.id)).professionalId;
   colleague = (await createTestProfessional(runtime, a.id)).professionalId;
   patientId = await createTestPatient(runtime, a.id);
+  // Opening an encounter needs a care relationship that comes from elsewhere (D20).
+  await asTenant(runtime, a.id, (tx) =>
+    tx.insert(careAssignment).values({
+      tenantId: a.id,
+      patientId,
+      professionalId: author,
+      assignedBy: randomUUID(),
+    }),
+  );
   const opened = await asProfessional(runtime, a.id, author, (tx) =>
     openDraft(tx, { tenantId: a.id, patientId, authorId: author }),
   );

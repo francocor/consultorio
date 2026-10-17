@@ -145,7 +145,7 @@ describe('every template validates on save and on signing', () => {
 
 describe('psychology is not shared by default (end to end)', () => {
   async function signedPsychology() {
-    const patientId = await world.patient([colleague]);
+    const patientId = await world.patient([psychologist, colleague]);
     const note = await world.open(psychologist, patientId, { templateKind: 'psychology' });
     await saveDraft(note, psychologist, {
       sessionDate: '2026-05-04',
@@ -153,14 +153,14 @@ describe('psychology is not shared by default (end to end)', () => {
       risk: 'none',
       observations: 'Sesión reservada',
     });
-    await world.api.post(`/notes/${note.id}/sign`, psychologist.session, {});
+    await world.api.post(`/notes/${note.id}/sign`, psychologist.session, { expectedRevision: 1 });
     return { patientId, note };
   }
 
   async function signedGeneral(patientId: string) {
     const note = await world.open(colleague, patientId, { templateKind: 'general' });
     await saveDraft(note, colleague, { reasonForConsultation: 'Control' });
-    await world.api.post(`/notes/${note.id}/sign`, colleague.session, {});
+    await world.api.post(`/notes/${note.id}/sign`, colleague.session, { expectedRevision: 1 });
     return note;
   }
 

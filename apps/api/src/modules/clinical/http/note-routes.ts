@@ -15,7 +15,7 @@ const IdParams = z.strictObject({ id: z.uuid() });
 
 const SignRequest = z.object({
   /** The revision the author saw; a newer one means another tab saved in between. */
-  expectedRevision: z.number().int().min(0).optional(),
+  expectedRevision: z.number().int().min(0),
 });
 
 /**

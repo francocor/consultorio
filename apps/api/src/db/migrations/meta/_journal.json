@@ -176,6 +176,13 @@
       "when": 1792208756184,
       "tag": "0061_clinical_triggers",
       "breakpoints": true
+    },
+    {
+      "idx": 25,
+      "version": "7",
+      "when": 1792222047606,
+      "tag": "0062_clinical_d20",
+      "breakpoints": true
     }
   ]
 }

@@ -28,6 +28,7 @@ import {
   loadDetails,
   namesOf,
   openContent,
+  openErrorReason,
 } from './repo.js';
 
 export interface TimelineService {
@@ -122,7 +123,8 @@ export function createTimelineService(deps: { keys: TenantKeys }): TimelineServi
           signedAt: note.signedAt?.toISOString() ?? null,
           createdAt: note.createdAt.toISOString(),
           headline: headlineOf(content),
-          errorReason: note.status === 'entered_in_error' ? note.errorReason : null,
+          errorReason:
+            note.status === 'entered_in_error' ? await openErrorReason(keys, tx, note) : null,
           addenda: await addendaDtos(keys, tx, detail?.addenda ?? [], names),
           basis:
             note.authorProfessionalId === caller.professionalId

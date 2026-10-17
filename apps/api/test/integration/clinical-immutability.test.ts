@@ -67,6 +67,8 @@ async function draftWithColleague(
   options: { visibility?: 'default' | 'author_only'; templateKind?: string } = {},
 ) {
   const patientId = await freshPatient();
+  // Opening an encounter needs a care relationship that comes from somewhere else (D20).
+  await assign(patientId, author);
   await assign(patientId, colleague);
   const opened = await asProfessional(runtime, org.id, author, (tx) =>
     openDraft(tx, { tenantId: org.id, patientId, authorId: author, ...options }),
@@ -306,10 +308,11 @@ describe('a signed entry', () => {
 });
 
 describe('entered in error', () => {
-  const mark = (professionalId: string, noteId: string, reason = 'Paciente equivocado') =>
+  // The reason is stored encrypted, so the database sees bytes: it can insist on one, not read it.
+  const mark = (professionalId: string, noteId: string, reason: Buffer | null = Buffer.from([1])) =>
     run(
       professionalId,
-      sql`UPDATE clinical_note SET status = 'entered_in_error', error_reason = ${reason} WHERE id = ${noteId}`,
+      sql`UPDATE clinical_note SET status = 'entered_in_error', error_reason_enc = ${reason} WHERE id = ${noteId}`,
     );
 
   it('lets the author mark a signed entry, keeps its content and records who and when', async () => {
@@ -325,7 +328,7 @@ describe('entered in error', () => {
 
     expect(rows.note[0]).toMatchObject({
       status: 'entered_in_error',
-      errorReason: 'Paciente equivocado',
+      errorReasonEnc: expect.any(Buffer) as unknown,
       errorMarkedBy: author,
     });
     expect(rows.note[0]?.errorMarkedAt).toBeInstanceOf(Date);
@@ -335,7 +338,7 @@ describe('entered in error', () => {
   it('lets another treating professional mark it, and records that professional (not the author)', async () => {
     const { noteId } = await signedNote();
 
-    await mark(colleague, noteId, 'Duplicado');
+    await mark(colleague, noteId);
     const [row] = await asProfessional(runtime, org.id, author, (tx) =>
       tx.select().from(clinicalNote).where(eq(clinicalNote.id, noteId)),
     );
@@ -368,22 +371,18 @@ describe('entered in error', () => {
   it('requires a reason', async () => {
     const { noteId } = await signedNote();
 
-    for (const reason of ['', '   ']) {
-      await expect(mark(author, noteId, reason)).rejects.toMatchObject({
-        cause: { code: '23514' },
-      });
-    }
+    await expect(mark(author, noteId, null)).rejects.toMatchObject({ cause: { code: '23514' } });
   });
 
   it('is final: nothing changes afterwards, and it cannot be marked twice', async () => {
     const { noteId } = await signedNote();
     await mark(author, noteId);
 
-    await expect(mark(author, noteId, 'Otra razón')).rejects.toMatchObject(failure(IMMUTABLE));
+    await expect(mark(author, noteId, Buffer.from([2]))).rejects.toMatchObject(failure(IMMUTABLE));
     await expect(
       run(
         author,
-        sql`UPDATE clinical_note SET status = 'signed', error_reason = NULL WHERE id = ${noteId}`,
+        sql`UPDATE clinical_note SET status = 'signed', error_reason_enc = NULL WHERE id = ${noteId}`,
       ),
     ).rejects.toBeTruthy();
   });
@@ -391,7 +390,7 @@ describe('entered in error', () => {
   it('lets the author also mark an unsigned draft (a draft opened on the wrong patient)', async () => {
     const { noteId } = await draftWithColleague();
 
-    await mark(author, noteId, 'Abierto en otro paciente');
+    await mark(author, noteId);
     const [row] = await asProfessional(runtime, org.id, author, (tx) =>
       tx.select().from(clinicalNote).where(eq(clinicalNote.id, noteId)),
     );
@@ -409,9 +408,9 @@ describe('addenda', () => {
   ) {
     return run(
       professionalId,
-      sql`INSERT INTO addendum (tenant_id, note_id, patient_id, author_professional_id, visibility, template_kind, kind, reason, content_enc)
+      sql`INSERT INTO addendum (tenant_id, note_id, patient_id, author_professional_id, visibility, template_kind, kind, reason_enc, content_enc)
           VALUES (${org.id}, ${noteId}, ${patientId}, ${professionalId}, ${overrides.visibility ?? 'default'},
-                  ${overrides.template ?? 'general'}, 'correction', 'Corrección', ${Buffer.from([1])})`,
+                  ${overrides.template ?? 'general'}, 'correction', ${Buffer.from([1])}, ${Buffer.from([1])})`,
     );
   }
 
@@ -455,7 +454,7 @@ describe('addenda', () => {
     const wrong = await signedNote();
     await run(
       author,
-      sql`UPDATE clinical_note SET status = 'entered_in_error', error_reason = 'Duplicado' WHERE id = ${wrong.noteId}`,
+      sql`UPDATE clinical_note SET status = 'entered_in_error', error_reason_enc = ${Buffer.from([1])} WHERE id = ${wrong.noteId}`,
     );
 
     await expect(addendum(author, draft.noteId, draft.patientId)).rejects.toMatchObject(
@@ -484,10 +483,13 @@ describe('addenda', () => {
     await addendum(author, noteId, patientId);
 
     await expect(
-      run(author, sql`UPDATE addendum SET reason = 'Otra' WHERE note_id = ${noteId}`),
+      run(
+        author,
+        sql`UPDATE addendum SET reason_enc = ${Buffer.from([2])} WHERE note_id = ${noteId}`,
+      ),
     ).rejects.toMatchObject({ cause: { code: NOT_ALLOWED } });
     await expect(
-      asOwner(author, `UPDATE addendum SET reason = 'Otra' WHERE note_id = '${noteId}'`),
+      asOwner(author, `UPDATE addendum SET reason_enc = '\x02' WHERE note_id = '${noteId}'`),
     ).rejects.toMatchObject({ code: IMMUTABLE });
     await expect(
       asOwner(author, `DELETE FROM addendum WHERE note_id = '${noteId}'`),
@@ -497,22 +499,23 @@ describe('addenda', () => {
   it('requires a reason and a known kind', async () => {
     const { noteId, patientId } = await signedNote();
 
-    for (const [kind, reason] of [
-      ['correction', ' '],
-      ['opinion', 'Motivo'],
+    // No reason at all is a not-null violation; an unknown kind a check violation.
+    for (const [kind, reason, code] of [
+      ['correction', null, '23502'],
+      ['opinion', Buffer.from([1]), '23514'],
     ] as const) {
       await expect(
         run(
           author,
-          sql`INSERT INTO addendum (tenant_id, note_id, patient_id, author_professional_id, visibility, template_kind, kind, reason, content_enc)
+          sql`INSERT INTO addendum (tenant_id, note_id, patient_id, author_professional_id, visibility, template_kind, kind, reason_enc, content_enc)
               VALUES (${org.id}, ${noteId}, ${patientId}, ${author}, 'default', 'general', ${kind}, ${reason}, ${Buffer.from([1])})`,
         ),
-      ).rejects.toMatchObject({ cause: { code: '23514' } });
+      ).rejects.toMatchObject({ cause: { code } });
     }
   });
 });
 
-describe('encounters feed the care relationship (source 2)', () => {
+describe('signed encounters feed the care relationship (source 2, decision D20)', () => {
   const relationship = async (patientId: string, professionalId: string) => {
     const rows = await asTenant(runtime, org.id, (tx) =>
       tx.select().from(careRelationship).where(eq(careRelationship.patientId, patientId)),
@@ -520,55 +523,71 @@ describe('encounters feed the care relationship (source 2)', () => {
     return rows.find((row) => row.professionalId === professionalId);
   };
 
-  it('makes the author a treating professional the moment the encounter exists', async () => {
+  const sign = (professionalId: string, made: OpenedNote & { patientId: string }) =>
+    asProfessional(runtime, org.id, professionalId, (tx) =>
+      signDraft(tx, {
+        id: made.noteId,
+        tenantId: org.id,
+        patientId: made.patientId,
+        authorProfessionalId: professionalId,
+        templateKind: 'general',
+        visibility: 'default',
+      }),
+    );
+
+  const draftBy = async (professionalId: string, patientId: string) => ({
+    patientId,
+    ...(await asProfessional(runtime, org.id, professionalId, (tx) =>
+      openDraft(tx, { tenantId: org.id, patientId, authorId: professionalId }),
+    )),
+  });
+
+  it('does not count a draft: the relationship appears when the note is signed', async () => {
     const patientId = await freshPatient();
+    const made = await draftBy(author, patientId);
     expect(await relationship(patientId, author)).toBeUndefined();
 
-    await asProfessional(runtime, org.id, author, (tx) =>
-      openDraft(tx, { tenantId: org.id, patientId, authorId: author }),
-    );
+    await sign(author, made);
 
     expect(await relationship(patientId, author)).toMatchObject({ encounters: 1, active: true });
   });
 
-  it('counts a second encounter, and only for the professional who opened it', async () => {
+  it('counts each signed encounter, and only for the professional who wrote it', async () => {
     const patientId = await freshPatient();
-    for (const who of [author, author, colleague]) {
-      await asProfessional(runtime, org.id, who, (tx) =>
-        openDraft(tx, { tenantId: org.id, patientId, authorId: who }),
-      );
-    }
+    const first = await draftBy(author, patientId);
+    await sign(author, first);
+    const second = await draftBy(author, patientId);
+    await sign(author, second);
+    // The colleague needs a care relationship of their own to open one here.
+    await assign(patientId, colleague);
+    await sign(colleague, await draftBy(colleague, patientId));
 
     expect(await relationship(patientId, author)).toMatchObject({ encounters: 2, active: true });
     expect(await relationship(patientId, colleague)).toMatchObject({ encounters: 1, active: true });
   });
 
-  it('takes the relationship back when the only encounter is marked in error (wrong patient)', async () => {
+  it('takes the relationship back when the only signed encounter is marked in error', async () => {
     const patientId = await freshPatient();
-    const opened = await asProfessional(runtime, org.id, author, (tx) =>
-      openDraft(tx, { tenantId: org.id, patientId, authorId: author }),
-    );
+    const made = await draftBy(author, patientId);
+    await sign(author, made);
 
     await run(
       author,
-      sql`UPDATE clinical_note SET status = 'entered_in_error', error_reason = 'Paciente equivocado' WHERE id = ${opened.noteId}`,
+      sql`UPDATE clinical_note SET status = 'entered_in_error', error_reason_enc = ${Buffer.from([1])} WHERE id = ${made.noteId}`,
     );
 
     expect(await relationship(patientId, author)).toMatchObject({ encounters: 0, active: false });
   });
 
-  it('keeps the relationship while another encounter, or an assignment, still stands', async () => {
+  it('never counted a draft marked in error, so marking it leaves the relationship as it was', async () => {
     const patientId = await freshPatient();
-    const first = await asProfessional(runtime, org.id, author, (tx) =>
-      openDraft(tx, { tenantId: org.id, patientId, authorId: author }),
-    );
-    await asProfessional(runtime, org.id, author, (tx) =>
-      openDraft(tx, { tenantId: org.id, patientId, authorId: author }),
-    );
+    const signed = await draftBy(author, patientId);
+    await sign(author, signed);
+    const draft = await draftBy(author, patientId);
 
     await run(
       author,
-      sql`UPDATE clinical_note SET status = 'entered_in_error', error_reason = 'Duplicado' WHERE id = ${first.noteId}`,
+      sql`UPDATE clinical_note SET status = 'entered_in_error', error_reason_enc = ${Buffer.from([1])} WHERE id = ${draft.noteId}`,
     );
 
     expect(await relationship(patientId, author)).toMatchObject({ encounters: 1, active: true });

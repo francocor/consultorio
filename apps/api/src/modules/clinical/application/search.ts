@@ -24,6 +24,7 @@ import {
   loadDetails,
   namesOf,
   openAddendum,
+  openAddendumReason,
   openContent,
 } from './repo.js';
 
@@ -116,7 +117,7 @@ export function createSearchService(deps: { keys: TenantKeys; cap?: number }): S
             const text = await openAddendum(keys, tx, addendum);
             snippet =
               findMatch(text, query.q)?.snippet ??
-              findMatch(addendum.reason, query.q)?.snippet ??
+              findMatch(await openAddendumReason(keys, tx, addendum), query.q)?.snippet ??
               null;
             if (snippet !== null) {
               inAddendum = true;

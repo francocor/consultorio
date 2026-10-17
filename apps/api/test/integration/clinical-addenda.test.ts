@@ -68,13 +68,15 @@ async function setSettings(settings: Record<string, unknown>) {
 
 /** A signed general note by `author`, on a patient the colleague also treats. */
 async function signedNote(content: object = DIAGNOSIS_A, options: { visibility?: string } = {}) {
-  const patientId = await world.patient([colleague]);
+  const patientId = await world.patient([author, colleague]);
   const draft = await world.open(author, patientId, options);
   await world.api.put(`/encounters/${draft.encounterId}/note/draft`, author.session, {
     content,
     baseRevision: 0,
   });
-  const signed = await world.api.post(`/notes/${draft.id}/sign`, author.session, {});
+  const signed = await world.api.post(`/notes/${draft.id}/sign`, author.session, {
+    expectedRevision: 1,
+  });
   return { patientId, note: signed.json<NoteDto>() };
 }
 
@@ -249,13 +251,13 @@ describe('a shared read', () => {
 
     expect(audit[0]?.reason).toBeNull();
 
-    const psychology = await world.patient([colleague]);
+    const psychology = await world.patient([author, colleague]);
     const draft = await world.open(author, psychology, { templateKind: 'psychology' });
     await world.api.put(`/encounters/${draft.encounterId}/note/draft`, author.session, {
       content: { sessionDate: '2026-05-04', modality: 'in_person', risk: 'none' },
       baseRevision: 0,
     });
-    await world.api.post(`/notes/${draft.id}/sign`, author.session, {});
+    await world.api.post(`/notes/${draft.id}/sign`, author.session, { expectedRevision: 1 });
     expect((await read(draft.id, reader)).statusCode).toBe(404);
     expect((await read(draft.id, colleague)).statusCode).toBe(200);
   });
@@ -407,7 +409,9 @@ describe('a read-only organization (D16)', () => {
         author.session,
         { content: { symptoms: 'Tos' }, baseRevision: 0 },
       );
-      const signDraft = await world.api.post(`/notes/${draft.id}/sign`, author.session, {});
+      const signDraft = await world.api.post(`/notes/${draft.id}/sign`, author.session, {
+        expectedRevision: 1,
+      });
       const error = await markError(note.id, author);
 
       expect(readIt.statusCode).toBe(200);

@@ -22,6 +22,9 @@ import { noteAccess } from '../domain/note.js';
 export const DRAFT_FIELD = { table: 'clinical_note', column: 'draft_content_enc' } as const;
 export const VERSION_FIELD = { table: 'note_version', column: 'content_enc' } as const;
 export const ADDENDUM_FIELD = { table: 'addendum', column: 'content_enc' } as const;
+/** The reasons are as sensitive as the text they explain, so they are encrypted the same way. */
+export const ADDENDUM_REASON_FIELD = { table: 'addendum', column: 'reason_enc' } as const;
+export const ERROR_REASON_FIELD = { table: 'clinical_note', column: 'error_reason_enc' } as const;
 
 export interface NoteRecord {
   note: ClinicalNoteRow;
@@ -131,6 +134,34 @@ export async function openAddendum(keys: TenantKeys, tx: Tx, row: AddendumRow): 
   return text;
 }
 
+export async function openAddendumReason(
+  keys: TenantKeys,
+  tx: Tx,
+  row: AddendumRow,
+): Promise<string> {
+  const plain = await keys.decryptField(
+    tx,
+    { ...ADDENDUM_REASON_FIELD, rowId: row.id },
+    row.reasonEnc,
+  );
+  return plain.toString('utf8');
+}
+
+/** Why an entry was marked in error; null while it has not been. */
+export async function openErrorReason(
+  keys: TenantKeys,
+  tx: Tx,
+  note: ClinicalNoteRow,
+): Promise<string | null> {
+  if (!note.errorReasonEnc) return null;
+  const plain = await keys.decryptField(
+    tx,
+    { ...ERROR_REASON_FIELD, rowId: note.id },
+    note.errorReasonEnc,
+  );
+  return plain.toString('utf8');
+}
+
 export async function addendaDtos(
   keys: TenantKeys,
   tx: Tx,
@@ -142,7 +173,7 @@ export async function addendaDtos(
     result.push({
       id: row.id,
       kind: row.kind === 'rectification' ? 'rectification' : 'correction',
-      reason: row.reason,
+      reason: await openAddendumReason(keys, tx, row),
       text: await openAddendum(keys, tx, row),
       author: authorOf(names, row.authorProfessionalId),
       createdAt: row.createdAt.toISOString(),
@@ -175,6 +206,7 @@ export async function noteToDto(
     ...addendaRows.map((row) => row.authorProfessionalId),
   ]);
   const treating = await isTreating(tx, viewer.professionalId, note.patientId);
+  const errorReason = await openErrorReason(keys, tx, note);
   const access = noteAccess({
     status: note.status as NoteStatus,
     isAuthor: note.authorProfessionalId === viewer.professionalId,
@@ -199,12 +231,9 @@ export async function noteToDto(
     createdAt: note.createdAt.toISOString(),
     signedAt: note.signedAt?.toISOString() ?? null,
     error:
-      note.status === 'entered_in_error' &&
-      note.errorMarkedBy &&
-      note.errorReason &&
-      note.errorMarkedAt
+      note.status === 'entered_in_error' && note.errorMarkedBy && errorReason && note.errorMarkedAt
         ? {
-            reason: note.errorReason,
+            reason: errorReason,
             markedBy: authorOf(names, note.errorMarkedBy),
             markedAt: note.errorMarkedAt.toISOString(),
           }

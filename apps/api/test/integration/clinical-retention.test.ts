@@ -55,12 +55,14 @@ async function signed(by: Professional, patientId: string, content: object, opti
     content,
     baseRevision: 0,
   });
-  return (await world.api.post(`/notes/${draft.id}/sign`, by.session, {})).json<NoteDto>();
+  return (
+    await world.api.post(`/notes/${draft.id}/sign`, by.session, { expectedRevision: 1 })
+  ).json<NoteDto>();
 }
 
 describe('a read-only organization', () => {
   it('keeps every clinical read available to the treating professional', async () => {
-    const patientId = await world.patient([colleague]);
+    const patientId = await world.patient([author, colleague]);
     const note = await signed(author, patientId, { reasonForConsultation: 'Control de rutina' });
     await asTenant(runtime, world.tenant.id, (tx) =>
       tx
@@ -105,7 +107,7 @@ describe('nothing clinical is ever deleted', () => {
 
   it('keeps the rows when the professional who wrote them leaves the organization', async () => {
     const leaver = await world.professional();
-    const patientId = await world.patient([colleague]);
+    const patientId = await world.patient([author, colleague, leaver]);
     const note = await signed(leaver, patientId, { reasonForConsultation: 'Antes de irse' });
 
     const deactivated = await world.api.post(
@@ -192,7 +194,7 @@ describe('the clinical part of the export', () => {
   });
 
   it("does not hand one professional another's restricted entries", async () => {
-    const patientId = await world.patient([colleague]);
+    const patientId = await world.patient([author, colleague]);
     await signed(
       author,
       patientId,

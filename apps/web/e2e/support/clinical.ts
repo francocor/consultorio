@@ -55,7 +55,9 @@ export async function signedNoteVia(
     baseRevision: 0,
   });
   expect(saved.status).toBe(200);
-  const signed = await apiCall(page, 'POST', `/notes/${opened.body.id}/sign`, {});
+  const signed = await apiCall(page, 'POST', `/notes/${opened.body.id}/sign`, {
+    expectedRevision: 1,
+  });
   expect(signed.status).toBe(200);
   return opened.body;
 }

@@ -347,6 +347,19 @@ export const TENANT_FIXTURES: Record<string, TenantTableFixture> = {
       return id;
     },
   },
+  clinical_footprint: {
+    // The runtime role cannot write this table: the footprint appears with the first note.
+    insert: async (tx, tenantId, overrides) => {
+      const authorId = await insertProfessional(tx, tenantId);
+      const patientId = overrides?.['patient_id'] ?? (await insertPatient(tx, tenantId));
+      const opened = await insertEncounter(tx, tenantId, authorId, patientId);
+      await insertNote(tx, tenantId, opened, authorId);
+      return returningId(
+        tx,
+        sql`SELECT id FROM clinical_footprint WHERE patient_id = ${patientId}`,
+      );
+    },
+  },
   clinical_note: {
     insert: async (tx, tenantId, overrides) => {
       const authorId = await insertProfessional(tx, tenantId);
@@ -388,9 +401,9 @@ export const TENANT_FIXTURES: Record<string, TenantTableFixture> = {
         returningId(
           tx,
           sql`INSERT INTO addendum (tenant_id, note_id, patient_id, author_professional_id, visibility,
-                                    template_kind, kind, reason, content_enc)
+                                    template_kind, kind, reason_enc, content_enc)
                 VALUES (${tenantId}, ${overrides?.['note_id'] ?? noteId}, ${overrides?.['patient_id'] ?? opened.patientId},
-                        ${actor}, 'default', 'general', 'correction', 'Corrección', ${Buffer.from([1])})
+                        ${actor}, 'default', 'general', 'correction', ${Buffer.from([1])}, ${Buffer.from([1])})
                 RETURNING id`,
         ),
       );

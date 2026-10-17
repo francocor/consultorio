@@ -16,6 +16,7 @@ import type { TenantKeys } from '../../../platform/crypto/tenant-keys.js';
 import type { Tx } from '../../../platform/db/tenant-context.js';
 import { uuidv7 } from '../../../platform/db/uuid.js';
 import { AppError } from '../../../platform/http/problem.js';
+import { AccessRefused } from '../../access/index.js';
 import { isTreating } from '../../patients/index.js';
 import { canonicalJson, contentHash } from '../domain/canonical.js';
 
@@ -37,6 +38,16 @@ export interface Caller extends Viewer {
   actor: Actor;
 }
 
+/**
+ * Looks an appointment up by id inside the transaction of the request. The agenda module owns the
+ * appointments, so the clinical module only receives this port (composition root); `null` when the
+ * appointment does not exist or the caller cannot see it.
+ */
+export type AppointmentLookup = (
+  tx: Tx,
+  appointmentId: string,
+) => Promise<{ patientId: string; professionalId: string } | null>;
+
 /** The most a note may weigh once serialized: a clinical note is text, not a file store. */
 const MAX_CONTENT_BYTES = 200_000;
 
@@ -50,7 +61,7 @@ export interface NoteService {
   sign(
     tx: Tx,
     caller: Caller,
-    input: { noteId: string; expectedRevision?: number | undefined },
+    input: { noteId: string; expectedRevision: number },
   ): Promise<NoteDto>;
   get(tx: Tx, caller: Caller, input: { noteId: string }): Promise<NoteDto>;
 }
@@ -78,8 +89,20 @@ export function readReason(note: NoteRecord['note'], viewer: Viewer, treating: b
  * professional, so the clinical policies of the database see them too, and writes its audit entry
  * in the same transaction: an action that cannot be audited does not happen.
  */
-export function createNoteService(deps: { keys: TenantKeys }): NoteService {
+export function createNoteService(deps: {
+  keys: TenantKeys;
+  /** Without it no encounter can be linked to an appointment: the link cannot be checked. */
+  appointments?: AppointmentLookup | undefined;
+}): NoteService {
   const { keys } = deps;
+
+  /** Does anybody have a clinical footprint or a care relationship with this patient? */
+  async function hasFootprint(tx: Tx, patientId: string): Promise<boolean> {
+    const result = await tx.execute<{ found: boolean }>(
+      sql`SELECT app.has_clinical_footprint(${patientId}::uuid) AS found`,
+    );
+    return result.rows[0]?.found === true;
+  }
 
   async function lock(tx: Tx, noteId: string) {
     const [row] = await tx
@@ -99,6 +122,27 @@ export function createNoteService(deps: { keys: TenantKeys }): NoteService {
       if (!found) throw new AppError('not_found');
       const template = latestTemplate(request.templateKind);
       if (!template) throw new AppError('validation_failed');
+
+      // An appointment, when named, is the appointment of this patient with this professional.
+      if (request.appointmentId !== undefined) {
+        const appointment = await deps.appointments?.(tx, request.appointmentId);
+        if (
+          !appointment ||
+          appointment.patientId !== request.patientId ||
+          appointment.professionalId !== caller.professionalId
+        ) {
+          throw new AccessRefused('appointment_mismatch');
+        }
+      }
+      // Decision D20: opening an encounter does not create the care relationship, it needs one
+      // that comes from elsewhere (an appointment, an assignment or a signed encounter). The one
+      // exception is a patient nobody has written about yet.
+      if (
+        !(await isTreating(tx, caller.professionalId, request.patientId)) &&
+        (await hasFootprint(tx, request.patientId))
+      ) {
+        throw new AccessRefused('encounter_requires_relationship');
+      }
 
       const visibility = request.visibility ?? 'default';
       const encounterId = uuidv7();
@@ -211,7 +255,7 @@ export function createNoteService(deps: { keys: TenantKeys }): NoteService {
       if (note.authorProfessionalId !== caller.professionalId) {
         throw new NoteDenied('note_not_author', refusedEntry(note));
       }
-      if (expectedRevision !== undefined && expectedRevision !== note.draftRevision) {
+      if (expectedRevision !== note.draftRevision) {
         throw new AppError('stale_revision');
       }
 

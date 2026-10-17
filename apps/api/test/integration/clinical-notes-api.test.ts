@@ -7,6 +7,7 @@ import { afterAll, beforeAll, describe, expect, inject, it } from 'vitest';
 import { auditEvent } from '../../src/db/schema/audit.js';
 import { clinicalNote, encounter, noteVersion } from '../../src/db/schema/clinical.js';
 import { contentHash } from '../../src/modules/clinical/domain/canonical.js';
+import type { AppointmentLookup } from '../../src/modules/clinical/index.js';
 import { createRuntimeDb, type DbHandle } from '../../src/platform/db/pool.js';
 import {
   createClinicalWorld,
@@ -25,6 +26,11 @@ let world: ClinicalWorld;
 let author: Professional;
 let colleague: Professional;
 
+/** The appointments the agenda would know about; a test registers the ones it needs. */
+const appointments = new Map<string, { patientId: string; professionalId: string }>();
+const lookupAppointment: AppointmentLookup = (_tx, id) =>
+  Promise.resolve(appointments.get(id) ?? null);
+
 const GENERAL = {
   reasonForConsultation: 'Control de presión arterial',
   symptoms: 'Cefalea ocasional',
@@ -34,7 +40,9 @@ const GENERAL = {
 
 beforeAll(async () => {
   runtime = createRuntimeDb(inject('runtimeUrl'));
-  world = await createClinicalWorld(runtime, 'clinical-notes');
+  world = await createClinicalWorld(runtime, 'clinical-notes', {
+    clinical: { appointments: lookupAppointment },
+  });
   author = await world.professional();
   colleague = await world.professional();
 });
@@ -56,7 +64,7 @@ const saveDraft = (
     baseRevision,
     ...extra,
   });
-const sign = (noteId: string, by: Professional, body: object = {}) =>
+const sign = (noteId: string, by: Professional, body: object = { expectedRevision: 1 }) =>
   world.api.post(`/notes/${noteId}/sign`, by.session, body);
 const read = (noteId: string, by: Professional) => world.api.get(`/notes/${noteId}`, by.session);
 
@@ -105,6 +113,7 @@ describe('opening an encounter', () => {
   it('records the appointment it was opened from (the link scheduling will use)', async () => {
     const patientId = await world.patient();
     const appointmentId = randomUUID();
+    appointments.set(appointmentId, { patientId, professionalId: author.professionalId });
 
     const note = await world.open(author, patientId, { appointmentId });
 
@@ -231,7 +240,7 @@ describe('saving a draft', () => {
   });
 
   it('lets the author restrict the entry to themselves while it is a draft', async () => {
-    const patientId = await world.patient([colleague]);
+    const patientId = await world.patient([author, colleague]);
     const note = await world.open(author, patientId);
 
     const response = await saveDraft(note, author, GENERAL, 0, { visibility: 'author_only' });
@@ -240,7 +249,7 @@ describe('saving a draft', () => {
   });
 
   it('keeps a draft private to its author: a treating colleague cannot see or change it', async () => {
-    const patientId = await world.patient([colleague]);
+    const patientId = await world.patient([author, colleague]);
     const note = await world.open(author, patientId);
 
     expect((await read(note.id, colleague)).statusCode).toBe(404);
@@ -338,7 +347,7 @@ describe('signing', () => {
       },
       1,
     );
-    expect((await sign(note.id, author)).statusCode).toBe(200);
+    expect((await sign(note.id, author, { expectedRevision: 2 })).statusCode).toBe(200);
   });
 
   it('refuses to sign a revision the author has not seen (a second tab saved in between)', async () => {
@@ -393,7 +402,7 @@ describe('signing', () => {
   });
 
   it('keeps the restriction to the author on a signed entry: a treating colleague cannot read it', async () => {
-    const patientId = await world.patient([colleague]);
+    const patientId = await world.patient([author, colleague]);
     const note = await world.open(author, patientId, { visibility: 'author_only' });
     await saveDraft(note, author, GENERAL, 0);
     await sign(note.id, author);
@@ -405,7 +414,7 @@ describe('signing', () => {
 
 describe('reading', () => {
   it('shows a signed entry to a colleague who treats the patient, read-only', async () => {
-    const patientId = await world.patient([colleague]);
+    const patientId = await world.patient([author, colleague]);
     const note = await world.open(author, patientId);
     await saveDraft(note, author, GENERAL, 0);
     await sign(note.id, author);
