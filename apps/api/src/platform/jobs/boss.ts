@@ -85,7 +85,13 @@ export interface LazyJobs {
   stop(options?: Parameters<PgBoss['stop']>[0]): Promise<void>;
 }
 
-export function createLazyJobs(boss: Pick<PgBoss, 'start' | 'stop'>, inner?: JobClient): LazyJobs {
+/** What the lazy client needs of the queue: a PgBoss, or a double with the same two methods. */
+interface Startable {
+  start(): Promise<unknown>;
+  stop(options?: Parameters<PgBoss['stop']>[0]): Promise<unknown>;
+}
+
+export function createLazyJobs(boss: Startable, inner?: JobClient): LazyJobs {
   const real = inner ?? createJobClient(boss as PgBoss);
   let starting: Promise<unknown> | undefined;
   const started = () => {
