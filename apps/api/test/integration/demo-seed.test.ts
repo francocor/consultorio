@@ -114,6 +114,62 @@ describe('seedDemoTenant', () => {
     );
   }, 120_000);
 
+  it('fills the agenda: today, last week and next week, with every status and the identity review', async () => {
+    const id = await newDemoTenant('seed-agenda');
+
+    await seedDemoTenant(deps, id);
+
+    const rows = await deps.withTenant({ tenantId: id, userId: SYSTEM }, async (tx) => {
+      const statuses = await tx.execute<{ status: string; n: number }>(
+        sql`SELECT status, count(*)::int AS n FROM appointment GROUP BY status`,
+      );
+      const days = await tx.execute<{ n: number }>(
+        sql`SELECT count(DISTINCT (starts_at AT TIME ZONE 'America/Argentina/Buenos_Aires')::date)::int AS n FROM appointment`,
+      );
+      const professionals = await tx.execute<{ n: number }>(
+        sql`SELECT count(DISTINCT professional_id)::int AS n FROM appointment`,
+      );
+      const review = await tx.execute<{ n: number }>(
+        sql`SELECT count(*)::int AS n FROM worklist_item WHERE kind = 'identity_review' AND status = 'open'`,
+      );
+      const occupancy = await tx.execute<{ n: number }>(
+        sql`SELECT count(*)::int AS n FROM slot_occupancy`,
+      );
+      const setup = await tx.execute<{ types: number; blocks: number; daysOff: number }>(
+        sql`SELECT (SELECT count(*) FROM appointment_type)::int AS types,
+                   (SELECT count(*) FROM schedule_block)::int AS blocks,
+                   (SELECT count(*) FROM tenant_day_off)::int AS "daysOff"`,
+      );
+      return {
+        statuses: new Map(statuses.rows.map((row) => [row.status, row.n])),
+        days: days.rows[0]?.n ?? 0,
+        professionals: professionals.rows[0]?.n ?? 0,
+        review: review.rows[0]?.n ?? 0,
+        occupancy: occupancy.rows[0]?.n ?? 0,
+        setup: setup.rows[0],
+      };
+    });
+
+    for (const status of [
+      'scheduled',
+      'confirmed',
+      'in_progress',
+      'attended',
+      'no_show',
+      'cancelled',
+    ]) {
+      expect(rows.statuses.get(status) ?? 0, status).toBeGreaterThan(0);
+    }
+    expect(rows.days).toBeGreaterThanOrEqual(8);
+    expect(rows.professionals).toBe(3);
+    expect(rows.review).toBeGreaterThanOrEqual(1);
+    // A cancelled visit frees its time; the rest keep theirs.
+    expect(rows.occupancy).toBeGreaterThan(20);
+    expect(rows.setup?.types).toBeGreaterThanOrEqual(3);
+    expect(rows.setup?.blocks).toBe(1);
+    expect(rows.setup?.daysOff).toBe(1);
+  }, 120_000);
+
   it('applies the Aillu look and keeps the organization out of billing', async () => {
     const id = await newDemoTenant('seed-look');
 

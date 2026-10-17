@@ -37,6 +37,8 @@ const NO_SEED_DATA: Record<string, string> = {
   permission_grant:
     'Extra permissions are handed out by an administrator; the demo shows roles alone.',
   session: 'Created when somebody signs in; the reset signs everyone out.',
+  slot_hold:
+    'A slot kept for a few minutes while somebody books; every hold has expired or become an appointment.',
   support_grant: 'Opened by an organization for the platform operator, for a stated reason.',
 };
 
