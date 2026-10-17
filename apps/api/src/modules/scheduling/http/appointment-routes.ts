@@ -1,11 +1,17 @@
 import {
   AppointmentDto,
+  AppointmentHistoryResponse,
   BookAppointmentRequest,
+  CancelAppointmentRequest,
+  CorrectStatusRequest,
+  RescheduleRequest,
+  TransitionRequest,
   effectivePermissions,
   type SlotConflictExtension,
 } from '@consultorio/contracts';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
+import { z } from 'zod';
 
 import type { AuditActor } from '../../../platform/audit/writer.js';
 import type { Actor } from '../../../platform/authz/actor.js';
@@ -14,12 +20,16 @@ import { refuseRequest } from '../../../platform/authz/refuse.js';
 import type { Tx, WithTenant } from '../../../platform/db/tenant-context.js';
 import { AppError, conflictCode } from '../../../platform/http/problem.js';
 import { AccessRefused, visibleLocationIds } from '../../access/index.js';
-import {
-  bookAppointment,
-  SlotTakenError,
-  type BookActor,
-} from '../application/book-appointment.js';
+import { bookAppointment, SlotTakenError } from '../application/book-appointment.js';
 import { createSchedulingPorts, isExclusionViolation } from '../application/drizzle-ports.js';
+import { appointmentHistory } from '../application/history.js';
+import {
+  correctStatus,
+  rescheduleAppointment,
+  transitionAppointment,
+  type TransitionAction,
+} from '../application/lifecycle.js';
+import type { BookActor } from '../application/placement.js';
 import type { LocationRecord } from '../application/ports.js';
 import type { TimeRange } from '../domain/working-hours.js';
 
@@ -89,9 +99,49 @@ export function locationAuthorizer(
   };
 }
 
+const IdParams = z.strictObject({ id: z.uuid() });
+
+/** The lifecycle actions: the URL word, the action, and who may ask. */
+const TRANSITION_ROUTES = [
+  { path: 'confirm', action: 'confirm', permission: 'scheduling.checkin' },
+  { path: 'check-in', action: 'check_in', permission: 'scheduling.checkin' },
+  { path: 'start', action: 'start', permission: 'scheduling.checkin' },
+  { path: 'attend', action: 'attend', permission: 'scheduling.checkin' },
+  { path: 'no-show', action: 'no_show', permission: 'scheduling.checkin' },
+  { path: 'approve', action: 'approve', permission: 'scheduling.book' },
+] as const satisfies readonly {
+  path: string;
+  action: TransitionAction;
+  permission: 'scheduling.checkin' | 'scheduling.book';
+}[];
+
 export function appointmentRoutes(deps: AppointmentRoutesDeps) {
   return (app: FastifyInstance): void => {
     const typed = app.withTypeProvider<ZodTypeProvider>();
+
+    /** Runs a use case and turns its refusals into the answers the API gives. */
+    async function respond(
+      request: FastifyRequest,
+      reply: FastifyReply,
+      appointmentId: string,
+      work: () => Promise<AppointmentDto>,
+    ): Promise<AppointmentDto> {
+      try {
+        return await work();
+      } catch (error) {
+        // Fastify takes the reply itself as the result of an async handler once it is sent.
+        if (error instanceof SlotTakenError) return replySlotTaken(request, reply, error) as never;
+        if (isExclusionViolation(error)) return replySlotTaken(request, reply) as never;
+        if (error instanceof AccessRefused) {
+          return await refuseRequest(deps.auditDeny, request, {
+            reason: error.reason,
+            resourceType: 'appointment',
+            resourceId: appointmentId,
+          });
+        }
+        throw error;
+      }
+    }
 
     typed.post(
       '/appointments',
@@ -128,6 +178,153 @@ export function appointmentRoutes(deps: AppointmentRoutesDeps) {
           }
           throw error;
         }
+      },
+    );
+
+    for (const route of TRANSITION_ROUTES) {
+      typed.post(
+        `/appointments/:id/${route.path}`,
+        {
+          config: {
+            readOnly: 'write',
+            permission: route.permission,
+            audits: ['appointment.status_changed'],
+          },
+          schema: {
+            params: IdParams,
+            body: TransitionRequest,
+            response: { 200: AppointmentDto },
+          },
+        },
+        (request, reply) => {
+          const { audit, book, context } = requestActor(request);
+          return respond(request, reply, request.params.id, () =>
+            deps.withTenant(context, (tx) =>
+              transitionAppointment(createSchedulingPorts(tx), {
+                appointmentId: request.params.id,
+                action: route.action,
+                actor: book,
+                auditActor: audit,
+                now: deps.clock(),
+                expectedVersion: request.body.expectedVersion,
+              }),
+            ),
+          );
+        },
+      );
+    }
+
+    // Cancelling is a patient-protective write: it stays possible when the organization is
+    // read-only, because a patient must always be able to give a slot back.
+    typed.post(
+      '/appointments/:id/cancel',
+      {
+        config: {
+          readOnly: 'patient_protective',
+          permission: 'scheduling.book',
+          audits: ['appointment.cancelled'],
+        },
+        schema: {
+          params: IdParams,
+          body: CancelAppointmentRequest,
+          response: { 200: AppointmentDto },
+        },
+      },
+      (request, reply) => {
+        const { audit, book, context } = requestActor(request);
+        const { expectedVersion, ...cancellation } = request.body;
+        return respond(request, reply, request.params.id, () =>
+          deps.withTenant(context, (tx) =>
+            transitionAppointment(createSchedulingPorts(tx), {
+              appointmentId: request.params.id,
+              action: 'cancel',
+              actor: book,
+              auditActor: audit,
+              now: deps.clock(),
+              expectedVersion,
+              cancellation: {
+                cancelledBy: cancellation.cancelledBy,
+                reasonCode: cancellation.reasonCode,
+                ...(cancellation.note === undefined ? {} : { note: cancellation.note }),
+              },
+            }),
+          ),
+        );
+      },
+    );
+
+    typed.post(
+      '/appointments/:id/correct',
+      {
+        config: {
+          readOnly: 'write',
+          permission: 'scheduling.checkin',
+          audits: ['appointment.status_corrected'],
+        },
+        schema: {
+          params: IdParams,
+          body: CorrectStatusRequest,
+          response: { 200: AppointmentDto },
+        },
+      },
+      (request, reply) => {
+        const { audit, book, context } = requestActor(request);
+        return respond(request, reply, request.params.id, () =>
+          deps.withTenant(context, (tx) =>
+            correctStatus(createSchedulingPorts(tx), {
+              appointmentId: request.params.id,
+              toStatus: request.body.toStatus,
+              reason: request.body.reason,
+              actor: book,
+              auditActor: audit,
+              now: deps.clock(),
+              expectedVersion: request.body.expectedVersion,
+            }),
+          ),
+        );
+      },
+    );
+
+    typed.post(
+      '/appointments/:id/reschedule',
+      {
+        config: {
+          readOnly: 'write',
+          permission: 'scheduling.book',
+          audits: ['appointment.rescheduled', 'appointment.reassigned', 'appointment.overridden'],
+        },
+        schema: {
+          params: IdParams,
+          body: RescheduleRequest,
+          response: { 200: AppointmentDto },
+        },
+      },
+      (request, reply) => {
+        const { actor, audit, book, context } = requestActor(request);
+        return respond(request, reply, request.params.id, () =>
+          deps.withTenant(context, (tx) =>
+            rescheduleAppointment(createSchedulingPorts(tx), {
+              appointmentId: request.params.id,
+              ...request.body,
+              actor: book,
+              auditActor: audit,
+              now: deps.clock(),
+              authorizeLocation: locationAuthorizer(tx, actor),
+            }),
+          ),
+        );
+      },
+    );
+
+    typed.get(
+      '/appointments/:id/history',
+      {
+        config: { readOnly: 'read', permission: 'scheduling.read' },
+        schema: { params: IdParams, response: { 200: AppointmentHistoryResponse } },
+      },
+      (request) => {
+        const { context } = requestActor(request);
+        return deps.withTenant(context, (tx) => appointmentHistory(tx, request.params.id));
       },
     );
   };

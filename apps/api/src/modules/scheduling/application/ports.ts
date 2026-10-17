@@ -1,4 +1,4 @@
-import type { AppointmentDto, HolidayDto } from '@consultorio/contracts';
+import type { AppointmentDto, AppointmentStatus, HolidayDto } from '@consultorio/contracts';
 
 import type { AuditEventInput } from '../../../platform/audit/writer.js';
 import type { Occupancy } from '../domain/lanes.js';
@@ -91,6 +91,53 @@ export interface NewEvent {
   details?: Record<string, string | number | boolean | null | string[]>;
 }
 
+/** An appointment as the use cases read it (administrative data only). */
+export interface AppointmentRecord {
+  id: string;
+  patientId: string;
+  professionalId: string;
+  locationId: string;
+  appointmentTypeId: string;
+  startsAt: Date;
+  endsAt: Date;
+  bufferMinutes: number;
+  lane: number;
+  status: AppointmentStatus;
+  source: 'staff' | 'online' | 'waitlist_offer';
+  bookedBy: string | null;
+  identityConfirmed: boolean;
+  identityConfirmedBy: string | null;
+  identityConfirmation: 'staff' | 'self_confirmed' | null;
+  outOfHours: boolean;
+  overrideReason: string | null;
+  videoRoom: string | null;
+  seriesId: string | null;
+  seriesIndex: number | null;
+  version: number;
+}
+
+/** What a use case may change on an appointment. The version is bumped by the port. */
+export interface AppointmentPatch {
+  status?: AppointmentStatus;
+  startsAt?: Date;
+  endsAt?: Date;
+  professionalId?: string;
+  locationId?: string;
+  lane?: number;
+  identityConfirmed?: boolean;
+  identityConfirmedBy?: string | null;
+  identityConfirmation?: 'staff' | 'self_confirmed' | null;
+  outOfHours?: boolean;
+  overrideReason?: string | null;
+  videoRoom?: string | null;
+  cancelledByKind?: 'patient' | 'professional' | 'organization' | null;
+  cancelReason?: string | null;
+  cancelNote?: string | null;
+  cancelledAt?: Date | null;
+  lateCancellation?: boolean | null;
+  patientId?: string;
+}
+
 export interface SchedulingPorts {
   /** Takes the row lock that serializes every write of one professional (design 4.6). */
   lockProfessional(id: string): Promise<ProfessionalRecord | null>;
@@ -118,6 +165,12 @@ export interface SchedulingPorts {
   insertAppointment(
     values: NewAppointment,
   ): Promise<{ ok: true; appointment: AppointmentDto } | { ok: false; reason: 'slot_taken' }>;
+  /** Reads an appointment; `lock` takes the row lock (FOR UPDATE) so a change cannot interleave. */
+  findAppointment(id: string, options?: { lock?: boolean }): Promise<AppointmentRecord | null>;
+  /** Writes the changes and bumps the version. */
+  updateAppointment(id: string, patch: AppointmentPatch): Promise<AppointmentDto>;
+  /** The organization's late-cancellation window, in hours (default 24). */
+  lateCancellationHours(): Promise<number>;
   insertEvent(event: NewEvent): Promise<void>;
   audit(event: AuditEventInput): Promise<void>;
 }

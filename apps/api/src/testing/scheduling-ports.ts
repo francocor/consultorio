@@ -4,6 +4,8 @@ import type { HolidayDto } from '@consultorio/contracts';
 
 import type {
   ActiveOccupancy,
+  AppointmentPatch,
+  AppointmentRecord,
   LaneMoveCommand,
   LocationRecord,
   NewAppointment,
@@ -26,6 +28,9 @@ export interface FakeSchedulingState {
   locations: Map<string, LocationRecord>;
   types: Map<string, TypeRecord>;
   patients: Map<string, PatientRecord>;
+  appointments: Map<string, AppointmentRecord>;
+  updates: { id: string; patch: AppointmentPatch }[];
+  lateWindowHours: number;
   weekly: HoursRow[];
   periods: HoursPeriod[];
   blocks: TimeRange[];
@@ -52,6 +57,9 @@ export function createFakeSchedulingPorts(overrides: Partial<FakeSchedulingState
     locations: new Map(),
     types: new Map(),
     patients: new Map(),
+    appointments: new Map(),
+    updates: [],
+    lateWindowHours: 24,
     weekly: [],
     periods: [],
     blocks: [],
@@ -139,6 +147,37 @@ export function createFakeSchedulingPorts(overrides: Partial<FakeSchedulingState
         },
       });
     },
+    findAppointment: (id) => Promise.resolve(state.appointments.get(id) ?? null),
+    updateAppointment: (id, patch) => {
+      const current = state.appointments.get(id);
+      if (!current) return Promise.reject(new Error('no such appointment'));
+      state.updates.push({ id, patch });
+      const next: AppointmentRecord = {
+        ...current,
+        ...Object.fromEntries(Object.entries(patch).filter(([, value]) => value !== undefined)),
+        version: current.version + 1,
+      };
+      state.appointments.set(id, next);
+      return Promise.resolve({
+        id: next.id,
+        patientId: next.patientId,
+        professionalId: next.professionalId,
+        locationId: next.locationId,
+        appointmentTypeId: next.appointmentTypeId,
+        startsAt: next.startsAt.toISOString(),
+        endsAt: next.endsAt.toISOString(),
+        bufferMinutes: next.bufferMinutes,
+        status: next.status,
+        source: next.source,
+        bookedBy: next.bookedBy,
+        identityConfirmed: next.identityConfirmed,
+        outOfHours: next.outOfHours,
+        seriesId: next.seriesId,
+        seriesIndex: next.seriesIndex,
+        version: next.version,
+      });
+    },
+    lateCancellationHours: () => Promise.resolve(state.lateWindowHours),
     insertEvent: (event) => {
       state.events.push(event);
       return Promise.resolve();

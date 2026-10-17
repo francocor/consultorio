@@ -522,10 +522,10 @@ Depends: S2.03, S2.01.
 
 Depends: S2.04.
 
-- [ ] 2.13 `domain/appointment-state-machine.ts`: the 8 statuses and the transition table. [SCH-11] Test: exhaustive pair test (every from/to combination).
-- [ ] 2.14 `application/transition.ts` plus routes to confirm, check in, start, attend, no-show and cancel (reason, actor kind); writes `appointment_event`; optimistic `version`. [SCH-10, SCH-11] Test: integration per transition; `attended` is terminal.
-- [ ] 2.15 `POST /appointments/:id/reschedule` and reassign (revalidate, version check, event kind `rescheduled`/`reassigned`, hook to rotate `video_room` and revoke tokens). [SCH-09] Test: version conflict returns 409; rescheduled count derivable from events.
-- [ ] 2.16 Cancellation allowed in a read-only tenant, scheduling and rescheduling refused. [SCH-10, SCH-15] Test: read-only inject matrix.
+- [x] 2.13 `domain/appointment-state-machine.ts`: the 8 statuses and the transition table. [SCH-11] Test: exhaustive pair test (every from/to combination).
+- [x] 2.14 `application/transition.ts` plus routes to confirm, check in, start, attend, no-show and cancel (reason, actor kind); writes `appointment_event`; optimistic `version`. [SCH-10, SCH-11] Test: integration per transition; `attended` is terminal.
+- [x] 2.15 `POST /appointments/:id/reschedule` and reassign (revalidate, version check, event kind `rescheduled`/`reassigned`, hook to rotate `video_room` and revoke tokens). [SCH-09] Test: version conflict returns 409; rescheduled count derivable from events.
+- [x] 2.16 Cancellation allowed in a read-only tenant, scheduling and rescheduling refused. [SCH-10, SCH-15] Test: read-only inject matrix.
 
 ## S2.06 Reception worklist (~300 lines)
 

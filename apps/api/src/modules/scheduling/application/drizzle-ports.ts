@@ -9,13 +9,13 @@ import {
 } from '../../../db/schema/scheduling-config.js';
 import { appointment, appointmentEvent, slotHold } from '../../../db/schema/scheduling.js';
 import { professional, professionalHours } from '../../../db/schema/staff.js';
-import { location } from '../../../db/schema/tenant.js';
+import { location, tenant } from '../../../db/schema/tenant.js';
 import { audit } from '../../../platform/audit/writer.js';
 import type { Tx } from '../../../platform/db/tenant-context.js';
 import type { HoursPeriod, HoursRow } from '../domain/working-hours.js';
 
 import { createHolidayService } from './holidays.js';
-import type { ActiveOccupancy, SchedulingPorts } from './ports.js';
+import type { ActiveOccupancy, AppointmentRecord, SchedulingPorts } from './ports.js';
 
 const EXCLUSION_VIOLATION = '23P01';
 
@@ -299,6 +299,37 @@ export function createSchedulingPorts(tx: Tx): SchedulingPorts {
           return { ok: false as const, reason: 'slot_taken' as const };
         throw error;
       }
+    },
+
+    async findAppointment(id, options) {
+      const query = tx.select().from(appointment).where(eq(appointment.id, id));
+      const [row] = await (options?.lock ? query.for('update') : query);
+      if (!row) return null;
+      return {
+        ...row,
+        status: row.status as AppointmentRecord['status'],
+        source: row.source as AppointmentRecord['source'],
+        identityConfirmation:
+          row.identityConfirmation === 'staff' || row.identityConfirmation === 'self_confirmed'
+            ? row.identityConfirmation
+            : null,
+      };
+    },
+
+    async updateAppointment(id, patch) {
+      const [row] = await tx
+        .update(appointment)
+        .set({ ...patch, version: sql`${appointment.version} + 1` })
+        .where(eq(appointment.id, id))
+        .returning(appointmentColumns);
+      if (!row) throw new Error('appointment update matched no row');
+      return toAppointmentDto(row);
+    },
+
+    async lateCancellationHours() {
+      const [row] = await tx.select({ settings: tenant.settings }).from(tenant);
+      const value = row?.settings['late_cancellation_hours'];
+      return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : 24;
     },
 
     async insertEvent(event) {

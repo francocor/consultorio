@@ -3,7 +3,11 @@ import { describe, expect, it } from 'vitest';
 import {
   APPOINTMENT_STATUSES,
   BookAppointmentRequest,
+  CancelAppointmentRequest,
+  CorrectStatusRequest,
+  RescheduleRequest,
   SlotConflictExtension,
+  TransitionRequest,
   isAppointmentStatus,
 } from './scheduling.js';
 
@@ -125,5 +129,61 @@ describe('SlotConflictExtension', () => {
 
     expect(SlotConflictExtension.safeParse(body).success).toBe(true);
     expect(SlotConflictExtension.safeParse({ ...body, patientName: 'Ana' }).success).toBe(false);
+  });
+});
+
+describe('lifecycle requests', () => {
+  it('accept an optional version and nothing else on a plain transition', () => {
+    expect(TransitionRequest.safeParse({}).success).toBe(true);
+    expect(TransitionRequest.safeParse({ expectedVersion: 3 }).success).toBe(true);
+    expect(TransitionRequest.safeParse({ expectedVersion: 0 }).success).toBe(false);
+    expect(TransitionRequest.safeParse({ status: 'attended' }).success).toBe(false);
+  });
+
+  it('cancel needs who cancelled and a reason code, and bounds the free text', () => {
+    const ok = { cancelledBy: 'patient', reasonCode: 'illness' };
+
+    expect(CancelAppointmentRequest.safeParse(ok).success).toBe(true);
+    expect(CancelAppointmentRequest.safeParse({ ...ok, note: 'x'.repeat(200) }).success).toBe(true);
+    expect(CancelAppointmentRequest.safeParse({ ...ok, note: 'x'.repeat(201) }).success).toBe(
+      false,
+    );
+    expect(CancelAppointmentRequest.safeParse({ reasonCode: 'illness' }).success).toBe(false);
+    expect(CancelAppointmentRequest.safeParse({ ...ok, cancelledBy: 'landlord' }).success).toBe(
+      false,
+    );
+    expect(CancelAppointmentRequest.safeParse({ ...ok, reasonCode: 'because' }).success).toBe(
+      false,
+    );
+  });
+
+  it('a correction needs a status of the eight and a reason', () => {
+    expect(
+      CorrectStatusRequest.safeParse({ toStatus: 'attended', reason: 'Arrived late' }).success,
+    ).toBe(true);
+    expect(CorrectStatusRequest.safeParse({ toStatus: 'attended', reason: '' }).success).toBe(
+      false,
+    );
+    expect(CorrectStatusRequest.safeParse({ toStatus: 'rescheduled', reason: 'x' }).success).toBe(
+      false,
+    );
+  });
+
+  it('a reschedule needs the version and at least one thing to change', () => {
+    const at = '2026-12-01T13:00:00.000Z';
+
+    expect(RescheduleRequest.safeParse({ expectedVersion: 1, startsAt: at }).success).toBe(true);
+    expect(RescheduleRequest.safeParse({ expectedVersion: 1, professionalId: ID }).success).toBe(
+      true,
+    );
+    expect(RescheduleRequest.safeParse({ startsAt: at }).success).toBe(false);
+    expect(RescheduleRequest.safeParse({ expectedVersion: 1 }).success).toBe(false);
+    expect(
+      RescheduleRequest.safeParse({
+        expectedVersion: 1,
+        startsAt: at,
+        local: { date: '2026-12-01', time: '10:00' },
+      }).success,
+    ).toBe(false);
   });
 });

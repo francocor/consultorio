@@ -101,3 +101,107 @@ export const SlotConflictExtension = z.strictObject({
   nextSlots: z.array(SlotRange).max(10),
 });
 export type SlotConflictExtension = z.infer<typeof SlotConflictExtension>;
+
+// Lifecycle -----------------------------------------------------------------------------------
+
+const ExpectedVersion = z.number().int().min(1);
+
+/** Optimistic concurrency: a stale `expectedVersion` gets 409 `stale_revision`. */
+export const TransitionRequest = z.strictObject({ expectedVersion: ExpectedVersion.optional() });
+export type TransitionRequest = z.infer<typeof TransitionRequest>;
+
+export const CANCELLED_BY = ['patient', 'professional', 'organization'] as const;
+export type CancelledBy = (typeof CANCELLED_BY)[number];
+
+/** Reasons for cancelling. A code, so reports can group them; the free text is optional. */
+export const CANCELLATION_REASONS = [
+  'patient_request',
+  'illness',
+  'schedule_conflict',
+  'no_longer_needed',
+  'professional_unavailable',
+  'organization_closed',
+  'duplicate',
+  'other',
+] as const;
+export type CancellationReason = (typeof CANCELLATION_REASONS)[number];
+
+export const CancelAppointmentRequest = z.strictObject({
+  cancelledBy: z.enum(CANCELLED_BY),
+  reasonCode: z.enum(CANCELLATION_REASONS),
+  note: z.string().trim().max(200).optional(),
+  expectedVersion: ExpectedVersion.optional(),
+});
+export type CancelAppointmentRequest = z.infer<typeof CancelAppointmentRequest>;
+
+/** An authorized correction of a terminal status needs a reason (audited). */
+export const CorrectStatusRequest = z.strictObject({
+  toStatus: z.enum(APPOINTMENT_STATUSES),
+  reason: z.string().trim().min(1).max(200),
+  expectedVersion: ExpectedVersion.optional(),
+});
+export type CorrectStatusRequest = z.infer<typeof CorrectStatusRequest>;
+
+/**
+ * Moves an appointment to another time, location or professional. The version is required: a move
+ * decided on a stale screen must not overwrite a change somebody else made.
+ */
+export const RescheduleRequest = z
+  .object({
+    expectedVersion: ExpectedVersion,
+    startsAt: Instant.optional(),
+    local: LocalStart.optional(),
+    professionalId: z.uuid().optional(),
+    locationId: z.uuid().optional(),
+    overrideHours: OverrideHours.optional(),
+    overrideHold: z.boolean().optional(),
+  })
+  .superRefine((value, ctx) => {
+    if (value.startsAt !== undefined && value.local !== undefined) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['startsAt'],
+        message: 'give either an instant or a local time',
+      });
+    }
+    if (
+      value.startsAt === undefined &&
+      value.local === undefined &&
+      value.professionalId === undefined &&
+      value.locationId === undefined
+    ) {
+      ctx.addIssue({ code: 'custom', path: ['startsAt'], message: 'nothing to change' });
+    }
+  });
+export type RescheduleRequest = z.infer<typeof RescheduleRequest>;
+
+export const APPOINTMENT_EVENT_KINDS = [
+  'created',
+  'status_changed',
+  'rescheduled',
+  'reassigned',
+  'status_corrected',
+  'identity_confirmed',
+  'identity_rejected',
+] as const;
+export type AppointmentEventKind = (typeof APPOINTMENT_EVENT_KINDS)[number];
+
+export const AppointmentEventDto = z.strictObject({
+  id: z.uuid(),
+  kind: z.enum(APPOINTMENT_EVENT_KINDS),
+  fromStatus: z.enum(APPOINTMENT_STATUSES).nullable(),
+  toStatus: z.enum(APPOINTMENT_STATUSES).nullable(),
+  actorUserId: z.uuid().nullable(),
+  actorKind: z.enum(['staff', 'patient', 'system']),
+  at: Instant,
+  details: z.record(z.string(), z.unknown()),
+});
+export type AppointmentEventDto = z.infer<typeof AppointmentEventDto>;
+
+export const AppointmentHistoryResponse = z.strictObject({
+  appointmentId: z.uuid(),
+  /** How many times it was moved: derived from the history, never a status. */
+  rescheduledCount: z.number().int(),
+  events: z.array(AppointmentEventDto),
+});
+export type AppointmentHistoryResponse = z.infer<typeof AppointmentHistoryResponse>;

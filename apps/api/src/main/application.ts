@@ -65,6 +65,11 @@ export interface ApplicationOptions {
   passwordValidator: PasswordValidator;
   /** Replaceable in tests; production uses the system clock. */
   clock?: () => Date;
+  /**
+   * The clock of scheduling alone (tests move it to just after an appointment starts without ending
+   * the sessions, which run on `clock`). Defaults to `clock`.
+   */
+  schedulingClock?: () => Date;
   hasher?: PasswordHasher;
   lockout?: LockoutPolicy;
   /** Request limits; defaults protect a single instance. Tests raise them. */
@@ -215,10 +220,11 @@ export function createApplication(options: ApplicationOptions): FastifyInstance 
     },
   });
 
+  const schedulingClock = options.schedulingClock ?? options.clock;
   const scheduling = createScheduling({
     withTenant,
     auditDeny,
-    ...(options.clock ? { clock: options.clock } : {}),
+    ...(schedulingClock ? { clock: schedulingClock } : {}),
   });
 
   const auditViewer = createAudit({ withTenant });

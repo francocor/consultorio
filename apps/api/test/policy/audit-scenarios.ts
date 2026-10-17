@@ -93,6 +93,11 @@ export const AUDIT_SCENARIOS: Record<AuditAction, AuditScenario> = {
   // Appointments.
   'appointment.created': t('scheduling-booking.test.ts'),
   'appointment.overridden': t('scheduling-booking.test.ts'),
+  'appointment.rescheduled': t('scheduling-lifecycle.test.ts'),
+  'appointment.reassigned': t('scheduling-lifecycle.test.ts'),
+  'appointment.status_changed': t('scheduling-lifecycle.test.ts'),
+  'appointment.cancelled': t('scheduling-lifecycle.test.ts'),
+  'appointment.status_corrected': t('scheduling-lifecycle.test.ts'),
 
   // Scheduling setup.
   'appointment_type.created': t('scheduling-config-api.test.ts'),
