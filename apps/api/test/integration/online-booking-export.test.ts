@@ -5,8 +5,8 @@ import { afterAll, beforeAll, describe, expect, inject, it } from 'vitest';
 import { bookingLink } from '../../src/db/schema/online-booking.js';
 import { exportOnlineBooking } from '../../src/modules/online-booking/application/export-contributor.js';
 import { createRuntimeDb, type DbHandle } from '../../src/platform/db/pool.js';
-import { insertProfessional } from '../support/fixture-helpers.js';
 import { asTenant, createTestTenant, type TestTenant } from '../support/tenants.js';
+import { createTestProfessional } from '../support/users.js';
 
 let runtime: DbHandle;
 let a: TestTenant;
@@ -26,9 +26,9 @@ const slug = () => randomBytes(8).toString('hex');
 
 describe('administrative export of the online booking', () => {
   it('lists the booking links of the exporting organization, and nobody else', async () => {
+    const { professionalId } = await createTestProfessional(runtime, a.id);
     await asTenant(runtime, a.id, async (tx) => {
       await tx.insert(bookingLink).values({ tenantId: a.id, slug: slug(), enabled: true });
-      const professionalId = await insertProfessional(tx, a.id);
       await tx.insert(bookingLink).values({ tenantId: a.id, professionalId, slug: slug() });
     });
     await asTenant(runtime, b.id, (tx) =>

@@ -5,8 +5,8 @@ import { afterAll, beforeAll, describe, expect, inject, it } from 'vitest';
 
 import { bookingLink } from '../../src/db/schema/online-booking.js';
 import { createRuntimeDb, type DbHandle } from '../../src/platform/db/pool.js';
-import { insertProfessional } from '../support/fixture-helpers.js';
 import { asTenant, createTestTenant, type TestTenant } from '../support/tenants.js';
+import { createTestProfessional } from '../support/users.js';
 
 let runtime: DbHandle;
 let a: TestTenant;
@@ -46,10 +46,10 @@ describe('booking_link', () => {
 
   it('refuses a slug that is already taken, even by another organization', async () => {
     const taken = slug();
-    await asTenant(runtime, a.id, async (tx) => {
-      const professionalId = await insertProfessional(tx, a.id);
-      await tx.insert(bookingLink).values({ tenantId: a.id, professionalId, slug: taken });
-    });
+    const { professionalId } = await createTestProfessional(runtime, a.id);
+    await asTenant(runtime, a.id, (tx) =>
+      tx.insert(bookingLink).values({ tenantId: a.id, professionalId, slug: taken }),
+    );
 
     const duplicate = await dbError(
       asTenant(runtime, b.id, (tx) =>
@@ -70,11 +70,10 @@ describe('booking_link', () => {
       ),
     ).toBe('23505');
 
-    const professionalId = await asTenant(runtime, b.id, async (tx) => {
-      const id = await insertProfessional(tx, b.id);
-      await tx.insert(bookingLink).values({ tenantId: b.id, professionalId: id, slug: slug() });
-      return id;
-    });
+    const { professionalId } = await createTestProfessional(runtime, b.id);
+    await asTenant(runtime, b.id, (tx) =>
+      tx.insert(bookingLink).values({ tenantId: b.id, professionalId, slug: slug() }),
+    );
     expect(
       await dbError(
         asTenant(runtime, b.id, (tx) =>
@@ -87,10 +86,10 @@ describe('booking_link', () => {
   it.each(['SHORT', 'has space!', 'UPPERCASE12345678', 'x'.repeat(33), 'a-b-c-d-e-f-g'])(
     'refuses the slug %j: only lowercase letters and digits, 8 to 32 of them',
     async (value) => {
+      const { professionalId } = await createTestProfessional(runtime, b.id);
       expect(
         await dbError(
           asTenant(runtime, b.id, async (tx) => {
-            const professionalId = await insertProfessional(tx, b.id);
             await tx.execute(
               sql`INSERT INTO booking_link (tenant_id, professional_id, slug)
                     VALUES (${b.id}, ${professionalId}, ${value})`,
