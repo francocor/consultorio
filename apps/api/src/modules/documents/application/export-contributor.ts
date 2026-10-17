@@ -1,4 +1,4 @@
-import { and, asc, eq, sql } from 'drizzle-orm';
+import { and, asc, eq, inArray, or, sql } from 'drizzle-orm';
 
 import { careRelationship } from '../../../db/schema/care.js';
 import { document, type DocumentRow } from '../../../db/schema/documents.js';
@@ -54,24 +54,30 @@ export const exportAdministrativeDocuments: ExportContributor = async ({ tx }) =
 };
 
 /**
- * Clinical part, one package per professional: the clinical documents of the patients that
- * professional treats. Row level security (the export runs as that professional) already limits it
- * to what they may read; the care relationship narrows it to their own patients.
+ * Clinical part, one package per professional: the clinical documents that professional wrote,
+ * and those of the patients they treat. Row level security (the export runs as that professional)
+ * already limits it to what they may read; authorship or the care relationship narrows it to
+ * their own work, the same rule as the notes. A document the professional wrote is theirs even if
+ * no relationship is active any more.
  */
 export const exportClinicalDocuments: ExportContributor = async ({ tx, professionalId }) => {
   if (professionalId === undefined) return { documents: [] };
+  const treated = tx
+    .select({ patientId: careRelationship.patientId })
+    .from(careRelationship)
+    .where(
+      and(eq(careRelationship.professionalId, professionalId), eq(careRelationship.active, true)),
+    );
   const rows = await tx
-    .select({ row: document })
+    .select()
     .from(document)
-    .innerJoin(
-      careRelationship,
+    .where(
       and(
-        eq(careRelationship.patientId, document.patientId),
-        eq(careRelationship.professionalId, professionalId),
-        eq(careRelationship.active, true),
+        real,
+        eq(document.classification, 'clinical'),
+        or(eq(document.authorProfessionalId, professionalId), inArray(document.patientId, treated)),
       ),
     )
-    .where(and(real, eq(document.classification, 'clinical')))
     .orderBy(asc(document.createdAt), asc(document.id));
-  return { documents: rows.map((entry) => exported(entry.row)) };
+  return { documents: rows.map(exported) };
 };
