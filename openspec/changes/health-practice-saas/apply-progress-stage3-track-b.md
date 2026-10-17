@@ -111,3 +111,22 @@ Blocked on track C: the waitlist fallback on the slot picker (`waitlistPath` pro
 ## Verification
 
 (See the section filled in after the last run, below.)
+
+Run on the tip of the branch (Node v24, pnpm 10.34.7, Docker running and shared with other tracks):
+
+| Command                                                                 | Result                                                                                           |
+| ----------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------ |
+| `corepack pnpm install --frozen-lockfile`                               | exit 0                                                                                           |
+| `corepack pnpm typecheck` / `lint` / `format:check`                      | exit 0                                                                                           |
+| `corepack pnpm test`                                                    | **273 files, 3,466 tests passed**                                                                |
+| `corepack pnpm test:integration`                                        | **135 files passed, 1 skipped (the slow ClamAV suite); 2,082 tests passed, 4 skipped**           |
+| `corepack pnpm build`                                                   | exit 0 (the Web Worker of the proof of work is in the bundle: `pow.worker-*.js`)                 |
+| `corepack pnpm db:check`                                                | No migration drift                                                                               |
+| `test:e2e` (`E2E_WEB_PORT=4540 E2E_API_PORT=3540 E2E_MINIO_PORT=9540`, `--workers=3`) | **173 passed** (170 of the seam + 3 of this track)                                   |
+
+Things the runs found, all fixed and recorded here:
+
+1. First integration run: two of my test files failed only in the full run, because `fixture-helpers.insertProfessional` numbers its users from 1 in every file and the database is shared (`fixture-1@example.test` twice). They use `createTestProfessional` now.
+2. First full e2e run: `stage2-center.spec.ts` failed once. Cause: my booking spec held the first free times of the same professional (the cardiologist) that it looks for when both run in parallel. The booking spec now uses the psychologist, whom no other spec books.
+3. The vitest transform cache (`node_modules/.vitest-cache`) keeps a stale `import.meta.glob` when a file appears in a globbed folder (it hid `test/policy/no-delete/booking.json`). Delete the folder after adding such a file; CI starts clean.
+4. `Lighthouse` and CI were not run.
