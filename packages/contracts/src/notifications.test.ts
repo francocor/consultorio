@@ -12,6 +12,10 @@ import {
   MESSAGE_STATUSES,
   NOTIFICATION_AUDIT_ACTIONS,
   NotificationSettings,
+  SimulatorInboundRequest,
+  SimulatorModeRequest,
+  SimulatorStatusRequest,
+  SimulatorUnreachableRequest,
 } from './notifications.js';
 
 describe('notification catalogues', () => {
@@ -100,5 +104,32 @@ describe('notification settings', () => {
     expect(
       NotificationSettings.safeParse({ ...DEFAULT_NOTIFICATION_SETTINGS, sendAt: '09:00' }).success,
     ).toBe(false);
+  });
+});
+
+describe('the shapes of the WhatsApp simulator console', () => {
+  it('accepts a status report, a reply, a mode and an unreachable number, and nothing else', () => {
+    expect(SimulatorStatusRequest.parse({ status: 'delivered' })).toEqual({ status: 'delivered' });
+    expect(
+      SimulatorStatusRequest.parse({ status: 'failed', errorCode: 'not_on_whatsapp' }),
+    ).toEqual({
+      status: 'failed',
+      errorCode: 'not_on_whatsapp',
+    });
+    expect(SimulatorStatusRequest.safeParse({ status: 'accepted' }).success).toBe(false);
+    expect(SimulatorInboundRequest.parse({ from: '+5491144445555', text: '1' })).toEqual({
+      from: '+5491144445555',
+      text: '1',
+    });
+    expect(SimulatorInboundRequest.safeParse({ from: '+5491144445555' }).success).toBe(false);
+    expect(SimulatorModeRequest.parse({ mode: 'down' })).toEqual({ mode: 'down' });
+    expect(SimulatorModeRequest.safeParse({ mode: 'broken' }).success).toBe(false);
+    expect(
+      SimulatorUnreachableRequest.parse({ number: '+5491144445555', unreachable: true }),
+    ).toEqual({
+      number: '+5491144445555',
+      unreachable: true,
+    });
+    expect(SimulatorUnreachableRequest.safeParse({ number: '+5491144445555' }).success).toBe(false);
   });
 });

@@ -12,6 +12,7 @@ import {
   foreignKey,
   index,
   integer,
+  pgTable,
   smallint,
   text,
   timestamp,
@@ -173,3 +174,149 @@ export const messageAttempt = tenantTable(
 );
 
 export type MessageAttemptRow = typeof messageAttempt.$inferSelect;
+
+/** What a provider event did to the message it is about. */
+export const MESSAGE_EVENT_STATUSES = ['sent', 'delivered', 'read', 'failed'] as const;
+
+/**
+ * A status event of the WhatsApp provider that was applied, by the id the provider gave it. The
+ * unique key is the idempotence of the webhook: a replayed event finds its row and changes nothing.
+ */
+export const messageEvent = tenantTable(
+  'message_event',
+  {
+    eventId: text('event_id').notNull(),
+    messageId: uuid('message_id').notNull(),
+    status: text('status').notNull(),
+  },
+  (table) => [
+    foreignKey({
+      name: 'message_event_tenant_id_fkey',
+      columns: [table.tenantId],
+      foreignColumns: [tenant.id],
+    }),
+    foreignKey({
+      name: 'message_event_message_fkey',
+      columns: [table.tenantId, table.messageId],
+      foreignColumns: [message.tenantId, message.id],
+    }),
+    check('message_event_status_check', sql.raw(`"status" in (${list(MESSAGE_EVENT_STATUSES)})`)),
+    unique('message_event_tenant_id_event_id_key').on(table.tenantId, table.eventId),
+  ],
+);
+
+/** What became of a reply from a patient. */
+export const INBOUND_OUTCOMES = [
+  'confirmed',
+  'cancelled',
+  'opted_out',
+  'needs_review',
+  'ignored',
+] as const;
+
+/**
+ * A reply that reached an organization on WhatsApp, by the id of the provider's event (a replayed
+ * event is the same reply). It keeps no text: what the patient wrote is only in the encrypted
+ * detail of the reception worklist item that asks a person to look at it (`needs_review`), and
+ * the sender is a hash. A reply from a number the organization never wrote to is not recorded.
+ */
+export const inboundMessage = tenantTable(
+  'inbound_message',
+  {
+    eventId: text('event_id').notNull(),
+    fromHash: text('from_hash').notNull(),
+    outcome: text('outcome').notNull(),
+  },
+  (table) => [
+    foreignKey({
+      name: 'inbound_message_tenant_id_fkey',
+      columns: [table.tenantId],
+      foreignColumns: [tenant.id],
+    }),
+    check('inbound_message_outcome_check', sql.raw(`"outcome" in (${list(INBOUND_OUTCOMES)})`)),
+    unique('inbound_message_tenant_id_event_id_key').on(table.tenantId, table.eventId),
+  ],
+);
+
+/** How the local WhatsApp simulator answers (`/operator/dev/whatsapp/mode`). */
+export const LOCAL_WHATSAPP_MODES = ['ok', 'down', 'reject_template'] as const;
+
+export const LOCAL_WHATSAPP_STATUSES = [
+  'accepted',
+  'sent',
+  'delivered',
+  'read',
+  'failed',
+  'received',
+] as const;
+
+/**
+ * The phone of the local WhatsApp simulator: every message the platform handed to it and every
+ * reply typed into it. Platform table, no `tenant_id`: the provider knows nothing about our
+ * organizations, and the simulator exists only while `WHATSAPP_PROVIDER=local` (the production
+ * guard refuses it otherwise). The API and the worker share it through Postgres.
+ */
+export const localWhatsappMessage = pgTable(
+  'local_whatsapp_message',
+  {
+    id: uuid('id')
+      .primaryKey()
+      .default(sql`app.uuid_v7()`),
+    providerMessageId: text('provider_message_id').notNull(),
+    /** Sending twice with the same key is one message. Null for a reply. */
+    idempotencyKey: text('idempotency_key'),
+    direction: text('direction').notNull(),
+    /** The recipient of an outbound message, the sender of an inbound one (E.164). */
+    number: text('number').notNull(),
+    templateKey: text('template_key'),
+    /** The text as the patient reads it. */
+    body: text('body').notNull(),
+    status: text('status').notNull(),
+    errorCode: text('error_code'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true })
+      .notNull()
+      .defaultNow()
+      .$onUpdate(() => new Date()),
+  },
+  (table) => [
+    uniqueIndex('local_whatsapp_message_provider_id_key').on(table.providerMessageId),
+    uniqueIndex('local_whatsapp_message_idempotency_key')
+      .on(table.idempotencyKey)
+      .where(sql`${table.idempotencyKey} is not null`),
+    check(
+      'local_whatsapp_message_direction_check',
+      sql`${table.direction} in ('outbound', 'inbound')`,
+    ),
+    check(
+      'local_whatsapp_message_status_check',
+      sql.raw(`"status" in (${list(LOCAL_WHATSAPP_STATUSES)})`),
+    ),
+    index('local_whatsapp_message_created_idx').on(table.createdAt),
+  ],
+);
+
+/** The one row of controls of the simulator. */
+export const localWhatsappControl = pgTable(
+  'local_whatsapp_control',
+  {
+    id: smallint('id').primaryKey().default(1),
+    mode: text('mode').notNull().default('ok'),
+    /** Numbers the simulator treats as "not on WhatsApp" (the reserved +999 prefix always is). */
+    unreachableNumbers: text('unreachable_numbers')
+      .array()
+      .notNull()
+      .default(sql`'{}'::text[]`),
+    updatedAt: timestamp('updated_at', { withTimezone: true })
+      .notNull()
+      .defaultNow()
+      .$onUpdate(() => new Date()),
+  },
+  (table) => [
+    check('local_whatsapp_control_single_row_check', sql`${table.id} = 1`),
+    check(
+      'local_whatsapp_control_mode_check',
+      sql.raw(`"mode" in (${list(LOCAL_WHATSAPP_MODES)})`),
+    ),
+  ],
+);

@@ -1,6 +1,16 @@
 import { describe, expect, it } from 'vitest';
 
+import { describeWhatsAppContract } from '../whatsapp-local/whatsapp.contract.js';
+
 import { createFakeWhatsAppSender } from './index.js';
+
+describeWhatsAppContract({
+  name: 'in-memory fake',
+  make: () => {
+    const sender = createFakeWhatsAppSender();
+    return Promise.resolve({ sender, sign: (raw) => sender.signBody(raw) });
+  },
+});
 
 const request = {
   templateKey: 'appointment_reminder',

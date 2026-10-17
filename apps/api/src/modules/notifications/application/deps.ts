@@ -30,6 +30,11 @@ export interface WorklistItem {
   subjectType: WorklistSubjectType;
   subjectId: string;
   locationId: string | null;
+  /**
+   * Administrative detail for the person who works the item, stored encrypted. Only the worklist
+   * of the API process keeps it; the worker's version leaves it out.
+   */
+  detail?: Record<string, unknown>;
 }
 
 export interface Worklist {

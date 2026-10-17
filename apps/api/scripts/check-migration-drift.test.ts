@@ -123,6 +123,8 @@ describe('the migration tools together (two tracks, one merge)', () => {
     const schemaB = await schemaWith('track-b.ts', 'track_b_table');
     const merged = await schemaWith('merged.ts', 'track_a_table', 'track_b_table');
 
+    // Two Stage 4 tracks play the parts: no track of Stage 3 has a number to itself in this test,
+    // so a real migration of Stage 3 (messaging has some) never changes what it expects.
     // Track A creates its migration from its schema, on its copy of the folder.
     const a = await copyOfMigrations();
     const generatedA = await generateInScratch({
@@ -133,7 +135,7 @@ describe('the migration tools together (two tracks, one merge)', () => {
     });
     await createMigration({
       migrationsDir: a,
-      track: '3a',
+      track: '4a',
       name: 'track_a_table',
       now: new Date(stamp + 5_000),
       ...(generatedA.sql ? { sql: generatedA.sql.content } : {}),
@@ -142,7 +144,7 @@ describe('the migration tools together (two tracks, one merge)', () => {
     expect(
       (await checkMigrationDrift({ schemaFile: schemaA, migrationsDir: a, scratchDir })).drift,
     ).toBe(false);
-    expect(await readFile(join(a, '0320_track_a_table.sql'), 'utf8')).toContain('"track_a_table"');
+    expect(await readFile(join(a, '0410_track_a_table.sql'), 'utf8')).toContain('"track_a_table"');
 
     // Track B does the same, at the same time, from the same base.
     const b = await copyOfMigrations();
@@ -154,7 +156,7 @@ describe('the migration tools together (two tracks, one merge)', () => {
     });
     await createMigration({
       migrationsDir: b,
-      track: '3b',
+      track: '4b',
       name: 'track_b_table',
       now: new Date(stamp + 2_000),
       ...(generatedB.sql ? { sql: generatedB.sql.content } : {}),
@@ -162,8 +164,8 @@ describe('the migration tools together (two tracks, one merge)', () => {
     });
 
     // The merge: B's files and journal entry land after A's.
-    await cp(join(b, '0340_track_b_table.sql'), join(a, '0340_track_b_table.sql'));
-    await cp(join(b, 'meta', '0340_snapshot.json'), join(a, 'meta', '0340_snapshot.json'));
+    await cp(join(b, '0430_track_b_table.sql'), join(a, '0430_track_b_table.sql'));
+    await cp(join(b, 'meta', '0430_snapshot.json'), join(a, 'meta', '0430_snapshot.json'));
     const mergedJournal = (await readFolder(a)).journal;
     const entryB = (await readFolder(b)).journal.entries.at(-1);
     if (!entryB) throw new Error('track B has no entry');
@@ -178,8 +180,8 @@ describe('the migration tools together (two tracks, one merge)', () => {
 
     const report = await restampFolder(a, { refresh: { schemaFile: merged, scratchDir } });
 
-    expect(report.restamped).toEqual(['0340_track_b_table']);
-    expect(report.relinked).toEqual(['0340']);
+    expect(report.restamped).toEqual(['0430_track_b_table']);
+    expect(report.relinked).toEqual(['0430']);
     expect(report.refreshedSnapshot).toBe(true);
     const after = await checkMigrationDrift({ schemaFile: merged, migrationsDir: a, scratchDir });
     expect(after.problems).toEqual([]);

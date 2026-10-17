@@ -55,6 +55,8 @@ export const MESSAGE_FAILURE_REASONS = [
   'template_rejected',
   'invalid_number',
   'mailbox_unavailable',
+  /** The provider took the message and later reported it undelivered (not a bad address). */
+  'delivery_failed',
   'retries_exhausted',
 ] as const;
 export type MessageFailureReason = (typeof MESSAGE_FAILURE_REASONS)[number];
@@ -114,3 +116,61 @@ export const DEFAULT_NOTIFICATION_SETTINGS: NotificationSettings = {
   hideProfessional: false,
   hideAppointmentType: false,
 };
+
+// The WhatsApp simulator console (`/operator/dev/whatsapp/*`, developer tool) ------------------
+
+export const WHATSAPP_SIMULATOR_MODES = ['ok', 'down', 'reject_template'] as const;
+export type WhatsAppSimulatorMode = (typeof WHATSAPP_SIMULATOR_MODES)[number];
+
+/** One entry of the simulator's phone: a message it was given, or a reply typed into it. */
+export const SimulatorMessageDto = z.strictObject({
+  id: z.uuid(),
+  providerMessageId: z.string(),
+  direction: z.enum(['outbound', 'inbound']),
+  /** The recipient of an outbound message, the sender of a reply (E.164). */
+  number: z.string(),
+  templateKey: z.string().nullable(),
+  /** The text as the patient reads it. */
+  body: z.string(),
+  status: z.string(),
+  errorCode: z.string().nullable(),
+  createdAt: z.iso.datetime(),
+});
+export type SimulatorMessageDto = z.infer<typeof SimulatorMessageDto>;
+
+export const SimulatorStateResponse = z.strictObject({
+  messages: z.array(SimulatorMessageDto),
+  mode: z.enum(WHATSAPP_SIMULATOR_MODES),
+  unreachableNumbers: z.array(z.string()),
+});
+export type SimulatorStateResponse = z.infer<typeof SimulatorStateResponse>;
+
+/** A delivery receipt typed into the simulator: it is signed and posted to the real webhook. */
+export const SimulatorStatusRequest = z.strictObject({
+  status: z.enum(['sent', 'delivered', 'read', 'failed']),
+  errorCode: z.string().min(1).max(64).optional(),
+});
+export type SimulatorStatusRequest = z.infer<typeof SimulatorStatusRequest>;
+
+/** A reply typed into the simulator by a patient. */
+export const SimulatorInboundRequest = z.strictObject({
+  from: z.string().min(5).max(20),
+  text: z.string().max(1000),
+});
+export type SimulatorInboundRequest = z.infer<typeof SimulatorInboundRequest>;
+
+export const SimulatorModeRequest = z.strictObject({ mode: z.enum(WHATSAPP_SIMULATOR_MODES) });
+export type SimulatorModeRequest = z.infer<typeof SimulatorModeRequest>;
+
+export const SimulatorUnreachableRequest = z.strictObject({
+  number: z.string().min(5).max(20),
+  unreachable: z.boolean(),
+});
+export type SimulatorUnreachableRequest = z.infer<typeof SimulatorUnreachableRequest>;
+
+/** What the simulator did with a simulated event. */
+export const SimulatorEventResponse = z.strictObject({
+  /** True when the application's own webhook accepted the signed event. */
+  delivered: z.boolean(),
+});
+export type SimulatorEventResponse = z.infer<typeof SimulatorEventResponse>;

@@ -26,6 +26,25 @@ async function insertMessage(
 
 export const fixtures: Record<string, TenantTableFixture> = {
   message: { insert: insertMessage },
+  message_event: {
+    insert: async (tx, tenantId, overrides) =>
+      returningId(
+        tx,
+        sql`INSERT INTO message_event (tenant_id, event_id, message_id, status)
+              VALUES (${tenantId}, ${unique('fixture-event')},
+                      ${overrides?.['message_id'] ?? (await insertMessage(tx, tenantId))}, 'delivered')
+              RETURNING id`,
+      ),
+  },
+  inbound_message: {
+    insert: (tx, tenantId) =>
+      returningId(
+        tx,
+        sql`INSERT INTO inbound_message (tenant_id, event_id, from_hash, outcome)
+              VALUES (${tenantId}, ${unique('fixture-reply')}, 'hash', 'ignored')
+              RETURNING id`,
+      ),
+  },
   channel_preference: {
     insert: async (tx, tenantId, overrides) =>
       returningId(

@@ -5,7 +5,7 @@ import type {
   MessageFailureReason,
   MessageKind,
 } from '@consultorio/contracts';
-import { and, desc, eq, sql } from 'drizzle-orm';
+import { and, desc, eq, inArray, sql } from 'drizzle-orm';
 
 import { message, messageAttempt, type MessageRow } from '../../../db/schema/notifications.js';
 import { SYSTEM_USER_ID, type Tx } from '../../../platform/db/tenant-context.js';
@@ -377,6 +377,36 @@ export async function callProvider(send: PendingSend): Promise<ProviderResult> {
   }
 }
 
+/**
+ * A message that failed for good: the next channel the policy allows gets it, and with none left
+ * reception is told ("reminder not delivered"). The failure itself is already recorded.
+ */
+async function continueAfterFailure(
+  deps: MessagingDeps,
+  tx: Tx,
+  row: MessageRow,
+  tenant: TenantRef,
+): Promise<void> {
+  const kind = row.kind as MessageKind;
+  const recipient = await loadRecipient(tx, row.patientId);
+  const settings = await loadMessagingSettings(tx);
+  if (!recipient || !isAppointmentKind(kind)) return;
+  const decision = selectChannels(
+    kind,
+    recipient.facts,
+    channelOptions(deps, { tenant, settings }),
+  );
+  const fallback = await queueFallback(deps, tx, row, decision);
+  if (fallback !== null || row.appointmentId === null) return;
+  const appointment = await loadAppointment(tx, row.appointmentId);
+  if (!appointment) return;
+  await openWorklist(deps, tx, kind, {
+    worklistKind: 'reminder_not_delivered',
+    appointmentId: appointment.id,
+    locationId: appointment.locationId,
+  });
+}
+
 /** The channel could not carry the message for good: record it and look for another way. */
 async function failPermanently(
   deps: MessagingDeps,
@@ -389,22 +419,29 @@ async function failPermanently(
     .set({ status: 'failed', failureReason: reason })
     .where(and(eq(message.id, send.messageId), eq(message.status, 'queued')));
   const [row] = await tx.select().from(message).where(eq(message.id, send.messageId));
-  const recipient = await loadRecipient(tx, send.patientId);
-  const settings = await loadMessagingSettings(tx);
-  if (!row || !recipient) return;
-  const decision = selectChannels(
-    send.kind,
-    recipient.facts,
-    channelOptions(deps, { tenant: send.tenant, settings }),
-  );
-  const fallback = await queueFallback(deps, tx, row, decision);
-  if (fallback === null) {
-    await openWorklist(deps, tx, send.kind, {
-      worklistKind: 'reminder_not_delivered',
-      appointmentId: send.appointmentId,
-      locationId: send.locationId,
-    });
-  }
+  if (row) await continueAfterFailure(deps, tx, row, send.tenant);
+}
+
+/**
+ * The provider took the message and later reported that it could not deliver it (a status event
+ * of the webhook). The message fails like one the provider refused, and the fallback follows.
+ */
+export async function failAcceptedMessage(
+  deps: MessagingDeps,
+  tx: Tx,
+  messageId: string,
+  reason: MessageFailureReason,
+): Promise<boolean> {
+  const [failed] = await tx
+    .update(message)
+    .set({ status: 'failed', failureReason: reason })
+    .where(and(eq(message.id, messageId), inArray(message.status, ['sent', 'queued'])))
+    .returning();
+  if (!failed) return false;
+  const state = await loadTenantState(tx, failed.tenantId);
+  if (!state || state.isDemo) return true;
+  await continueAfterFailure(deps, tx, failed, { id: state.id, isDemo: false });
+  return true;
 }
 
 /** Step 3. Runs in the transaction of the job. */

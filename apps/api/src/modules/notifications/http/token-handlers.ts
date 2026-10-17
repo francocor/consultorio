@@ -1,20 +1,12 @@
 import type { MessageChannel } from '@consultorio/contracts';
 
-import type { TenantKeys } from '../../../platform/crypto/tenant-keys.js';
-import { SYSTEM_USER_ID } from '../../../platform/db/tenant-context.js';
-import type { AppointmentEvents } from '../../../platform/events/appointment-events.js';
-import { AppError } from '../../../platform/http/problem.js';
 import type {
   TokenContext,
   TokenHandler,
   TokenPage,
 } from '../../../platform/public/token-router.js';
-import {
-  createSchedulingPorts,
-  transitionAppointment,
-  type BookActor,
-} from '../../scheduling/index.js';
 import { loadAppointment, type AppointmentContext } from '../application/context.js';
+import { actForPatient, type PatientActionDeps } from '../application/patient-actions.js';
 import { recordOptOut } from '../application/preferences.js';
 import { loadMessagingSettings } from '../application/settings.js';
 import { formatDate, formatTime } from '../domain/content.js';
@@ -28,18 +20,7 @@ import { withinCancelDeadline } from '../domain/validity.js';
  * alone.
  */
 
-export interface TokenHandlerDeps {
-  keys: TenantKeys;
-  /** Where the appointment events go, so a confirmation or cancellation reaches the planner. */
-  events: AppointmentEvents;
-}
-
-/** The patient acts without an account: the system carries out the change on their behalf. */
-const ON_BEHALF_OF_PATIENT: BookActor = {
-  userId: SYSTEM_USER_ID,
-  permissions: new Set<string>(),
-  professionalId: null,
-};
+export type TokenHandlerDeps = PatientActionDeps;
 
 const GONE: TokenPage = {
   title: 'No se pudo completar la acción',
@@ -72,33 +53,18 @@ async function details(context: TokenContext, appointment: AppointmentContext) {
   return { rows, settings };
 }
 
-async function transition(
+function transition(
   deps: TokenHandlerDeps,
   context: TokenContext,
   appointment: AppointmentContext,
   action: 'confirm' | 'cancel',
 ): Promise<boolean> {
-  try {
-    await transitionAppointment(
-      createSchedulingPorts(context.tx, { keys: deps.keys, events: deps.events }),
-      {
-        appointmentId: appointment.id,
-        action,
-        actor: ON_BEHALF_OF_PATIENT,
-        auditActor: { ...context.actor, userId: SYSTEM_USER_ID },
-        now: context.now,
-        expectedVersion: appointment.version,
-        ...(action === 'cancel'
-          ? { cancellation: { cancelledBy: 'patient', reasonCode: 'patient_request' } as const }
-          : {}),
-      },
-    );
-    return true;
-  } catch (error) {
-    // The state machine says no (already confirmed, already cancelled): the visitor is told so.
-    if (error instanceof AppError) return false;
-    throw error;
-  }
+  return actForPatient(deps, context.tx, {
+    appointment,
+    action,
+    now: context.now,
+    actor: context.actor,
+  });
 }
 
 export function createConfirmHandler(deps: TokenHandlerDeps): TokenHandler {

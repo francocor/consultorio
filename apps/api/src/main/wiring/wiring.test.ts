@@ -68,11 +68,11 @@ describe('the module wiring (every shared registration, in one place per module)
     expect(Object.keys(registry).sort()).toEqual([...ADAPTER_PORTS].sort());
   });
 
-  it('does nothing observable yet: the skeletons register no route of their own', async () => {
+  it('only ADDS routes: everything the application serves without the modules is still served with them', async () => {
     const without = await routesOf(createApp([]));
-    const withModules = await routesOf(createApp(MODULE_WIRINGS));
+    const withModules = new Set(await routesOf(createApp(MODULE_WIRINGS)));
 
-    expect(withModules).toEqual(without);
+    expect(without.filter((route) => !withModules.has(route))).toEqual([]);
   });
 });
 
@@ -82,11 +82,12 @@ function createApp(wiring: typeof MODULE_WIRINGS) {
   return buildTestApplication(db, { wiring });
 }
 
-async function routesOf(app: ReturnType<typeof createApp>): Promise<string> {
+/** "METHOD /url" of every route the application serves. */
+async function routesOf(app: ReturnType<typeof createApp>): Promise<string[]> {
   await app.ready();
-  const printed = app.printRoutes({ commonPrefix: false });
+  const routes = [...app.routeCategories.keys()];
   await app.close();
-  return printed;
+  return routes;
 }
 
 describe('the simulator console entries of the modules', () => {

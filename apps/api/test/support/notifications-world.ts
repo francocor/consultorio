@@ -12,6 +12,7 @@ import { message, messageAttempt, type MessageRow } from '../../src/db/schema/no
 import { worklistItem } from '../../src/db/schema/worklist.js';
 import type { MessagingDeps } from '../../src/modules/notifications/application/deps.js';
 import { createNotificationJobs } from '../../src/modules/notifications/application/jobs.js';
+import type { WhatsAppSender } from '../../src/modules/notifications/application/ports.js';
 import {
   queueMessage,
   type QueueMessageInput,
@@ -72,7 +73,7 @@ export interface NotificationsWorld {
   jobs: RecordingJobClient;
   email: ScriptedEmail;
   demoEmail: FakeEmailSender;
-  whatsapp: FakeWhatsAppSender;
+  whatsapp: WhatsAppSender;
   demoWhatsapp: FakeWhatsAppSender;
   /** The clock of messaging (the jobs). Independent from the clock of scheduling. */
   now(): Date;
@@ -111,13 +112,13 @@ export interface NotificationsWorld {
  */
 export function createNotificationsWorld(
   world: SchedulingHttpWorld,
-  options: { jobs?: RecordingJobClient } = {},
+  options: { jobs?: RecordingJobClient; whatsapp?: WhatsAppSender } = {},
 ): NotificationsWorld {
   let current = new Date('2031-05-06T12:00:00.000Z');
   const jobs = options.jobs ?? createRecordingJobClient();
   const email = createScriptedEmail();
   const demoEmail = createFakeEmailSender();
-  const whatsapp = createFakeWhatsAppSender();
+  const whatsapp = options.whatsapp ?? createFakeWhatsAppSender();
   const demoWhatsapp = createFakeWhatsAppSender();
   const clock = () => current;
   const deps: MessagingDeps = {

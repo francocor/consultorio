@@ -11,21 +11,25 @@ import type { AuthzOptions } from '../../platform/authz/guard.js';
 import type { TenantKeys } from '../../platform/crypto/tenant-keys.js';
 import type { WithTenant } from '../../platform/db/tenant-context.js';
 import type { AppointmentEvents } from '../../platform/events/appointment-events.js';
+import type { PublicOrigins } from '../../platform/http/public-origin.js';
 import type { JobClient } from '../../platform/jobs/boss.js';
 import { createTokenRoutes, registerTokenHandler } from '../../platform/public/token-router.js';
 import { createActionTokens } from '../../platform/tokens/index.js';
+import type { WorklistService } from '../scheduling/index.js';
 import { readOrganizationName, type ExportRegistry } from '../tenancy/index.js';
 
-import type { TenantRef } from './application/deps.js';
+import type { Channels, MessagingDeps, TenantRef } from './application/deps.js';
 import { exportNotifications } from './application/export-contributor.js';
 import { createReminderPlanner } from './application/plan-reminders.js';
+import type { WhatsAppSender } from './application/ports.js';
 import { createLinkRevoker } from './application/revoke-links.js';
-import { createWorklist } from './application/worklist.js';
+import { createWorklist, createWorklistFromService } from './application/worklist.js';
 import {
   createCancelHandler,
   createConfirmHandler,
   createOptOutHandler,
 } from './http/token-handlers.js';
+import { whatsappWebhookRoutes } from './http/whatsapp-webhook.js';
 
 export type {
   WebhookHeaders,
@@ -72,7 +76,17 @@ export interface NotificationsOptions {
   jobs?: JobClient | undefined;
   /** False when no WhatsApp provider serves the organization (it then plans email). */
   whatsappAvailable?: ((tenant: TenantRef) => boolean) | undefined;
+  /** The provider that signs the WhatsApp webhook. Absent when WhatsApp is off: no webhook. */
+  whatsappWebhookSender?: WhatsAppSender | undefined;
+  /** Which provider serves which organization (acknowledgments, fallbacks). */
+  channels?: Channels | undefined;
+  /** The reception worklist of scheduling: it keeps the detail of the replies reception reads. */
+  worklist?: WorklistService | undefined;
+  /** Where emailed links point. */
+  origins?: PublicOrigins | undefined;
 }
+
+const NO_CHANNELS: Channels = { email: () => undefined, whatsapp: () => undefined };
 
 export interface Notifications {
   /** What the module was built with; the track builds its services from it. */
@@ -103,14 +117,42 @@ export function createNotifications(options: NotificationsOptions): Notification
     // Synchronous and in the transaction of the appointment write (see the event bus).
     options.events.subscribe((tx, event) => planner.handle(tx, event));
   }
+  const channels = options.channels ?? NO_CHANNELS;
+  const worklist = options.worklist
+    ? createWorklistFromService(options.worklist)
+    : createWorklist({ keys: options.keys });
+  // What a failure reported by the webhook needs to find the other channel: only with a queue.
+  const reactions: MessagingDeps | undefined =
+    options.jobs && options.origins
+      ? {
+          withTenant: options.withTenant,
+          channels,
+          jobs: options.jobs,
+          clock,
+          origins: options.origins,
+          tokens,
+          worklist,
+        }
+      : undefined;
+
+  const tokenRoutes = createTokenRoutes({
+    withTenant: options.withTenant,
+    tokens,
+    clock,
+    organizationName: readOrganizationName,
+  });
+  const webhookRoutes = whatsappWebhookRoutes({
+    withTenant: options.withTenant,
+    sender: options.whatsappWebhookSender,
+    inbound: { keys: options.keys, events: options.events, channels, worklist, clock },
+    reactions,
+  });
   return {
     options,
-    routes: createTokenRoutes({
-      withTenant: options.withTenant,
-      tokens,
-      clock,
-      organizationName: readOrganizationName,
-    }),
+    routes: (app) => {
+      tokenRoutes(app);
+      webhookRoutes(app);
+    },
   };
 }
 
