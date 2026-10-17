@@ -5,6 +5,7 @@ import { tenant } from '../../../db/schema/tenant.js';
 import { audit, type AuditActor } from '../../../platform/audit/writer.js';
 import type { Tx } from '../../../platform/db/tenant-context.js';
 import { AppError } from '../../../platform/http/problem.js';
+import type { SettingsSectionRegistry } from '../../../platform/settings-sections.js';
 import {
   planSettingsUpdate,
   readSettings,
@@ -25,45 +26,79 @@ async function currentTenantRow(tx: Tx): Promise<{ id: string; settings: StoredS
 
 type AuditEntry = Parameters<typeof audit>[1];
 
-function entryFor(event: SettingsEvent): Pick<AuditEntry, 'action' | 'metadata'> {
+type Entry = Pick<AuditEntry, 'action' | 'metadata'>;
+
+function entriesFor(event: SettingsEvent): Entry[] {
   switch (event.kind) {
     case 'reception_metadata':
-      return {
-        action: 'setting.reception_sees_clinical_metadata.changed',
-        metadata: { enabled: event.enabled },
-      };
-    case 'sharing':
-      return {
-        action: 'sharing.changed',
-        metadata: {
-          clinicalSharing: event.clinicalSharing,
-          added: event.added,
-          removed: event.removed,
-          psychologyShared: event.added.includes('psychology'),
+      return [
+        {
+          action: 'setting.reception_sees_clinical_metadata.changed',
+          metadata: { enabled: event.enabled },
         },
-      };
+      ];
+    case 'sharing':
+      return [
+        {
+          action: 'sharing.changed',
+          metadata: {
+            clinicalSharing: event.clinicalSharing,
+            added: event.added,
+            removed: event.removed,
+            psychologyShared: event.added.includes('psychology'),
+          },
+        },
+      ];
     case 'require_2fa':
-      return {
-        action: 'setting.changed',
-        metadata: { setting: 'require_2fa', enabled: event.enabled },
-      };
+      return [
+        { action: 'setting.changed', metadata: { setting: 'require_2fa', enabled: event.enabled } },
+      ];
     case 'quiet_hours':
-      return {
-        action: 'setting.changed',
-        metadata: { setting: 'quiet_hours', start: event.start, end: event.end },
-      };
+      return [
+        {
+          action: 'setting.changed',
+          metadata: { setting: 'quiet_hours', start: event.start, end: event.end },
+        },
+      ];
+    case 'section':
+      // The generic entry names the fields, never their values; a field with an action of its own
+      // (the WhatsApp switch) adds that entry too.
+      return [
+        {
+          action: 'setting.changed',
+          metadata: { setting: event.section, changedFields: event.changedFields },
+        },
+        ...event.fieldAudits.map((field): Entry => ({
+          action: field.action,
+          metadata: {
+            setting: event.section,
+            field: field.field,
+            ...(field.enabled === undefined ? {} : { enabled: field.enabled }),
+          },
+        })),
+      ];
   }
 }
 
-export function createSettingsService(): SettingsService {
+export interface SettingsServiceOptions {
+  /** The sections the modules registered (main/wiring). */
+  sections: SettingsSectionRegistry;
+}
+
+export function createSettingsService(options: SettingsServiceOptions): SettingsService {
+  const sections = () => options.sections.sections();
   return {
     async get(tx) {
-      return readSettings((await currentTenantRow(tx)).settings);
+      return readSettings((await currentTenantRow(tx)).settings, sections());
     },
 
     async update(tx, input) {
       const row = await currentTenantRow(tx);
-      const plan = planSettingsUpdate(readSettings(row.settings), input.patch);
+      const plan = planSettingsUpdate(
+        readSettings(row.settings, sections()),
+        input.patch,
+        sections(),
+      );
       if (!plan.ok) {
         throw new AppError('validation_failed', [{ path: plan.path, i18nKey: plan.i18nKey }]);
       }
@@ -75,16 +110,18 @@ export function createSettingsService(): SettingsService {
           .set({ settings: sql`${tenant.settings} || ${JSON.stringify(plan.stored)}::jsonb` })
           .where(eq(tenant.id, row.id));
         for (const event of plan.events) {
-          await audit(tx, {
-            ...entryFor(event),
-            outcome: 'allow',
-            actor: input.actor,
-            resourceType: 'tenant',
-            resourceId: row.id,
-          });
+          for (const entry of entriesFor(event)) {
+            await audit(tx, {
+              ...entry,
+              outcome: 'allow',
+              actor: input.actor,
+              resourceType: 'tenant',
+              resourceId: row.id,
+            });
+          }
         }
       }
-      return readSettings((await currentTenantRow(tx)).settings);
+      return readSettings((await currentTenantRow(tx)).settings, sections());
     },
   };
 }

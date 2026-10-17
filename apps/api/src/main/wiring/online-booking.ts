@@ -1,3 +1,5 @@
+import { DEFAULT_ONLINE_BOOKING_SETTINGS, OnlineBookingSettings } from '@consultorio/contracts';
+
 import { createFakeBotChallenge } from '../../adapters/bot-challenge-fake/index.js';
 import { createOnlineBooking } from '../../modules/online-booking/index.js';
 import { fake } from '../adapter-resolver.js';
@@ -10,6 +12,13 @@ import type { ModuleWiring } from './types.js';
  * `botChallenge` port when its local puzzle exists, and adds its jobs to the worker.
  */
 export const onlineBookingWiring: ModuleWiring = {
+  settingsSections: [
+    {
+      key: 'onlineBooking',
+      schema: OnlineBookingSettings,
+      defaults: DEFAULT_ONLINE_BOOKING_SETTINGS,
+    },
+  ],
   name: 'online-booking',
   // No customer adapter yet: the public forms stay closed; demo organizations get the fake.
   adapters: () => ({ botChallenge: { real: undefined, demo: fake(createFakeBotChallenge()) } }),

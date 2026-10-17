@@ -75,6 +75,26 @@ describe('GET /settings', () => {
       sharedTemplates: [],
       require2fa: false,
       quietHours: { start: '21:00', end: '08:00' },
+      notifications: {
+        reminderLeadHours: [24],
+        hideProfessional: false,
+        hideAppointmentType: false,
+      },
+      onlineBooking: {
+        minLeadHours: 2,
+        horizonDays: 60,
+        dailyCap: null,
+        rescheduleDeadlineHours: 12,
+        requireApproval: false,
+      },
+      waitlist: {
+        entryExpiryDays: 60,
+        offerWindowMinutes: 30,
+        minOfferLeadMinutes: 60,
+        maxActiveEntries: 5,
+      },
+      teleconsultation: { joinOpensMinutes: 15, noShowAfterMinutes: 15 },
+      integrations: { whatsapp: true, video: true },
     });
   });
 
@@ -209,6 +229,115 @@ describe('PATCH /settings: other settings', () => {
       tx.select({ settings: tenant.settings }).from(tenant),
     );
 
+    expect(other[0]?.settings).toEqual({});
+  });
+});
+
+describe('PATCH /settings: the sections of the modules', () => {
+  it('stores a partial change of one section, keeps the rest of it and audits the fields', async () => {
+    const response = await api.patch('/settings', owner, {
+      notifications: { reminderLeadHours: [48, 2], hideProfessional: true },
+    });
+
+    expect(response.statusCode, response.body).toBe(200);
+    expect(response.json<SettingsDto>().notifications).toEqual({
+      reminderLeadHours: [48, 2],
+      hideProfessional: true,
+      hideAppointmentType: false,
+    });
+    const [row] = await rows('setting.changed');
+    expect(row).toMatchObject({
+      outcome: 'allow',
+      metadata: {
+        setting: 'notifications',
+        changedFields: ['reminderLeadHours', 'hideProfessional'],
+      },
+    });
+    // The values never reach the trail: only the names of the fields.
+    expect(JSON.stringify(row?.metadata)).not.toContain('48');
+    const [stored] = await asTenant(runtime, a.id, (tx) =>
+      tx.select({ settings: tenant.settings }).from(tenant),
+    );
+    expect(stored?.settings['notifications']).toEqual({
+      reminderLeadHours: [48, 2],
+      hideProfessional: true,
+      hideAppointmentType: false,
+    });
+    // The settings of the other keys survive the merge.
+    expect(stored?.settings['require_2fa']).toBe(true);
+  });
+
+  it('applies a second change on top of the first, one section at a time', async () => {
+    const response = await api.patch('/settings', admin, {
+      waitlist: { offerWindowMinutes: 20 },
+      onlineBooking: { requireApproval: true, dailyCap: 25 },
+    });
+
+    expect(response.statusCode, response.body).toBe(200);
+    const settings = response.json<SettingsDto>();
+    expect(settings.waitlist).toMatchObject({ offerWindowMinutes: 20, maxActiveEntries: 5 });
+    expect(settings.onlineBooking).toMatchObject({
+      requireApproval: true,
+      dailyCap: 25,
+      horizonDays: 60,
+    });
+    expect(settings.notifications.reminderLeadHours).toEqual([48, 2]);
+    const entries = await rows('setting.changed');
+    expect(entries.map((entry) => (entry.metadata as { setting?: string }).setting)).toEqual(
+      expect.arrayContaining(['waitlist', 'onlineBooking']),
+    );
+  });
+
+  it('writes nothing and audits nothing when a section value did not change', async () => {
+    const before = (await rows('setting.changed')).length;
+
+    const response = await api.patch('/settings', owner, { waitlist: { offerWindowMinutes: 20 } });
+
+    expect(response.statusCode).toBe(200);
+    expect((await rows('setting.changed')).length).toBe(before);
+  });
+
+  it('audits the WhatsApp switch under its own action as well', async () => {
+    const response = await api.patch('/settings', owner, { integrations: { whatsapp: false } });
+
+    expect(response.statusCode, response.body).toBe(200);
+    expect(response.json<SettingsDto>().integrations).toEqual({ whatsapp: false, video: true });
+    const [row] = await rows('notification.integration.changed');
+    expect(row).toMatchObject({
+      outcome: 'allow',
+      metadata: { setting: 'integrations', field: 'whatsapp', enabled: false },
+    });
+    // The video switch has no action of its own: only the generic entry.
+    const videoOff = await api.patch('/settings', owner, { integrations: { video: false } });
+    expect(videoOff.statusCode).toBe(200);
+    expect((await rows('notification.integration.changed')).length).toBe(1);
+  });
+
+  it('refuses an unknown section, an unknown field and an invalid value, and changes nothing', async () => {
+    const before = (await read()).waitlist;
+
+    const unknownSection = await api.patch('/settings', owner, { billing: { enabled: true } });
+    const unknownField = await api.patch('/settings', owner, { waitlist: { priority: 'high' } });
+    const invalid = await api.patch('/settings', owner, { waitlist: { maxActiveEntries: 0 } });
+    const tooManyReminders = await api.patch('/settings', owner, {
+      notifications: { reminderLeadHours: [72, 48, 24, 2] },
+    });
+
+    for (const response of [unknownSection, unknownField, invalid, tooManyReminders]) {
+      expect(response.statusCode, response.body).toBe(400);
+    }
+    expect((await read()).waitlist).toEqual(before);
+  });
+
+  it('denies reception and professionals the sections, and sends nothing to another organization', async () => {
+    const attempt = { waitlist: { maxActiveEntries: 3 } };
+
+    expect((await api.patch('/settings', reception, attempt)).statusCode).toBe(403);
+    expect((await api.patch('/settings', professional, attempt)).statusCode).toBe(403);
+    expect((await api.get('/settings', reception)).statusCode).toBe(403);
+    const other = await asTenant(runtime, b.id, (tx) =>
+      tx.select({ settings: tenant.settings }).from(tenant),
+    );
     expect(other[0]?.settings).toEqual({});
   });
 });

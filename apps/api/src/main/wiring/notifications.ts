@@ -1,3 +1,5 @@
+import { DEFAULT_NOTIFICATION_SETTINGS, NotificationSettings } from '@consultorio/contracts';
+
 import { createFakeWhatsAppSender } from '../../adapters/whatsapp-fake/index.js';
 import { createNotifications } from '../../modules/notifications/index.js';
 import { fake } from '../adapter-resolver.js';
@@ -11,6 +13,13 @@ import type { ModuleWiring } from './types.js';
  * its jobs to the worker.
  */
 export const notificationsWiring: ModuleWiring = {
+  settingsSections: [
+    {
+      key: 'notifications',
+      schema: NotificationSettings,
+      defaults: DEFAULT_NOTIFICATION_SETTINGS,
+    },
+  ],
   name: 'notifications',
   // No customer adapter yet: WhatsApp stays unavailable for customers; demo organizations get the fake.
   adapters: () => ({ whatsapp: { real: undefined, demo: fake(createFakeWhatsAppSender()) } }),

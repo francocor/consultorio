@@ -1,3 +1,5 @@
+import { DEFAULT_WAITLIST_SETTINGS, WaitlistSettings } from '@consultorio/contracts';
+
 import { createWaitlist } from '../../modules/waitlist/index.js';
 
 import type { ModuleWiring } from './types.js';
@@ -8,6 +10,9 @@ import type { ModuleWiring } from './types.js';
  * jobs to the worker. The waitlist owns no external provider, so it has no adapter slot.
  */
 export const waitlistWiring: ModuleWiring = {
+  settingsSections: [
+    { key: 'waitlist', schema: WaitlistSettings, defaults: DEFAULT_WAITLIST_SETTINGS },
+  ],
   name: 'waitlist',
   create: (context) =>
     createWaitlist({

@@ -63,6 +63,7 @@ import { createPublicOrigins } from '../platform/http/public-origin.js';
 import { createMemoryRateLimitStore, type RateLimit } from '../platform/http/rate-limit.js';
 import type { JobClient } from '../platform/jobs/boss.js';
 import type { EmailSender } from '../platform/mail/email-sender.js';
+import { createSettingsSectionRegistry } from '../platform/settings-sections.js';
 import type { ObjectStorage } from '../platform/storage/object-storage.js';
 
 import type { AdapterResolver } from './adapter-resolver.js';
@@ -241,12 +242,19 @@ export function createApplication(options: ApplicationOptions): FastifyInstance 
         : 'UTC';
   };
 
+  // The sections of the organization settings that the modules own: registered once, here.
+  const settingsSections = createSettingsSectionRegistry();
+  for (const wiring of options.wiring ?? []) {
+    for (const section of wiring.settingsSections ?? []) settingsSections.register(section);
+  }
+
   const access = createAccess({
     withTenant,
     auditDeny,
     sessions: identity.sessions,
     grants,
     defaultTimeZone: countryTimeZone,
+    settingsSections,
   });
 
   const staff = createStaff({

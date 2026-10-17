@@ -1,3 +1,4 @@
+import { integrationsWiring } from './integrations.js';
 import { notificationsWiring } from './notifications.js';
 import { onlineBookingWiring } from './online-booking.js';
 import { teleconsultationWiring } from './teleconsultation.js';
@@ -19,6 +20,7 @@ export { combineWorkerContributions } from './worker.js';
  * module is added here once; after that its track only edits its own wiring file.
  */
 export const MODULE_WIRINGS: readonly ModuleWiring[] = [
+  integrationsWiring,
   notificationsWiring,
   onlineBookingWiring,
   waitlistWiring,

@@ -9,6 +9,7 @@ import type { RateLimitStore } from '../../platform/http/rate-limit.js';
 import type { JobClient } from '../../platform/jobs/boss.js';
 import type { WorkerOptions } from '../../platform/jobs/worker.js';
 import type { EmailSender } from '../../platform/mail/email-sender.js';
+import type { SettingsSection } from '../../platform/settings-sections.js';
 import type { ObjectStorage } from '../../platform/storage/object-storage.js';
 import type { AdapterRegistry, AdapterResolver } from '../adapter-resolver.js';
 import type { Config } from '../config.js';
@@ -69,6 +70,8 @@ export interface ModuleWiring {
    * slot stays empty until the module's local or real adapter exists.
    */
   adapters?: (context: AdapterWiringContext) => Partial<AdapterRegistry>;
+  /** The sections of the organization settings this module owns (merged into /settings). */
+  settingsSections?: readonly SettingsSection[];
   /** True when the module enqueues jobs from a request, so the API process holds a queue client. */
   needsJobs?: boolean;
   /** Builds the module: returns its routes and subscribes to the event bus. */

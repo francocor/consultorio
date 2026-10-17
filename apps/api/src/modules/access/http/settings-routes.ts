@@ -41,6 +41,8 @@ export function settingsRoutes(deps: SettingsRoutesDeps) {
             'sharing.changed',
             'setting.reception_sees_clinical_metadata.changed',
             'setting.changed',
+            // The WhatsApp switch of the integrations section has an action of its own.
+            'notification.integration.changed',
           ],
         },
         schema: { body: UpdateSettingsRequest, response: { 200: SettingsDto } },

@@ -7,6 +7,7 @@ import type { FastifyInstance } from 'fastify';
 
 import type { AuthzOptions } from '../../platform/authz/guard.js';
 import type { WithTenant } from '../../platform/db/tenant-context.js';
+import type { SettingsSectionRegistry } from '../../platform/settings-sections.js';
 import type { ExportRegistry } from '../tenancy/index.js';
 
 import { exportAccess } from './application/export-contributor.js';
@@ -43,6 +44,8 @@ export interface AccessOptions {
   grants?: Grants;
   /** Time zone of a new location without one, from the country of the organization. */
   defaultTimeZone: (country: string) => string;
+  /** The sections of the organization settings that the capability modules registered. */
+  settingsSections: SettingsSectionRegistry;
 }
 
 export interface Access {
@@ -62,7 +65,7 @@ export function createAccess(options: AccessOptions): Access {
 
   const settings = settingsRoutes({
     withTenant: options.withTenant,
-    settings: createSettingsService(),
+    settings: createSettingsService({ sections: options.settingsSections }),
   });
 
   const places = locationRoutes({
