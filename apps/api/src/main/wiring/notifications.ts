@@ -1,0 +1,23 @@
+import { createFakeWhatsAppSender } from '../../adapters/whatsapp-fake/index.js';
+import { createNotifications } from '../../modules/notifications/index.js';
+import { fake } from '../adapter-resolver.js';
+
+import type { ModuleWiring } from './types.js';
+
+/**
+ * Everything the notifications module registers with the composition root (track A). The track
+ * edits this file, `modules/notifications/` and nothing shared: it fills the customer slot of the
+ * `whatsapp` port when its local simulator exists, subscribes to the appointment events, and adds
+ * its jobs to the worker.
+ */
+export const notificationsWiring: ModuleWiring = {
+  name: 'notifications',
+  // No customer adapter yet: WhatsApp stays unavailable for customers; demo organizations get the fake.
+  adapters: () => ({ whatsapp: { real: undefined, demo: fake(createFakeWhatsAppSender()) } }),
+  create: (context) =>
+    createNotifications({
+      withTenant: context.withTenant,
+      auditDeny: context.auditDeny,
+      ...(context.clock ? { clock: context.clock } : {}),
+    }),
+};

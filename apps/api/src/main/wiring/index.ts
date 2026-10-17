@@ -1,0 +1,26 @@
+import { notificationsWiring } from './notifications.js';
+import { onlineBookingWiring } from './online-booking.js';
+import { teleconsultationWiring } from './teleconsultation.js';
+import type { ModuleWiring } from './types.js';
+import { waitlistWiring } from './waitlist.js';
+
+export type {
+  AdapterWiringContext,
+  ModuleWiring,
+  WiringContext,
+  WorkerContribution,
+  WorkerWiringContext,
+} from './types.js';
+export { combineWorkerContributions } from './worker.js';
+
+/**
+ * Every capability module the composition root wires, in registration order. `main` and the test
+ * application both pass this list, so a test exercises the very composition production runs. A new
+ * module is added here once; after that its track only edits its own wiring file.
+ */
+export const MODULE_WIRINGS: readonly ModuleWiring[] = [
+  notificationsWiring,
+  onlineBookingWiring,
+  waitlistWiring,
+  teleconsultationWiring,
+];

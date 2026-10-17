@@ -65,8 +65,10 @@ import type { JobClient } from '../platform/jobs/boss.js';
 import type { EmailSender } from '../platform/mail/email-sender.js';
 import type { ObjectStorage } from '../platform/storage/object-storage.js';
 
+import type { AdapterResolver } from './adapter-resolver.js';
 import { buildServer, type FeatureRoutes } from './server.js';
 import type { TrustProxySetting } from './trust-proxy.js';
+import type { ModuleWiring } from './wiring/types.js';
 
 export interface ApplicationOptions {
   /** The runtime database (connects as `app_rw`). */
@@ -138,6 +140,14 @@ export interface ApplicationOptions {
   onboardingCapabilities?: Capabilities;
   /** Routes of the capability modules, registered after identity. */
   modules?: readonly FeatureRoutes[];
+  /**
+   * The capability modules of the patient-engagement stages (`main/wiring`). `main` and the test
+   * application pass the same list. Each module is built with the shared services and returns its
+   * routes; it subscribes to the appointment events when it is built.
+   */
+  wiring?: readonly ModuleWiring[];
+  /** Which adapter serves which organization. Modules resolve their providers through it. */
+  adapters?: AdapterResolver;
   /**
    * The appointment event bus. Defaults to a new one per application; a test passes its own to
    * listen to what scheduling publishes.
@@ -317,6 +327,23 @@ export function createApplication(options: ApplicationOptions): FastifyInstance 
     ...(options.clock ? { clock: options.clock } : {}),
   });
 
+  const wired = (options.wiring ?? []).map((wiring) =>
+    wiring.create({
+      withTenant,
+      auditDeny,
+      keys: options.keys,
+      email: options.email,
+      origins,
+      rateLimitStore,
+      appointmentEvents,
+      worklist: scheduling.worklist,
+      ...(options.clock ? { clock: options.clock } : {}),
+      ...(options.storage ? { storage: options.storage } : {}),
+      ...(options.jobs ? { jobs: options.jobs } : {}),
+      ...(options.adapters ? { adapters: options.adapters } : {}),
+    }),
+  );
+
   const auditViewer = createAudit({ withTenant });
   const supportAccess = createSupportAccess({ withTenant });
   const operatorConsole =
@@ -384,6 +411,7 @@ export function createApplication(options: ApplicationOptions): FastifyInstance 
       branding.routes,
       supportAccess.routes,
       ...(operatorConsole ? [operatorConsole.routes] : []),
+      ...wired.flatMap((module) => (module.routes ? [module.routes] : [])),
       ...(options.modules ?? []),
     ],
   });

@@ -6,6 +6,7 @@ import { createFakeEmailSender } from '../../src/adapters/fake-email/index.js';
 import { createLocalKeyManagement } from '../../src/adapters/local-kek/index.js';
 import { createApplication, type ApplicationOptions } from '../../src/main/application.js';
 import { findAsset } from '../../src/main/assets.js';
+import { MODULE_WIRINGS } from '../../src/main/wiring/index.js';
 import {
   createPasswordPolicy,
   createPasswordValidator,
@@ -55,6 +56,8 @@ export function buildTestApplication(
     }),
     email: createFakeEmailSender(),
     passwordValidator: testPasswordValidator,
+    // The modules wired exactly as `main` wires them (a test passes `wiring: []` to leave them out).
+    wiring: MODULE_WIRINGS,
     // Tests sign in many times from one address; the limits have their own tests.
     limits: {
       perClient: { max: 100_000, windowMs: 60_000 },

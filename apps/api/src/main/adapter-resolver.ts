@@ -61,6 +61,31 @@ export type AdapterRegistry = {
   };
 };
 
+/**
+ * Joins the slots that the composition root and each module register into one registry. Every
+ * port must be registered exactly once: a port nobody registered, or one that two modules both
+ * claim, stops the application at startup instead of failing at the first request.
+ */
+export function assembleAdapterRegistry(
+  parts: readonly Partial<AdapterRegistry>[],
+): AdapterRegistry {
+  const slots = new Map<AdapterPort, AdapterRegistry[AdapterPort]>();
+  for (const part of parts) {
+    for (const port of ADAPTER_PORTS) {
+      const slot = part[port];
+      if (slot === undefined) continue;
+      if (slots.has(port)) throw new Error(`The "${port}" adapter is registered twice.`);
+      slots.set(port, slot);
+    }
+  }
+  const missing = ADAPTER_PORTS.filter((port) => !slots.has(port));
+  if (missing.length > 0) {
+    throw new Error(`No adapter is registered for: ${missing.join(', ')}.`);
+  }
+  // Every port is present, which the checks above just proved; the map cannot say so by type.
+  return Object.fromEntries(slots) as unknown as AdapterRegistry;
+}
+
 export interface TenantRef {
   id: string;
   isDemo: boolean;

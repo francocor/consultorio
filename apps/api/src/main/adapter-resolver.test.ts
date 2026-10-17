@@ -11,6 +11,7 @@ import { createFakeWhatsAppSender } from '../adapters/whatsapp-fake/index.js';
 
 import {
   ADAPTER_PORTS,
+  assembleAdapterRegistry,
   createAdapterResolver,
   createTenantRoutedEmail,
   DemoAdapterError,
@@ -144,5 +145,37 @@ describe('email routed by organization', () => {
 
     expect(realSender.sent).toHaveLength(0);
     expect(demoSender.sent).toHaveLength(0);
+  });
+});
+
+describe('assembling the registry from the modules', () => {
+  const { email, objectStorage, keyManagement, whatsapp, videoLink, botChallenge } = registry();
+
+  it('joins what the composition root and each module register into one complete registry', () => {
+    const assembled = assembleAdapterRegistry([
+      { email, objectStorage, keyManagement },
+      { whatsapp },
+      { videoLink },
+      { botChallenge },
+    ]);
+
+    expect(Object.keys(assembled).sort()).toEqual([...ADAPTER_PORTS].sort());
+    expect(assembled.whatsapp).toBe(whatsapp);
+  });
+
+  it('refuses to start when a port has no adapter at all, naming the port', () => {
+    expect(() =>
+      assembleAdapterRegistry([{ email, objectStorage, keyManagement, whatsapp, videoLink }]),
+    ).toThrow(/botChallenge/);
+    expect(() => assembleAdapterRegistry([])).toThrow(/email.*whatsapp|whatsapp.*email/s);
+  });
+
+  it('refuses a port that two modules both register: the second would silently win', () => {
+    expect(() =>
+      assembleAdapterRegistry([
+        { email, objectStorage, keyManagement, whatsapp, videoLink, botChallenge },
+        { whatsapp },
+      ]),
+    ).toThrow(/whatsapp.*twice/);
   });
 });
