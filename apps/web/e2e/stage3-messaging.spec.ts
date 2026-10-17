@@ -113,6 +113,9 @@ test('the owner resends a reminder, the patient confirms and then opts out of Wh
   await page.getByRole('button', { name: 'Usar la configuración rápida' }).click();
   await page.getByLabel('Nombre y apellido').fill('Dra. Laura Medina');
   await page.getByLabel('Profesión o especialidad').fill('Clínica médica');
+  // A professional needs a registration (D21): the role is not active without one.
+  await page.getByLabel('Jurisdicción de la matrícula').selectOption('AR-B');
+  await page.getByLabel('Número de matrícula').fill('45678');
   await page.getByRole('button', { name: 'Dejar todo listo' }).click();
   await expect(page.getByRole('heading', { name: 'Su consultorio está listo' })).toBeVisible();
 

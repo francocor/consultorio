@@ -290,6 +290,8 @@ test('an organization that is not a demo one solves the real proof of work in th
       await ownerApi.call('POST', '/onboarding/fast-path', {
         fullName: 'Dra. Ana Reserva',
         specialties: ['Nutrición'],
+        // A professional needs a registration (D21): the role is not active without one.
+        matricula: { jurisdiction: 'AR-B', number: 'MP 45671' },
       })
     ).status,
   ).toBe(200);
