@@ -1,8 +1,11 @@
+import { createHash } from 'node:crypto';
 import { Readable } from 'node:stream';
 import { buffer } from 'node:stream/consumers';
 
 import {
   assertTenantKey,
+  ObjectChangedError,
+  type MoveOptions,
   type ObjectHead,
   type ObjectStorage,
   type PresignedPost,
@@ -32,6 +35,9 @@ interface Stored {
   bytes: Buffer;
   contentType: string;
 }
+
+/** Like an S3 ETag of a single-part upload: a quoted digest of the content. */
+const etagOf = (bytes: Buffer) => `"${createHash('md5').update(bytes).digest('hex')}"`;
 
 /**
  * In-memory ObjectStorage for tests and for a demo tenant (design section 6: the fake of the
@@ -64,6 +70,7 @@ export function createMemoryObjectStorage(
           size: found.bytes.length,
           contentType: found.contentType,
           stream: Readable.from([found.bytes]),
+          etag: etagOf(found.bytes),
         };
       });
     },
@@ -99,12 +106,20 @@ export function createMemoryObjectStorage(
       });
     },
 
-    move(tenantId: string, fromKey: string, toKey: string): Promise<boolean> {
+    move(
+      tenantId: string,
+      fromKey: string,
+      toKey: string,
+      options: MoveOptions = {},
+    ): Promise<boolean> {
       return settle(() => {
         assertTenantKey(tenantId, fromKey);
         assertTenantKey(tenantId, toKey);
         const found = objects.get(fromKey);
         if (!found) return false;
+        if (options.ifMatch !== undefined && options.ifMatch !== etagOf(found.bytes)) {
+          throw new ObjectChangedError();
+        }
         objects.set(toKey, found);
         objects.delete(fromKey);
         return true;

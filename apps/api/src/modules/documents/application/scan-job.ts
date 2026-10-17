@@ -15,7 +15,11 @@ import {
   ScannerUnavailableError,
   type MalwareScanner,
 } from '../../../platform/scanning/malware-scanner.js';
-import { tenantKey, type ObjectStorage } from '../../../platform/storage/object-storage.js';
+import {
+  ObjectChangedError,
+  tenantKey,
+  type ObjectStorage,
+} from '../../../platform/storage/object-storage.js';
 import { isOverdue, scanBackoffSeconds } from '../domain/scan-schedule.js';
 
 import { SCAN_JOB } from './uploads.js';
@@ -160,9 +164,32 @@ export function createScanJob(deps: ScanJobDeps) {
     if (infected) return reject(tx, row, tenantId, 'infected', located.key);
 
     // Clean. Move the object out of quarantine, then record it; the move is idempotent, so a crash
-    // between the two steps is finished by the next attempt.
+    // between the two steps is finished by the next attempt. The uploader's link stays valid for
+    // minutes, so the object could be swapped between the scan and the move: the move names the
+    // exact object that was scanned (its etag) and is refused for any other.
     const releasedKey = tenantKey(tenantId, 'docs', row.id);
-    if (located.key !== releasedKey) await storage.move(tenantId, located.key, releasedKey);
+    if (located.key !== releasedKey) {
+      let moved: boolean;
+      try {
+        moved = await storage.move(tenantId, located.key, releasedKey, {
+          ifMatch: located.stored.etag,
+        });
+      } catch (error) {
+        if (!(error instanceof ObjectChangedError)) throw error;
+        moved = false;
+      }
+      // Replaced (or gone) since it was scanned: nothing was released. Look at what is there now.
+      if (!moved) return scanAgain(tx, row, tenantId);
+      // The released object is the one that was scanned: the hash is the proof.
+      const released = await storage.get(tenantId, releasedKey);
+      const releasedRead = released ? await readCapped(released.stream, DOCUMENT_MAX_BYTES) : null;
+      if (
+        !releasedRead?.ok ||
+        createHash('sha256').update(releasedRead.bytes).digest('hex') !== sha256
+      ) {
+        return reject(tx, row, tenantId, 'corrupt', releasedKey);
+      }
+    }
     const [duplicate] = await tx
       .select({ id: document.id })
       .from(document)
@@ -197,6 +224,11 @@ export function createScanJob(deps: ScanJobDeps) {
       patientId: row.patientId,
       metadata: { result: 'clean' },
     });
+  }
+
+  /** The object changed after it was scanned: stay quarantined and scan what is there now. */
+  async function scanAgain(tx: Tx, row: DocumentRow, tenantId: string): Promise<void> {
+    await deps.jobs.enqueue(tx, SCAN_JOB, { tenantId, documentId: row.id }, { startAfter: 5 });
   }
 
   /** The scanner did not answer: stay quarantined, try again later, raise the alarm if it drags on. */

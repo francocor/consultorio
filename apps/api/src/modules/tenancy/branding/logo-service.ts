@@ -39,7 +39,10 @@ export interface LogoService {
   ): Promise<LogoChange>;
   remove(tx: Tx, input: { actor: AuditActor; tenantId: string }): Promise<LogoChange>;
   /** The logo of the tenant, optionally scaled to a square icon size. Null when there is none. */
-  read(tx: Tx, input: { tenantId: string; iconSize?: 192 | 512 }): Promise<StoredObject | null>;
+  read(
+    tx: Tx,
+    input: { tenantId: string; iconSize?: 192 | 512 },
+  ): Promise<Omit<StoredObject, 'etag'> | null>;
   /** Removes an object that nothing refers to any more. Failure is not an error: it is only waste. */
   discard(tenantId: string, key: string): Promise<void>;
   /** Whether logos can be stored at all in this deployment. */

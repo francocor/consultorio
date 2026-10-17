@@ -5,6 +5,7 @@ import { buffer } from 'node:stream/consumers';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import {
+  ObjectChangedError,
   StorageKeyError,
   tenantKey,
   type ObjectStorage,
@@ -143,6 +144,53 @@ export function describeObjectStorage(label: string, make: () => Promise<Storage
       await storage.put(A, present, { body: Buffer.from('x'), contentType: 'text/plain' });
       await expect(storage.move(A, present, fresh(B))).rejects.toBeInstanceOf(StorageKeyError);
       expect(await storage.head(A, present)).not.toBeNull();
+    });
+
+    describe('moving only what was inspected (JD-S2 C5)', () => {
+      const put = (key: string, text: string) =>
+        storage.put(A, key, { body: Buffer.from(text), contentType: 'text/plain' });
+
+      it('gives every object an etag that changes with its content', async () => {
+        const key = fresh();
+        await put(key, 'uno');
+        const first = (await storage.get(A, key))?.etag;
+
+        await put(key, 'dos');
+        const second = (await storage.get(A, key))?.etag;
+
+        expect(first).toEqual(expect.any(String));
+        expect(first).not.toBe('');
+        expect(second).not.toBe(first);
+        expect((await storage.get(A, key))?.etag).toBe(second);
+      });
+
+      it('moves the object when it is still the one that was inspected', async () => {
+        const from = fresh(A, 'quarantine', randomUUID());
+        const to = fresh(A, 'docs', randomUUID());
+        await put(from, 'inspeccionado');
+        const etag = (await storage.get(A, from))?.etag;
+
+        const moved = await storage.move(A, from, to, { ifMatch: etag ?? '' });
+
+        expect(moved).toBe(true);
+        expect(await storage.head(A, from)).toBeNull();
+        expect((await storage.head(A, to))?.size).toBe('inspeccionado'.length);
+      });
+
+      it('refuses to move an object that was overwritten after it was inspected, and leaves both keys as they were', async () => {
+        const from = fresh(A, 'quarantine', randomUUID());
+        const to = fresh(A, 'docs', randomUUID());
+        await put(from, 'inspeccionado');
+        const etag = (await storage.get(A, from))?.etag;
+        await put(from, 'reemplazado despues del escaneo');
+
+        await expect(storage.move(A, from, to, { ifMatch: etag ?? '' })).rejects.toBeInstanceOf(
+          ObjectChangedError,
+        );
+
+        expect((await storage.head(A, from))?.size).toBe('reemplazado despues del escaneo'.length);
+        expect(await storage.head(A, to)).toBeNull();
+      });
     });
 
     it('removes an object, and removing it again is fine', async () => {

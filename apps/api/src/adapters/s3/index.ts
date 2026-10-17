@@ -14,6 +14,8 @@ import { createPresignedPost } from '@aws-sdk/s3-presigned-post';
 
 import {
   assertTenantKey,
+  ObjectChangedError,
+  type MoveOptions,
   type ObjectHead,
   type ObjectStorage,
   type PresignedPost,
@@ -45,6 +47,11 @@ function isNotFound(error: unknown): boolean {
     error.name === 'NoSuchKey' ||
     error.name === 'NotFound'
   );
+}
+
+function isPreconditionFailed(error: unknown): boolean {
+  if (!(error instanceof S3ServiceException)) return false;
+  return error.$metadata.httpStatusCode === 412 || error.name === 'PreconditionFailed';
 }
 
 /**
@@ -95,6 +102,7 @@ export function createS3ObjectStorage(config: S3StorageConfig): S3ObjectStorage 
           size: response.ContentLength ?? 0,
           contentType: response.ContentType ?? 'application/octet-stream',
           stream: response.Body as Readable,
+          etag: response.ETag ?? '',
         };
       } catch (error) {
         if (isNotFound(error)) return null;
@@ -140,7 +148,12 @@ export function createS3ObjectStorage(config: S3StorageConfig): S3ObjectStorage 
       };
     },
 
-    async move(tenantId: string, fromKey: string, toKey: string): Promise<boolean> {
+    async move(
+      tenantId: string,
+      fromKey: string,
+      toKey: string,
+      options: MoveOptions = {},
+    ): Promise<boolean> {
       assertTenantKey(tenantId, fromKey);
       assertTenantKey(tenantId, toKey);
       try {
@@ -150,10 +163,13 @@ export function createS3ObjectStorage(config: S3StorageConfig): S3ObjectStorage 
             Key: toKey,
             CopySource: `${Bucket}/${fromKey.split('/').map(encodeURIComponent).join('/')}`,
             MetadataDirective: 'COPY',
+            // Copy only the object that was inspected: S3 refuses with 412 if it changed.
+            ...(options.ifMatch === undefined ? {} : { CopySourceIfMatch: options.ifMatch }),
           }),
         );
       } catch (error) {
         if (isNotFound(error)) return false;
+        if (isPreconditionFailed(error)) throw new ObjectChangedError();
         throw error;
       }
       await client.send(new DeleteObjectCommand({ Bucket, Key: fromKey }));
