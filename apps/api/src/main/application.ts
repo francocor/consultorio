@@ -228,6 +228,8 @@ export function createApplication(options: ApplicationOptions): FastifyInstance 
     sessions: identity.sessions,
     grants,
     defaultTimeZone: countryTimeZone,
+    email: options.email,
+    origins,
   });
 
   const staff = createStaff({

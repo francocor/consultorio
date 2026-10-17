@@ -20,16 +20,19 @@ export type StaffRole = (typeof STAFF_ROLES)[number];
 /**
  * What a person may HAND OUT, in an invitation or by adding a role to an existing member.
  *
- * Decision D19: only the owner brings professionals into the organization. A professional is the
- * only role that opens clinical records, and an unverified registration is enough to do clinical
- * work (D1), so an admin who could create a professional account would hold a second, clinical
- * account of their own. The owner already controls the organization, which bounds that risk to
- * the owner.
+ * Decision D19 (revised and confirmed by the owner of the product on 2026-10-17): the owner AND
+ * the admin bring professionals into the organization. A professional is the only role that opens
+ * clinical records, and an unverified registration is enough to do clinical work (D1), so an admin
+ * who creates a professional could hold a second, clinical account. That risk is accepted and is
+ * AUDITED and NOTIFIED instead of prevented: an admin who adds a professional writes a
+ * `professional.added_by_admin` audit event and every active owner gets an email, and a patient
+ * assignment to a professional added in the last 7 days is flagged for review.
  */
 const GRANT_CEILING: Partial<Record<Role, readonly Role[]>> = {
   owner: ['owner', 'admin', 'professional', 'reception'],
-  // An admin cannot create an owner (escalation above themselves) or a professional (D19).
-  admin: ['admin', 'reception'],
+  // An admin cannot create an owner (escalation above themselves). A professional is allowed
+  // (D19, revised), with an audit event and an email to the owners.
+  admin: ['admin', 'professional', 'reception'],
 };
 
 /**

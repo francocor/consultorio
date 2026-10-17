@@ -11,6 +11,8 @@ import {
   AccessRefused,
   countOtherActiveOwners,
   lockOwnersAnd,
+  prepareProfessionalAddedNotice,
+  type ProfessionalAddedNotice,
   type SessionRevoker,
 } from '../../access/index.js';
 import type { Invitations } from '../../identity/index.js';
@@ -31,6 +33,8 @@ export interface PreparedInvitation {
   organizationName: string;
   inviterName: string | null;
   expiresInDays: number;
+  /** Set when an admin who is not an owner invited a professional (decision D19). */
+  ownerNotice: ProfessionalAddedNotice | null;
 }
 
 export interface StatusChangeInput {
@@ -106,6 +110,17 @@ export function createLifecycleService(deps: {
         metadata: { roles: [...input.roles] },
       });
 
+      // An admin who is not an owner invited a professional: leave a trace and tell the owners
+      // (decision D19). The owner who invites a professional needs neither.
+      const ownerNotice = input.roles.includes('professional')
+        ? await prepareProfessionalAddedNotice(tx, {
+            actor: input.actor,
+            actorRoles: input.actorRoles,
+            via: 'invitation',
+            subjectName: input.displayName,
+          })
+        : null;
+
       const [inviter] = await tx
         .select({ name: membership.displayName })
         .from(membership)
@@ -117,6 +132,7 @@ export function createLifecycleService(deps: {
         organizationName: await readOrganizationName(tx),
         inviterName: inviter?.name ?? null,
         expiresInDays: Math.round(TOKEN_KIND_REGISTRY.staff_invitation.ttlMs / DAY_MS),
+        ownerNotice,
       };
     },
 

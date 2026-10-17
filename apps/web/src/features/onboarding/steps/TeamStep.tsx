@@ -2,7 +2,7 @@ import { rolesInviterMayGrant, type StaffRole } from '@consultorio/contracts';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { useState } from 'react';
-import { useForm } from 'react-hook-form';
+import { useForm, useWatch } from 'react-hook-form';
 import { useTranslation } from 'react-i18next';
 import { z } from 'zod';
 
@@ -44,7 +44,7 @@ interface Sent {
 
 /**
  * Invitations from the first run. The ceiling is the inviter's: an owner can invite anyone, an
- * admin with the grant only reception and admins. Before an invitation goes out the server says
+ * admin with the grant also professionals and admins, never an owner. Before an invitation goes out the server says
  * whether it changes the plan; until subscriptions exist it never does, and when it does the
  * person confirms first.
  */
@@ -61,6 +61,10 @@ export function TeamStep({ next, skip, back }: StepProps) {
     resolver: zodResolver(Schema),
     defaultValues: { email: '', role: offered[0] === 'admin' ? 'admin' : 'reception' },
   });
+
+  const chosenRole = useWatch({ control: form.control, name: 'role' });
+  // Decision D19: when an admin brings a professional in, the owners get an email.
+  const owesOwnersNotice = chosenRole === 'professional' && !me.roles.includes('owner');
 
   const send = useMutation({
     mutationFn: (values: Values) =>
@@ -146,9 +150,11 @@ export function TeamStep({ next, skip, back }: StepProps) {
               )}
             />
           </div>
-          {offered.includes('professional') ? null : (
-            <p className="text-sm text-muted-foreground">{t('onboarding:team.professionalNote')}</p>
-          )}
+          {owesOwnersNotice ? (
+            <p className="text-sm text-muted-foreground">
+              {t('onboarding:team.professionalNotice')}
+            </p>
+          ) : null}
 
           {pending ? (
             <Alert tone="warning">

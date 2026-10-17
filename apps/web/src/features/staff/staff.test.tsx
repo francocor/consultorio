@@ -153,7 +153,7 @@ describe('inviting a person', () => {
     expect(within(dialog).getByRole('checkbox', { name: /Recepción/ })).toBeInTheDocument();
   });
 
-  it('an administrator can invite administration and reception only: professionals are the owner’s to bring in', async () => {
+  it('an administrator can invite administration, reception and professionals, but not owners, and is told the owners get an email', async () => {
     const user = userEvent.setup();
     open({}, meFor(['admin'], { user: { id: IDS.owner, email: 'administracion@demo.invalid' } }));
     await user.click(await screen.findByRole('button', { name: 'Invitar a una persona' }));
@@ -161,8 +161,27 @@ describe('inviting a person', () => {
 
     expect(within(dialog).getByRole('checkbox', { name: /Administración/ })).toBeInTheDocument();
     expect(within(dialog).getByRole('checkbox', { name: /Recepción/ })).toBeInTheDocument();
-    expect(within(dialog).queryByRole('checkbox', { name: /Profesional/ })).not.toBeInTheDocument();
     expect(within(dialog).queryByRole('checkbox', { name: /Propietario/ })).not.toBeInTheDocument();
+    expect(
+      within(dialog).queryByText(/avisaremos por correo a los titulares/),
+    ).not.toBeInTheDocument();
+
+    await user.click(within(dialog).getByRole('checkbox', { name: /Profesional/ }));
+
+    expect(within(dialog).getByText(/avisaremos por correo a los titulares/)).toBeInTheDocument();
+  });
+
+  it('an owner inviting a professional is not shown the notice for the owners', async () => {
+    const user = userEvent.setup();
+    open();
+    await user.click(await screen.findByRole('button', { name: 'Invitar a una persona' }));
+    const dialog = await screen.findByRole('dialog');
+
+    await user.click(within(dialog).getByRole('checkbox', { name: /Profesional/ }));
+
+    expect(
+      within(dialog).queryByText(/avisaremos por correo a los titulares/),
+    ).not.toBeInTheDocument();
   });
 
   it('shows the validation next to the field and sends nothing', async () => {
@@ -224,13 +243,20 @@ describe('managing a person', () => {
     expect(await screen.findByText('Roles actualizados.')).toBeInTheDocument();
   });
 
-  it('an administrator cannot add the professional role to a colleague', async () => {
+  it('an administrator can add the professional role to a colleague, and is told the owners get an email', async () => {
     const user = userEvent.setup();
     open({}, meFor(['admin'], { user: { id: IDS.owner, email: 'administracion@demo.invalid' } }));
     const sheet = await manage(user, 'Camila Duarte');
 
     expect(within(sheet).getByRole('checkbox', { name: /Recepción/ })).toBeChecked();
-    expect(within(sheet).queryByRole('checkbox', { name: /Profesional/ })).not.toBeInTheDocument();
+    expect(
+      within(sheet).queryByText(/avisaremos por correo a los titulares/),
+    ).not.toBeInTheDocument();
+
+    await user.click(within(sheet).getByRole('checkbox', { name: /Profesional/ }));
+
+    expect(within(sheet).getByRole('checkbox', { name: /Profesional/ })).toBeChecked();
+    expect(within(sheet).getByText(/avisaremos por correo a los titulares/)).toBeInTheDocument();
   });
 
   it('an administrator still manages a professional who already is one', async () => {

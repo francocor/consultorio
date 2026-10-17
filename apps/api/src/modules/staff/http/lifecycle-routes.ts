@@ -17,7 +17,7 @@ import { AppError } from '../../../platform/http/problem.js';
 import type { PublicOrigins } from '../../../platform/http/public-origin.js';
 import type { EmailSender } from '../../../platform/mail/email-sender.js';
 import { renderInvitationEmail } from '../../../platform/mail/templates.js';
-import { AccessRefused } from '../../access/index.js';
+import { AccessRefused, sendProfessionalAddedNotice } from '../../access/index.js';
 import type { DirectoryService } from '../application/directory.js';
 import type { LifecycleService } from '../application/lifecycle.js';
 
@@ -49,7 +49,11 @@ export function lifecycleRoutes(deps: LifecycleRoutesDeps) {
     typed.post(
       '/staff/invitations',
       {
-        config: { readOnly: 'write', permission: 'staff.manage', audits: ['staff.invited'] },
+        config: {
+          readOnly: 'write',
+          permission: 'staff.manage',
+          audits: ['staff.invited', 'professional.added_by_admin'],
+        },
         schema: { body: InviteStaffRequest, response: { 201: InviteStaffResponse } },
       },
       async (request, reply) => {
@@ -93,6 +97,22 @@ export function lifecycleRoutes(deps: LifecycleRoutesDeps) {
             expiresInDays: prepared.expiresInDays,
           }),
         });
+        // An admin who is not an owner invited a professional: the owners are told (decision D19).
+        // A provider failure here does not undo the invitation; the audit event is the record.
+        if (prepared.ownerNotice) {
+          await sendProfessionalAddedNotice({
+            email: deps.email,
+            notice: prepared.ownerNotice,
+            tenant: { id: host.tenant.id, isDemo: host.tenant.isDemo },
+            link: deps.origins(host.tenant.slug) + '/staff',
+            onFailure: (error) => {
+              request.log.error(
+                { err: error },
+                'the owners could not be told about a professional',
+              );
+            },
+          });
+        }
         return reply.code(201).send({ expiresAt: prepared.expiresAt.toISOString() });
       },
     );

@@ -109,6 +109,7 @@
   "action.staff.deactivated": "Persona del equipo desactivada",
   "action.staff.reactivated": "Persona del equipo reactivada",
   "action.staff.profile_updated": "Perfil de una persona modificado",
+  "action.professional.added_by_admin": "Un administrador incorporó a un profesional (se avisó a los titulares)",
   "action.professional.hours_updated": "Horarios de un profesional modificados",
   "action.professional.hours_period_set": "Horario especial de un profesional cargado",
   "action.professional.hours_period_removed": "Horario especial de un profesional quitado",

@@ -80,6 +80,9 @@ export const AUDIT_ACTIONS = [
   'staff.deactivated',
   'staff.reactivated',
   'staff.profile_updated',
+  // Decision D19 (revised): an admin who is not an owner invited a professional or granted the
+  // professional role. The owners are told by email.
+  'professional.added_by_admin',
   'professional.hours_updated',
   // Appointments (administrative data only). Every status change, override and calendar view of
   // another professional is recorded (scheduling, "Scheduling authorization and audit").

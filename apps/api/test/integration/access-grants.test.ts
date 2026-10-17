@@ -352,7 +352,7 @@ describe('changing the roles of a member', () => {
     expect(await auditRows('access.denied', ownerUser.membershipId)).toHaveLength(1);
   });
 
-  it('keeps the professional role out of an admin hands: no second clinical account (D19)', async () => {
+  it('lets an admin grant the professional role (D19, revised): audited, and the owners are told', async () => {
     const admin = await session(await member(['admin']));
     const colleague = await member(['reception']);
 
@@ -360,12 +360,9 @@ describe('changing the roles of a member', () => {
       roles: ['reception', 'professional'],
     });
 
-    expect(response.statusCode).toBe(403);
-    expect(await rolesOf(colleague)).toEqual(['reception']);
-    expect((await auditRows('access.denied', colleague.membershipId))[0]).toMatchObject({
-      outcome: 'deny',
-      reason: 'role_change_above_ceiling',
-    });
+    expect(response.statusCode).toBe(200);
+    expect(await rolesOf(colleague)).toEqual(['reception', 'professional']);
+    expect(await auditRows('professional.added_by_admin', colleague.membershipId)).toHaveLength(1);
   });
 
   it('still lets an admin manage the roles of a professional who already is one', async () => {

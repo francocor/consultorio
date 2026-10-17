@@ -93,6 +93,7 @@ export const AUDIT_SCENARIOS: Record<AuditAction, AuditScenario> = {
   'staff.deactivated': t('staff-lifecycle.test.ts'),
   'staff.reactivated': t('staff-lifecycle.test.ts'),
   'staff.profile_updated': t('staff-profile.test.ts'),
+  'professional.added_by_admin': t('professional-added-by-admin.test.ts'),
   'professional.hours_updated': t('staff-hours.test.ts'),
   'professional.hours_period_set': t('scheduling-config-api.test.ts'),
   'professional.hours_period_removed': t('scheduling-config-api.test.ts'),

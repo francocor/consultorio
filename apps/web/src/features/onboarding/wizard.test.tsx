@@ -650,7 +650,8 @@ describe('the steps', () => {
       });
     });
 
-    it('offers only the roles the person may hand out: an admin cannot invite professionals', async () => {
+    it('offers the roles the person may hand out: an admin may invite professionals, and is told the owners get an email', async () => {
+      const user = userEvent.setup();
       open({
         state: resume,
         me: meFor(['admin'], { grants: ['onboarding.manage'] }),
@@ -660,7 +661,12 @@ describe('the steps', () => {
       const role = screen.getByLabelText('Rol');
       expect(within(role).getByRole('option', { name: 'Recepción' })).toBeInTheDocument();
       expect(within(role).getByRole('option', { name: 'Administración' })).toBeInTheDocument();
-      expect(within(role).queryByRole('option', { name: 'Profesional' })).not.toBeInTheDocument();
+      expect(within(role).getByRole('option', { name: 'Profesional' })).toBeInTheDocument();
+      expect(screen.queryByText(/avisaremos por correo a los titulares/)).not.toBeInTheDocument();
+
+      await user.selectOptions(role, 'professional');
+
+      expect(screen.getByText(/avisaremos por correo a los titulares/)).toBeInTheDocument();
     });
 
     it('can be skipped, and the cursor moves on', async () => {

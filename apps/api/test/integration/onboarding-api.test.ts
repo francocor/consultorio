@@ -875,7 +875,7 @@ describe('the invitation from the first run (task 2.90)', () => {
     expect(rows).toHaveLength(2);
   });
 
-  it('an admin with the grant cannot invite a professional (D19) from the first run either', async () => {
+  it('an admin with the grant may invite a professional from the first run too (D19, revised)', async () => {
     const w = await world('onb-invite-d19');
     const { admin, adminUser } = await w.team();
     await w.api.post(`/members/${adminUser.membershipId}/grants`, w.owner, {
@@ -887,7 +887,8 @@ describe('the invitation from the first run (task 2.90)', () => {
       roles: ['professional'],
     });
 
-    expect(response.statusCode).toBe(403);
+    expect(response.statusCode).toBe(201);
+    expect((await w.audits('professional.added_by_admin')).length).toBe(1);
   });
 });
 

@@ -13,7 +13,10 @@ import type { AuthzOptions } from '../../../platform/authz/guard.js';
 import { refuseRequest } from '../../../platform/authz/refuse.js';
 import type { WithTenant } from '../../../platform/db/tenant-context.js';
 import { AppError } from '../../../platform/http/problem.js';
+import type { PublicOrigins } from '../../../platform/http/public-origin.js';
+import type { EmailSender } from '../../../platform/mail/email-sender.js';
 import type { Grants } from '../application/grants.js';
+import { sendProfessionalAddedNotice } from '../application/professional-notice.js';
 import { AccessRefused } from '../application/refusal.js';
 import type { RoleService } from '../application/roles.js';
 
@@ -22,6 +25,10 @@ export interface MemberRoutesDeps {
   auditDeny: AuthzOptions['auditDeny'];
   grants: Grants;
   roles: RoleService;
+  /** Tells the owners when an admin adds a professional (decision D19). */
+  email: EmailSender;
+  /** Where the emailed links point. From configuration, never from the request. */
+  origins: PublicOrigins;
 }
 
 const MemberParams = z.strictObject({ membershipId: z.uuid() });
@@ -145,7 +152,11 @@ export function memberRoutes(deps: MemberRoutesDeps) {
     typed.put(
       '/members/:membershipId/roles',
       {
-        config: { readOnly: 'write', permission: 'staff.manage', audits: ['role.changed'] },
+        config: {
+          readOnly: 'write',
+          permission: 'staff.manage',
+          audits: ['role.changed', 'professional.added_by_admin'],
+        },
         schema: {
           params: MemberParams,
           body: ChangeRolesRequest,
@@ -166,6 +177,21 @@ export function memberRoutes(deps: MemberRoutesDeps) {
                 newRoles: request.body.roles,
               }),
           );
+          const host = request.hostContext;
+          if (result.notice && host?.kind === 'tenant') {
+            await sendProfessionalAddedNotice({
+              email: deps.email,
+              notice: result.notice,
+              tenant: { id: host.tenant.id, isDemo: host.tenant.isDemo },
+              link: deps.origins(host.tenant.slug) + '/staff',
+              onFailure: (error) => {
+                request.log.error(
+                  { err: error },
+                  'the owners could not be told about a professional',
+                );
+              },
+            });
+          }
           return { membershipId: request.params.membershipId, roles: result.roles };
         } catch (error) {
           if (error instanceof AccessRefused) {

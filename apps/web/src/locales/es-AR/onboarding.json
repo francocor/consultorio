@@ -116,7 +116,7 @@
   "team.impact.description": "Revise el efecto en su plan antes de enviarla.",
   "team.impact.confirm": "Confirmar y enviar",
   "team.optional": "Puede omitir este paso y invitar a su equipo cuando quiera.",
-  "team.professionalNote": "Solo la persona titular puede invitar profesionales.",
+  "team.professionalNotice": "Como administrador, al invitar a un profesional avisaremos por correo a los titulares de la organización.",
 
   "branding.title": "Identidad visual",
   "branding.description": "El nombre y el color con los que sus pacientes y su equipo ven la aplicación. Sin cambios, usa el estilo neutro de la plataforma.",
