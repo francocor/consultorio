@@ -13,8 +13,13 @@ export interface TokenPageModel {
   /** Label and value rows (date, time, place, professional). */
   details?: readonly { label: string; value: string }[];
   message?: string;
-  /** The one thing the visitor can do; absent when the page only informs. */
-  action?: { label: string };
+  /**
+   * The thing the visitor can do; absent when the page only informs. A page with two choices (an
+   * offer to accept or decline) gives each a `value`: the button posts it as `choice`.
+   */
+  action?: { label: string; value?: string };
+  /** A second choice beside the action. Shown only together with an action. */
+  secondaryAction?: { label: string; value: string };
 }
 
 const HTML_ESCAPES: Record<string, string> = {
@@ -39,6 +44,8 @@ dt { font-weight: 600; }
 dd { margin: 0 0 0.5rem; }
 button { min-height: 44px; padding: 0.6rem 1.2rem; border: 0; border-radius: 6px; background: #0f766e; color: #ffffff; font: inherit; cursor: pointer; }
 button:focus-visible { outline: 3px solid #1d4ed8; outline-offset: 2px; }
+form { display: flex; flex-wrap: wrap; gap: 0.75rem; }
+button.secondary { background: #ffffff; color: #0f766e; border: 2px solid #0f766e; }
 `;
 
 /**
@@ -63,10 +70,20 @@ export function renderTokenPage(model: TokenPageModel): string {
           .map((row) => `<dt>${escapeHtml(row.label)}</dt>\n<dd>${escapeHtml(row.value)}</dd>`)
           .join('\n')}\n</dl>`;
   const message = model.message === undefined ? '' : `<p>${escapeHtml(model.message)}</p>`;
-  const action =
+  const choice = (value: string | undefined) =>
+    value === undefined ? '' : ` name="choice" value="${escapeHtml(value)}"`;
+  const buttons =
     model.action === undefined
-      ? ''
-      : `<form method="post">\n<button type="submit">${escapeHtml(model.action.label)}</button>\n</form>`;
+      ? []
+      : [
+          `<button type="submit"${choice(model.action.value)}>${escapeHtml(model.action.label)}</button>`,
+          ...(model.secondaryAction === undefined
+            ? []
+            : [
+                `<button type="submit" class="secondary"${choice(model.secondaryAction.value)}>${escapeHtml(model.secondaryAction.label)}</button>`,
+              ]),
+        ];
+  const action = buttons.length === 0 ? '' : `<form method="post">\n${buttons.join('\n')}\n</form>`;
 
   return `<!doctype html>
 <html lang="es-AR">

@@ -10,6 +10,7 @@ import type { SchedulingPorts } from '../../scheduling/index.js';
 
 import { recordCall } from './calls.js';
 import { expireOffer } from './expiry.js';
+import { lockOffer } from './offer-lock.js';
 import { invalidateOpenOffers } from './offer-state.js';
 import { SYSTEM_ACTOR, WAITLIST_OFFER_JOB } from './offers.js';
 import type { DeliverWaitlistOffer } from './ports.js';
@@ -50,11 +51,8 @@ export async function deliverOffer(
   input: { offerId: string; now: Date },
 ): Promise<DeliveryOutcome> {
   const { now } = input;
-  const [offer] = await tx
-    .select()
-    .from(waitlistOffer)
-    .where(eq(waitlistOffer.id, input.offerId))
-    .for('update');
+  const ports = deps.portsOf(tx);
+  const offer = await lockOffer(tx, ports, input.offerId);
   if (offer?.status !== 'open' || offer.deliveredAt !== null) return 'skipped';
   if (offer.expiresAt.getTime() <= now.getTime()) {
     await expireOffer(tx, deps, { offerId: offer.id, now });
@@ -71,7 +69,7 @@ export async function deliverOffer(
     return 'skipped';
   }
 
-  const booking = await canBookSlot(deps.portsOf(tx), {
+  const booking = await canBookSlot(ports, {
     patientId: offer.patientId,
     professionalId: offer.professionalId,
     locationId: offer.locationId,
@@ -118,7 +116,7 @@ export async function deliverOffer(
       .where(eq(waitlistEntry.id, offer.entryId));
     await recordCall(
       tx,
-      deps.portsOf(tx),
+      ports,
       {
         entryId: offer.entryId,
         professionalId: offer.professionalId,

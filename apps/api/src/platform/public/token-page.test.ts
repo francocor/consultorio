@@ -34,6 +34,52 @@ describe('renderTokenPage', () => {
     expect(html.match(/<button/g)).toHaveLength(1);
   });
 
+  it('names the choice of each button when a page has two, so the handler knows which was pressed', () => {
+    const html = renderTokenPage({
+      ...page,
+      action: { label: 'Aceptar el turno', value: 'accept' },
+      secondaryAction: { label: 'No me sirve', value: 'decline' },
+    });
+
+    expect(html.match(/<button/g)).toHaveLength(2);
+    expect(html).toContain(
+      '<button type="submit" name="choice" value="accept">Aceptar el turno</button>',
+    );
+    expect(html).toContain(
+      '<button type="submit" class="secondary" name="choice" value="decline">No me sirve</button>',
+    );
+    expect(html.match(/<form/g)).toHaveLength(1);
+  });
+
+  it('leaves a single button unnamed, as before', () => {
+    const html = renderTokenPage(page);
+
+    expect(html).toContain('<button type="submit">Confirmar asistencia</button>');
+    expect(html).not.toContain('name="choice"');
+  });
+
+  it('shows no second button without a first one', () => {
+    const html = renderTokenPage({
+      organizationName: 'Centro Médico Aillu',
+      title: 'Solo informa',
+      secondaryAction: { label: 'No me sirve', value: 'decline' },
+    });
+
+    expect(html).not.toContain('<button');
+    expect(html).not.toContain('<form');
+  });
+
+  it('escapes the labels and the values of the buttons', () => {
+    const html = renderTokenPage({
+      ...page,
+      action: { label: '<b>Sí</b>', value: 'a"b' },
+    });
+
+    expect(html).not.toContain('<b>Sí');
+    expect(html).toContain('value="a&quot;b"');
+    expect(html).toContain('&lt;b&gt;Sí&lt;/b&gt;');
+  });
+
   it('has no button and no form when there is nothing to do', () => {
     const html = renderTokenPage({
       organizationName: 'Centro Médico Aillu',

@@ -12,12 +12,14 @@ import type { TenantKeys } from '../../platform/crypto/tenant-keys.js';
 import type { WithTenant } from '../../platform/db/tenant-context.js';
 import type { AppointmentEvents } from '../../platform/events/appointment-events.js';
 import type { JobClient } from '../../platform/jobs/boss.js';
+import { registerTokenHandler } from '../../platform/public/token-router.js';
 import { createSchedulingPorts } from '../scheduling/index.js';
 import type { ExportRegistry } from '../tenancy/index.js';
 
 import { exportWaitlist } from './application/export-contributor.js';
 import { createSlotTrigger } from './application/trigger.js';
 import { entryRoutes } from './http/entry-routes.js';
+import { createOfferHandler } from './http/offer-handler.js';
 
 export { closeEntriesOfOptedOutPatient, closeExpiredEntries } from './application/entries.js';
 export { createWaitlistJobs } from './application/jobs.js';
@@ -61,6 +63,15 @@ export function createWaitlist(options: WaitlistOptions): Waitlist {
   // Synchronous and in the transaction of the cancellation or the booking (see the event bus).
   const trigger = createSlotTrigger({ jobs: options.jobs, clock });
   options.events.subscribe((tx, event) => trigger.handle(tx, event));
+
+  // The link of an offer: accept or decline, on the page of the platform's token router.
+  registerTokenHandler(
+    'waitlist_offer',
+    createOfferHandler({
+      portsOf: (tx) => createSchedulingPorts(tx, { keys: options.keys, events: options.events }),
+      jobs: options.jobs,
+    }),
+  );
 
   const entries = entryRoutes({
     withTenant: options.withTenant,

@@ -23,6 +23,7 @@ import type { SchedulingPorts } from '../../scheduling/index.js';
 import { manualContactReason } from '../domain/manual-contact.js';
 
 import { loadEntries, loadEntry } from './entry-view.js';
+import { lockOpenOffersOf } from './offer-lock.js';
 import { invalidateOpenOffers } from './offer-state.js';
 import { reachOf } from './reachability.js';
 import { loadWaitlistConfig } from './settings.js';
@@ -265,6 +266,8 @@ export function listEntries(tx: Tx, query: WaitlistListQuery): Promise<WaitlistE
 }
 
 async function lockEntry(tx: Tx, id: string): Promise<WaitlistEntryRow> {
+  // The open offers first, the entry after: the order a booking takes them in.
+  await lockOpenOffersOf(tx, [id]);
   const [row] = await tx.select().from(waitlistEntry).where(eq(waitlistEntry.id, id)).for('update');
   if (!row) throw new AppError('not_found');
   return row;
@@ -510,16 +513,16 @@ const SYSTEM_ACTOR: EntryActor = {
  * Returns how many it closed.
  */
 export async function closeExpiredEntries(tx: Tx, input: { now: Date }): Promise<number> {
-  const due = await tx
-    .select()
-    .from(waitlistEntry)
-    .where(
-      and(
-        inArray(waitlistEntry.status, ['active', 'paused', 'offered']),
-        sql`${waitlistEntry.expiresAt} <= ${input.now.toISOString()}::timestamptz`,
-      ),
-    )
-    .for('update');
+  const dueWhere = and(
+    inArray(waitlistEntry.status, ['active', 'paused', 'offered']),
+    sql`${waitlistEntry.expiresAt} <= ${input.now.toISOString()}::timestamptz`,
+  );
+  const ids = await tx.select({ id: waitlistEntry.id }).from(waitlistEntry).where(dueWhere);
+  await lockOpenOffersOf(
+    tx,
+    ids.map((row) => row.id),
+  );
+  const due = await tx.select().from(waitlistEntry).where(dueWhere).for('update');
   for (const row of due) {
     await closeEntryRow(tx, row, { reason: 'expired', actor: SYSTEM_ACTOR, now: input.now });
   }
@@ -535,11 +538,13 @@ export async function closeEntriesOfOptedOutPatient(
   tx: Tx,
   input: { patientId: string; now: Date },
 ): Promise<number> {
-  const rows = await tx
-    .select()
-    .from(waitlistEntry)
-    .where(and(eq(waitlistEntry.patientId, input.patientId), IN_PLAY))
-    .for('update');
+  const theirs = and(eq(waitlistEntry.patientId, input.patientId), IN_PLAY);
+  const ids = await tx.select({ id: waitlistEntry.id }).from(waitlistEntry).where(theirs);
+  await lockOpenOffersOf(
+    tx,
+    ids.map((row) => row.id),
+  );
+  const rows = await tx.select().from(waitlistEntry).where(theirs).for('update');
   for (const row of rows) {
     await closeEntryRow(tx, row, {
       reason: 'patient_opted_out',
