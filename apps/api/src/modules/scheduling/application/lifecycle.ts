@@ -31,13 +31,13 @@ import {
   resolveStart,
   typeOffered,
   type BookActor,
+  type LocationAuthorizer,
   type Plan,
   type PlanInput,
 } from './placement.js';
 import type {
   AppointmentPatch,
   AppointmentRecord,
-  LocationRecord,
   ProfessionalRecord,
   SchedulingPorts,
 } from './ports.js';
@@ -73,7 +73,7 @@ export async function lockForChange(
   // before anything is locked or changed.
   if (actor) {
     assertCalendar(actor, peek.professionalId);
-    assertLocation(actor, peek.locationId);
+    assertLocation(actor, peek.locationId, peek.professionalId);
   }
   const ids = [...new Set([peek.professionalId, ...alsoProfessionalIds])].sort();
   for (const id of ids) await ports.lockProfessional(id);
@@ -340,7 +340,7 @@ export interface RescheduleInput {
   actor: BookActor;
   auditActor: AuditActor;
   now: Date;
-  authorizeLocation?: (location: LocationRecord) => Promise<void>;
+  authorizeLocation?: LocationAuthorizer;
 }
 
 /**
@@ -360,7 +360,9 @@ export async function rescheduleAppointment(
   );
   // Moving it into another calendar or location needs the right to work there too.
   assertCalendar(input.actor, input.professionalId ?? record.professionalId);
-  if (input.locationId) assertLocation(input.actor, input.locationId);
+  if (input.locationId) {
+    assertLocation(input.actor, input.locationId, input.professionalId ?? record.professionalId);
+  }
   checkVersion(record, input.expectedVersion);
   if (!canReschedule(record.status)) throw new AppError('conflict');
 
@@ -370,7 +372,7 @@ export async function rescheduleAppointment(
   const type = await ports.findType(record.appointmentTypeId);
   if (!professional || !location || !type) throw new AppError('not_found');
   if (professional.status !== 'active' || !location.active) throw new AppError('conflict');
-  if (input.authorizeLocation) await input.authorizeLocation(location);
+  if (input.authorizeLocation) await input.authorizeLocation(location, professional.id);
 
   const professionalChanged = professional.id !== record.professionalId;
   if (professionalChanged && !typeOffered(type, professional)) {

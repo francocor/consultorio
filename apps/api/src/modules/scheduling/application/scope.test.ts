@@ -260,3 +260,63 @@ describe('reception works at its locations only', () => {
     expect(state.updates).toEqual([]);
   });
 });
+
+describe('a reception user who is also a professional', () => {
+  // Reception limits them to Centro for everybody's calendar; only their own is open everywhere.
+  const both = (): BookActor =>
+    scoped({
+      mayUseCalendar: () => true,
+      mayUseLocation: (locationId, professionalId) =>
+        locationId === CENTRO || professionalId === ME,
+    });
+  const confirm = (ports: ReturnType<typeof world>['ports'], who: BookActor) =>
+    transitionAppointment(ports, {
+      appointmentId: 'appt-1',
+      action: 'confirm',
+      actor: who,
+      auditActor,
+      now: NOW,
+      expectedVersion: 1,
+    });
+
+  it('is refused for a colleague’s appointment at a location they are not assigned to', async () => {
+    const { ports, state } = world(record({ professionalId: COLLEAGUE, locationId: NORTE }));
+
+    const error = await thrown(confirm(ports, both()));
+
+    expect(error).toBeInstanceOf(AccessRefused);
+    expect((error as AccessRefused).reason).toBe('location_not_assigned');
+    expect(state.updates).toEqual([]);
+  });
+
+  it('works in their own calendar at any location', async () => {
+    const { ports } = world(record({ professionalId: ME, locationId: NORTE }));
+
+    expect((await confirm(ports, both())).status).toBe('confirmed');
+  });
+
+  it('works in a colleague’s calendar at an assigned location', async () => {
+    const { ports } = world(record({ professionalId: COLLEAGUE, locationId: CENTRO }));
+
+    expect((await confirm(ports, both())).status).toBe('confirmed');
+  });
+
+  it('is refused when a reschedule moves a colleague’s appointment to a location not assigned', async () => {
+    const { ports, state } = world(record({ professionalId: COLLEAGUE, locationId: CENTRO }));
+
+    const error = await thrown(
+      rescheduleAppointment(ports, {
+        appointmentId: 'appt-1',
+        expectedVersion: 1,
+        locationId: NORTE,
+        actor: both(),
+        auditActor,
+        now: NOW,
+      }),
+    );
+
+    expect(error).toBeInstanceOf(AccessRefused);
+    expect((error as AccessRefused).reason).toBe('location_not_assigned');
+    expect(state.updates).toEqual([]);
+  });
+});

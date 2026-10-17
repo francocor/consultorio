@@ -1,4 +1,10 @@
-import type { AppointmentDto, AuditAction, Problem } from '@consultorio/contracts';
+import type {
+  AppointmentDto,
+  AuditAction,
+  AvailabilityResponse,
+  CalendarResponse,
+  Problem,
+} from '@consultorio/contracts';
 import { and, desc, eq } from 'drizzle-orm';
 import { afterAll, beforeAll, describe, expect, inject, it } from 'vitest';
 
@@ -9,6 +15,8 @@ import {
   createSchedulingHttpWorld,
   type SchedulingHttpWorld,
 } from '../support/scheduling-world.js';
+import { TEST_PASSWORD } from '../support/session.js';
+import { createTestProfessional } from '../support/users.js';
 
 let runtime: DbHandle;
 let world: SchedulingHttpWorld;
@@ -224,6 +232,130 @@ describe('reception operates its own locations', () => {
 
     expect(attempts.map((r) => r.statusCode)).toEqual([403, 403, 403]);
     expect((await world.act(norteAppointment, 'check-in', world.admin, {})).statusCode).toBe(200);
+  });
+});
+
+describe('a reception user who is also a professional', () => {
+  const WINDOW = (weeksAfter: number) =>
+    `from=${world.monday(weeksAfter)}T00:00:00Z&to=${world.monday(weeksAfter)}T23:59:59Z`;
+
+  /** Reception at Centro only, and a professional who works at Norte. */
+  async function receptionProfessional() {
+    const created = await createTestProfessional(runtime, world.tenant.id, {
+      password: TEST_PASSWORD,
+      alsoRoles: ['reception'],
+    });
+    const session = await world.signIn(created);
+    await world.api.put(`/members/${created.membershipId}/locations`, world.owner, {
+      locationIds: [world.centro],
+    });
+    const hours = await world.api.put(
+      `/professionals/${created.professionalId}/hours`,
+      world.owner,
+      {
+        hours: [{ locationId: world.norte, weekday: 1, start: '09:00', end: '13:00' }],
+      },
+    );
+    expect(hours.statusCode, hours.body).toBe(200);
+    return { ...session, professionalId: created.professionalId };
+  }
+
+  async function norteColleague(weeksAfter: number) {
+    const colleague = await world.addProfessional();
+    await world.api.put(`/professionals/${colleague.professionalId}/hours`, colleague, {
+      hours: [{ locationId: world.norte, weekday: 1, start: '09:00', end: '13:00' }],
+    });
+    const response = await world.api.post('/appointments', world.admin, {
+      ...(await world.bookingBody(weeksAfter, '10:00')),
+      professionalId: colleague.professionalId,
+      locationId: world.norte,
+    });
+    expect(response.statusCode, response.body).toBe(201);
+    return { colleague, appointment: response.json<AppointmentDto>() };
+  }
+
+  it('is held to the assigned locations in a colleague’s calendar: no reading, no changes, no booking', async () => {
+    const both = await receptionProfessional();
+    const { colleague, appointment: theirs } = await norteColleague(14);
+
+    const attempts = await Promise.all([
+      world.api.get(`/appointments/${theirs.id}`, both),
+      world.api.get(`/appointments/${theirs.id}/history`, both),
+      world.act(theirs, 'check-in', both),
+      world.act(theirs, 'cancel', both, { cancelledBy: 'patient', reasonCode: 'illness' }),
+      world.api.post('/appointments', both, {
+        ...(await world.bookingBody(14, '11:00')),
+        professionalId: colleague.professionalId,
+        locationId: world.norte,
+      }),
+    ]);
+
+    expect(attempts.map((r) => r.statusCode)).toEqual([403, 403, 403, 403, 403]);
+    const booking = await world.api.post('/appointments', both, {
+      ...(await world.bookingBody(14, '11:00')),
+      professionalId: world.colleague.professionalId,
+    });
+    expect(booking.statusCode, booking.body).toBe(201);
+  });
+
+  it('is unrestricted in their own calendar, at any location', async () => {
+    const both = await receptionProfessional();
+
+    const own = await world.api.post('/appointments', both, {
+      ...(await world.bookingBody(15, '10:00')),
+      professionalId: both.professionalId,
+      locationId: world.norte,
+    });
+
+    expect(own.statusCode, own.body).toBe(201);
+    const confirm = await world.act(own.json<AppointmentDto>(), 'confirm', both);
+    expect(confirm.statusCode).toBe(200);
+  });
+
+  it('sees their own calendar everywhere in the feed, and only the assigned locations of the others', async () => {
+    const both = await receptionProfessional();
+    const { appointment: theirs } = await norteColleague(16);
+    const own = await world.api.post('/appointments', both, {
+      ...(await world.bookingBody(16, '10:00')),
+      professionalId: both.professionalId,
+      locationId: world.norte,
+    });
+    const atCentro = await world.book(16, '11:00', {}, world.admin);
+
+    const feed = await world.api.get(`/appointments?${WINDOW(16)}`, both);
+
+    expect(feed.statusCode, feed.body).toBe(200);
+    const ids = feed.json<CalendarResponse>().appointments.map((entry) => entry.id);
+    expect(ids).toContain(own.json<AppointmentDto>().id);
+    expect(ids).toContain(atCentro.id);
+    expect(ids).not.toContain(theirs.id);
+    const refused = await world.api.get(
+      `/appointments?${WINDOW(16)}&locationId=${world.norte}`,
+      both,
+    );
+    const ownOnly = refused.json<CalendarResponse>().appointments.map((entry) => entry.id);
+    expect(ownOnly).toEqual([own.json<AppointmentDto>().id]);
+  });
+
+  it('is offered the free time of a colleague only at the assigned locations', async () => {
+    const both = await receptionProfessional();
+    const colleague = await world.addProfessional();
+    await world.api.put(`/professionals/${colleague.professionalId}/hours`, colleague, {
+      hours: [
+        { locationId: world.centro, weekday: 1, start: '09:00', end: '11:00' },
+        { locationId: world.norte, weekday: 1, start: '11:00', end: '13:00' },
+      ],
+    });
+
+    const response = await world.api.get(
+      `/availability?professionalId=${colleague.professionalId}&typeId=${world.consulta}&from=${world.monday(17)}&to=${world.monday(17)}`,
+      both,
+    );
+
+    expect(response.statusCode, response.body).toBe(200);
+    const slots = response.json<AvailabilityResponse>().slots;
+    expect(slots.length).toBeGreaterThan(0);
+    expect(new Set(slots.map((slot) => slot.locationId))).toEqual(new Set([world.centro]));
   });
 });
 

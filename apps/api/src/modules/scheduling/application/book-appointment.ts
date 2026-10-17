@@ -14,6 +14,7 @@ import {
   SlotNoLongerAvailableError,
   typeOffered,
   type BookActor,
+  type LocationAuthorizer,
   type Plan,
   type PlanInput,
 } from './placement.js';
@@ -38,7 +39,7 @@ export interface BookInput {
    * Called once the location is known to exist, so a location the actor may not operate is refused
    * as a denial, and one that does not exist (or belongs to another organization) as not found.
    */
-  authorizeLocation?: (location: LocationRecord) => Promise<void>;
+  authorizeLocation?: LocationAuthorizer;
 }
 
 /**
@@ -75,7 +76,7 @@ export async function bookAppointment(
     throw new AppError('conflict');
   }
   assertCalendar(actor, professional.id);
-  if (input.authorizeLocation) await input.authorizeLocation(location);
+  if (input.authorizeLocation) await input.authorizeLocation(location, professional.id);
   if (!typeOffered(type, professional)) {
     throw invalid('appointmentTypeId', 'scheduling.booking.type_not_offered');
   }

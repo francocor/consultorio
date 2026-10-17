@@ -11,9 +11,10 @@ import {
   resolveStart,
   typeOffered,
   type BookActor,
+  type LocationAuthorizer,
   type PlanInput,
 } from './placement.js';
-import type { HoldRecord, LocationRecord, SchedulingPorts } from './ports.js';
+import type { HoldRecord, SchedulingPorts } from './ports.js';
 
 export { SlotNoLongerAvailableError } from './placement.js';
 
@@ -43,7 +44,7 @@ export interface CreateHoldInput {
   sourceKey: string;
   /** Holds one source may have at a time. Defaults to 1. */
   bound?: number;
-  authorizeLocation?: (location: LocationRecord) => Promise<void>;
+  authorizeLocation?: LocationAuthorizer;
 }
 
 /**
@@ -63,7 +64,7 @@ export async function createHold(ports: SchedulingPorts, input: CreateHoldInput)
     throw new AppError('conflict');
   }
   assertCalendar(actor, professional.id);
-  if (input.authorizeLocation) await input.authorizeLocation(location);
+  if (input.authorizeLocation) await input.authorizeLocation(location, professional.id);
   if (!typeOffered(type, professional)) {
     throw invalid('appointmentTypeId', 'scheduling.booking.type_not_offered');
   }

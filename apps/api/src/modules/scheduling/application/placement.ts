@@ -29,9 +29,22 @@ export interface BookActor {
    * or in one that was delegated). Absent means every calendar, as for tests.
    */
   mayUseCalendar?: (professionalId: string) => boolean;
-  /** Whether the actor may operate this location (reception works at its own). Absent means any. */
-  mayUseLocation?: (locationId: string) => boolean;
+  /**
+   * Whether the actor may operate this location in this professional's calendar (reception works at
+   * its assigned locations, except in its own calendar when it is also a professional). Absent
+   * means any.
+   */
+  mayUseLocation?: (locationId: string, professionalId: string) => boolean;
 }
+
+/**
+ * Called once the location is known to exist, with the professional whose calendar is worked in, so
+ * a location the actor may not operate there is refused as a denial.
+ */
+export type LocationAuthorizer = (
+  location: LocationRecord,
+  professionalId: string,
+) => Promise<void>;
 
 /** Refuses a calendar the actor was not given. The reason goes to the audit trail only. */
 export function assertCalendar(actor: BookActor, professionalId: string): void {
@@ -40,9 +53,9 @@ export function assertCalendar(actor: BookActor, professionalId: string): void {
   }
 }
 
-/** Refuses a location the actor does not work at. */
-export function assertLocation(actor: BookActor, locationId: string): void {
-  if (actor.mayUseLocation && !actor.mayUseLocation(locationId)) {
+/** Refuses a location the actor does not work at, for the calendar of this professional. */
+export function assertLocation(actor: BookActor, locationId: string, professionalId: string): void {
+  if (actor.mayUseLocation && !actor.mayUseLocation(locationId, professionalId)) {
     throw new AccessRefused('location_not_assigned');
   }
 }

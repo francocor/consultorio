@@ -22,10 +22,11 @@ import {
   SlotTakenError,
   typeOffered,
   type BookActor,
+  type LocationAuthorizer,
   type Plan,
   type PlanInput,
 } from './placement.js';
-import type { LocationRecord, SchedulingPorts } from './ports.js';
+import type { SchedulingPorts } from './ports.js';
 
 const DAY_MS = 86_400_000;
 
@@ -46,7 +47,7 @@ export interface SeriesInput {
   actor: BookActor;
   auditActor: AuditActor & { userId: string };
   now: Date;
-  authorizeLocation?: (location: LocationRecord) => Promise<void>;
+  authorizeLocation?: LocationAuthorizer;
 }
 
 const REASON_BY_KEY: Record<string, SeriesConflictReason> = {
@@ -128,7 +129,7 @@ export async function bookSeries(
     throw new AppError('conflict');
   }
   assertCalendar(actor, professional.id);
-  if (input.authorizeLocation) await input.authorizeLocation(location);
+  if (input.authorizeLocation) await input.authorizeLocation(location, professional.id);
   if (!typeOffered(type, professional)) {
     throw invalid('appointmentTypeId', 'scheduling.booking.type_not_offered');
   }

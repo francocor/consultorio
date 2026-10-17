@@ -28,7 +28,7 @@ import { refuseRequest } from '../../../platform/authz/refuse.js';
 import type { TenantKeys } from '../../../platform/crypto/tenant-keys.js';
 import type { Tx, WithTenant } from '../../../platform/db/tenant-context.js';
 import { AppError, conflictCode } from '../../../platform/http/problem.js';
-import { AccessRefused, visibleLocationIds } from '../../access/index.js';
+import { AccessRefused } from '../../access/index.js';
 import { bookAppointment, SlotTakenError } from '../application/book-appointment.js';
 import type { createCalendar } from '../application/calendar.js';
 import { createSchedulingPorts } from '../application/drizzle-ports.js';
@@ -41,8 +41,12 @@ import {
   transitionAppointment,
   type TransitionAction,
 } from '../application/lifecycle.js';
-import { SlotNoLongerAvailableError, type BookActor } from '../application/placement.js';
-import type { LocationRecord } from '../application/ports.js';
+import { locationAccessOf } from '../application/location-access.js';
+import {
+  SlotNoLongerAvailableError,
+  type BookActor,
+  type LocationAuthorizer,
+} from '../application/placement.js';
 import type { TimeRange } from '../domain/working-hours.js';
 
 export interface AppointmentRoutesDeps {
@@ -75,27 +79,16 @@ export function requestActor(request: FastifyRequest): {
 }
 
 /**
- * The locations a viewer may operate: owners and admins every one; a professional is held to their
- * own calendar instead of to locations; everyone else works at the locations they are assigned to.
- */
-export async function operableLocations(tx: Tx, actor: Actor): Promise<'all' | string[]> {
-  if (actor.roles.some((role) => role === 'owner' || role === 'admin' || role === 'professional')) {
-    return 'all';
-  }
-  return visibleLocationIds(tx, { roles: actor.roles, membershipId: actor.membershipId });
-}
-
-/**
  * What a use case needs to know about the limits of the actor: the calendars they may work in (a
- * professional's own and the delegated ones) and the locations they may operate. Computed once per
- * request, in its transaction, so the services never read the session.
+ * professional's own and the delegated ones) and the locations they may operate in each of them.
+ * Computed once per request, in its transaction, so the services never read the session.
  */
 export async function scopedActor(tx: Tx, actor: Actor, book: BookActor): Promise<BookActor> {
-  const locations = await operableLocations(tx, actor);
+  const access = await locationAccessOf(tx, actor);
   return {
     ...book,
     mayUseCalendar: (professionalId) => calendarAccess(actor, professionalId),
-    mayUseLocation: (locationId) => locations === 'all' || locations.includes(locationId),
+    mayUseLocation: (locationId, professionalId) => access.may({ locationId, professionalId }),
   };
 }
 
@@ -128,16 +121,15 @@ export function replySlotNoLongerAvailable(
 }
 
 /**
- * Reception and other non-professional staff operate the locations they are assigned to; owners and
- * admins every location; a professional is held to their own calendar instead (not to locations).
+ * Reception and other staff assigned to locations operate those; owners and admins every location;
+ * a professional who is only a professional is held to calendars instead of locations. A reception
+ * user who is also a professional is limited to the assigned locations everywhere but in their own
+ * calendar.
  */
-export function locationAuthorizer(
-  tx: Tx,
-  actor: Actor,
-): (location: LocationRecord) => Promise<void> {
-  return async (location) => {
-    const operable = await operableLocations(tx, actor);
-    if (operable !== 'all' && !operable.includes(location.id)) {
+export function locationAuthorizer(tx: Tx, actor: Actor): LocationAuthorizer {
+  return async (location, professionalId) => {
+    const access = await locationAccessOf(tx, actor);
+    if (!access.may({ locationId: location.id, professionalId })) {
       throw new AccessRefused('location_not_assigned');
     }
   };

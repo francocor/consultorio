@@ -17,12 +17,12 @@ import { conflictWith } from '../../../platform/http/problem.js';
 import { AccessRefused } from '../../access/index.js';
 import { availability } from '../application/availability.js';
 import { createSchedulingPorts } from '../application/drizzle-ports.js';
+import { locationAccessOf } from '../application/location-access.js';
 import { SlotTakenError } from '../application/placement.js';
 import { bookSeries, SeriesConflictError } from '../application/series.js';
 
 import {
   locationAuthorizer,
-  operableLocations,
   replySlotTaken,
   requestActor,
   scopedActor,
@@ -60,7 +60,9 @@ export function planningRoutes(deps: PlanningRoutesDeps) {
           availability(createSchedulingPorts(tx, { keys: deps.keys }), {
             query: request.query,
             now: deps.clock(),
-            visibleLocations: await operableLocations(tx, actor),
+            visibleLocations: (await locationAccessOf(tx, actor)).forProfessional(
+              request.query.professionalId,
+            ),
           }),
         );
       },
