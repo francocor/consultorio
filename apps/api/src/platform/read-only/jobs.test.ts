@@ -103,6 +103,29 @@ describe('job classification (every queue declares one category)', () => {
     }
   });
 
+  it('classifies the Stage 4 queues: exports and invoice PDFs keep running, messages are cancelled', () => {
+    expect(jobCategoryOf('afip.issue')).toBe('afip_submission');
+    expect(jobCategoryOf('export.build')).toBe('export');
+    // A PDF is rendered from an invoice that already exists, which a read-only tenant may read.
+    expect(jobCategoryOf('invoice.pdf')).toBe('export');
+    // An email to a patient is a message: cancelled in a read-only tenant, never replayed.
+    expect(jobCategoryOf('invoice.deliver')).toBe('write');
+    expect(jobCategoryOf('fiscal.credential_watch')).toBe('write');
+  });
+
+  it('lets only afip.issue jobs queued before the freeze submit an invoice in a read-only tenant', () => {
+    const afip = { category: jobCategoryOf('afip.issue') };
+
+    expect(jobMayRun(afip, frozen, BEFORE)).toEqual({ run: true });
+    expect(jobMayRun(afip, frozen, AFTER)).toEqual({ run: false, reason: 'tenant_read_only' });
+    for (const queue of ['invoice.deliver', 'fiscal.credential_watch']) {
+      expect(jobMayRun({ category: jobCategoryOf(queue) }, frozen, BEFORE).run, queue).toBe(false);
+    }
+    for (const queue of ['export.build', 'invoice.pdf']) {
+      expect(jobMayRun({ category: jobCategoryOf(queue) }, frozen, AFTER).run, queue).toBe(true);
+    }
+  });
+
   it('refuses a queue nobody classified instead of guessing a category', () => {
     expect(() => jobCategoryOf('made.up.queue')).toThrow(/made.up.queue/);
   });
