@@ -30,6 +30,9 @@ import { FormSkeleton } from '../../../../shared/ui/states/loading-skeleton.js';
 import { toast } from '../../../../shared/ui/toaster.js';
 import { messagingApi, messagingKeys } from '../api/messaging-api.js';
 
+/** The labels are long sentences: on a phone they wrap instead of pushing the page sideways. */
+const WRAP = 'h-auto max-w-full whitespace-normal py-2 text-center';
+
 const TONE: Record<ChannelStateDto['state'], BadgeTone> = {
   default: 'success',
   none: 'neutral',
@@ -120,6 +123,7 @@ export function ChannelsPanel({ patientId }: { patientId: string }) {
           <Button
             type="button"
             variant="outline"
+            className={WRAP}
             onClick={() => {
               setLeaving('email');
             }}
@@ -140,6 +144,7 @@ export function ChannelsPanel({ patientId }: { patientId: string }) {
               <Button
                 type="button"
                 variant="outline"
+                className={WRAP}
                 disabled={!data.hasMobile || data.whatsapp.state !== 'none'}
                 aria-describedby={
                   data.whatsapp.state === 'opted_out' ? 'channels-opted-out-help' : undefined
@@ -154,6 +159,7 @@ export function ChannelsPanel({ patientId }: { patientId: string }) {
               <Button
                 type="button"
                 variant="outline"
+                className={WRAP}
                 disabled={!data.hasEmail || !data.hasMobile || data.whatsapp.state === 'opted_in'}
                 loading={request.isPending}
                 onClick={() => {
@@ -166,6 +172,7 @@ export function ChannelsPanel({ patientId }: { patientId: string }) {
                 <Button
                   type="button"
                   variant="outline"
+                  className={WRAP}
                   onClick={() => {
                     setLeaving('whatsapp');
                   }}
