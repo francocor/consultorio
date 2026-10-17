@@ -1,4 +1,4 @@
-import type { OperatorDto } from '@consultorio/contracts';
+import type { DevProviderDto, OperatorDto } from '@consultorio/contracts';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { LogOut, ShieldCheck } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
@@ -12,6 +12,7 @@ import { FormSkeleton } from '../../shared/ui/states/loading-skeleton.js';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../../shared/ui/tabs.js';
 
 import { operatorApi, operatorKeys } from './api/operator-api.js';
+import { ProvidersPage } from './dev/ProvidersPage.js';
 import { HolidayCatalog } from './holidays/HolidayCatalog.js';
 import { OperatorLogin } from './OperatorLogin.js';
 import { TenantsPanel } from './TenantsPanel.js';
@@ -78,6 +79,19 @@ export function OperatorConsole() {
 function Console({ operator, onSignedOut }: { operator: OperatorDto; onSignedOut: () => void }) {
   const { t } = useTranslation('operator');
   const api = useApi();
+  // The provider console exists only where the server was started with LOCAL_PROVIDERS_CONSOLE;
+  // anywhere else this is a 404 and the tab is simply not offered.
+  const providers = useQuery({
+    queryKey: operatorKeys.devProviders,
+    queryFn: async (): Promise<readonly DevProviderDto[] | null> => {
+      try {
+        return await operatorApi(api).devProviders();
+      } catch {
+        return null;
+      }
+    },
+    retry: false,
+  });
   const signOut = useMutation({
     mutationFn: () => operatorApi(api).logout(),
     // Whatever the server answered, nothing of this session stays in the browser.
@@ -118,6 +132,9 @@ function Console({ operator, onSignedOut }: { operator: OperatorDto; onSignedOut
           <TabsList aria-label={t('nav.label')} className="justify-start">
             <TabsTrigger value="tenants">{t('nav.tenants')}</TabsTrigger>
             <TabsTrigger value="holidays">{t('nav.holidays')}</TabsTrigger>
+            {providers.data ? (
+              <TabsTrigger value="providers">{t('nav.providers')}</TabsTrigger>
+            ) : null}
           </TabsList>
           <TabsContent value="tenants">
             <TenantsPanel />
@@ -125,6 +142,11 @@ function Console({ operator, onSignedOut }: { operator: OperatorDto; onSignedOut
           <TabsContent value="holidays">
             <HolidayCatalog />
           </TabsContent>
+          {providers.data ? (
+            <TabsContent value="providers">
+              <ProvidersPage providers={providers.data} />
+            </TabsContent>
+          ) : null}
         </Tabs>
       </main>
     </div>

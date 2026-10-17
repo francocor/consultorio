@@ -5,6 +5,7 @@ import {
 
 import { createFakeVideoLinkProvider } from '../../adapters/video-fake/index.js';
 import { createTeleconsultation } from '../../modules/teleconsultation/index.js';
+import { adapterOfSetting } from '../../platform/local-providers/dev-routes.js';
 import { fake } from '../adapter-resolver.js';
 
 import type { ModuleWiring } from './types.js';
@@ -26,6 +27,15 @@ export const teleconsultationWiring: ModuleWiring = {
   name: 'teleconsultation',
   // No customer adapter yet: no link is created for customers; demo organizations get the fake.
   adapters: () => ({ videoLink: { real: undefined, demo: fake(createFakeVideoLinkProvider()) } }),
+  devProviders: ({ config }) => [
+    {
+      id: 'video',
+      label: 'Video',
+      // The simulators add their mode (an outage, rejected templates) when they exist.
+      status: () =>
+        Promise.resolve({ adapter: adapterOfSetting(config.providers.video), mode: null }),
+    },
+  ],
   create: (context) =>
     createTeleconsultation({
       withTenant: context.withTenant,

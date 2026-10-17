@@ -89,6 +89,10 @@ async function runApi(config: Config): Promise<void> {
     email: createTenantRoutedEmail(adapters),
     adapters,
     wiring: MODULE_WIRINGS,
+    localProviders: {
+      console: config.providers.localProvidersConsole,
+      providers: MODULE_WIRINGS.flatMap((module) => module.devProviders?.({ config }) ?? []),
+    },
     passwordValidator,
     lockout: config.lockout,
     ...(storage ? { storage } : {}),

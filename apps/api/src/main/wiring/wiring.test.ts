@@ -12,6 +12,7 @@ import {
   assembleAdapterRegistry,
   createAdapterResolver,
 } from '../adapter-resolver.js';
+import { loadConfig } from '../config.js';
 
 import { combineWorkerContributions, type WorkerContribution } from './worker.js';
 
@@ -87,6 +88,48 @@ async function routesOf(app: ReturnType<typeof createApp>): Promise<string> {
   await app.close();
   return printed;
 }
+
+describe('the simulator console entries of the modules', () => {
+  const env = {
+    DATABASE_URL: 'postgres://app_rw:placeholder@localhost:5432/app',
+    BASE_DOMAIN: 'consultorio.test',
+    PLATFORM_HOST: 'platform.consultorio.test',
+    KMS_LOCAL_KEK_BASE64: Buffer.alloc(32, 7).toString('base64'),
+  };
+  const entriesFor = (overrides: Record<string, string> = {}) =>
+    MODULE_WIRINGS.flatMap((wiring) =>
+      wiring.devProviders
+        ? wiring.devProviders({ config: loadConfig({ ...env, ...overrides }) })
+        : [],
+    );
+
+  it('lists WhatsApp, the bot challenge and video, each with the adapter that serves customers', async () => {
+    const entries = entriesFor();
+
+    expect(entries.map((entry) => entry.id).sort()).toEqual(['bot-challenge', 'video', 'whatsapp']);
+    for (const entry of entries) {
+      expect(await entry.status(), entry.id).toEqual({ adapter: 'local', mode: null });
+    }
+  });
+
+  it('reports the real provider, or none, when the configuration selects it', async () => {
+    const entries = entriesFor({
+      NODE_ENV: 'production',
+      KMS_PROVIDER: 'aws',
+      AWS_REGION: 'sa-east-1',
+      AWS_KMS_KEY_ID: 'alias/consultorio',
+      SMTP_HOST: 'email-smtp.sa-east-1.amazonaws.com',
+      SMTP_SECURITY: 'starttls',
+      WHATSAPP_PROVIDER: 'meta',
+      WHATSAPP_APP_SECRET: 'placeholder-app-secret-0123456789',
+    });
+    const status = async (id: string) => entries.find((entry) => entry.id === id)?.status();
+
+    expect(await status('whatsapp')).toEqual({ adapter: 'real', mode: null });
+    expect(await status('video')).toEqual({ adapter: 'off', mode: null });
+    expect(await status('bot-challenge')).toEqual({ adapter: 'real', mode: null });
+  });
+});
 
 describe('combining what the modules add to the worker', () => {
   const job = (name: string) =>

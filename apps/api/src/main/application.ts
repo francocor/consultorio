@@ -62,6 +62,7 @@ import type { HealthDeps } from '../platform/http/health.js';
 import { createPublicOrigins } from '../platform/http/public-origin.js';
 import { createMemoryRateLimitStore, type RateLimit } from '../platform/http/rate-limit.js';
 import type { JobClient } from '../platform/jobs/boss.js';
+import { createDevRoutes, type DevProvider } from '../platform/local-providers/dev-routes.js';
 import type { EmailSender } from '../platform/mail/email-sender.js';
 import { createSettingsSectionRegistry } from '../platform/settings-sections.js';
 import type { ObjectStorage } from '../platform/storage/object-storage.js';
@@ -149,6 +150,11 @@ export interface ApplicationOptions {
   wiring?: readonly ModuleWiring[];
   /** Which adapter serves which organization. Modules resolve their providers through it. */
   adapters?: AdapterResolver;
+  /**
+   * The provider console (`LOCAL_PROVIDERS_CONSOLE`): with `console: false` no `/operator/dev`
+   * route exists. It lives inside the operator console, so it needs one.
+   */
+  localProviders?: { console: boolean; providers: readonly DevProvider[] };
   /**
    * The appointment event bus. Defaults to a new one per application; a test passes its own to
    * listen to what scheduling publishes.
@@ -354,6 +360,10 @@ export function createApplication(options: ApplicationOptions): FastifyInstance 
 
   const auditViewer = createAudit({ withTenant });
   const supportAccess = createSupportAccess({ withTenant });
+  const devRoutes = createDevRoutes({
+    enabled: options.localProviders?.console ?? false,
+    providers: options.localProviders?.providers ?? [],
+  });
   const operatorConsole =
     options.operator && options.deployment.mode === 'multi'
       ? createOperatorConsole({
@@ -366,6 +376,7 @@ export function createApplication(options: ApplicationOptions): FastifyInstance 
           secureLinks: options.cookieSecure,
           loginRateLimit: limits.login,
           ...(options.operator.demoReset ? { demoReset: options.operator.demoReset } : {}),
+          ...(devRoutes ? { extensions: [devRoutes] } : {}),
           ...(options.clock ? { clock: options.clock } : {}),
         })
       : undefined;

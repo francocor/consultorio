@@ -2,6 +2,7 @@ import { DEFAULT_NOTIFICATION_SETTINGS, NotificationSettings } from '@consultori
 
 import { createFakeWhatsAppSender } from '../../adapters/whatsapp-fake/index.js';
 import { createNotifications } from '../../modules/notifications/index.js';
+import { adapterOfSetting } from '../../platform/local-providers/dev-routes.js';
 import { fake } from '../adapter-resolver.js';
 
 import type { ModuleWiring } from './types.js';
@@ -23,6 +24,15 @@ export const notificationsWiring: ModuleWiring = {
   name: 'notifications',
   // No customer adapter yet: WhatsApp stays unavailable for customers; demo organizations get the fake.
   adapters: () => ({ whatsapp: { real: undefined, demo: fake(createFakeWhatsAppSender()) } }),
+  devProviders: ({ config }) => [
+    {
+      id: 'whatsapp',
+      label: 'WhatsApp',
+      // The simulators add their mode (an outage, rejected templates) when they exist.
+      status: () =>
+        Promise.resolve({ adapter: adapterOfSetting(config.providers.whatsapp), mode: null }),
+    },
+  ],
   create: (context) =>
     createNotifications({
       withTenant: context.withTenant,

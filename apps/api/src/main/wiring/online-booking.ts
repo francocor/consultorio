@@ -2,6 +2,7 @@ import { DEFAULT_ONLINE_BOOKING_SETTINGS, OnlineBookingSettings } from '@consult
 
 import { createFakeBotChallenge } from '../../adapters/bot-challenge-fake/index.js';
 import { createOnlineBooking } from '../../modules/online-booking/index.js';
+import { adapterOfSetting } from '../../platform/local-providers/dev-routes.js';
 import { fake } from '../adapter-resolver.js';
 
 import type { ModuleWiring } from './types.js';
@@ -22,6 +23,15 @@ export const onlineBookingWiring: ModuleWiring = {
   name: 'online-booking',
   // No customer adapter yet: the public forms stay closed; demo organizations get the fake.
   adapters: () => ({ botChallenge: { real: undefined, demo: fake(createFakeBotChallenge()) } }),
+  devProviders: ({ config }) => [
+    {
+      id: 'bot-challenge',
+      label: 'Bot challenge',
+      // The simulators add their mode (an outage, rejected templates) when they exist.
+      status: () =>
+        Promise.resolve({ adapter: adapterOfSetting(config.providers.botChallenge), mode: null }),
+    },
+  ],
   create: (context) =>
     createOnlineBooking({
       withTenant: context.withTenant,
