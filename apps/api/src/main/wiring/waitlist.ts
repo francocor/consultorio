@@ -1,6 +1,10 @@
 import { DEFAULT_WAITLIST_SETTINGS, WaitlistSettings } from '@consultorio/contracts';
 
-import { deliverWaitlistOffer, offerQuietHoursEnd } from '../../modules/notifications/index.js';
+import {
+  boundDelivery,
+  deliverWaitlistOffer,
+  offerQuietHoursEnd,
+} from '../../modules/notifications/index.js';
 import { createSchedulingPorts } from '../../modules/scheduling/index.js';
 import {
   WAITLIST_EXPIRE_JOB,
@@ -8,6 +12,7 @@ import {
   createWaitlistJobs,
 } from '../../modules/waitlist/index.js';
 import { createTenantKeys } from '../../platform/crypto/tenant-keys.js';
+import type { Tx } from '../../platform/db/tenant-context.js';
 import { createPublicOrigins } from '../../platform/http/public-origin.js';
 import { fanOut } from '../../platform/jobs/worker.js';
 import { createActionTokens } from '../../platform/tokens/index.js';
@@ -15,6 +20,26 @@ import { deploymentFromConfig } from '../deployment.js';
 import { createKeyManagement } from '../key-management.js';
 
 import type { ModuleWiring } from './types.js';
+
+/**
+ * Hands an offer to the notifications module. The module binds its queue and providers when its
+ * part of the process is built; a process that did not build it would answer "nobody can be
+ * reached" for every offer, and the waitlist would flag each patient as unreachable. That is a
+ * configuration mistake, so it fails the job (which is retried) instead of rewriting the waitlist.
+ */
+export function deliverThroughNotifications(
+  tx: Tx,
+  input: Parameters<typeof deliverWaitlistOffer>[1],
+): ReturnType<typeof deliverWaitlistOffer> {
+  if (boundDelivery() === undefined) {
+    return Promise.reject(
+      new Error(
+        'The notifications module is not built in this process: offers cannot be delivered',
+      ),
+    );
+  }
+  return deliverWaitlistOffer(tx, input);
+}
 
 /** The sweep that backs up the exact expiry of every offer runs once a minute. */
 const SWEEP_EVERY_MS = 60_000;
@@ -67,7 +92,7 @@ export const waitlistWiring: ModuleWiring = {
             clock: now,
             tokens: createActionTokens({ clock: now }),
             origins,
-            deliver: deliverWaitlistOffer,
+            deliver: deliverThroughNotifications,
             // An offer is put off to the end of quiet hours, which is not a failed delivery.
             quietHoursEnd: offerQuietHoursEnd,
           }),

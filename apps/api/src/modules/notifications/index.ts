@@ -234,6 +234,7 @@ export { createBookingNotifier } from './application/booking-confirmation.js';
 export type { BookingNotifierDeps } from './application/booking-confirmation.js';
 export {
   bindOfferDelivery,
+  boundDelivery,
   deliverWaitlistOffer,
   offerQuietHoursEnd,
 } from './application/offer-delivery.js';

@@ -1,16 +1,17 @@
 import { describe, expect, it } from 'vitest';
 
 import { createFakeEmailSender } from '../../adapters/fake-email/index.js';
-import { createVideoJoinRegistry } from '../../modules/notifications/index.js';
+import { createVideoJoinRegistry, bindOfferDelivery } from '../../modules/notifications/index.js';
 import {
   WAITLIST_EXPIRE_JOB,
   WAITLIST_MATCH_JOB,
   WAITLIST_OFFER_JOB,
 } from '../../modules/waitlist/index.js';
+import type { Tx } from '../../platform/db/tenant-context.js';
 import type { JobClient } from '../../platform/jobs/boss.js';
 import { loadConfig } from '../config.js';
 
-import { waitlistWiring } from './waitlist.js';
+import { deliverThroughNotifications, waitlistWiring } from './waitlist.js';
 
 const env = {
   DATABASE_URL: 'postgres://app_rw:placeholder@localhost:5432/app',
@@ -67,5 +68,26 @@ describe('what the waitlist needs from the application', () => {
   it('owns the settings section of the waitlist and no adapter slot', () => {
     expect(waitlistWiring.settingsSections?.map((section) => section.key)).toEqual(['waitlist']);
     expect(waitlistWiring.adapters).toBeUndefined();
+  });
+});
+
+describe('delivering an offer through notifications', () => {
+  const input = {
+    offerId: '0190a000-0000-7000-8000-000000000001',
+    patientId: '0190a000-0000-7000-8000-000000000002',
+    professionalId: '0190a000-0000-7000-8000-000000000003',
+    locationId: '0190a000-0000-7000-8000-000000000004',
+    startsAt: new Date('2031-05-12T13:00:00.000Z'),
+    endsAt: new Date('2031-05-12T13:30:00.000Z'),
+    expiresAt: new Date('2031-05-05T12:30:00.000Z'),
+    offerTokenUrl: 'https://aillu.test/public/t/TOKEN',
+  };
+
+  it('fails loudly in a process that never built the notifications module, instead of leaving every patient "unreachable"', async () => {
+    bindOfferDelivery(undefined);
+
+    await expect(deliverThroughNotifications({} as Tx, input)).rejects.toThrow(
+      'notifications module',
+    );
   });
 });
