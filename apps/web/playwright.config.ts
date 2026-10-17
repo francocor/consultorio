@@ -1,7 +1,11 @@
 import { defineConfig, devices } from '@playwright/test';
 
-const WEB_PORT = 4173;
-const API_PORT = 3100;
+/**
+ * The ports of the preview server and the API of the stack. Several worktrees can run the suite on
+ * one machine: each one sets its own `E2E_WEB_PORT` and `E2E_API_PORT` and starts the stack by hand.
+ */
+const WEB_PORT = Number(process.env['E2E_WEB_PORT'] ?? '4173');
+const API_PORT = Number(process.env['E2E_API_PORT'] ?? '3100');
 
 /**
  * End-to-end tests run against the REAL stack: the built web app served by `vite preview` (with
