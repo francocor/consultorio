@@ -401,6 +401,7 @@ test('a patient books online, is reminded and confirms, has a video visit, and a
     await expect(
       console_
         .getByRole('listitem')
+        .filter({ hasText: `Para ${phone}` })
         .filter({ hasText: 'no le enviaremos más mensajes por WhatsApp' }),
     ).toHaveCount(1, { timeout: 30_000 });
 

@@ -294,8 +294,13 @@ test('the owner resends a reminder, the patient confirms and then opts out of Wh
   await console_.getByRole('button', { name: 'Enviar respuesta' }).click();
   await expect(console_.getByText('La respuesta llegó al webhook.')).toBeVisible();
   // One acknowledgment goes back to the patient, and nothing more.
+  // The simulator's phone is shared by every organization of the stack, and other specs write
+  // BAJA too: look only at the acknowledgment that went to this patient's number.
   await expect(
-    phone.getByRole('listitem').filter({ hasText: 'no le enviaremos más mensajes por WhatsApp' }),
+    phone
+      .getByRole('listitem')
+      .filter({ hasText: `Para ${patientPhone}` })
+      .filter({ hasText: 'no le enviaremos más mensajes por WhatsApp' }),
   ).toHaveCount(1, { timeout: 30_000 });
   await console_.context().close();
 
