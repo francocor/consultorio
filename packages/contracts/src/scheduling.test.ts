@@ -4,7 +4,10 @@ import {
   APPOINTMENT_STATUSES,
   BookAppointmentRequest,
   CancelAppointmentRequest,
+  CheckInRequest,
+  ConfirmIdentityRequest,
   CorrectStatusRequest,
+  DetachPatientRequest,
   RescheduleRequest,
   SlotConflictExtension,
   TransitionRequest,
@@ -133,22 +136,54 @@ describe('SlotConflictExtension', () => {
 });
 
 describe('lifecycle requests', () => {
-  it('accept an optional version and nothing else on a plain transition', () => {
-    expect(TransitionRequest.safeParse({}).success).toBe(true);
+  it('need the version on a plain transition, and nothing else', () => {
     expect(TransitionRequest.safeParse({ expectedVersion: 3 }).success).toBe(true);
+    expect(TransitionRequest.safeParse({}).success).toBe(false);
     expect(TransitionRequest.safeParse({ expectedVersion: 0 }).success).toBe(false);
-    expect(TransitionRequest.safeParse({ status: 'attended' }).success).toBe(false);
+    expect(TransitionRequest.safeParse({ expectedVersion: 3, status: 'attended' }).success).toBe(
+      false,
+    );
+  });
+
+  it('need the version on every other write of an appointment', () => {
+    const cancel = { cancelledBy: 'patient', reasonCode: 'illness' };
+    const correct = { toStatus: 'attended', reason: 'Arrived late' };
+    const detach = { resolution: 'move_to_patient', patientId: ID };
+
+    expect(CheckInRequest.safeParse({}).success).toBe(false);
+    expect(CheckInRequest.safeParse({ expectedVersion: 1, confirmIdentity: true }).success).toBe(
+      true,
+    );
+    expect(ConfirmIdentityRequest.safeParse({}).success).toBe(false);
+    expect(ConfirmIdentityRequest.safeParse({ expectedVersion: 2 }).success).toBe(true);
+    expect(CancelAppointmentRequest.safeParse(cancel).success).toBe(false);
+    expect(CancelAppointmentRequest.safeParse({ ...cancel, expectedVersion: 1 }).success).toBe(
+      true,
+    );
+    expect(CorrectStatusRequest.safeParse(correct).success).toBe(false);
+    expect(CorrectStatusRequest.safeParse({ ...correct, expectedVersion: 1 }).success).toBe(true);
+    expect(DetachPatientRequest.safeParse(detach).success).toBe(false);
+    expect(DetachPatientRequest.safeParse({ ...detach, expectedVersion: 1 }).success).toBe(true);
+    expect(
+      DetachPatientRequest.safeParse({
+        resolution: 'cancel',
+        cancelledBy: 'organization',
+        reasonCode: 'other',
+      }).success,
+    ).toBe(false);
   });
 
   it('cancel needs who cancelled and a reason code, and bounds the free text', () => {
-    const ok = { cancelledBy: 'patient', reasonCode: 'illness' };
+    const ok = { cancelledBy: 'patient', reasonCode: 'illness', expectedVersion: 1 };
 
     expect(CancelAppointmentRequest.safeParse(ok).success).toBe(true);
     expect(CancelAppointmentRequest.safeParse({ ...ok, note: 'x'.repeat(200) }).success).toBe(true);
     expect(CancelAppointmentRequest.safeParse({ ...ok, note: 'x'.repeat(201) }).success).toBe(
       false,
     );
-    expect(CancelAppointmentRequest.safeParse({ reasonCode: 'illness' }).success).toBe(false);
+    expect(
+      CancelAppointmentRequest.safeParse({ reasonCode: 'illness', expectedVersion: 1 }).success,
+    ).toBe(false);
     expect(CancelAppointmentRequest.safeParse({ ...ok, cancelledBy: 'landlord' }).success).toBe(
       false,
     );
@@ -159,14 +194,23 @@ describe('lifecycle requests', () => {
 
   it('a correction needs a status of the eight and a reason', () => {
     expect(
-      CorrectStatusRequest.safeParse({ toStatus: 'attended', reason: 'Arrived late' }).success,
+      CorrectStatusRequest.safeParse({
+        toStatus: 'attended',
+        reason: 'Arrived late',
+        expectedVersion: 1,
+      }).success,
     ).toBe(true);
-    expect(CorrectStatusRequest.safeParse({ toStatus: 'attended', reason: '' }).success).toBe(
-      false,
-    );
-    expect(CorrectStatusRequest.safeParse({ toStatus: 'rescheduled', reason: 'x' }).success).toBe(
-      false,
-    );
+    expect(
+      CorrectStatusRequest.safeParse({ toStatus: 'attended', reason: '', expectedVersion: 1 })
+        .success,
+    ).toBe(false);
+    expect(
+      CorrectStatusRequest.safeParse({
+        toStatus: 'rescheduled',
+        reason: 'x',
+        expectedVersion: 1,
+      }).success,
+    ).toBe(false);
   });
 
   it('a reschedule needs the version and at least one thing to change', () => {

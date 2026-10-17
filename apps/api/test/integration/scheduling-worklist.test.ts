@@ -219,6 +219,7 @@ describe('GET /worklist', () => {
       status: 'scheduled',
       professionalId: world.doctor.professionalId,
       locationId: world.centro,
+      version: created.version,
     });
     expect(Object.keys(item?.appointment ?? {}).sort()).toEqual(
       [
@@ -231,6 +232,7 @@ describe('GET /worklist', () => {
         'professionalId',
         'startsAt',
         'status',
+        'version',
       ].sort(),
     );
   });

@@ -65,10 +65,10 @@ describe('the attendance lifecycle', () => {
     const created = await world.book(1, '10:00');
     const api = world.api;
 
-    const confirmed = await api.post(url(created, 'confirm'), world.reception, {});
-    const checkedIn = await api.post(url(created, 'check-in'), world.reception, {});
-    const started = await api.post(url(created, 'start'), world.doctor, {});
-    const attended = await api.post(url(created, 'attend'), world.doctor, {});
+    const confirmed = await world.act(created, 'confirm', world.reception);
+    const checkedIn = await world.act(created, 'check-in', world.reception);
+    const started = await world.act(created, 'start', world.doctor);
+    const attended = await world.act(created, 'attend', world.doctor);
 
     expect(confirmed.json<AppointmentDto>().status).toBe('confirmed');
     expect(checkedIn.json<AppointmentDto>().status).toBe('checked_in');
@@ -101,19 +101,19 @@ describe('the attendance lifecycle', () => {
   it('keeps an attended appointment in its slot and as a terminal status', async () => {
     backToStart();
     const created = await world.book(2, '10:00');
-    await world.api.post(url(created, 'check-in'), world.reception, {});
-    await world.api.post(url(created, 'start'), world.doctor, {});
-    await world.api.post(url(created, 'attend'), world.doctor, {});
+    await world.act(created, 'check-in', world.reception);
+    await world.act(created, 'start', world.doctor);
+    await world.act(created, 'attend', world.doctor);
 
     for (const action of ['confirm', 'check-in', 'no-show', 'start']) {
-      const response = await world.api.post(url(created, action), world.doctor, {});
+      const response = await world.act(created, action, world.doctor);
       expect(response.statusCode, action).toBe(409);
     }
-    const cancel = await world.api.post(url(created, 'cancel'), world.reception, {
+    const cancel = await world.act(created, 'cancel', world.reception, {
       cancelledBy: 'patient',
       reasonCode: 'illness',
     });
-    const move = await world.api.post(url(created, 'reschedule'), world.reception, {
+    const move = await world.act(created, 'reschedule', world.reception, {
       expectedVersion: 4,
       local: { date: world.monday(3), time: '10:00' },
     });
@@ -131,17 +131,17 @@ describe('the attendance lifecycle', () => {
   it('only the professional of the appointment starts and attends it', async () => {
     backToStart();
     const created = await world.book(3, '10:00');
-    await world.api.post(url(created, 'check-in'), world.reception, {});
+    await world.act(created, 'check-in', world.reception);
     const denied = await asTenant(runtime, world.tenant.id, (tx) =>
       tx.execute<{ n: number }>(
         sql`SELECT count(*)::int AS n FROM audit_event WHERE action = 'access.denied'`,
       ),
     );
 
-    const byReception = await world.api.post(url(created, 'start'), world.reception, {});
-    const byAdmin = await world.api.post(url(created, 'start'), world.admin, {});
-    const byColleague = await world.api.post(url(created, 'start'), world.colleague, {});
-    const byDoctor = await world.api.post(url(created, 'start'), world.doctor, {});
+    const byReception = await world.act(created, 'start', world.reception, {});
+    const byAdmin = await world.act(created, 'start', world.admin, {});
+    const byColleague = await world.act(created, 'start', world.colleague, {});
+    const byDoctor = await world.act(created, 'start', world.doctor);
 
     expect([byReception.statusCode, byAdmin.statusCode, byColleague.statusCode]).toEqual([
       403, 403, 403,
@@ -158,12 +158,12 @@ describe('the attendance lifecycle', () => {
   it('rejects an invalid transition and leaves the appointment as it was', async () => {
     backToStart();
     const created = await world.book(4, '10:00');
-    await world.api.post(url(created, 'cancel'), world.reception, {
+    await world.act(created, 'cancel', world.reception, {
       cancelledBy: 'patient',
       reasonCode: 'illness',
     });
 
-    const response = await world.api.post(url(created, 'check-in'), world.reception, {});
+    const response = await world.act(created, 'check-in', world.reception);
 
     expect(response.statusCode).toBe(409);
     expect((await stored(created))?.status).toBe('cancelled');
@@ -173,9 +173,9 @@ describe('the attendance lifecycle', () => {
     backToStart();
     const created = await world.book(5, '10:00');
 
-    const early = await world.api.post(url(created, 'no-show'), world.reception, {});
+    const early = await world.act(created, 'no-show', world.reception, {});
     afterStart(created);
-    const late = await world.api.post(url(created, 'no-show'), world.reception, {});
+    const late = await world.act(created, 'no-show', world.reception, {});
     backToStart();
 
     expect(early.statusCode).toBe(400);
@@ -203,7 +203,7 @@ describe('the attendance lifecycle', () => {
         .where(eq(appointment.id, created.id)),
     );
 
-    const response = await world.api.post(url(created, 'approve'), world.reception, {});
+    const response = await world.act(created, 'approve', world.reception, {});
 
     expect(response.json<AppointmentDto>().status).toBe('scheduled');
   });
@@ -213,12 +213,12 @@ describe('optimistic concurrency', () => {
   it('rejects a stale version with 409 stale_revision, and accepts the current one', async () => {
     backToStart();
     const created = await world.book(7, '10:00');
-    await world.api.post(url(created, 'confirm'), world.reception, {});
+    await world.act(created, 'confirm', world.reception, {});
 
-    const stale = await world.api.post(url(created, 'check-in'), world.reception, {
+    const stale = await world.act(created, 'check-in', world.reception, {
       expectedVersion: 1,
     });
-    const current = await world.api.post(url(created, 'check-in'), world.reception, {
+    const current = await world.act(created, 'check-in', world.reception, {
       expectedVersion: 2,
     });
 
@@ -232,8 +232,8 @@ describe('optimistic concurrency', () => {
     const created = await world.book(8, '10:00');
 
     const [one, two] = await Promise.all([
-      world.api.post(url(created, 'confirm'), world.reception, { expectedVersion: 1 }),
-      world.api.post(url(created, 'check-in'), world.admin, { expectedVersion: 1 }),
+      world.act(created, 'confirm', world.reception, { expectedVersion: 1 }),
+      world.act(created, 'check-in', world.admin, { expectedVersion: 1 }),
     ]);
 
     expect([one.statusCode, two.statusCode].sort()).toEqual([200, 409]);
@@ -245,7 +245,7 @@ describe('cancellation', () => {
     backToStart();
     const created = await world.book(9, '10:00');
 
-    const response = await world.api.post(url(created, 'cancel'), world.reception, {
+    const response = await world.act(created, 'cancel', world.reception, {
       cancelledBy: 'patient',
       reasonCode: 'schedule_conflict',
       note: 'Travelling',
@@ -276,7 +276,7 @@ describe('cancellation', () => {
     const created = await world.book(10, '10:00');
     world.setNow(new Date(Date.parse(created.startsAt) - 2 * 3_600_000));
 
-    await world.api.post(url(created, 'cancel'), world.reception, {
+    await world.act(created, 'cancel', world.reception, {
       cancelledBy: 'organization',
       reasonCode: 'organization_closed',
     });
@@ -289,12 +289,9 @@ describe('cancellation', () => {
     backToStart();
     const created = await world.book(11, '10:00');
 
-    expect((await world.api.post(url(created, 'cancel'), world.reception, {})).statusCode).toBe(
-      400,
-    );
+    expect((await world.act(created, 'cancel', world.reception, {})).statusCode).toBe(400);
     expect(
-      (await world.api.post(url(created, 'cancel'), world.reception, { cancelledBy: 'patient' }))
-        .statusCode,
+      (await world.act(created, 'cancel', world.reception, { cancelledBy: 'patient' })).statusCode,
     ).toBe(400);
   });
 });
@@ -304,9 +301,9 @@ describe('correcting a status', () => {
     backToStart();
     const created = await world.book(12, '10:00');
     afterStart(created);
-    await world.api.post(url(created, 'no-show'), world.reception, {});
+    await world.act(created, 'no-show', world.reception, {});
 
-    const response = await world.api.post(url(created, 'correct'), world.reception, {
+    const response = await world.act(created, 'correct', world.reception, {
       toStatus: 'attended',
       reason: 'Patient arrived late',
     });
@@ -332,11 +329,11 @@ describe('correcting a status', () => {
     backToStart();
     const created = await world.book(13, '10:00');
     afterStart(created);
-    await world.api.post(url(created, 'no-show'), world.reception, {});
+    await world.act(created, 'no-show', world.reception, {});
     backToStart();
     await world.book(13, '10:00', {}, world.admin);
 
-    const response = await world.api.post(url(created, 'correct'), world.reception, {
+    const response = await world.act(created, 'correct', world.reception, {
       toStatus: 'attended',
       reason: 'Late',
     });
@@ -355,7 +352,7 @@ describe('correcting a status', () => {
 
     expect(
       (
-        await world.api.post(url(created, 'correct'), world.reception, {
+        await world.act(created, 'correct', world.reception, {
           toStatus: 'attended',
           reason: '',
         })
@@ -363,7 +360,7 @@ describe('correcting a status', () => {
     ).toBe(400);
     expect(
       (
-        await world.api.post(url(created, 'correct'), world.reception, {
+        await world.act(created, 'correct', world.reception, {
           toStatus: 'attended',
           reason: 'Why not',
         })
@@ -376,9 +373,9 @@ describe('rescheduling and reassigning', () => {
   it('moves to a free slot, keeps the status, retains the original time and counts the move from the history', async () => {
     backToStart();
     const created = await world.book(15, '10:00');
-    await world.api.post(url(created, 'confirm'), world.reception, {});
+    await world.act(created, 'confirm', world.reception, {});
 
-    const response = await world.api.post(url(created, 'reschedule'), world.reception, {
+    const response = await world.act(created, 'reschedule', world.reception, {
       expectedVersion: 2,
       local: { date: world.monday(16), time: '11:00' },
     });
@@ -410,7 +407,7 @@ describe('rescheduling and reassigning', () => {
     const created = await world.book(17, '10:00');
     await world.book(18, '10:00');
 
-    const response = await world.api.post(url(created, 'reschedule'), world.reception, {
+    const response = await world.act(created, 'reschedule', world.reception, {
       expectedVersion: 1,
       local: { date: world.monday(18), time: '10:00' },
     });
@@ -426,9 +423,9 @@ describe('rescheduling and reassigning', () => {
   it('answers 409 stale_revision for a version that is no longer current', async () => {
     backToStart();
     const created = await world.book(19, '10:00');
-    await world.api.post(url(created, 'confirm'), world.reception, {});
+    await world.act(created, 'confirm', world.reception, {});
 
-    const response = await world.api.post(url(created, 'reschedule'), world.reception, {
+    const response = await world.act(created, 'reschedule', world.reception, {
       expectedVersion: 1,
       local: { date: world.monday(20), time: '10:00' },
     });
@@ -441,7 +438,7 @@ describe('rescheduling and reassigning', () => {
     backToStart();
     const created = await world.book(21, '10:00');
 
-    const response = await world.api.post(url(created, 'reschedule'), world.reception, {
+    const response = await world.act(created, 'reschedule', world.reception, {
       expectedVersion: 1,
       professionalId: world.colleague.professionalId,
     });
@@ -464,15 +461,15 @@ describe('rescheduling and reassigning', () => {
     backToStart();
     const created = await world.book(22, '10:00');
 
-    const late = await world.api.post(url(created, 'reschedule'), world.reception, {
+    const late = await world.act(created, 'reschedule', world.reception, {
       expectedVersion: 1,
       local: { date: world.monday(22), time: '16:00' },
     });
-    const same = await world.api.post(url(created, 'reschedule'), world.reception, {
+    const same = await world.act(created, 'reschedule', world.reception, {
       expectedVersion: 1,
       local: { date: world.monday(22), time: '10:00' },
     });
-    const empty = await world.api.post(url(created, 'reschedule'), world.reception, {
+    const empty = await world.act(created, 'reschedule', world.reception, {
       expectedVersion: 1,
     });
 
@@ -489,7 +486,7 @@ describe('rescheduling and reassigning', () => {
         await world.api.post(
           '/appointments/0190a000-0000-7000-8000-0000000000aa/confirm',
           world.reception,
-          {},
+          { expectedVersion: 1 },
         )
       ).statusCode,
     ).toBe(404);
@@ -518,18 +515,18 @@ describe('a read-only organization', () => {
     try {
       const refused = await Promise.all([
         world.api.post('/appointments', world.reception, await world.bookingBody(25, '10:00')),
-        world.api.post(url(toKeep, 'reschedule'), world.reception, {
+        world.act(toKeep, 'reschedule', world.reception, {
           expectedVersion: 1,
           local: { date: world.monday(25), time: '11:00' },
         }),
-        world.api.post(url(toKeep, 'check-in'), world.reception, {}),
-        world.api.post(url(toKeep, 'confirm'), world.reception, {}),
-        world.api.post(url(toKeep, 'correct'), world.reception, {
+        world.act(toKeep, 'check-in', world.reception, {}),
+        world.act(toKeep, 'confirm', world.reception, {}),
+        world.act(toKeep, 'correct', world.reception, {
           toStatus: 'attended',
           reason: 'x',
         }),
       ]);
-      const cancel = await world.api.post(url(toCancel, 'cancel'), world.reception, {
+      const cancel = await world.act(toCancel, 'cancel', world.reception, {
         cancelledBy: 'patient',
         reasonCode: 'illness',
       });

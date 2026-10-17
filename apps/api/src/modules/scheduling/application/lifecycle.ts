@@ -82,10 +82,12 @@ export async function lockForChange(
   return record;
 }
 
-export function checkVersion(record: AppointmentRecord, expectedVersion: number | undefined): void {
-  if (expectedVersion !== undefined && expectedVersion !== record.version) {
-    throw new AppError('stale_revision');
-  }
+/**
+ * Every write of an appointment names the version it was decided on. A version that is not the
+ * current one is stale, and so is one that is missing: nothing changes on a guess.
+ */
+export function checkVersion(record: AppointmentRecord, expectedVersion: number): void {
+  if (expectedVersion !== record.version) throw new AppError('stale_revision');
 }
 
 export interface TransitionInput {
@@ -94,7 +96,7 @@ export interface TransitionInput {
   actor: BookActor;
   auditActor: AuditActor & { userId: string };
   now: Date;
-  expectedVersion?: number | undefined;
+  expectedVersion: number;
   cancellation?: { cancelledBy: CancelledBy; reasonCode: CancellationReason; note?: string };
   /**
    * At check-in, the staff member saw the patient and the ID document and confirms who it is. Staff
@@ -251,7 +253,7 @@ export interface CorrectInput {
   actor: BookActor;
   auditActor: AuditActor;
   now: Date;
-  expectedVersion?: number | undefined;
+  expectedVersion: number;
 }
 
 /**

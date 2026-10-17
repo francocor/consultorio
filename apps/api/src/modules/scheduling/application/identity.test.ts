@@ -179,6 +179,7 @@ describe('check-in with identity confirmation', () => {
       actor: who,
       auditActor: auditActor(who.userId),
       now: NOW,
+      expectedVersion: 1,
       ...(confirmIdentity === undefined ? {} : { confirmIdentity }),
     });
 
@@ -273,6 +274,7 @@ describe('confirming from the worklist', () => {
       appointmentId: 'appt-1',
       actor: who,
       auditActor: auditActor(who.userId),
+      expectedVersion: 1,
     });
 
   it('lets reception confirm the identity and closes the review', async () => {
@@ -306,6 +308,22 @@ describe('confirming from the worklist', () => {
     expect(((await thrown(confirm(ports, reception))) as AppError).code).toBe('conflict');
   });
 
+  it('refuses a change that names no version', async () => {
+    const { ports, state } = world();
+
+    const error = await thrown(
+      confirmIdentity(ports, {
+        appointmentId: 'appt-1',
+        actor: reception,
+        auditActor: auditActor(reception.userId),
+        expectedVersion: undefined as unknown as number,
+      }),
+    );
+
+    expect((error as AppError).code).toBe('stale_revision');
+    expect(state.updates).toEqual([]);
+  });
+
   it('refuses a cancelled appointment and confirms nothing', async () => {
     const { ports, state } = world(appointment({ status: 'cancelled' }));
 
@@ -325,6 +343,7 @@ describe('rejecting the match (detach)', () => {
       actor: who,
       auditActor: auditActor(who.userId),
       now: NOW,
+      expectedVersion: 1,
       resolution,
     });
 

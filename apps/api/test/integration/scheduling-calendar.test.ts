@@ -131,7 +131,7 @@ describe('the day view of a location', () => {
 
   it('keeps cancelled appointments visible with their status, and never lists a hold', async () => {
     const created = await world.book(4, '09:00');
-    await world.api.post(`/appointments/${created.id}/cancel`, world.reception, {
+    await world.act(created, 'cancel', world.reception, {
       cancelledBy: 'patient',
       reasonCode: 'illness',
     });

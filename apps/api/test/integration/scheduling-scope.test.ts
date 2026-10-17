@@ -98,17 +98,17 @@ describe('a professional works in their own calendar', () => {
     const theirs = await world.book(3, '10:00', { professionalId: world.colleague.professionalId });
 
     const attempts = await Promise.all([
-      world.api.post(`/appointments/${theirs.id}/confirm`, world.doctor, {}),
-      world.api.post(`/appointments/${theirs.id}/check-in`, world.doctor, {}),
-      world.api.post(`/appointments/${theirs.id}/cancel`, world.doctor, {
+      world.act(theirs, 'confirm', world.doctor, {}),
+      world.act(theirs, 'check-in', world.doctor, {}),
+      world.act(theirs, 'cancel', world.doctor, {
         cancelledBy: 'patient',
         reasonCode: 'illness',
       }),
-      world.api.post(`/appointments/${theirs.id}/reschedule`, world.doctor, {
+      world.act(theirs, 'reschedule', world.doctor, {
         expectedVersion: 1,
         local: { date: world.monday(4), time: '10:00' },
       }),
-      world.api.post(`/appointments/${theirs.id}/correct`, world.doctor, {
+      world.act(theirs, 'correct', world.doctor, {
         toStatus: 'attended',
         reason: 'x',
       }),
@@ -126,7 +126,7 @@ describe('a professional works in their own calendar', () => {
   it('cannot move their own appointment into a colleague’s calendar', async () => {
     const own = await world.book(5, '10:00', {}, world.doctor);
 
-    const response = await world.api.post(`/appointments/${own.id}/reschedule`, world.doctor, {
+    const response = await world.act(own, 'reschedule', world.doctor, {
       expectedVersion: 1,
       professionalId: world.colleague.professionalId,
     });
@@ -168,7 +168,7 @@ describe('a delegated calendar', () => {
         professionalId: world.colleague.professionalId,
       });
 
-      const confirm = await world.api.post(`/appointments/${theirs.id}/confirm`, world.doctor, {});
+      const confirm = await world.act(theirs, 'confirm', world.doctor, {});
       const history = await world.api.get(`/appointments/${theirs.id}/history`, world.doctor);
 
       expect(confirm.statusCode).toBe(200);
@@ -211,22 +211,19 @@ describe('reception operates its own locations', () => {
     const norteAppointment = response.json<AppointmentDto>();
 
     const attempts = await Promise.all([
-      world.api.post(`/appointments/${norteAppointment.id}/check-in`, world.reception, {}),
-      world.api.post(`/appointments/${norteAppointment.id}/cancel`, world.reception, {
+      world.act(norteAppointment, 'check-in', world.reception, {}),
+      world.act(norteAppointment, 'cancel', world.reception, {
         cancelledBy: 'patient',
         reasonCode: 'illness',
       }),
-      world.api.post(`/appointments/${norteAppointment.id}/reschedule`, world.reception, {
+      world.act(norteAppointment, 'reschedule', world.reception, {
         expectedVersion: 1,
         local: { date: world.monday(11), time: '10:00' },
       }),
     ]);
 
     expect(attempts.map((r) => r.statusCode)).toEqual([403, 403, 403]);
-    expect(
-      (await world.api.post(`/appointments/${norteAppointment.id}/check-in`, world.admin, {}))
-        .statusCode,
-    ).toBe(200);
+    expect((await world.act(norteAppointment, 'check-in', world.admin, {})).statusCode).toBe(200);
   });
 });
 
@@ -297,7 +294,7 @@ describe('a read-only organization: every scheduling route has a category and ho
           expect(response.statusCode, route.label).not.toBe(402);
         }
       }
-      const cancel = await world.api.post(`/appointments/${toCancel.id}/cancel`, world.reception, {
+      const cancel = await world.act(toCancel, 'cancel', world.reception, {
         cancelledBy: 'patient',
         reasonCode: 'illness',
       });

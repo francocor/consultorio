@@ -112,8 +112,12 @@ export type SlotConflictExtension = z.infer<typeof SlotConflictExtension>;
 
 const ExpectedVersion = z.number().int().min(1);
 
-/** Optimistic concurrency: a stale `expectedVersion` gets 409 `stale_revision`. */
-export const TransitionRequest = z.strictObject({ expectedVersion: ExpectedVersion.optional() });
+/**
+ * Optimistic concurrency: every write of an appointment names the version the screen was showing,
+ * and a stale `expectedVersion` gets 409 `stale_revision`. It is required, never optional: a change
+ * decided on a stale screen must not overwrite what somebody else did.
+ */
+export const TransitionRequest = z.strictObject({ expectedVersion: ExpectedVersion });
 export type TransitionRequest = z.infer<typeof TransitionRequest>;
 
 /**
@@ -122,7 +126,7 @@ export type TransitionRequest = z.infer<typeof TransitionRequest>;
  * professional's own check-in confirms only in a solo practice (D18).
  */
 export const CheckInRequest = z.strictObject({
-  expectedVersion: ExpectedVersion.optional(),
+  expectedVersion: ExpectedVersion,
   confirmIdentity: z.boolean().optional(),
 });
 export type CheckInRequest = z.infer<typeof CheckInRequest>;
@@ -147,7 +151,7 @@ export const CancelAppointmentRequest = z.strictObject({
   cancelledBy: z.enum(CANCELLED_BY),
   reasonCode: z.enum(CANCELLATION_REASONS),
   note: z.string().trim().max(200).optional(),
-  expectedVersion: ExpectedVersion.optional(),
+  expectedVersion: ExpectedVersion,
 });
 export type CancelAppointmentRequest = z.infer<typeof CancelAppointmentRequest>;
 
@@ -155,7 +159,7 @@ export type CancelAppointmentRequest = z.infer<typeof CancelAppointmentRequest>;
 export const CorrectStatusRequest = z.strictObject({
   toStatus: z.enum(APPOINTMENT_STATUSES),
   reason: z.string().trim().min(1).max(200),
-  expectedVersion: ExpectedVersion.optional(),
+  expectedVersion: ExpectedVersion,
 });
 export type CorrectStatusRequest = z.infer<typeof CorrectStatusRequest>;
 
@@ -267,6 +271,8 @@ export const WorklistAppointmentDto = z.strictObject({
   patientName: z.string(),
   locationId: z.uuid(),
   identityConfirmed: z.boolean(),
+  /** What the item's actions (confirm the identity, detach the patient) name as `expectedVersion`. */
+  version: z.number().int(),
 });
 export type WorklistAppointmentDto = z.infer<typeof WorklistAppointmentDto>;
 
@@ -306,7 +312,7 @@ export type WorklistResponse = z.infer<typeof WorklistResponse>;
 
 /** Confirms the identity of the appointment an identity review is about. */
 export const ConfirmIdentityRequest = z.strictObject({
-  expectedVersion: ExpectedVersion.optional(),
+  expectedVersion: ExpectedVersion,
 });
 export type ConfirmIdentityRequest = z.infer<typeof ConfirmIdentityRequest>;
 
@@ -318,14 +324,14 @@ export const DetachPatientRequest = z.discriminatedUnion('resolution', [
   z.strictObject({
     resolution: z.literal('move_to_patient'),
     patientId: z.uuid(),
-    expectedVersion: ExpectedVersion.optional(),
+    expectedVersion: ExpectedVersion,
   }),
   z.strictObject({
     resolution: z.literal('cancel'),
     cancelledBy: z.enum(CANCELLED_BY),
     reasonCode: z.enum(CANCELLATION_REASONS),
     note: z.string().trim().max(200).optional(),
-    expectedVersion: ExpectedVersion.optional(),
+    expectedVersion: ExpectedVersion,
   }),
 ]);
 export type DetachPatientRequest = z.infer<typeof DetachPatientRequest>;

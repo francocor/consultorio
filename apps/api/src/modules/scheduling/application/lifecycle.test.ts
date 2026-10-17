@@ -131,6 +131,7 @@ const move = (
     auditActor,
     now,
     ...extra,
+    expectedVersion: extra.expectedVersion ?? 1,
   });
 
 describe('the ordinary path through the day', () => {
@@ -138,10 +139,11 @@ describe('the ordinary path through the day', () => {
     const { ports, state } = world();
     const doctor = actor({ professionalId: DOCTOR });
 
-    await move(ports, 'confirm');
-    await move(ports, 'check_in');
-    await move(ports, 'start', doctor);
-    const done = await move(ports, 'attend', doctor);
+    // Each step names the version the previous one produced.
+    await move(ports, 'confirm', actor(), { expectedVersion: 1 });
+    await move(ports, 'check_in', actor(), { expectedVersion: 2 });
+    await move(ports, 'start', doctor, { expectedVersion: 3 });
+    const done = await move(ports, 'attend', doctor, { expectedVersion: 4 });
 
     expect(done.status).toBe('attended');
     expect(done.version).toBe(5);
@@ -248,6 +250,7 @@ describe('transitions that are not allowed', () => {
         actor: actor(),
         auditActor,
         now: NOW,
+        expectedVersion: 1,
       }),
     );
 
@@ -263,6 +266,56 @@ describe('optimistic concurrency', () => {
 
     expect((error as AppError).code).toBe('stale_revision');
     expect(state.updates).toEqual([]);
+  });
+
+  it('refuses a change that names no version, in every write of an appointment', async () => {
+    const noVersion = { expectedVersion: undefined } as unknown as { expectedVersion: number };
+    const transition = world();
+    const correction = world(appointment({ status: 'no_show' }));
+    const move = world();
+
+    const results = await Promise.all([
+      thrown(
+        transitionAppointment(transition.ports, {
+          appointmentId: 'appt-1',
+          action: 'confirm',
+          actor: actor(),
+          auditActor,
+          now: NOW,
+          ...noVersion,
+        }),
+      ),
+      thrown(
+        correctStatus(correction.ports, {
+          appointmentId: 'appt-1',
+          toStatus: 'attended',
+          reason: 'x',
+          actor: actor(),
+          auditActor,
+          now: NOW,
+          ...noVersion,
+        }),
+      ),
+      thrown(
+        rescheduleAppointment(move.ports, {
+          appointmentId: 'appt-1',
+          local: { date: '2026-07-27', time: '11:00' },
+          actor: actor(),
+          auditActor,
+          now: NOW,
+          ...noVersion,
+        }),
+      ),
+    ]);
+
+    expect(results.map((error) => (error as AppError).code)).toEqual([
+      'stale_revision',
+      'stale_revision',
+      'stale_revision',
+    ]);
+    expect(transition.state.updates).toEqual([]);
+    expect(correction.state.updates).toEqual([]);
+    expect(move.state.updates).toEqual([]);
   });
 
   it('accepts the current version', async () => {
@@ -440,6 +493,7 @@ describe('correcting a terminal status', () => {
       actor: actor(),
       auditActor,
       now: NOW,
+      expectedVersion: 1,
     });
 
   it('changes a mistaken no-show to attended and audits the previous status, reason and actor', async () => {

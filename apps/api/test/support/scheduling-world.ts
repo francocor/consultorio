@@ -1,11 +1,12 @@
 import { randomBytes } from 'node:crypto';
 
 import type { AppointmentDto, AppointmentTypeDto, LocationDto } from '@consultorio/contracts';
-import { sql } from 'drizzle-orm';
+import { eq, sql } from 'drizzle-orm';
 import type { FastifyInstance, LightMyRequestResponse } from 'fastify';
 import { expect } from 'vitest';
 
 import { createLocalKeyManagement } from '../../src/adapters/local-kek/index.js';
+import { appointment } from '../../src/db/schema/scheduling.js';
 import { createTenantKeys, type TenantKeys } from '../../src/platform/crypto/tenant-keys.js';
 import type { DbHandle } from '../../src/platform/db/pool.js';
 import type { Tx } from '../../src/platform/db/tenant-context.js';
@@ -64,6 +65,19 @@ export interface SchedulingHttpWorld {
     extra?: Record<string, unknown>,
     by?: TestSession,
   ): Promise<AppointmentDto>;
+  /** The current version of an appointment, read straight from the database. */
+  versionOf(appointmentId: string): Promise<number>;
+  /**
+   * Posts an action of an appointment (`check-in`, `cancel`, `detach-patient`...) naming its
+   * current version, like a screen that has just loaded it. A version in `body` wins, so a test
+   * can send a stale one.
+   */
+  act(
+    target: { id: string },
+    action: string,
+    by: TestSession,
+    body?: Record<string, unknown>,
+  ): Promise<LightMyRequestResponse>;
   signIn(user: TestUser): Promise<Member>;
   /** The owner gives `member` the calendars of these professionals (delegated calendar). */
   delegateCalendar(member: Member, professionalIds: string[]): Promise<void>;
@@ -166,6 +180,27 @@ export async function createSchedulingHttpWorld(
     return response.json<AppointmentDto>();
   };
 
+  const versionOf = async (appointmentId: string): Promise<number> => {
+    const [row] = await asTenant(runtime, tenant.id, (tx) =>
+      tx
+        .select({ version: appointment.version })
+        .from(appointment)
+        .where(eq(appointment.id, appointmentId)),
+    );
+    if (!row) throw new Error(`no appointment ${appointmentId}`);
+    return row.version;
+  };
+  const act = async (
+    target: { id: string },
+    action: string,
+    by: TestSession,
+    body: Record<string, unknown> = {},
+  ): Promise<LightMyRequestResponse> =>
+    api.post(`/appointments/${target.id}/${action}`, by, {
+      expectedVersion: await versionOf(target.id),
+      ...body,
+    });
+
   await app.ready();
   return {
     runtime,
@@ -192,6 +227,8 @@ export async function createSchedulingHttpWorld(
     monday,
     bookingBody,
     book,
+    versionOf,
+    act,
     signIn,
     delegateCalendar: async (member, professionalIds) => {
       const response = await api.post(`/members/${member.membershipId}/grants`, owner, {

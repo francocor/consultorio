@@ -183,6 +183,7 @@ describe('a professional works in their own calendar only', () => {
         actor: scoped(),
         auditActor,
         now: NOW,
+        expectedVersion: 1,
         cancellation: { cancelledBy: 'patient', reasonCode: 'illness' },
       });
 
@@ -231,6 +232,7 @@ describe('a professional works in their own calendar only', () => {
       actor: delegated,
       auditActor,
       now: NOW,
+      expectedVersion: 1,
     });
 
     expect(done.status).toBe('confirmed');
@@ -249,6 +251,7 @@ describe('reception works at its locations only', () => {
         actor: reception,
         auditActor,
         now: NOW,
+        expectedVersion: 1,
       }),
     );
 

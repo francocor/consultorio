@@ -16,7 +16,7 @@ export interface ConfirmIdentityInput {
   appointmentId: string;
   actor: BookActor;
   auditActor: Actor;
-  expectedVersion?: number | undefined;
+  expectedVersion: number;
 }
 
 /**
@@ -68,7 +68,7 @@ export interface DetachInput {
   auditActor: Actor;
   now: Date;
   resolution: DetachResolution;
-  expectedVersion?: number | undefined;
+  expectedVersion: number;
 }
 
 /**
@@ -121,6 +121,7 @@ export async function detachPatient(
       actor: input.actor,
       auditActor: input.auditActor,
       now: input.now,
+      expectedVersion: record.version,
       cancellation: input.resolution.cancellation,
     });
   }
