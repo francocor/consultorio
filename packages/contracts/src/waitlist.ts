@@ -26,6 +26,16 @@ export const WAITLIST_CLOSE_REASONS = [
 ] as const;
 export type WaitlistCloseReason = (typeof WAITLIST_CLOSE_REASONS)[number];
 
+/**
+ * Error codes of the waitlist module, with their status and the key of the es-AR message. They join
+ * the API catalog (errors.ts); the messages go in `locales/es-AR/errors.waitlist.json`, keyed by the
+ * code. The track adds its codes here.
+ */
+export const WAITLIST_ERRORS = {} as const satisfies Record<
+  string,
+  { status: number; i18nKey: string }
+>;
+
 /** Audit actions of the waitlist. They are registered in the shared catalogue. */
 export const WAITLIST_AUDIT_ACTIONS = [
   'waitlist.entry.created',

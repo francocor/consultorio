@@ -21,6 +21,16 @@ export const MESSAGE_STATUSES = [
 ] as const;
 export type MessageStatus = (typeof MESSAGE_STATUSES)[number];
 
+/**
+ * Error codes of the notifications module, with their status and the key of the es-AR message. They join
+ * the API catalog (errors.ts); the messages go in `locales/es-AR/errors.notifications.json`, keyed by the
+ * code. The track adds its codes here.
+ */
+export const NOTIFICATION_ERRORS = {} as const satisfies Record<
+  string,
+  { status: number; i18nKey: string }
+>;
+
 /** Audit actions of messaging. They are registered in the shared catalogue (`audit-actions.ts`). */
 export const NOTIFICATION_AUDIT_ACTIONS = [
   'notification.optout.recorded',

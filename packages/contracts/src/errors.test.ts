@@ -1,6 +1,16 @@
 import { describe, expect, it } from 'vitest';
 
-import { ERROR_CATALOG, ERROR_CODES, Problem, errorCodeForStatus } from './errors.js';
+import {
+  ERROR_CATALOG,
+  ERROR_CODES,
+  Problem,
+  errorCodeForStatus,
+  findDuplicateErrorCodes,
+} from './errors.js';
+import { NOTIFICATION_ERRORS } from './notifications.js';
+import { ONLINE_BOOKING_ERRORS } from './online-booking.js';
+import { TELECONSULTATION_ERRORS } from './teleconsultation.js';
+import { WAITLIST_ERRORS } from './waitlist.js';
 
 const REQUEST_ID = '0190a000-0000-7000-8000-000000000001';
 
@@ -94,5 +104,36 @@ describe('error catalog', () => {
     [418, 'bad_request'],
   ])('maps HTTP status %i to code %s', (status, code) => {
     expect(errorCodeForStatus(status)).toBe(code);
+  });
+});
+
+describe('the error catalogs of the modules', () => {
+  const modules = {
+    notifications: NOTIFICATION_ERRORS,
+    'online-booking': ONLINE_BOOKING_ERRORS,
+    waitlist: WAITLIST_ERRORS,
+    teleconsultation: TELECONSULTATION_ERRORS,
+  } as const;
+
+  it.each(Object.entries(modules))(
+    '%s has a catalog that is part of the API catalog',
+    (_name, catalog) => {
+      const entries: [string, { status: number; i18nKey: string }][] = Object.entries(catalog);
+      for (const [code, entry] of entries) {
+        expect(ERROR_CATALOG, code).toHaveProperty(code);
+        expect(entry.i18nKey, code).toBe(`errors.${code}`);
+      }
+    },
+  );
+
+  it('finds a code two catalogs both define, which would silently let the second one win', () => {
+    const entry = { status: 409, i18nKey: 'errors.same' };
+
+    expect(findDuplicateErrorCodes([{ same: entry }, { other: entry }])).toEqual([]);
+    expect(findDuplicateErrorCodes([{ same: entry }, { same: entry }])).toEqual(['same']);
+  });
+
+  it('has no code defined by two of the catalogs that ship', () => {
+    expect(findDuplicateErrorCodes([...Object.values(modules)])).toEqual([]);
   });
 });

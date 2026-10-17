@@ -9,6 +9,16 @@ import { z } from 'zod';
 export const VIDEO_SESSION_STATUSES = ['ready', 'link_pending', 'closed'] as const;
 export type VideoSessionStatus = (typeof VIDEO_SESSION_STATUSES)[number];
 
+/**
+ * Error codes of the teleconsultation module, with their status and the key of the es-AR message. They join
+ * the API catalog (errors.ts); the messages go in `locales/es-AR/errors.teleconsultation.json`, keyed by the
+ * code. The track adds its codes here.
+ */
+export const TELECONSULTATION_ERRORS = {} as const satisfies Record<
+  string,
+  { status: number; i18nKey: string }
+>;
+
 /** Audit actions of video links. They are registered in the shared catalogue. */
 export const TELECONSULTATION_AUDIT_ACTIONS = [
   'video.link.created',

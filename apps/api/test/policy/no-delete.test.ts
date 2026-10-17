@@ -4,7 +4,7 @@ import { fileURLToPath } from 'node:url';
 
 import { describe, expect, it } from 'vitest';
 
-import allowlist from './no-delete.allowlist.json' with { type: 'json' };
+import { ALLOWLIST as allowlist } from './no-delete-allowlist.js';
 
 /**
  * Tenant data is deactivated, ended or revoked, never deleted (tenancy, "No deletion"). This keeps

@@ -1,5 +1,10 @@
 import { z } from 'zod';
 
+import { NOTIFICATION_ERRORS } from './notifications.js';
+import { ONLINE_BOOKING_ERRORS } from './online-booking.js';
+import { TELECONSULTATION_ERRORS } from './teleconsultation.js';
+import { WAITLIST_ERRORS } from './waitlist.js';
+
 /**
  * Error codes of the API, with the HTTP status each one is sent with and the i18n key the web app
  * translates. The catalog is the one place that pairs them, so server and client cannot drift.
@@ -8,7 +13,7 @@ import { z } from 'zod';
  * exist AND for a tenant-scoped resource they may not see (see `denied()` in the API), so the
  * response never reveals which of the two it was.
  */
-export const ERROR_CATALOG = {
+const CORE_ERRORS = {
   bad_request: { status: 400, i18nKey: 'errors.bad_request' },
   validation_failed: { status: 400, i18nKey: 'errors.validation_failed' },
   unauthenticated: { status: 401, i18nKey: 'errors.unauthenticated' },
@@ -37,6 +42,41 @@ export const ERROR_CATALOG = {
   // A capability this deployment does not have configured (for example, no object storage).
   service_unavailable: { status: 503, i18nKey: 'errors.service_unavailable' },
 } as const satisfies Record<string, { status: number; i18nKey: string }>;
+
+/** The codes that more than one of the catalogs defines. */
+export function findDuplicateErrorCodes(
+  catalogs: readonly Readonly<Record<string, unknown>>[],
+): string[] {
+  const seen = new Set<string>();
+  const duplicates = new Set<string>();
+  for (const catalog of catalogs) {
+    for (const code of Object.keys(catalog)) {
+      if (seen.has(code)) duplicates.add(code);
+      seen.add(code);
+    }
+  }
+  return [...duplicates];
+}
+
+const duplicated = findDuplicateErrorCodes([
+  CORE_ERRORS,
+  NOTIFICATION_ERRORS,
+  ONLINE_BOOKING_ERRORS,
+  WAITLIST_ERRORS,
+  TELECONSULTATION_ERRORS,
+]);
+if (duplicated.length > 0) {
+  throw new Error(`Error codes defined twice: ${duplicated.join(', ')}.`);
+}
+
+/** The core codes and the ones each capability module adds in its own contracts file. */
+export const ERROR_CATALOG = {
+  ...CORE_ERRORS,
+  ...NOTIFICATION_ERRORS,
+  ...ONLINE_BOOKING_ERRORS,
+  ...WAITLIST_ERRORS,
+  ...TELECONSULTATION_ERRORS,
+} as const;
 
 export type ErrorCode = keyof typeof ERROR_CATALOG;
 

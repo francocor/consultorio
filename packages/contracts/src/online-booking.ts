@@ -6,6 +6,16 @@ import { z } from 'zod';
  * S3.10) adds its request and response shapes below, in this file only.
  */
 
+/**
+ * Error codes of the online-booking module, with their status and the key of the es-AR message. They join
+ * the API catalog (errors.ts); the messages go in `locales/es-AR/errors.online-booking.json`, keyed by the
+ * code. The track adds its codes here.
+ */
+export const ONLINE_BOOKING_ERRORS = {} as const satisfies Record<
+  string,
+  { status: number; i18nKey: string }
+>;
+
 /** Audit actions of online booking. They are registered in the shared catalogue. */
 export const ONLINE_BOOKING_AUDIT_ACTIONS = [
   'booking.link.enabled',

@@ -21,10 +21,14 @@ import {
   seedDemoTenant,
 } from '../../src/db/seed/demo/index.js';
 import { seedPlatformCatalogs } from '../../src/db/seed/platform.js';
+import { createAdapterResolver } from '../../src/main/adapter-resolver.js';
+import { buildAdapterRegistry } from '../../src/main/adapters.js';
 import { createApplication } from '../../src/main/application.js';
+import { loadConfig } from '../../src/main/config.js';
 import { documentWorker } from '../../src/main/document-jobs.js';
 import { createConfiguredEmail } from '../../src/main/email.js';
 import { loadPasswordValidator } from '../../src/main/password-validator.js';
+import { MODULE_WIRINGS, combineWorkerContributions } from '../../src/main/wiring/index.js';
 import { createPasswordHasher } from '../../src/modules/identity/index.js';
 import { createOperatorAdminFor, createOperatorSecrets } from '../../src/modules/operator/index.js';
 import { holdExpireJob } from '../../src/modules/scheduling/index.js';
@@ -237,6 +241,25 @@ export async function startStack(options: StackOptions): Promise<Stack> {
     closers.unshift(() => jobsBoss.stop({ graceful: false }));
 
     const passwordValidator = await loadPasswordValidator({ breachCheck: false });
+    // The same composition as `main`: the modules, their adapters (the local simulators), the
+    // provider console and the jobs of the worker, so a browser journey runs the real thing.
+    const config = loadConfig({
+      DATABASE_URL: runtimeUrl,
+      BASE_DOMAIN: baseDomain,
+      PLATFORM_HOST: platformHost,
+      KMS_LOCAL_KEK_BASE64: randomBytes(32).toString('base64'),
+      LOCAL_PROVIDERS_CONSOLE: 'true',
+    });
+    const adapters = createAdapterResolver(
+      buildAdapterRegistry({
+        config,
+        email,
+        storage,
+        kms,
+        db: runtime.db,
+        wiring: MODULE_WIRINGS,
+      }),
+    );
     const app = createApplication({
       database: runtime,
       logLevel: 'warn',
@@ -247,6 +270,12 @@ export async function startStack(options: StackOptions): Promise<Stack> {
       ...(options.publicPort === undefined ? {} : { publicPort: options.publicPort }),
       keys,
       email: email.sender,
+      adapters,
+      wiring: MODULE_WIRINGS,
+      localProviders: {
+        console: config.providers.localProvidersConsole,
+        providers: MODULE_WIRINGS.flatMap((module) => module.devProviders?.({ config }) ?? []),
+      },
       passwordValidator,
       storage,
       // Confirming an upload queues its scan; the worker below runs it.
@@ -288,8 +317,13 @@ export async function startStack(options: StackOptions): Promise<Stack> {
         log: pino({ level: 'warn' }),
         sealGraceMs: 500,
         sealIntervalMs: 1500,
-        tenantJobs: [{ definition: holdExpireJob, everyMs: 60_000 }],
-        ...documentWorker({ storage, scanner, email: email.sender }),
+        ...combineWorkerContributions([
+          { tenantJobs: [{ definition: holdExpireJob, everyMs: 60_000 }] },
+          documentWorker({ storage, scanner, email: email.sender }),
+          ...MODULE_WIRINGS.map(
+            (module) => module.worker?.({ config, adapters, email: email.sender }) ?? {},
+          ),
+        ]),
       });
       closers.unshift(() => worker?.stop() ?? Promise.resolve());
     }
