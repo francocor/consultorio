@@ -22,4 +22,9 @@ export interface Actor {
    * clinical work: nothing else sets it.
    */
   professionalId: string | null;
+  /**
+   * The professionals whose calendars this member was delegated (`scheduling.delegated_calendar`,
+   * with a scope). Empty or absent without a live grant.
+   */
+  delegatedProfessionalIds?: readonly string[];
 }
