@@ -49,7 +49,7 @@ describe('clinical permissions are locked to the professional role (hard rule)',
   });
 
   it('the grantable list contains no clinical.* permission', () => {
-    expect(GRANTABLE.length).toBe(5);
+    expect(GRANTABLE.length).toBe(7);
     expect(GRANTABLE.filter(isClinicalPermission)).toEqual([]);
   });
 
@@ -105,6 +105,17 @@ describe('effective permissions = role permissions + (grants inside GRANTABLE)',
     expect(result.filter((permission) => permission === 'cash.operate')).toHaveLength(1);
   });
 
+  it('keeps booking over a slot hold behind an explicit grant, held by owner and admin by default', () => {
+    expect(GRANTABLE).toContain('scheduling.override_hold');
+    expect(effectivePermissions(['owner'], [])).toContain('scheduling.override_hold');
+    expect(effectivePermissions(['admin'], [])).toContain('scheduling.override_hold');
+    expect(effectivePermissions(['reception'], [])).not.toContain('scheduling.override_hold');
+    expect(effectivePermissions(['professional'], [])).not.toContain('scheduling.override_hold');
+    expect(effectivePermissions(['reception'], ['scheduling.override_hold'])).toContain(
+      'scheduling.override_hold',
+    );
+  });
+
   it('gives reception patient administration and the cash register by default', () => {
     expect(ROLE_PERMISSIONS.reception).toEqual(
       expect.arrayContaining(['patients.administer', 'cash.operate']),
@@ -119,22 +130,27 @@ describe('effective permissions = role permissions + (grants inside GRANTABLE)',
   });
 });
 
-describe('only the owner brings professionals in (decision D19)', () => {
+describe('owner and admin bring professionals in (decision D19, revised 2026-10-17)', () => {
   it('lets an owner hand out every staff role', () => {
     expect([...rolesInviterMayGrant(['owner'])].sort()).toEqual(
       ['admin', 'owner', 'professional', 'reception'].sort(),
     );
   });
 
-  it('keeps the professional role out of an admin ceiling, and the owner role too', () => {
-    expect([...rolesInviterMayGrant(['admin'])].sort()).toEqual(['admin', 'reception']);
-    expect(canGrantRoles(['admin'], ['professional'])).toBe(false);
-    expect(canGrantRoles(['admin'], ['reception', 'professional'])).toBe(false);
+  it('lets an admin hand out admin, professional and reception, but never the owner role', () => {
+    expect([...rolesInviterMayGrant(['admin'])].sort()).toEqual(
+      ['admin', 'professional', 'reception'].sort(),
+    );
+    expect(canGrantRoles(['admin'], ['professional'])).toBe(true);
+    expect(canGrantRoles(['admin'], ['reception', 'professional'])).toBe(true);
     expect(canGrantRoles(['admin'], ['reception'])).toBe(true);
+    expect(canGrantRoles(['admin'], ['owner'])).toBe(false);
+    expect(canGrantRoles(['admin'], ['reception', 'owner'])).toBe(false);
   });
 
-  it('does not let an admin who also holds the professional role grant the professional role', () => {
-    expect(canGrantRoles(['admin', 'professional'], ['professional'])).toBe(false);
+  it('gives reception and professionals nothing to hand out', () => {
+    expect(canGrantRoles(['reception'], ['professional'])).toBe(false);
+    expect(canGrantRoles(['professional'], ['professional'])).toBe(false);
   });
 
   it('still lets an admin manage the people who are already professionals', () => {
@@ -147,11 +163,11 @@ describe('only the owner brings professionals in (decision D19)', () => {
     expect(canManageRoles(['owner'], [])).toBe(false);
   });
 
-  it('lets an admin keep a professional role the member already has, but not add it', () => {
+  it('lets an admin add the professional role to a member, or keep it', () => {
     expect(canChangeRoles(['admin'], ['professional'], ['professional', 'admin'])).toBe(true);
     expect(canChangeRoles(['admin'], ['professional'], ['reception'])).toBe(true);
-    expect(canChangeRoles(['admin'], ['reception'], ['reception', 'professional'])).toBe(false);
-    expect(canChangeRoles(['admin'], ['reception'], ['professional'])).toBe(false);
+    expect(canChangeRoles(['admin'], ['reception'], ['reception', 'professional'])).toBe(true);
+    expect(canChangeRoles(['admin'], ['reception'], ['professional'])).toBe(true);
     expect(canChangeRoles(['owner'], ['reception'], ['professional'])).toBe(true);
   });
 

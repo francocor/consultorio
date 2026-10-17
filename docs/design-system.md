@@ -74,6 +74,16 @@ Product components:
 
 One `AppShell` for all staff roles: a collapsible sidebar from the tablet breakpoint, a bottom navigation with at most five entries plus "More" on phones. The navigation is derived from the permissions the API returns, so hiding an entry is a convenience, never the protection. The patient portal and the public booking pages have their own minimal shells (Stage 2 and later).
 
+## The agenda
+
+The calendar (`shared/ui/calendar`) is our own grid; the decision against react-big-calendar is in [`docs/adr/calendar.md`](adr/calendar.md). The rules that make it work all day:
+
+- **Times belong to the location.** Every instant is drawn in the time zone of the location, never the device's (`zoned-time.ts`, with a 23-hour day under test).
+- **Status is an icon and a word.** The eight appointment statuses each have their own icon, a tone from the tokens above and a Spanish word; the type of appointment only adds a decorative stripe. A legend lists them.
+- **Phones get a list.** At 360 px the day and week open as an agenda list (a full-width button per appointment, grouped by day); the month is a compact grid with counts. Desktop users can switch to the list too, so everything the grid does is reachable without a pointer.
+- **Moving without a mouse.** `Alt` + arrows move an appointment by 15 minutes or to the next column. Dragging with a mouse is optimistic, rolls back on a conflict and offers "Deshacer".
+- **Working screens.** "Hoy" (professionals, mobile first: who is next, one button to call them in), "Llegadas" (front desk: who is still to arrive, one button to register the arrival) and "Pendientes" (the worklist, with its count on the navigation).
+
 ## Accessibility checklist (WCAG 2.2 AA)
 
 - Contrast: tokens are tested; the tenant primary is guaranteed by the server.

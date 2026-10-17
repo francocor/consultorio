@@ -74,6 +74,8 @@ describe('the operator database role is an allowlist', () => {
       // Creating an organization: its row, data key, owner invitation and first audit entry.
       'action_token',
       'audit_event',
+      // The country holiday catalog is platform data the operator maintains.
+      'holiday_catalog',
       // Administrative configuration, readable only under a support grant.
       'location',
       // The operator's own accounts, sessions and trail.
@@ -92,7 +94,7 @@ describe('the operator database role is an allowlist', () => {
     const touched = new Set(await tablesTouchedByOperator());
     const forbidden = (await allTables()).filter(
       (table) =>
-        /^(patient|anamnesis|care_|coverage|payer|data_processing|membership|user_account|session|login_|recovery_|permission_grant|professional_hours|encounter|appointment|clinical|document|prescription|payment|invoice)/.test(
+        /^(patient|anamnesis|care_|coverage|payer|data_processing|membership|user_account|session|login_|recovery_|permission_grant|professional_hours|encounter|appointment|slot_|schedule_|tenant_day_off|worklist|clinical|document|prescription|payment|invoice)/.test(
           table,
         ) || ['patient', 'anamnesis', 'membership', 'user_account', 'session'].includes(table),
     );

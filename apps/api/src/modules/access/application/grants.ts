@@ -164,5 +164,19 @@ export function createGrantsRepo(withTenant: WithTenant, grants: Grants): Grants
         const live = await grants.list(tx, membershipId);
         return live.map((grant) => grant.permission);
       }),
+    // A delegated calendar always carries the professionals it covers; anything else counts as none.
+    delegatedCalendarsFor: (tenantId, membershipId) =>
+      withTenant({ tenantId, userId: SYSTEM_USER_ID }, async (tx) => {
+        const live = await grants.list(tx, membershipId);
+        const ids = live
+          .filter((grant) => grant.permission === 'scheduling.delegated_calendar')
+          .flatMap((grant) => {
+            const scoped = grant.scope['professionalIds'];
+            return Array.isArray(scoped)
+              ? scoped.filter((id): id is string => typeof id === 'string')
+              : [];
+          });
+        return [...new Set(ids)];
+      }),
   };
 }

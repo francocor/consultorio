@@ -5,6 +5,7 @@ import { RequirePermission } from '../../app/guards.js';
 import { useMe } from '../../app/session.js';
 import { usePageTitle } from '../../app/use-page-title.js';
 import { cn } from '../../shared/lib/cn.js';
+import { Button } from '../../shared/ui/button.js';
 import { PageHeader } from '../../shared/ui/page-header.js';
 
 import { SETTINGS_TABS, settingsTabsFor } from './settings-tabs.js';
@@ -18,7 +19,18 @@ export function SettingsPage() {
 
   return (
     <RequirePermission anyOf={SETTINGS_TABS.map((tab) => tab.permission)}>
-      <PageHeader title={t('title')} description={t('description')} className="mb-4" />
+      <PageHeader
+        title={t('title')}
+        description={t('description')}
+        className="mb-4"
+        actions={
+          me.permissions.includes('onboarding.manage') ? (
+            <Button asChild variant="outline">
+              <Link to="/onboarding">{t('setup')}</Link>
+            </Button>
+          ) : undefined
+        }
+      />
       <nav aria-label={t('nav')} className="mb-6 overflow-x-auto border-b">
         <ul className="flex min-w-max gap-1">
           {tabs.map((tab) => (

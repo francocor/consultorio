@@ -6,7 +6,9 @@ Mode: Standard for Stage 0; **Strict TDD from Stage 1** (`strict_tdd: true` in `
 
 Stage 0: tasks 0.2 to 0.34 done and merged. Task 0.1 (rotate secrets) is a manual owner action and is NOT done.
 
-Stage 1: slices S1.00 to S1.37 done (tasks 1.1 to 1.130, all 130 tasks of Stage 1), and the independent security review of 1.129 has been run and its ten findings handled (batch 7). Next: the owner's review of PR #14 (and the confirmation of decision D19), then Stage 2. See batches 3 to 7 at the end of this file.
+Stage 1: slices S1.00 to S1.37 done (tasks 1.1 to 1.130, all 130 tasks of Stage 1), and the independent security review of 1.129 has been run and its ten findings handled (batch 7). Next: the owner's review of PR #14 (and the confirmation of decision D19). See batches 3 to 7 below.
+
+Stage 2: slices S2.01 to S2.16 done (tasks 2.1 to 2.46, the scheduling backend and web), plus the scheduling review fixes and the documents track (S2.25 to S2.28, tasks 2.75 to 2.85) merged in "Stage 2 integration 1" at the end of this file; branch `feat/stage-2-practice-core` stacked on `feat/stage-1-secure-core`. Still open: clinical (S2.17 to S2.24), onboarding, the Stage 2 gate. The per-track reports stay beside this file: `apply-progress-stage2-schedfix.md` and `apply-progress-stage2-documents.md`.
 
 ## Batch 1: Stage 0, slices S0.01 to S0.05
 
@@ -736,3 +738,622 @@ The first full `pnpm test` run (while the integration suite was running) timed o
 - The worker holds `app_rw` and `audit_sealer`. Production must provision the `audit_sealer` login and make the proxy send `dist/content-security-policy.txt`.
 - Nothing was verified in CI (never polled). Lighthouse was not re-run (the local browser would not start under `lhci`).
 - The two ESLint-based unit tests (`web-lint-rules`, `country-isolation`) exceed 120 seconds when the whole monorepo runs while Docker is busy; they pass alone in about 35 seconds.
+
+## Batch 8: Stage 2, slices S2.01 to S2.11 (the scheduling backend)
+
+Strict TDD. Branch `feat/stage-2-practice-core` (from `feat/stage-1-secure-core`), one work-unit commit per slice step with the slice id in the subject, automatic mode, delivery `size:exception` (about 50k added lines including generated migration metadata and tests; the production code is a fraction of that), draft PR to `feat/stage-1-secure-core`, merged after PR #14. No merge, CI not polled.
+
+### Commits (in order)
+
+| Slice | Commits | Tasks |
+|---|---|---|
+| S2.01 Appointment types, blocks, days off | `78b4ab7` tables, `6e1fd5a` time zones (task 2.9 pulled forward: weekly blocks need them), `58333b0` services, routes, holiday calendar, hours for a range of dates, operator catalog | 2.1 to 2.3, 2.9 |
+| S2.02 Appointment and occupancy schema | `4a6f848` tables, exclusion constraint, sync triggers; `9084cf7` concurrency | 2.4 to 2.6 |
+| S2.03 Lanes and time zones | `50b3a0d` | 2.7, 2.8 |
+| S2.04 Booking service | `2edbb46` working windows, free slots, ports and the in-memory fake; `3742449` booking and `POST /appointments` | 2.10 to 2.12 |
+| S2.05 Lifecycle | `d7d2062` state machine; `d7af008` transitions, reschedule, reassign, correct, read-only | 2.13 to 2.16 |
+| S2.06 Worklist | `a1cdd31` worklist; `2d1d454` module boundaries lint | 2.17 to 2.19 |
+| S2.07 Identity confirmation | `ca6104d` rules; `9608d9e` review, confirmation, detach | 2.20 to 2.23 |
+| S2.08 Care relationship | `7428236` | 2.24, 2.25 |
+| S2.09 Slot holds | `3afe4a3` | 2.26, 2.27 |
+| S2.10 Availability and series | `93354dc` | 2.28, 2.29 |
+| S2.11 Authorization, audit, read-only | `13e6ae6` calendar scope in `can()`; `9a6c44e` scope on every route, calendar feed, detail, read-only matrix; `222c784` demo agenda; `fbfb628` es-AR labels; `85193b3` export contributor; one test fix for the catalog check | 2.30 to 2.33 |
+
+### What was built
+
+- **Schema** (migrations 0023 to 0027, hand-completed with `finish-migration`): `appointment_type`, `schedule_block`, `tenant_day_off`, `professional_hours_exception`; `appointment`, `appointment_event`, `slot_hold`, `slot_occupancy` (one conflict surface with a `btree_gist` exclusion constraint per tenant, professional, lane and range, DEFERRABLE) with definer sync triggers and a lane-capacity constraint trigger; `worklist_item`; `app.recompute_care_relationship` and `app.care_adjust` fed by a trigger on the appointment; `holiday_catalog.removed_at`.
+- **Domain** (pure, unit tested): time zones with DST (luxon), holidays, lanes (greedy re-lane), working windows, free slots, the eight-status state machine, identity-confirmation rules.
+- **Application**: types, blocks, days off, hours periods, placement (`planSlot`/`applyPlan` shared by booking, reschedule, correction, holds and series), booking, lifecycle, identity, history, worklist, holds and the `hold.expire` job, availability, recurring series, calendar, administrative export contributor. Ports and an in-memory fake keep the use cases unit-testable.
+- **HTTP**: config routes, appointment routes, worklist routes, planning routes (availability, holds, series, calendar); `409 slot_taken` carries the conflict and the next free slots, `409 slot_no_longer_available`, `409 stale_revision` on a stale `version`.
+- **Authorization**: scheduling permissions, calendar scope for professionals (own calendar unless one is delegated) in `can()`, reception filtered by its locations, read-only matrix (cancel allowed, book and reschedule refused with 402), `AUDIT_ACTIONS` for every scheduling action and the audit-scenario coverage.
+- **Lint**: modules reach each other only through `index.ts` (policy plus a fixture test).
+- **Demo seed**: types, one block, one day off, one special-hours period and appointments over the previous, current and next week with every status, booked through the same use cases; one booking made by the cardiologist for an existing patient shows the identity review in the worklist.
+- **Web**: es-AR labels for the new audit actions and messages for the two new error codes (no scheduling screens yet).
+
+### TDD Cycle Evidence
+
+| Task | Test file(s) | Layer | RED | GREEN | Triangulation |
+|---|---|---|---|---|---|
+| 2.1 | `scheduling-config-schema.test.ts`, generated isolation suite | Integration | written first (tables missing) | green | CHECKs (duration, buffer, color, interval); the NULL-safe CHECK found a real hole (see bugs); isolation of the tables |
+| 2.2 | `scheduling-config-api.test.ts`, `scheduling-config.test.ts` (contracts) | Integration + unit | written first | green | CRUD, deactivate not delete, denials per role, audit rows, 409 stale |
+| 2.3 | `operator-holidays.test.ts`, `domain/holidays.test.ts`, `operator-privileges.test.ts` | Integration + unit | written first | green | moved holiday visible without a release, soft remove, operator only, forbidden columns |
+| 2.4, 2.5 | `scheduling-schema.test.ts` | Integration | written first | green | transition table of every status against occupancy, holds, buffer range, lane capacity, isolation |
+| 2.6 | `scheduling-concurrency.test.ts` | Integration | written first | green | N parallel connections, exactly one winner and `23P01` for the rest, back-to-back allowed |
+| 2.7, 2.8 | `domain/lanes.test.ts` | Unit + property | written first | green | tables plus fast-check: never over capacity, no overlap per lane, re-lane fits whenever feasible |
+| 2.9 | `domain/time.test.ts` | Unit | written first | green | spring-forward gap, fall-back overlap, Argentina (no DST) and a DST zone |
+| 2.10 to 2.12 | `domain/working-hours.test.ts`, `domain/free-slots.test.ts`, `application/book-appointment.test.ts`, `scheduling-booking.test.ts` | Unit + integration | written first | green | golden path, overlap, buffer, hours, block, holiday, hold, capacity, other location, past date, override, 402, next slots |
+| 2.13 to 2.16 | `domain/appointment-state-machine.test.ts`, `application/lifecycle.test.ts`, `scheduling-lifecycle.test.ts` | Unit + integration | written first | green | exhaustive pair test, each transition, version conflict, reschedule keeps the old slot until committed, read-only matrix |
+| 2.17, 2.18 | `scheduling-worklist.test.ts` | Integration | written first | green | six kinds, invalid kind refused, location filter, encrypted detail, resolve and dismiss audited |
+| 2.19 | `module-boundaries.test.ts` + fixtures | Lint | written first | green | internal import fails, `index.ts` import passes |
+| 2.20 to 2.23 | `domain/identity-confirmation.test.ts`, `application/identity.test.ts`, `scheduling-identity.test.ts` | Unit + integration | written first | green | truth table of D14 and D18, own professional refused, solo practice only at in-person check-in, detach leaves the matched record untouched |
+| 2.24, 2.25 | `scheduling-care-relationship.test.ts` | Integration | written first | green | real clinical policies on a test table: unconfirmed gives nothing, confirmation gives access, confirmed no-show counts, unconfirmed no-show does not, cancelled and pending do not |
+| 2.26, 2.27 | `application/holds.test.ts`, `scheduling-holds.test.ts` | Unit + integration | written first | green | per-source bound, expiry (lazy and job), invalidation, conversion, capacity-1 rule, override then confirm gives 409 |
+| 2.28, 2.29 | `application/availability.test.ts`, `application/series.test.ts`, `scheduling-availability.test.ts` | Unit + integration | written first | green | hours minus blocks, holidays and occupancy, buffer, dry run and commit, one conflict skipped, independent cancel |
+| 2.30 | `platform/authz/calendar-scope.test.ts`, `application/scope.test.ts`, `scheduling-scope.test.ts` | Unit + integration | written first | green | own calendar, delegated calendar by professional, reception by location |
+| 2.31 to 2.33 | `scheduling-calendar.test.ts`, `scheduling-lifecycle.test.ts`, audit coverage, `route-categories` | Integration | written first | green | feed has no clinical field, read-only matrix, every action in the catalogue has a scenario |
+| (demo) | `db/seed/demo/schedule.test.ts` (13), `demo-seed.test.ts`, `demo-coverage.test.ts` | Unit + integration | written first (the coverage test failed on `slot_hold` until it got a reason) | green | every status present, children to pediatrics, nothing on the day off or inside the block, a self-booked visit opens the identity review |
+| (export) | `scheduling-export.test.ts`, `export-registry.test.ts` | Integration + unit | RED from the existing guard (module without a contributor) | green | own organization only, no encrypted or clinical field |
+
+### Test summary and verification (tip of `feat/stage-2-practice-core`, Node 24, pnpm 10.34.7, Docker running)
+
+| Command | Result |
+|---|---|
+| `corepack pnpm install --frozen-lockfile` | exit 0 |
+| `corepack pnpm typecheck` | exit 0 (contracts, api, web) |
+| `corepack pnpm lint` | exit 0 |
+| `corepack pnpm format:check` | exit 0 |
+| `corepack pnpm test` | **165 files, 2149 tests passed** (it was 146 files, 1693 tests) |
+| `corepack pnpm test:integration` | **90 files, 1386 tests passed** (it was 75 files, 1105 tests). The full run found one failure (`platform-catalogs`, see bugs); after the fix that file passes alone (18 tests) |
+| `corepack pnpm build` | exit 0 |
+| `corepack pnpm db:check` | "No migration drift." (migrations 0023 to 0027) |
+| `corepack pnpm test:e2e` | **112 passed** (about 2.1 minutes). Two earlier attempts failed on a sign-in and on the Postgres health check while another worktree (`consultorio-wt-docs`) was running its own integration tests and containers on the same machine; run alone the suite passes |
+
+### Bugs found by the tests and fixed in the same slice
+
+- A CHECK on a nullable column was satisfied by NULL (`NULL > 0` is unknown, not false); the constraint now says `IS NOT NULL AND ...` and migration 0023 was regenerated before it was committed.
+- An import cycle between holds and booking: the shared helpers (`typeOffered`, `SlotNoLongerAvailableError`) moved to `placement.ts`.
+- Sessions in the integration worlds expired when a test moved the clock; the application takes a `schedulingClock` option so tests can move scheduling time without moving session time.
+- The full integration suite found that `platform-catalogs` required every year of the shared holiday catalog to be full, while the operator suite adds a few holidays to 2031. The check now covers the seeded years 2026 to 2028.
+
+### Decisions and deviations (all recorded; automatic mode)
+
+1. **One conflict surface.** `slot_occupancy` is the only table the exclusion constraint lives on. Appointments and active holds are mirrored into it by SECURITY DEFINER triggers (`pg_temp` last in the search path, closed by default, EXECUTE granted explicitly). The constraint is DEFERRABLE so a reschedule can move an appointment inside one transaction.
+2. **Lanes are capacity.** `professional.max_simultaneous` is the number of lanes; a re-lane is greedy and runs under the per-professional `FOR UPDATE` lock that serializes the writes of one professional. Public flows use capacity 1 (`requireNoActiveOverlap`).
+3. **Buffer inside the range.** The occupied range is `[start, end + buffer)`: the exclusion constraint needs no special case and back-to-back appointments stay allowed.
+4. **Holds expire lazily and by job.** Under the lock, stale holds are expired before a booking looks at the schedule (correct without the job); `hold.expire` (every 60 s through the new tenant-job ticker) keeps the table tidy.
+5. **Reschedule is an event, not a status.** `appointment_event.kind = rescheduled`; the eight statuses stay as designed.
+6. **Identity (D14, D18).** Initial value: confirmed unless an existing patient is matched online, or the booking actor is the appointment's own professional. Who may confirm: staff other than the appointment's professional; the sole active professional of a practice may self-confirm only through the in-person check-in action; the worklist refuses the own professional. The care-relationship trigger counts only confirmed appointments.
+7. **Task 2.9 pulled forward** into S2.01 (weekly blocks need time zone conversion). The hours-for-a-range-of-dates feature (`professional_hours_exception`) is also in S2.01; the design lists it with working hours.
+8. **Holiday catalog is soft-removed** (`removed_at`) so a mistaken holiday can be retracted without a release; an organization's own day off is separate (`tenant_day_off`). The operator API is platform-audited.
+9. **Optimistic concurrency.** Every mutating appointment route takes `version`; a stale one is `409 stale_revision`. A taken slot is `409 slot_taken` with the conflict and `nextSlots`; an invalidated hold is `409 slot_no_longer_available`.
+10. **ESLint boundaries.** The policy is expressed with `boundaries/dependencies` (`disallow` to another module's file unless it is `index.ts`); a `relationship` filter proved unnecessary because imports inside the same module are already allowed.
+11. **Export contributor.** The existing guard (a test that every module registers an export contributor) failed for `scheduling`; `modules/scheduling/application/export-contributor.ts` exports types, appointments with their history, blocks, days off and special-hours periods. Slot holds, the occupancy index and the worklist are not exported (derived, transient, or an operational queue with encrypted detail).
+12. **Demo agenda** is a pure function of the dataset and of "now" (`buildDemoSchedule`), so the calendar always shows today; the seed books through `bookAppointment` and `transitionAppointment` with permissive actors instead of inserting rows, which keeps every trigger and invariant in play. The one self-booked visit shows the identity review.
+13. **Commit attribution.** No AI attribution lines were added to commits or to the PR, as the owner's standing rule requires.
+
+### Attachment points for the scheduling web slices (S2.12 onward)
+
+Routes (under `/api/v1`, session cookie, `Origin` checked; contracts in `packages/contracts/src/scheduling.ts` and `scheduling-config.ts`; the exact paths are in `apps/api/src/modules/scheduling/http/`):
+
+- Calendar: `GET /appointments?from&to&professionalIds&locationId` returns `CalendarResponse` (`CalendarEntryDto`, administrative fields only, already filtered by the actor's calendar scope and locations); `GET /appointments/:id` returns `AppointmentDto` (including `identityConfirmation` and `version`).
+- Booking and lifecycle: `POST /appointments` (`BookAppointmentRequest`); `GET /appointments/:id/history`; the actions are `POST /appointments/:id/{confirm,check-in,start,attend,no-show,approve,cancel,correct,reschedule,detach-patient}` (reassigning a professional is a `reschedule` that changes `professionalId`); each takes `version`. Conflicts: `409 slot_taken` (extension `SlotConflictExtension`: `conflict`, `nextSlots`), `409 slot_no_longer_available`, `409 stale_revision`; a read-only tenant gets `402 tenant_read_only` (except cancel).
+- Availability and series: `GET /availability?professionalId&from&to&typeId` (`AvailabilityResponse`); `POST /appointments/series` (dry run and commit with a skip list); holds are `/slot-holds` (create, release, convert).
+- Worklist: `GET /worklist` (filtered by the user's locations, `WORKLIST_KINDS`), `POST /worklist/:id/{resolve,dismiss,confirm-identity}`; permission `worklist.manage`.
+- Settings: appointment types, schedule blocks, days off, holidays by year and per-professional hours periods (permission `scheduling.configure`).
+- Web catalogs already in place: es-AR audit labels (`locales/es-AR/audit.json`) and `errors.slot_taken`, `errors.slot_no_longer_available` (`locales/es-AR/errors.json`). The scheduling screens need a new `scheduling.json` namespace.
+- Demo: reception and owner see the full agenda, each professional sees their own calendar; the identity review item is in the worklist.
+
+### Remaining
+
+- S2.12 to S2.34 (scheduling web, clinical, documents, onboarding, gate and legacy removal).
+- The frontend does not use the new routes yet; none of the scheduling API was exercised from a browser (the Playwright demo specs still pass against the extended seed).
+- Reminders, the waitlist and public booking (Stage 3) will add worklist items through `worklist.openItem`; the kinds already exist.
+- `slot_hold` has no demo row (listed with a reason in the coverage test).
+- Nothing was verified in CI (never polled).
+
+## Batch 9: Stage 2, slices S2.12 to S2.16 (the scheduling web)
+
+Strict TDD. Branch `feat/stage-2-practice-core`, work-unit commits with the slice id, automatic mode, delivery `size:exception` as in batch 8, draft PR #15 (base `feat/stage-1-secure-core`), no merge, CI not polled. Only `apps/web`, one shared contracts file, docs and the openspec artifacts changed: no backend file was edited (a separate agent owns the backend review fixes).
+
+### Commits (in order, after batch 8)
+
+| Slice | Commits | Tasks |
+|---|---|---|
+| S2.12 Calendar view | `76949de` lifecycle table shared through contracts; `7799cda` API client keeps the 409 extensions; `9ee0297` `CalendarView` (day, week, month, list) and the ADR; `b74b34a` agenda page, filters, legend, URL state, navigation; `e63962b` Playwright at 360 and 1280 px | 2.34 to 2.36 |
+| S2.13 Booking UI | `62f0beb` booking dialog, slot grid, conflict handling, optimistic move with undo, Playwright booking | 2.37 to 2.39 |
+| S2.14 Appointment drawer | `60cfff1` drawer, arrival and identity step, cancel, move, correction, history, series review, Playwright full day | 2.40 to 2.42 |
+| S2.15 Worklist, Today, Check-in | `d9d731c` worklist with badge, Today, Check-in, role matrix | 2.43, 2.44 |
+| S2.16 Scheduling settings | `6539001` types, blocks, holidays, overbooking; `33268e5` operator holiday catalog | 2.45, 2.46 |
+| Follow-ups found by the full e2e run | `3730786` the shell spec follows the new entries, tabs no longer widen the page at 360 px, the free-time search reaches past the seeded weeks; `060eb20` the booking specs use a pediatric time at the locations reception works at | (S2.12 to S2.16) |
+
+### What was built
+
+- **Calendar (`shared/ui/calendar`).** A custom grid behind a presentational API (`resources`, `events`, `backgrounds`, `closedDays`): day with a column per professional, week with a column per day, month with counts, and a list presentation that phones always use. All time arithmetic is in the zone of the location (`zoned-time.ts`, DST under test); overlaps share a column (`layoutOverlaps`, so overbooking is visible); keyboard: events are buttons, `Alt` + arrows move an appointment by 15 minutes or to the next column. Dragging with a mouse is optimistic. Status is an icon and a word, never a color.
+- **Agenda page.** Day, week, month; location filter; professional chips; cancelled toggle; legend; state in the address (`?view&date&location&pros&cancelled&list&appointment`) so a reload or a shared link lands in the same place; a professional is always asked for by name (their own agenda) and sees colleagues only with the delegated-calendar permission; the `truncated` flag shows a non-blocking notice.
+- **Booking.** From a time chosen on the grid only the patient is missing; from the button the dialog opens on the day and professional on screen; a taken time (`409 slot_taken`) shows the next free times one tap away; out-of-hours asks for a reason only for who holds the permission; a weekly series is reviewed in a table before anything exists (skip or go back).
+- **Drawer.** Only the actions the lifecycle allows (the same table as the API, now in `@consultorio/contracts`) and the permissions cover; arrival with the identity step (staff wording, and the solo-practice wording for the appointment's own professional), cancel (who and why, note required for "other"), reschedule or reassign with free times and next times, correction (statuses limited by who may speak for the consultation, 403 explained), history with the rescheduled count, read-only mode (only cancelling stays on).
+- **Worklist, Today, Check-in.** "Pendientes" (kind chips with counts, location filter, resolve, dismiss with confirmation, approve, confirm identity, correct the patient, differences table) with its count as a badge on the navigation; "Hoy" for professionals (who is next, one button to start, in progress, waiting, to arrive, done); "Llegadas" for reception (search, one-click arrival, identity pending opens the arrival step).
+- **Settings.** Settings > Turnos: appointment types (create, edit sending only what changed, deactivate with confirmation, restrict to professionals), blocks (zone-aware, whole days or hours, weekly repetition, the appointments inside are listed and NOT touched, remove one or the series), holidays and days off (merged year view, add and remove the organization's own), overbooking (confirmation from two simultaneous appointments). Operator console: holiday catalog editor (a change reaches every organization with no release, proven end to end).
+- **Shared fixes found on the way.** The API client dropped the whole problem when a 409 carried extra members (`slot_taken` with `nextSlots` was reported as a plain conflict): fixed with validated extensions. A flex/grid child widened the page past 360 px (`grid-cols-1`). Toast fade made axe read half-transparent colors (the specs use reduced motion).
+
+### Path finding (the question of `/api/v1`)
+
+The server has NO `/api/v1` prefix: `rg` over `apps/api/src` finds the routes registered as `/appointments`, `/availability`, `/worklist`, `/appointment-types`, `/schedule-blocks`, `/holidays`, `/days-off`, `/slot-holds` and `/staff` (batch 5 was right; batch 8's "under `/api/v1`" and the task text `POST /api/v1/appointments` repeat the original plan). The web calls `API_BASE = '/api'` and the proxy strips it, exactly as for every Stage 1 route, so every new call is `/api/appointments...` in the browser and `/appointments...` at the server. A `/api/v1` prefix, if it is ever added, is one constant in `buildServer` plus the proxy rule.
+
+### TDD Cycle Evidence
+
+RED means the test file was written before the production code it exercises (a missing module is the failure) and, where a run was seen failing, it is said so.
+
+| Tasks | Test file(s) | Layer | Notes |
+|---|---|---|---|
+| 2.34 | `zoned-time.test.ts` (15), `calendar-layout.test.ts` (14), `CalendarView.test.tsx` (27), contracts `appointment-lifecycle.test.ts` | Unit + component + axe | RED first. A real bug showed as a failing drag test (the drop was measured after the press state was cleared) |
+| 2.35 | `calendar-events.test.ts`, `appointment-actions.test.ts`, `period.test.ts`, `search.test.ts`, `time-zone.test.ts`, `use-calendar.test.tsx`, `calendar-page.test.tsx`, `api-client.test.ts` | Unit + hook + component | RED observed for the API client (3 failed: extensions lost). Page tests: 17 of 18 passed at the first run, the failing one was a test flaw (cache) |
+| 2.36 | `calendar.responsive.spec.ts` | e2e 360 + 1280, axe | RED observed: 296 px of horizontal overflow at 360 px, then fixed |
+| 2.37 | `booking-dialog.test.tsx` (12) | Component + axe | RED first; one race in the test fixed |
+| 2.38 | `calendar-page.test.tsx` (moving), `CalendarView.test.tsx` | Component | Optimistic move, rollback with next times, undo with the new version |
+| 2.39 | `calendar.booking.spec.ts` | e2e | At most 6 actions and 30 s asserted; the lost race shows the next times |
+| 2.40, 2.41 | `appointment-drawer.test.tsx` (33), `booking-series.test.tsx` (6) | Component + axe | RED first; 32 of 33 passed at the first run (one test query too broad) |
+| 2.42 | `calendar.day.spec.ts` | e2e | Reception books, confirms, checks in; the professional starts and attends; axe at each step |
+| 2.43 | `worklist-items.test.ts` (6), `worklist-page.test.tsx` (16), `nav-badge.test.tsx` (5) | Unit + component | RED first; the badge name needed an explicit `aria-label` (inline spans lose the space) |
+| 2.44 | `day-flow.test.ts`, `today-page.test.tsx` (9), `checkin-page.test.tsx` (7), `scheduling.roles.spec.ts`, `scheduling.responsive.spec.ts` | Unit + component + e2e | Role matrix: reception, professional, owner |
+| 2.45 | `type-form.test.ts` (9), `overbooking.test.ts`, `block-form.test.ts`, `scheduling-settings.test.tsx` (26), `scheduling.settings.responsive.spec.ts` | Unit + component + e2e | RED first |
+| 2.46 | `holidays.test.tsx` (8), `operator.holidays.spec.ts`, `operator.holidays.responsive.spec.ts` | Component + e2e | The operator adds a holiday and an organization reads it at once |
+
+### Test summary and verification (tip of `feat/stage-2-practice-core`, Node 24, pnpm 10.34.7, Docker running)
+
+| Command | Result |
+|---|---|
+| `corepack pnpm install --frozen-lockfile` | not needed: no dependency was added (the lockfile is unchanged) |
+| `corepack pnpm typecheck` | exit 0 (contracts, api, web) |
+| `corepack pnpm lint` | exit 0 |
+| `corepack pnpm format:check` | exit 0 |
+| `corepack pnpm test` | **190 files, 2443 tests passed** (it was 165 files, 2149 tests) |
+| `corepack pnpm test:integration` | **90 files, 1386 tests**, same count as batch 8. The full run failed 8 tests in 3 files (`staff-lifecycle`, `jobs`, `no-delete`) on 30-second timeouts while the machine was saturated by other worktrees (Docker answered `docker info` in 110 s); those three files, re-run once on their own, passed (3 files, 62 tests) |
+| `corepack pnpm build` | exit 0 |
+| `corepack pnpm test:e2e` | **140 passed** on a fresh stack (it was 112; +28 specs: calendar 360 and 1280, booking, full day, roles, settings, operator holidays). Two earlier full runs failed: on a reused stack (state left by `auth` and `staff` specs, which expect a fresh one), on a slow lazy chunk (10 s) and on two of my specs fighting for the same free time; fixed (see commits `3730786` and `060eb20`) |
+
+Browser checks beyond the suite: axe at 360 and 1280 px on the agenda (day, week, month), the booking dialog, the drawer, Hoy, Llegadas, Pendientes, every section of Settings > Turnos and the operator catalog.
+
+### Decisions and deviations
+
+1. **Q6: a custom grid, not react-big-calendar.** Measured, not guessed: react-big-calendar 1.20 in a scratch folder under jsdom + axe gave 2 critical violations in the day view and 2 in the week view, no per-location time zone (device zone; the workaround is a process-wide default), a 12-hour clock, no keyboard path to an empty slot, mouse-only drag. Record and numbers in `docs/adr/calendar.md`.
+2. **Resize is not offered.** An appointment's end is derived from its type (spec), and the API has no way to set it; dragging an edge would promise something impossible. Task 2.38 says "move and resize": only move is built, with a keyboard equivalent.
+3. **The legend uses its own badge.** The shared `StatusBadge` has another status set; scheduling has eight, each with its own icon and word (`STATUS_PRESENTATION`).
+4. **The lifecycle table moved to `@consultorio/contracts`** (new `appointment-lifecycle.ts`) so the screens offer exactly what the API allows. The API keeps its own copy for now (its hand-written exhaustive test is the guard) to avoid editing backend files while another agent works there; switching it to the shared table is a three-line change.
+5. **"Who am I" in the agenda.** `/auth/me` carries no professional id, so the screens find the signed-in professional in the staff directory by email (the directory shows a person their own email). If the directory is hidden for a role, the professional's own screens fall back to an empty state.
+6. **Differences of an identity review.** The producer (online booking, Stage 3) does not exist yet; the card reads `detail.differences` (`field`, `submitted`, `onFile`) when present. Staff bookings carry none.
+7. **Blocks over appointments.** The API does not list affected appointments, so the dialog reads the calendar feed for the block's window and lists them; creating needs the person to confirm they know the appointments stay as they are.
+8. **Navigation.** The owner/admin layout also gets Agenda and Pendientes (the spec lets them manage appointments and see the worklist; the design table listed only dashboard/staff/reports/billing/settings), and the professional layout gets Agenda (the spec says they open their calendar). `NOT_BUILT_YET` keeps Borradores and Recetas out until Stage 2 clinical.
+9. **Coordinator's contract notes honored without touching the backend.** Every mutating call sends the appointment's current `expectedVersion` (a `Versioned<>` type makes it a compile error to forget; the worklist and the Today buttons read the version just before sending); `truncated` is read through a local `CalendarFeed` schema that already accepts it; a `slot_taken` without the extension is handled everywhere; corrections to "in progress" or "attended" are offered only to the appointment's own professional and a 403 is explained.
+10. **Tests with toasts use reduced motion** in the specs that run axe with a toast on screen.
+
+### Remaining
+
+- S2.17 to S2.34 (clinical schema and UI, documents, onboarding, gate, legacy removal).
+- The booking dialog has no hold step yet (holds exist in the API; the public flow in Stage 3 uses them).
+- Nothing was verified in CI (never polled).
+
+## Stage 2 integration 1: scheduling review fixes and the documents track
+
+Two finished parallel tracks were merged into `feat/stage-2-practice-core` (tip before: `835fdf3`), with `git merge --no-ff`, in this order. The per-track reports stay as they are and hold the detail of each track: `apply-progress-stage2-schedfix.md` (14 review findings, strict TDD evidence, contract changes) and `apply-progress-stage2-documents.md` (S2.25 to S2.28, strict TDD evidence, deviations 1 to 15, shared-file list).
+
+### What was merged
+
+| Order | Branch | Merge commit | Notes |
+|---|---|---|---|
+| 1 | `fix/stage-2-scheduling-review` (`2320671`, based on `28ba4cf`) | `31d2bba` | No textual conflict: the UI branch only touched `apps/web` and `packages/contracts/src/appointment-lifecycle.ts`, which the fixes did not. The contract changes broke the web at compile time, which is how the adaptations below were found |
+| 2 | `feat/stage-2-documents` (`15963fb`, based on `9bd2379`) | `35a521f` | Textual conflicts in `_journal.json`, `application.ts`, `main.ts`, `worker.ts`, `queues.ts`, `export-contributors.ts` and `translate.ts` (see resolutions). The other shared files merged cleanly and are exercised by the suites |
+
+### Conflict resolutions
+
+- `migrations/meta/_journal.json`: both tracks appended at idx 23; kept the 23 to 27 of this branch, then the schedfix entry as idx 28 and the documents entry as idx 29, with `when` strictly increasing.
+- `main/application.ts`: both `createScheduling` and `createDocuments` are built (each its own `const`), and both route sets are in `routes` (`scheduling.routes`, `documents.routes`).
+- `main/main.ts` (`runWorker`): the worker receives the scheduling `tenantJobs` (`hold.expire` every minute) and the documents hooks (`documentWorker(...)`: `jobs` and `schedules`).
+- `platform/jobs/worker.ts`: both option families coexist. `tenantJobs` (a job queued for every organization every N ms, scheduling) and `jobs` / `schedules` built from a `WorkerJobContext` (documents). `registerJobs` receives `audit.seal`, `audit.verify`, the tenant jobs and the module jobs. Converging the two mechanisms into one is a possible later cleanup, not done here.
+- `platform/jobs/queues.ts`: `hold.expire`, `document.scan` and `document.cleanup` are all registered.
+- `main/export-contributors.ts`: scheduling and documents contributors both registered.
+- `web/shared/lib/translate.ts`: git sees this file as binary (a NUL character in the `MISSING` sentinel). Resolved by taking this branch's version and adding the `documents` namespace; the NUL is preserved.
+- Merged without conflict but worth knowing: `contracts/index.ts`, `roles.ts`, `audit-actions.ts`, `tokens/kinds.ts`, `config.ts`, `test/support/fixtures.ts`, `definer-functions.test.ts`, `demo-coverage.test.ts`, `audit-scenarios.ts`, `i18n.ts`, the locale files, `PatientDetailPage.tsx`, `router.tsx` and `tasks.md`.
+
+### Migrations: one linear sequence
+
+| File | Journal idx | `when` | Origin |
+|---|---|---|---|
+| `0023_scheduling_config` to `0027_care_from_appointments` | 23 to 27 | unchanged | this branch |
+| `0028_care_lock_order` | 28 | 1792206823184 | schedfix `0080_care_lock_order` (renumbered, SQL and snapshot content unchanged) |
+| `0029_documents` | 29 | 1792208525251 | documents `0040_documents` (renumbered, SQL unchanged) |
+| `0030_document_appointment_fk` | 30 | 1792224778157 | new, see below |
+
+Snapshots: `0028_snapshot.json` already chained to `0027`. `0029_snapshot.json` was rebuilt as the `0028` snapshot plus the `public.document` table of the documents snapshot (its `prevId` is the id of `0028`); the old `0040_snapshot.json` is gone. `0030_snapshot.json` was generated by drizzle-kit. `pnpm db:check` reports no drift. Migrations 0000 to 0022 were not touched.
+
+### Documents get a foreign key to the appointment (migration 0030, new behaviour, strict TDD)
+
+`document.appointment_id` now references `appointment (tenant_id, id)` by the composite key (`document_appointment_fkey`); `encounter_id` stays without a foreign key until the clinical merge.
+
+- RED: `documents-schema.test.ts` "links a document to an appointment of its own organization, and to no other" (an appointment of another tenant and a random id were accepted) and `documents-uploads.test.ts` "keeps the appointment the document came with, and refuses one of another patient" (a 200 for an appointment of another patient).
+- GREEN: the migration, the schema declaration, and a check in `uploads.ts` that the appointment exists and belongs to the patient of the upload (404 `not_found` otherwise, so a bad id is never a 500 from the database).
+- Gotcha found while writing the migration: `ALTER TABLE ... ADD CONSTRAINT FOREIGN KEY` validates the existing rows with a query that runs as the table owner, and `FORCE ROW LEVEL SECURITY` binds the owner on both `document` and `appointment`: their tenant policy casts an `app.tenant_id` nobody set to uuid and the migration failed with 22P02. The migration lifts FORCE on the two tables for that statement only, inside the migration transaction, and puts it back. Any future migration that adds a foreign key between two forced-RLS tables needs the same.
+- The generated isolation suite caught the new key (`composite foreign key document_appointment_fkey`): the `document` fixture now takes an `appointment_id` override.
+- Not enforced by the database: that the appointment's patient is the document's patient. The use case checks it; a composite key including the patient would need a new unique constraint on `appointment`.
+
+### State machine: one lifecycle table
+
+`apps/api/src/modules/scheduling/domain/appointment-state-machine.ts` no longer keeps its own transition table: `canTransition`, `isTerminal` and `canReschedule` are the shared functions of `packages/contracts/src/appointment-lifecycle.ts` (the screens read the same table). Its exhaustive hand-written test (every from/to pair, 13 allowed transitions, terminal statuses) is unchanged and passes.
+
+### UI adaptations to the schedfix contracts
+
+| Contract change | Adaptation | Proof |
+|---|---|---|
+| `CorrectStatusRequest` is `{ toStatus, reasonCode, note?, expectedVersion }` | The correct panel has a "Motivo de la corrección" select (the four codes, labels in `scheduling.json`) and an optional "Detalle (opcional)" textarea; the button stays off until a code is chosen; an empty note is left out of the request | `appointment-drawer.test.tsx` (3 correct tests, RED first), `e2e/calendar.day.spec.ts` now ends with a real correction by the professional |
+| `WorklistAppointmentDto.version` | The worklist actions (confirm identity, detach patient, approve) send the version the card was listed with instead of reading the appointment first; a 409 `stale_revision` reloads the list and shows "Este turno cambió mientras lo miraba" | `worklist-page.test.tsx`: the `GET /appointments/:id` stubs are gone, so a stray read fails; new stale test |
+| Cancel with `cancelledBy` other than `patient` is a 402 on a read-only tenant | In a read-only organization the cancel panel offers only "El paciente" in "Quién cancela" and says why (`aria-describedby`); with an active organization the three options remain | `appointment-drawer.test.tsx` (two new tests, RED first) |
+| `scheduling.override_hold` (403 without it) | The UI never sends `overrideHold` (there is no hold step in the booking dialog yet, see batch 9 "Remaining"), so nothing can hit that 403 today. A 403 on a booking is shown by the generic message and the dialog stays open (characterization test, passes without a code change). The staff screen already lists the permission (schedfix). A UI that overrides a hold will need to hide the option from users without the permission | `booking-dialog.test.tsx` |
+| `expectedVersion` required everywhere, `CalendarResponse.truncated`, `slot_taken` always with `nextSlots` | Already followed by the UI track (it sent the version everywhere, showed the truncation notice and handled a conflict without next slots) | existing tests |
+
+### Other documents changed
+
+- `design.md` (grantable toggles table) and `specs/authorization/spec.md` (grantable permissions requirement, plus a scenario) now list `scheduling.override_hold`; owner and admin hold it by default, reception and professional need a grant.
+
+### Verification (tip of the branch, Node v24.22.0, pnpm 10.34.7, Docker running and shared with other worktrees)
+
+| Command | Result |
+|---|---|
+| `corepack pnpm install --frozen-lockfile` | exit 0 (no dependency changed) |
+| `corepack pnpm typecheck` | exit 0 (contracts, api, web) |
+| `corepack pnpm lint` | exit 0 |
+| `corepack pnpm format:check` | exit 0 |
+| `corepack pnpm test` | **209 files, 2680 tests passed** |
+| `corepack pnpm test:integration` | **102 files, 1540 tests**: 1535 passed and 4 skipped (the slow ClamAV suite) in the full run; 1 failed (the generated isolation test for the new `document_appointment_fkey`, a fixture gap described above). After the fixture fix the file passes alone (152 tests). No test needed a re-run for an infrastructure reason in this run |
+| `corepack pnpm build` | exit 0 |
+| `corepack pnpm db:check` | No migration drift (0000 to 0030) |
+| `corepack pnpm test:e2e` | **140 passed** on a fresh stack on private ports (API 3790, web 4790; the ports were changed only in the working tree and reverted), `--workers=3`, desktop and mobile-360, axe on every screen |
+| `docker build -f infra/Dockerfile` and a smoke run with the production configuration of the CI smoke test (private port 3187) | image built; `/health` answered `{"status":"ok"}` |
+
+CI was not run or polled from here. Lighthouse was not run.
+
+### Risks and follow-ups
+
+- The `tenantJobs` and `jobs` / `schedules` worker hooks do the same kind of thing in two ways; they coexist now.
+- `.env.example` still lacks `CLAMAV_HOST` and the scanner variables stay in `main/config-scanner.ts` (documents deviation 7); `.env` files were off limits for this run.
+- `encounter_id` still has no foreign key: it arrives with the clinical merge (the next migration number is 0031 or later; the clinical and onboarding branches renumber at their merges).
+- The e2e stack still has an in-memory storage whose upload URL a browser cannot reach and does not run the document jobs, so there is no Playwright spec for documents (documents deviation 13).
+- Migration 0030 takes a short exclusive lock on `appointment` and `document` (it lifts and restores FORCE ROW LEVEL SECURITY). Harmless before the first deployment; plan it for a quiet moment afterwards.
+
+## Stage 2 integration 2: clinical, onboarding and the plan, then the close of Stage 2 (S2.31 to S2.33)
+
+Three finished branches were merged into `feat/stage-2-practice-core` (tip before: `8287601`) with `git merge --no-ff`, in this order, and then Part B (S2.31 to S2.33, adapted local-first) was built on top. The per-track reports stay as they are and hold the detail of each track: `apply-progress-stage2-clinical.md` (S2.17 to S2.24, decision D20 and the security review fixes), `apply-progress-stage2-onboarding.md` (S2.29, S2.30), `apply-progress-stage2-documents.md` and `apply-progress-stage2-schedfix.md` (merged in integration 1). Mode: automatic, strict TDD for new behavior, `size:exception` (work-unit commits, no merge to main, CI not polled).
+
+### What was merged
+
+| Order | Branch                                                        | Merge commit | Notes                                                                                                                                                                                                       |
+| ----- | ------------------------------------------------------------- | ------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1     | `feat/stage-2-clinical` (`2192bc9`, based on the Stage 1 tip) | `071beba`    | Textual conflicts in `_journal.json`, `application.ts`, `export-contributors.ts`, `definer-functions.test.ts`, `demo-seed.test.ts`, `seed.ts`, `router.tsx`, `PatientDetailPage.tsx` and `translate.ts`      |
+| 2     | `feat/stage-2-onboarding` (`b6bcc8e`, based on `28ba4cf`)     | `6d7f780`    | Conflicts in `_journal.json`, `application.ts`, `export-contributors.ts`, `router.tsx`, `translate.ts`, `docs/demo.md`, `playwright.config.ts` and `e2e/support/stack.ts`                                   |
+| 3     | `docs/refine-stages-3-6` (`32ff16f`, docs only)               | `a27a5e5`    | No conflict: it only touches `tasks.md`; git merged the Stage 3 to 6 detail with the Stage 0 to 2 checkbox states of this branch (258 checked tasks before and after)                                       |
+
+### Conflict resolutions
+
+- `migrations/meta/_journal.json`: this branch's entries up to idx 30, then the new ones appended with strictly increasing `when` (see the sequence below).
+- `main/application.ts`: `createScheduling`, `createDocuments`, `createClinical` and `createOnboarding` are all built, and `scheduling.routes`, `documents.routes`, `clinical.routes`, `onboarding.routes` are all registered; the options keep both `clinical` and `onboardingCapabilities`.
+- `export-contributors.ts`, `definer-functions.test.ts`, `demo-seed.test.ts`, `seed.ts`: both sides kept (the clinical notes step now follows the agenda step in the seed).
+- `router.tsx`: the scheduling routes (`/calendar`, `/today`, `/check-in`, `/worklist`), the clinical routes (`/notes/$noteId`, `/encounters/new`, `/drafts`) and the onboarding wizard guard.
+- `PatientDetailPage.tsx`: the "Documentos" tab and the "Historia clínica" (`chart`) tab both exist; `TabId` has both.
+- `web/shared/lib/translate.ts` (git sees it as binary because of the NUL in the `MISSING` sentinel): took this branch's version and added the `clinical` and `onboarding` namespaces; the NUL is preserved.
+- `playwright.config.ts` and `e2e/support/stack.ts`: both tracks added `E2E_WEB_PORT`/`E2E_API_PORT`; kept one copy.
+- `roles.test.ts` merged cleanly but was wrong: `GRANTABLE` has 7 entries, not 6 (found by running the test, then fixed).
+
+### Migrations: one linear sequence
+
+0000 to 0030 are untouched (`git diff` on them is empty).
+
+| File                     | Journal idx | `when`        | Origin                                                                  |
+| ------------------------ | ----------- | ------------- | ----------------------------------------------------------------------- |
+| `0031_clinical`          | 31          | 1792227200000 | clinical `0060_clinical` (renumbered, SQL unchanged apart from a comment) |
+| `0032_clinical_triggers` | 32          | 1792227201000 | clinical `0061_clinical_triggers` (renumbered)                          |
+| `0033_clinical_d20`      | 33          | 1792227202000 | clinical `0062_clinical_d20` (renumbered)                               |
+| `0034_encounter_links`   | 34          | 1792227670766 | NEW: composite foreign keys and the encounter guard (see D20 wiring)    |
+| `0035_onboarding_state`  | 35          | 1792227671766 | onboarding `0070_onboarding_state` (renumbered)                         |
+
+Snapshots: the track snapshots described their own base, so each one was rebuilt on this branch's chain: the difference between the track's snapshot and the one before it (tables that changed or were added) was applied on top of the previous snapshot of this chain, with a new `id` and `prevId` set to the previous `id`. `0034_snapshot.json` was generated by drizzle-kit. Checks: the journal `idx` are sequential, the `when` values strictly increase, the `prevId` chain is unbroken over 36 snapshots, and `pnpm db:check` reports "No migration drift."
+
+### D20 wiring (strict TDD)
+
+Both modules are in one application now, so the clinical module no longer receives a test double for the agenda:
+
+- `scheduling.findCareSourceAppointment(tx, id)` (new, `application/care-source.ts`) is the port the composition root hands to `createClinical` (`options.clinical.appointments` is kept only as a test override). `open()` refuses, with a 403 and a deny audit entry naming the patient: an unknown appointment, or one of another patient or professional, or a cancelled or pending-approval one (`appointment_mismatch`), and one whose identity nobody confirmed (`appointment_identity_unconfirmed`, new). The care relationship itself needed no change: the scheduling trigger already feeds `care_relationship` from appointments with confirmed identity, and both the service and `encounter_guard` read `is_treating`, so an appointment with confirmed identity is a valid source and an unconfirmed one is not.
+- Migration `0034_encounter_links`: composite FK `encounter (tenant_id, appointment_id)` to `appointment`, composite FK `document (tenant_id, encounter_id)` to `encounter`, and `encounter_guard` replaced: for a named appointment it needs the same patient and professional (otherwise 23503, like the note guard for a parent that does not match, which keeps the generated isolation suite meaningful) and a confirmed identity and a counting status (otherwise 42501). The gotcha of integration 1 applies: FORCE row level security is lifted on `document`, `encounter` and `appointment` for the length of the `ADD CONSTRAINT` statements and put back, inside the migration transaction.
+- RED then GREEN: `clinical-appointments.test.ts` (8 cases) failed first with 5 of 8 red (the unconfirmed appointment was accepted, the foreign key did not exist, the encounter linked to a stranger's appointment). It covers the three cases asked for: confirmed identity then open is allowed (with and without naming the appointment, and the encounter carries the appointment); an unconfirmed booking (the professional booking themselves) is refused with a 403 and the deny audit, and it is allowed once reception confirms the identity at check-in; another professional's appointment is refused. Plus the database: the guard rejects another professional's or another patient's appointment (23503) and an unconfirmed one (42501), and the two foreign keys exist.
+- Tests adapted to the FK: the fake `AppointmentLookup` maps in `clinical-notes-api` and `clinical-encounter-access` are gone (random appointment ids can no longer be inserted); the `encounter` and `document` fixtures honor the new overrides; `clinical-schema` and `documents-schema` assert the foreign keys.
+- UI, the "Iniciar consulta" entry point. For the appointment's own professional (clinical write permission, confirmed identity, not read-only), `domain/consultation.ts` decides: a patient "En sala" gets the existing call-in button, which now also opens `/encounters/new?patientId=&appointmentId=` after the appointment moves to "En consulta"; an appointment in progress gets a link to the same page. Both in the drawer (agenda) and in "Hoy" (`StartConsultation`). Everyone else sees the unchanged buttons. The new-encounter page loads the appointment, shows "Turno: type", ties the encounter to it and starts the reason of the note from the type of the appointment (general and odontology templates); an appointment of another patient in the address is dropped with a message. Tests first for each: drawer (a table of who is offered it), Today (link and navigation), chart (prefill and foreign appointment).
+- The demo seed opens its consultations from appointments (see S2.31).
+
+### D21, the authorization spec and the onboarding link
+
+- `GRANTABLE` has 7: `scheduling.override_hours`, `scheduling.override_hold`, `scheduling.register_past`, `scheduling.delegated_calendar`, `cash.operate`, `patients.administer`, `onboarding.manage`. `design.md` (grantable toggles table) and the authorization spec (grantable requirement and a scenario: running the first run needs its own permission; an admin holds it only by grant) were updated.
+- Decision D21 (orchestrator, pending owner confirmation) is in `proposal.md` (new section "Stage 2 integration: decisions D20 and D21", which also records D20): during the first-run wizard an active owner may add the `professional` role to themselves exactly once, audited as `role.changed` with `via: onboarding`; the path closes when the wizard finishes. The authorization spec's "No self-assignment" requirement has the exception and a scenario; the tenant-onboarding spec's initial-roles requirement states the narrow path and a scenario for the closing. The code already behaved this way (the onboarding track tests it); nothing was changed in it.
+- The clinical-records spec got the two new scenarios (identity unconfirmed, identity confirmed) and the extended requirement.
+- "Ir a la agenda" and the checklist item "first appointment" link to `/calendar`, which is the real scheduling route (`router.tsx`). A new test, `app/onboarding-links.test.ts`, keeps every address the first run links to (`/calendar`, `/patients/new`, `/onboarding` and each `CHECKLIST_LINKS` entry) a route of the application. `MeResponse.needsWizard` is required and every builder compiles (typecheck is the proof; `meFor` sets it).
+
+### S2.31: Stage 2 end to end and demo data
+
+- **2.94 Demo seed** (`db/seed/demo/stage2.ts`, `seed.ts`, `snapshot.ts`, `reset.ts`): after the agenda and the first notes, the cardiologist and the pediatrician open encounters FROM the attended and in-progress appointments (D20), write and sign the notes (one visit stays in progress with its note as a draft, one signed note gets an addendum); then eight documents go through the real upload service, a direct put to the quarantine key (the browser's part) and the real scan job with the fake scanner: three administrative by reception, four clinical by the professionals attached to a visit (one linked to the encounter and the appointment) and one EICAR file that shows a rejection. The seed takes an optional `documents: { storage, scanner }`; the CLI `demo:seed`/`demo:reset` and the deployed reset pass the S3 storage when `S3_BUCKET` is set. `NO_SEED_DATA.document` is removed and `demo-coverage` proves every table has data. The reset removes the files from the bucket after the database reset succeeds and stores new ones (test: another organization's objects are untouched).
+- **2.95 e2e**: the Playwright stack (`scripts/stack/start-stack.ts`) now starts MinIO (fixed host port through `--minio-port`/`E2E_MINIO_PORT`, because the web's Content Security Policy must name the storage origin: `CSP_CONNECT_SOURCES`), the queue client of the API and the worker with the document jobs and hold expiry. `stage2-solo.spec.ts` (360 px): the operator creates the organization, the owner takes the invitation from Mailpit, signs in, uses the quick setup, registers the first patient and books the first appointment; the time from the first sign-in is recorded as an annotation (5.2 seconds in the final run, budget 10 minutes). `stage2-center.spec.ts`: reception registers, books, confirms and checks in; the cardiologist calls the patient in from the agenda, the encounter opens tied to the appointment with the reason prefilled, writes, signs, adds an addendum, finishes the visit, uploads a lab result (scanned by the worker, shown "Disponible", downloaded) and the EICAR file (refused with its reason, no download button); reception does not see the clinical documents and uploads an identity copy; the API refuses reception the signed note; the owner of the demo organization is not sent to the wizard. Axe runs on every new screen. `calendar.day.spec.ts` follows the new call-in behavior.
+- **A real defect found by the journey and fixed test-first**: `DocumentsTab` rendered the dialogs as siblings after a body that changes between the empty state and the list, so when the first uploaded file turned the empty list into a list, React rebuilt the upload dialog and the person lost the summary. A component test that makes the list go from empty to non-empty failed first; the dialogs now follow the body at a fixed position.
+- **2.96 Reset timing with Stage 2 data**: `demo reset took 4,749 ms` (budget 30 s in CI, requirement 60 s), with the agenda, the consultations and the documents; the same run proves the logical content equal to a first seed.
+- **2.97 Benchmark**: `pnpm --filter @consultorio/api bench:clinical`; `docs/perf/clinical-readable.md`. With 102,000 notes a patient's chart answers in 1.0 ms at p95 with the policies on (0.8 ms without), the drafts in 0.8 ms and a 2,000-entry chart in 25.7 ms; the plan is an index scan on the existing index. No index change was needed.
+
+### S2.32: delivery pipeline and backups (local-first)
+
+- **2.99** `pnpm backup:local` (`backup`, `verify`, `restore`; `apps/api/scripts/backup/`): a custom-format `pg_dump` run inside the database container, a checksummed copy of the bucket through the S3 API, a manifest written last; `verify`/`restore` refuse a changed backup before creating anything; a restore only ever creates a NEW database (an existing name is refused) and puts the objects in the named bucket. Tests: `manifest.test.ts` (5, unit) and `backup-restore.test.ts` (3, integration on throwaway Postgres and MinIO: isolation across two organizations on the restored copy, the same FORCE row level security and policies as the source, the PDF byte for byte, refusal over an existing database and of a tampered dump). It was also run for real against the compose services on private ports (`demo:seed` with a bucket, backup, verify, restore into `consultorio_restore` with 26 patients, 8 documents and 17 notes, the refusal over `consultorio`), then torn down. `docs/runbooks/backup-restore.md` has the production design (PITR, weekly dump, the KEK that must be escrowed apart) and the quarterly drill checklist.
+- **2.98 deferred (owner action)**: the cloud account, region (Q1), registry and the GitHub environments do not exist, so no workflow was written that could not run. `docs/runbooks/deploy.md` records what is ready (image, smoke test, migrations as a one-off) and what the owner must provide. Nothing depends on it.
+
+### S2.33: Stage 2 gate
+
+| Item                                                                                                                | Result                                                                                                                                                                                                                                                                                                                                                                                                           |
+| ------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Everything the gate defines (typecheck, lint, format, unit, integration, build, db:check, e2e, Docker image, smoke) | Green, see "Verification"                                                                                                                                                                                                                                                                                                                                                                                        |
+| 2.100 fresh-context review (`judgment-day`)                                                                         | **Not done by the executor** (an executor cannot open a fresh context). While integrating, the three areas were re-read and these were found and fixed: an encounter could name an appointment that did not exist or belonged to someone else (no foreign key, no guard), an unconfirmed appointment was not refused, the upload dialog defect and the stale `GRANTABLE` test. The independent review stays for the orchestrator to launch; its report goes in the PR |
+| 2.101 `docs/legacy-parity.md`                                                                                       | Written; the owner's sign-off is pending                                                                                                                                                                                                                                                                                                                                                                         |
+| Success: a solo professional books a first appointment within 10 minutes                                            | Met and automated: `stage2-solo.spec.ts`, 5.2 s of automation at 360 px                                                                                                                                                                                                                                                                                                                                          |
+| Success: a center runs a full day                                                                                   | Met and automated: `stage2-center.spec.ts` (three roles; scheduling, clinical, documents), plus `calendar.day.spec.ts`                                                                                                                                                                                                                                                                                            |
+| Success: reception books an existing patient in 30 s or less                                                        | `calendar.booking.spec.ts` (6 actions, 30 s) passes                                                                                                                                                                                                                                                                                                                                                              |
+| Success: usable at 360 px, installable PWA                                                                          | `*.responsive.spec.ts` and `pwa.spec.ts` pass, axe on every journey                                                                                                                                                                                                                                                                                                                                              |
+| Success: p75 load under 2.5 s on 4G                                                                                 | NOT verified locally: Lighthouse CI cannot start Chrome on this Windows machine (`spawn UNKNOWN` from chrome-launcher, also with the Playwright Chromium); it is a CI job and stays unverified here                                                                                                                                                                                                              |
+| Success: 100% of clinical reads and writes audited, no signed entry editable, a non-clinical admin denied           | The clinical, audit-scenario and access suites pass (`clinical-*`, `audit-scenarios`)                                                                                                                                                                                                                                                                                                                            |
+| Success: the demo resets in under a minute with data in every module                                                | 4.7 s with Stage 2 data; `demo-coverage`                                                                                                                                                                                                                                                                                                                                                                         |
+| Success: legacy archived or removed                                                                                 | N/A in this repository (tasks 2.102 and 2.103); the parity document is written                                                                                                                                                                                                                                                                                                                                   |
+
+### Verification
+
+Node v24.22.0, pnpm 10.34.7 via corepack, Docker Desktop shared with other projects (their containers were not touched).
+
+| Command                                                                         | After Part A (merges, D20, D21)                          | After Part B (tip of the branch)                                                   |
+| ------------------------------------------------------------------------------- | -------------------------------------------------------- | ---------------------------------------------------------------------------------- |
+| `corepack pnpm install --frozen-lockfile`                                       | exit 0                                                   | exit 0                                                                             |
+| `typecheck` / `lint` / `format:check`                                           | exit 0                                                   | exit 0                                                                             |
+| `corepack pnpm test`                                                            | 228 files, 2,984 tests passed                            | **229 files, 2,990 tests passed**                                                  |
+| `corepack pnpm test:integration`                                                | 117 files, 1,805 passed, 4 skipped (the slow ClamAV suite) | **118 files, 1,811 passed, 4 skipped**                                           |
+| `corepack pnpm build`                                                           | exit 0                                                   | exit 0                                                                             |
+| `corepack pnpm db:check`                                                        | No migration drift                                       | No migration drift                                                                 |
+| `test:e2e` (fresh stack, private ports, `--workers=3`)                          | 168 passed (ports 3410/4410)                             | **170 passed, 0 flaky** (ports 3430/4430, MinIO 9430)                              |
+| Docker build and smoke (`/health`, production configuration of the CI smoke test) | built, `{"status":"ok"}` (private port)                  | built, `{"status":"ok"}` (private port)                                            |
+| `pnpm demo:stack` and sign-in                                                   | started, signed in as the owner                          | started (MinIO on 9100), signed in as the cardiologist; stopped by the PID I started, containers gone |
+
+No test needed a re-run for an infrastructure reason in the final runs. CI was not run or polled.
+
+### TDD cycle evidence (new behavior)
+
+| Task                        | Test                                                  | RED                                                                                                             | GREEN                                                  |
+| --------------------------- | ----------------------------------------------------- | --------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------ |
+| D20 appointment source      | `clinical-appointments.test.ts`                       | 5 of 8 failed (no FK, no identity check, a stranger's appointment accepted)                                    | 8 of 8 after migration 0034, the lookup and the rule   |
+| "Iniciar consulta"          | `appointment-drawer.test.tsx`, `today-page.test.tsx`  | 3 failed (no link, no navigation)                                                                               | green after `StartConsultation`                        |
+| Prefill from the appointment | `clinical-chart.test.tsx`                            | 2 failed                                                                                                        | green after `NewEncounterPage`/`NewEncounterForm`      |
+| Onboarding links            | `onboarding-links.test.ts`                            | a guard for an existing property: it passed at once                                                             | n/a                                                    |
+| Grantable list              | `roles.test.ts`                                       | failed (7 is not 6)                                                                                             | green                                                  |
+| Demo documents              | `demo-coverage` (entry removed), `demo-seed` (2 tests) | coverage failed: `document` has no data and no reason                                                          | green after `stage2.ts`                                |
+| Reset takes the files out   | `demo-reset.test.ts`                                  | failed (14 objects instead of 7)                                                                                | green after the reset change                           |
+| Upload dialog defect        | `documents.test.tsx`                                  | failed (summary lost)                                                                                           | green after the fix                                    |
+| Backup and restore          | `manifest.test.ts`, `backup-restore.test.ts`          | **deviation**: the library was written before its tests (tooling); both passed at their first run and the drill was repeated for real on compose | green                          |
+| Benchmark                   | script                                                | n/a (a measurement tool, checked at 5,000 and at 102,000 notes)                                                 | n/a                                                    |
+
+### Deviations and decisions
+
+1. The snapshot chain was rebuilt from each track's delta rather than regenerated, because drizzle-kit can only describe the current schema; the final `db:check` proves the last snapshot equals the schema.
+2. The `AppointmentLookup` port now returns `identityConfirmed` and `counts`; the "unconfirmed" refusal is a separate reason from "mismatch" so the deny audit tells them apart. Opening an encounter WITHOUT naming the appointment for a patient with no clinical footprint and no relationship is still allowed under D20 (a brand-new patient); naming an unconfirmed appointment is refused. Closing that gap would be a product decision for the owner.
+3. "Iniciar consulta" turns the call-in button of a professional into call-in plus navigation; reception and other roles keep the old button. The label stays "Iniciar consulta" because existing tests and the demo script use it.
+4. The Playwright stack fixes the MinIO host port (default 9190 for the suite, 9100 for `demo:stack`) because the web build names the origin in its CSP; two runs on one machine need different `E2E_MINIO_PORT`.
+5. The e2e stack is heavier (one more container, the worker with the document jobs); a run takes about 2.5 minutes with three workers.
+6. `.gitignore` gained `/backups/`.
+
+### Risks and follow-ups
+
+- 2.100 (independent review) and the owner's sign-off of the legacy parity are open; D20 and D21 need the owner's confirmation.
+- Lighthouse CI was not run here (see the gate table).
+- The deployed demo reset now writes files to the real bucket under the demo organization's prefix with the fake scanner; confirm that is wanted when the demo is first deployed.
+- Production still requires ClamAV with a bucket; the fake scanner is for development and the demo only.
+- Migration 0034 takes a short exclusive lock on `document`, `encounter` and `appointment` (FORCE row level security is lifted and restored); plan it for a quiet moment after the first deployment, like 0030.
+- The `tenantJobs` and `jobs`/`schedules` worker hooks still coexist (integration 1).
+- CI never ran on this branch.
+
+### Local run and demo (updated)
+
+```bash
+corepack pnpm install --frozen-lockfile
+# the demo in one terminal (Docker is the only requirement); the banner prints the exact command for the web app
+pnpm demo:stack
+# in a second terminal:
+CSP_CONNECT_SOURCES=http://localhost:9100 API_PROXY_TARGET=http://127.0.0.1:3000 pnpm --filter @consultorio/web dev
+# open http://aillu.localhost:5173   (password for every account: Demo-Aillu-2026-clave)
+#   propietaria@ administracion@ recepcion@ recepcion.norte@ cardiologia@ pediatria@ psicologia@  (all @demo.invalid)
+# mail: the Mailpit address in the banner; platform console: http://platform.localhost:5173 (operator in the banner)
+
+# your own data (survives restarts): pnpm infra:up; pnpm --filter @consultorio/api db:migrate; pnpm demo:seed; pnpm dev
+# (with S3_BUCKET set, demo:seed also uploads and scans the demo documents)
+
+pnpm backup:local                                   # back up the local database and bucket
+pnpm backup:local verify backups/<folder>
+pnpm backup:local restore backups/<folder> --into consultorio_restore --bucket consultorio-restore
+pnpm --filter @consultorio/api bench:clinical       # the clinical RLS benchmark (100,000 notes)
+
+# the browser suite, on private ports when another run holds the defaults
+cd apps/web && pnpm exec vite build
+E2E_WEB_PORT=4310 E2E_API_PORT=3310 E2E_MINIO_PORT=9310 pnpm exec playwright test --workers=3
+```
+
+A good path to show: `docs/demo.md`, item 5 "A day in the center".
+
+## Judgment Day Stage 2, round 1
+
+Two blind judges reviewed the Stage 2 branch (target `363aadd`). The findings confirmed by both (C1 to C9) and the ones raised by one judge (S1 to S10) were fixed in `feat/stage-2-practice-core` (tip before: `38ae16c`) with strict TDD: a failing test first, then the fix, one `fix(...)` commit per finding id (`JD-S2 <id>` in the message). Every suspect item was reproduced with a failing test before it was fixed, and every one of them reproduced, so none was left unfixed. Migrations 0000 to 0035 are untouched (SQL), except the comment of S10 in 0031 (see below). The new ones are 0036 to 0041, generated with `drizzle-kit generate --custom`: sequential `idx`, strictly increasing `when`, unbroken `prevId` chain, and `db:check` reports "No migration drift."
+
+### What was fixed
+
+| Id  | Fix                                                                                                                                                                                                                                                                                                                                                              | Test (RED, then GREEN)                                                                                                                                      |
+| --- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| C1  | `rescheduleAppointment` resets `identity_confirmed` (and by/confirmation) when the professional changes to the actor's OWN profile, opens an `identity_review`, and flags `identityReset` in the history event and the audit entry. Covers a reception+professional user and a delegated calendar.                                                                | `lifecycle.test.ts` "reassigning a confirmed appointment" (3 RED); `scheduling-identity.test.ts` (the actor gets no care relationship)                      |
+| C2  | Hide and reclassify of a CLINICAL document need authorship or a care relationship (both directions). Migration 0036 repeats it in `guard_document` for any change of `classification` away from clinical.                                                                                                                                                         | `documents-lifecycle.test.ts` "a colleague who reads a clinical document only through sharing" (2 RED: the API and direct SQL)                              |
+| C3  | Migration 0037: triggers on `document` (insert as clinical, reclassify to clinical) call the existing `app.clinical_footprint_mark()`, plus a backfill. The note service reads the same database function, so the application agrees with the database.                                                                                                            | `documents-schema.test.ts` "a clinical document leaves a clinical footprint" (2 RED)                                                                        |
+| C4  | The clinical documents export selects by `author_professional_id = me OR patient in treated`, like the notes exporter.                                                                                                                                                                                                                                           | `documents-export.test.ts` (RED: the author's document of an untreated patient was missing)                                                                 |
+| C5  | `ObjectStorage.get` returns the `etag`; `move` takes `{ ifMatch }` (S3 `CopySourceIfMatch`, a digest in the fake) and throws `ObjectChangedError` for another object. The scan moves only the scanned object, scans again on a change, and checks the sha256 of the released object.                                                                              | `storage-contract.ts` (fake AND MinIO); `documents-scan.test.ts` "a file replaced between the scan and the release" (RED: the infected file was released)   |
+| C6  | Upload `encounterId`: looked up in the caller's RLS scope, same patient, author or treating, otherwise `not_found` (it was a 500).                                                                                                                                                                                                                               | `documents-uploads.test.ts` (RED: 500)                                                                                                                      |
+| C7  | `correctStatus`: the appointment's own professional cannot put a cancelled appointment back into a care-counting status (`scheduled`, `confirmed`, `checked_in`, `in_progress`, `attended`, and `no_show`, which also counts). Another member with `scheduling.checkin` revives it, flagged `revivedFromCancelled` in the history and the audit entry.             | `lifecycle.test.ts` "reviving a cancelled appointment" (7 RED); `scheduling-lifecycle.test.ts`                                                              |
+| C8  | `app.lock_first_encounter(patient)`, an advisory transaction lock by organization and patient, in the `encounter_guard` trigger (migration 0038) and in `notes.open`; taken only when the author does not already treat the patient.                                                                                                                              | `clinical-encounter-access.test.ts` "serialized" (RED: the second professional got in after the first committed); a concurrent HTTP test                    |
+| C9  | Migration 0039 marks the wizard finished for non-demo organizations that have staff or a professional. The application closes the self-added professional role 30 days after the organization was created (`isSelfRoleOpen`).                                                                                                                                    | `onboarding-api.test.ts` (30 days, RED); `onboarding-schema.test.ts` (runs the migration SQL in a rolled-back transaction)                                  |
+| S1  | `Actor.ownProfessionalId` and `BookActor.ownProfessionalId`: the member's profile whatever its state. Every D14 decision (booking, confirm, detach, check-in, C1, C7) uses it. A failed profile lookup now rejects the request instead of answering "none". The clinical gate (`professionalId`) is unchanged.                                                     | `professional-gate.test.ts`, `guard.test.ts`, `identity.test.ts` "D14 does not depend on the clinical gate" (4 RED)                                         |
+| S2  | Migration 0040: the lane capacity check runs when an occupancy is inserted, becomes active again, or changes lane or professional. An active appointment that stays put keeps its lane (the second option of the finding).                                                                                                                                        | `scheduling-schema.test.ts` (RED: raw 23514)                                                                                                                |
+| S3  | `detachPatient` with `move_to_patient`: `fromPatientId` and `toPatientId` in the history event and the audit entry, and an `appointment.identity.confirmed` entry (`viaDetach`) for the new record. The route declares the new audit action.                                                                                                                      | `identity.test.ts`; `scheduling-identity.test.ts`                                                                                                           |
+| S4  | Local restore: `--bucket` is required, cannot be the live bucket or the one the backup came from, and the bucket must be new or empty. All of it is checked before the database is created. The runbook says so.                                                                                                                                                 | `backup-restore.test.ts` (RED: it restored into the live bucket)                                                                                            |
+| S5  | The platform catalog reader filters `removed_at`.                                                                                                                                                                                                                                                                                                                | `platform-catalogs.test.ts` (RED)                                                                                                                           |
+| S6  | `GET /appointments/:id` and its history answer `not_found` (not 403) outside the viewer's calendars and locations.                                                                                                                                                                                                                                               | `scheduling-scope.test.ts` (RED); `scheduling-calendar.test.ts` updated                                                                                     |
+| S7  | Migration 0041: restrictive `clinical_professionals_only` policy (FOR SELECT, the owner role is let through for the definer triggers) on `clinical_footprint`. The isolation fixtures read it as a professional.                                                                                                                                                  | `clinical-schema.test.ts` (2 RED)                                                                                                                           |
+| S8  | A `pending_approval` item refuses a plain resolve or dismiss (409) and is no longer offered those actions. Approving the appointment resolves it (`approved`); cancelling it already dismissed it.                                                                                                                                                               | `scheduling-worklist.test.ts` (3 RED)                                                                                                                       |
+| S9  | `weeklyOccurrences`: the end of each occurrence is the shifted start plus the length of the block.                                                                                                                                                                                                                                                               | `blocks.test.ts` (RED: equal start and end in the skipped hour)                                                                                             |
+| S10 | Comment only in `0031_clinical.sql` (0061 to 0032). The same stale numbers in the `schema/clinical.ts` and `schema/documents.ts` comments were corrected too. Drizzle does not verify the SQL hash of an applied migration (it compares the timestamp) and the snapshots do not hold it, so nothing needed to be skipped; `db:check` still reports no drift.         | `db:check`; the whole integration suite migrates from zero                                                                                                  |
+
+### Decisions and deviations
+
+1. C7 includes `no_show` among the blocked statuses (it also counts for the care relationship in the trigger of migration 0028). Reviving a cancelled appointment straight into `in_progress` or `attended` is therefore possible for nobody: the own professional is refused by C7 and anybody else by the existing clinical rule. Another member revives it to `scheduled` (or `checked_in`), and it then progresses normally.
+2. S6 covers the two reads named in the finding. The WRITE routes (`confirm`, `check-in`, `cancel`, `reschedule`, `correct`, ...) still answer 403 for a colleague's appointment and 404 for an unknown id, so they tell the same fact; they were not in the finding and their tests expect 403. The refusal of the two reads is no longer in the audit trail (a not found writes nothing). See the follow-ups.
+3. C2: the database backstop covers the change of `classification`, as asked. Hiding a clinical document is enforced by the use case only.
+4. C8 takes the lock only when the author does not already treat the patient, so the common path adds no contention.
+5. C3 marks the footprint when the document row is written, not when the upload is confirmed, so an abandoned or rejected upload of a clinical document leaves it too. The footprint is a one-way "somebody started this record" marker.
+6. S2 chose "check the capacity where an appointment is placed" over refusing the lowering: a lane-2 appointment of the past, or one that cannot be moved, would otherwise still break on a status change.
+7. S7: an `INSERT ... ON CONFLICT` evaluates the reading policies, so the policy lets the owner role (`current_user = 'app_owner'`, the role of the definer triggers) through, like `document_classification` does. The runtime role reads the footprint only as a professional.
+8. `ObjectStorage.get` returns an `etag`; the logo service (it returns a derived PNG) is typed without it.
+
+### Verification
+
+Node v24.22.0, pnpm via corepack, Docker Desktop shared with other projects (their containers were not touched; the containers the browser suite started were removed by their own cleanup).
+
+| Command                                                      | Result                                                                                                                                                                                                      |
+| ------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `typecheck` / `lint` / `format:check`                        | exit 0                                                                                                                                                                                                      |
+| `corepack pnpm test`                                         | **230 files, 3,022 tests passed**                                                                                                                                                                           |
+| `corepack pnpm test:integration`                             | 119 files: 117 passed, 1 skipped (the slow ClamAV suite), **1 failed: `documents-scan.test.ts`**; see the note below. 1,833 tests passed, 4 skipped                                                       |
+| `documents-scan.test.ts` + `definer-functions.test.ts` alone | re-run on its own after the failure: 26 of 26 passed (`documents-scan` alone: 21 of 21, twice)                                                                                                              |
+| `corepack pnpm build`                                        | exit 0                                                                                                                                                                                                      |
+| `corepack pnpm db:check`                                     | No migration drift                                                                                                                                                                                          |
+| `test:e2e` (fresh stack, private ports 4471/3471/9471, `--workers=3`) | **170 passed**, 0 flaky                                                                                                                                                                         |
+
+The one integration failure looks like a clock skew, not a defect of this round: "raises an alert once the document has waited more than an hour" sets `upload_completed_at = now() - 61 minutes` in the database container and reads the wait with the host clock, and the wait came out as 60 minutes (`expected 60 to be greater than or equal to 61`), which fits a container clock a little behind the host. That test leaves the fake scanner switched off when it fails, so the three tests after it in the file (including the new C5 test) failed as a consequence. The same file passes on its own. CI was not run or polled.
+
+### Follow-ups (INFO items of the review, not fixed in this round)
+
+- `cancelledBy: 'patient'` is client-asserted in a read-only organization (A10).
+- Audit gaps on shared document reads and on reception metadata (A12).
+- The fake scanner is allowed outside production (A14).
+- No quota on unconfirmed uploads (A15).
+- Backup consistency, encryption and path checks (A16).
+- No database guard on identity transitions or on clinical document insert (B12).
+- Overlap race of hours periods (B15).
+- New from this round: the write routes of an appointment still tell "exists in a colleague's calendar" (403) from "does not exist" (404) (decision 2).
+
+## Judgment Day Stage 2, round 2
+
+Second round of the adversarial review of Stage 2, applied on top of `e3b5016`. Each fix is its own `fix(...)` commit tagged "JD-S2 R2-<id>"; every one started with a failing test.
+
+### What was fixed
+
+| Id    | Fix                                                                                                                                                                                                                                                                                                                                                       | Test                                                                                                                                                                                                                      |
+| ----- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| R2-C1 | `weeklyOccurrences` (S9 regression): the end of each occurrence keeps its own local time (`addLocalDays(zone, end, 7 * week)`), so an all-day, an overnight and a Friday-to-Monday block end where they should across a daylight saving change. The length of the first occurrence is used only when the shifted end is not after the shifted start (the skipped hour). | `blocks.test.ts`: all-day across the spring and the fall change, overnight 22:00-06:00 across both, Friday 18:00 to Monday 08:00 (America/New_York; 5 RED). The S9 and "keeps the local hour" tests still pass                |
+| R2-C2 | Migration 0042 replaces `app.guard_document()`: moving a clinical document to `hidden` needs `app.professional_id` to be the author or to treat the patient. No exception for the system user. Every earlier check is kept.                                                                                                                                | `documents-lifecycle.test.ts` "is refused by the database too: hiding a clinical document ..." (RED: a colleague who reads it through sharing hid it); covers the colleague, the system user and the author                |
+| R2-C3 | `document.rescan_attempts` (migration 0043) counts the rounds in which the quarantined object changed after it was scanned. After `MAX_RESCANS` (5) the next change rejects the upload as `corrupt`, removes the object and raises the existing `document_scan_overdue` alert. `scan_attempts` is untouched (it counts scanner outages, which may be many).    | `documents-scan.test.ts` "gives up after a few scans of a file that keeps changing ..." (RED: stayed quarantined)                                                                                                          |
+| R2-S1 | Reproduced. `viewsOthersCalendar` required a gated `professionalId`, so a delegated look by a member without a recorded matricula was never audited. It now compares with `ownProfessionalId ?? professionalId` and audits every non-administrative look at a calendar that is not the member's own. The feed uses the same function.                         | New `delegated-view.test.ts` (2 RED: gate closed with a profile; no profile at all)                                                                                                                                        |
+| R2-S2 | Reproduced. `resolveProfessionalIds` looks the profile up for every member. `ownProfessionalId` is the profile whatever the roles; `professionalId` (the gate) still needs the professional role, an active profile and a valid matricula.                                                                                                                 | `professional-gate.test.ts` (2 RED); the "does not even look" test now expects one lookup and a null gate                                                                                                                  |
+| R2-S3 | `isSelfRoleOpen` filters the `tenant` row by `current_setting('app.tenant_id')`. Not reproducible as a leak (the `tenant_isolation` policy already limits the table); defense in depth.                                                                                                                                                                   | The onboarding integration suites (no new test: nothing can fail)                                                                                                                                                          |
+
+The flaky `documents-scan.test.ts` "raises an alert ..." now sets `upload_completed_at` from the process clock (the clock the job reads) instead of `now()` in the database container, and the file has an `afterEach` that switches the fake scanner back on, so a failure no longer leaves it off for the tests after it.
+
+### Decisions and deviations
+
+1. R2-C3 adds a column instead of reusing `scan_attempts`: that counter also drives the backoff of scanner outages and can legitimately be high, so a document that waited out an outage would be refused on its first swap.
+2. R2-S2 costs one profile lookup per request for members who do not hold the professional role (owners, admin, reception). A failed lookup rejects those requests too, as it already did for professionals.
+3. R2-C2 uses `OLD.status IS DISTINCT FROM 'hidden'` with `NEW.status = 'hidden'`; the existing transition rule already limits it to `available` to `hidden`.
+4. New runbook: `docs/runbooks/sole-owner-professional-role.md` (see B-W3 below).
+
+### Verification
+
+| Command                                                               | Result                                                                      |
+| --------------------------------------------------------------------- | --------------------------------------------------------------------------- |
+| `typecheck` / `lint` / `format:check`                                 | exit 0                                                                      |
+| `corepack pnpm test`                                                  | **231 files, 3,032 tests passed**                                           |
+| `corepack pnpm test:integration`                                      | 118 files passed, 1 skipped (the slow ClamAV suite); 1,839 tests, 4 skipped |
+| `corepack pnpm build`                                                 | exit 0                                                                      |
+| `corepack pnpm db:check`                                              | No migration drift (journal 0042 and 0043, `when` increasing)               |
+| `test:e2e` (fresh stack, private ports 4481/3481/9481, `--workers=3`) | **170 passed**, 0 flaky                                                      |
+
+CI was not run or polled.
+
+### Follow-ups (INFO items of the review, not fixed in this round)
+
+- A-W3 / B-S4: the semantics of the 0039 backfill (which organizations count as "wizard finished") deserve a second look before the first real organization is migrated.
+- B-W3: a sole owner past 30 days has no self-role path inside the product. The recovery path is in `docs/runbooks/sole-owner-professional-role.md` (invite a second owner, or an operator action with a second reviewer); a reviewed operator script does not exist yet.
+- B-W4: the restore guard compares only the bucket name, not the endpoint or the account behind it.
+- B-S3: a not-found read in another professional's calendar writes no audit entry, and the write routes of an appointment still answer 403 (see decision 2 of round 1).
+
+## Owner decisions D19/D20/D21 (2026-10-17)
+
+The owner of the product reviewed the three decisions the orchestrator took in automatic mode and answered on 2026-10-17. Branch `feat/stage-2-practice-core` (draft PR #15), from tip `e1124f9`. Strict TDD: every behavior below has a test written first (the unit RED runs for the ceiling are in the first commit; the integration suites `professional-added-by-admin.test.ts` and `owner-professional.test.ts` were written before the services and routes they exercise).
+
+### What changed per decision
+
+**D19 (revised).** The owner and the admin bring professionals in; the 7-day review flag stays; the owners are notified; the residual risk is accepted.
+
+- `GRANT_CEILING.admin` now includes `professional` (`packages/contracts/src/roles.ts`). The owner role stays out of an admin's reach in invitations, at invitation acceptance and in role changes.
+- New audit action `professional.added_by_admin` (`via: invitation` or `via: role_grant`, `ownersNotified`). `access/application/professional-notice.ts` writes it inside the transaction of the change and reads the addresses of every active owner. The routes (`PUT /members/:id/roles` and `POST /staff/invitations`) send `renderProfessionalAddedEmail` after the commit. An actor who holds the owner role writes neither. A provider failure is logged and does not undo the change.
+- Web: the invite dialog, the roles tab and the wizard team step offer the professional role to an admin and tell them the owners get an email.
+- `proposal.md` records the accepted residual risk: clinical separation against a malicious admin is audited and notified rather than prevented.
+
+**D20.** Confirmed exactly as implemented. The status in `proposal.md` changed from "pending owner confirmation" to "confirmed by owner 2026-10-17". No code change.
+
+**D21 (revised).** An owner may act as a professional at any time, provided they complete the professional profile.
+
+- `staff/application/owner-professional.ts` adds the role and saves the profile (name, specialty, matricula and jurisdiction) in the caller's transaction, audited as `role.changed` with `via: owner_professional_profile`.
+- New `POST /staff/me/professional` (`OwnerProfessionalRequest` in contracts). The wizard profile step and the fast path use the same service.
+- Removed: `isSelfRoleOpen`, `SELF_ROLE_WINDOW_DAYS`, the `onboarding_role_closed` refusal and their tests. `isWizardCompleted` stays because the wizard gate uses it. Migration 0039 is untouched and nothing depends on the window.
+- Web: an owner "Atender como profesional" form in the Perfil profesional tab, and a shared `MatriculaFields` used by the wizard step, the fast path and that form.
+- The runbook `docs/runbooks/sole-owner-professional-role.md` is removed: it only described the 30-day window.
+- Non-owners still cannot self-assign roles, and an owner still cannot change their own roles through the role-change endpoint (both tested).
+
+### The fast-path choice
+
+The fast path (and the wizard's "yes, I am a professional" step) **requires the matricula and its jurisdiction before the role is active**, instead of granting the role and leaving the matricula as a checklist item. This matches "siempre y cuando llene el perfil de profesional con los datos" and is consistent with D1 (an unverified matricula is enough for clinical work; verification is needed only for e-prescription).
+
+- `FastPathRequest.matricula` is optional in the shape only: an owner who already completed the profile is not asked again. When the fast path has to create the profile and the matricula is missing, nothing is created and the answer is a 400 naming `matricula` (`onboarding.matricula_required`).
+- `ProfessionalStepRequest` (the yes branch) takes a required `MatriculaInput`; `matricula: null` is refused at the contract.
+- A malformed matricula, or one held by another active professional, rolls the whole transaction back: no role, no profile, no audit entry (tested).
+- The checklist item "matricula" stays for professionals added by someone else; the fast-path test no longer lists it as pending.
+- The `tenant-onboarding` "Fast path" requirement changed accordingly (it used to say the short path MUST NOT require the matricula).
+
+### Commits
+
+| Commit    | Message                                                                                                                      |
+| --------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| `35cc614` | feat(authz): admins may invite and grant the professional role, with an audit event and an email to the owners (D19 revised) |
+| `755ac51` | feat(authz): an owner may act as a professional at any time by completing the profile (D21 revised)                          |
+| `3ab0641` | docs(sdd): record owner decisions D19, D20 and D21 in the proposal, specs and design                                         |
+
+### Deviations and risks
+
+1. The notification is sent after the commit and is not retried: a provider outage loses the email, and the audit event remains. Stage 3 `notifications` could take over delivery with an outbox if the owner wants a guarantee.
+2. The owner email goes out when the admin acts (invitation sent, role granted), not when the invitee accepts; an invitation that is never accepted still notifies the owners.
+3. `professional.added_by_admin` is only written when the actor does not hold the owner role. An actor with both the owner and admin roles counts as an owner.
+4. `POST /staff/me/professional` uses the `staff.manage` permission (owner and admin) and lets the service refuse non-owners with an audited denial, because no owner-only permission fits.
+5. The 7-day review flag keys on the creation of the professional profile, so an owner who completes their profile later is flagged for 7 days when reception assigns patients to them. Accepted: it is the same signal as for any new professional.
+6. The first full e2e run had one failure (`stage2-center.spec.ts` waiting for the 10:00 slot, a timeout) that passed alone and passed in the second full run. It looks like contention under three workers and is not related to this change. Both runs are reported.
+7. `test:integration` had one suite-level failure in the first full run (`backup-restore.test.ts`, "socket hang up" while the shared Docker daemon was busy). The file passes alone (4 tests).
+
+### Verification
+
+| Command                                                       | Result                                                                                                                                |
+| ------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
+| `corepack pnpm install --frozen-lockfile`                     | up to date                                                                                                                            |
+| `typecheck` / `lint` / `format:check`                         | exit 0                                                                                                                                |
+| `corepack pnpm test`                                          | **231 files, 3,047 tests passed**                                                                                                     |
+| `corepack pnpm test:integration`                              | 119 files passed, 1 skipped (ClamAV), 1,866 tests; `backup-restore.test.ts` failed once with a Docker socket error and passed alone  |
+| `corepack pnpm build`                                         | exit 0                                                                                                                                |
+| `corepack pnpm db:check`                                      | No migration drift (no new migration)                                                                                                 |
+| `test:e2e` (fresh stack, ports 4590/3590/9590, `--workers=3`) | **170 passed** on the second full run; the first had 169 passed and one timeout in `stage2-center.spec.ts` that passed when run alone |
+
+CI was not run or polled.

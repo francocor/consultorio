@@ -26,7 +26,8 @@ function isStaffRole(role: Role): boolean {
  * - Nobody changes their own roles, up or down.
  * - The target's current roles must be inside what the actor manages (an admin cannot touch an
  *   owner, not even to demote them) and the roles being ADDED inside what the actor hands out
- *   (decision D19: an admin cannot add the professional role, but may keep or remove it).
+ *   (decision D19, revised: an admin may add the professional role, which is audited and tells the
+ *   owners; the owner role stays above the admin ceiling).
  * - An organization always keeps at least one active owner.
  */
 export function evaluateRoleChange(input: RoleChangeInput): RoleChangeVerdict {

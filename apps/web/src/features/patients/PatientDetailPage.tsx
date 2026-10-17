@@ -1,5 +1,5 @@
 import { useQuery } from '@tanstack/react-query';
-import { Link, useParams } from '@tanstack/react-router';
+import { Link, useParams, useSearch } from '@tanstack/react-router';
 import { UserRoundX } from 'lucide-react';
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
@@ -14,6 +14,8 @@ import { EmptyState } from '../../shared/ui/states/empty-state.js';
 import { ErrorState } from '../../shared/ui/states/error-state.js';
 import { DetailSkeleton } from '../../shared/ui/states/loading-skeleton.js';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../../shared/ui/tabs.js';
+import { ChartTab } from '../clinical/components/ChartTab.js';
+import { DocumentsTab } from '../documents/components/DocumentsTab.js';
 
 import { patientKeys, patientsApi } from './api/patients-api.js';
 import { AccessReportTab } from './components/AccessReportTab.js';
@@ -26,7 +28,16 @@ import { HistoryTab } from './components/HistoryTab.js';
 import { fullNameOf, PatientHeader } from './components/PatientHeader.js';
 import { PrivacyTab } from './components/PrivacyTab.js';
 
-type TabId = 'data' | 'coverage' | 'privacy' | 'history' | 'care' | 'anamnesis' | 'access';
+type TabId =
+  | 'data'
+  | 'coverage'
+  | 'privacy'
+  | 'history'
+  | 'care'
+  | 'documents'
+  | 'chart'
+  | 'anamnesis'
+  | 'access';
 
 /** The record of one patient. The address carries the id; everything else loads from it. */
 export function PatientDetailPage() {
@@ -39,11 +50,12 @@ export function PatientDetailPage() {
 }
 
 function PatientRecord({ patientId }: { patientId: string }) {
-  const { t } = useTranslation(['patients', 'common']);
+  const { t } = useTranslation(['patients', 'clinical', 'common']);
   const api = useApi();
   const me = useMe();
   const [editing, setEditing] = useState(false);
-  const [tab, setTab] = useState<TabId>('data');
+  const search: { tab?: 'chart' } = useSearch({ strict: false });
+  const [tab, setTab] = useState<TabId>(search.tab ?? 'data');
 
   const patient = useQuery({
     queryKey: patientKeys.detail(patientId),
@@ -84,7 +96,12 @@ function PatientRecord({ patientId }: { patientId: string }) {
   const canWrite = hasAnyPermission(me.permissions, ['patients.write']);
   const canAdminister = hasAnyPermission(me.permissions, ['patients.administer']);
   const canReadAnamnesis = hasAnyPermission(me.permissions, ['clinical.anamnesis.read']);
+  const canReadChart = hasAnyPermission(me.permissions, ['clinical.note.read']);
+  const canWriteChart = hasAnyPermission(me.permissions, ['clinical.note.write']);
   const canReadAudit = hasAnyPermission(me.permissions, ['audit.read']);
+  const canReadDocuments = hasAnyPermission(me.permissions, ['patients.read']);
+  const canWriteClinicalDocuments = hasAnyPermission(me.permissions, ['clinical.document.write']);
+  const canReadClinicalDocuments = hasAnyPermission(me.permissions, ['clinical.document.read']);
 
   return (
     <div>
@@ -108,6 +125,10 @@ function PatientRecord({ patientId }: { patientId: string }) {
           <TabsTrigger value="privacy">{t('patients:tab.privacy')}</TabsTrigger>
           <TabsTrigger value="history">{t('patients:tab.history')}</TabsTrigger>
           <TabsTrigger value="care">{t('patients:tab.care')}</TabsTrigger>
+          {canReadDocuments ? (
+            <TabsTrigger value="documents">{t('patients:tab.documents')}</TabsTrigger>
+          ) : null}
+          {canReadChart ? <TabsTrigger value="chart">{t('clinical:tab.chart')}</TabsTrigger> : null}
           {canReadAnamnesis ? (
             <TabsTrigger value="anamnesis">{t('patients:tab.anamnesis')}</TabsTrigger>
           ) : null}
@@ -130,6 +151,27 @@ function PatientRecord({ patientId }: { patientId: string }) {
         <TabsContent value="care">
           <CareTab patientId={record.id} canAssign={canAdminister} />
         </TabsContent>
+        {canReadDocuments ? (
+          <TabsContent value="documents">
+            <DocumentsTab
+              patientId={record.id}
+              canWrite={canWrite}
+              canWriteClinical={canWriteClinicalDocuments}
+              canReadClinical={canReadClinicalDocuments}
+            />
+          </TabsContent>
+        ) : null}
+        {canReadChart ? (
+          <TabsContent value="chart">
+            <ChartTab
+              patientId={record.id}
+              canWrite={canWriteChart}
+              onOpenAnamnesis={() => {
+                setTab('anamnesis');
+              }}
+            />
+          </TabsContent>
+        ) : null}
         {canReadAnamnesis ? (
           <TabsContent value="anamnesis">
             <AnamnesisTab patientId={record.id} />

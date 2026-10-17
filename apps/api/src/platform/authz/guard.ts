@@ -8,7 +8,7 @@ import { AppError } from '../http/problem.js';
 import type { Actor } from './actor.js';
 import { can } from './can.js';
 import {
-  deriveProfessionalId,
+  resolveProfessionalIds,
   type MatriculaValidator,
   type ProfessionalRepo,
 } from './professional-gate.js';
@@ -35,6 +35,8 @@ declare module 'fastify' {
 /** The grants (`permission_grant`) of a member. The access module implements it (S1.18). */
 export interface GrantsRepo {
   grantsFor(tenantId: string, membershipId: string): Promise<string[]>;
+  /** The professionals whose calendars the member was delegated (from the grant's scope). */
+  delegatedCalendarsFor?(tenantId: string, membershipId: string): Promise<string[]>;
 }
 
 /** Before the access module there are no grants: roles alone decide. */
@@ -49,9 +51,14 @@ export function createActorLoader(deps: {
   validateMatricula: MatriculaValidator;
 }): ActorLoader {
   return async (session) => {
-    const [grants, professionalId] = await Promise.all([
+    const [grants, delegated, professional] = await Promise.all([
       deps.grants.grantsFor(session.tenantId, session.membershipId).catch(() => []),
-      deriveProfessionalId(
+      (
+        deps.grants.delegatedCalendarsFor?.(session.tenantId, session.membershipId) ??
+        Promise.resolve([])
+      ).catch(() => []),
+      // A failed lookup rejects the request: nobody can say whose appointments are "their own".
+      resolveProfessionalIds(
         { tenantId: session.tenantId, membershipId: session.membershipId, roles: session.roles },
         deps.professionals,
         deps.validateMatricula,
@@ -64,7 +71,9 @@ export function createActorLoader(deps: {
       membershipId: session.membershipId,
       roles: session.roles,
       grants,
-      professionalId,
+      professionalId: professional.professionalId,
+      ownProfessionalId: professional.ownProfessionalId,
+      delegatedProfessionalIds: delegated,
     };
   };
 }

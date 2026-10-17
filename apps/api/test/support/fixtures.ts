@@ -85,14 +85,121 @@ async function insertPatient(tx: Tx, tenantId: string): Promise<string> {
   );
 }
 
+async function insertLocation(tx: Tx, tenantId: string): Promise<string> {
+  return returningId(
+    tx,
+    sql`INSERT INTO location (tenant_id, name, time_zone)
+          VALUES (${tenantId}, ${unique('Location')}, 'America/Argentina/Buenos_Aires')
+          RETURNING id`,
+  );
+}
+
+let appointmentDay = 0;
+/** An appointment on a day of its own, so repeated fixtures never overlap. */
+async function insertAppointmentRow(
+  tx: Tx,
+  tenantId: string,
+  overrides?: Readonly<Record<string, string>>,
+): Promise<string> {
+  appointmentDay += 1;
+  return returningId(
+    tx,
+    sql`INSERT INTO appointment
+          (tenant_id, patient_id, professional_id, location_id, appointment_type_id, starts_at, ends_at, booked_by)
+          VALUES (${tenantId},
+                  ${overrides?.['patient_id'] ?? (await insertPatient(tx, tenantId))},
+                  ${overrides?.['professional_id'] ?? (await insertProfessional(tx, tenantId))},
+                  ${overrides?.['location_id'] ?? (await insertLocation(tx, tenantId))},
+                  ${overrides?.['appointment_type_id'] ?? (await returningId(tx, sql`INSERT INTO appointment_type (tenant_id, name, duration_minutes) VALUES (${tenantId}, ${unique('Consulta')}, 30) RETURNING id`))},
+                  (timestamptz '2031-01-01T10:00:00Z' + ${appointmentDay}::int * interval '1 day'),
+                  (timestamptz '2031-01-01T10:30:00Z' + ${appointmentDay}::int * interval '1 day'),
+                  ${randomUUID()})
+          RETURNING id`,
+  );
+}
+
 /**
  * Tables that hold clinical content. Their rows are only visible to a health professional's
  * transaction, so the isolation suite reads them acting as the professional who wrote them.
  */
-export const CLINICAL_TABLES: ReadonlySet<string> = new Set(['anamnesis']);
+export const CLINICAL_TABLES: ReadonlySet<string> = new Set([
+  'anamnesis',
+  'encounter',
+  'clinical_note',
+  'note_version',
+  'addendum',
+  // No content, but only a professional reads it (JD-S2 S7).
+  'clinical_footprint',
+]);
 
 /** Row id -> professional who authored it, for the clinical fixtures below. */
 export const CLINICAL_AUTHORS = new Map<string, string>();
+
+/** Runs `fn` acting as a health professional (the clinical policies and triggers need one). */
+async function actingAs<T>(tx: Tx, professionalId: string, fn: () => Promise<T>): Promise<T> {
+  await tx.execute(sql`select set_config('app.professional_id', ${professionalId}, true)`);
+  // No `finally`: after an error the transaction is aborted and the original error must surface.
+  const result = await fn();
+  await tx.execute(sql`select set_config('app.professional_id', '', true)`);
+  return result;
+}
+
+/** An encounter written by `authorId` for a new patient; returns both ids. */
+async function insertEncounter(
+  tx: Tx,
+  tenantId: string,
+  authorId: string,
+  patientId?: string,
+): Promise<{ encounterId: string; patientId: string }> {
+  const patient = patientId ?? (await insertPatient(tx, tenantId));
+  const encounterId = await actingAs(tx, authorId, () =>
+    returningId(
+      tx,
+      sql`INSERT INTO encounter (tenant_id, patient_id, author_professional_id, template_kind)
+            VALUES (${tenantId}, ${patient}, ${authorId}, 'general') RETURNING id`,
+    ),
+  );
+  return { encounterId, patientId: patient };
+}
+
+/** The draft note of an encounter, written by `authorId`. Overrides replace foreign key columns. */
+async function insertNote(
+  tx: Tx,
+  tenantId: string,
+  opened: { encounterId: string; patientId: string },
+  authorId: string,
+  overrides?: Readonly<Record<string, string>>,
+): Promise<string> {
+  const noteAuthor = overrides?.['author_professional_id'] ?? authorId;
+  return actingAs(tx, noteAuthor, () =>
+    returningId(
+      tx,
+      sql`INSERT INTO clinical_note (tenant_id, encounter_id, patient_id, author_professional_id, template_kind, template_version)
+            VALUES (${tenantId}, ${overrides?.['encounter_id'] ?? opened.encounterId}, ${overrides?.['patient_id'] ?? opened.patientId}, ${noteAuthor}, 'general', 1)
+            RETURNING id`,
+    ),
+  );
+}
+
+async function insertVersion(
+  tx: Tx,
+  tenantId: string,
+  note: { noteId: string; patientId: string },
+  authorId: string,
+  overrides?: Readonly<Record<string, string>>,
+): Promise<string> {
+  const versionAuthor = overrides?.['author_professional_id'] ?? authorId;
+  return actingAs(tx, versionAuthor, () =>
+    returningId(
+      tx,
+      sql`INSERT INTO note_version (tenant_id, note_id, patient_id, author_professional_id, visibility,
+                                    template_kind, template_version, version_no, content_enc, content_hash)
+            VALUES (${tenantId}, ${overrides?.['note_id'] ?? note.noteId}, ${overrides?.['patient_id'] ?? note.patientId},
+                    ${versionAuthor}, 'default', 'general', 1, 1, ${Buffer.from([1])}, ${'b'.repeat(64)})
+            RETURNING id`,
+    ),
+  );
+}
 
 export const TENANT_FIXTURES: Record<string, TenantTableFixture> = {
   care_assignment: {
@@ -259,6 +366,86 @@ export const TENANT_FIXTURES: Record<string, TenantTableFixture> = {
               RETURNING id`,
       ),
   },
+  encounter: {
+    insert: async (tx, tenantId, overrides) => {
+      const authorId =
+        overrides?.['author_professional_id'] ?? (await insertProfessional(tx, tenantId));
+      const patientId = overrides?.['patient_id'] ?? (await insertPatient(tx, tenantId));
+      const id = await actingAs(tx, authorId, () =>
+        returningId(
+          tx,
+          sql`INSERT INTO encounter (tenant_id, patient_id, author_professional_id, template_kind, appointment_id)
+                VALUES (${tenantId}, ${patientId}, ${authorId}, 'general', ${overrides?.['appointment_id'] ?? null}) RETURNING id`,
+        ),
+      );
+      CLINICAL_AUTHORS.set(id, authorId);
+      return id;
+    },
+  },
+  clinical_footprint: {
+    // The runtime role cannot write this table: the footprint appears with the first note.
+    insert: async (tx, tenantId, overrides) => {
+      const authorId = await insertProfessional(tx, tenantId);
+      const patientId = overrides?.['patient_id'] ?? (await insertPatient(tx, tenantId));
+      const opened = await insertEncounter(tx, tenantId, authorId, patientId);
+      await insertNote(tx, tenantId, opened, authorId);
+      // Only a professional reads the footprint.
+      return actingAs(tx, authorId, () =>
+        returningId(tx, sql`SELECT id FROM clinical_footprint WHERE patient_id = ${patientId}`),
+      );
+    },
+  },
+  clinical_note: {
+    insert: async (tx, tenantId, overrides) => {
+      const authorId = await insertProfessional(tx, tenantId);
+      const opened = await insertEncounter(tx, tenantId, authorId);
+      const id = await insertNote(tx, tenantId, opened, authorId, overrides);
+      CLINICAL_AUTHORS.set(id, overrides?.['author_professional_id'] ?? authorId);
+      return id;
+    },
+  },
+  note_version: {
+    insert: async (tx, tenantId, overrides) => {
+      const authorId = await insertProfessional(tx, tenantId);
+      const opened = await insertEncounter(tx, tenantId, authorId);
+      const noteId = await insertNote(tx, tenantId, opened, authorId);
+      const id = await insertVersion(
+        tx,
+        tenantId,
+        { noteId, patientId: opened.patientId },
+        authorId,
+        overrides,
+      );
+      CLINICAL_AUTHORS.set(id, overrides?.['author_professional_id'] ?? authorId);
+      return id;
+    },
+  },
+  addendum: {
+    insert: async (tx, tenantId, overrides) => {
+      const authorId = await insertProfessional(tx, tenantId);
+      const opened = await insertEncounter(tx, tenantId, authorId);
+      const noteId = await insertNote(tx, tenantId, opened, authorId);
+      await insertVersion(tx, tenantId, { noteId, patientId: opened.patientId }, authorId);
+      await actingAs(tx, authorId, () =>
+        tx.execute(
+          sql`UPDATE clinical_note SET status = 'signed', signed_at = now(), draft_content_enc = NULL WHERE id = ${noteId}`,
+        ),
+      );
+      const actor = overrides?.['author_professional_id'] ?? authorId;
+      const id = await actingAs(tx, actor, () =>
+        returningId(
+          tx,
+          sql`INSERT INTO addendum (tenant_id, note_id, patient_id, author_professional_id, visibility,
+                                    template_kind, kind, reason_enc, content_enc)
+                VALUES (${tenantId}, ${overrides?.['note_id'] ?? noteId}, ${overrides?.['patient_id'] ?? opened.patientId},
+                        ${actor}, 'default', 'general', 'correction', ${Buffer.from([1])}, ${Buffer.from([1])})
+                RETURNING id`,
+        ),
+      );
+      CLINICAL_AUTHORS.set(id, actor);
+      return id;
+    },
+  },
   anamnesis: {
     // The clinical policies read the professional of the transaction, so the fixture acts as the author.
     insert: async (tx, tenantId, overrides) => {
@@ -274,6 +461,29 @@ export const TENANT_FIXTURES: Record<string, TenantTableFixture> = {
       await tx.execute(sql`select set_config('app.professional_id', '', true)`);
       CLINICAL_AUTHORS.set(id, authorId);
       return id;
+    },
+  },
+  document: {
+    // An administrative document: visible to a plain transaction, so the generic suite can read it.
+    // The clinical restriction has its own tests (documents-schema.test.ts).
+    insert: async (tx, tenantId, overrides) => {
+      const id = randomUUID();
+      return returningId(
+        tx,
+        sql`INSERT INTO document (id, tenant_id, patient_id, category, classification, original_name,
+                                  declared_content_type, size_bytes, object_key, uploaded_by,
+                                  author_professional_id, replaces_document_id, duplicate_of_id,
+                                  appointment_id, encounter_id)
+              VALUES (${id}, ${tenantId}, ${overrides?.['patient_id'] ?? (await insertPatient(tx, tenantId))},
+                      'id_copy', 'administrative', 'dni.pdf', 'application/pdf', 1000,
+                      ${`t/${tenantId}/quarantine/${id}`}, ${randomUUID()},
+                      ${overrides?.['author_professional_id'] ?? null},
+                      ${overrides?.['replaces_document_id'] ?? null},
+                      ${overrides?.['duplicate_of_id'] ?? null},
+                      ${overrides?.['appointment_id'] ?? null},
+                      ${overrides?.['encounter_id'] ?? null})
+              RETURNING id`,
+      );
     },
   },
   professional: {
@@ -338,6 +548,130 @@ export const TENANT_FIXTURES: Record<string, TenantTableFixture> = {
               RETURNING id`,
       );
     },
+  },
+  appointment_type: {
+    insert: (tx, tenantId) =>
+      returningId(
+        tx,
+        sql`INSERT INTO appointment_type (tenant_id, name, duration_minutes)
+              VALUES (${tenantId}, ${unique('Consulta')}, 30)
+              RETURNING id`,
+      ),
+  },
+  schedule_block: {
+    insert: async (tx, tenantId, overrides) =>
+      returningId(
+        tx,
+        sql`INSERT INTO schedule_block (tenant_id, professional_id, location_id, starts_at, ends_at, reason, created_by)
+              VALUES (${tenantId},
+                      ${overrides?.['professional_id'] ?? (await insertProfessional(tx, tenantId))},
+                      ${overrides?.['location_id'] ?? null},
+                      '2026-12-20T00:00:00Z', '2026-12-31T00:00:00Z', 'Vacation', ${randomUUID()})
+              RETURNING id`,
+      ),
+  },
+  tenant_day_off: {
+    insert: (tx, tenantId, overrides) =>
+      returningId(
+        tx,
+        sql`INSERT INTO tenant_day_off (tenant_id, day, name, location_id, created_by)
+              VALUES (${tenantId}, (date '2030-01-01' + ${nextVersion()}::int), ${unique('Day off')}, ${overrides?.['location_id'] ?? null}, ${randomUUID()})
+              RETURNING id`,
+      ),
+  },
+  professional_hours_exception: {
+    insert: async (tx, tenantId, overrides) => {
+      const locationId =
+        overrides?.['location_id'] ??
+        (await returningId(
+          tx,
+          sql`INSERT INTO location (tenant_id, name, time_zone)
+                VALUES (${tenantId}, ${unique('Location')}, 'America/Argentina/Buenos_Aires')
+                RETURNING id`,
+        ));
+      return returningId(
+        tx,
+        sql`INSERT INTO professional_hours_exception
+              (tenant_id, professional_id, period_id, date_from, date_to, location_id, weekday, start_minute, end_minute, created_by)
+              VALUES (${tenantId},
+                      ${overrides?.['professional_id'] ?? (await insertProfessional(tx, tenantId))},
+                      ${randomUUID()}, '2026-12-01', '2026-12-15', ${locationId}, 1, 540, 780, ${randomUUID()})
+              RETURNING id`,
+      );
+    },
+  },
+  appointment: {
+    insert: async (tx, tenantId, overrides) => insertAppointmentRow(tx, tenantId, overrides),
+  },
+  appointment_event: {
+    insert: async (tx, tenantId, overrides) =>
+      returningId(
+        tx,
+        sql`INSERT INTO appointment_event (tenant_id, appointment_id, kind, to_status)
+              VALUES (${tenantId}, ${overrides?.['appointment_id'] ?? (await insertAppointmentRow(tx, tenantId))}, 'created', 'scheduled')
+              RETURNING id`,
+      ),
+  },
+  slot_hold: {
+    insert: async (tx, tenantId, overrides) => {
+      const professionalId =
+        overrides?.['professional_id'] ?? (await insertProfessional(tx, tenantId));
+      const locationId = overrides?.['location_id'] ?? (await insertLocation(tx, tenantId));
+      return returningId(
+        tx,
+        sql`INSERT INTO slot_hold
+              (tenant_id, professional_id, location_id, starts_at, ends_at, expires_at, source_key, appointment_id, status)
+              VALUES (${tenantId}, ${professionalId}, ${locationId},
+                      '2031-01-01T10:00:00Z', '2031-01-01T10:30:00Z', now() + interval '10 minutes',
+                      ${randomUUID()}, ${overrides?.['appointment_id'] ?? null},
+                      ${overrides?.['appointment_id'] ? 'converted' : 'expired'})
+              RETURNING id`,
+      );
+    },
+  },
+  slot_occupancy: {
+    // The runtime role cannot write this table: a row appears when an appointment is inserted.
+    // The foreign keys that only the triggers can set are exercised through the tables that point
+    // at the same parents, as for the care relationship.
+    insert: async (tx, tenantId, overrides) => {
+      if (
+        overrides?.['appointment_id'] !== undefined ||
+        overrides?.['slot_hold_id'] !== undefined
+      ) {
+        return returningId(
+          tx,
+          sql`INSERT INTO appointment_event (tenant_id, appointment_id, kind)
+                VALUES (${tenantId}, ${overrides['appointment_id'] ?? overrides['slot_hold_id']}, 'created')
+                RETURNING id`,
+        );
+      }
+      const appointmentId = await insertAppointmentRow(tx, tenantId, overrides);
+      return returningId(
+        tx,
+        sql`SELECT id FROM slot_occupancy WHERE appointment_id = ${appointmentId}`,
+      );
+    },
+  },
+  worklist_item: {
+    insert: (tx, tenantId, overrides) =>
+      returningId(
+        tx,
+        sql`INSERT INTO worklist_item (tenant_id, kind, subject_type, subject_id, location_id)
+              VALUES (${tenantId}, 'reminder_not_sent', 'appointment', ${randomUUID()}, ${overrides?.['location_id'] ?? null})
+              RETURNING id`,
+      ),
+  },
+  onboarding_state: {
+    // One row per organization: the suite inserts for the same tenant several times, so the
+    // fixture updates the row that is already there (the policy still checks the proposed row).
+    insert: (tx, tenantId) =>
+      returningId(
+        tx,
+        sql`INSERT INTO onboarding_state (tenant_id, answers)
+              VALUES (${tenantId}, '{"isProfessional": true}'::jsonb)
+              ON CONFLICT (tenant_id) DO UPDATE SET answers = EXCLUDED.answers
+              RETURNING id`,
+      ),
   },
   tenant_feature: {
     insert: (tx, tenantId) =>

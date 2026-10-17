@@ -50,11 +50,14 @@ describe('holiday_catalog', () => {
             FROM holiday_catalog WHERE country = 'AR' GROUP BY 1 ORDER BY 1`,
     );
 
-    // Other suites load the catalogs around today's date too, so the window may start earlier: the
-    // three years the scheduling tests rely on must be there, each with a full calendar.
+    // Other suites load the catalogs around today's date too, and the operator suite adds a few
+    // holidays to a far year of its own: the three years the scheduling tests rely on must be
+    // there, each with a full calendar.
     const years = result.rows.map((row) => row.year);
     expect(years).toEqual(expect.arrayContaining([2026, 2027, 2028]));
-    for (const row of result.rows) expect(row.n).toBeGreaterThan(14);
+    for (const row of result.rows.filter((entry) => entry.year >= 2026 && entry.year <= 2028)) {
+      expect(row.n).toBeGreaterThan(14);
+    }
   });
 
   it('seeding again changes nothing (idempotent loaders)', async () => {
@@ -160,6 +163,29 @@ describe('catalog reader (what the country pack reads)', () => {
 
     expect(holidays.map((holiday) => holiday.name)).toContain('Extra bridge day');
     await owner.db.execute(sql`DELETE FROM holiday_catalog WHERE name = 'Extra bridge day'`);
+  });
+
+  it('does not return a holiday the operator removed, and returns it again once restored (JD-S2 S5)', async () => {
+    const reader = createCatalogReader(runtime.db);
+    await owner.db.execute(
+      sql`INSERT INTO holiday_catalog (country, date, name, kind, removed_at)
+            VALUES ('AR', '2026-09-16', 'Removed by mistake', 'bridge', now())`,
+    );
+    try {
+      expect((await reader.holidays('AR', 2026)).map((holiday) => holiday.name)).not.toContain(
+        'Removed by mistake',
+      );
+
+      await owner.db.execute(
+        sql`UPDATE holiday_catalog SET removed_at = NULL WHERE name = 'Removed by mistake'`,
+      );
+
+      expect((await reader.holidays('AR', 2026)).map((holiday) => holiday.name)).toContain(
+        'Removed by mistake',
+      );
+    } finally {
+      await owner.db.execute(sql`DELETE FROM holiday_catalog WHERE name = 'Removed by mistake'`);
+    }
   });
 
   it('returns no holidays for a country without a catalog', async () => {

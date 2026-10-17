@@ -8,6 +8,10 @@ import { AppError } from '../../../platform/http/problem.js';
 import { evaluateRoleChange } from '../domain/role-change.js';
 
 import { countOtherActiveOwners, lockOwnersAnd } from './members.js';
+import {
+  prepareProfessionalAddedNotice,
+  type ProfessionalAddedNotice,
+} from './professional-notice.js';
 import { AccessRefused } from './refusal.js';
 
 /** What the role change needs from the session service (ends the sessions of the changed member). */
@@ -27,7 +31,22 @@ export interface ChangeRolesInput {
 }
 
 export interface RoleService {
-  changeRoles(tx: Tx, input: ChangeRolesInput): Promise<{ roles: StaffRole[] }>;
+  /**
+   * `notice` is set when an admin who is not an owner added the professional role (decision D19):
+   * the caller emails the owners once the transaction has committed.
+   */
+  changeRoles(
+    tx: Tx,
+    input: ChangeRolesInput,
+  ): Promise<{ roles: StaffRole[]; notice: ProfessionalAddedNotice | null }>;
+}
+
+async function memberName(tx: Tx, membershipId: string): Promise<string | undefined> {
+  const [row] = await tx
+    .select({ name: membership.displayName })
+    .from(membership)
+    .where(eq(membership.id, membershipId));
+  return row?.name ?? undefined;
 }
 
 export function createRoleService(deps: { sessions: SessionRevoker }): RoleService {
@@ -71,7 +90,19 @@ export function createRoleService(deps: { sessions: SessionRevoker }): RoleServi
         resourceId: target.id,
         metadata: { previousRoles, newRoles: roles },
       });
-      return { roles };
+      // An admin who is not an owner added the professional role: leave a trace and tell the owners.
+      const addedProfessional =
+        roles.includes('professional') && !previousRoles.includes('professional');
+      const notice = addedProfessional
+        ? await prepareProfessionalAddedNotice(tx, {
+            actor: input.actor,
+            actorRoles: actor.roles,
+            via: 'role_grant',
+            membershipId: target.id,
+            subjectName: await memberName(tx, target.id),
+          })
+        : null;
+      return { roles, notice };
     },
   };
 }

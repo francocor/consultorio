@@ -1,6 +1,6 @@
 import type { Permission } from '@consultorio/contracts';
 
-export type SettingsTabId = 'locations' | 'branding' | 'security';
+export type SettingsTabId = 'locations' | 'scheduling' | 'branding' | 'security';
 
 export interface SettingsTab {
   id: SettingsTabId;
@@ -12,6 +12,7 @@ export interface SettingsTab {
 /** The sections of Settings, in the order they are offered. */
 export const SETTINGS_TABS: readonly SettingsTab[] = [
   { id: 'locations', to: '/settings/locations', permission: 'locations.manage' },
+  { id: 'scheduling', to: '/settings/scheduling', permission: 'scheduling.configure' },
   { id: 'branding', to: '/settings/branding', permission: 'tenant.branding.manage' },
   { id: 'security', to: '/settings/security', permission: 'tenant.settings.manage' },
 ];

@@ -26,10 +26,24 @@ const ALLOWED: Record<string, readonly string[]> = {
   'app.active_support_grant_id(uuid)': ['app_operator'],
   'app.tenant_is_unclaimed(uuid)': ['app_operator'],
   'app.demo_reset(uuid)': ['app_operator'],
+  // Documents: tell a clinical document the caller may not read from one that does not exist,
+  // and give reception the metadata of clinical documents when the organization allows it.
+  'app.document_probe(uuid)': ['app_rw'],
+  'app.reception_clinical_documents(uuid)': ['app_rw'],
   // Called only by triggers, never directly.
   'app.care_adjust(uuid,uuid,uuid,integer,integer)': [],
   'app.care_assignment_sync()': [],
   'app.care_set_assigned(uuid,uuid,uuid,boolean)': [],
+  // The appointment source of the care relationship (S2.08); only its trigger calls them.
+  'app.recompute_care_relationship(uuid,uuid,uuid)': [],
+  'app.appointment_care_sync()': [],
+  // Mirror appointments and holds into the occupancy (S2.02); only their triggers call them.
+  'app.sync_appointment_occupancy()': [],
+  'app.sync_hold_occupancy()': [],
+  // Clinical triggers (Stage 2) that feed the care relationship: an encounter counts, an entry
+  // marked in error stops counting. The runtime role writes the encounter, never this table.
+  'app.clinical_footprint_mark()': [],
+  'app.clinical_note_care_sync()': [],
 };
 
 let owner: pg.Client;

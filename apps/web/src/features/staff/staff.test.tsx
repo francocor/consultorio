@@ -153,7 +153,7 @@ describe('inviting a person', () => {
     expect(within(dialog).getByRole('checkbox', { name: /Recepción/ })).toBeInTheDocument();
   });
 
-  it('an administrator can invite administration and reception only: professionals are the owner’s to bring in', async () => {
+  it('an administrator can invite administration, reception and professionals, but not owners, and is told the owners get an email', async () => {
     const user = userEvent.setup();
     open({}, meFor(['admin'], { user: { id: IDS.owner, email: 'administracion@demo.invalid' } }));
     await user.click(await screen.findByRole('button', { name: 'Invitar a una persona' }));
@@ -161,8 +161,27 @@ describe('inviting a person', () => {
 
     expect(within(dialog).getByRole('checkbox', { name: /Administración/ })).toBeInTheDocument();
     expect(within(dialog).getByRole('checkbox', { name: /Recepción/ })).toBeInTheDocument();
-    expect(within(dialog).queryByRole('checkbox', { name: /Profesional/ })).not.toBeInTheDocument();
     expect(within(dialog).queryByRole('checkbox', { name: /Propietario/ })).not.toBeInTheDocument();
+    expect(
+      within(dialog).queryByText(/avisaremos por correo a los titulares/),
+    ).not.toBeInTheDocument();
+
+    await user.click(within(dialog).getByRole('checkbox', { name: /Profesional/ }));
+
+    expect(within(dialog).getByText(/avisaremos por correo a los titulares/)).toBeInTheDocument();
+  });
+
+  it('an owner inviting a professional is not shown the notice for the owners', async () => {
+    const user = userEvent.setup();
+    open();
+    await user.click(await screen.findByRole('button', { name: 'Invitar a una persona' }));
+    const dialog = await screen.findByRole('dialog');
+
+    await user.click(within(dialog).getByRole('checkbox', { name: /Profesional/ }));
+
+    expect(
+      within(dialog).queryByText(/avisaremos por correo a los titulares/),
+    ).not.toBeInTheDocument();
   });
 
   it('shows the validation next to the field and sends nothing', async () => {
@@ -224,13 +243,20 @@ describe('managing a person', () => {
     expect(await screen.findByText('Roles actualizados.')).toBeInTheDocument();
   });
 
-  it('an administrator cannot add the professional role to a colleague', async () => {
+  it('an administrator can add the professional role to a colleague, and is told the owners get an email', async () => {
     const user = userEvent.setup();
     open({}, meFor(['admin'], { user: { id: IDS.owner, email: 'administracion@demo.invalid' } }));
     const sheet = await manage(user, 'Camila Duarte');
 
     expect(within(sheet).getByRole('checkbox', { name: /Recepción/ })).toBeChecked();
-    expect(within(sheet).queryByRole('checkbox', { name: /Profesional/ })).not.toBeInTheDocument();
+    expect(
+      within(sheet).queryByText(/avisaremos por correo a los titulares/),
+    ).not.toBeInTheDocument();
+
+    await user.click(within(sheet).getByRole('checkbox', { name: /Profesional/ }));
+
+    expect(within(sheet).getByRole('checkbox', { name: /Profesional/ })).toBeChecked();
+    expect(within(sheet).getByText(/avisaremos por correo a los titulares/)).toBeInTheDocument();
   });
 
   it('an administrator still manages a professional who already is one', async () => {
@@ -428,11 +454,80 @@ describe('professional profile', () => {
 
     expect(await within(sheet).findByText(/no tiene el rol de profesional/)).toBeInTheDocument();
   });
+
+  it('lets an owner who is not a professional attend by completing the profile (D21)', async () => {
+    const user = userEvent.setup();
+    let body: unknown;
+    const app = open({
+      'POST /api/staff/me/professional': (_url, init) => {
+        body = jsonBody(init);
+        return jsonResponse({
+          id: IDS.professionalProfile,
+          membershipId: IDS.owner,
+          fullName: 'Marcela Quiroga',
+          status: 'active',
+          specialties: ['Clínica médica'],
+          matricula: { jurisdiction: 'AR-B', number: '123456', status: 'unverified' },
+          maxSimultaneous: 1,
+          clinicalAccess: true,
+        });
+      },
+    });
+    const sheet = await manage(user, 'Marcela Quiroga');
+    await user.click(within(sheet).getByRole('tab', { name: 'Perfil profesional' }));
+
+    expect(
+      await within(sheet).findByRole('heading', { name: 'Atender como profesional' }),
+    ).toBeInTheDocument();
+    expect(within(sheet).getByLabelText('Nombre completo')).toHaveValue('Marcela Quiroga');
+    expect(await a11yViolations(sheet)).toEqual([]);
+    await user.type(within(sheet).getByLabelText('Profesión o especialidad'), 'Clínica médica');
+    await user.selectOptions(within(sheet).getByLabelText('Jurisdicción de la matrícula'), 'AR-B');
+    await user.type(within(sheet).getByLabelText('Número de matrícula'), '123456');
+    await user.click(within(sheet).getByRole('button', { name: 'Activar mi perfil profesional' }));
+
+    await waitFor(() => {
+      expect(body).toEqual({
+        fullName: 'Marcela Quiroga',
+        specialties: ['Clínica médica'],
+        matricula: { jurisdiction: 'AR-B', number: '123456' },
+      });
+    });
+    expect(await screen.findByText('Ya puede atender como profesional.')).toBeInTheDocument();
+    expect(app.missingKeys).toEqual([]);
+  });
+
+  it('asks for the complete profile before activating it, and sends nothing without it', async () => {
+    const user = userEvent.setup();
+    const app = open();
+    const sheet = await manage(user, 'Marcela Quiroga');
+    await user.click(within(sheet).getByRole('tab', { name: 'Perfil profesional' }));
+    await within(sheet).findByRole('heading', { name: 'Atender como profesional' });
+
+    await user.click(within(sheet).getByRole('button', { name: 'Activar mi perfil profesional' }));
+
+    // The name is prefilled; the specialty, the jurisdiction and the number are missing.
+    expect(await within(sheet).findAllByText('Este dato es obligatorio.')).toHaveLength(3);
+    expect(app.requests).not.toContain('POST /api/staff/me/professional');
+  });
+
+  it('offers the form to the owner only on their own profile, never to an administrator', async () => {
+    const user = userEvent.setup();
+    open({}, meFor(['admin'], { user: { id: IDS.owner, email: 'administracion@demo.invalid' } }));
+    const sheet = await manage(user, 'Camila Duarte');
+    await user.click(within(sheet).getByRole('tab', { name: 'Perfil profesional' }));
+
+    expect(await within(sheet).findByText(/no tiene el rol de profesional/)).toBeInTheDocument();
+    expect(
+      within(sheet).queryByRole('button', { name: 'Activar mi perfil profesional' }),
+    ).not.toBeInTheDocument();
+  });
 });
 
 describe('extra permissions', () => {
   const grantable = [
     'scheduling.override_hours',
+    'scheduling.override_hold',
     'scheduling.register_past',
     'scheduling.delegated_calendar',
     'cash.operate',
@@ -448,7 +543,7 @@ describe('extra permissions', () => {
     await user.click(within(sheet).getByRole('tab', { name: 'Permisos' }));
 
     const switches = await within(sheet).findAllByRole('switch');
-    expect(switches).toHaveLength(5);
+    expect(switches).toHaveLength(grantable.length);
     expect(within(sheet).getByRole('switch', { name: /Operar la caja/ })).not.toBeChecked();
     expect(sheet).not.toHaveTextContent(/historia clínica|nota clínica/i);
   });

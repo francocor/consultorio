@@ -106,6 +106,15 @@ export default defineConfig(
               from: { element: { type: 'api-country' } },
               allow: { to: { element: { type: 'api-country' } } },
             },
+            // Module boundaries: one module reaches another only through its public API, the
+            // module's `index.ts`. Its own files import each other freely (relationship
+            // "internal"). Cross-module imports of anything else are errors.
+            {
+              from: { element: { type: 'api-module' } },
+              disallow: {
+                to: { element: { type: 'api-module', fileInternalPath: '!index.ts' } },
+              },
+            },
           ],
         },
       ],

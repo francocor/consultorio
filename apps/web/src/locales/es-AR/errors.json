@@ -11,6 +11,8 @@
   "conflict": "Esta acción entra en conflicto con el estado actual. Actualice la página e intente nuevamente.",
   "demo_tenant_required": "Esta acción solo está disponible en organizaciones de demostración.",
   "stale_revision": "Otra persona modificó este registro. Actualice para ver la versión más reciente.",
+  "slot_taken": "Ese horario ya no está disponible. Elija otro de los horarios sugeridos.",
+  "slot_no_longer_available": "El horario reservado dejó de estar disponible. Elija otro e intente nuevamente.",
   "unsupported_country": "El país de esta organización todavía no es compatible.",
   "rate_limited": "Hubo demasiados intentos. Espere un momento e intente nuevamente.",
   "internal_error": "Ocurrió un problema de nuestro lado. Intente nuevamente en unos minutos.",

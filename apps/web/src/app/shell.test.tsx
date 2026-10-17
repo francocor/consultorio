@@ -7,7 +7,6 @@ import { bootFor, meFor } from '../shared/test/fixtures.js';
 import { renderApp, renderInRouter } from '../shared/test/render-app.js';
 
 import { BottomNav } from './BottomNav.js';
-import { FirstRunSlot } from './FirstRunSlot.js';
 import { NAV_ITEMS } from './nav/nav-config.js';
 import { StatusBanners } from './StatusBanners.js';
 
@@ -254,14 +253,12 @@ describe('banners wired to real signals', () => {
 });
 
 describe('FirstRunSlot', () => {
-  it('renders nothing until Stage 2 provides the onboarding content', async () => {
-    renderInRouter(
-      <div data-testid="slot">
-        <FirstRunSlot />
-      </div>,
-    );
+  it('offers nothing to a person who does not run the first run, and asks for nothing', async () => {
+    const app = renderApp({ me: meFor(['reception']) });
 
-    expect(await screen.findByTestId('slot')).toBeEmptyDOMElement();
+    await screen.findByRole('heading', { level: 1 });
+    expect(screen.queryByRole('region', { name: 'Primeros pasos' })).not.toBeInTheDocument();
+    expect(app.requests.filter((request) => request.includes('/api/onboarding'))).toEqual([]);
   });
 });
 

@@ -27,6 +27,10 @@ export const ERROR_CATALOG = {
   // The action only exists for demo organizations.
   demo_tenant_required: { status: 409, i18nKey: 'errors.demo_tenant_required' },
   stale_revision: { status: 409, i18nKey: 'errors.stale_revision' },
+  // The time is taken: another appointment, a hold, or the professional's capacity (scheduling).
+  slot_taken: { status: 409, i18nKey: 'errors.slot_taken' },
+  // A hold was invalidated by staff before its holder finished (scheduling, "Slot holds").
+  slot_no_longer_available: { status: 409, i18nKey: 'errors.slot_no_longer_available' },
   unsupported_country: { status: 422, i18nKey: 'errors.unsupported_country' },
   rate_limited: { status: 429, i18nKey: 'errors.rate_limited' },
   internal_error: { status: 500, i18nKey: 'errors.internal_error' },

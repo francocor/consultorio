@@ -2,7 +2,7 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 
 import type { Plugin } from 'vite';
 
-import { contentSecurityPolicy, scriptHash, type CspOptions } from './csp.js';
+import { connectOriginsFrom, contentSecurityPolicy, scriptHash, type CspOptions } from './csp.js';
 import { buildInlineScripts } from './theme-boot-plugin.js';
 
 /** Where the build leaves the production policy, for the reverse proxy of the deployment. */
@@ -21,6 +21,8 @@ type Middleware = (req: IncomingMessage, res: ServerResponse, next: () => void) 
  * `content-security-policy.txt` next to `index.html`, for the proxy of the deployment to send.
  */
 export function cspPlugin(themeBootSource: string): Plugin {
+  // The storage origin that receives document uploads, named by the deployment (docs/dev-setup.md).
+  const connectSources = connectOriginsFrom(process.env['CSP_CONNECT_SOURCES']);
   const middleware =
     (mode: CspOptions['mode']): Middleware =>
     (_req, res, next) => {
@@ -28,7 +30,7 @@ export function cspPlugin(themeBootSource: string): Plugin {
         (scripts) => {
           res.setHeader(
             'content-security-policy',
-            contentSecurityPolicy({ scriptHashes: scripts.map(scriptHash), mode }),
+            contentSecurityPolicy({ scriptHashes: scripts.map(scriptHash), mode, connectSources }),
           );
           next();
         },
@@ -51,7 +53,7 @@ export function cspPlugin(themeBootSource: string): Plugin {
       this.emitFile({
         type: 'asset',
         fileName: POLICY_FILE,
-        source: `${contentSecurityPolicy({ scriptHashes: scripts.map(scriptHash), mode: 'production' })}
+        source: `${contentSecurityPolicy({ scriptHashes: scripts.map(scriptHash), mode: 'production', connectSources })}
 `,
       });
     },

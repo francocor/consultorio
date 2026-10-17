@@ -36,15 +36,22 @@ export const AUDIT_SCENARIOS: Record<AuditAction, AuditScenario> = {
   'auth.portal.sign_in': { pending: 'Stage 5: patient portal sign-in by one-time code' },
 
   // Clinical records.
-  'clinical.note.read': { pending: 'Stage 2 (S2.17 to S2.21): clinical notes' },
-  'clinical.note.created': { pending: 'Stage 2 (S2.18): draft and sign' },
-  'clinical.note.updated': { pending: 'Stage 2 (S2.18): draft and sign' },
-  'clinical.note.signed': { pending: 'Stage 2 (S2.18): draft and sign' },
-  'clinical.note.amended': { pending: 'Stage 2 (S2.19): addenda' },
-  'clinical.note.entered_in_error': { pending: 'Stage 2 (S2.19): entered in error' },
+  'clinical.note.read': t('clinical-notes-api.test.ts'),
+  'clinical.note.created': t('clinical-notes-api.test.ts'),
+  'clinical.note.updated': t('clinical-notes-api.test.ts'),
+  'clinical.note.signed': t('clinical-notes-api.test.ts'),
+  'clinical.note.amended': t('clinical-addenda.test.ts'),
+  'clinical.note.entered_in_error': t('clinical-addenda.test.ts'),
   'clinical.anamnesis.read': t('anamnesis-api.test.ts'),
   'clinical.anamnesis.updated': t('anamnesis-api.test.ts'),
-  'clinical.search': { pending: 'Stage 2 (S2.21): per-patient clinical search' },
+  'clinical.search': t('clinical-search.test.ts'),
+
+  // Documents.
+  'document.uploaded': t('documents-uploads.test.ts'),
+  'document.scanned': t('documents-scan.test.ts'),
+  'document.downloaded': t('documents-download.test.ts'),
+  'document.hidden': t('documents-lifecycle.test.ts'),
+  'document.reclassified': t('documents-access.test.ts'),
 
   // Patient identity data.
   'patient.created': t('patients-api.test.ts'),
@@ -86,12 +93,47 @@ export const AUDIT_SCENARIOS: Record<AuditAction, AuditScenario> = {
   'staff.deactivated': t('staff-lifecycle.test.ts'),
   'staff.reactivated': t('staff-lifecycle.test.ts'),
   'staff.profile_updated': t('staff-profile.test.ts'),
+  'professional.added_by_admin': t('professional-added-by-admin.test.ts'),
   'professional.hours_updated': t('staff-hours.test.ts'),
+  'professional.hours_period_set': t('scheduling-config-api.test.ts'),
+  'professional.hours_period_removed': t('scheduling-config-api.test.ts'),
+
+  // Appointments.
+  'appointment.created': t('scheduling-booking.test.ts'),
+  'appointment.overridden': t('scheduling-booking.test.ts'),
+  'appointment.rescheduled': t('scheduling-lifecycle.test.ts'),
+  'appointment.reassigned': t('scheduling-lifecycle.test.ts'),
+  'appointment.status_changed': t('scheduling-lifecycle.test.ts'),
+  'appointment.cancelled': t('scheduling-lifecycle.test.ts'),
+  'appointment.status_corrected': t('scheduling-lifecycle.test.ts'),
+  'appointment.calendar_viewed': t('scheduling-calendar.test.ts'),
+  'appointment.identity.confirmed': t('scheduling-identity.test.ts'),
+  'appointment.identity.self_confirmed': t('scheduling-identity.test.ts'),
+  'appointment.identity.rejected': t('scheduling-identity.test.ts'),
+  'worklist.resolved': t('scheduling-worklist.test.ts'),
+  'worklist.dismissed': t('scheduling-worklist.test.ts'),
+
+  // Scheduling setup.
+  'appointment_type.created': t('scheduling-config-api.test.ts'),
+  'appointment_type.updated': t('scheduling-config-api.test.ts'),
+  'appointment_type.deactivated': t('scheduling-config-api.test.ts'),
+  'appointment_type.reactivated': t('scheduling-config-api.test.ts'),
+  'schedule_block.created': t('scheduling-config-api.test.ts'),
+  'schedule_block.removed': t('scheduling-config-api.test.ts'),
+  'day_off.created': t('scheduling-config-api.test.ts'),
+  'day_off.removed': t('scheduling-config-api.test.ts'),
 
   // Exports and archive.
   'export.created': { pending: 'Stage 6: cancellation export' },
   'archive.read': { pending: 'Stage 6: archive access' },
   'audit.exported': t('audit-viewer.test.ts'),
+
+  // The guided first run.
+  'onboarding.step_updated': t('onboarding-api.test.ts'),
+  'onboarding.completed': t('onboarding-api.test.ts'),
+  'onboarding.fast_path': t('onboarding-api.test.ts'),
+  'onboarding.checklist_dismissed': t('onboarding-api.test.ts'),
+  'onboarding.checklist_restored': t('onboarding-api.test.ts'),
 
   // Platform operator.
   'support.access': t('operator-support.test.ts'),

@@ -4,9 +4,13 @@ import {
   formatAge,
   formatDate,
   formatDateTime,
+  formatDayLong,
+  formatDayShort,
   formatDocument,
+  formatMonthYear,
   formatMoney,
   formatTime,
+  formatWeekdayShort,
 } from './format.js';
 
 /** Intl uses no-break and narrow spaces; compare with plain ones. */
@@ -79,5 +83,23 @@ describe('formatAge', () => {
   it('shows nothing for a missing or invalid birth date', () => {
     expect(formatAge(null, now)).toBe('');
     expect(formatAge('zzz', now)).toBe('');
+  });
+});
+
+describe('calendar day labels (a calendar day, never shifted by a time zone)', () => {
+  it('writes a day the way it is said: weekday, day and month', () => {
+    expect(formatDayLong('2026-10-17')).toBe('sábado 17 de octubre');
+    expect(formatDayLong('2026-01-01')).toBe('jueves 1 de enero');
+  });
+
+  it('has short forms for headers', () => {
+    expect(formatDayShort('2026-10-17')).toBe('17 oct');
+    expect(formatWeekdayShort('2026-10-17')).toBe('sáb');
+    expect(formatWeekdayShort('2026-10-12')).toBe('lun');
+  });
+
+  it('names a month with its year', () => {
+    expect(formatMonthYear('2026-10-17')).toBe('octubre de 2026');
+    expect(formatMonthYear('2027-02-01')).toBe('febrero de 2027');
   });
 });

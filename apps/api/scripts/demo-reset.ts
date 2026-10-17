@@ -1,5 +1,7 @@
 import { parseArgs } from 'node:util';
 
+import { createFakeScanner } from '../src/adapters/fake-scanner/index.js';
+import { createS3ObjectStorage } from '../src/adapters/s3/index.js';
 import {
   DEMO_ACCOUNTS,
   DemoSeedError,
@@ -35,6 +37,7 @@ async function main(): Promise<void> {
   }
   const runtime = createRuntimeDb(config.databaseUrl);
   const operator = createOperatorDb(config.operatorDatabaseUrl);
+  const storage = config.storage ? createS3ObjectStorage(config.storage) : undefined;
   try {
     const found = await createTenantLookup(runtime.db)(values.slug);
     if (!found) throw new DemoSeedError(`There is no organization "${values.slug}".`);
@@ -49,6 +52,7 @@ async function main(): Promise<void> {
         clock: () => new Date(),
         environment: config.nodeEnv,
         rotateCredentials: values.rotate === true,
+        ...(storage ? { documents: { storage, scanner: createFakeScanner() } } : {}),
       },
       found.id,
       { operatorId: null },
@@ -71,6 +75,7 @@ async function main(): Promise<void> {
       ].join('\n'),
     );
   } finally {
+    storage?.close();
     await Promise.all([runtime.close(), operator.close()]);
   }
 }

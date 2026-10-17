@@ -97,6 +97,7 @@ Other things the deployment must know:
 
 - **One host per organization**, plus `platform.<base domain>` for the operator console. The web app decides it is the console from the first label of the host (`platform`) or from `VITE_PLATFORM_HOST` at build time.
 - **Content Security Policy.** Send the policy of the build on every response of the web bundle (the HTML, the scripts, the service worker). The build writes it, with the hashes of the two inline scripts (zod without code generation, and the theme boot), to `dist/content-security-policy.txt`; the proxy of the deployment sends that file's content as `Content-Security-Policy`. In development the Vite servers send it themselves (`vite dev` the development form, with the allowances for hot reload; `vite preview` the production form, which the browser suite runs against and fails on any violation). The production policy: scripts from this origin plus those two hashes only (no `unsafe-inline`, no `unsafe-eval`); styles from this origin and inline (libraries add `<style>` elements); images from this origin, `data:` and `blob:`; fonts, API calls, the manifest and the service worker from this origin; no plugins, no `<base>` changes, forms only to this origin, never framed; `upgrade-insecure-requests`. A new inline script, a CDN font or an analytics snippet needs a conscious change of `apps/web/vite/csp.ts`, not an exception at the proxy.
+- **Documents.** Two things on top of the rules above. (1) The browser uploads a file straight to object storage with a presigned POST, so the storage origin must be allowed in `connect-src`: build the web app with `CSP_CONNECT_SOURCES=https://<storage origin>` (comma or space separated; only plain http(s) origins are accepted, anything else is dropped), and give the bucket a CORS rule that allows `POST` from the app's origin. (2) A download is `GET /api/files/<token>`: the API streams the file, so the proxy must not buffer it whole, must not cache it and must pass `Content-Disposition` through. The same session cookie is needed, which is why the file never comes from storage directly.
 - **Service worker.** `sw.js` must be served from the root with `Cache-Control: no-cache` so a new version reaches people at their next visit; hashed assets under `/assets/` can be cached for a year. The worker never caches `/api/*` or any personal data.
 - **Emailed links never come from the request.** Password reset and invitation links are built from configuration: `{slug}.BASE_DOMAIN` in multi mode (add `PUBLIC_PORT=5173` locally so the link opens the dev server) and the required `PUBLIC_URL` (`https://agenda.clinica.example`, https in production) in single mode. A forged `Host` header cannot change them.
 - **Client address.** `TRUST_PROXY` is the number of reverse proxies in front of the API (production default `1`; development default `false`) or a comma-separated list of proxy addresses and ranges. The API takes the client address from `X-Forwarded-For` that many hops from the right, so addresses a client prepends are ignored; `true` is refused because it would believe the leftmost entry. The contract: the API is reachable **only** through the proxy, and the proxy **appends** the address it received the connection from (the default of nginx, Envoy and the AWS ALB). An entry that is not an IP address is stored as "unknown", never as an error.
@@ -115,26 +116,39 @@ Other things the deployment must know:
 
 Start the virus scanner only when working on uploads: `docker compose --env-file .env -f infra/docker-compose.yml --profile scan up -d clamav`.
 
+**Documents and the scanner.** Every uploaded document is scanned before anyone can download it, and the worker does the scanning. Two variables point it at `clamd`: `CLAMAV_HOST` (for the local container, `127.0.0.1`) and `CLAMAV_PORT` (default `3310`, the same variable the compose file uses to publish the container). Without `CLAMAV_HOST` outside production the worker uses a fake scanner that only flags the EICAR test string, so the upload flow can be tried without ClamAV. In production a bucket (`S3_BUCKET`) without `CLAMAV_HOST` is a startup error: with no scanner every upload would wait in quarantine forever. If the scanner stops answering, documents simply stay quarantined and are retried with a growing delay; after an hour of waiting the worker logs an error. The slow test against a real ClamAV only runs with `SLOW_TESTS=1` (`SLOW_TESTS=1 pnpm test:integration -- clamav`); it needs the image `clamav/clamav` and takes one to three minutes to start.
+
 To try the production image locally: `docker compose --env-file .env -f infra/docker-compose.yml --profile app up --build`.
 
 ## Everyday commands
 
-| Command                                      | What it does                                                 |
-| -------------------------------------------- | ------------------------------------------------------------ |
-| `pnpm typecheck`                             | TypeScript across all packages                               |
-| `pnpm lint` / `pnpm format:check`            | ESLint and Prettier (`pnpm format` fixes formatting)         |
-| `pnpm test`                                  | Unit tests (Vitest: api and contracts in Node, web in jsdom) |
-| `pnpm test:coverage`                         | Same, with a v8 coverage report in `coverage/`               |
-| `pnpm test:integration`                      | Integration tests against a real Postgres 17 (needs Docker)  |
-| `pnpm test:e2e`                              | Builds the web app and runs Playwright on mobile and desktop |
-| `pnpm demo:seed`                             | Seeds the demo organization "aillu" in your local database   |
-| `pnpm demo:reset`                            | Puts a demo organization back to its starting content        |
-| `pnpm demo:stack`                            | A throwaway Docker stack with two demo organizations         |
-| `pnpm build`                                 | Builds the web app and bundles the API into `apps/api/dist`  |
-| `pnpm db:check`                              | Fails when the Drizzle schema and the migrations disagree    |
-| `pnpm --filter @consultorio/api db:generate` | Generates a migration from schema changes                    |
+| Command                                         | What it does                                                                                                       |
+| ----------------------------------------------- | ------------------------------------------------------------------------------------------------------------------ |
+| `pnpm typecheck`                                | TypeScript across all packages                                                                                     |
+| `pnpm lint` / `pnpm format:check`               | ESLint and Prettier (`pnpm format` fixes formatting)                                                               |
+| `pnpm test`                                     | Unit tests (Vitest: api and contracts in Node, web in jsdom)                                                       |
+| `pnpm test:coverage`                            | Same, with a v8 coverage report in `coverage/`                                                                     |
+| `pnpm test:integration`                         | Integration tests against a real Postgres 17 (needs Docker)                                                        |
+| `pnpm test:e2e`                                 | Builds the web app and runs Playwright on mobile and desktop                                                       |
+| `pnpm demo:seed`                                | Seeds the demo organization "aillu" in your local database                                                         |
+| `pnpm demo:reset`                               | Puts a demo organization back to its starting content                                                              |
+| `pnpm demo:stack`                               | A throwaway Docker stack with two demo organizations                                                               |
+| `pnpm backup:local`                             | Backs up the local database and bucket; `verify` and `restore` subcommands (see `docs/runbooks/backup-restore.md`) |
+| `pnpm --filter @consultorio/api bench:clinical` | Benchmarks the clinical row level security with 100,000 notes (`docs/perf/clinical-readable.md`)                   |
+| `pnpm build`                                    | Builds the web app and bundles the API into `apps/api/dist`                                                        |
+| `pnpm db:check`                                 | Fails when the Drizzle schema and the migrations disagree                                                          |
+| `pnpm --filter @consultorio/api db:generate`    | Generates a migration from schema changes                                                                          |
 
 Migrations are forward-only. Never edit a migration that has been merged; add a new one.
+
+`pnpm test:e2e` starts its own stack (Postgres, MinIO, Mailpit, API and worker in Docker) and the preview server: the web on port 4173, the API on 3100 and the document storage (MinIO) on 9190. When another run holds those ports (several worktrees on one machine), give the run its own, and Playwright starts everything on them:
+
+```bash
+cd apps/web && pnpm exec vite build
+E2E_WEB_PORT=4310 E2E_API_PORT=3310 E2E_MINIO_PORT=9310 pnpm exec playwright test --workers=3
+```
+
+The preview server's Content Security Policy allows the storage origin (`CSP_CONNECT_SOURCES`, set by `playwright.config.ts` from `E2E_MINIO_PORT`), because the browser uploads documents straight to MinIO.
 
 ## Troubleshooting
 

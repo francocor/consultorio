@@ -3,26 +3,31 @@ import { randomBytes } from 'node:crypto';
 import pino from 'pino';
 
 import { createFakeEmailSender } from '../adapters/fake-email/index.js';
+import { createFakeScanner } from '../adapters/fake-scanner/index.js';
 import { createLocalKeyManagement } from '../adapters/local-kek/index.js';
 import { createMemoryObjectStorage } from '../adapters/memory-storage/index.js';
 import { createS3ObjectStorage } from '../adapters/s3/index.js';
 import { consentTextFor, createDemoResetPort } from '../db/seed/demo/index.js';
 import { createPasswordHasher } from '../modules/identity/index.js';
 import { createOperatorSecrets } from '../modules/operator/index.js';
+import { holdExpireJob } from '../modules/scheduling/index.js';
 import { createTenantKeys } from '../platform/crypto/tenant-keys.js';
 import { createOperatorDb, createRuntimeDb } from '../platform/db/pool.js';
 import { createDbProbe } from '../platform/db/probe.js';
 import { createWithTenant } from '../platform/db/tenant-context.js';
+import { createBoss, createJobClient } from '../platform/jobs/boss.js';
 import { startWorker } from '../platform/jobs/worker.js';
 
 import { createAdapterResolver, createTenantRoutedEmail, fake, real } from './adapter-resolver.js';
 import { createApplication } from './application.js';
 import { ConfigError, loadConfig, type Config } from './config.js';
 import { deploymentFromConfig } from './deployment.js';
+import { documentWorker } from './document-jobs.js';
 import { createConfiguredEmail } from './email.js';
 import { createKeyManagement } from './key-management.js';
 import { buildLoggerOptions } from './logger.js';
 import { loadPasswordValidator } from './password-validator.js';
+import { createConfiguredScanner } from './scanner.js';
 
 const ROLES = ['api', 'worker'] as const;
 type Role = (typeof ROLES)[number];
@@ -52,6 +57,10 @@ async function runApi(config: Config): Promise<void> {
     : undefined;
   const email = createConfiguredEmail(config.mail);
   const storage = config.storage ? createS3ObjectStorage(config.storage) : undefined;
+  // Confirming an upload queues its scan in the same transaction, so with a bucket the API also
+  // holds a queue client (it only enqueues; the worker is the one that runs the jobs).
+  const jobsBoss = storage ? createBoss(config.databaseUrl, 'api') : undefined;
+  await jobsBoss?.start();
   // Which adapter serves which organization: a demo organization only ever gets the fakes. Email is
   // routed by organization today; storage and key management are registered so the registry is
   // complete, and join the routing when their call sites carry the organization.
@@ -88,6 +97,7 @@ async function runApi(config: Config): Promise<void> {
     passwordValidator,
     lockout: config.lockout,
     ...(storage ? { storage } : {}),
+    ...(jobsBoss ? { jobs: createJobClient(jobsBoss) } : {}),
     ...(operatorDatabase
       ? {
           operator: {
@@ -103,6 +113,9 @@ async function runApi(config: Config): Promise<void> {
               consentText: consentTextFor(database.db),
               clock: () => new Date(),
               environment: config.nodeEnv,
+              // The demo has files in the bucket when there is one; its content is fictitious, so the
+              // fake scanner (EICAR only) is what checks it.
+              ...(storage ? { documents: { storage, scanner: createFakeScanner() } } : {}),
               rotateCredentials: config.nodeEnv === 'production',
             }),
           },
@@ -129,6 +142,7 @@ async function runApi(config: Config): Promise<void> {
 
   app.log.info('shutting down');
   await app.close();
+  await jobsBoss?.stop({ graceful: true, timeout: 10_000 });
   email.close();
   storage?.close();
   await database.close();
@@ -147,14 +161,26 @@ async function runWorker(config: Config): Promise<void> {
       'Invalid environment configuration. AUDIT_SEALER_DATABASE_URL: is required for the worker (the audit_sealer login seals and verifies the audit trails)',
     );
   }
+  // Scanning documents needs the bucket, a scanner and a way to tell an uploader about a refusal.
+  const storage = config.storage ? createS3ObjectStorage(config.storage) : undefined;
+  const email = createConfiguredEmail(config.mail);
+  const { scanner, kind } = createConfiguredScanner(config.scanner);
+  if (storage && kind === 'fake') {
+    log.warn('CLAMAV_HOST is not set: documents are scanned by the fake scanner (EICAR only)');
+  }
   const worker = await startWorker({
     databaseUrl: config.databaseUrl,
     sealerDatabaseUrl: config.auditSealerDatabaseUrl,
     log,
+    // Scheduling: the holds that ran out are ended every minute (they are also ended lazily).
+    tenantJobs: [{ definition: holdExpireJob, everyMs: 60_000 }],
+    ...(storage ? documentWorker({ storage, scanner, email: email.sender }) : {}),
   });
   log.info('worker started');
   await waitForShutdownSignal();
   await worker.stop();
+  email.close();
+  storage?.close();
   log.info('worker stopped');
 }
 

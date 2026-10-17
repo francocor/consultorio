@@ -1,4 +1,10 @@
-import { AILLU_PRESET, type AnamnesisContent, type Role } from '@consultorio/contracts';
+import {
+  AILLU_PRESET,
+  type AddendumKind,
+  type AnamnesisContent,
+  type ClinicalTemplateKind,
+  type Role,
+} from '@consultorio/contracts';
 
 import { DEMO_ACCOUNTS, DEMO_EMAIL_DOMAIN } from './credentials.js';
 import { createRng, type Rng } from './rng.js';
@@ -72,6 +78,23 @@ export interface DemoCare {
   anamnesis?: AnamnesisContent;
 }
 
+/**
+ * A clinical note the demo professionals wrote, so the chart, the search and the drafts view have
+ * something to show. `state` is `signed` unless said otherwise: a `draft` stays unsigned, an `error`
+ * is signed and then marked entered in error (with the reason). A note may carry one addendum.
+ * The professional must be the one assigned to the patient in `care`.
+ */
+export interface DemoNote {
+  professional: DemoCare['professional'];
+  patientIndex: number;
+  templateKind: ClinicalTemplateKind;
+  content: Record<string, unknown>;
+  state?: 'signed' | 'draft' | 'error';
+  errorReason?: string;
+  visibility?: 'default' | 'author_only';
+  addendum?: { kind: AddendumKind; reason: string; text: string };
+}
+
 export interface DemoDataset {
   branding: {
     displayName: string;
@@ -86,6 +109,7 @@ export interface DemoDataset {
   payerPlans: readonly { payerCode: string; planName: string }[];
   patients: readonly DemoPatient[];
   care: readonly DemoCare[];
+  notes: readonly DemoNote[];
 }
 
 const LOCATIONS: readonly DemoLocation[] = [
@@ -394,6 +418,200 @@ const CARE: readonly DemoCare[] = [
   { professional: 'psychology', patientIndex: 7 },
 ];
 
+const NOTES: readonly DemoNote[] = [
+  // Cardiology: the general template.
+  {
+    professional: 'cardiology',
+    patientIndex: 0,
+    templateKind: 'general',
+    content: {
+      reasonForConsultation: 'Control de hipertensión arterial',
+      symptoms: 'Sin cefalea ni palpitaciones. Refiere buena adherencia al tratamiento.',
+      measurements: [
+        { name: 'Presión arterial', value: '128/82', unit: 'mmHg' },
+        { name: 'Frecuencia cardíaca', value: '72', unit: 'lpm' },
+        { name: 'Peso', value: '68', unit: 'kg' },
+      ],
+      diagnosis: 'Hipertensión arterial controlada',
+      plan: 'Continuar con el tratamiento actual. Reducir el consumo de sal. Control en tres meses.',
+      medications: [{ name: 'Enalapril', dose: '10 mg', frequency: 'una vez por día' }],
+    },
+    addendum: {
+      kind: 'correction',
+      reason: 'Se precisa el horario de la dosis',
+      text: 'El enalapril se toma por la mañana, en ayunas.',
+    },
+  },
+  {
+    professional: 'cardiology',
+    patientIndex: 1,
+    templateKind: 'general',
+    content: {
+      reasonForConsultation: 'Control de anticoagulación y del marcapasos',
+      symptoms: 'Sin sangrados ni mareos. Concurre con el último resultado de laboratorio.',
+      measurements: [
+        { name: 'INR', value: '2,4' },
+        { name: 'Presión arterial', value: '134/80', unit: 'mmHg' },
+        { name: 'Frecuencia cardíaca', value: '64', unit: 'lpm' },
+      ],
+      diagnosis: 'Fibrilación auricular anticoagulada, con INR en rango',
+      plan: 'Mantener la dosis de acenocumarol. Control de INR en 30 días. Control del marcapasos en seis meses.',
+      medications: [{ name: 'Acenocumarol', dose: '2 mg', frequency: 'una vez por día' }],
+    },
+  },
+  {
+    professional: 'cardiology',
+    patientIndex: 2,
+    templateKind: 'general',
+    content: {
+      reasonForConsultation: 'Control cardiológico de rutina',
+      symptoms: 'Asintomática. Migrañas ocasionales, sin relación con el esfuerzo.',
+      measurements: [{ name: 'Presión arterial', value: '112/70', unit: 'mmHg' }],
+      diagnosis: 'Examen cardiovascular normal',
+      plan: 'Sin indicaciones. Repetir el control en un año.',
+    },
+  },
+  {
+    professional: 'cardiology',
+    patientIndex: 3,
+    templateKind: 'general',
+    content: {
+      reasonForConsultation: 'Dolor opresivo en el pecho al subir escaleras',
+      symptoms: 'Dos episodios en el último mes, de unos cinco minutos, que ceden con el reposo.',
+      measurements: [
+        { name: 'Presión arterial', value: '142/88', unit: 'mmHg' },
+        { name: 'Frecuencia cardíaca', value: '78', unit: 'lpm' },
+      ],
+      diagnosis: 'Angina de esfuerzo a confirmar',
+      plan: 'Prueba ergométrica y laboratorio completo. No indicar ácido acetilsalicílico por la alergia registrada. Control con los resultados.',
+    },
+  },
+  {
+    professional: 'cardiology',
+    patientIndex: 4,
+    templateKind: 'general',
+    state: 'draft',
+    content: {
+      reasonForConsultation: 'Palpitaciones durante el embarazo',
+      symptoms: 'Episodios breves, de pocos segundos, sobre todo al acostarse.',
+    },
+  },
+  {
+    professional: 'cardiology',
+    patientIndex: 8,
+    templateKind: 'general',
+    state: 'error',
+    errorReason: 'La nota se cargó en la paciente equivocada',
+    content: {
+      reasonForConsultation: 'Control de presión arterial',
+      measurements: [{ name: 'Presión arterial', value: '150/95', unit: 'mmHg' }],
+      diagnosis: 'Hipertensión arterial',
+    },
+  },
+  // Pediatrics: the general template, with the measurements of a child.
+  {
+    professional: 'pediatrics',
+    patientIndex: 22,
+    templateKind: 'general',
+    content: {
+      reasonForConsultation: 'Control de salud de la niña',
+      symptoms: 'Sin molestias. Eccema leve en los pliegues, estable.',
+      measurements: [
+        { name: 'Peso', value: '22', unit: 'kg' },
+        { name: 'Talla', value: '120', unit: 'cm' },
+      ],
+      diagnosis: 'Control de salud normal. Alergia a la proteína de la leche de vaca.',
+      plan: 'Calendario de vacunación al día. Mantener la dieta sin lácteos de vaca. Próximo control en doce meses.',
+    },
+  },
+  {
+    professional: 'pediatrics',
+    patientIndex: 23,
+    templateKind: 'general',
+    content: {
+      reasonForConsultation: 'Control de salud para el inicio de las clases',
+      measurements: [
+        { name: 'Peso', value: '34', unit: 'kg' },
+        { name: 'Talla', value: '141', unit: 'cm' },
+      ],
+      diagnosis: 'Desarrollo acorde a la edad',
+      plan: 'Apto para las actividades escolares y deportivas. Control visual anual.',
+    },
+  },
+  {
+    professional: 'pediatrics',
+    patientIndex: 24,
+    templateKind: 'general',
+    content: {
+      reasonForConsultation: 'Control de asma',
+      symptoms:
+        'Dos crisis leves en el último mes, con tos nocturna que cedió con el broncodilatador.',
+      measurements: [{ name: 'Saturación de oxígeno', value: '98', unit: '%' }],
+      diagnosis: 'Asma leve intermitente',
+      plan: 'Revisión de la técnica de inhalación. Evitar los desencadenantes conocidos. Control en tres meses.',
+      medications: [{ name: 'Salbutamol', dose: '2 disparos', frequency: 'por crisis' }],
+    },
+  },
+  {
+    professional: 'pediatrics',
+    patientIndex: 25,
+    templateKind: 'general',
+    content: {
+      reasonForConsultation: 'Control del recién nacido',
+      symptoms: 'Lactancia materna exclusiva, buena succión y deposiciones normales.',
+      measurements: [
+        { name: 'Peso', value: '4,2', unit: 'kg' },
+        { name: 'Perímetro cefálico', value: '37', unit: 'cm' },
+      ],
+      diagnosis: 'Crecimiento adecuado',
+      plan: 'Continuar con la lactancia. Aplicar las vacunas de los dos meses. Próximo control en cuatro semanas.',
+    },
+  },
+  // Psychology: its own template; one session is restricted to its author.
+  {
+    professional: 'psychology',
+    patientIndex: 6,
+    templateKind: 'psychology',
+    content: {
+      sessionDate: '2026-09-14',
+      modality: 'in_person',
+      topics: 'Estrés laboral y dificultad para dormir',
+      observations: 'Se muestra colaboradora. Refiere sobrecarga de tareas desde hace seis meses.',
+      risk: 'none',
+      plan: 'Registro semanal del sueño y ejercicios de respiración. Próxima sesión en dos semanas.',
+    },
+  },
+  {
+    professional: 'psychology',
+    patientIndex: 6,
+    templateKind: 'psychology',
+    content: {
+      sessionDate: '2026-09-28',
+      modality: 'virtual',
+      topics: 'Rumiación nocturna y límites con el trabajo',
+      observations:
+        'Mejoró la rutina de sueño, pero persisten los despertares. Refiere desánimo los fines de semana.',
+      risk: 'medium',
+      followUpNote: 'Se acuerda un contacto telefónico a la semana si el insomnio empeora.',
+      plan: 'Continuar con el registro del sueño. Trabajar la organización de las tareas.',
+    },
+  },
+  {
+    professional: 'psychology',
+    patientIndex: 7,
+    templateKind: 'psychology',
+    visibility: 'author_only',
+    content: {
+      sessionDate: '2026-09-21',
+      modality: 'in_person',
+      topics: 'Primera entrevista',
+      observations: 'Consulta por ansiedad ante exámenes. Sin antecedentes de tratamiento previo.',
+      risk: 'low',
+      plan: 'Definir objetivos en la segunda sesión.',
+    },
+  },
+];
+
 export function buildDemoDataset(): DemoDataset {
   const rng = createRng(SEED);
   return {
@@ -409,5 +627,6 @@ export function buildDemoDataset(): DemoDataset {
     payerPlans: PAYER_PLANS,
     patients: buildPatients(rng),
     care: CARE,
+    notes: NOTES,
   };
 }

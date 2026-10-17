@@ -8,28 +8,36 @@ const idsFor = (roles: readonly Role[], stage = ENABLED_STAGE, grants: string[] 
     (item) => item.id,
   );
 
-describe('navigation at the stage that ships (Stage 1)', () => {
-  it('ships Stage 1', () => {
-    expect(ENABLED_STAGE).toBe(1);
+describe('navigation at the stage that ships (Stage 2, screens built so far)', () => {
+  it('ships Stage 2', () => {
+    expect(ENABLED_STAGE).toBe(2);
   });
 
-  it('reception sees home and patients, and no clinical entry point', () => {
+  it('reception sees the agenda and patients, and no clinical entry point', () => {
     const ids = idsFor(['reception']);
 
-    expect(ids).toEqual(['home', 'patients']);
+    expect(ids).toEqual(['home', 'calendar', 'check-in', 'worklist', 'patients']);
     expect(ids).not.toContain('drafts');
     expect(ids).not.toContain('prescriptions');
   });
 
-  it('a professional sees home and patients', () => {
-    expect(idsFor(['professional'])).toEqual(['home', 'patients']);
+  it('a professional sees today, the agenda and patients until the clinical screens are built', () => {
+    expect(idsFor(['professional'])).toEqual(['home', 'today', 'calendar', 'patients']);
   });
 
-  it('owner and admin see settings, staff and audit, and still no clinical entry point', () => {
+  it('owner and admin see the agenda, settings, staff and audit, and still no clinical entry point', () => {
     for (const role of ['owner', 'admin'] as const) {
       const ids = idsFor([role]);
 
-      expect(ids, role).toEqual(['home', 'patients', 'staff', 'audit', 'settings']);
+      expect(ids, role).toEqual([
+        'home',
+        'calendar',
+        'worklist',
+        'patients',
+        'staff',
+        'audit',
+        'settings',
+      ]);
       expect(ids).not.toContain('drafts');
     }
   });
@@ -37,7 +45,16 @@ describe('navigation at the stage that ships (Stage 1)', () => {
   it('an owner who is also a professional gets both areas once, clinical ones governed by the professional role', () => {
     const ids = idsFor(['owner', 'professional']);
 
-    expect(ids).toEqual(['home', 'patients', 'staff', 'audit', 'settings']);
+    expect(ids).toEqual([
+      'home',
+      'today',
+      'calendar',
+      'patients',
+      'worklist',
+      'staff',
+      'audit',
+      'settings',
+    ]);
     expect(new Set(ids).size).toBe(ids.length);
   });
 
@@ -46,15 +63,22 @@ describe('navigation at the stage that ships (Stage 1)', () => {
   });
 
   it('a grant adds nothing that needs a different permission (cash needs its stage)', () => {
-    expect(idsFor(['reception'], 1, ['cash.operate'])).toEqual(['home', 'patients']);
+    expect(idsFor(['reception'], ENABLED_STAGE, ['cash.operate'])).toEqual([
+      'home',
+      'calendar',
+      'check-in',
+      'worklist',
+      'patients',
+    ]);
   });
 });
 
 describe('navigation once every stage has shipped', () => {
-  it('professional layout: today, patients, drafts, prescriptions', () => {
+  it('professional layout: today, agenda, patients, drafts, prescriptions', () => {
     expect(idsFor(['professional'], 6)).toEqual([
       'home',
       'today',
+      'calendar',
       'patients',
       'drafts',
       'prescriptions',
@@ -75,6 +99,8 @@ describe('navigation once every stage has shipped', () => {
   it('owner layout adds reports and billing, billing only for the owner', () => {
     expect(idsFor(['owner'], 6)).toEqual([
       'home',
+      'calendar',
+      'worklist',
       'patients',
       'staff',
       'reports',
@@ -88,7 +114,7 @@ describe('navigation once every stage has shipped', () => {
   it('a multi-role user combines the layouts, professional first', () => {
     const ids = idsFor(['owner', 'professional'], 6);
 
-    expect(ids.slice(0, 3)).toEqual(['home', 'today', 'patients']);
+    expect(ids.slice(0, 4)).toEqual(['home', 'today', 'calendar', 'patients']);
     expect(ids).toContain('staff');
     expect(ids).toContain('prescriptions');
   });

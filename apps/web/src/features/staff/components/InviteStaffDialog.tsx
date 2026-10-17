@@ -6,7 +6,7 @@ import {
 } from '@consultorio/contracts';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { useForm } from 'react-hook-form';
+import { useForm, useWatch } from 'react-hook-form';
 import { useTranslation } from 'react-i18next';
 import { z } from 'zod';
 
@@ -64,6 +64,9 @@ export function InviteStaffDialog({
     resolver: zodResolver(Schema),
     defaultValues: { email: '', displayName: '', roles: [] },
   });
+  const chosen = useWatch({ control: form.control, name: 'roles' });
+  // Decision D19: when an admin brings a professional in, the owners get an email.
+  const owesOwnersNotice = chosen.includes('professional') && !inviterRoles.includes('owner');
 
   const invite = useMutation({
     mutationFn: (values: Values) =>
@@ -176,6 +179,11 @@ export function InviteStaffDialog({
                       />
                     ))}
                   </fieldset>
+                  {owesOwnersNotice ? (
+                    <Alert tone="info">
+                      <AlertDescription>{t('staff:invite.professionalNotice')}</AlertDescription>
+                    </Alert>
+                  ) : null}
                   <FormMessage />
                 </FormItem>
               )}

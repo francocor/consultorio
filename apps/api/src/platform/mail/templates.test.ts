@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest';
 
-import { renderInvitationEmail, renderPasswordResetEmail } from './templates.js';
+import {
+  renderInvitationEmail,
+  renderPasswordResetEmail,
+  renderProfessionalAddedEmail,
+} from './templates.js';
 
 const LINK = 'https://clinica-sur.consultorio.test/auth/reset?token=abc_DEF-123';
 
@@ -123,5 +127,62 @@ describe('staff invitation email (es-AR)', () => {
     expect(email.html).not.toContain('<b>Eve</b>');
     expect(email.html).toContain('&lt;b&gt;Eve&lt;/b&gt;');
     expect(email.html).toContain('A &amp; B');
+  });
+});
+
+describe('professional added by an admin email (es-AR, decision D19)', () => {
+  const STAFF = 'https://clinica-sur.consultorio.test/staff';
+
+  it('tells the owner who added a professional, by invitation, in neutral Spanish', () => {
+    const email = renderProfessionalAddedEmail({
+      organizationName: 'Clínica Sur',
+      adminName: 'Laura Pérez',
+      subjectName: 'Dra. Ana Gómez',
+      via: 'invitation',
+      link: STAFF,
+    });
+
+    expect(email.subject).toBe('Un administrador incorporó a un profesional en Clínica Sur');
+    expect(email.text).toContain('Laura Pérez');
+    expect(email.text).toContain('Dra. Ana Gómez');
+    expect(email.text).toContain('invitó');
+    expect(email.text).toContain(STAFF);
+    expect(email.html).toContain(`href="${STAFF}"`);
+    expect(email.text + email.html).not.toMatch(/\b(revisá|entrá|fijate|mirá)\b/i);
+  });
+
+  it('says it was a role grant, and copes with no names', () => {
+    const email = renderProfessionalAddedEmail({
+      organizationName: 'Clínica Sur',
+      via: 'role_grant',
+      link: STAFF,
+    });
+
+    expect(email.text).toContain('rol de profesional');
+    expect(email.text).toContain('Un administrador');
+    expect(email.text).not.toContain('undefined');
+  });
+
+  it('escapes names in the HTML', () => {
+    const email = renderProfessionalAddedEmail({
+      organizationName: 'Clínica Sur',
+      adminName: '<b>x</b>',
+      subjectName: '<i>y</i>',
+      via: 'invitation',
+      link: STAFF,
+    });
+
+    expect(email.html).not.toContain('<b>x</b>');
+    expect(email.html).not.toContain('<i>y</i>');
+  });
+
+  it('refuses a link that is not http(s)', () => {
+    expect(() =>
+      renderProfessionalAddedEmail({
+        organizationName: 'Clínica Sur',
+        via: 'role_grant',
+        link: 'javascript:alert(1)',
+      }),
+    ).toThrow();
   });
 });

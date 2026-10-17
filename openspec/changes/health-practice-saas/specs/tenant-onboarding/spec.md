@@ -37,12 +37,24 @@ Until self-service signup exists, and afterwards for tenants created by the oper
 
 ### Requirement: Tenant defaults and initial roles
 
-On creation the system MUST set the organization's country to Argentina, default time zone and locale es-AR, and MUST give the first user the owner role. The first run MUST ask whether the owner is also a health professional. If yes, a professional profile MUST be created for the owner, whose matrícula is recorded to unlock clinical work and verified before prescribing (`staff-professionals`, `e-prescription`), and who MUST read clinical data only through the professional role. If no, the owner MUST NOT gain clinical access.
+On creation the system MUST set the organization's country to Argentina, default time zone and locale es-AR, and MUST give the first user the owner role. The first run MUST ask whether the owner is also a health professional. If yes, a professional profile MUST be created for the owner with the same data and rules as any professional (name, specialty, and the matrícula with its jurisdiction), recorded unverified to unlock clinical work and verified by the platform before prescribing (`staff-professionals`, `e-prescription`), and the owner MUST read clinical data only through the professional role. If no, the owner MUST NOT gain clinical access. Because roles are otherwise never self-assigned (`authorization`), the professional role of the owner MUST be added by one narrow path (decision D21, revised and confirmed by the owner of the product on 2026-10-17): an active owner MAY act as a health professional at any time, not only during the first run, provided they complete the professional profile. Completing it MUST add the professional role (and only that role) to their own membership in the same transaction, audited as a role change with `via: owner_professional_profile`. The profile data MUST be required before the role is active, so the first-run answer "yes" and the solo fast path MUST both ask for the matrícula and its jurisdiction. There MUST be no one-time limit, no closure when the wizard is finished and no age window.
 
 #### Scenario: Owner is also a professional
 - GIVEN the owner answers that they are a health professional
 - WHEN the first run completes the profile step
 - THEN the owner MUST have both the owner role and a professional profile
+
+#### Scenario: The owner acts as a professional at any time (D21, revised)
+- GIVEN an owner who finished the setup wizard long ago, or whose organization is a year old
+- WHEN they complete the professional profile with name, specialty, matrícula and jurisdiction
+- THEN they hold the owner and professional roles, audited as a role change with `via: owner_professional_profile`
+- AND the same request on the day of the first run behaves the same way
+
+#### Scenario: The role needs the profile data first (D21, revised)
+- GIVEN an owner in the first run who answers that they are a health professional
+- WHEN they submit the profile without the matrícula or its jurisdiction
+- THEN the answer is refused with an inline message in Spanish
+- AND the owner has no professional role and no profile
 
 #### Scenario: Owner is not a professional
 - GIVEN the owner answers that they are not a health professional
@@ -77,12 +89,17 @@ After the first sign-in the owner MUST be guided through a setup wizard with the
 
 ### Requirement: Fast path for solo professionals
 
-For a solo professional the wizard MUST offer a short path that creates the location, working hours and a default appointment type with sensible defaults, so that the first appointment can be booked within 10 minutes of first login. The short path MUST NOT require the matrícula, branding or any payment step; those remain as checklist items. Sensible defaults MUST be editable afterwards.
+For a solo professional the wizard MUST offer a short path that creates the location, working hours and a default appointment type with sensible defaults, so that the first appointment can be booked within 10 minutes of first login. Because the owner who attends is a professional, the short path MUST ask for the complete professional profile (name, specialty, and the matrícula with its jurisdiction, decision D21 revised) before the professional role is active, and MUST create nothing without it; an owner who already completed the profile is not asked again. The short path MUST NOT require branding or any payment step; those remain as checklist items. Sensible defaults MUST be editable afterwards.
 
 #### Scenario: Solo path
 - GIVEN an owner who is the only professional
-- WHEN they choose the short path
+- WHEN they choose the short path and give name, specialty, matrícula and jurisdiction
 - THEN the system MUST create defaults and take them to the calendar ready to book
+
+#### Scenario: Solo path without the matrícula
+- GIVEN an owner who chooses the short path
+- WHEN they send it without the matrícula or its jurisdiction
+- THEN the system MUST refuse it, create no location, hours, appointment type or professional role, and show what is missing inline
 
 #### Scenario: First appointment within 10 minutes
 - GIVEN a new solo professional on a phone who signs in for the first time

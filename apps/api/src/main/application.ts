@@ -3,18 +3,41 @@ import type { Writable } from 'node:stream';
 import { fail } from '@consultorio/contracts';
 import type { FastifyInstance } from 'fastify';
 
-import { createAccess, createGrants, createGrantsRepo } from '../modules/access/index.js';
+import {
+  createAccess,
+  createGrants,
+  createGrantsRepo,
+  createLocationService,
+} from '../modules/access/index.js';
 import { createAudit } from '../modules/audit/index.js';
+import { createClinical, type AppointmentLookup } from '../modules/clinical/index.js';
+import { createDocuments } from '../modules/documents/index.js';
 import type { LockoutPolicy } from '../modules/identity/application/lockout.js';
 import type { PasswordValidator } from '../modules/identity/domain/password-policy.js';
 import { createIdentity, type PasswordHasher } from '../modules/identity/index.js';
+import {
+  createOnboarding,
+  createWizardGate,
+  type Capabilities,
+} from '../modules/onboarding/index.js';
 import {
   createOperatorConsole,
   type DemoResetPort,
   type OperatorSecrets,
 } from '../modules/operator/index.js';
 import { createPatients } from '../modules/patients/index.js';
-import { createStaff } from '../modules/staff/index.js';
+import {
+  createAppointmentTypeService,
+  createScheduling,
+  findCareSourceAppointment,
+} from '../modules/scheduling/index.js';
+import {
+  createHoursService,
+  createOwnerProfessionalService,
+  createProfileService,
+  createStaff,
+  type MatriculaRules,
+} from '../modules/staff/index.js';
 import {
   createBranding,
   createSupportAccess,
@@ -35,6 +58,7 @@ import { createWithTenant } from '../platform/db/tenant-context.js';
 import type { HealthDeps } from '../platform/http/health.js';
 import { createPublicOrigins } from '../platform/http/public-origin.js';
 import { createMemoryRateLimitStore, type RateLimit } from '../platform/http/rate-limit.js';
+import type { JobClient } from '../platform/jobs/boss.js';
 import type { EmailSender } from '../platform/mail/email-sender.js';
 import type { ObjectStorage } from '../platform/storage/object-storage.js';
 
@@ -64,6 +88,11 @@ export interface ApplicationOptions {
   passwordValidator: PasswordValidator;
   /** Replaceable in tests; production uses the system clock. */
   clock?: () => Date;
+  /**
+   * The clock of scheduling alone (tests move it to just after an appointment starts without ending
+   * the sessions, which run on `clock`). Defaults to `clock`.
+   */
+  schedulingClock?: () => Date;
   hasher?: PasswordHasher;
   lockout?: LockoutPolicy;
   /** Request limits; defaults protect a single instance. Tests raise them. */
@@ -76,6 +105,11 @@ export interface ApplicationOptions {
    */
   storage?: ObjectStorage;
   /**
+   * Enqueues background jobs from a request (the scan of an uploaded document). Absent in a
+   * deployment without them: the features that need a job then answer "unavailable".
+   */
+  jobs?: JobClient;
+  /**
    * The platform operator console. Absent when no operator database is configured (and always
    * absent in single-tenant mode, which has no platform host): `/operator/*` is then a 404.
    */
@@ -86,6 +120,19 @@ export interface ApplicationOptions {
     /** The privileged reset of a demo organization; the demo module provides it. */
     demoReset?: DemoResetPort;
   };
+  /** Clinical records: only a test lowers the search cap (default 2,000 entries). */
+  clinical?: {
+    searchCap?: number;
+    /** Replaces the agenda lookup that checks the appointment an encounter is opened from (tests only). */
+    appointments?: AppointmentLookup;
+    /** The per-user allowance of the record search (default 30 a minute). */
+    searchRateLimit?: RateLimit;
+  };
+  /**
+   * The parts of the product this deployment has. The guided first run shows only the wizard steps
+   * and checklist items of those. Defaults to patients, scheduling and branding (Stage 2).
+   */
+  onboardingCapabilities?: Capabilities;
   /** Routes of the capability modules, registered after identity. */
   modules?: readonly FeatureRoutes[];
 }
@@ -129,9 +176,11 @@ export function createApplication(options: ApplicationOptions): FastifyInstance 
     ...(options.publicPort === undefined ? {} : { port: options.publicPort }),
   });
 
+  const wizardGate = createWizardGate();
   const identity = createIdentity({
     withTenant,
     grants: grantsRepo,
+    needsWizard: wizardGate.needsWizard,
     keys: options.keys,
     email: options.email,
     passwordValidator: options.passwordValidator,
@@ -159,19 +208,29 @@ export function createApplication(options: ApplicationOptions): FastifyInstance 
     },
   });
 
+  const matriculaRules: MatriculaRules = (country, jurisdiction, value) => {
+    const found = getCountryPack(country, createCatalogReader(db));
+    return found.ok
+      ? found.value.validateMatricula(jurisdiction, value)
+      : fail('errors.unsupported_country');
+  };
+  const countryTimeZone = (country: string) => {
+    const found = getCountryPack(country, createCatalogReader(db));
+    return found.ok
+      ? found.value.defaults.timeZone
+      : pack.ok
+        ? pack.value.defaults.timeZone
+        : 'UTC';
+  };
+
   const access = createAccess({
     withTenant,
     auditDeny,
     sessions: identity.sessions,
     grants,
-    defaultTimeZone: (country) => {
-      const found = getCountryPack(country, createCatalogReader(db));
-      return found.ok
-        ? found.value.defaults.timeZone
-        : pack.ok
-          ? pack.value.defaults.timeZone
-          : 'UTC';
-    },
+    defaultTimeZone: countryTimeZone,
+    email: options.email,
+    origins,
   });
 
   const staff = createStaff({
@@ -181,12 +240,7 @@ export function createApplication(options: ApplicationOptions): FastifyInstance 
     sessions: identity.sessions,
     email: options.email,
     origins,
-    matriculaRules: (country, jurisdiction, value) => {
-      const found = getCountryPack(country, createCatalogReader(db));
-      return found.ok
-        ? found.value.validateMatricula(jurisdiction, value)
-        : fail('errors.unsupported_country');
-    },
+    matriculaRules,
   });
 
   const patients = createPatients({
@@ -212,6 +266,49 @@ export function createApplication(options: ApplicationOptions): FastifyInstance 
         ? found.value.validateDocument(type, value)
         : fail('errors.unsupported_country');
     },
+  });
+
+  const schedulingClock = options.schedulingClock ?? options.clock;
+  const scheduling = createScheduling({
+    withTenant,
+    auditDeny,
+    keys: options.keys,
+    ...(schedulingClock ? { clock: schedulingClock } : {}),
+  });
+
+  const documents = createDocuments({
+    withTenant,
+    auditDeny,
+    storage: options.storage,
+    jobs: options.jobs,
+    ...(options.clock ? { clock: options.clock } : {}),
+  });
+
+  const clinical = createClinical({
+    withTenant,
+    auditDeny,
+    keys: options.keys,
+    ...(options.clinical?.searchCap === undefined ? {} : { searchCap: options.clinical.searchCap }),
+    // The agenda is part of every deployment: an encounter names a real appointment (D20).
+    appointments: options.clinical?.appointments ?? findCareSourceAppointment,
+    rateLimit: {
+      store: rateLimitStore,
+      ...(options.clinical?.searchRateLimit ? { search: options.clinical.searchRateLimit } : {}),
+    },
+  });
+
+  const onboarding = createOnboarding({
+    withTenant,
+    auditDeny,
+    ...(options.onboardingCapabilities ? { capabilities: options.onboardingCapabilities } : {}),
+    locations: createLocationService(),
+    hours: createHoursService(options.clock ? { clock: options.clock } : {}),
+    ownerProfessional: createOwnerProfessionalService({
+      profiles: createProfileService({ rules: matriculaRules }),
+    }),
+    types: createAppointmentTypeService(),
+    defaultTimeZone: countryTimeZone,
+    ...(options.clock ? { clock: options.clock } : {}),
   });
 
   const auditViewer = createAudit({ withTenant });
@@ -273,6 +370,10 @@ export function createApplication(options: ApplicationOptions): FastifyInstance 
       access.routes,
       staff.routes,
       patients.routes,
+      scheduling.routes,
+      documents.routes,
+      clinical.routes,
+      onboarding.routes,
       auditViewer.routes,
       branding.routes,
       supportAccess.routes,

@@ -7,6 +7,7 @@ import {
 } from '@consultorio/contracts';
 
 import type { Actor } from './actor.js';
+import { calendarAccess } from './calendar-scope.js';
 
 /** Why a request was denied. Goes to the audit entry, never to the client. */
 export type DenyReason =
@@ -21,13 +22,17 @@ export type DenyReason =
   /** A clinical permission, and the user has no professional profile that passed the gate. */
   | 'professional_gate'
   /** A patient session reached a staff action. */
-  | 'patient_on_staff_route';
+  | 'patient_on_staff_route'
+  /** The action works in the calendar of a professional the actor was not given (scheduling). */
+  | 'not_own_calendar';
 
 export type Decision = { allowed: true } | { allowed: false; reason: DenyReason };
 
 /** What the action is about, when the route already knows. */
 export interface Resource {
   tenantId?: string;
+  /** The professional whose calendar the action touches: a professional works in their own. */
+  calendarOf?: string;
 }
 
 function isPermission(value: string): value is Permission {
@@ -72,5 +77,8 @@ export function can(actor: Actor, action: string, resource: Resource = {}): Deci
     return deny('not_permitted');
   if (isClinicalPermission(action) && actor.professionalId === null)
     return deny('professional_gate');
+  if (resource.calendarOf !== undefined && !calendarAccess(actor, resource.calendarOf)) {
+    return deny('not_own_calendar');
+  }
   return { allowed: true };
 }

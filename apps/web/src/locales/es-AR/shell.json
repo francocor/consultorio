@@ -22,6 +22,7 @@
   "user.menu": "Menú de la cuenta",
   "user.signedInAs": "Sesión iniciada como",
   "user.security": "Seguridad y sesiones",
+  "user.firstSteps": "Primeros pasos",
   "user.appearance": "Apariencia",
   "org.logoAlt": "Logotipo de {{name}}",
   "org.fallbackName": "Gestión de consultorios",

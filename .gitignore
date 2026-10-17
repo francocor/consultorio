@@ -29,3 +29,6 @@ skills-lock.json
 # Connection details of the throwaway end-to-end stack (public development values)
 apps/web/e2e/.stack/
 .lighthouseci/
+
+# Local backups (apps/api/scripts/backup-local.ts)
+/backups/

@@ -14,6 +14,8 @@ import { lazy, type ComponentType } from 'react';
 
 import { AuthLayout } from '../features/auth/AuthLayout.js';
 import { LoginPage } from '../features/auth/LoginPage.js';
+import { validateCalendarSearch } from '../features/calendar/search.js';
+import { isWizardScreen } from '../features/onboarding/wizard-model.js';
 import { settingsTabsFor } from '../features/settings/settings-tabs.js';
 import { SettingsPage } from '../features/settings/SettingsPage.js';
 import { isApiError } from '../shared/lib/api-client.js';
@@ -190,12 +192,89 @@ function buildRouteTree() {
   const patientRoute = createRoute({
     getParentRoute: () => authedRoute,
     path: '/patients/$patientId',
+    // `?tab=chart` opens the clinical chart (links from a note come back to it).
+    validateSearch: (search: Record<string, unknown>) => ({
+      tab: search['tab'] === 'chart' ? ('chart' as const) : undefined,
+    }),
     component: guarded(
       ['patients.read'],
       lazyRouteComponent(
         () => import('../features/patients/PatientDetailPage.js'),
         'PatientDetailPage',
       ),
+    ),
+  });
+
+  const calendarRoute = createRoute({
+    getParentRoute: () => authedRoute,
+    path: '/calendar',
+    validateSearch: validateCalendarSearch,
+    component: guarded(
+      ['scheduling.read'],
+      lazyRouteComponent(() => import('../features/calendar/CalendarPage.js'), 'CalendarPage'),
+    ),
+  });
+
+  const todayRoute = createRoute({
+    getParentRoute: () => authedRoute,
+    path: '/today',
+    component: guarded(
+      ['scheduling.read'],
+      lazyRouteComponent(() => import('../features/today/TodayPage.js'), 'TodayPage'),
+    ),
+  });
+
+  const checkInRoute = createRoute({
+    getParentRoute: () => authedRoute,
+    path: '/check-in',
+    component: lazyRouteComponent(
+      () => import('../features/checkin/CheckInPage.js'),
+      'CheckInPage',
+    ),
+  });
+
+  const worklistRoute = createRoute({
+    getParentRoute: () => authedRoute,
+    path: '/worklist',
+    component: guarded(
+      ['worklist.manage'],
+      lazyRouteComponent(() => import('../features/worklist/WorklistPage.js'), 'WorklistPage'),
+    ),
+  });
+
+  // Clinical records: professionals only (reception, owner and admin see the "no access" screen).
+  const noteRoute = createRoute({
+    getParentRoute: () => authedRoute,
+    path: '/notes/$noteId',
+    component: guarded(
+      ['clinical.note.read'],
+      lazyRouteComponent(() => import('../features/clinical/NotePage.js'), 'NotePage'),
+    ),
+  });
+
+  const newEncounterRoute = createRoute({
+    getParentRoute: () => authedRoute,
+    path: '/encounters/new',
+    validateSearch: (search: Record<string, unknown>) => ({
+      patientId: typeof search['patientId'] === 'string' ? search['patientId'] : undefined,
+      appointmentId:
+        typeof search['appointmentId'] === 'string' ? search['appointmentId'] : undefined,
+    }),
+    component: guarded(
+      ['clinical.note.write'],
+      lazyRouteComponent(
+        () => import('../features/clinical/NewEncounterPage.js'),
+        'NewEncounterPage',
+      ),
+    ),
+  });
+
+  const draftsRoute = createRoute({
+    getParentRoute: () => authedRoute,
+    path: '/drafts',
+    component: guarded(
+      ['clinical.note.write'],
+      lazyRouteComponent(() => import('../features/clinical/DraftsPage.js'), 'DraftsPage'),
     ),
   });
 
@@ -218,6 +297,22 @@ function buildRouteTree() {
   });
 
   // Settings has its own frame (the sections) and checks each section on its own.
+  // The setup wizard: its own page, reachable by address from the checklist and from Settings.
+  const onboardingRoute = createRoute({
+    getParentRoute: () => authedRoute,
+    path: '/onboarding',
+    validateSearch: (search: Record<string, unknown>) => ({
+      step:
+        typeof search['step'] === 'string' && isWizardScreen(search['step'])
+          ? search['step']
+          : undefined,
+    }),
+    component: lazyRouteComponent(
+      () => import('../features/onboarding/OnboardingPage.js'),
+      'OnboardingPage',
+    ),
+  });
+
   const settingsRoute = createRoute({
     getParentRoute: () => authedRoute,
     path: '/settings',
@@ -239,6 +334,15 @@ function buildRouteTree() {
     component: lazyRouteComponent(
       () => import('../features/settings/LocationsPage.js'),
       'LocationsPage',
+    ),
+  });
+
+  const settingsSchedulingRoute = createRoute({
+    getParentRoute: () => settingsRoute,
+    path: '/scheduling',
+    component: lazyRouteComponent(
+      () => import('../features/settings/scheduling/SchedulingSettingsPage.js'),
+      'SchedulingSettingsPage',
     ),
   });
 
@@ -301,11 +405,20 @@ function buildRouteTree() {
       patientsRoute,
       newPatientRoute,
       patientRoute,
+      calendarRoute,
+      todayRoute,
+      checkInRoute,
+      worklistRoute,
+      noteRoute,
+      newEncounterRoute,
+      draftsRoute,
       staffRoute,
       auditRoute,
+      onboardingRoute,
       settingsRoute.addChildren([
         settingsIndexRoute,
         settingsLocationsRoute,
+        settingsSchedulingRoute,
         settingsBrandingRoute,
         settingsSecurityRoute,
       ]),

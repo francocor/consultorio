@@ -73,9 +73,11 @@ describe('MeResponse and SessionList', () => {
       scope: 'full',
       twoFactor: { enrolled: false, required: true, graceEndsAt: '2026-10-23T10:00:00.000Z' },
       tenantStatus: 'read_only',
+      needsWizard: true,
     };
 
     expect(MeResponse.parse(me)).toEqual(me);
+    expect(MeResponse.safeParse({ ...me, needsWizard: undefined }).success).toBe(false);
     expect(MeResponse.safeParse({ ...me, roles: ['superuser'] }).success).toBe(false);
     expect(MeResponse.safeParse({ ...me, tenantStatus: 'frozen' }).success).toBe(false);
   });

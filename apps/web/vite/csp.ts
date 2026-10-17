@@ -13,6 +13,32 @@ export interface CspOptions {
    * contract"). `development`: the same policy plus what the Vite dev server needs.
    */
   mode: 'production' | 'development';
+  /**
+   * Extra origins the page may connect to: the object storage that receives the document uploads
+   * straight from the browser (a presigned POST). Empty when documents are not used.
+   */
+  connectSources?: readonly string[];
+}
+
+/**
+ * The origins in a list the deployment provides (`CSP_CONNECT_SOURCES`), separated by commas or
+ * spaces. Only plain http(s) origins survive, reduced to scheme, host and port: a wildcard, a
+ * keyword such as `'unsafe-inline'`, another scheme or a malformed entry is dropped, so this setting
+ * can name a storage service and can never loosen the policy.
+ */
+export function connectOriginsFrom(list: string | undefined): string[] {
+  const origins = new Set<string>();
+  for (const entry of (list ?? '').split(/[\s,]+/)) {
+    if (entry === '') continue;
+    try {
+      const url = new URL(entry);
+      const web = url.protocol === 'https:' || url.protocol === 'http:';
+      if (web && url.username === '' && url.password === '') origins.add(url.origin);
+    } catch {
+      // Not a URL: dropped.
+    }
+  }
+  return [...origins];
 }
 
 /**
@@ -41,7 +67,10 @@ export function contentSecurityPolicy(options: CspOptions): string {
     ['style-src', ["'self'", "'unsafe-inline'"]],
     ['img-src', ["'self'", 'data:', 'blob:']],
     ['font-src', ["'self'"]],
-    ['connect-src', ["'self'", ...(development ? ['ws:', 'wss:'] : [])]],
+    [
+      'connect-src',
+      ["'self'", ...(options.connectSources ?? []), ...(development ? ['ws:', 'wss:'] : [])],
+    ],
     ['manifest-src', ["'self'"]],
     ['worker-src', ["'self'"]],
     ['object-src', ["'none'"]],

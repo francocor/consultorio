@@ -1,5 +1,6 @@
 import { z } from 'zod';
 
+import { readScannerConfig, type ScannerConfig } from './config-scanner.js';
 import { parseTrustProxy, type TrustProxySetting } from './trust-proxy.js';
 
 const LOG_LEVELS = ['fatal', 'error', 'warn', 'info', 'debug', 'trace', 'silent'] as const;
@@ -276,6 +277,8 @@ export interface Config {
   readonly kms: KmsConfig;
   /** Undefined when S3_BUCKET is not set: logo upload and documents are then unavailable. */
   readonly storage?: StorageConfig;
+  /** Undefined when CLAMAV_HOST is not set: development then scans with the fake scanner. */
+  readonly scanner?: ScannerConfig;
   /** Undefined when SMTP_HOST is not set (allowed outside production). */
   readonly mail?: MailConfig;
   readonly passwordBreachCheck: boolean;
@@ -324,6 +327,15 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     throw new ConfigError(`Invalid environment configuration. ${problems}`);
   }
   const value = parsed.data;
+  // The scanner has its own small schema (see config-scanner.ts), read from the same environment.
+  const scanner = readScannerConfig(withoutEmptyValues(env), {
+    nodeEnv: value.NODE_ENV,
+    storageConfigured: value.S3_BUCKET !== undefined,
+  });
+  if (scanner.problems.length > 0) {
+    const problems = scanner.problems.map((problem) => `${problem.path}: ${problem.message}`);
+    throw new ConfigError(`Invalid environment configuration. ${problems.join('; ')}`);
+  }
   return {
     nodeEnv: value.NODE_ENV,
     databaseUrl: value.DATABASE_URL,
@@ -362,6 +374,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
                 }),
           },
         }),
+    ...(scanner.config === undefined ? {} : { scanner: scanner.config }),
     ...(value.SMTP_HOST === undefined
       ? {}
       : {

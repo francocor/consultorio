@@ -7,6 +7,8 @@ import type { FastifyInstance } from 'fastify';
 
 import type { AuthzOptions } from '../../platform/authz/guard.js';
 import type { WithTenant } from '../../platform/db/tenant-context.js';
+import type { PublicOrigins } from '../../platform/http/public-origin.js';
+import type { EmailSender } from '../../platform/mail/email-sender.js';
 import type { ExportRegistry } from '../tenancy/index.js';
 
 import { exportAccess } from './application/export-contributor.js';
@@ -30,6 +32,14 @@ export type { MemberRecord } from './application/members.js';
 export { seesEveryLocation, visibleLocationIds } from './application/locations.js';
 export type { LocationViewer } from './application/locations.js';
 export { AccessRefused } from './application/refusal.js';
+export { createLocationService } from './application/locations.js';
+export type { LocationService } from './application/locations.js';
+export { addProfessionalRoleToOwner } from './application/owner-professional.js';
+export {
+  prepareProfessionalAddedNotice,
+  sendProfessionalAddedNotice,
+} from './application/professional-notice.js';
+export type { ProfessionalAddedNotice } from './application/professional-notice.js';
 export type { SessionRevoker } from './application/roles.js';
 
 export interface AccessOptions {
@@ -40,6 +50,10 @@ export interface AccessOptions {
   grants?: Grants;
   /** Time zone of a new location without one, from the country of the organization. */
   defaultTimeZone: (country: string) => string;
+  /** Tells the owners when an admin adds a professional (decision D19). */
+  email: EmailSender;
+  /** Where the emailed links point. From configuration, never from the request. */
+  origins: PublicOrigins;
 }
 
 export interface Access {
@@ -55,6 +69,8 @@ export function createAccess(options: AccessOptions): Access {
     auditDeny: options.auditDeny,
     grants,
     roles,
+    email: options.email,
+    origins: options.origins,
   });
 
   const settings = settingsRoutes({

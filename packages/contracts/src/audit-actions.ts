@@ -34,6 +34,12 @@ export const AUDIT_ACTIONS = [
   'clinical.anamnesis.read',
   'clinical.anamnesis.updated',
   'clinical.search',
+  // Documents: attachments of a patient (uploads, downloads, hiding, reclassifying).
+  'document.uploaded',
+  'document.scanned',
+  'document.downloaded',
+  'document.hidden',
+  'document.reclassified',
   // Patient identity data.
   'patient.created',
   'patient.updated',
@@ -74,7 +80,45 @@ export const AUDIT_ACTIONS = [
   'staff.deactivated',
   'staff.reactivated',
   'staff.profile_updated',
+  // Decision D19 (revised): an admin who is not an owner invited a professional or granted the
+  // professional role. The owners are told by email.
+  'professional.added_by_admin',
   'professional.hours_updated',
+  // Appointments (administrative data only). Every status change, override and calendar view of
+  // another professional is recorded (scheduling, "Scheduling authorization and audit").
+  'appointment.created',
+  'appointment.overridden',
+  'appointment.rescheduled',
+  'appointment.reassigned',
+  'appointment.status_changed',
+  'appointment.cancelled',
+  'appointment.status_corrected',
+  // A professional looked at the calendar of another professional (a delegated calendar).
+  'appointment.calendar_viewed',
+  // Identity of the patient of an appointment (decisions D14 and D18).
+  'appointment.identity.confirmed',
+  'appointment.identity.self_confirmed',
+  'appointment.identity.rejected',
+  // The reception worklist: every item is resolved or dismissed by a person.
+  'worklist.resolved',
+  'worklist.dismissed',
+  // Scheduling setup: what can be booked, when the calendar is closed, hours for a range of dates.
+  'appointment_type.created',
+  'appointment_type.updated',
+  'appointment_type.deactivated',
+  'appointment_type.reactivated',
+  'schedule_block.created',
+  'schedule_block.removed',
+  'day_off.created',
+  'day_off.removed',
+  'professional.hours_period_set',
+  'professional.hours_period_removed',
+  // The guided first run: progress of the setup wizard, the solo fast path and the checklist.
+  'onboarding.step_updated',
+  'onboarding.completed',
+  'onboarding.fast_path',
+  'onboarding.checklist_dismissed',
+  'onboarding.checklist_restored',
   // Support access that the organization opens for the platform.
   'support.grant.created',
   'support.grant.revoked',

@@ -26,11 +26,17 @@ describe('action token kinds (design 4.5)', () => {
     );
   });
 
-  it('enables only the account flows for now', () => {
+  it('enables the account flows and the document download for now', () => {
     const enabled = TOKEN_KINDS.filter((kind) => isEnabledKind(kind)).sort();
 
     expect(enabled).toEqual(
-      ['password_reset', 'portal_activation', 'signup_verification', 'staff_invitation'].sort(),
+      [
+        'document_download',
+        'password_reset',
+        'portal_activation',
+        'signup_verification',
+        'staff_invitation',
+      ].sort(),
     );
   });
 

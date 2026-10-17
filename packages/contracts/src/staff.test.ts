@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   InviteStaffRequest,
+  OwnerProfessionalRequest,
   ProfessionalProfileRequest,
   SetWeeklyHoursRequest,
   StaffMemberDto,
@@ -100,5 +101,42 @@ describe('weekly hours', () => {
   it('replaces the whole schedule, and may be empty', () => {
     expect(SetWeeklyHoursRequest.safeParse({ hours: [] }).success).toBe(true);
     expect(SetWeeklyHoursRequest.safeParse({ hours: [interval] }).success).toBe(true);
+  });
+});
+
+describe('OwnerProfessionalRequest (D21: an owner acts as a professional)', () => {
+  const request = {
+    fullName: 'Ana Pérez',
+    specialties: ['nutrition'],
+    matricula: { jurisdiction: 'AR-B', number: '12345' },
+  };
+
+  it('needs the name, a specialty, the jurisdiction and the number of the matricula', () => {
+    expect(OwnerProfessionalRequest.safeParse(request).success).toBe(true);
+    expect(OwnerProfessionalRequest.safeParse({ ...request, fullName: ' ' }).success).toBe(false);
+    expect(OwnerProfessionalRequest.safeParse({ ...request, specialties: [] }).success).toBe(false);
+    expect(OwnerProfessionalRequest.safeParse({ ...request, matricula: null }).success).toBe(false);
+    expect(
+      OwnerProfessionalRequest.safeParse({ ...request, matricula: { jurisdiction: 'AR-B' } })
+        .success,
+    ).toBe(false);
+    expect(
+      OwnerProfessionalRequest.safeParse({ ...request, matricula: { number: '12345' } }).success,
+    ).toBe(false);
+  });
+
+  it('cannot name a role, a verification or a number of simultaneous visits', () => {
+    expect(
+      OwnerProfessionalRequest.safeParse({ ...request, roles: ['professional'] }).success,
+    ).toBe(false);
+    expect(OwnerProfessionalRequest.safeParse({ ...request, maxSimultaneous: 5 }).success).toBe(
+      false,
+    );
+    expect(
+      OwnerProfessionalRequest.safeParse({
+        ...request,
+        matricula: { ...request.matricula, status: 'verified' },
+      }).success,
+    ).toBe(false);
   });
 });

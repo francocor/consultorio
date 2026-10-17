@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   deriveProfessionalId,
+  resolveProfessionalIds,
   type ProfessionalProfile,
   type ProfessionalRepo,
 } from './professional-gate.js';
@@ -70,7 +71,7 @@ describe('professional gate (authorization, "Health professional" definition)', 
     }
   });
 
-  it('does not even look for a profile when the membership does not hold the professional role', async () => {
+  it('looks the profile up for any member, but a role other than professional never unlocks the gate', async () => {
     const repo = repoWith(PROFILE);
 
     const id = await deriveProfessionalId(
@@ -80,7 +81,7 @@ describe('professional gate (authorization, "Health professional" definition)', 
     );
 
     expect(id).toBeNull();
-    expect(repo.calls).toEqual([]);
+    expect(repo.calls).toEqual(['m1']);
   });
 
   it('asks the repository for the profile of the membership', async () => {
@@ -107,5 +108,67 @@ describe('professional gate (authorization, "Health professional" definition)', 
         validateMatricula,
       ),
     ).resolves.toBeNull();
+  });
+});
+
+describe('own professional profile (D14), independent of the clinical gate', () => {
+  const resolve = (roles: Role[], profile: ProfessionalProfile | null) =>
+    resolveProfessionalIds(
+      { tenantId: 't1', membershipId: 'm1', roles },
+      repoWith(profile),
+      validateMatricula,
+    );
+
+  it('knows the own profile of a professional whose matricula is not recorded yet', async () => {
+    expect(await resolve(['professional'], { ...PROFILE, matricula: null })).toEqual({
+      professionalId: null,
+      ownProfessionalId: PROFILE.id,
+    });
+  });
+
+  it('knows the own profile of an owner who is also a professional without a valid matricula', async () => {
+    expect(
+      await resolve(['owner', 'professional'], { ...PROFILE, matricula: 'not a matricula' }),
+    ).toEqual({ professionalId: null, ownProfessionalId: PROFILE.id });
+  });
+
+  it('gives both ids when the profile passes the gate', async () => {
+    expect(await resolve(['professional'], PROFILE)).toEqual({
+      professionalId: PROFILE.id,
+      ownProfessionalId: PROFILE.id,
+    });
+  });
+
+  it('keeps the own profile of a member who lost the professional role, with the gate closed (JD-S2 R2-S2)', async () => {
+    // Demoted: the old appointments are still theirs for the identity rules, but nothing clinical opens.
+    expect(await resolve(['owner'], PROFILE)).toEqual({
+      professionalId: null,
+      ownProfessionalId: PROFILE.id,
+    });
+    expect(await resolve(['reception'], PROFILE)).toEqual({
+      professionalId: null,
+      ownProfessionalId: PROFILE.id,
+    });
+  });
+
+  it('has no own profile for a member who never had one', async () => {
+    expect(await resolve(['owner'], null)).toEqual({
+      professionalId: null,
+      ownProfessionalId: null,
+    });
+  });
+
+  it('does not guess when the lookup fails: it rejects instead of answering "none"', async () => {
+    const broken: ProfessionalRepo = {
+      findByMembership: () => Promise.reject(new Error('database down')),
+    };
+
+    await expect(
+      resolveProfessionalIds(
+        { tenantId: 't1', membershipId: 'm1', roles: ['professional'] },
+        broken,
+        validateMatricula,
+      ),
+    ).rejects.toThrow('database down');
   });
 });

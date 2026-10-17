@@ -3,7 +3,9 @@ import { asc, eq } from 'drizzle-orm';
 import { SYSTEM_USER_ID, type WithTenant } from '../../../platform/db/tenant-context.js';
 import { membershipLocation } from '../../schema/access.js';
 import { careAssignment } from '../../schema/care.js';
+import { addendum, clinicalNote, encounter } from '../../schema/clinical.js';
 import { patientCoverage, payerPlan } from '../../schema/coverage.js';
+import { document } from '../../schema/documents.js';
 import { membership, userAccount } from '../../schema/identity.js';
 import { patient, patientRepresentative } from '../../schema/patients.js';
 import { payer } from '../../schema/platform-catalogs.js';
@@ -38,12 +40,100 @@ export interface DemoSnapshot {
     assignedTo: string[];
     alerts: string[];
   }[];
+  /** The clinical notes, as each author sees them (the content itself is encrypted and not compared). */
+  notes: {
+    author: string;
+    specialties: string[];
+    patient: string;
+    template: string;
+    status: string;
+    visibility: string;
+    addenda: number;
+    /** Opened from an appointment of the agenda (decision D20). */
+    fromAppointment: boolean;
+  }[];
+  /** The files of the organization with the verdict of the scan; the bytes are not compared. */
+  documents: {
+    patient: string;
+    name: string;
+    category: string;
+    classification: string;
+    status: string;
+    scanResult: string | null;
+    linkedTo: string[];
+  }[];
 }
 
 export async function snapshotDemoTenant(
   withTenant: WithTenant,
   tenantId: string,
 ): Promise<DemoSnapshot> {
+  const staff = await withTenant({ tenantId, userId: SYSTEM_USER_ID }, (tx) =>
+    tx
+      .select({
+        id: professional.id,
+        specialties: professional.specialties,
+        name: membership.displayName,
+        userId: membership.userId,
+      })
+      .from(professional)
+      .innerJoin(membership, eq(membership.id, professional.membershipId)),
+  );
+  // Clinical rows are visible only to the professional who wrote them (or treats the patient), so
+  // each author's notes are read as that author.
+  const notes: DemoSnapshot['notes'] = [];
+  for (const author of staff) {
+    const rows = await withTenant(
+      { tenantId, userId: author.userId, actingProfessionalId: author.id },
+      async (tx) => {
+        const written = await tx
+          .select({
+            id: clinicalNote.id,
+            status: clinicalNote.status,
+            template: clinicalNote.templateKind,
+            visibility: clinicalNote.visibility,
+            family: patient.familyName,
+            given: patient.givenNames,
+            appointmentId: encounter.appointmentId,
+          })
+          .from(clinicalNote)
+          .innerJoin(patient, eq(patient.id, clinicalNote.patientId))
+          .innerJoin(encounter, eq(encounter.id, clinicalNote.encounterId))
+          .where(eq(clinicalNote.authorProfessionalId, author.id));
+        const extra = await tx.select({ noteId: addendum.noteId }).from(addendum);
+        return written.map((row) => ({
+          ...row,
+          addenda: extra.filter((entry) => entry.noteId === row.id).length,
+        }));
+      },
+    );
+    for (const row of rows) {
+      notes.push({
+        author: author.name ?? '?',
+        specialties: [...author.specialties],
+        patient: `${row.family}, ${row.given}`,
+        template: row.template,
+        status: row.status,
+        visibility: row.visibility,
+        addenda: row.addenda,
+        fromAppointment: row.appointmentId !== null,
+      });
+    }
+  }
+  // Every field is part of the key: two notes can share author, patient,
+  // template and status, and the comparison must not depend on row order.
+  const noteKey = (note: (typeof notes)[number]) =>
+    [
+      note.author,
+      note.patient,
+      note.template,
+      note.status,
+      note.visibility,
+      note.addenda,
+      note.fromAppointment,
+    ].join('|');
+  notes.sort((a, b) => noteKey(a).localeCompare(noteKey(b)));
+
   return withTenant({ tenantId, userId: SYSTEM_USER_ID }, async (tx) => {
     const [org] = await tx
       .select({ theme: tenant.theme })
@@ -84,6 +174,21 @@ export async function snapshotDemoTenant(
       .select({ patientId: dataProcessingConsent.patientId })
       .from(dataProcessingConsent);
     const guardians = await tx.select().from(patientRepresentative);
+    const files = await tx
+      .select({
+        family: patient.familyName,
+        given: patient.givenNames,
+        name: document.originalName,
+        category: document.category,
+        classification: document.classification,
+        status: document.status,
+        scanResult: document.scanResult,
+        encounterId: document.encounterId,
+        appointmentId: document.appointmentId,
+      })
+      .from(document)
+      .innerJoin(patient, eq(patient.id, document.patientId))
+      .orderBy(asc(patient.familyName), asc(document.originalName));
     const care = await tx
       .select({ patientId: careAssignment.patientId, name: membership.displayName })
       .from(careAssignment)
@@ -138,6 +243,19 @@ export async function snapshotDemoTenant(
           alerts: [...person.safetyFlags].sort(),
         };
       }),
+      notes,
+      documents: files.map((file) => ({
+        patient: `${file.family}, ${file.given}`,
+        name: file.name,
+        category: file.category,
+        classification: file.classification,
+        status: file.status,
+        scanResult: file.scanResult,
+        linkedTo: [
+          ...(file.encounterId ? ['encounter'] : []),
+          ...(file.appointmentId ? ['appointment'] : []),
+        ],
+      })),
     };
   });
 }

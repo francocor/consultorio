@@ -1,9 +1,20 @@
 import { eq, inArray, sql } from 'drizzle-orm';
 
+import { createAmendmentService } from '../../../modules/clinical/application/amendments.js';
+import { createNoteService, type Caller } from '../../../modules/clinical/application/notes.js';
 import type { PasswordHasher } from '../../../modules/identity/infrastructure/argon2.js';
 import { createAnamnesisService } from '../../../modules/patients/application/anamnesis.js';
 import { createAssignmentService } from '../../../modules/patients/application/assignments.js';
 import { snapshotOf } from '../../../modules/patients/application/mapping.js';
+import { createAppointmentTypeService } from '../../../modules/scheduling/application/appointment-types.js';
+import { createBlockService } from '../../../modules/scheduling/application/blocks.js';
+import { bookAppointment } from '../../../modules/scheduling/application/book-appointment.js';
+import { createSchedulingPorts } from '../../../modules/scheduling/application/drizzle-ports.js';
+import { createHolidayService } from '../../../modules/scheduling/application/holidays.js';
+import { createHoursPeriodService } from '../../../modules/scheduling/application/hours-periods.js';
+import { transitionAppointment } from '../../../modules/scheduling/application/lifecycle.js';
+import type { BookActor } from '../../../modules/scheduling/application/placement.js';
+import { instantAtLocalMinute } from '../../../modules/scheduling/domain/time.js';
 import { audit, type AuditActor } from '../../../platform/audit/writer.js';
 import type { TenantKeys } from '../../../platform/crypto/tenant-keys.js';
 import { SYSTEM_USER_ID, type Tx, type WithTenant } from '../../../platform/db/tenant-context.js';
@@ -11,6 +22,7 @@ import { uuidv7 } from '../../../platform/db/uuid.js';
 import { membershipLocation } from '../../schema/access.js';
 import { patientCoverage, payerPlan } from '../../schema/coverage.js';
 import { membership, userAccount } from '../../schema/identity.js';
+import { onboardingState } from '../../schema/onboarding.js';
 import { patient, patientRepresentative, patientVersion } from '../../schema/patients.js';
 import { payer } from '../../schema/platform-catalogs.js';
 import { dataProcessingConsent } from '../../schema/privacy.js';
@@ -19,6 +31,8 @@ import { location, tenant } from '../../schema/tenant.js';
 
 import { DEMO_ACCOUNTS, DEMO_PASSWORD } from './credentials.js';
 import { buildDemoDataset, type DemoPatient, type DemoStaff } from './dataset.js';
+import { buildDemoSchedule, type DemoAppointment } from './schedule.js';
+import { seedStage2, type DemoDocumentsDeps, type SeededAppointment } from './stage2.js';
 
 /** The seed cannot run: wrong environment, wrong organization, or data already there. */
 /** How long the demo's professionals have been in the team, by their profile. */
@@ -51,6 +65,11 @@ export interface DemoSeedDeps {
   emailFor?: (account: DemoStaff) => string;
   /** `NODE_ENV` of the process. The seed with the public development passwords never runs in production. */
   environment?: string | undefined;
+  /**
+   * Where the demo's files go and the scanner that checks them. Without it the demo has no
+   * documents (the seed cannot invent files that a download would not find).
+   */
+  documents?: DemoDocumentsDeps | undefined;
 }
 
 export interface SeededCredential {
@@ -180,6 +199,7 @@ export async function seedDemoTenant(
 
   // 2. The organization's content, as the owner.
   const professionalIds = new Map<string, string>();
+  const locationIds = new Map<string, string>();
   await deps.withTenant({ tenantId, userId: owner.userId }, async (tx) => {
     await tx
       .update(tenant)
@@ -203,7 +223,6 @@ export async function seedDemoTenant(
       metadata: { fields: ['displayName', 'shortName', 'primaryColor', 'radius', 'headingFont'] },
     });
 
-    const locationIds = new Map<string, string>();
     for (const place of data.locations) {
       const id = uuidv7();
       locationIds.set(place.key, id);
@@ -338,7 +357,347 @@ export async function seedDemoTenant(
     );
   }
 
+  // 5. The agenda: types, a block, a day off, hours for a range of dates, and appointments around
+  // today with every status, all through the same use cases the API runs.
+  const appointments = await seedAgenda(deps, {
+    tenantId,
+    data,
+    now,
+    owner,
+    reception,
+    people,
+    professionalIds,
+    locationIds,
+    patientIds,
+  });
+  // 6. What the professionals wrote, through the same services the API uses (so the encryption, the
+  // signature hash and the audit entries are the real ones): notes signed, a draft left open, an
+  // addendum, an entry marked in error and one restricted to its author.
+  const notes = createNoteService({ keys: deps.keys });
+  const amendments = createAmendmentService({ keys: deps.keys });
+  for (const entry of data.notes) {
+    const patientId = patientIds[entry.patientIndex];
+    const professionalId = professionalIds.get(entry.professional);
+    const person = people.get(entry.professional);
+    if (!patientId || !professionalId || !person) {
+      throw new DemoSeedError('A note points at a patient or professional that is not there.');
+    }
+    const context = { tenantId, userId: person.userId, actingProfessionalId: professionalId };
+    const caller: Caller = {
+      actor: { ...actorOf(person.userId, 'professional'), userId: person.userId },
+      professionalId,
+      tenantActive: true,
+    };
+    const opened = await deps.withTenant(context, (tx) =>
+      notes.open(tx, caller, {
+        patientId,
+        templateKind: entry.templateKind,
+        ...(entry.visibility ? { visibility: entry.visibility } : {}),
+      }),
+    );
+    await deps.withTenant(context, (tx) =>
+      notes.saveDraft(tx, caller, {
+        encounterId: opened.encounterId,
+        request: { content: entry.content, baseRevision: 0 },
+      }),
+    );
+    if (entry.state === 'draft') continue;
+    await deps.withTenant(context, (tx) =>
+      notes.sign(tx, caller, { noteId: opened.id, expectedRevision: 1 }),
+    );
+    if (entry.addendum) {
+      const addendum = entry.addendum;
+      await deps.withTenant(context, (tx) =>
+        amendments.addAddendum(tx, caller, { noteId: opened.id, request: addendum }),
+      );
+    }
+    if (entry.state === 'error' && entry.errorReason) {
+      const reason = entry.errorReason;
+      await deps.withTenant(context, (tx) =>
+        amendments.markEnteredInError(tx, caller, { noteId: opened.id, request: { reason } }),
+      );
+    }
+  }
+
+  // 7. The Stage 2 story of the day: consultations opened from appointments, signed and amended, and
+  // the documents that came with them, all scanned.
+  await seedStage2({
+    tenantId,
+    now,
+    withTenant: deps.withTenant,
+    keys: deps.keys,
+    clock: deps.clock,
+    documents: deps.documents,
+    reception,
+    people,
+    professionalIds,
+    appointments,
+  });
+
+  // 8. The demo organization is already set up: it opens on its agenda, with no setup wizard and no
+  // first-run checklist on its pages (a fresh organization created by the operator shows both).
+  await deps.withTenant({ tenantId, userId: owner.userId }, (tx) =>
+    tx.insert(onboardingState).values({
+      tenantId,
+      answers: { isProfessional: false, path: 'center' },
+      wizardCompletedAt: now,
+      wizardCompletedBy: owner.userId,
+      checklistDismissedAt: now,
+      checklistDismissedBy: owner.userId,
+    }),
+  );
+
   return { credentials };
+}
+
+interface AgendaPerson {
+  userId: string;
+  membershipId: string;
+}
+
+const TOOLS = [
+  'scheduling.book',
+  'scheduling.checkin',
+  'scheduling.register_past',
+  'scheduling.override_hours',
+] as const;
+
+const clock = (minutes: number): string =>
+  `${String(Math.floor(minutes / 60)).padStart(2, '0')}:${String(minutes % 60).padStart(2, '0')}`;
+
+/** How long before a visit the demo says it was booked, so a past visit is not a backdated one. */
+const BOOKED_AHEAD_MS = 2 * 86_400_000;
+
+async function seedAgenda(
+  deps: DemoSeedDeps,
+  input: {
+    tenantId: string;
+    data: ReturnType<typeof buildDemoDataset>;
+    now: Date;
+    owner: AgendaPerson;
+    reception: AgendaPerson;
+    people: ReadonlyMap<string, AgendaPerson>;
+    professionalIds: ReadonlyMap<string, string>;
+    locationIds: ReadonlyMap<string, string>;
+    patientIds: readonly string[];
+  },
+): Promise<SeededAppointment[]> {
+  const { tenantId, data, now, owner, reception } = input;
+  const created: SeededAppointment[] = [];
+  const schedule = buildDemoSchedule(data, now);
+  const zoneOf = (locationKey: string) =>
+    data.locations.find((place) => place.key === locationKey)?.timeZone ??
+    'America/Argentina/Buenos_Aires';
+  const ownerActor = { ...actorOf(owner.userId, 'owner'), userId: owner.userId };
+
+  // Setup, as the owner.
+  const typeIds = new Map<string, string>();
+  await deps.withTenant({ tenantId, userId: owner.userId }, async (tx) => {
+    const types = createAppointmentTypeService();
+    for (const type of schedule.types) {
+      const created = await types.create(tx, {
+        actor: ownerActor,
+        request: {
+          name: type.name,
+          durationMinutes: type.durationMinutes,
+          bufferMinutes: type.bufferMinutes,
+          mode: 'in_person',
+          requiresApproval: false,
+          color: type.color,
+          professionalIds: [],
+          specialties: [],
+        },
+      });
+      typeIds.set(type.key, created.id);
+    }
+
+    await createHolidayService().createDayOff(tx, {
+      actor: ownerActor,
+      request: { day: schedule.dayOff.date, name: schedule.dayOff.name },
+    });
+
+    const blockedProfessional = input.professionalIds.get(schedule.block.professional);
+    const blockedLocation = input.locationIds.get(schedule.block.location);
+    if (blockedProfessional && blockedLocation) {
+      const zone = zoneOf(schedule.block.location);
+      await createBlockService().create(tx, {
+        actor: ownerActor,
+        request: {
+          professionalId: blockedProfessional,
+          locationId: blockedLocation,
+          startsAt: instantAtLocalMinute(
+            zone,
+            schedule.block.date,
+            schedule.block.startMinute,
+          ).toISOString(),
+          endsAt: instantAtLocalMinute(
+            zone,
+            schedule.block.date,
+            schedule.block.endMinute,
+          ).toISOString(),
+          reason: schedule.block.reason,
+        },
+      });
+    }
+
+    const periodProfessional = input.professionalIds.get(schedule.period.professional);
+    if (periodProfessional) {
+      await createHoursPeriodService().set(tx, {
+        actor: ownerActor,
+        viewer: { membershipId: owner.membershipId, roles: ['owner'] },
+        professionalId: periodProfessional,
+        request: {
+          dateFrom: schedule.period.dateFrom,
+          dateTo: schedule.period.dateTo,
+          reason: schedule.period.reason,
+          hours: schedule.period.hours.flatMap((slot) => {
+            const locationId = input.locationIds.get(slot.location);
+            return locationId
+              ? [
+                  {
+                    locationId,
+                    weekday: slot.weekday,
+                    start: clock(slot.startMinute),
+                    end: clock(slot.endMinute),
+                  },
+                ]
+              : [];
+          }),
+        },
+      });
+    }
+  });
+
+  // Appointments. Holidays are left empty, as in real life.
+  const dates = schedule.appointments.map((entry) => entry.date).sort();
+  const closed = new Set<string>();
+  if (dates.length > 0) {
+    const holidays = await deps.withTenant({ tenantId, userId: SYSTEM_USER_ID }, (tx) =>
+      createHolidayService().holidaysBetween(tx, dates[0] ?? '', dates.at(-1) ?? ''),
+    );
+    for (const holiday of holidays) if (holiday.locationId === null) closed.add(holiday.day);
+  }
+
+  const actorOfPerson = (
+    person: AgendaPerson,
+    role: AuditActor['actingRole'],
+    professionalId: string | null,
+  ): { book: BookActor; audit: AuditActor & { userId: string } } => ({
+    book: { userId: person.userId, permissions: new Set(TOOLS), professionalId },
+    audit: { ...actorOf(person.userId, role), userId: person.userId },
+  });
+
+  const ordered = [...schedule.appointments].sort(
+    (a, b) => a.date.localeCompare(b.date) || a.startMinute - b.startMinute,
+  );
+  for (const entry of ordered) {
+    if (closed.has(entry.date)) continue;
+    const professionalId = input.professionalIds.get(entry.professional);
+    const professionalPerson = input.people.get(entry.professional);
+    const locationId = input.locationIds.get(entry.location);
+    const typeId = typeIds.get(entry.type);
+    const patientId = input.patientIds[entry.patientIndex];
+    if (!professionalId || !professionalPerson || !locationId || !typeId || !patientId) {
+      throw new DemoSeedError('The agenda points at something that is not there.');
+    }
+    const startMs = instantAtLocalMinute(
+      zoneOf(entry.location),
+      entry.date,
+      entry.startMinute,
+    ).getTime();
+
+    // Who takes the booking: reception at its locations, the owner at the others, and the
+    // professional themselves for the one booking that shows the identity review.
+    const booker = entry.selfBooked
+      ? actorOfPerson(professionalPerson, 'professional', professionalId)
+      : entry.location === 'cordoba'
+        ? actorOfPerson(owner, 'owner', null)
+        : actorOfPerson(reception, 'reception', null);
+    const front = actorOfPerson(reception, 'reception', null);
+    const clinician = actorOfPerson(professionalPerson, 'professional', professionalId);
+
+    await deps.withTenant({ tenantId, userId: booker.book.userId }, async (tx) => {
+      const ports = createSchedulingPorts(tx, { keys: deps.keys });
+      const booked = await bookAppointment(ports, {
+        request: {
+          patientId,
+          professionalId,
+          locationId,
+          appointmentTypeId: typeId,
+          startsAt: new Date(startMs).toISOString(),
+        },
+        actor: booker.book,
+        auditActor: booker.audit,
+        // Booked a couple of days ahead of the visit, never backdated.
+        now: new Date(Math.min(now.getTime(), startMs - BOOKED_AHEAD_MS)),
+      });
+      // Every change names the version it was decided on, like any other client.
+      let version = booked.version;
+      const move = async (
+        action: 'confirm' | 'check_in' | 'start' | 'attend' | 'no_show' | 'cancel',
+        who: typeof front,
+      ) => {
+        const updated = await transitionAppointment(ports, {
+          appointmentId: booked.id,
+          action,
+          actor: who.book,
+          auditActor: who.audit,
+          now,
+          expectedVersion: version,
+          ...(action === 'cancel'
+            ? {
+                cancellation: {
+                  cancelledBy: 'patient' as const,
+                  reasonCode: 'patient_request' as const,
+                },
+              }
+            : {}),
+        });
+        version = updated.version;
+        return updated;
+      };
+      await followTheDay(entry, move, front, clinician);
+      created.push({ id: booked.id, entry, patientId, professionalId });
+    });
+  }
+  return created;
+}
+
+/** Carries an appointment from `scheduled` to the status the demo wants it in. */
+async function followTheDay<Who>(
+  entry: DemoAppointment,
+  move: (
+    action: 'confirm' | 'check_in' | 'start' | 'attend' | 'no_show' | 'cancel',
+    who: Who,
+  ) => Promise<unknown>,
+  front: Who,
+  clinician: Who,
+): Promise<void> {
+  switch (entry.status) {
+    case 'scheduled':
+      return;
+    case 'confirmed':
+      await move('confirm', front);
+      return;
+    case 'checked_in':
+      await move('check_in', front);
+      return;
+    case 'in_progress':
+      await move('check_in', front);
+      await move('start', clinician);
+      return;
+    case 'attended':
+      await move('check_in', front);
+      await move('start', clinician);
+      await move('attend', clinician);
+      return;
+    case 'no_show':
+      await move('no_show', front);
+      return;
+    case 'cancelled':
+      await move('cancel', front);
+      return;
+  }
 }
 
 async function payerIdsByCode(tx: Tx, codes: readonly string[]): Promise<Map<string, string>> {

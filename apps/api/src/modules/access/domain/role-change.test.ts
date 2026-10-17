@@ -36,15 +36,23 @@ describe('evaluateRoleChange', () => {
     });
   });
 
-  it('refuses an admin who tries to grant the professional role to a colleague (D19)', () => {
+  it('lets an admin grant the professional role to a colleague (D19, revised)', () => {
     expect(
       evaluateRoleChange(
         change({ actor: ['admin'], target: ['reception'], next: ['professional'] }),
       ),
-    ).toEqual({ ok: false, reason: 'above_ceiling' });
+    ).toEqual({ ok: true });
     expect(
       evaluateRoleChange(
         change({ actor: ['admin'], target: ['reception'], next: ['reception', 'professional'] }),
+      ),
+    ).toEqual({ ok: true });
+  });
+
+  it('still refuses an admin who tries to grant the owner role', () => {
+    expect(
+      evaluateRoleChange(
+        change({ actor: ['admin'], target: ['reception'], next: ['reception', 'owner'] }),
       ),
     ).toEqual({ ok: false, reason: 'above_ceiling' });
   });

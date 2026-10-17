@@ -13,6 +13,7 @@ import type { PasswordHasher } from '../identity/index.js';
 
 import { createOperatorAuth } from './application/auth.js';
 import { createOperatorRun } from './application/context.js';
+import { createOperatorHolidays } from './application/holidays.js';
 import { createOperatorAdmin, type OperatorAdmin } from './application/operators.js';
 import { createOperatorSupport } from './application/support.js';
 import { createOperatorTenants, type DemoResetPort } from './application/tenants.js';
@@ -77,12 +78,14 @@ export function createOperatorConsole(options: OperatorOptions): OperatorConsole
     ...clock,
   });
   const support = createOperatorSupport({ run });
+  const holidays = createOperatorHolidays({ run });
 
   return {
     routes: operatorRoutes({
       auth,
       tenants,
       support,
+      holidays,
       email: options.email,
       origins: options.origins,
       secureLinks: options.secureLinks,
