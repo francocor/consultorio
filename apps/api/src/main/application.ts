@@ -16,7 +16,7 @@ import {
   type OperatorSecrets,
 } from '../modules/operator/index.js';
 import { createPatients } from '../modules/patients/index.js';
-import { createScheduling } from '../modules/scheduling/index.js';
+import { createScheduling, findCareSourceAppointment } from '../modules/scheduling/index.js';
 import { createStaff } from '../modules/staff/index.js';
 import {
   createBranding,
@@ -103,7 +103,7 @@ export interface ApplicationOptions {
   /** Clinical records: only a test lowers the search cap (default 2,000 entries). */
   clinical?: {
     searchCap?: number;
-    /** Finds an appointment, to check the one an encounter is opened from (the agenda provides it). */
+    /** Replaces the agenda lookup that checks the appointment an encounter is opened from (tests only). */
     appointments?: AppointmentLookup;
     /** The per-user allowance of the record search (default 30 a minute). */
     searchRateLimit?: RateLimit;
@@ -257,7 +257,8 @@ export function createApplication(options: ApplicationOptions): FastifyInstance 
     auditDeny,
     keys: options.keys,
     ...(options.clinical?.searchCap === undefined ? {} : { searchCap: options.clinical.searchCap }),
-    ...(options.clinical?.appointments ? { appointments: options.clinical.appointments } : {}),
+    // The agenda is part of every deployment: an encounter names a real appointment (D20).
+    appointments: options.clinical?.appointments ?? findCareSourceAppointment,
     rateLimit: {
       store: rateLimitStore,
       ...(options.clinical?.searchRateLimit ? { search: options.clinical.searchRateLimit } : {}),

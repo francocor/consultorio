@@ -7,7 +7,6 @@ import { afterAll, beforeAll, describe, expect, inject, it } from 'vitest';
 import { auditEvent } from '../../src/db/schema/audit.js';
 import { clinicalNote, encounter, noteVersion } from '../../src/db/schema/clinical.js';
 import { contentHash } from '../../src/modules/clinical/domain/canonical.js';
-import type { AppointmentLookup } from '../../src/modules/clinical/index.js';
 import { createRuntimeDb, type DbHandle } from '../../src/platform/db/pool.js';
 import {
   createClinicalWorld,
@@ -26,11 +25,6 @@ let world: ClinicalWorld;
 let author: Professional;
 let colleague: Professional;
 
-/** The appointments the agenda would know about; a test registers the ones it needs. */
-const appointments = new Map<string, { patientId: string; professionalId: string }>();
-const lookupAppointment: AppointmentLookup = (_tx, id) =>
-  Promise.resolve(appointments.get(id) ?? null);
-
 const GENERAL = {
   reasonForConsultation: 'Control de presión arterial',
   symptoms: 'Cefalea ocasional',
@@ -40,9 +34,7 @@ const GENERAL = {
 
 beforeAll(async () => {
   runtime = createRuntimeDb(inject('runtimeUrl'));
-  world = await createClinicalWorld(runtime, 'clinical-notes', {
-    clinical: { appointments: lookupAppointment },
-  });
+  world = await createClinicalWorld(runtime, 'clinical-notes');
   author = await world.professional();
   colleague = await world.professional();
 });
@@ -108,16 +100,6 @@ describe('opening an encounter', () => {
       access: { basis: 'author', canEdit: true, canSign: true },
     });
     expect(Date.parse(note.createdAt)).toBeGreaterThan(Date.now() - 60_000);
-  });
-
-  it('records the appointment it was opened from (the link scheduling will use)', async () => {
-    const patientId = await world.patient();
-    const appointmentId = randomUUID();
-    appointments.set(appointmentId, { patientId, professionalId: author.professionalId });
-
-    const note = await world.open(author, patientId, { appointmentId });
-
-    expect(note.appointmentId).toBe(appointmentId);
   });
 
   it('answers as if the patient does not exist for a patient of another organization, and creates nothing', async () => {

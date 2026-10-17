@@ -46,7 +46,14 @@ export interface Caller extends Viewer {
 export type AppointmentLookup = (
   tx: Tx,
   appointmentId: string,
-) => Promise<{ patientId: string; professionalId: string } | null>;
+) => Promise<{
+  patientId: string;
+  professionalId: string;
+  /** Whether a person confirmed who the patient is (D14, D18). */
+  identityConfirmed: boolean;
+  /** Whether the appointment still counts as a care source (not cancelled, not awaiting approval). */
+  counts: boolean;
+} | null>;
 
 /** The most a note may weigh once serialized: a clinical note is text, not a file store. */
 const MAX_CONTENT_BYTES = 200_000;
@@ -133,6 +140,11 @@ export function createNoteService(deps: {
         ) {
           throw new AccessRefused('appointment_mismatch');
         }
+        // D14, D18: an appointment nobody confirmed the identity of is not a care source.
+        if (!appointment.identityConfirmed) {
+          throw new AccessRefused('appointment_identity_unconfirmed');
+        }
+        if (!appointment.counts) throw new AccessRefused('appointment_mismatch');
       }
       // Decision D20: opening an encounter does not create the care relationship, it needs one
       // that comes from elsewhere (an appointment, an assignment or a signed encounter). The one

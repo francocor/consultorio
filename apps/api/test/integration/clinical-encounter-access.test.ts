@@ -7,7 +7,6 @@ import { afterAll, beforeAll, describe, expect, inject, it } from 'vitest';
 import { auditEvent } from '../../src/db/schema/audit.js';
 import { careRelationship } from '../../src/db/schema/care.js';
 import { encounter } from '../../src/db/schema/clinical.js';
-import type { AppointmentLookup } from '../../src/modules/clinical/index.js';
 import { createRuntimeDb, type DbHandle } from '../../src/platform/db/pool.js';
 import {
   createClinicalWorld,
@@ -29,14 +28,10 @@ let world: ClinicalWorld;
 let author: Professional;
 let intruder: Professional;
 let colleague: Professional;
-const appointments = new Map<string, { patientId: string; professionalId: string }>();
-const lookup: AppointmentLookup = (_tx, id) => Promise.resolve(appointments.get(id) ?? null);
 
 beforeAll(async () => {
   runtime = createRuntimeDb(inject('runtimeUrl'));
-  world = await createClinicalWorld(runtime, 'clinical-encounter-access', {
-    clinical: { appointments: lookup },
-  });
+  world = await createClinicalWorld(runtime, 'clinical-encounter-access');
   author = await world.professional();
   intruder = await world.professional();
   colleague = await world.professional();
@@ -214,54 +209,25 @@ describe('the sources of a care relationship', () => {
 });
 
 describe('the appointment an encounter is opened from', () => {
-  it('must be an appointment of the same patient and the same professional', async () => {
+  // The cases with real appointments (confirmed identity, unconfirmed, somebody else's) are in
+  // clinical-appointments.test.ts, which runs the agenda too.
+  it('is refused when the appointment does not exist', async () => {
     const patientId = await world.patient([author]);
-    const otherPatient = await world.patient([author]);
-    const mine = randomUUID();
-    const wrongPatient = randomUUID();
-    const wrongProfessional = randomUUID();
-    appointments.set(mine, { patientId, professionalId: author.professionalId });
-    appointments.set(wrongPatient, {
-      patientId: otherPatient,
-      professionalId: author.professionalId,
+
+    const response = await open(author, {
+      patientId,
+      templateKind: 'general',
+      appointmentId: randomUUID(),
     });
-    appointments.set(wrongProfessional, { patientId, professionalId: colleague.professionalId });
 
-    const ok = await open(author, { patientId, templateKind: 'general', appointmentId: mine });
-    const refused = await Promise.all(
-      [wrongPatient, wrongProfessional, randomUUID()].map((appointmentId) =>
-        open(author, { patientId, templateKind: 'general', appointmentId }),
-      ),
-    );
-
-    expect(ok.statusCode).toBe(201);
-    expect(ok.json<NoteDto>().appointmentId).toBe(mine);
-    expect(refused.map((response) => response.statusCode)).toEqual([403, 403, 403]);
+    expect(response.statusCode).toBe(403);
     const denials = await asTenant(runtime, world.tenant.id, (tx) =>
       tx
         .select()
         .from(auditEvent)
         .where(and(eq(auditEvent.action, 'access.denied'), eq(auditEvent.patientId, patientId))),
     );
-    expect(denials.filter((row) => row.reason === 'appointment_mismatch')).toHaveLength(3);
-  });
-
-  it('is refused when the deployment cannot check appointments at all', async () => {
-    const plain = await createClinicalWorld(runtime, 'clinical-encounter-no-agenda');
-    try {
-      const doctor = await plain.professional();
-      const patientId = await plain.patient([doctor]);
-
-      const response = await plain.api.post('/encounters', doctor.session, {
-        patientId,
-        templateKind: 'general',
-        appointmentId: randomUUID(),
-      });
-
-      expect(response.statusCode).toBe(403);
-    } finally {
-      await plain.close();
-    }
+    expect(denials.map((row) => row.reason)).toContain('appointment_mismatch');
   });
 });
 

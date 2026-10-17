@@ -21,6 +21,7 @@ import {
 } from 'drizzle-orm/pg-core';
 
 import { tenantTable } from './_helpers.js';
+import { encounter } from './clinical.js';
 import { patient } from './patients.js';
 import { appointment } from './scheduling.js';
 import { professional } from './staff.js';
@@ -45,8 +46,7 @@ const list = (values: readonly string[]) => sql.raw(values.map((v) => `'${v}'`).
  * the system user and see both, to scan them.
  *
  * `appointment_id` points at the appointment the document came with (same organization, by the
- * composite key). `encounter_id` is an extension point: the table it points at arrives with the
- * clinical record, which adds the foreign key.
+ * composite key), and `encounter_id` at the encounter the document belongs to (same organization).
  */
 export const document = tenantTable(
   'document',
@@ -108,6 +108,11 @@ export const document = tenantTable(
       name: 'document_appointment_fkey',
       columns: [table.tenantId, table.appointmentId],
       foreignColumns: [appointment.tenantId, appointment.id],
+    }),
+    foreignKey({
+      name: 'document_encounter_fkey',
+      columns: [table.tenantId, table.encounterId],
+      foreignColumns: [encounter.tenantId, encounter.id],
     }),
     foreignKey({
       name: 'document_replaces_fkey',

@@ -206,24 +206,25 @@ describe('the keys keep a row inside its organization and its patient', () => {
     ).rejects.toMatchObject({ cause: { code: '23505' } });
   });
 
-  it('records an optional appointment reference with no foreign key yet (extension point)', async () => {
-    const appointmentId = randomUUID();
+  it('keeps the appointment reference optional, and refuses one that does not exist (composite foreign key)', async () => {
+    const insertWith = (appointmentId: string | null) =>
+      asProfessional(runtime, a.id, author, async (tx) => {
+        const [row] = await tx
+          .insert(encounter)
+          .values({
+            tenantId: a.id,
+            patientId,
+            authorProfessionalId: author,
+            templateKind: 'general',
+            appointmentId,
+          })
+          .returning({ appointmentId: encounter.appointmentId });
+        return row;
+      });
 
-    const opened = await asProfessional(runtime, a.id, author, async (tx) => {
-      const [row] = await tx
-        .insert(encounter)
-        .values({
-          tenantId: a.id,
-          patientId,
-          authorProfessionalId: author,
-          templateKind: 'general',
-          appointmentId,
-        })
-        .returning({ appointmentId: encounter.appointmentId });
-      return row;
-    });
-
-    expect(opened?.appointmentId).toBe(appointmentId);
+    expect((await insertWith(null))?.appointmentId).toBeNull();
+    await expect(insertWith(randomUUID())).rejects.toMatchObject({ cause: { code: '23503' } });
+    // The cases with real appointments are in clinical-appointments.test.ts.
   });
 
   it('rejects values outside the status and visibility vocabulary', async () => {

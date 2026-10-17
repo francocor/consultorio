@@ -13,6 +13,7 @@ import {
 
 import { bytea, tenantTable } from './_helpers.js';
 import { patient } from './patients.js';
+import { appointment } from './scheduling.js';
 import { professional } from './staff.js';
 import { tenant } from './tenant.js';
 
@@ -38,8 +39,9 @@ const VISIBILITIES = "('default', 'author_only')";
  * comes from elsewhere (decision D20, trigger `encounter_guard`), and only when its note is SIGNED
  * does it count as a care source itself (source 2, trigger `clinical_note_care_sync`).
  *
- * `appointment_id` is an extension point: scheduling links an encounter to its appointment, but
- * the `appointment` table does not exist on this branch, so there is no foreign key yet.
+ * `appointment_id` is the appointment the encounter was opened from (same organization, by the
+ * composite key; the guard trigger also demands the same patient, the same professional and a
+ * confirmed identity).
  *
  * `visibility` and `template_kind` repeat the ones of the note so the clinical policies can decide
  * on this row alone: the existence of an author-only or psychology encounter is as private as its
@@ -69,6 +71,11 @@ export const encounter = tenantTable(
       name: 'encounter_author_fkey',
       columns: [table.tenantId, table.authorProfessionalId],
       foreignColumns: [professional.tenantId, professional.id],
+    }),
+    foreignKey({
+      name: 'encounter_appointment_fkey',
+      columns: [table.tenantId, table.appointmentId],
+      foreignColumns: [appointment.tenantId, appointment.id],
     }),
     check('encounter_visibility_check', sql`${table.visibility} in ${sql.raw(VISIBILITIES)}`),
     check(

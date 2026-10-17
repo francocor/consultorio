@@ -372,8 +372,8 @@ export const TENANT_FIXTURES: Record<string, TenantTableFixture> = {
       const id = await actingAs(tx, authorId, () =>
         returningId(
           tx,
-          sql`INSERT INTO encounter (tenant_id, patient_id, author_professional_id, template_kind)
-                VALUES (${tenantId}, ${patientId}, ${authorId}, 'general') RETURNING id`,
+          sql`INSERT INTO encounter (tenant_id, patient_id, author_professional_id, template_kind, appointment_id)
+                VALUES (${tenantId}, ${patientId}, ${authorId}, 'general', ${overrides?.['appointment_id'] ?? null}) RETURNING id`,
         ),
       );
       CLINICAL_AUTHORS.set(id, authorId);
@@ -471,14 +471,15 @@ export const TENANT_FIXTURES: Record<string, TenantTableFixture> = {
         sql`INSERT INTO document (id, tenant_id, patient_id, category, classification, original_name,
                                   declared_content_type, size_bytes, object_key, uploaded_by,
                                   author_professional_id, replaces_document_id, duplicate_of_id,
-                                  appointment_id)
+                                  appointment_id, encounter_id)
               VALUES (${id}, ${tenantId}, ${overrides?.['patient_id'] ?? (await insertPatient(tx, tenantId))},
                       'id_copy', 'administrative', 'dni.pdf', 'application/pdf', 1000,
                       ${`t/${tenantId}/quarantine/${id}`}, ${randomUUID()},
                       ${overrides?.['author_professional_id'] ?? null},
                       ${overrides?.['replaces_document_id'] ?? null},
                       ${overrides?.['duplicate_of_id'] ?? null},
-                      ${overrides?.['appointment_id'] ?? null})
+                      ${overrides?.['appointment_id'] ?? null},
+                      ${overrides?.['encounter_id'] ?? null})
               RETURNING id`,
       );
     },

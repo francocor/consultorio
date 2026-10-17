@@ -23,6 +23,10 @@ import { configRoutes } from './http/config-routes.js';
 import { planningRoutes } from './http/planning-routes.js';
 import { worklistRoutes } from './http/worklist-routes.js';
 
+export {
+  findCareSourceAppointment,
+  type CareSourceAppointment,
+} from './application/care-source.js';
 export type { OpenItemInput, WorklistService } from './application/worklist.js';
 export { HOLD_EXPIRE_JOB, holdExpireJob } from './application/hold-expiry.js';
 

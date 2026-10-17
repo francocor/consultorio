@@ -10,6 +10,7 @@ import { tenant } from '../../src/db/schema/tenant.js';
 import { createRuntimeDb, type DbHandle } from '../../src/platform/db/pool.js';
 import { createWithTenant, SYSTEM_USER_ID, type Tx } from '../../src/platform/db/tenant-context.js';
 import { uuidv7 } from '../../src/platform/db/uuid.js';
+import { openDraft } from '../support/clinical.js';
 import { createTestPatient } from '../support/patients.js';
 import { at, createSchedulingWorld, insertAppointment } from '../support/scheduling.js';
 import { asTenant, createTestTenant, type TestTenant } from '../support/tenants.js';
@@ -233,8 +234,15 @@ describe('the shape of a row', () => {
     await expect(insert(row({ appointmentId: randomUUID() }))).rejects.toMatchObject({
       cause: { code: '23503' },
     });
-    // The encounter does not exist yet: its foreign key arrives with the clinical record.
-    await expect(insert(row({ encounterId: randomUUID() }))).resolves.toBeDefined();
+    // The same for the encounter the document belongs to (clinical record, migration 0034).
+    const opened = await run(runtime.db)(
+      { tenantId: a.id, userId: randomUUID(), actingProfessionalId: treating.professionalId },
+      (tx) => openDraft(tx, { tenantId: a.id, patientId, authorId: treating.professionalId }),
+    );
+    await expect(insert(row({ encounterId: opened.encounterId }))).resolves.toBeDefined();
+    await expect(insert(row({ encounterId: randomUUID() }))).rejects.toMatchObject({
+      cause: { code: '23503' },
+    });
   });
 
   it('refuses a replacement that points at a document of another patient or organization', async () => {
