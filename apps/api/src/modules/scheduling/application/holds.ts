@@ -5,14 +5,16 @@ import { AppError } from '../../../platform/http/problem.js';
 import {
   applyPlan,
   assertCalendar,
+  guardRace,
   invalid,
   planSlot,
   resolveStart,
   typeOffered,
   type BookActor,
+  type LocationAuthorizer,
   type PlanInput,
 } from './placement.js';
-import type { HoldRecord, LocationRecord, SchedulingPorts } from './ports.js';
+import type { HoldRecord, SchedulingPorts } from './ports.js';
 
 export { SlotNoLongerAvailableError } from './placement.js';
 
@@ -42,7 +44,7 @@ export interface CreateHoldInput {
   sourceKey: string;
   /** Holds one source may have at a time. Defaults to 1. */
   bound?: number;
-  authorizeLocation?: (location: LocationRecord) => Promise<void>;
+  authorizeLocation?: LocationAuthorizer;
 }
 
 /**
@@ -62,7 +64,7 @@ export async function createHold(ports: SchedulingPorts, input: CreateHoldInput)
     throw new AppError('conflict');
   }
   assertCalendar(actor, professional.id);
-  if (input.authorizeLocation) await input.authorizeLocation(location);
+  if (input.authorizeLocation) await input.authorizeLocation(location, professional.id);
   if (!typeOffered(type, professional)) {
     throw invalid('appointmentTypeId', 'scheduling.booking.type_not_offered');
   }
@@ -84,20 +86,22 @@ export async function createHold(ports: SchedulingPorts, input: CreateHoldInput)
     capacityOne: input.origin === 'public',
   };
   const plan = await planSlot(ports, planInput);
-  await applyPlan(ports, plan);
+  await applyPlan(ports, planInput, plan);
 
-  const created = await ports.insertHold({
-    professionalId: professional.id,
-    locationId: location.id,
-    startsAt: new Date(plan.range.start),
-    endsAt: new Date(plan.range.end),
-    bufferMinutes: type.bufferMinutes,
-    lane: plan.lane,
-    expiresAt: new Date(now.getTime() + HOLD_MINUTES * 60_000),
-    origin: input.origin,
-    sourceKey: input.sourceKey,
-    createdBy: input.origin === 'staff' ? actor.userId : null,
-  });
+  const created = await guardRace(ports, planInput, plan, () =>
+    ports.insertHold({
+      professionalId: professional.id,
+      locationId: location.id,
+      startsAt: new Date(plan.range.start),
+      endsAt: new Date(plan.range.end),
+      bufferMinutes: type.bufferMinutes,
+      lane: plan.lane,
+      expiresAt: new Date(now.getTime() + HOLD_MINUTES * 60_000),
+      origin: input.origin,
+      sourceKey: input.sourceKey,
+      createdBy: input.origin === 'staff' ? actor.userId : null,
+    }),
+  );
   return toDto(created);
 }
 

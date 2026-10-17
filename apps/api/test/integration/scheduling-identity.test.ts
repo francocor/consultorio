@@ -98,7 +98,7 @@ describe('check-in confirms the identity', () => {
   it('lets reception confirm at check-in: the identity is confirmed, the review closes, the audit names reception', async () => {
     const created = await selfBooked(3);
 
-    const response = await world.api.post(url(created, 'check-in'), world.reception, {
+    const response = await world.act(created, 'check-in', world.reception, {
       confirmIdentity: true,
     });
 
@@ -128,7 +128,7 @@ describe('check-in confirms the identity', () => {
   it('checks in without confirming when reception does not confirm', async () => {
     const created = await selfBooked(4);
 
-    const response = await world.api.post(url(created, 'check-in'), world.reception, {});
+    const response = await world.act(created, 'check-in', world.reception, {});
 
     expect(response.json<AppointmentDto>()).toMatchObject({
       status: 'checked_in',
@@ -140,7 +140,7 @@ describe('check-in confirms the identity', () => {
   it('does not let the professional own check-in confirm when the organization has other staff', async () => {
     const created = await selfBooked(5);
 
-    const response = await world.api.post(url(created, 'check-in'), world.doctor, {
+    const response = await world.act(created, 'check-in', world.doctor, {
       confirmIdentity: true,
     });
 
@@ -156,7 +156,7 @@ describe('check-in confirms the identity', () => {
   it('lets another professional confirm, as staff', async () => {
     const created = await selfBooked(6);
 
-    const response = await world.api.post(url(created, 'check-in'), world.colleague, {
+    const response = await world.act(created, 'check-in', world.colleague, {
       confirmIdentity: true,
     });
 
@@ -174,12 +174,12 @@ describe('the identity review on the worklist', () => {
     const byReception = await world.api.post(
       `/worklist/${itemOne?.id ?? ''}/confirm-identity`,
       world.reception,
-      {},
+      { expectedVersion: itemOne?.appointment?.version },
     );
     const byAdmin = await world.api.post(
       `/worklist/${itemTwo?.id ?? ''}/confirm-identity`,
       world.admin,
-      {},
+      { expectedVersion: itemTwo?.appointment?.version },
     );
 
     expect(byReception.json<AppointmentDto>()).toMatchObject({
@@ -228,31 +228,70 @@ describe('the identity review on the worklist', () => {
     const item = (await openReviews()).find((i) => i.subjectId === created.id);
     const denied = (await auditRows('access.denied')).length;
 
-    const response = await world.api.post(
-      `/worklist/${item?.id ?? ''}/confirm-identity`,
-      session,
-      {},
-    );
+    const response = await world.api.post(`/worklist/${item?.id ?? ''}/confirm-identity`, session, {
+      expectedVersion: created.version,
+    });
 
     expect(response.statusCode).toBe(403);
     expect((await auditRows('access.denied')).length).toBe(denied + 1);
     expect((await stored(created))?.identityConfirmed).toBe(false);
     // A professional without the worklist permission is refused at the door.
     expect(
-      (await world.api.post(`/worklist/${item?.id ?? ''}/confirm-identity`, world.colleague, {}))
-        .statusCode,
+      (
+        await world.api.post(`/worklist/${item?.id ?? ''}/confirm-identity`, world.colleague, {
+          expectedVersion: created.version,
+        })
+      ).statusCode,
     ).toBe(403);
   });
 
   it('is a conflict when the identity is already confirmed, and not found from another location', async () => {
     const created = await selfBooked(11);
     const item = (await openReviews()).find((i) => i.subjectId === created.id);
-    await world.api.post(`/worklist/${item?.id ?? ''}/confirm-identity`, world.admin, {});
+    await world.api.post(`/worklist/${item?.id ?? ''}/confirm-identity`, world.admin, {
+      expectedVersion: created.version,
+    });
 
     expect(
-      (await world.api.post(`/worklist/${item?.id ?? ''}/confirm-identity`, world.admin, {}))
-        .statusCode,
+      (
+        await world.api.post(`/worklist/${item?.id ?? ''}/confirm-identity`, world.admin, {
+          expectedVersion: created.version + 1,
+        })
+      ).statusCode,
     ).toBe(409);
+  });
+});
+
+describe('a cancelled appointment leaves the identity review', () => {
+  it('dismisses the review when the appointment is cancelled, and nobody can confirm it afterwards', async () => {
+    const created = await selfBooked(15);
+    const item = (await openReviews()).find((i) => i.subjectId === created.id);
+    expect(item).toBeDefined();
+
+    const cancel = await world.act(created, 'cancel', world.reception, {
+      cancelledBy: 'patient',
+      reasonCode: 'illness',
+    });
+
+    expect(cancel.statusCode, cancel.body).toBe(200);
+    expect((await openReviews()).some((i) => i.subjectId === created.id)).toBe(false);
+    const dismissed = (
+      await world.api.get('/worklist?status=dismissed&kind=identity_review', world.admin)
+    ).json<WorklistResponse>();
+    expect(dismissed.items.find((i) => i.id === item?.id)).toMatchObject({
+      status: 'dismissed',
+      resolution: 'appointment_cancelled',
+      actions: [],
+    });
+    const confirm = await world.api.post(
+      `/worklist/${item?.id ?? ''}/confirm-identity`,
+      world.admin,
+      {
+        expectedVersion: created.version + 1,
+      },
+    );
+    expect(confirm.statusCode).toBe(409);
+    expect((await stored(created))?.identityConfirmed).toBe(false);
   });
 });
 
@@ -266,7 +305,7 @@ describe('rejecting the match', () => {
       versions: await tx.select().from(patientVersion).where(eq(patientVersion.patientId, matched)),
     }));
 
-    const response = await world.api.post(url(created, 'detach-patient'), world.reception, {
+    const response = await world.act(created, 'detach-patient', world.reception, {
       resolution: 'move_to_patient',
       patientId: other,
     });
@@ -289,7 +328,7 @@ describe('rejecting the match', () => {
   it('cancels the appointment instead', async () => {
     const created = await selfBooked(13);
 
-    const response = await world.api.post(url(created, 'detach-patient'), world.admin, {
+    const response = await world.act(created, 'detach-patient', world.admin, {
       resolution: 'cancel',
       cancelledBy: 'organization',
       reasonCode: 'other',
@@ -309,30 +348,20 @@ describe('rejecting the match', () => {
     const move = (patientId: string) => ({ resolution: 'move_to_patient', patientId });
 
     expect(
-      (await world.api.post(url(created, 'detach-patient'), world.doctor, move(created.patientId)))
+      (await world.act(created, 'detach-patient', world.doctor, move(created.patientId)))
         .statusCode,
     ).toBe(403);
     expect(
-      (
-        await world.api.post(
-          url(confirmed, 'detach-patient'),
-          world.reception,
-          move(created.patientId),
-        )
-      ).statusCode,
+      (await world.act(confirmed, 'detach-patient', world.reception, move(created.patientId)))
+        .statusCode,
     ).toBe(409);
     expect(
-      (await world.api.post(url(created, 'detach-patient'), world.reception, move(foreignPatient)))
+      (await world.act(created, 'detach-patient', world.reception, move(foreignPatient)))
         .statusCode,
     ).toBe(404);
     expect(
-      (
-        await world.api.post(
-          url(created, 'detach-patient'),
-          world.reception,
-          move(created.patientId),
-        )
-      ).statusCode,
+      (await world.act(created, 'detach-patient', world.reception, move(created.patientId)))
+        .statusCode,
     ).toBe(400);
   });
 });
@@ -377,7 +406,14 @@ describe('a solo practice (D18)', () => {
     };
     const reviews = async () =>
       (await api.get('/worklist?kind=identity_review', session)).json<WorklistResponse>().items;
-    return { tenant, app, api, session, both, book, reviews };
+    // The appointment was just created, so the version it came back with is the current one.
+    const act = (
+      target: AppointmentDto,
+      action: string,
+      by: TestSession,
+      body: Record<string, unknown> = {},
+    ) => api.post(url(target, action), by, { expectedVersion: target.version, ...body });
+    return { tenant, app, api, session, both, book, reviews, act };
   }
 
   it('lets the sole professional self-confirm at in-person check-in, with its own audit marker', async () => {
@@ -386,7 +422,7 @@ describe('a solo practice (D18)', () => {
       const created = await solo.book(0);
       expect(created.identityConfirmed).toBe(false);
 
-      const response = await solo.api.post(url(created, 'check-in'), solo.session, {
+      const response = await solo.act(created, 'check-in', solo.session, {
         confirmIdentity: true,
       });
 
@@ -418,7 +454,7 @@ describe('a solo practice (D18)', () => {
       const response = await solo.api.post(
         `/worklist/${item?.id ?? ''}/confirm-identity`,
         solo.session,
-        {},
+        { expectedVersion: created.version },
       );
 
       expect(response.statusCode).toBe(403);
@@ -432,14 +468,14 @@ describe('a solo practice (D18)', () => {
     const solo = await soloWorld('sched-identity-solo-grows');
     try {
       const first = await solo.book(2);
-      await solo.api.post(url(first, 'check-in'), solo.session, { confirmIdentity: true });
+      await solo.act(first, 'check-in', solo.session, { confirmIdentity: true });
       const second = await solo.book(3);
       await createTestUser(runtime, solo.tenant.id, {
         roles: ['reception'],
         password: TEST_PASSWORD,
       });
 
-      const later = await solo.api.post(url(second, 'check-in'), solo.session, {
+      const later = await solo.act(second, 'check-in', solo.session, {
         confirmIdentity: true,
       });
 

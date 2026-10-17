@@ -1,4 +1,8 @@
-import { APPOINTMENT_STATUSES, type AppointmentStatus } from '@consultorio/contracts';
+import {
+  APPOINTMENT_STATUSES,
+  type AppointmentStatus,
+  type CorrectionReason,
+} from '@consultorio/contracts';
 import { describe, expect, it } from 'vitest';
 
 import { AppError } from '../../../platform/http/problem.js';
@@ -131,6 +135,7 @@ const move = (
     auditActor,
     now,
     ...extra,
+    expectedVersion: extra.expectedVersion ?? 1,
   });
 
 describe('the ordinary path through the day', () => {
@@ -138,10 +143,11 @@ describe('the ordinary path through the day', () => {
     const { ports, state } = world();
     const doctor = actor({ professionalId: DOCTOR });
 
-    await move(ports, 'confirm');
-    await move(ports, 'check_in');
-    await move(ports, 'start', doctor);
-    const done = await move(ports, 'attend', doctor);
+    // Each step names the version the previous one produced.
+    await move(ports, 'confirm', actor(), { expectedVersion: 1 });
+    await move(ports, 'check_in', actor(), { expectedVersion: 2 });
+    await move(ports, 'start', doctor, { expectedVersion: 3 });
+    const done = await move(ports, 'attend', doctor, { expectedVersion: 4 });
 
     expect(done.status).toBe('attended');
     expect(done.version).toBe(5);
@@ -248,6 +254,7 @@ describe('transitions that are not allowed', () => {
         actor: actor(),
         auditActor,
         now: NOW,
+        expectedVersion: 1,
       }),
     );
 
@@ -263,6 +270,56 @@ describe('optimistic concurrency', () => {
 
     expect((error as AppError).code).toBe('stale_revision');
     expect(state.updates).toEqual([]);
+  });
+
+  it('refuses a change that names no version, in every write of an appointment', async () => {
+    const noVersion = { expectedVersion: undefined } as unknown as { expectedVersion: number };
+    const transition = world();
+    const correction = world(appointment({ status: 'no_show' }));
+    const move = world();
+
+    const results = await Promise.all([
+      thrown(
+        transitionAppointment(transition.ports, {
+          appointmentId: 'appt-1',
+          action: 'confirm',
+          actor: actor(),
+          auditActor,
+          now: NOW,
+          ...noVersion,
+        }),
+      ),
+      thrown(
+        correctStatus(correction.ports, {
+          appointmentId: 'appt-1',
+          toStatus: 'attended',
+          reasonCode: 'other',
+          actor: actor(),
+          auditActor,
+          now: NOW,
+          ...noVersion,
+        }),
+      ),
+      thrown(
+        rescheduleAppointment(move.ports, {
+          appointmentId: 'appt-1',
+          local: { date: '2026-07-27', time: '11:00' },
+          actor: actor(),
+          auditActor,
+          now: NOW,
+          ...noVersion,
+        }),
+      ),
+    ]);
+
+    expect(results.map((error) => (error as AppError).code)).toEqual([
+      'stale_revision',
+      'stale_revision',
+      'stale_revision',
+    ]);
+    expect(transition.state.updates).toEqual([]);
+    expect(correction.state.updates).toEqual([]);
+    expect(move.state.updates).toEqual([]);
   });
 
   it('accepts the current version', async () => {
@@ -384,6 +441,40 @@ describe('cancellation', () => {
     expect(((await thrown(cancel(ports))) as AppError).code).toBe('conflict');
   });
 
+  it('dismisses the open identity review of the appointment it cancels', async () => {
+    const { ports, state } = world(appointment({ identityConfirmed: false }));
+
+    await cancel(ports);
+
+    expect(state.closedItems).toContainEqual({
+      kind: 'identity_review',
+      subjectId: 'appt-1',
+      status: 'dismissed',
+      resolution: 'appointment_cancelled',
+    });
+  });
+
+  it('dismisses the pending approval item of the appointment it cancels', async () => {
+    const { ports, state } = world(appointment({ status: 'pending_approval' }));
+
+    await cancel(ports);
+
+    expect(state.closedItems).toContainEqual({
+      kind: 'pending_approval',
+      subjectId: 'appt-1',
+      status: 'dismissed',
+      resolution: 'appointment_cancelled',
+    });
+  });
+
+  it('closes nothing when the appointment is not cancelled', async () => {
+    const { ports, state } = world(appointment({ identityConfirmed: false }));
+
+    await move(ports, 'confirm');
+
+    expect(state.closedItems).toEqual([]);
+  });
+
   it('needs the cancellation details', async () => {
     const { ports } = world();
 
@@ -394,28 +485,31 @@ describe('cancellation', () => {
 });
 
 describe('correcting a terminal status', () => {
+  // The appointment's own professional by default: a correction into the clinical statuses is theirs.
   const correct = (
     ports: ReturnType<typeof world>['ports'],
     toStatus: AppointmentStatus,
-    reason = 'Patient arrived late',
+    extra: { who?: BookActor; reasonCode?: CorrectionReason; note?: string } = {},
   ) =>
     correctStatus(ports, {
       appointmentId: 'appt-1',
       toStatus,
-      reason,
-      actor: actor(),
+      reasonCode: extra.reasonCode ?? 'patient_arrived_late',
+      ...(extra.note === undefined ? {} : { note: extra.note }),
+      actor: extra.who ?? actor({ professionalId: DOCTOR }),
       auditActor,
       now: NOW,
+      expectedVersion: 1,
+    });
+  const mistakenNoShow = () =>
+    appointment({
+      status: 'no_show',
+      startsAt: new Date('2026-07-13T11:00:00.000Z'),
+      endsAt: new Date('2026-07-13T11:30:00.000Z'),
     });
 
-  it('changes a mistaken no-show to attended and audits the previous status, reason and actor', async () => {
-    const { ports, state } = world(
-      appointment({
-        status: 'no_show',
-        startsAt: new Date('2026-07-13T11:00:00.000Z'),
-        endsAt: new Date('2026-07-13T11:30:00.000Z'),
-      }),
-    );
+  it('changes a mistaken no-show to attended and audits the previous status, reason code and actor', async () => {
+    const { ports, state } = world(mistakenNoShow());
 
     const corrected = await correct(ports, 'attended');
 
@@ -424,13 +518,62 @@ describe('correcting a terminal status', () => {
       kind: 'status_corrected',
       fromStatus: 'no_show',
       toStatus: 'attended',
-      details: { reason: 'Patient arrived late' },
+      details: { reasonCode: 'patient_arrived_late' },
     });
     expect(state.audits[0]).toMatchObject({
       action: 'appointment.status_corrected',
       actor: { userId: USER },
-      metadata: { from: 'no_show', to: 'attended', reason: 'Patient arrived late' },
+      metadata: { from: 'no_show', to: 'attended', reasonCode: 'patient_arrived_late' },
     });
+  });
+
+  it('keeps the free text out of the audit trail and in the history only', async () => {
+    const { ports, state } = world(mistakenNoShow());
+
+    await correct(ports, 'attended', { note: 'Came in through the side door' });
+
+    expect(JSON.stringify(state.audits)).not.toContain('side door');
+    expect(state.events[0]?.details).toEqual({
+      reasonCode: 'patient_arrived_late',
+      note: 'Came in through the side door',
+    });
+  });
+
+  it.each(['attended', 'in_progress'] as const)(
+    'needs the appointment’s own professional to correct into %s',
+    async (target) => {
+      const reception = world(mistakenNoShow());
+      const colleague = world(mistakenNoShow());
+      const admin = world(mistakenNoShow());
+
+      const byReception = await thrown(correct(reception.ports, target, { who: actor() }));
+      const byColleague = await thrown(
+        correct(colleague.ports, target, { who: actor({ professionalId: COLLEAGUE }) }),
+      );
+      const byAdmin = await thrown(
+        correct(admin.ports, target, { who: actor({ permissions: ['scheduling.register_past'] }) }),
+      );
+
+      for (const error of [byReception, byColleague, byAdmin]) {
+        expect(error).toBeInstanceOf(AccessRefused);
+        expect((error as AccessRefused).reason).toBe('not_the_appointment_professional');
+      }
+      for (const { state } of [reception, colleague, admin]) {
+        expect(state.updates).toEqual([]);
+        expect(state.audits).toEqual([]);
+      }
+    },
+  );
+
+  it('leaves the corrections that are not clinical to whoever may check in', async () => {
+    const restored = world(appointment({ status: 'cancelled' }));
+    const missed = world(appointment({ status: 'attended' }));
+
+    const toScheduled = await correct(restored.ports, 'scheduled', { who: actor() });
+    const toNoShow = await correct(missed.ports, 'no_show', { who: actor() });
+
+    expect(toScheduled.status).toBe('scheduled');
+    expect(toNoShow.status).toBe('no_show');
   });
 
   it('is rejected when the slot was rebooked for someone else, showing the conflicting range', async () => {
@@ -487,7 +630,7 @@ describe('correcting a terminal status', () => {
   it('gives the lane back and clears the cancellation when a cancelled appointment is restored', async () => {
     const { ports, state } = world(appointment({ status: 'cancelled' }));
 
-    await correct(ports, 'scheduled', 'Cancelled by mistake');
+    await correct(ports, 'scheduled', { reasonCode: 'entered_by_mistake' });
 
     expect(state.updates[0]?.patch).toMatchObject({
       status: 'scheduled',
@@ -496,6 +639,22 @@ describe('correcting a terminal status', () => {
       cancelReason: null,
       cancelledAt: null,
     });
+  });
+
+  it('answers an overlap the database refuses with the conflict and the next free slots', async () => {
+    const { ports, state } = world(
+      appointment({
+        status: 'no_show',
+        startsAt: new Date('2026-07-13T11:00:00.000Z'),
+        endsAt: new Date('2026-07-13T11:30:00.000Z'),
+      }),
+    );
+    state.refuseOverlapOn.add('updateAppointment');
+
+    const error = await thrown(correct(ports, 'attended'));
+
+    expect(error).toBeInstanceOf(SlotTakenError);
+    expect((error as SlotTakenError).nextSlots.length).toBeGreaterThan(0);
   });
 
   it('refuses to correct a status that is not terminal', async () => {
@@ -557,6 +716,16 @@ describe('rescheduling', () => {
     expect(error).toBeInstanceOf(SlotTakenError);
     expect(state.updates).toEqual([]);
     expect(state.events).toEqual([]);
+  });
+
+  it('answers an overlap the database refuses with the conflict and the next free slots', async () => {
+    const { ports, state } = world();
+    state.refuseOverlapOn.add('updateAppointment');
+
+    const error = await thrown(reschedule(ports));
+
+    expect(error).toBeInstanceOf(SlotTakenError);
+    expect((error as SlotTakenError).nextSlots.length).toBeGreaterThan(0);
   });
 
   it('does not count its own old slot against the move (shifting by ten minutes)', async () => {

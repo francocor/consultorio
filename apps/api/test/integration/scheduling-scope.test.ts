@@ -1,14 +1,23 @@
-import type { AppointmentDto, AuditAction, Problem } from '@consultorio/contracts';
-import { and, desc, eq } from 'drizzle-orm';
+import type {
+  AppointmentDto,
+  AuditAction,
+  AvailabilityResponse,
+  CalendarResponse,
+  Problem,
+} from '@consultorio/contracts';
+import { and, desc, eq, inArray } from 'drizzle-orm';
 import { afterAll, beforeAll, describe, expect, inject, it } from 'vitest';
 
 import { auditEvent } from '../../src/db/schema/audit.js';
+import { appointment } from '../../src/db/schema/scheduling.js';
 import { tenant as tenantTable } from '../../src/db/schema/tenant.js';
 import { createRuntimeDb, type DbHandle } from '../../src/platform/db/pool.js';
 import {
   createSchedulingHttpWorld,
   type SchedulingHttpWorld,
 } from '../support/scheduling-world.js';
+import { TEST_PASSWORD } from '../support/session.js';
+import { createTestProfessional } from '../support/users.js';
 
 let runtime: DbHandle;
 let world: SchedulingHttpWorld;
@@ -98,19 +107,19 @@ describe('a professional works in their own calendar', () => {
     const theirs = await world.book(3, '10:00', { professionalId: world.colleague.professionalId });
 
     const attempts = await Promise.all([
-      world.api.post(`/appointments/${theirs.id}/confirm`, world.doctor, {}),
-      world.api.post(`/appointments/${theirs.id}/check-in`, world.doctor, {}),
-      world.api.post(`/appointments/${theirs.id}/cancel`, world.doctor, {
+      world.act(theirs, 'confirm', world.doctor, {}),
+      world.act(theirs, 'check-in', world.doctor, {}),
+      world.act(theirs, 'cancel', world.doctor, {
         cancelledBy: 'patient',
         reasonCode: 'illness',
       }),
-      world.api.post(`/appointments/${theirs.id}/reschedule`, world.doctor, {
+      world.act(theirs, 'reschedule', world.doctor, {
         expectedVersion: 1,
         local: { date: world.monday(4), time: '10:00' },
       }),
-      world.api.post(`/appointments/${theirs.id}/correct`, world.doctor, {
+      world.act(theirs, 'correct', world.doctor, {
         toStatus: 'attended',
-        reason: 'x',
+        reasonCode: 'other',
       }),
       world.api.get(`/appointments/${theirs.id}/history`, world.doctor),
       world.api.get(`/appointments/${theirs.id}`, world.doctor),
@@ -126,7 +135,7 @@ describe('a professional works in their own calendar', () => {
   it('cannot move their own appointment into a colleague’s calendar', async () => {
     const own = await world.book(5, '10:00', {}, world.doctor);
 
-    const response = await world.api.post(`/appointments/${own.id}/reschedule`, world.doctor, {
+    const response = await world.act(own, 'reschedule', world.doctor, {
       expectedVersion: 1,
       professionalId: world.colleague.professionalId,
     });
@@ -168,7 +177,7 @@ describe('a delegated calendar', () => {
         professionalId: world.colleague.professionalId,
       });
 
-      const confirm = await world.api.post(`/appointments/${theirs.id}/confirm`, world.doctor, {});
+      const confirm = await world.act(theirs, 'confirm', world.doctor, {});
       const history = await world.api.get(`/appointments/${theirs.id}/history`, world.doctor);
 
       expect(confirm.statusCode).toBe(200);
@@ -211,22 +220,143 @@ describe('reception operates its own locations', () => {
     const norteAppointment = response.json<AppointmentDto>();
 
     const attempts = await Promise.all([
-      world.api.post(`/appointments/${norteAppointment.id}/check-in`, world.reception, {}),
-      world.api.post(`/appointments/${norteAppointment.id}/cancel`, world.reception, {
+      world.act(norteAppointment, 'check-in', world.reception, {}),
+      world.act(norteAppointment, 'cancel', world.reception, {
         cancelledBy: 'patient',
         reasonCode: 'illness',
       }),
-      world.api.post(`/appointments/${norteAppointment.id}/reschedule`, world.reception, {
+      world.act(norteAppointment, 'reschedule', world.reception, {
         expectedVersion: 1,
         local: { date: world.monday(11), time: '10:00' },
       }),
     ]);
 
     expect(attempts.map((r) => r.statusCode)).toEqual([403, 403, 403]);
-    expect(
-      (await world.api.post(`/appointments/${norteAppointment.id}/check-in`, world.admin, {}))
-        .statusCode,
-    ).toBe(200);
+    expect((await world.act(norteAppointment, 'check-in', world.admin, {})).statusCode).toBe(200);
+  });
+});
+
+describe('a reception user who is also a professional', () => {
+  const WINDOW = (weeksAfter: number) =>
+    `from=${world.monday(weeksAfter)}T00:00:00Z&to=${world.monday(weeksAfter)}T23:59:59Z`;
+
+  /** Reception at Centro only, and a professional who works at Norte. */
+  async function receptionProfessional() {
+    const created = await createTestProfessional(runtime, world.tenant.id, {
+      password: TEST_PASSWORD,
+      alsoRoles: ['reception'],
+    });
+    const session = await world.signIn(created);
+    await world.api.put(`/members/${created.membershipId}/locations`, world.owner, {
+      locationIds: [world.centro],
+    });
+    const hours = await world.api.put(
+      `/professionals/${created.professionalId}/hours`,
+      world.owner,
+      {
+        hours: [{ locationId: world.norte, weekday: 1, start: '09:00', end: '13:00' }],
+      },
+    );
+    expect(hours.statusCode, hours.body).toBe(200);
+    return { ...session, professionalId: created.professionalId };
+  }
+
+  async function norteColleague(weeksAfter: number) {
+    const colleague = await world.addProfessional();
+    await world.api.put(`/professionals/${colleague.professionalId}/hours`, colleague, {
+      hours: [{ locationId: world.norte, weekday: 1, start: '09:00', end: '13:00' }],
+    });
+    const response = await world.api.post('/appointments', world.admin, {
+      ...(await world.bookingBody(weeksAfter, '10:00')),
+      professionalId: colleague.professionalId,
+      locationId: world.norte,
+    });
+    expect(response.statusCode, response.body).toBe(201);
+    return { colleague, appointment: response.json<AppointmentDto>() };
+  }
+
+  it('is held to the assigned locations in a colleague’s calendar: no reading, no changes, no booking', async () => {
+    const both = await receptionProfessional();
+    const { colleague, appointment: theirs } = await norteColleague(14);
+
+    const attempts = await Promise.all([
+      world.api.get(`/appointments/${theirs.id}`, both),
+      world.api.get(`/appointments/${theirs.id}/history`, both),
+      world.act(theirs, 'check-in', both),
+      world.act(theirs, 'cancel', both, { cancelledBy: 'patient', reasonCode: 'illness' }),
+      world.api.post('/appointments', both, {
+        ...(await world.bookingBody(14, '11:00')),
+        professionalId: colleague.professionalId,
+        locationId: world.norte,
+      }),
+    ]);
+
+    expect(attempts.map((r) => r.statusCode)).toEqual([403, 403, 403, 403, 403]);
+    const booking = await world.api.post('/appointments', both, {
+      ...(await world.bookingBody(14, '11:00')),
+      professionalId: world.colleague.professionalId,
+    });
+    expect(booking.statusCode, booking.body).toBe(201);
+  });
+
+  it('is unrestricted in their own calendar, at any location', async () => {
+    const both = await receptionProfessional();
+
+    const own = await world.api.post('/appointments', both, {
+      ...(await world.bookingBody(15, '10:00')),
+      professionalId: both.professionalId,
+      locationId: world.norte,
+    });
+
+    expect(own.statusCode, own.body).toBe(201);
+    const confirm = await world.act(own.json<AppointmentDto>(), 'confirm', both);
+    expect(confirm.statusCode).toBe(200);
+  });
+
+  it('sees their own calendar everywhere in the feed, and only the assigned locations of the others', async () => {
+    const both = await receptionProfessional();
+    const { appointment: theirs } = await norteColleague(16);
+    const own = await world.api.post('/appointments', both, {
+      ...(await world.bookingBody(16, '10:00')),
+      professionalId: both.professionalId,
+      locationId: world.norte,
+    });
+    const atCentro = await world.book(16, '11:00', {}, world.admin);
+
+    const feed = await world.api.get(`/appointments?${WINDOW(16)}`, both);
+
+    expect(feed.statusCode, feed.body).toBe(200);
+    const ids = feed.json<CalendarResponse>().appointments.map((entry) => entry.id);
+    expect(ids).toContain(own.json<AppointmentDto>().id);
+    expect(ids).toContain(atCentro.id);
+    expect(ids).not.toContain(theirs.id);
+    const refused = await world.api.get(
+      `/appointments?${WINDOW(16)}&locationId=${world.norte}`,
+      both,
+    );
+    const ownOnly = refused.json<CalendarResponse>().appointments.map((entry) => entry.id);
+    expect(ownOnly).toEqual([own.json<AppointmentDto>().id]);
+  });
+
+  it('is offered the free time of a colleague only at the assigned locations', async () => {
+    const both = await receptionProfessional();
+    const colleague = await world.addProfessional();
+    await world.api.put(`/professionals/${colleague.professionalId}/hours`, colleague, {
+      hours: [
+        { locationId: world.centro, weekday: 1, start: '09:00', end: '11:00' },
+        { locationId: world.norte, weekday: 1, start: '11:00', end: '13:00' },
+      ],
+    });
+
+    const response = await world.api.get(
+      `/availability?professionalId=${colleague.professionalId}&typeId=${world.consulta}&from=${world.monday(17)}&to=${world.monday(17)}`,
+      both,
+    );
+
+    expect(response.statusCode, response.body).toBe(200);
+    const slots = response.json<AvailabilityResponse>().slots;
+    expect(slots.length).toBeGreaterThan(0);
+    expect(new Set(slots.map((slot) => slot.locationId))).toEqual(new Set([world.centro]));
   });
 });
 
@@ -297,7 +427,7 @@ describe('a read-only organization: every scheduling route has a category and ho
           expect(response.statusCode, route.label).not.toBe(402);
         }
       }
-      const cancel = await world.api.post(`/appointments/${toCancel.id}/cancel`, world.reception, {
+      const cancel = await world.act(toCancel, 'cancel', world.reception, {
         cancelledBy: 'patient',
         reasonCode: 'illness',
       });
@@ -310,6 +440,56 @@ describe('a read-only organization: every scheduling route has a category and ho
       );
       expect(book.statusCode).toBe(402);
       expect(book.json<Problem>().code).toBe('tenant_read_only');
+    } finally {
+      await world.inTenant((tx) =>
+        tx
+          .update(tenantTable)
+          .set({ status: 'active', readOnlySince: null })
+          .where(eq(tenantTable.id, world.tenant.id)),
+      );
+    }
+  });
+  it('lets only a cancellation the patient asked for through; the organization’s own is a write', async () => {
+    const own = await world.book(19, '10:00');
+    const byProfessional = await world.book(19, '11:00');
+    const byPatient = await world.book(19, '12:00');
+    await world.inTenant((tx) =>
+      tx
+        .update(tenantTable)
+        .set({ status: 'read_only', readOnlySince: new Date() })
+        .where(eq(tenantTable.id, world.tenant.id)),
+    );
+    try {
+      const organization = await world.act(own, 'cancel', world.reception, {
+        cancelledBy: 'organization',
+        reasonCode: 'organization_closed',
+      });
+      const professional = await world.act(byProfessional, 'cancel', world.reception, {
+        cancelledBy: 'professional',
+        reasonCode: 'professional_unavailable',
+      });
+      const patient = await world.act(byPatient, 'cancel', world.reception, {
+        cancelledBy: 'patient',
+        reasonCode: 'patient_request',
+      });
+
+      expect([organization.statusCode, professional.statusCode, patient.statusCode]).toEqual([
+        402, 402, 200,
+      ]);
+      expect(organization.json<Problem>().code).toBe('tenant_read_only');
+      const statuses = await world.inTenant((tx) =>
+        tx
+          .select({ id: appointment.id, status: appointment.status })
+          .from(appointment)
+          .where(inArray(appointment.id, [own.id, byProfessional.id, byPatient.id])),
+      );
+      expect(new Map(statuses.map((row) => [row.id, row.status]))).toEqual(
+        new Map([
+          [own.id, 'scheduled'],
+          [byProfessional.id, 'scheduled'],
+          [byPatient.id, 'cancelled'],
+        ]),
+      );
     } finally {
       await world.inTenant((tx) =>
         tx

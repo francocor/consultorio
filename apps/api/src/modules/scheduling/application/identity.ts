@@ -16,7 +16,7 @@ export interface ConfirmIdentityInput {
   appointmentId: string;
   actor: BookActor;
   auditActor: Actor;
-  expectedVersion?: number | undefined;
+  expectedVersion: number;
 }
 
 /**
@@ -30,7 +30,8 @@ export async function confirmIdentity(
 ): Promise<AppointmentDto> {
   const record = await lockForChange(ports, input.appointmentId, [], input.actor);
   checkVersion(record, input.expectedVersion);
-  if (record.identityConfirmed) throw new AppError('conflict');
+  // A cancelled appointment has no identity left to confirm.
+  if (record.identityConfirmed || record.status === 'cancelled') throw new AppError('conflict');
 
   const how = canConfirmIdentity({
     actorProfessionalId: input.actor.professionalId,
@@ -67,7 +68,7 @@ export interface DetachInput {
   auditActor: Actor;
   now: Date;
   resolution: DetachResolution;
-  expectedVersion?: number | undefined;
+  expectedVersion: number;
 }
 
 /**
@@ -82,10 +83,21 @@ export async function detachPatient(
 ): Promise<AppointmentDto> {
   const record = await lockForChange(ports, input.appointmentId, [], input.actor);
   checkVersion(record, input.expectedVersion);
-  if (record.identityConfirmed) throw new AppError('conflict');
+  if (record.identityConfirmed || record.status === 'cancelled') throw new AppError('conflict');
   if (input.actor.professionalId === record.professionalId) {
     throw new AccessRefused('identity_reject_own_appointment');
   }
+
+  // The review is resolved as rejected before anything else closes it: cancelling the appointment
+  // would otherwise dismiss it as an ordinary cancellation.
+  await ports.closeWorklistItem({
+    kind: 'identity_review',
+    subjectType: 'appointment',
+    subjectId: record.id,
+    status: 'resolved',
+    resolution: 'identity_rejected',
+    actor: input.auditActor,
+  });
 
   let result: AppointmentDto;
   if (input.resolution.kind === 'move_to_patient') {
@@ -109,6 +121,7 @@ export async function detachPatient(
       actor: input.actor,
       auditActor: input.auditActor,
       now: input.now,
+      expectedVersion: record.version,
       cancellation: input.resolution.cancellation,
     });
   }
@@ -128,14 +141,6 @@ export async function detachPatient(
     resourceId: record.id,
     patientId: record.patientId,
     metadata: { resolution: input.resolution.kind === 'move_to_patient' ? 'moved' : 'cancelled' },
-  });
-  await ports.closeWorklistItem({
-    kind: 'identity_review',
-    subjectType: 'appointment',
-    subjectId: record.id,
-    status: 'resolved',
-    resolution: 'identity_rejected',
-    actor: input.auditActor,
   });
   return result;
 }

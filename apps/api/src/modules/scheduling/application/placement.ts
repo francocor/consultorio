@@ -6,6 +6,7 @@ import { assignLane, overlaps, relane, type LaneMove } from '../domain/lanes.js'
 import { chooseOccurrence, resolveLocal } from '../domain/time.js';
 import type { TimeRange } from '../domain/working-hours.js';
 
+import { isExclusionViolation } from './db-errors.js';
 import type {
   ActiveOccupancy,
   LaneMoveCommand,
@@ -28,9 +29,22 @@ export interface BookActor {
    * or in one that was delegated). Absent means every calendar, as for tests.
    */
   mayUseCalendar?: (professionalId: string) => boolean;
-  /** Whether the actor may operate this location (reception works at its own). Absent means any. */
-  mayUseLocation?: (locationId: string) => boolean;
+  /**
+   * Whether the actor may operate this location in this professional's calendar (reception works at
+   * its assigned locations, except in its own calendar when it is also a professional). Absent
+   * means any.
+   */
+  mayUseLocation?: (locationId: string, professionalId: string) => boolean;
 }
+
+/**
+ * Called once the location is known to exist, with the professional whose calendar is worked in, so
+ * a location the actor may not operate there is refused as a denial.
+ */
+export type LocationAuthorizer = (
+  location: LocationRecord,
+  professionalId: string,
+) => Promise<void>;
 
 /** Refuses a calendar the actor was not given. The reason goes to the audit trail only. */
 export function assertCalendar(actor: BookActor, professionalId: string): void {
@@ -39,9 +53,9 @@ export function assertCalendar(actor: BookActor, professionalId: string): void {
   }
 }
 
-/** Refuses a location the actor does not work at. */
-export function assertLocation(actor: BookActor, locationId: string): void {
-  if (actor.mayUseLocation && !actor.mayUseLocation(locationId)) {
+/** Refuses a location the actor does not work at, for the calendar of this professional. */
+export function assertLocation(actor: BookActor, locationId: string, professionalId: string): void {
+  if (actor.mayUseLocation && !actor.mayUseLocation(locationId, professionalId)) {
     throw new AccessRefused('location_not_assigned');
   }
 }
@@ -121,6 +135,10 @@ interface Placement {
  * The lowest free lane, re-laning when capacity allows it. Never two locations at once. With
  * `capacityOne` (public flows) the professional's capacity does not matter: ANY overlapping
  * occupancy refuses the range and the lane is always 1.
+ *
+ * `occupancies` are the ones that overlap the range. Re-laning may have to move occupancies that
+ * only touch those (a chain of overlaps), so `connected` is the whole chain around the range; it
+ * defaults to `occupancies`, which is right whenever nothing can be moved.
  */
 export function place(
   occupancies: readonly ActiveOccupancy[],
@@ -128,6 +146,7 @@ export function place(
   locationId: string,
   capacity: number,
   capacityOne = false,
+  connected: readonly ActiveOccupancy[] = occupancies,
 ): Placement | null {
   if (occupancies.some((other) => other.locationId !== locationId)) return null;
   if (capacityOne) {
@@ -135,7 +154,7 @@ export function place(
   }
   const lane = assignLane(occupancies, range, capacity);
   if (lane !== null) return { lane, moves: [] };
-  const rearranged = relane(occupancies, range, capacity);
+  const rearranged = relane(connected, range, capacity);
   return rearranged ? { lane: rearranged.lane, moves: rearranged.moves } : null;
 }
 
@@ -173,6 +192,31 @@ export interface Plan {
   overrides: OverrideKind[];
   outOfHours: boolean;
   overrideReason: string | null;
+}
+
+/**
+ * The professional's occupancies that are connected to `range` through overlaps: the ones that
+ * overlap it, the ones that overlap those, and so on. Re-laning needs the whole chain, because
+ * moving one occupancy to another lane can collide with the next one in that lane.
+ */
+async function occupanciesAround(
+  ports: SchedulingPorts,
+  professionalId: string,
+  range: TimeRange,
+  ignore: (occupancy: ActiveOccupancy) => boolean,
+): Promise<ActiveOccupancy[]> {
+  let window = range;
+  for (;;) {
+    const found = (await ports.occupancies(professionalId, window)).filter(
+      (other) => !ignore(other),
+    );
+    const reach: TimeRange = {
+      start: Math.min(window.start, ...found.map((other) => other.start)),
+      end: Math.max(window.end, ...found.map((other) => other.end)),
+    };
+    if (reach.start === window.start && reach.end === window.end) return found;
+    window = reach;
+  }
 }
 
 async function conflictOf(
@@ -251,25 +295,45 @@ export async function planSlot(ports: SchedulingPorts, input: PlanInput): Promis
 
   // Holds that ran out stop counting; then look at what is really occupied.
   await ports.expireHolds(input.professional.id, input.now);
-  const occupancies = (await ports.occupancies(input.professional.id, occupied)).filter(
-    (other) => other.id !== input.ignoreAppointmentId && other.id !== input.ignoreHoldId,
-  );
+  const ignored = (other: ActiveOccupancy) =>
+    other.id === input.ignoreAppointmentId || other.id === input.ignoreHoldId;
   const capacity = input.professional.maxSimultaneous;
   const capacityOne = input.capacityOne === true;
-  let placement = place(occupancies, occupied, input.location.id, capacity, capacityOne);
+  // Only an overbooking professional can have anything to re-lane, and then it needs the whole chain.
+  const connected =
+    capacity > 1 && !capacityOne
+      ? await occupanciesAround(ports, input.professional.id, occupied, ignored)
+      : (await ports.occupancies(input.professional.id, occupied)).filter(
+          (other) => !ignored(other),
+        );
+  const occupancies = connected.filter((other) => overlaps(other, occupied));
+  let placement = place(occupancies, occupied, input.location.id, capacity, capacityOne, connected);
   let invalidatedHolds: string[] = [];
-  let basis = occupancies;
+  let basis = connected;
   if (placement === null && input.overrideHold === true) {
     const holds = occupancies.filter((other) => other.kind === 'hold');
-    const withoutHolds = occupancies.filter((other) => other.kind !== 'hold');
+    // Taking a slot from somebody who is completing a booking is for those who were given the right.
+    if (holds.length > 0 && !input.actor.permissions.has('scheduling.override_hold')) {
+      throw new AccessRefused('override_hold_not_permitted');
+    }
+    const gone = new Set(holds.map((hold) => hold.id));
+    basis = connected.filter((other) => !gone.has(other.id));
     placement =
       holds.length > 0
-        ? place(withoutHolds, occupied, input.location.id, capacity, capacityOne)
+        ? place(
+            occupancies.filter((other) => !gone.has(other.id)),
+            occupied,
+            input.location.id,
+            capacity,
+            capacityOne,
+            basis,
+          )
         : null;
     if (placement !== null) {
       invalidatedHolds = holds.map((hold) => hold.id);
       overrides.push('hold');
-      basis = withoutHolds;
+    } else {
+      basis = connected;
     }
   }
   if (placement === null) throw await conflictOf(ports, input, range, occupied);
@@ -291,10 +355,32 @@ export async function planSlot(ports: SchedulingPorts, input: PlanInput): Promis
   };
 }
 
+/**
+ * Runs a write that follows a plan. An overlap the database still refuses (a race that slipped
+ * through the row lock and the checks) becomes the same conflict answer as any other, with the
+ * taken range and the next free times. The ports run each such write in a savepoint, so the
+ * transaction can still read the free slots after the refusal.
+ */
+export async function guardRace<T>(
+  ports: SchedulingPorts,
+  input: PlanInput,
+  plan: Plan,
+  write: () => Promise<T>,
+): Promise<T> {
+  try {
+    return await write();
+  } catch (error) {
+    if (isExclusionViolation(error)) throw await conflictAfterRace(ports, input, plan);
+    throw error;
+  }
+}
+
 /** Makes the plan real: invalidates the holds it gives way over and moves the lanes it re-lanes. */
-export async function applyPlan(ports: SchedulingPorts, plan: Plan): Promise<void> {
-  if (plan.invalidatedHolds.length > 0) await ports.invalidateHolds(plan.invalidatedHolds);
-  if (plan.moves.length > 0) await ports.applyLaneMoves(plan.moves);
+export function applyPlan(ports: SchedulingPorts, input: PlanInput, plan: Plan): Promise<void> {
+  return guardRace(ports, input, plan, async () => {
+    if (plan.invalidatedHolds.length > 0) await ports.invalidateHolds(plan.invalidatedHolds);
+    if (plan.moves.length > 0) await ports.applyLaneMoves(plan.moves);
+  });
 }
 
 /** The conflict answer for an overlap the database caught after the checks passed (a race). */

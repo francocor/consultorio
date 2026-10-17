@@ -22,10 +22,11 @@ import {
   SlotTakenError,
   typeOffered,
   type BookActor,
+  type LocationAuthorizer,
   type Plan,
   type PlanInput,
 } from './placement.js';
-import type { LocationRecord, SchedulingPorts } from './ports.js';
+import type { SchedulingPorts } from './ports.js';
 
 const DAY_MS = 86_400_000;
 
@@ -46,7 +47,7 @@ export interface SeriesInput {
   actor: BookActor;
   auditActor: AuditActor & { userId: string };
   now: Date;
-  authorizeLocation?: (location: LocationRecord) => Promise<void>;
+  authorizeLocation?: LocationAuthorizer;
 }
 
 const REASON_BY_KEY: Record<string, SeriesConflictReason> = {
@@ -128,7 +129,7 @@ export async function bookSeries(
     throw new AppError('conflict');
   }
   assertCalendar(actor, professional.id);
-  if (input.authorizeLocation) await input.authorizeLocation(location);
+  if (input.authorizeLocation) await input.authorizeLocation(location, professional.id);
   if (!typeOffered(type, professional)) {
     throw invalid('appointmentTypeId', 'scheduling.booking.type_not_offered');
   }
@@ -201,12 +202,15 @@ export async function bookSeries(
   if (conflicts) throw new SeriesConflictError(occurrences);
   if (planned.size === 0) throw invalid('skip', 'scheduling.series.nothing_to_create');
 
+  // Judged once, before the first session exists: from then on the patient has an appointment and
+  // would no longer look like one the actor just registered.
+  const freshPatient = await ports.isFreshPatient(patient.id, actor.userId, now);
   const seriesId = randomUUID();
   const appointments: AppointmentDto[] = [];
   for (const occurrence of occurrences) {
     const entry = planned.get(occurrence.index);
     if (occurrence.status !== 'ok' || !entry) continue;
-    await applyPlan(ports, entry.plan);
+    await applyPlan(ports, entry.planInput, entry.plan);
     appointments.push(
       await persistAppointment(ports, {
         professional,
@@ -219,6 +223,7 @@ export async function bookSeries(
         plan: entry.plan,
         planInput: entry.planInput,
         series: { seriesId, index: occurrence.index },
+        freshPatient,
       }),
     );
   }

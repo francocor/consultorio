@@ -16,13 +16,14 @@ import type { WithTenant } from '../../../platform/db/tenant-context.js';
 import { conflictWith } from '../../../platform/http/problem.js';
 import { AccessRefused } from '../../access/index.js';
 import { availability } from '../application/availability.js';
-import { createSchedulingPorts, isExclusionViolation } from '../application/drizzle-ports.js';
+import { auditDelegatedView } from '../application/delegated-view.js';
+import { createSchedulingPorts } from '../application/drizzle-ports.js';
+import { locationAccessOf } from '../application/location-access.js';
 import { SlotTakenError } from '../application/placement.js';
 import { bookSeries, SeriesConflictError } from '../application/series.js';
 
 import {
   locationAuthorizer,
-  operableLocations,
   replySlotTaken,
   requestActor,
   scopedActor,
@@ -47,7 +48,7 @@ export function planningRoutes(deps: PlanningRoutesDeps) {
         schema: { querystring: AvailabilityQuery, response: { 200: AvailabilityResponse } },
       },
       async (request) => {
-        const { actor, context } = requestActor(request);
+        const { actor, audit, context } = requestActor(request);
         // Another professional's free time is part of their calendar: yours or one delegated to you.
         if (!calendarAccess(actor, request.query.professionalId)) {
           return refuseRequest(deps.auditDeny, request, {
@@ -56,13 +57,23 @@ export function planningRoutes(deps: PlanningRoutesDeps) {
             resourceId: request.query.professionalId,
           });
         }
-        return deps.withTenant(context, async (tx) =>
-          availability(createSchedulingPorts(tx, { keys: deps.keys }), {
+        return deps.withTenant(context, async (tx) => {
+          const free = await availability(createSchedulingPorts(tx, { keys: deps.keys }), {
             query: request.query,
             now: deps.clock(),
-            visibleLocations: await operableLocations(tx, actor),
-          }),
-        );
+            visibleLocations: (await locationAccessOf(tx, actor)).forProfessional(
+              request.query.professionalId,
+            ),
+          });
+          // Free time in a colleague's calendar is part of that calendar: looking is audited.
+          await auditDelegatedView(tx, {
+            actor,
+            auditActor: audit,
+            professionalId: request.query.professionalId,
+            view: 'availability',
+          });
+          return free;
+        });
       },
     );
 
@@ -98,7 +109,6 @@ export function planningRoutes(deps: PlanningRoutesDeps) {
             return conflictWith(request, reply, { occurrences: error.occurrences });
           }
           if (error instanceof SlotTakenError) return replySlotTaken(request, reply, error);
-          if (isExclusionViolation(error)) return replySlotTaken(request, reply);
           if (error instanceof AccessRefused) {
             return await refuseRequest(deps.auditDeny, request, {
               reason: error.reason,

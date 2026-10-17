@@ -3,7 +3,7 @@ import {
   isAllowedWhenReadOnly,
   type RouteCategory,
 } from '@consultorio/contracts';
-import type { FastifyInstance } from 'fastify';
+import type { FastifyInstance, FastifyRequest } from 'fastify';
 
 import { AppError, denied } from '../http/problem.js';
 
@@ -27,6 +27,19 @@ const PUBLIC_BOOKING_PREFIX = /^\/public\/[^/]+\/(?:booking|p|waitlist)(?:\/|$)/
 
 function isKnownCategory(value: unknown): value is RouteCategory {
   return ROUTE_CATEGORIES.some((category) => category === value);
+}
+
+/**
+ * For a route that stays open when the tenant is read-only because part of what it does protects
+ * the patient (category `patient_protective`), while the rest does not: call it for the part that
+ * does not. In a tenant that is not active it refuses with 402 `tenant_read_only`, exactly as the
+ * policy refuses a plain write; in an active one it does nothing.
+ */
+export function refuseWhenReadOnly(request: FastifyRequest): void {
+  const context = request.hostContext;
+  if (context?.kind === 'tenant' && context.tenant.status !== 'active') {
+    throw new AppError('tenant_read_only');
+  }
 }
 
 /**

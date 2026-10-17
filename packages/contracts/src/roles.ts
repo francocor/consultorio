@@ -118,6 +118,8 @@ export const PERMISSIONS = [
   // Appointment types, blocks, days off (the setup of the calendar).
   'scheduling.configure',
   'scheduling.override_hours',
+  // Book over an active slot hold that somebody else is completing a booking on.
+  'scheduling.override_hold',
   'scheduling.register_past',
   'scheduling.delegated_calendar',
   // The reception queue of items that need a person.
@@ -170,6 +172,7 @@ const ADMINISTRATION = [
   'scheduling.checkin',
   'scheduling.configure',
   'scheduling.override_hours',
+  'scheduling.override_hold',
   'scheduling.register_past',
   'scheduling.delegated_calendar',
   'worklist.manage',
@@ -217,6 +220,7 @@ export const ROLE_PERMISSIONS: Record<Role, readonly Permission[]> = {
  */
 export const GRANTABLE = [
   'scheduling.override_hours',
+  'scheduling.override_hold',
   'scheduling.register_past',
   'scheduling.delegated_calendar',
   'cash.operate',

@@ -313,7 +313,7 @@ describe('POST /appointments/series', () => {
     const { appointments } = response.json<SeriesCommitResponse>();
     const third = appointments[2] as AppointmentDto;
 
-    const cancel = await world.api.post(`/appointments/${third.id}/cancel`, world.reception, {
+    const cancel = await world.act(third, 'cancel', world.reception, {
       cancelledBy: 'patient',
       reasonCode: 'illness',
     });

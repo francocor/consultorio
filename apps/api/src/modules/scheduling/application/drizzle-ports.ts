@@ -16,26 +16,15 @@ import type { Tx } from '../../../platform/db/tenant-context.js';
 import { isSoloPractice } from '../domain/identity-confirmation.js';
 import type { HoursPeriod, HoursRow } from '../domain/working-hours.js';
 
+import { isExclusionViolation } from './db-errors.js';
 import { createHolidayService } from './holidays.js';
 import type { ActiveOccupancy, AppointmentRecord, HoldRecord, SchedulingPorts } from './ports.js';
 import { createWorklistService } from './worklist.js';
 
-const EXCLUSION_VIOLATION = '23P01';
-
 /** A patient registered this recently by the person booking counts as created in the same action. */
 const FRESH_PATIENT_MS = 15 * 60_000;
 
-/** The SQLSTATE of a database failure, whichever layer wrapped it. */
-export function sqlStateOf(error: unknown): string | undefined {
-  const cause = (error as { cause?: { code?: unknown } } | null)?.cause;
-  if (typeof cause?.code === 'string') return cause.code;
-  const direct = (error as { code?: unknown } | null)?.code;
-  return typeof direct === 'string' ? direct : undefined;
-}
-
-export function isExclusionViolation(error: unknown): boolean {
-  return sqlStateOf(error) === EXCLUSION_VIOLATION;
-}
+export { isExclusionViolation };
 
 export const appointmentColumns = {
   id: appointment.id,
@@ -307,17 +296,24 @@ export function createSchedulingPorts(tx: Tx, deps: { keys: TenantKeys }): Sched
 
     async applyLaneMoves(moves) {
       if (moves.length === 0) return;
-      // Rows trade lanes: the intermediate state may overlap, so the check waits for the end of
-      // the moves and runs right there (IMMEDIATE), before anything else is written.
-      await tx.execute(sql`SET CONSTRAINTS slot_occupancy_no_overlap DEFERRED`);
-      for (const move of moves) {
-        if (move.kind === 'appointment') {
-          await tx.update(appointment).set({ lane: move.lane }).where(eq(appointment.id, move.id));
-        } else {
-          await tx.update(slotHold).set({ lane: move.lane }).where(eq(slotHold.id, move.id));
+      // A savepoint, so a refused overlap does not abort the transaction: the caller still has to
+      // read the free slots to answer with.
+      await tx.transaction(async (inner) => {
+        // Rows trade lanes: the intermediate state may overlap, so the check waits for the end of
+        // the moves and runs right there (IMMEDIATE), before anything else is written.
+        await inner.execute(sql`SET CONSTRAINTS slot_occupancy_no_overlap DEFERRED`);
+        for (const move of moves) {
+          if (move.kind === 'appointment') {
+            await inner
+              .update(appointment)
+              .set({ lane: move.lane })
+              .where(eq(appointment.id, move.id));
+          } else {
+            await inner.update(slotHold).set({ lane: move.lane }).where(eq(slotHold.id, move.id));
+          }
         }
-      }
-      await tx.execute(sql`SET CONSTRAINTS slot_occupancy_no_overlap IMMEDIATE`);
+        await inner.execute(sql`SET CONSTRAINTS slot_occupancy_no_overlap IMMEDIATE`);
+      });
     },
 
     async insertAppointment(values) {
@@ -361,11 +357,16 @@ export function createSchedulingPorts(tx: Tx, deps: { keys: TenantKeys }): Sched
     },
 
     async updateAppointment(id, patch) {
-      const [row] = await tx
-        .update(appointment)
-        .set({ ...patch, version: sql`${appointment.version} + 1` })
-        .where(eq(appointment.id, id))
-        .returning(appointmentColumns);
+      // A savepoint: a change of time, lane or status can be refused by the overlap constraint, and
+      // the caller still reads the free slots to answer with.
+      const row = await tx.transaction(async (inner) => {
+        const [updated] = await inner
+          .update(appointment)
+          .set({ ...patch, version: sql`${appointment.version} + 1` })
+          .where(eq(appointment.id, id))
+          .returning(appointmentColumns);
+        return updated;
+      });
       if (!row) throw new Error('appointment update matched no row');
       return toAppointmentDto(row);
     },
@@ -383,10 +384,13 @@ export function createSchedulingPorts(tx: Tx, deps: { keys: TenantKeys }): Sched
     },
 
     async insertHold(values) {
-      const [row] = await tx
-        .insert(slotHold)
-        .values({ tenantId: sql`current_setting('app.tenant_id')::uuid`, ...values })
-        .returning();
+      const row = await tx.transaction(async (inner) => {
+        const [created] = await inner
+          .insert(slotHold)
+          .values({ tenantId: sql`current_setting('app.tenant_id')::uuid`, ...values })
+          .returning();
+        return created;
+      });
       if (!row) throw new Error('hold insert returned no row');
       return toHoldRecord(row);
     },
@@ -407,9 +411,14 @@ export function createSchedulingPorts(tx: Tx, deps: { keys: TenantKeys }): Sched
         .update(slotHold)
         .set({ status: 'released' })
         .where(
-          inArray(
-            slotHold.id,
-            mine.map((row) => row.id),
+          and(
+            inArray(
+              slotHold.id,
+              mine.map((row) => row.id),
+            ),
+            // Only a hold that is still active: another transaction may have converted, released or
+            // expired it since it was read, and that outcome must not be overwritten.
+            eq(slotHold.status, 'active'),
           ),
         );
     },

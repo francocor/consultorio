@@ -28,10 +28,11 @@ import { refuseRequest } from '../../../platform/authz/refuse.js';
 import type { TenantKeys } from '../../../platform/crypto/tenant-keys.js';
 import type { Tx, WithTenant } from '../../../platform/db/tenant-context.js';
 import { AppError, conflictCode } from '../../../platform/http/problem.js';
-import { AccessRefused, visibleLocationIds } from '../../access/index.js';
+import { refuseWhenReadOnly } from '../../../platform/read-only/index.js';
+import { AccessRefused } from '../../access/index.js';
 import { bookAppointment, SlotTakenError } from '../application/book-appointment.js';
 import type { createCalendar } from '../application/calendar.js';
-import { createSchedulingPorts, isExclusionViolation } from '../application/drizzle-ports.js';
+import { createSchedulingPorts } from '../application/drizzle-ports.js';
 import { appointmentHistory } from '../application/history.js';
 import { createHold, releaseHold } from '../application/holds.js';
 import { detachPatient } from '../application/identity.js';
@@ -41,8 +42,12 @@ import {
   transitionAppointment,
   type TransitionAction,
 } from '../application/lifecycle.js';
-import { SlotNoLongerAvailableError, type BookActor } from '../application/placement.js';
-import type { LocationRecord } from '../application/ports.js';
+import { locationAccessOf } from '../application/location-access.js';
+import {
+  SlotNoLongerAvailableError,
+  type BookActor,
+  type LocationAuthorizer,
+} from '../application/placement.js';
 import type { TimeRange } from '../domain/working-hours.js';
 
 export interface AppointmentRoutesDeps {
@@ -75,42 +80,36 @@ export function requestActor(request: FastifyRequest): {
 }
 
 /**
- * The locations a viewer may operate: owners and admins every one; a professional is held to their
- * own calendar instead of to locations; everyone else works at the locations they are assigned to.
- */
-export async function operableLocations(tx: Tx, actor: Actor): Promise<'all' | string[]> {
-  if (actor.roles.some((role) => role === 'owner' || role === 'admin' || role === 'professional')) {
-    return 'all';
-  }
-  return visibleLocationIds(tx, { roles: actor.roles, membershipId: actor.membershipId });
-}
-
-/**
  * What a use case needs to know about the limits of the actor: the calendars they may work in (a
- * professional's own and the delegated ones) and the locations they may operate. Computed once per
- * request, in its transaction, so the services never read the session.
+ * professional's own and the delegated ones) and the locations they may operate in each of them.
+ * Computed once per request, in its transaction, so the services never read the session.
  */
 export async function scopedActor(tx: Tx, actor: Actor, book: BookActor): Promise<BookActor> {
-  const locations = await operableLocations(tx, actor);
+  const access = await locationAccessOf(tx, actor);
   return {
     ...book,
     mayUseCalendar: (professionalId) => calendarAccess(actor, professionalId),
-    mayUseLocation: (locationId) => locations === 'all' || locations.includes(locationId),
+    mayUseLocation: (locationId, professionalId) => access.may({ locationId, professionalId }),
   };
 }
 
 const iso = (ms: number) => new Date(ms).toISOString();
 const slotRange = (range: TimeRange) => ({ startsAt: iso(range.start), endsAt: iso(range.end) });
 
-/** The 409 for a time that is taken, with the taken range and the next free times. */
+/**
+ * The 409 for a time that is taken, with the taken range and the next free times. Every refusal of
+ * an overlap reaches here as a `SlotTakenError`, the ones the database caught after the checks too
+ * (the use cases convert them), so the answer always carries the same members.
+ */
 export function replySlotTaken(
   request: FastifyRequest,
   reply: FastifyReply,
-  error?: SlotTakenError,
+  error: SlotTakenError,
 ): FastifyReply {
-  const extra: SlotConflictExtension | Record<string, never> = error
-    ? { conflict: slotRange(error.conflict), nextSlots: error.nextSlots.map(slotRange) }
-    : {};
+  const extra: SlotConflictExtension = {
+    conflict: slotRange(error.conflict),
+    nextSlots: error.nextSlots.map(slotRange),
+  };
   return conflictCode(request, reply, 'slot_taken', extra);
 }
 
@@ -123,16 +122,15 @@ export function replySlotNoLongerAvailable(
 }
 
 /**
- * Reception and other non-professional staff operate the locations they are assigned to; owners and
- * admins every location; a professional is held to their own calendar instead (not to locations).
+ * Reception and other staff assigned to locations operate those; owners and admins every location;
+ * a professional who is only a professional is held to calendars instead of locations. A reception
+ * user who is also a professional is limited to the assigned locations everywhere but in their own
+ * calendar.
  */
-export function locationAuthorizer(
-  tx: Tx,
-  actor: Actor,
-): (location: LocationRecord) => Promise<void> {
-  return async (location) => {
-    const operable = await operableLocations(tx, actor);
-    if (operable !== 'all' && !operable.includes(location.id)) {
+export function locationAuthorizer(tx: Tx, actor: Actor): LocationAuthorizer {
+  return async (location, professionalId) => {
+    const access = await locationAccessOf(tx, actor);
+    if (!access.may({ locationId: location.id, professionalId })) {
       throw new AccessRefused('location_not_assigned');
     }
   };
@@ -190,7 +188,6 @@ export function appointmentRoutes(deps: AppointmentRoutesDeps) {
       if (error instanceof SlotNoLongerAvailableError) {
         return replySlotNoLongerAvailable(request, reply);
       }
-      if (isExclusionViolation(error)) return replySlotTaken(request, reply);
       if (error instanceof AccessRefused) {
         return await refuseRequest(deps.auditDeny, request, {
           reason: error.reason,
@@ -248,8 +245,13 @@ export function appointmentRoutes(deps: AppointmentRoutesDeps) {
       },
       async (request, reply) => {
         try {
-          return await runScoped(request, ({ tx, actor }) =>
-            deps.calendar.get(tx, { id: request.params.id, actor }),
+          return await runScoped(request, ({ tx, actor, audit }) =>
+            deps.calendar.get(tx, {
+              id: request.params.id,
+              actor,
+              auditActor: audit,
+              view: 'appointment',
+            }),
           );
         } catch (error) {
           return await refusal(error, request, reply, {
@@ -268,9 +270,14 @@ export function appointmentRoutes(deps: AppointmentRoutesDeps) {
       },
       async (request, reply) => {
         try {
-          return await runScoped(request, async ({ tx, actor }) => {
+          return await runScoped(request, async ({ tx, actor, audit }) => {
             // The history is as private as the appointment: same calendar, same location.
-            await deps.calendar.get(tx, { id: request.params.id, actor });
+            await deps.calendar.get(tx, {
+              id: request.params.id,
+              actor,
+              auditActor: audit,
+              view: 'history',
+            });
             return appointmentHistory(tx, request.params.id);
           });
         } catch (error) {
@@ -456,8 +463,9 @@ export function appointmentRoutes(deps: AppointmentRoutesDeps) {
       );
     }
 
-    // Cancelling is a patient-protective write: it stays possible when the organization is
-    // read-only, because a patient must always be able to give a slot back.
+    // Cancelling is patient-protective when the patient asks for it: it stays possible when the
+    // organization is read-only, because a patient must always be able to give a slot back. The
+    // organization or a professional cancelling for their own reasons is an ordinary write.
     typed.post(
       '/appointments/:id/cancel',
       {
@@ -474,6 +482,7 @@ export function appointmentRoutes(deps: AppointmentRoutesDeps) {
       },
       (request, reply) => {
         const { expectedVersion, ...cancellation } = request.body;
+        if (cancellation.cancelledBy !== 'patient') refuseWhenReadOnly(request);
         return respond(request, reply, request.params.id, () =>
           runScoped(request, ({ tx, who, audit }) =>
             transitionAppointment(portsOf(tx), {
@@ -510,7 +519,8 @@ export function appointmentRoutes(deps: AppointmentRoutesDeps) {
             correctStatus(portsOf(tx), {
               appointmentId: request.params.id,
               toStatus: request.body.toStatus,
-              reason: request.body.reason,
+              reasonCode: request.body.reasonCode,
+              note: request.body.note,
               actor: who,
               auditActor: audit,
               now: deps.clock(),

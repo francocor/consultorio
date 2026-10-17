@@ -9,6 +9,9 @@ import { afterAll, beforeAll, describe, expect, inject, it } from 'vitest';
 
 import { auditEvent } from '../../src/db/schema/audit.js';
 import { slotHold } from '../../src/db/schema/scheduling.js';
+import { createBlockService } from '../../src/modules/scheduling/application/blocks.js';
+import { createCalendar } from '../../src/modules/scheduling/application/calendar.js';
+import { createHolidayService } from '../../src/modules/scheduling/application/holidays.js';
 import { createRuntimeDb, type DbHandle } from '../../src/platform/db/pool.js';
 import {
   createSchedulingHttpWorld,
@@ -131,7 +134,7 @@ describe('the day view of a location', () => {
 
   it('keeps cancelled appointments visible with their status, and never lists a hold', async () => {
     const created = await world.book(4, '09:00');
-    await world.api.post(`/appointments/${created.id}/cancel`, world.reception, {
+    await world.act(created, 'cancel', world.reception, {
       cancelledBy: 'patient',
       reasonCode: 'illness',
     });
@@ -169,6 +172,52 @@ describe('the day view of a location', () => {
     expect(response.holidays).toEqual([
       expect.objectContaining({ day: world.monday(5), name: 'Closure' }),
     ]);
+  });
+
+  it('says the answer is complete when it is, and cut short when the cap is reached', async () => {
+    for (const time of ['09:00', '09:30', '10:00']) await world.book(12, time);
+    const query = {
+      from: `${world.monday(12)}T00:00:00-03:00`,
+      to: new Date(Date.parse(`${world.monday(12)}T00:00:00-03:00`) + 86_400_000).toISOString(),
+    };
+    const actor = {
+      kind: 'staff' as const,
+      userId: world.admin.user.id,
+      tenantId: world.tenant.id,
+      membershipId: world.admin.membershipId,
+      roles: ['admin' as const],
+      grants: [],
+      professionalId: null,
+    };
+    const auditActor = {
+      userId: world.admin.user.id,
+      actingRole: 'admin' as const,
+      ip: null,
+      userAgent: null,
+      requestId: null,
+    };
+    const calendarWith = (maxEntries: number) =>
+      createCalendar({
+        blocks: createBlockService(),
+        holidays: createHolidayService(),
+        maxEntries,
+      });
+    const read = (maxEntries: number) =>
+      world.inTenant((tx) => calendarWith(maxEntries).feed(tx, { query, actor, auditActor }));
+
+    const roomy = await read(10);
+    const exact = await read(3);
+    const tight = await read(2);
+
+    expect(roomy.appointments).toHaveLength(3);
+    expect(roomy.truncated).toBe(false);
+    // Exactly at the cap nothing is missing.
+    expect(exact.appointments).toHaveLength(3);
+    expect(exact.truncated).toBe(false);
+    // One over the cap: the earliest ones are kept and the answer says it is not all of it.
+    expect(tight.appointments).toHaveLength(2);
+    expect(tight.truncated).toBe(true);
+    expect((await feed(window(12))).truncated).toBe(false);
   });
 
   it('validates the window', async () => {
@@ -302,6 +351,65 @@ describe('a professional sees their own calendar by default', () => {
     await feed(window(9));
     await feed(window(9), world.admin);
 
+    expect(await auditCount('appointment.calendar_viewed')).toBe(before);
+  });
+});
+
+describe('looking at one appointment, its history or free time in a delegated calendar', () => {
+  const availability = (professionalId: string, who: typeof world.doctor | typeof world.admin) =>
+    world.api.get(
+      `/availability?professionalId=${professionalId}&typeId=${world.consulta}&from=${world.monday(13)}&to=${world.monday(13)}`,
+      who,
+    );
+
+  it('is audited as a calendar view, once for each look', async () => {
+    await world.delegateCalendar(world.doctor, [world.colleague.professionalId]);
+    try {
+      const theirs = await world.book(13, '09:00', {
+        professionalId: world.colleague.professionalId,
+      });
+      const before = await auditCount('appointment.calendar_viewed');
+
+      const one = await world.api.get(`/appointments/${theirs.id}`, world.doctor);
+      const afterOne = await auditCount('appointment.calendar_viewed');
+      const history = await world.api.get(`/appointments/${theirs.id}/history`, world.doctor);
+      const afterHistory = await auditCount('appointment.calendar_viewed');
+      const free = await availability(world.colleague.professionalId, world.doctor);
+      const afterFree = await auditCount('appointment.calendar_viewed');
+
+      expect([one.statusCode, history.statusCode, free.statusCode]).toEqual([200, 200, 200]);
+      expect([afterOne, afterHistory, afterFree]).toEqual([before + 1, before + 2, before + 3]);
+    } finally {
+      await world.revokeDelegation(world.doctor);
+    }
+  });
+
+  it('is not audited in their own calendar, nor for reception and admin', async () => {
+    const mine = await world.book(13, '10:00');
+    const theirs = await world.book(13, '10:30', {
+      professionalId: world.colleague.professionalId,
+    });
+    const before = await auditCount('appointment.calendar_viewed');
+
+    await world.api.get(`/appointments/${mine.id}`, world.doctor);
+    await world.api.get(`/appointments/${mine.id}/history`, world.doctor);
+    await availability(world.doctor.professionalId, world.doctor);
+    await world.api.get(`/appointments/${theirs.id}`, world.reception);
+    await world.api.get(`/appointments/${theirs.id}/history`, world.admin);
+    await availability(world.colleague.professionalId, world.admin);
+
+    expect(await auditCount('appointment.calendar_viewed')).toBe(before);
+  });
+
+  it('is not audited when it is refused, which is a denial of its own', async () => {
+    const theirs = await world.book(13, '11:00', {
+      professionalId: world.colleague.professionalId,
+    });
+    const before = await auditCount('appointment.calendar_viewed');
+
+    const refused = await world.api.get(`/appointments/${theirs.id}`, world.doctor);
+
+    expect(refused.statusCode).toBe(403);
     expect(await auditCount('appointment.calendar_viewed')).toBe(before);
   });
 });

@@ -9,6 +9,8 @@ import { describe, expect, it } from 'vitest';
 import { buildServer } from '../../main/server.js';
 import type { ResolvedTenant } from '../http/tenant-host.js';
 
+import { refuseWhenReadOnly } from './index.js';
+
 const BASE: ResolvedTenant = {
   id: '0190a000-0000-7000-8000-0000000000a1',
   slug: 'active',
@@ -47,6 +49,15 @@ function server() {
     app.post(`/cat/${category}`, { config: { readOnly: category } }, () => ({ done: category }));
   }
   // Public booking and waitlist routes are `write` or `read` like any other route.
+  // A patient-protective route that keeps only part of what it does open: the handler decides.
+  app.post<{ Querystring: { by?: string } }>(
+    '/cat/partly-protective',
+    { config: { readOnly: 'patient_protective' } },
+    (request) => {
+      if (request.query.by !== 'patient') refuseWhenReadOnly(request);
+      return { done: request.query.by ?? 'nobody' };
+    },
+  );
   app.get('/public/frozen/booking/availability', { config: { readOnly: 'read' } }, () => ({
     slots: [1],
   }));
@@ -212,5 +223,38 @@ describe('every route must declare a category', () => {
     expect(app.routeCategories.get('GET /health')).toBe('read');
     expect(app.routeCategories.get('POST /cat/write')).toBe('write');
     expect(app.routeCategories.get('POST /cat/webhook')).toBe('webhook');
+  });
+});
+
+describe('a route that is open to the patient and closed to the organization', () => {
+  const call = async (host: { host: string }, by: string) => {
+    const app = server();
+    const response = await app.inject({
+      method: 'POST',
+      url: `/cat/partly-protective?by=${by}`,
+      headers: host,
+    });
+    await app.close();
+    return response;
+  };
+
+  it('serves the patient in a READ-ONLY tenant and refuses the organization with 402', async () => {
+    const patient = await call(FROZEN, 'patient');
+    const organization = await call(FROZEN, 'organization');
+    const professional = await call(FROZEN, 'professional');
+
+    expect(patient.statusCode).toBe(200);
+    expect(patient.json()).toEqual({ done: 'patient' });
+    for (const refused of [organization, professional]) {
+      expect(refused.statusCode).toBe(402);
+      expect(Problem.parse(refused.json())).toMatchObject({ code: 'tenant_read_only' });
+    }
+  });
+
+  it('serves everybody in an ACTIVE tenant, and refuses the organization in a cancelled one', async () => {
+    expect((await call(ACTIVE, 'organization')).statusCode).toBe(200);
+    expect((await call(ACTIVE, 'patient')).statusCode).toBe(200);
+    expect((await call(CLOSED, 'organization')).statusCode).toBe(402);
+    expect((await call(CLOSED, 'patient')).statusCode).toBe(200);
   });
 });

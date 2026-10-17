@@ -14,6 +14,7 @@ import {
   SlotNoLongerAvailableError,
   typeOffered,
   type BookActor,
+  type LocationAuthorizer,
   type Plan,
   type PlanInput,
 } from './placement.js';
@@ -38,7 +39,7 @@ export interface BookInput {
    * Called once the location is known to exist, so a location the actor may not operate is refused
    * as a denial, and one that does not exist (or belongs to another organization) as not found.
    */
-  authorizeLocation?: (location: LocationRecord) => Promise<void>;
+  authorizeLocation?: LocationAuthorizer;
 }
 
 /**
@@ -75,7 +76,7 @@ export async function bookAppointment(
     throw new AppError('conflict');
   }
   assertCalendar(actor, professional.id);
-  if (input.authorizeLocation) await input.authorizeLocation(location);
+  if (input.authorizeLocation) await input.authorizeLocation(location, professional.id);
   if (!typeOffered(type, professional)) {
     throw invalid('appointmentTypeId', 'scheduling.booking.type_not_offered');
   }
@@ -115,7 +116,7 @@ export async function bookAppointment(
     ...(hold ? { ignoreHoldId: hold.id } : {}),
   };
   const plan = await planSlot(ports, planInput);
-  await applyPlan(ports, plan);
+  await applyPlan(ports, planInput, plan);
   // The hold stops occupying the range before the appointment takes it (one lane, one occupant).
   if (hold) await ports.updateHold(hold.id, { status: 'converted' });
 
@@ -148,6 +149,12 @@ export interface PersistInput {
   hold?: HoldRecord | null;
   /** The series the appointment belongs to, and which session it is. */
   series?: { seriesId: string; index: number };
+  /**
+   * Whether the patient was registered by the actor a moment ago, when the caller already judged
+   * it. A series judges it once before its first session exists: afterwards the patient has an
+   * appointment and would no longer look new.
+   */
+  freshPatient?: boolean;
 }
 
 /**
@@ -164,7 +171,10 @@ export async function persistAppointment(
   // registered a moment ago is not a match.
   const identityConfirmed = initialIdentityConfirmed({
     source: 'staff',
-    patient: (await ports.isFreshPatient(patient.id, actor.userId, now)) ? 'created' : 'existing',
+    patient:
+      (input.freshPatient ?? (await ports.isFreshPatient(patient.id, actor.userId, now)))
+        ? 'created'
+        : 'existing',
     bookingActorProfessionalId: actor.professionalId,
     appointmentProfessionalId: professional.id,
   });

@@ -3,8 +3,13 @@ import { describe, expect, it } from 'vitest';
 import {
   APPOINTMENT_STATUSES,
   BookAppointmentRequest,
+  CalendarResponse,
   CancelAppointmentRequest,
+  CheckInRequest,
+  ConfirmIdentityRequest,
+  CORRECTION_REASONS,
   CorrectStatusRequest,
+  DetachPatientRequest,
   RescheduleRequest,
   SlotConflictExtension,
   TransitionRequest,
@@ -133,22 +138,54 @@ describe('SlotConflictExtension', () => {
 });
 
 describe('lifecycle requests', () => {
-  it('accept an optional version and nothing else on a plain transition', () => {
-    expect(TransitionRequest.safeParse({}).success).toBe(true);
+  it('need the version on a plain transition, and nothing else', () => {
     expect(TransitionRequest.safeParse({ expectedVersion: 3 }).success).toBe(true);
+    expect(TransitionRequest.safeParse({}).success).toBe(false);
     expect(TransitionRequest.safeParse({ expectedVersion: 0 }).success).toBe(false);
-    expect(TransitionRequest.safeParse({ status: 'attended' }).success).toBe(false);
+    expect(TransitionRequest.safeParse({ expectedVersion: 3, status: 'attended' }).success).toBe(
+      false,
+    );
+  });
+
+  it('need the version on every other write of an appointment', () => {
+    const cancel = { cancelledBy: 'patient', reasonCode: 'illness' };
+    const correct = { toStatus: 'attended', reasonCode: 'patient_arrived_late' };
+    const detach = { resolution: 'move_to_patient', patientId: ID };
+
+    expect(CheckInRequest.safeParse({}).success).toBe(false);
+    expect(CheckInRequest.safeParse({ expectedVersion: 1, confirmIdentity: true }).success).toBe(
+      true,
+    );
+    expect(ConfirmIdentityRequest.safeParse({}).success).toBe(false);
+    expect(ConfirmIdentityRequest.safeParse({ expectedVersion: 2 }).success).toBe(true);
+    expect(CancelAppointmentRequest.safeParse(cancel).success).toBe(false);
+    expect(CancelAppointmentRequest.safeParse({ ...cancel, expectedVersion: 1 }).success).toBe(
+      true,
+    );
+    expect(CorrectStatusRequest.safeParse(correct).success).toBe(false);
+    expect(CorrectStatusRequest.safeParse({ ...correct, expectedVersion: 1 }).success).toBe(true);
+    expect(DetachPatientRequest.safeParse(detach).success).toBe(false);
+    expect(DetachPatientRequest.safeParse({ ...detach, expectedVersion: 1 }).success).toBe(true);
+    expect(
+      DetachPatientRequest.safeParse({
+        resolution: 'cancel',
+        cancelledBy: 'organization',
+        reasonCode: 'other',
+      }).success,
+    ).toBe(false);
   });
 
   it('cancel needs who cancelled and a reason code, and bounds the free text', () => {
-    const ok = { cancelledBy: 'patient', reasonCode: 'illness' };
+    const ok = { cancelledBy: 'patient', reasonCode: 'illness', expectedVersion: 1 };
 
     expect(CancelAppointmentRequest.safeParse(ok).success).toBe(true);
     expect(CancelAppointmentRequest.safeParse({ ...ok, note: 'x'.repeat(200) }).success).toBe(true);
     expect(CancelAppointmentRequest.safeParse({ ...ok, note: 'x'.repeat(201) }).success).toBe(
       false,
     );
-    expect(CancelAppointmentRequest.safeParse({ reasonCode: 'illness' }).success).toBe(false);
+    expect(
+      CancelAppointmentRequest.safeParse({ reasonCode: 'illness', expectedVersion: 1 }).success,
+    ).toBe(false);
     expect(CancelAppointmentRequest.safeParse({ ...ok, cancelledBy: 'landlord' }).success).toBe(
       false,
     );
@@ -157,16 +194,22 @@ describe('lifecycle requests', () => {
     );
   });
 
-  it('a correction needs a status of the eight and a reason', () => {
-    expect(
-      CorrectStatusRequest.safeParse({ toStatus: 'attended', reason: 'Arrived late' }).success,
-    ).toBe(true);
-    expect(CorrectStatusRequest.safeParse({ toStatus: 'attended', reason: '' }).success).toBe(
-      false,
-    );
-    expect(CorrectStatusRequest.safeParse({ toStatus: 'rescheduled', reason: 'x' }).success).toBe(
-      false,
-    );
+  it('a correction needs a status of the eight, a reason code and the version', () => {
+    const ok = { toStatus: 'attended', reasonCode: 'patient_arrived_late', expectedVersion: 1 };
+
+    expect(CorrectStatusRequest.safeParse(ok).success).toBe(true);
+    expect(CorrectStatusRequest.safeParse({ ...ok, note: 'x'.repeat(200) }).success).toBe(true);
+    expect(CorrectStatusRequest.safeParse({ ...ok, note: 'x'.repeat(201) }).success).toBe(false);
+    expect(CorrectStatusRequest.safeParse({ ...ok, reasonCode: 'because' }).success).toBe(false);
+    expect(CorrectStatusRequest.safeParse({ ...ok, toStatus: 'rescheduled' }).success).toBe(false);
+    // The free-text reason of before is gone: only a code reaches the audit trail.
+    expect(CorrectStatusRequest.safeParse({ ...ok, reason: 'Arrived late' }).success).toBe(false);
+    expect([...CORRECTION_REASONS]).toEqual([
+      'entered_by_mistake',
+      'patient_arrived_late',
+      'recorded_late',
+      'other',
+    ]);
   });
 
   it('a reschedule needs the version and at least one thing to change', () => {
@@ -185,5 +228,16 @@ describe('lifecycle requests', () => {
         local: { date: '2026-12-01', time: '10:00' },
       }).success,
     ).toBe(false);
+  });
+});
+
+describe('CalendarResponse', () => {
+  const empty = { appointments: [], blocks: [], holidays: [] };
+
+  it('says whether the answer was cut short, so the screen can ask to narrow the filter', () => {
+    expect(CalendarResponse.safeParse({ ...empty, truncated: false }).success).toBe(true);
+    expect(CalendarResponse.safeParse({ ...empty, truncated: true }).success).toBe(true);
+    expect(CalendarResponse.safeParse(empty).success).toBe(false);
+    expect(CalendarResponse.safeParse({ ...empty, truncated: 'yes' }).success).toBe(false);
   });
 });

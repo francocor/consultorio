@@ -109,6 +109,7 @@ export function createWorklistService(deps: { keys: TenantKeys }): WorklistServi
               patientId: appointment.patientId,
               locationId: appointment.locationId,
               identityConfirmed: appointment.identityConfirmed,
+              version: appointment.version,
               familyName: patient.familyName,
               givenNames: patient.givenNames,
             })
@@ -156,6 +157,7 @@ export function createWorklistService(deps: { keys: TenantKeys }): WorklistServi
               patientName: `${found.familyName}, ${found.givenNames}`,
               locationId: found.locationId,
               identityConfirmed: found.identityConfirmed,
+              version: found.version,
             }
           : null,
         actions: row.status === 'open' ? actionsOf(kind, subjectType) : [],

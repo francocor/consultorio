@@ -1,5 +1,5 @@
 import type { CalendarEntryDto, CalendarQuery, CalendarResponse } from '@consultorio/contracts';
-import { and, asc, eq, gt, inArray, lt, type SQL } from 'drizzle-orm';
+import { and, asc, eq, gt, inArray, lt, or, type SQL } from 'drizzle-orm';
 
 import { patient } from '../../../db/schema/patients.js';
 import { appointmentType } from '../../../db/schema/scheduling-config.js';
@@ -9,19 +9,23 @@ import type { Actor } from '../../../platform/authz/actor.js';
 import { calendarAccess } from '../../../platform/authz/calendar-scope.js';
 import type { Tx } from '../../../platform/db/tenant-context.js';
 import { AppError } from '../../../platform/http/problem.js';
-import { AccessRefused, visibleLocationIds } from '../../access/index.js';
+import { AccessRefused } from '../../access/index.js';
 
 import type { BlockService } from './blocks.js';
+import { auditDelegatedView, isAdministrative } from './delegated-view.js';
 import { toAppointmentDto } from './drizzle-ports.js';
 import type { HolidayService } from './holidays.js';
+import { locationAccessOf } from './location-access.js';
 
 /** The most appointments one answer carries; a month of a busy center is far below it. */
-const MAX_ENTRIES = 2000;
+const DEFAULT_MAX_ENTRIES = 2000;
 const DAY_MS = 86_400_000;
 
 export interface CalendarDeps {
   blocks: BlockService;
   holidays: HolidayService;
+  /** The cap of one answer; the feed says `truncated` when the window holds more. */
+  maxEntries?: number;
 }
 
 export interface CalendarInput {
@@ -29,9 +33,6 @@ export interface CalendarInput {
   actor: Actor;
   auditActor: AuditActor & { userId: string };
 }
-
-const isAdministrative = (actor: Actor) =>
-  actor.roles.some((role) => role === 'owner' || role === 'admin' || role === 'reception');
 
 /** Whose appointments a viewer asks for when they name nobody: everyone, or their own calendars. */
 function defaultProfessionals(actor: Actor): string[] | 'everyone' {
@@ -97,6 +98,33 @@ async function selectEntries(
 }
 
 /**
+ * The SQL condition on the location of an appointment for a viewer who does not see every location:
+ * the assigned ones, plus their own professional calendar when they have one. `'none'` means
+ * nothing can match; `'any'` means no condition.
+ */
+function locationFilter(input: {
+  assigned: readonly string[] | null;
+  own: string | null;
+  requested: string | undefined;
+}): SQL | 'any' | 'none' {
+  const { assigned, own, requested } = input;
+  if (assigned === null) return requested ? eq(appointment.locationId, requested) : 'any';
+  const ownCalendar = own === null ? undefined : eq(appointment.professionalId, own);
+  if (requested !== undefined) {
+    if (assigned.includes(requested)) return eq(appointment.locationId, requested);
+    // Not assigned there: only their own calendar is theirs at that location.
+    return ownCalendar
+      ? (and(ownCalendar, eq(appointment.locationId, requested)) ?? 'none')
+      : 'none';
+  }
+  const parts = [
+    ...(assigned.length > 0 ? [inArray(appointment.locationId, [...assigned])] : []),
+    ...(ownCalendar ? [ownCalendar] : []),
+  ];
+  return or(...parts) ?? 'none';
+}
+
+/**
  * The calendar feed (scheduling, "Calendar views"): the appointments of the professionals and
  * locations the viewer may see in a window, as administrative data only (patient name, type,
  * status, time). Reception sees the locations it works at; a professional sees their own calendar
@@ -104,25 +132,36 @@ async function selectEntries(
  * looks at another professional's calendar the view is audited.
  */
 export function createCalendar(deps: CalendarDeps) {
+  const maxEntries = deps.maxEntries ?? DEFAULT_MAX_ENTRIES;
   return {
     /** One appointment as the calendar shows it, if the viewer may work in its calendar and location. */
-    async get(tx: Tx, input: { id: string; actor: Actor }): Promise<CalendarEntryDto> {
+    async get(
+      tx: Tx,
+      input: {
+        id: string;
+        actor: Actor;
+        /** Who is looking, so a look at a colleague's calendar is audited. */
+        auditActor: AuditActor & { userId: string };
+        /** Whether the look is at the appointment itself or at its history. */
+        view: 'appointment' | 'history';
+      },
+    ): Promise<CalendarEntryDto> {
       const [entry] = await selectEntries(tx, eq(appointment.id, input.id), 1);
       if (!entry) throw new AppError('not_found');
       if (!calendarAccess(input.actor, entry.professionalId)) {
         throw new AccessRefused('not_own_calendar');
       }
-      const visible = input.actor.roles.some(
-        (r) => r === 'owner' || r === 'admin' || r === 'professional',
-      )
-        ? ('all' as const)
-        : await visibleLocationIds(tx, {
-            roles: input.actor.roles,
-            membershipId: input.actor.membershipId,
-          });
-      if (visible !== 'all' && !visible.includes(entry.locationId)) {
+      const access = await locationAccessOf(tx, input.actor);
+      if (!access.may({ locationId: entry.locationId, professionalId: entry.professionalId })) {
         throw new AccessRefused('location_not_assigned');
       }
+      await auditDelegatedView(tx, {
+        actor: input.actor,
+        auditActor: input.auditActor,
+        professionalId: entry.professionalId,
+        view: input.view,
+        appointmentId: entry.id,
+      });
       return entry;
     },
 
@@ -136,27 +175,26 @@ export function createCalendar(deps: CalendarDeps) {
       }
       const professionals = requested ?? defaultProfessionals(actor);
 
-      // Reception reads the locations it works at; asking for another one is a denial.
-      const visible = actor.roles.some(
-        (r) => r === 'owner' || r === 'admin' || r === 'professional',
-      )
-        ? ('all' as const)
-        : await visibleLocationIds(tx, { roles: actor.roles, membershipId: actor.membershipId });
-      if (query.locationId && visible !== 'all' && !visible.includes(query.locationId)) {
+      // Reception reads the locations it works at, and a professional who is also reception reads
+      // their own calendar everywhere; asking for another location is a denial.
+      const access = await locationAccessOf(tx, actor);
+      const own = access.scope.kind === 'assigned' ? access.scope.ownProfessionalId : null;
+      const assigned = access.scope.kind === 'all' ? null : access.assigned;
+      if (query.locationId && assigned && !assigned.includes(query.locationId) && own === null) {
         throw new AccessRefused('location_not_assigned');
       }
-      const locationFilter = query.locationId
-        ? [query.locationId]
-        : visible === 'all'
-          ? undefined
-          : visible;
+      const locationWhere = locationFilter({
+        assigned,
+        own,
+        requested: query.locationId,
+      });
 
       const from = new Date(query.from);
       const to = new Date(query.to);
       const empty =
-        (professionals !== 'everyone' && professionals.length === 0) ||
-        (locationFilter !== undefined && locationFilter.length === 0);
-      const appointments = empty
+        (professionals !== 'everyone' && professionals.length === 0) || locationWhere === 'none';
+      // One more than the cap is read, only to know whether something is missing.
+      const found = empty
         ? []
         : await selectEntries(
             tx,
@@ -166,19 +204,24 @@ export function createCalendar(deps: CalendarDeps) {
               ...(professionals === 'everyone'
                 ? []
                 : [inArray(appointment.professionalId, professionals)]),
-              ...(locationFilter ? [inArray(appointment.locationId, locationFilter)] : []),
+              ...(locationWhere === 'any' ? [] : [locationWhere]),
             ),
-            MAX_ENTRIES,
+            maxEntries + 1,
           );
+      const truncated = found.length > maxEntries;
+      const appointments = truncated ? found.slice(0, maxEntries) : found;
 
       const blocks = (await deps.blocks.list(tx, { from: query.from, to: query.to })).filter(
         (block) =>
           (professionals === 'everyone' ||
             block.professionalId === null ||
             professionals.includes(block.professionalId)) &&
-          (locationFilter === undefined ||
+          (assigned === null ||
             block.locationId === null ||
-            locationFilter.includes(block.locationId)),
+            (query.locationId === undefined
+              ? assigned.includes(block.locationId)
+              : block.locationId === query.locationId && assigned.includes(block.locationId)) ||
+            (own !== null && block.professionalId === own)),
       );
       const holidays = await deps.holidays.holidaysBetween(
         tx,
@@ -206,7 +249,7 @@ export function createCalendar(deps: CalendarDeps) {
           },
         });
       }
-      return { appointments, blocks, holidays };
+      return { appointments, blocks, holidays, truncated };
     },
   };
 }

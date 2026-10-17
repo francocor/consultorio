@@ -545,16 +545,19 @@ async function seedAgenda(
         // Booked a couple of days ahead of the visit, never backdated.
         now: new Date(Math.min(now.getTime(), startMs - BOOKED_AHEAD_MS)),
       });
-      const move = (
+      // Every change names the version it was decided on, like any other client.
+      let version = booked.version;
+      const move = async (
         action: 'confirm' | 'check_in' | 'start' | 'attend' | 'no_show' | 'cancel',
         who: typeof front,
-      ) =>
-        transitionAppointment(ports, {
+      ) => {
+        const updated = await transitionAppointment(ports, {
           appointmentId: booked.id,
           action,
           actor: who.book,
           auditActor: who.audit,
           now,
+          expectedVersion: version,
           ...(action === 'cancel'
             ? {
                 cancellation: {
@@ -564,6 +567,9 @@ async function seedAgenda(
               }
             : {}),
         });
+        version = updated.version;
+        return updated;
+      };
       await followTheDay(entry, move, front, clinician);
     });
   }

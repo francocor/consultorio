@@ -285,6 +285,32 @@ describe('a staff override of a hold', () => {
     );
     expect(audits.some((row) => JSON.stringify(row.metadata).includes('hold'))).toBe(true);
   });
+
+  it('refuses the override to reception until it is granted, and takes effect when it is', async () => {
+    world.setNow(START);
+    const held = await newHold(18);
+    const request = { ...(await world.bookingBody(18, '10:00')), overrideHold: true };
+
+    const denied = await world.api.post('/appointments', world.reception, request);
+    const stillHeld = (await holdRow(held.id))?.status;
+    await world.grantPermission(world.reception, 'scheduling.override_hold');
+    try {
+      const allowed = await world.api.post('/appointments', world.reception, {
+        ...request,
+        patientId: await world.freshPatient(),
+      });
+
+      expect(allowed.statusCode, allowed.body).toBe(201);
+    } finally {
+      await world.revokePermission(world.reception, 'scheduling.override_hold');
+    }
+
+    expect(denied.statusCode).toBe(403);
+    expect(denied.json<Problem>().code).toBe('forbidden');
+    // The refusal left the hold exactly as it was.
+    expect(stillHeld).toBe('active');
+    expect((await holdRow(held.id))?.status).toBe('invalidated');
+  });
 });
 
 describe('public holds (capacity 1)', () => {
@@ -341,6 +367,44 @@ describe('public holds (capacity 1)', () => {
 
     expect(created.origin).toBe('public');
     expect((await holdRow(created.id))?.lane).toBe(1);
+  });
+});
+
+describe('replacing the oldest hold of a source', () => {
+  it('does not release a hold that was converted while it was deciding', async () => {
+    world.setNow(START);
+    const held = await newHold(19);
+    const ports = (tx: Parameters<Parameters<typeof world.inTenant>[0]>[0]) =>
+      createSchedulingPorts(tx, { keys: world.keys });
+    let converting: () => void = () => undefined;
+    const converted = new Promise<void>((resolve) => {
+      converting = resolve;
+    });
+
+    // One transaction converts the hold and is slow to commit; another one asks to keep none of the
+    // source's holds. The second reads the hold as active, waits for the row, and must then find
+    // that it is no longer active.
+    const convert = world.inTenant(async (tx) => {
+      await tx.update(slotHold).set({ status: 'converted' }).where(eq(slotHold.id, held.id));
+      converting();
+      await new Promise((resolve) => setTimeout(resolve, 500));
+    });
+    await converted;
+    const release = world.inTenant((tx) =>
+      ports(tx).releaseOldestHolds(world.reception.user.id, 0),
+    );
+    await Promise.all([convert, release]);
+
+    expect((await holdRow(held.id))?.status).toBe('converted');
+  });
+
+  it('still releases the active holds beyond the ones kept', async () => {
+    world.setNow(START);
+    const older = await newHold(20, '10:00');
+    const newer = await world.api.post('/slot-holds', world.reception, holdBody(20, '11:00'));
+    expect(newer.statusCode, newer.body).toBe(201);
+    expect((await holdRow(older.id))?.status).toBe('released');
+    expect((await holdRow(newer.json<HoldDto>().id))?.status).toBe('active');
   });
 });
 

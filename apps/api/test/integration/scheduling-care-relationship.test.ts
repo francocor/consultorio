@@ -106,8 +106,12 @@ async function counters(patientId: string, professionalId: string) {
   return result.rows[0] ?? { qualifying_appointments: 0, active: false };
 }
 
-const post = (id: string, action: string, who = world.reception, body: object = {}) =>
-  world.api.post(`/appointments/${id}/${action}`, who, body);
+const post = (
+  id: string,
+  action: string,
+  who = world.reception,
+  body: Record<string, unknown> = {},
+) => world.act({ id }, action, who, body);
 
 /** Books `patientId` with the doctor; `byReception` decides if the identity starts confirmed. */
 async function bookFor(patientId: string, weeksAfter: number, byReception: boolean) {
@@ -243,7 +247,7 @@ describe('what the appointment gives a professional', () => {
 
     await post(created.id, 'correct', world.reception, {
       toStatus: 'scheduled',
-      reason: 'Cancelled by mistake',
+      reasonCode: 'entered_by_mistake',
     });
 
     expect(await readable(world.doctor, patientId)).toBe(1);

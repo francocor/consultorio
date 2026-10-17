@@ -433,6 +433,7 @@ describe('professional profile', () => {
 describe('extra permissions', () => {
   const grantable = [
     'scheduling.override_hours',
+    'scheduling.override_hold',
     'scheduling.register_past',
     'scheduling.delegated_calendar',
     'cash.operate',
@@ -448,7 +449,7 @@ describe('extra permissions', () => {
     await user.click(within(sheet).getByRole('tab', { name: 'Permisos' }));
 
     const switches = await within(sheet).findAllByRole('switch');
-    expect(switches).toHaveLength(5);
+    expect(switches).toHaveLength(grantable.length);
     expect(within(sheet).getByRole('switch', { name: /Operar la caja/ })).not.toBeChecked();
     expect(sheet).not.toHaveTextContent(/historia clínica|nota clínica/i);
   });
