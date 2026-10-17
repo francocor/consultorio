@@ -129,6 +129,38 @@ describe('asking to upload: POST /documents/uploads', () => {
     expect(await rowsOf(patientId)).toHaveLength(1);
   });
 
+  it('links a document to an encounter of the same patient that the uploader owns, and answers not found for any other (JD-S2 C6)', async () => {
+    const patientId = await h.patient();
+    const otherPatientId = await h.patient();
+    const opened = await h.api.post('/encounters', h.sessions.professional, {
+      patientId,
+      templateKind: 'general',
+    });
+    expect(opened.statusCode, opened.body).toBe(201);
+    const encounterId = opened.json<{ encounterId: string }>().encounterId;
+    const upload = (session: typeof h.sessions.professional, patient: string, id: string) =>
+      h.api.post('/documents/uploads', session, request(patient, { encounterId: id }));
+
+    const unknown = await upload(h.sessions.professional, patientId, randomUUID());
+    const ofAnotherPatient = await upload(h.sessions.professional, otherPatientId, encounterId);
+    // A colleague who does not treat this patient cannot see the encounter, let alone attach to it.
+    const byStranger = await upload(h.sessions.colleague, patientId, encounterId);
+    const byReception = await h.api.post(
+      '/documents/uploads',
+      h.sessions.reception,
+      request(patientId, { category: 'id_copy', encounterId }),
+    );
+    const linked = await upload(h.sessions.professional, patientId, encounterId);
+
+    expect(unknown.statusCode).toBe(404);
+    expect(ofAnotherPatient.statusCode).toBe(404);
+    expect(byStranger.statusCode).toBe(404);
+    expect(byReception.statusCode).toBe(404);
+    expect(linked.statusCode).toBe(200);
+    expect((await rowsOf(patientId)).map((row) => row.encounterId)).toEqual([encounterId]);
+    expect(await rowsOf(otherPatientId)).toHaveLength(0);
+  });
+
   it('refuses 11 files in one request and stores nothing', async () => {
     const patientId = await h.patient();
     const files = Array.from({ length: 11 }, (_, i) => ({ ...pdf(), name: `f${String(i)}.pdf` }));
