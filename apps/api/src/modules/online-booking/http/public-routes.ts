@@ -341,7 +341,7 @@ export function publicRoutes(deps: PublicRoutesDeps) {
         config: {
           readOnly: 'write',
           auth: 'public',
-          audits: 'none',
+          audits: ['booking.suspicious'],
           rateLimit: { max: 20, timeWindow: 60_000 },
         },
         schema: { params: PageParams, body: PublicHoldRequest, response: { 201: PublicHoldDto } },
@@ -349,7 +349,22 @@ export function publicRoutes(deps: PublicRoutesDeps) {
       async (request, reply) => {
         const tenant = tenantOf(request);
         void reply.header('cache-control', 'no-store');
-        // The bot challenge comes first: nothing else is spent on a request that fails it.
+        // An address that keeps asking for holds (opening a new session each time to get round the
+        // bound of one hold per session) is stopped, and the administrator is told.
+        if (!(await deps.abuse.allowHoldFrom(tenant.id, request.ip))) {
+          await run(tenant, async (tx) => {
+            const link = await findOrganizationLink(tx, request.params.slug);
+            if (link) {
+              await deps.abuse.recordSuspicious(tx, {
+                actor: request.auditActor,
+                reason: 'rate_limit',
+                linkId: link.id,
+              });
+            }
+          });
+          throw new AppError('rate_limited');
+        }
+        // The bot challenge comes next: nothing else is spent on a request that fails it.
         const solved = await challengeOf(tenant).verify(request.body.challengeProof, request.ip);
         if (!solved) throw new AppError('booking_challenge_failed');
 

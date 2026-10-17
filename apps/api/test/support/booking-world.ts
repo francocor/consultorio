@@ -16,6 +16,7 @@ import {
   createFakeEmailSender,
   type FakeEmailSender,
 } from '../../src/adapters/fake-email/index.js';
+import { createFakeVideoLinkProvider } from '../../src/adapters/video-fake/index.js';
 import type { AdapterPorts, AdapterResolver } from '../../src/main/adapter-resolver.js';
 import { onlineBookingMetrics } from '../../src/main/wiring/online-booking.js';
 import { createOtpSendJob } from '../../src/modules/online-booking/application/otp-send-job.js';
@@ -32,11 +33,22 @@ import {
   type SchedulingHttpWorld,
 } from './scheduling-world.js';
 
-/** An adapter resolver that serves the given bot challenge to every organization. */
-export function testAdapters(challenge: BotChallenge): AdapterResolver {
+/**
+ * An adapter resolver that serves the given bot challenge to every organization, and a video
+ * provider when asked to (organizations without one do not offer virtual appointments online).
+ */
+export function testAdapters(
+  challenge: BotChallenge,
+  options: { video?: boolean } = {},
+): AdapterResolver {
+  const video = createFakeVideoLinkProvider();
   return {
     forTenant: <P extends keyof AdapterPorts>(_tenant: unknown, port: P) =>
-      (port === 'botChallenge' ? challenge : undefined) as AdapterPorts[P] | undefined,
+      (port === 'botChallenge'
+        ? challenge
+        : port === 'videoLink' && options.video === true
+          ? video
+          : undefined) as AdapterPorts[P] | undefined,
   };
 }
 
@@ -98,6 +110,8 @@ export async function createBookingWorld(
     slug: string;
     now?: Date;
     app?: Parameters<typeof createSchedulingHttpWorld>[1]['app'];
+    /** The organization has a video provider, so virtual types may be offered online. */
+    video?: boolean;
   },
 ): Promise<BookingWorld> {
   const email = createFakeEmailSender();
@@ -110,7 +124,7 @@ export async function createBookingWorld(
     app: {
       email,
       jobs,
-      adapters: testAdapters(challenge),
+      adapters: testAdapters(challenge, { video: options.video === true }),
       // One clock for the whole application, moved by `advance` and `setNow`.
       clock: () => current,
       ...options.app,

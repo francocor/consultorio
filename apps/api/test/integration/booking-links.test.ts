@@ -264,4 +264,15 @@ describe('regenerating a link', () => {
       requestId: undefined,
     });
   });
+
+  it('regenerating the organization link also ends the professional addresses under it', async () => {
+    const links = await freshLinks();
+    const visitor = world.visitor();
+    expect((await visitor.get(world.pagePath(links))).statusCode).toBe(200);
+
+    await world.api.post(`/booking-links/${links.organization.id}/regenerate`, world.owner, {});
+
+    expect((await visitor.get(world.pagePath(links))).statusCode).toBe(404);
+    expect((await visitor.get(`/public/${links.organization.slug}/booking`)).statusCode).toBe(404);
+  });
 });

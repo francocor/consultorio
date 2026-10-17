@@ -10,6 +10,8 @@ import type { Metrics } from '../../../platform/metrics.js';
 
 /** The limits of the public flow (online-booking, "Abuse protection"). */
 export const ABUSE_LIMITS = {
+  /** Slots one address may hold in ten minutes (the life of a hold), however many sessions it opens. */
+  holdsPerSource: 10,
   /** Forms one address may send in an hour. */
   submissionsPerSource: 10,
   /** Forms one link may take in an hour, whatever the addresses. */
@@ -24,7 +26,11 @@ const HOUR = 3_600_000;
 
 export type SuspiciousReason = 'rate_limit' | 'code_flood' | 'hoarding';
 
+const HOLD_WINDOW = 600_000;
+
 export interface Abuse {
+  /** Counts a hold request from this address; false when it already has too many. */
+  allowHoldFrom(tenantId: string, ip: string): Promise<boolean>;
   /** Counts a form from this address; false when it is over its allowance for the hour. */
   allowSubmissionFrom(tenantId: string, ip: string): Promise<boolean>;
   /** Counts a form on this link; false when the link is over its allowance for the hour. */
@@ -37,9 +43,9 @@ export interface Abuse {
 }
 
 export function createAbuse(deps: { store: RateLimitStore; metrics: Metrics }): Abuse {
-  async function within(key: string, max: number): Promise<boolean> {
+  async function within(key: string, max: number, window = HOUR): Promise<boolean> {
     try {
-      const state = await deps.store.hit(key, HOUR);
+      const state = await deps.store.hit(key, window);
       return state.count <= max;
     } catch {
       // The counters are best effort (design 4.5): a store that fails does not close the form.
@@ -48,6 +54,12 @@ export function createAbuse(deps: { store: RateLimitStore; metrics: Metrics }): 
   }
 
   return {
+    allowHoldFrom: (tenantId, ip) =>
+      within(
+        `booking|hold|source|${tenantId}|${clientKeyOf(ip)}`,
+        ABUSE_LIMITS.holdsPerSource,
+        HOLD_WINDOW,
+      ),
     allowSubmissionFrom: (tenantId, ip) =>
       within(
         `booking|submission|source|${tenantId}|${clientKeyOf(ip)}`,

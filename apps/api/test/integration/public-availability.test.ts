@@ -364,6 +364,39 @@ describe('what a visitor may see of the schedule', () => {
     expect(page.professionals[0]?.types.map((type) => type.name)).toEqual(['Consulta']);
   });
 
+  it('offers virtual types once the organization has a video provider and its switch on', async () => {
+    const withVideo = await createBookingWorld(runtime, {
+      slug: 'public-avail-video',
+      video: true,
+    });
+    try {
+      const virtual = (
+        await withVideo.api.post('/appointment-types', withVideo.owner, {
+          name: 'Teleconsulta',
+          durationMinutes: 30,
+          mode: 'virtual',
+        })
+      ).json<AppointmentTypeDto>().id;
+      const own = await withVideo.openLinks({ typeIds: [withVideo.consulta, virtual] });
+
+      const on = (
+        await withVideo.visitor().get(withVideo.pagePath(own))
+      ).json<PublicBookingPageDto>();
+      await withVideo.api.patch('/settings', withVideo.owner, { integrations: { video: false } });
+      const off = (
+        await withVideo.visitor().get(withVideo.pagePath(own))
+      ).json<PublicBookingPageDto>();
+
+      expect(on.professionals[0]?.types.map((type) => type.mode).sort()).toEqual([
+        'in_person',
+        'virtual',
+      ]);
+      expect(off.professionals[0]?.types.map((type) => type.mode)).toEqual(['in_person']);
+    } finally {
+      await withVideo.close();
+    }
+  });
+
   it('ignores a tenant field in the query: the organization comes from the host and the link', async () => {
     world.setNow(EARLY);
     const date = world.monday(1);
@@ -625,6 +658,23 @@ describe('holding a slot', () => {
       expect(response.json<Problem>().code).toBe('slot_no_longer_available');
       expect(response.body).not.toMatch(/hours|horario|lead|horizon/i);
     }
+  });
+
+  it('stops an address that keeps taking holds by opening a new session each time', async () => {
+    world.setNow(EARLY);
+    const greedy = world.visitor({ ip: '10.66.0.1' });
+    const answers: number[] = [];
+    for (let attempt = 0; attempt < 12; attempt += 1) {
+      // A browser that forgets its cookie asks as a new session every time.
+      greedy.forget();
+      const response = await greedy.post(holdUrl(), await holdBody(greedy, 1 + attempt, '12:00'));
+      answers.push(response.statusCode);
+    }
+
+    expect(answers.slice(0, 10).every((status) => status === 201)).toBe(true);
+    expect(answers.slice(10)).toEqual([429, 429]);
+    // Another address is not affected.
+    expect((await hold(world.visitor(), 13, '12:00')).statusCode).toBe(201);
   });
 
   it('refuses a location or type the link does not expose, and a professional it does not name', async () => {

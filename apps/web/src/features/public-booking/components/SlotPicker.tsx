@@ -134,7 +134,6 @@ export function SlotPicker({
                 <Button
                   variant={entry.date === day?.date ? 'default' : 'outline'}
                   aria-pressed={entry.date === day?.date}
-                  aria-label={longDayLabel(entry.date)}
                   onClick={() => {
                     setPicked({ from, date: entry.date });
                   }}
