@@ -10,6 +10,7 @@ import { z } from 'zod';
 import { useBoot } from '../../app/boot.js';
 import { useApi, useServices } from '../../app/providers.js';
 import { SESSION_QUERY_KEY } from '../../app/services.js';
+import { meQueryOptions } from '../../app/session.js';
 import { usePageTitle } from '../../app/use-page-title.js';
 import { isApiError } from '../../shared/lib/api-client.js';
 import { Alert, AlertDescription } from '../../shared/ui/alert.js';
@@ -58,16 +59,35 @@ export function LoginPage() {
   );
 }
 
-/** Where to go once the session exists: the page that was asked for, or the start page. */
+/**
+ * Where to go once the session exists: the page that was asked for; otherwise the setup wizard for
+ * an owner whose organization has not finished it (their first sign-in, and every one after it
+ * until the wizard is finished, resumes where they left); otherwise the start page.
+ */
 function useFinishSignIn() {
   const router = useRouter();
+  const api = useApi();
   const { queryClient } = useServices();
   const { redirect } = useLoginSearch();
-  return (next: 'authenticated' | 'enrollment') => {
+  return async (next: 'authenticated' | 'enrollment') => {
     // The profile of the previous visitor, if any, is not this person's.
     queryClient.removeQueries({ queryKey: SESSION_QUERY_KEY });
     const history = router.history as RouterHistory;
-    history.push(next === 'enrollment' ? '/account/security' : (redirect ?? '/'));
+    if (next === 'enrollment') {
+      history.push('/account/security');
+      return;
+    }
+    if (redirect) {
+      history.push(redirect);
+      return;
+    }
+    let needsWizard = false;
+    try {
+      needsWizard = (await queryClient.query(meQueryOptions(api)))?.needsWizard ?? false;
+    } catch {
+      // The start page loads the profile again and explains whatever went wrong.
+    }
+    history.push(needsWizard ? '/onboarding' : '/');
   };
 }
 
@@ -95,7 +115,7 @@ function CredentialsStep({
     mutationFn: (values: LoginRequest) => authApi(api).login(values),
     onSuccess: (result) => {
       if (result.next === 'totp') onChallenge(result.challenge);
-      else finish(result.next);
+      else void finish(result.next);
     },
     onError: () => {
       form.resetField('password');
@@ -217,7 +237,7 @@ function CodeStep({
         recovery ? { challenge, recoveryCode: code } : { challenge, code },
       ),
     onSuccess: (result) => {
-      if (result.next !== 'totp') finish(result.next);
+      if (result.next !== 'totp') void finish(result.next);
     },
     onError: () => {
       form.reset({ code: '' });

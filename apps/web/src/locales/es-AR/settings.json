@@ -1,5 +1,6 @@
 {
   "title": "Configuración",
+  "setup": "Configuración inicial",
   "description": "La identidad, la seguridad y las sedes de la organización.",
   "nav": "Secciones de configuración",
   "tab.locations": "Sedes",

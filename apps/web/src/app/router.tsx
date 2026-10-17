@@ -14,6 +14,7 @@ import { lazy, type ComponentType } from 'react';
 
 import { AuthLayout } from '../features/auth/AuthLayout.js';
 import { LoginPage } from '../features/auth/LoginPage.js';
+import { isWizardScreen } from '../features/onboarding/wizard-model.js';
 import { settingsTabsFor } from '../features/settings/settings-tabs.js';
 import { SettingsPage } from '../features/settings/SettingsPage.js';
 import { isApiError } from '../shared/lib/api-client.js';
@@ -218,6 +219,22 @@ function buildRouteTree() {
   });
 
   // Settings has its own frame (the sections) and checks each section on its own.
+  // The setup wizard: its own page, reachable by address from the checklist and from Settings.
+  const onboardingRoute = createRoute({
+    getParentRoute: () => authedRoute,
+    path: '/onboarding',
+    validateSearch: (search: Record<string, unknown>) => ({
+      step:
+        typeof search['step'] === 'string' && isWizardScreen(search['step'])
+          ? search['step']
+          : undefined,
+    }),
+    component: lazyRouteComponent(
+      () => import('../features/onboarding/OnboardingPage.js'),
+      'OnboardingPage',
+    ),
+  });
+
   const settingsRoute = createRoute({
     getParentRoute: () => authedRoute,
     path: '/settings',
@@ -303,6 +320,7 @@ function buildRouteTree() {
       patientRoute,
       staffRoute,
       auditRoute,
+      onboardingRoute,
       settingsRoute.addChildren([
         settingsIndexRoute,
         settingsLocationsRoute,
