@@ -11,7 +11,9 @@ import type { WithTenant } from '../../platform/db/tenant-context.js';
 import type { LocationService } from '../access/index.js';
 import type { AppointmentTypeService } from '../scheduling/index.js';
 import type { HoursService, ProfileService } from '../staff/index.js';
+import type { ExportRegistry } from '../tenancy/index.js';
 
+import { exportOnboarding } from './application/export-contributor.js';
 import {
   createOnboardingService,
   noPlanImpact,
@@ -19,6 +21,11 @@ import {
 } from './application/onboarding.js';
 import { DEFAULT_CAPABILITIES, type Capabilities } from './domain/capabilities.js';
 import { onboardingRoutes } from './http/onboarding-routes.js';
+
+/** Registers what onboarding contributes to the cancellation export. */
+export function registerOnboardingExportContributors(registry: ExportRegistry): void {
+  registry.registerExportContributor('administrative', 'onboarding', exportOnboarding);
+}
 
 export { createWizardGate } from './application/wizard-gate.js';
 export type { WizardGate } from './application/wizard-gate.js';

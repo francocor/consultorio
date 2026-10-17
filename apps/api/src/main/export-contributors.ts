@@ -1,6 +1,7 @@
 import { registerAccessExportContributors } from '../modules/access/index.js';
 import { registerAuditExportContributors } from '../modules/audit/index.js';
 import { registerIdentityExportContributors } from '../modules/identity/index.js';
+import { registerOnboardingExportContributors } from '../modules/onboarding/index.js';
 import { registerPatientsExportContributors } from '../modules/patients/index.js';
 import { registerSchedulingExportContributors } from '../modules/scheduling/index.js';
 import { registerStaffExportContributors } from '../modules/staff/index.js';
@@ -20,5 +21,6 @@ export function registerAllExportContributors(registry: ExportRegistry): void {
   registerStaffExportContributors(registry);
   registerPatientsExportContributors(registry);
   registerSchedulingExportContributors(registry);
+  registerOnboardingExportContributors(registry);
   registerAuditExportContributors(registry);
 }
