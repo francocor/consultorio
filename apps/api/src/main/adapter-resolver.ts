@@ -1,3 +1,5 @@
+import type { InvoiceIssuer } from '@consultorio/contracts';
+
 import type { WhatsAppSender } from '../modules/notifications/application/ports.js';
 import type { VideoLinkProvider } from '../modules/teleconsultation/application/ports.js';
 import type { BotChallenge } from '../platform/bot-challenge/bot-challenge.js';
@@ -25,6 +27,8 @@ export interface AdapterPorts {
   videoLink: VideoLinkProvider;
   /** The bot challenge of the public forms (Stage 3). */
   botChallenge: BotChallenge;
+  /** Electronic invoices (Stage 4): ARCA/AFIP WSFE, a local simulator, an in-memory fake. */
+  invoiceIssuer: InvoiceIssuer;
 }
 export type AdapterPort = keyof AdapterPorts;
 
@@ -36,6 +40,7 @@ export const ADAPTER_PORTS = [
   'whatsapp',
   'videoLink',
   'botChallenge',
+  'invoiceIssuer',
 ] as const satisfies readonly AdapterPort[];
 
 export interface Marked<A> {

@@ -101,7 +101,7 @@ describe('settings contracts', () => {
   });
 });
 
-describe('settings sections of the patient-engagement stages', () => {
+describe('settings sections of the patient-engagement and revenue stages', () => {
   const sections = {
     notifications: { reminderLeadHours: [24], hideProfessional: false, hideAppointmentType: false },
     onlineBooking: {
@@ -118,7 +118,9 @@ describe('settings sections of the patient-engagement stages', () => {
       maxActiveEntries: 5,
     },
     teleconsultation: { joinOpensMinutes: 15, noShowAfterMinutes: 15 },
-    integrations: { whatsapp: true, video: true },
+    integrations: { whatsapp: true, video: true, einvoicing: false },
+    billing: { lateFeeEnabled: false, lateFeeAmount: 0 },
+    invoicing: { outageThresholdHours: 24 },
   };
   const core = {
     receptionSeesClinicalMetadata: false,
@@ -147,6 +149,15 @@ describe('settings sections of the patient-engagement stages', () => {
     expect(UpdateSettingsRequest.safeParse({ integrations: { whatsapp: false } }).success).toBe(
       true,
     );
+    expect(UpdateSettingsRequest.safeParse({ integrations: { einvoicing: true } }).success).toBe(
+      true,
+    );
+    expect(UpdateSettingsRequest.safeParse({ billing: { lateFeeEnabled: true } }).success).toBe(
+      true,
+    );
+    expect(
+      UpdateSettingsRequest.safeParse({ invoicing: { outageThresholdHours: 48 } }).success,
+    ).toBe(true);
   });
 
   it('refuses an unknown section, an unknown field and an invalid value', () => {

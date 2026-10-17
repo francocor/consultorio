@@ -1,5 +1,7 @@
 import { z } from 'zod';
 
+import { BillingSettings, DEFAULT_BILLING_SETTINGS } from './billing.js';
+import { DEFAULT_INVOICING_SETTINGS, InvoicingSettings } from './invoicing.js';
 import { DEFAULT_NOTIFICATION_SETTINGS, NotificationSettings } from './notifications.js';
 import { DEFAULT_ONLINE_BOOKING_SETTINGS, OnlineBookingSettings } from './online-booking.js';
 import { GRANTABLE, STAFF_ROLES } from './roles.js';
@@ -147,10 +149,16 @@ export const DEFAULT_QUIET_HOURS: QuietHours = { start: '21:00', end: '08:00' };
 export const IntegrationSettings = z.strictObject({
   whatsapp: z.boolean(),
   video: z.boolean(),
+  /** Electronic invoicing with AFIP. Off leaves the manual fallback and keeps old invoices. */
+  einvoicing: z.boolean(),
 });
 export type IntegrationSettings = z.infer<typeof IntegrationSettings>;
 
-export const DEFAULT_INTEGRATION_SETTINGS: IntegrationSettings = { whatsapp: true, video: true };
+export const DEFAULT_INTEGRATION_SETTINGS: IntegrationSettings = {
+  whatsapp: true,
+  video: true,
+  einvoicing: false,
+};
 
 /**
  * The sections of the organization settings that capability modules own, next to the core ones.
@@ -163,6 +171,8 @@ export const SETTINGS_SECTION_KEYS = [
   'waitlist',
   'teleconsultation',
   'integrations',
+  'billing',
+  'invoicing',
 ] as const;
 export type SettingsSectionKey = (typeof SETTINGS_SECTION_KEYS)[number];
 
@@ -173,6 +183,8 @@ export const DEFAULT_SETTINGS_SECTIONS = {
   waitlist: DEFAULT_WAITLIST_SETTINGS,
   teleconsultation: DEFAULT_TELECONSULTATION_SETTINGS,
   integrations: DEFAULT_INTEGRATION_SETTINGS,
+  billing: DEFAULT_BILLING_SETTINGS,
+  invoicing: DEFAULT_INVOICING_SETTINGS,
 } as const;
 
 export const SettingsDto = z.strictObject({
@@ -187,6 +199,8 @@ export const SettingsDto = z.strictObject({
   waitlist: WaitlistSettings,
   teleconsultation: TeleconsultationSettings,
   integrations: IntegrationSettings,
+  billing: BillingSettings,
+  invoicing: InvoicingSettings,
 });
 export type SettingsDto = z.infer<typeof SettingsDto>;
 
@@ -212,6 +226,8 @@ export const UpdateSettingsRequest = z
       .refine(nonEmpty, 'nothing to change')
       .optional(),
     integrations: IntegrationSettings.partial().refine(nonEmpty, 'nothing to change').optional(),
+    billing: BillingSettings.partial().refine(nonEmpty, 'nothing to change').optional(),
+    invoicing: InvoicingSettings.partial().refine(nonEmpty, 'nothing to change').optional(),
   })
   .refine(
     (body) => Object.keys(body).some((key) => key !== 'confirmPsychologySharing'),

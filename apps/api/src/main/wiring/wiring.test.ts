@@ -1,6 +1,7 @@
 import { readdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
+import { SETTINGS_SECTION_KEYS } from '@consultorio/contracts';
 import { describe, expect, it, vi } from 'vitest';
 
 import { buildTestApplication } from '../../../test/support/app.js';
@@ -28,14 +29,22 @@ const context = {
 };
 
 describe('the module wiring (every shared registration, in one place per module)', () => {
-  it('wires each Stage 3 module that has a directory, once', () => {
+  it('wires each Stage 3 and Stage 4 module that has a directory, once', () => {
     const wired = MODULE_WIRINGS.map((wiring) => wiring.name);
     const directories = readdirSync(MODULES_DIR, { withFileTypes: true })
       .filter((entry) => entry.isDirectory())
       .map((entry) => entry.name);
 
     expect(new Set(wired).size).toBe(wired.length);
-    for (const name of ['notifications', 'online-booking', 'waitlist', 'teleconsultation']) {
+    for (const name of [
+      'notifications',
+      'online-booking',
+      'waitlist',
+      'teleconsultation',
+      'billing',
+      'invoicing',
+      'reports',
+    ]) {
       expect(directories, name).toContain(name);
       expect(wired, name).toContain(name);
     }
@@ -47,7 +56,7 @@ describe('the module wiring (every shared registration, in one place per module)
     );
     const owned = slots.flatMap((slot) => Object.keys(slot)).sort();
 
-    expect(owned).toEqual(['botChallenge', 'videoLink', 'whatsapp']);
+    expect(owned).toEqual(['botChallenge', 'invoiceIssuer', 'videoLink', 'whatsapp']);
     for (const slot of slots) {
       for (const entry of Object.values(slot)) expect(entry.demo.kind).toBe('fake');
     }
@@ -55,9 +64,9 @@ describe('the module wiring (every shared registration, in one place per module)
 
   it('completes the adapter registry once the composition root adds its own ports', () => {
     const base = Object.fromEntries(
-      ADAPTER_PORTS.filter((port) => !['whatsapp', 'videoLink', 'botChallenge'].includes(port)).map(
-        (port) => [port, { real: undefined, demo: { adapter: {}, kind: 'fake' as const } }],
-      ),
+      ADAPTER_PORTS.filter(
+        (port) => !['whatsapp', 'videoLink', 'botChallenge', 'invoiceIssuer'].includes(port),
+      ).map((port) => [port, { real: undefined, demo: { adapter: {}, kind: 'fake' as const } }]),
     );
 
     const registry = assembleAdapterRegistry([
@@ -91,6 +100,48 @@ async function routesOf(app: ReturnType<typeof createApp>): Promise<string[]> {
   await app.close();
   return routes;
 }
+
+describe('the settings sections of the modules', () => {
+  const owners = MODULE_WIRINGS.flatMap((wiring) =>
+    (wiring.settingsSections ?? []).map((section) => [section.key, wiring.name] as const),
+  );
+
+  it('gives every section the contracts declare exactly one owner', () => {
+    expect(owners.map(([key]) => key).sort()).toEqual([...SETTINGS_SECTION_KEYS].sort());
+  });
+
+  it('puts the Stage 4 sections in the module that owns them, and the einvoicing switch in the platform section', () => {
+    expect(Object.fromEntries(owners)).toMatchObject({
+      billing: 'billing',
+      invoicing: 'invoicing',
+      integrations: 'integrations',
+    });
+  });
+
+  it('audits the einvoicing switch under the invoicing configuration action', () => {
+    const integrations = MODULE_WIRINGS.flatMap((wiring) => wiring.settingsSections ?? []).find(
+      (section) => section.key === 'integrations',
+    );
+
+    expect(integrations?.fieldAudits).toMatchObject({
+      whatsapp: 'notification.integration.changed',
+      einvoicing: 'invoicing.config.changed',
+    });
+  });
+
+  it('starts with e-invoicing off and no late fee', () => {
+    const defaults = Object.fromEntries(
+      MODULE_WIRINGS.flatMap((wiring) => wiring.settingsSections ?? []).map((section) => [
+        section.key,
+        section.defaults,
+      ]),
+    );
+
+    expect(defaults['integrations']).toMatchObject({ einvoicing: false });
+    expect(defaults['billing']).toEqual({ lateFeeEnabled: false, lateFeeAmount: 0 });
+    expect(defaults['invoicing']).toEqual({ outageThresholdHours: 24 });
+  });
+});
 
 describe('the registry of public links', () => {
   const claimsTheConfirmKind = {
@@ -132,10 +183,15 @@ describe('the simulator console entries of the modules', () => {
         : [],
     );
 
-  it('lists WhatsApp, the bot challenge and video, each with the adapter that serves customers', async () => {
+  it('lists WhatsApp, the bot challenge, video and AFIP, each with the adapter that serves customers', async () => {
     const entries = entriesFor();
 
-    expect(entries.map((entry) => entry.id).sort()).toEqual(['bot-challenge', 'video', 'whatsapp']);
+    expect(entries.map((entry) => entry.id).sort()).toEqual([
+      'afip',
+      'bot-challenge',
+      'video',
+      'whatsapp',
+    ]);
     for (const entry of entries) {
       expect(await entry.status(), entry.id).toEqual({ adapter: 'local', mode: null });
     }
@@ -157,6 +213,8 @@ describe('the simulator console entries of the modules', () => {
     expect(await status('whatsapp')).toEqual({ adapter: 'real', mode: null });
     expect(await status('video')).toEqual({ adapter: 'off', mode: null });
     expect(await status('bot-challenge')).toEqual({ adapter: 'real', mode: null });
+    // Production selects no AFIP simulator by default: invoicing is off until a provider is chosen.
+    expect(await status('afip')).toEqual({ adapter: 'off', mode: null });
   });
 });
 

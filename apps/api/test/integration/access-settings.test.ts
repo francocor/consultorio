@@ -94,7 +94,9 @@ describe('GET /settings', () => {
         maxActiveEntries: 5,
       },
       teleconsultation: { joinOpensMinutes: 15, noShowAfterMinutes: 15 },
-      integrations: { whatsapp: true, video: true },
+      integrations: { whatsapp: true, video: true, einvoicing: false },
+      billing: { lateFeeEnabled: false, lateFeeAmount: 0 },
+      invoicing: { outageThresholdHours: 24 },
     });
   });
 
@@ -301,7 +303,11 @@ describe('PATCH /settings: the sections of the modules', () => {
     const response = await api.patch('/settings', owner, { integrations: { whatsapp: false } });
 
     expect(response.statusCode, response.body).toBe(200);
-    expect(response.json<SettingsDto>().integrations).toEqual({ whatsapp: false, video: true });
+    expect(response.json<SettingsDto>().integrations).toEqual({
+      whatsapp: false,
+      video: true,
+      einvoicing: false,
+    });
     const [row] = await rows('notification.integration.changed');
     expect(row).toMatchObject({
       outcome: 'allow',
@@ -313,10 +319,62 @@ describe('PATCH /settings: the sections of the modules', () => {
     expect((await rows('notification.integration.changed')).length).toBe(1);
   });
 
+  it('audits the e-invoicing switch as a change of the invoicing configuration', async () => {
+    const { whatsapp, video } = (await read()).integrations;
+
+    const response = await api.patch('/settings', owner, { integrations: { einvoicing: true } });
+
+    expect(response.statusCode, response.body).toBe(200);
+    expect(response.json<SettingsDto>().integrations).toEqual({
+      whatsapp,
+      video,
+      einvoicing: true,
+    });
+    const [row] = await rows('invoicing.config.changed');
+    expect(row).toMatchObject({
+      outcome: 'allow',
+      metadata: { setting: 'integrations', field: 'einvoicing', enabled: true },
+    });
+    // Switching it off again is a change too, and the other switches are untouched.
+    const off = await api.patch('/settings', owner, { integrations: { einvoicing: false } });
+    expect(off.json<SettingsDto>().integrations).toEqual({ whatsapp, video, einvoicing: false });
+    expect((await rows('invoicing.config.changed')).length).toBe(2);
+  });
+
+  it('stores the billing and invoicing sections, audits them, and refuses reception', async () => {
+    const response = await api.patch('/settings', owner, {
+      billing: { lateFeeEnabled: true, lateFeeAmount: 500_000 },
+      invoicing: { outageThresholdHours: 48 },
+    });
+
+    expect(response.statusCode, response.body).toBe(200);
+    const settings = response.json<SettingsDto>();
+    expect(settings.billing).toEqual({ lateFeeEnabled: true, lateFeeAmount: 500_000 });
+    expect(settings.invoicing).toEqual({ outageThresholdHours: 48 });
+    const entries = await rows('setting.changed');
+    expect(entries.map((entry) => (entry.metadata as { setting?: string }).setting)).toEqual(
+      expect.arrayContaining(['billing', 'invoicing']),
+    );
+    // A fee is whole cents and never negative; a threshold is whole hours within a month.
+    for (const body of [
+      { billing: { lateFeeAmount: 12.5 } },
+      { billing: { lateFeeAmount: -1 } },
+      { invoicing: { outageThresholdHours: 0 } },
+    ]) {
+      expect((await api.patch('/settings', owner, body)).statusCode, JSON.stringify(body)).toBe(
+        400,
+      );
+    }
+    expect(
+      (await api.patch('/settings', reception, { invoicing: { outageThresholdHours: 12 } }))
+        .statusCode,
+    ).toBe(403);
+  });
+
   it('refuses an unknown section, an unknown field and an invalid value, and changes nothing', async () => {
     const before = (await read()).waitlist;
 
-    const unknownSection = await api.patch('/settings', owner, { billing: { enabled: true } });
+    const unknownSection = await api.patch('/settings', owner, { payroll: { enabled: true } });
     const unknownField = await api.patch('/settings', owner, { waitlist: { priority: 'high' } });
     const invalid = await api.patch('/settings', owner, { waitlist: { maxActiveEntries: 0 } });
     const tooManyReminders = await api.patch('/settings', owner, {

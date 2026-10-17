@@ -49,7 +49,7 @@ describe('the video section of the scheduling settings', () => {
   it('says the integration is off, and what that means for the appointments', async () => {
     open({
       'GET /api/settings': jsonResponse(
-        settings({ integrations: { whatsapp: true, video: false } }),
+        settings({ integrations: { whatsapp: true, video: false, einvoicing: false } }),
       ),
     });
 
@@ -68,7 +68,9 @@ describe('the video section of the scheduling settings', () => {
     open({
       'PATCH /api/settings': (_url, init) => {
         bodies.push(jsonBody(init));
-        return jsonResponse(settings({ integrations: { whatsapp: true, video: false } }));
+        return jsonResponse(
+          settings({ integrations: { whatsapp: true, video: false, einvoicing: false } }),
+        );
       },
     });
     const user = userEvent.setup();
