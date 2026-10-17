@@ -75,6 +75,11 @@ function routes(noteId: string, encounterId: string, forPatient: string) {
       payload: { kind: 'correction', reason: 'Motivo', text: 'Texto' },
     },
     { method: 'POST', url: `/notes/${noteId}/entered-in-error`, payload: { reason: 'Motivo' } },
+    { method: 'GET', url: `/patients/${forPatient}/clinical/timeline` },
+    { method: 'GET', url: `/patients/${forPatient}/clinical/search?q=confidencial` },
+    { method: 'GET', url: `/patients/${forPatient}/clinical/odontogram` },
+    { method: 'GET', url: '/clinical/drafts' },
+    { method: 'GET', url: '/clinical/templates' },
   ] as const;
 }
 

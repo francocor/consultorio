@@ -87,6 +87,8 @@ export interface ApplicationOptions {
     /** The privileged reset of a demo organization; the demo module provides it. */
     demoReset?: DemoResetPort;
   };
+  /** Clinical records: only a test lowers the search cap (default 2,000 entries). */
+  clinical?: { searchCap?: number };
   /** Routes of the capability modules, registered after identity. */
   modules?: readonly FeatureRoutes[];
 }
@@ -215,7 +217,12 @@ export function createApplication(options: ApplicationOptions): FastifyInstance 
     },
   });
 
-  const clinical = createClinical({ withTenant, auditDeny, keys: options.keys });
+  const clinical = createClinical({
+    withTenant,
+    auditDeny,
+    keys: options.keys,
+    ...(options.clinical?.searchCap === undefined ? {} : { searchCap: options.clinical.searchCap }),
+  });
 
   const auditViewer = createAudit({ withTenant });
   const supportAccess = createSupportAccess({ withTenant });

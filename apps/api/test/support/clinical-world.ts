@@ -44,11 +44,11 @@ let worlds = 0;
 export async function createClinicalWorld(
   runtime: DbHandle,
   slug: string,
-  options: { professionals?: Parameters<typeof buildTestApplication>[1] } = {},
+  overrides: Parameters<typeof buildTestApplication>[1] = {},
 ): Promise<ClinicalWorld> {
   worlds += 1;
   const tenant = await createTestTenant(runtime, { slug });
-  const app = buildTestApplication(runtime, options.professionals);
+  const app = buildTestApplication(runtime, overrides);
   const api = clientFor(app, slug);
 
   const member = async (roles: RoleName[]) => {

@@ -1,6 +1,11 @@
 import { z } from 'zod';
 
 import { CLINICAL_TEMPLATE_KINDS } from './access.js';
+import {
+  SURFACE_FINDINGS,
+  TOOTH_CONDITIONS,
+  TOOTH_SURFACES,
+} from './clinical-templates/odontology.js';
 
 /**
  * Clinical records over HTTP (clinical-records). These schemas carry clinical content, like the
@@ -256,3 +261,25 @@ export const HistoryResponse = z.strictObject({
   items: z.array(HistoryItemDto),
 });
 export type HistoryResponse = z.infer<typeof HistoryResponse>;
+
+const CurrentSurfaceDto = z.strictObject({
+  finding: z.enum(SURFACE_FINDINGS).optional(),
+  treatment: z.string().optional(),
+});
+
+export const CurrentToothDto = z.strictObject({
+  condition: z.enum(TOOTH_CONDITIONS).optional(),
+  surfaces: z.partialRecord(z.enum(TOOTH_SURFACES), CurrentSurfaceDto),
+  note: z.string().optional(),
+  /** The signature date of the entry that last said something about this tooth. */
+  updatedAt: z.iso.datetime(),
+  authorProfessionalId: z.uuid(),
+});
+
+/** The odontogram as it stands now, derived from the signed odontology entries the reader may see. */
+export const CurrentOdontogramResponse = z.strictObject({
+  teeth: z.record(z.string(), CurrentToothDto),
+  /** How many signed entries the chart was derived from. */
+  entries: z.number().int().min(0),
+});
+export type CurrentOdontogramResponse = z.infer<typeof CurrentOdontogramResponse>;

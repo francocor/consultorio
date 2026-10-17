@@ -219,3 +219,33 @@ export function asTemplateKind(value: string) {
   if (!isTemplateKind(value)) throw new Error('stored note has an unknown template kind');
   return value;
 }
+
+export interface NoteDetail {
+  version?: NoteVersionRow;
+  addenda: AddendumRow[];
+}
+
+/** The signed version and the addenda of many notes in two queries, by note id. */
+export async function loadDetails(
+  tx: Tx,
+  notes: readonly ClinicalNoteRow[],
+): Promise<Map<string, NoteDetail>> {
+  const details = new Map<string, NoteDetail>(notes.map((note) => [note.id, { addenda: [] }]));
+  if (notes.length === 0) return details;
+  const ids = notes.map((note) => note.id);
+  const versions = await tx
+    .select()
+    .from(noteVersion)
+    .where(and(inArray(noteVersion.noteId, ids), eq(noteVersion.versionNo, 1)));
+  for (const version of versions) {
+    const detail = details.get(version.noteId);
+    if (detail) detail.version = version;
+  }
+  const addenda = await tx
+    .select()
+    .from(addendum)
+    .where(inArray(addendum.noteId, ids))
+    .orderBy(asc(addendum.createdAt), asc(addendum.id));
+  for (const row of addenda) details.get(row.noteId)?.addenda.push(row);
+  return details;
+}

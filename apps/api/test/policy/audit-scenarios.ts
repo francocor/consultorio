@@ -44,7 +44,7 @@ export const AUDIT_SCENARIOS: Record<AuditAction, AuditScenario> = {
   'clinical.note.entered_in_error': t('clinical-addenda.test.ts'),
   'clinical.anamnesis.read': t('anamnesis-api.test.ts'),
   'clinical.anamnesis.updated': t('anamnesis-api.test.ts'),
-  'clinical.search': { pending: 'Stage 2 (S2.21): per-patient clinical search' },
+  'clinical.search': t('clinical-search.test.ts'),
 
   // Patient identity data.
   'patient.created': t('patients-api.test.ts'),
