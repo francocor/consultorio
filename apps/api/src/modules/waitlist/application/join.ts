@@ -218,7 +218,7 @@ export async function submitJoin(
   if (!rules) throw new AppError('unsupported_country');
   const errors: { path: string; i18nKey: string }[] = [];
   if (!form.dataProcessingConsent) {
-    errors.push(fieldError('dataProcessingConsent', 'booking.consent_required'));
+    errors.push(fieldError('dataProcessingConsent', 'waitlist.consent_required'));
   }
   const document = rules.validateDocument(form.document.type, form.document.number);
   if (!document.ok) errors.push(fieldError('document', document.error.i18nKey));

@@ -21,9 +21,13 @@ describe('AppShell: navigation driven by the role', () => {
     expect(
       await screen.findByRole('heading', { level: 1, name: 'Bienvenido a Clínica Norte' }),
     ).toBeInTheDocument();
+    // The waitlist is a sixth entry of reception: a phone's bottom bar holds five, so the last
+    // ones (patients, waitlist) wait under "Más" there, while the sidebar lists them all.
+    expect(within(sidebar()).getByRole('link', { name: 'Pacientes' })).toBeInTheDocument();
+    expect(within(sidebar()).getByRole('link', { name: 'Lista de espera' })).toBeInTheDocument();
+    expect(within(bottom()).getByRole('button', { name: 'Más' })).toBeInTheDocument();
     for (const nav of [sidebar(), bottom()]) {
       expect(within(nav).getByRole('link', { name: 'Inicio' })).toBeInTheDocument();
-      expect(within(nav).getByRole('link', { name: 'Pacientes' })).toBeInTheDocument();
       for (const hidden of ['Equipo', 'Auditoría', 'Configuración', 'Recetas', 'Borradores']) {
         expect(within(nav).queryByRole('link', { name: hidden })).not.toBeInTheDocument();
       }

@@ -141,7 +141,7 @@ describe('asking to join', () => {
     expect(noConsent.statusCode).toBe(400);
     expect(noConsent.json()).toMatchObject({
       code: 'validation_failed',
-      errors: [{ path: 'dataProcessingConsent', i18nKey: 'booking.consent_required' }],
+      errors: [{ path: 'dataProcessingConsent', i18nKey: 'waitlist.consent_required' }],
     });
     expect(noOptIn.statusCode).toBe(400);
     expect(noOptIn.json()).toMatchObject({ code: 'waitlist_opt_in_required' });
