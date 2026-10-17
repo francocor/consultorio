@@ -76,10 +76,20 @@ const plusDays = (iso: string, days: number) =>
  */
 export async function bookableProfessional(
   page: Page,
-  specialty = 'Cardiología',
-  typeName = 'Primera consulta',
-  organization: Organization = 'aillu',
+  options: {
+    specialty?: string;
+    typeName?: string;
+    organization?: Organization;
+    /** Where reception works: a free time elsewhere could not be booked by the spec. */
+    locationNames?: readonly string[];
+  } = {},
 ): Promise<Bookable> {
+  const {
+    specialty = 'Cardiología',
+    typeName = 'Primera consulta',
+    organization = 'aillu',
+    locationNames = ['Sede Central', 'Consultorios Norte'],
+  } = options;
   const staff = (await (await page.request.get(urlOf(organization, '/api/staff'))).json()) as {
     staff: {
       displayName: string | null;
@@ -95,6 +105,14 @@ export async function bookableProfessional(
   };
   const type = types.types.find((entry) => entry.name === typeName);
   if (!type) throw new Error(`No "${typeName}" appointment type in the demo`);
+  const locations = (await (
+    await page.request.get(urlOf(organization, '/api/locations'))
+  ).json()) as { locations: { id: string; name: string }[] };
+  const allowed = new Set(
+    locations.locations
+      .filter((entry) => locationNames.includes(entry.name))
+      .map((entry) => entry.id),
+  );
 
   const nowIso = new Date().toISOString();
   const query = new URLSearchParams({
@@ -112,7 +130,8 @@ export async function bookableProfessional(
     typeId: type.id,
     typeName: type.name,
     slots: availability.slots.filter(
-      (slot) => new Date(slot.startsAt).getTime() > Date.now() + 3_600_000,
+      (slot) =>
+        allowed.has(slot.locationId) && new Date(slot.startsAt).getTime() > Date.now() + 3_600_000,
     ),
   };
 }

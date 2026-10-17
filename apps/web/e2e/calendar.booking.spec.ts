@@ -12,7 +12,7 @@ const MAX_SECONDS = 30;
 
 test('reception books an existing patient in a few actions', async ({ page }) => {
   await openAs(page, 'reception', '/');
-  const target = await bookableProfessional(page);
+  const target = await bookableProfessional(page, { specialty: 'Pediatría' });
   const slot = target.slots[0];
   if (!slot) throw new Error('The demo professional has no free time in the next four weeks');
   const when = clockTime(slot.startsAt);
@@ -55,7 +55,7 @@ test('when somebody else takes the time first, the next free times are one click
   page,
 }) => {
   await openAs(page, 'reception', '/');
-  const target = await bookableProfessional(page);
+  const target = await bookableProfessional(page, { specialty: 'Pediatría' });
   const [mine, , later] = target.slots;
   if (!mine || !later) throw new Error('The demo professional needs three free times');
 
