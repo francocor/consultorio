@@ -23,6 +23,12 @@ export interface Actor {
    */
   professionalId: string | null;
   /**
+   * The member's own professional profile, whatever its state (no matricula yet, inactive). The
+   * identity rules (D14) ask "is this my own appointment?" with it, so they do not depend on the
+   * clinical gate. Absent means the same as `professionalId`.
+   */
+  ownProfessionalId?: string | null;
+  /**
    * The professionals whose calendars this member was delegated (`scheduling.delegated_calendar`,
    * with a scope). Empty or absent without a live grant.
    */

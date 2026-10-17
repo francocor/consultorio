@@ -8,7 +8,7 @@ import { AppError } from '../http/problem.js';
 import type { Actor } from './actor.js';
 import { can } from './can.js';
 import {
-  deriveProfessionalId,
+  resolveProfessionalIds,
   type MatriculaValidator,
   type ProfessionalRepo,
 } from './professional-gate.js';
@@ -51,13 +51,14 @@ export function createActorLoader(deps: {
   validateMatricula: MatriculaValidator;
 }): ActorLoader {
   return async (session) => {
-    const [grants, delegated, professionalId] = await Promise.all([
+    const [grants, delegated, professional] = await Promise.all([
       deps.grants.grantsFor(session.tenantId, session.membershipId).catch(() => []),
       (
         deps.grants.delegatedCalendarsFor?.(session.tenantId, session.membershipId) ??
         Promise.resolve([])
       ).catch(() => []),
-      deriveProfessionalId(
+      // A failed lookup rejects the request: nobody can say whose appointments are "their own".
+      resolveProfessionalIds(
         { tenantId: session.tenantId, membershipId: session.membershipId, roles: session.roles },
         deps.professionals,
         deps.validateMatricula,
@@ -70,7 +71,8 @@ export function createActorLoader(deps: {
       membershipId: session.membershipId,
       roles: session.roles,
       grants,
-      professionalId,
+      professionalId: professional.professionalId,
+      ownProfessionalId: professional.ownProfessionalId,
       delegatedProfessionalIds: delegated,
     };
   };

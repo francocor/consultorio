@@ -25,6 +25,12 @@ export interface BookActor {
   /** The actor's own professional profile, when the gate lets them have one. */
   professionalId: string | null;
   /**
+   * The actor's own professional profile whatever its state (a matricula still missing, say). The
+   * identity rules (D14) ask "is this my own appointment?" with it, so they do not depend on the
+   * clinical gate. Absent means the same as `professionalId`.
+   */
+  ownProfessionalId?: string | null;
+  /**
    * Whether the actor may work in this professional's calendar (a professional works in their own,
    * or in one that was delegated). Absent means every calendar, as for tests.
    */
@@ -45,6 +51,11 @@ export type LocationAuthorizer = (
   location: LocationRecord,
   professionalId: string,
 ) => Promise<void>;
+
+/** The profile the actor owns, whichever state it is in, for the identity rules (D14). */
+export function ownProfessionalOf(actor: BookActor): string | null {
+  return actor.ownProfessionalId ?? actor.professionalId;
+}
 
 /** Refuses a calendar the actor was not given. The reason goes to the audit trail only. */
 export function assertCalendar(actor: BookActor, professionalId: string): void {

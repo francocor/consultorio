@@ -9,6 +9,7 @@ import {
   assertCalendar,
   conflictAfterRace,
   invalid,
+  ownProfessionalOf,
   planSlot,
   resolveStart,
   SlotNoLongerAvailableError,
@@ -175,7 +176,7 @@ export async function persistAppointment(
       (input.freshPatient ?? (await ports.isFreshPatient(patient.id, actor.userId, now)))
         ? 'created'
         : 'existing',
-    bookingActorProfessionalId: actor.professionalId,
+    bookingActorProfessionalId: ownProfessionalOf(actor),
     appointmentProfessionalId: professional.id,
   });
 

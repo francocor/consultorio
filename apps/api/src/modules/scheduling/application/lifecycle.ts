@@ -28,6 +28,7 @@ import {
   assertLocation,
   guardRace,
   invalid,
+  ownProfessionalOf,
   planSlot,
   resolveStart,
   typeOffered,
@@ -139,9 +140,9 @@ export async function transitionAppointment(
   const patch: AppointmentPatch = { status: target };
   let confirmation: IdentityConfirmation | null = null;
   if (input.action === 'check_in' && input.confirmIdentity === true && !record.identityConfirmed) {
-    const own = input.actor.professionalId === record.professionalId;
+    const own = ownProfessionalOf(input.actor) === record.professionalId;
     confirmation = canConfirmIdentity({
-      actorProfessionalId: input.actor.professionalId,
+      actorProfessionalId: ownProfessionalOf(input.actor),
       appointmentProfessionalId: record.professionalId,
       channel: 'check_in',
       // The solo condition is evaluated here, in this transaction, only when it can matter.

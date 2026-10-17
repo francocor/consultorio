@@ -74,6 +74,7 @@ export function requestActor(request: FastifyRequest): {
       userId: actor.userId,
       permissions: new Set(effectivePermissions(actor.roles, actor.grants)),
       professionalId: actor.professionalId,
+      ownProfessionalId: actor.ownProfessionalId ?? actor.professionalId,
     },
     context: { tenantId: actor.tenantId, userId: actor.userId },
   };

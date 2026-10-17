@@ -455,3 +455,85 @@ describe('rejecting the match (detach)', () => {
     expect((error as AppError).code).toBe('conflict');
   });
 });
+
+describe('D14 does not depend on the clinical gate (a professional without a matricula yet)', () => {
+  // The profile exists and is the actor's own, but the gate gave no clinical id: `professionalId`
+  // is null. Treating that as "not a professional" opened the self-confirmation paths.
+  const ungatedB: BookActor = {
+    userId: USER_B,
+    permissions: new Set(['scheduling.book', 'scheduling.checkin', 'worklist.manage']),
+    professionalId: null,
+    ownProfessionalId: B,
+  };
+
+  it('starts unconfirmed when the owner of the profile books themselves for an existing patient', async () => {
+    const { ports, state } = world();
+
+    const booked = await bookAppointment(ports, {
+      request: {
+        patientId: 'patient-1',
+        professionalId: B,
+        locationId: CENTRO,
+        appointmentTypeId: 'type-30',
+        local: { date: '2026-07-20', time: '10:00' },
+      },
+      actor: ungatedB,
+      auditActor: auditActor(USER_B),
+      now: NOW,
+    });
+
+    expect(booked.identityConfirmed).toBe(false);
+    expect(state.openedItems).toHaveLength(1);
+  });
+
+  it('does not let them confirm from the worklist', async () => {
+    const { ports, state } = world();
+
+    const error = await thrown(
+      confirmIdentity(ports, {
+        appointmentId: 'appt-1',
+        actor: ungatedB,
+        auditActor: auditActor(USER_B),
+        expectedVersion: 1,
+      }),
+    );
+
+    expect(error).toBeInstanceOf(AccessRefused);
+    expect(state.updates).toEqual([]);
+  });
+
+  it('does not let them reject their own appointment', async () => {
+    const { ports } = world();
+
+    const error = await thrown(
+      detachPatient(ports, {
+        appointmentId: 'appt-1',
+        actor: ungatedB,
+        auditActor: auditActor(USER_B),
+        now: NOW,
+        expectedVersion: 1,
+        resolution: { kind: 'move_to_patient', patientId: 'patient-2' },
+      }),
+    );
+
+    expect(error).toBeInstanceOf(AccessRefused);
+  });
+
+  it('does not count them as staff at check-in, and self-confirms only alone in the organization', async () => {
+    const checkIn = (solo: boolean) => {
+      const { ports } = world(appointment(), { solo });
+      return transitionAppointment(ports, {
+        appointmentId: 'appt-1',
+        action: 'check_in',
+        actor: ungatedB,
+        auditActor: auditActor(USER_B),
+        now: NOW,
+        expectedVersion: 1,
+        confirmIdentity: true,
+      });
+    };
+
+    expect(await checkIn(false)).toMatchObject({ identityConfirmed: false });
+    expect(await checkIn(true)).toMatchObject({ identityConfirmation: 'self_confirmed' });
+  });
+});

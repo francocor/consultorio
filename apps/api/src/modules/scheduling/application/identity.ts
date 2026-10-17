@@ -7,7 +7,7 @@ import { canConfirmIdentity } from '../domain/identity-confirmation.js';
 
 import { recordIdentityConfirmed } from './identity-records.js';
 import { checkVersion, lockForChange, transitionAppointment } from './lifecycle.js';
-import { invalid, type BookActor } from './placement.js';
+import { invalid, ownProfessionalOf, type BookActor } from './placement.js';
 import type { SchedulingPorts } from './ports.js';
 
 type Actor = AuditActor & { userId: string };
@@ -34,7 +34,7 @@ export async function confirmIdentity(
   if (record.identityConfirmed || record.status === 'cancelled') throw new AppError('conflict');
 
   const how = canConfirmIdentity({
-    actorProfessionalId: input.actor.professionalId,
+    actorProfessionalId: ownProfessionalOf(input.actor),
     appointmentProfessionalId: record.professionalId,
     channel: 'worklist',
     soloPractice: false,
@@ -84,7 +84,7 @@ export async function detachPatient(
   const record = await lockForChange(ports, input.appointmentId, [], input.actor);
   checkVersion(record, input.expectedVersion);
   if (record.identityConfirmed || record.status === 'cancelled') throw new AppError('conflict');
-  if (input.actor.professionalId === record.professionalId) {
+  if (ownProfessionalOf(input.actor) === record.professionalId) {
     throw new AccessRefused('identity_reject_own_appointment');
   }
 
