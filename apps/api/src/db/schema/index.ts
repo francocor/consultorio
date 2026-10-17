@@ -8,6 +8,7 @@ export * from './care.js';
 export * from './coverage.js';
 export * from './identity.js';
 export * from './jobs.js';
+export * from './onboarding.js';
 export * from './operator.js';
 export * from './patients.js';
 export * from './platform-catalogs.js';
