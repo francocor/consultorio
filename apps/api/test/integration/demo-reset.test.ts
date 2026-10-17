@@ -3,7 +3,12 @@ import { randomBytes } from 'node:crypto';
 import { eq, sql } from 'drizzle-orm';
 import { afterAll, beforeAll, describe, expect, inject, it } from 'vitest';
 
+import { createFakeScanner } from '../../src/adapters/fake-scanner/index.js';
 import { createLocalKeyManagement } from '../../src/adapters/local-kek/index.js';
+import {
+  createMemoryObjectStorage,
+  type MemoryObjectStorage,
+} from '../../src/adapters/memory-storage/index.js';
 import { auditEvent } from '../../src/db/schema/audit.js';
 import { membership } from '../../src/db/schema/identity.js';
 import { platformAuditEvent } from '../../src/db/schema/operator.js';
@@ -33,6 +38,7 @@ let runtime: DbHandle;
 let sealer: DbHandle;
 let operator: OperatorHarness;
 let deps: DemoSeedDeps;
+let storage: MemoryObjectStorage;
 const clock = () => new Date('2026-03-02T12:00:00Z');
 const SYSTEM = '00000000-0000-0000-0000-000000000000';
 
@@ -70,12 +76,14 @@ beforeAll(async () => {
   runtime = createRuntimeDb(inject('runtimeUrl'));
   sealer = createSealerDb(inject('sealerUrl'));
   operator = createOperatorHarness();
+  storage = createMemoryObjectStorage();
   deps = {
     withTenant: createWithTenant(runtime.db),
     hasher: createPasswordHasher(),
     keys: createTenantKeys({ kms: createLocalKeyManagement(randomBytes(32).toString('base64')) }),
     consentText: { textKey: 'consent.data_processing', version: '1' },
     clock,
+    documents: { storage, scanner: createFakeScanner() },
   };
 }, 120_000);
 
@@ -235,6 +243,26 @@ describe('resetDemoTenant', () => {
     expect(entry).toBeDefined();
     expect(entry?.metadata).toMatchObject({ lastHash: result.chain.lastHash });
     expect(result.chain.lastHash).toMatch(/^[0-9a-f]{64}$/);
+  }, 240_000);
+
+  it('takes the files of the organization out of the bucket and stores new ones, without touching another organization', async () => {
+    const id = await demoTenant('reset-files');
+    const other = await demoTenant('reset-files-other');
+    await seedDemoTenant(deps, id);
+    await seedDemoTenant(deps, other);
+    const mine = () => storage.keys().filter((key) => key.startsWith(`t/${id}/`));
+    const theirs = () => storage.keys().filter((key) => key.startsWith(`t/${other}/`));
+    const before = mine();
+    const othersBefore = theirs();
+    expect(before.length).toBeGreaterThan(4);
+
+    await resetDemoTenant(port(), id, { operatorId: null });
+
+    const after = mine();
+    expect(after).toHaveLength(before.length);
+    // None of the old files remains: the new ones have new ids.
+    expect(after.filter((key) => before.includes(key))).toEqual([]);
+    expect(theirs()).toEqual(othersBefore);
   }, 240_000);
 
   it('keeps the documented password when it is not asked to rotate', async () => {

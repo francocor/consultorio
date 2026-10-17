@@ -3,6 +3,7 @@ import { randomBytes } from 'node:crypto';
 import pino from 'pino';
 
 import { createFakeEmailSender } from '../adapters/fake-email/index.js';
+import { createFakeScanner } from '../adapters/fake-scanner/index.js';
 import { createLocalKeyManagement } from '../adapters/local-kek/index.js';
 import { createMemoryObjectStorage } from '../adapters/memory-storage/index.js';
 import { createS3ObjectStorage } from '../adapters/s3/index.js';
@@ -112,6 +113,9 @@ async function runApi(config: Config): Promise<void> {
               consentText: consentTextFor(database.db),
               clock: () => new Date(),
               environment: config.nodeEnv,
+              // The demo has files in the bucket when there is one; its content is fictitious, so the
+              // fake scanner (EICAR only) is what checks it.
+              ...(storage ? { documents: { storage, scanner: createFakeScanner() } } : {}),
               rotateCredentials: config.nodeEnv === 'production',
             }),
           },

@@ -32,6 +32,7 @@ import { location, tenant } from '../../schema/tenant.js';
 import { DEMO_ACCOUNTS, DEMO_PASSWORD } from './credentials.js';
 import { buildDemoDataset, type DemoPatient, type DemoStaff } from './dataset.js';
 import { buildDemoSchedule, type DemoAppointment } from './schedule.js';
+import { seedStage2, type DemoDocumentsDeps, type SeededAppointment } from './stage2.js';
 
 /** The seed cannot run: wrong environment, wrong organization, or data already there. */
 /** How long the demo's professionals have been in the team, by their profile. */
@@ -64,6 +65,11 @@ export interface DemoSeedDeps {
   emailFor?: (account: DemoStaff) => string;
   /** `NODE_ENV` of the process. The seed with the public development passwords never runs in production. */
   environment?: string | undefined;
+  /**
+   * Where the demo's files go and the scanner that checks them. Without it the demo has no
+   * documents (the seed cannot invent files that a download would not find).
+   */
+  documents?: DemoDocumentsDeps | undefined;
 }
 
 export interface SeededCredential {
@@ -353,7 +359,7 @@ export async function seedDemoTenant(
 
   // 5. The agenda: types, a block, a day off, hours for a range of dates, and appointments around
   // today with every status, all through the same use cases the API runs.
-  await seedAgenda(deps, {
+  const appointments = await seedAgenda(deps, {
     tenantId,
     data,
     now,
@@ -364,7 +370,7 @@ export async function seedDemoTenant(
     locationIds,
     patientIds,
   });
-  // 5. What the professionals wrote, through the same services the API uses (so the encryption, the
+  // 6. What the professionals wrote, through the same services the API uses (so the encryption, the
   // signature hash and the audit entries are the real ones): notes signed, a draft left open, an
   // addendum, an entry marked in error and one restricted to its author.
   const notes = createNoteService({ keys: deps.keys });
@@ -413,7 +419,22 @@ export async function seedDemoTenant(
     }
   }
 
-  // 6. The demo organization is already set up: it opens on its agenda, with no setup wizard and no
+  // 7. The Stage 2 story of the day: consultations opened from appointments, signed and amended, and
+  // the documents that came with them, all scanned.
+  await seedStage2({
+    tenantId,
+    now,
+    withTenant: deps.withTenant,
+    keys: deps.keys,
+    clock: deps.clock,
+    documents: deps.documents,
+    reception,
+    people,
+    professionalIds,
+    appointments,
+  });
+
+  // 8. The demo organization is already set up: it opens on its agenda, with no setup wizard and no
   // first-run checklist on its pages (a fresh organization created by the operator shows both).
   await deps.withTenant({ tenantId, userId: owner.userId }, (tx) =>
     tx.insert(onboardingState).values({
@@ -460,8 +481,9 @@ async function seedAgenda(
     locationIds: ReadonlyMap<string, string>;
     patientIds: readonly string[];
   },
-): Promise<void> {
+): Promise<SeededAppointment[]> {
   const { tenantId, data, now, owner, reception } = input;
+  const created: SeededAppointment[] = [];
   const schedule = buildDemoSchedule(data, now);
   const zoneOf = (locationKey: string) =>
     data.locations.find((place) => place.key === locationKey)?.timeZone ??
@@ -635,8 +657,10 @@ async function seedAgenda(
         return updated;
       };
       await followTheDay(entry, move, front, clinician);
+      created.push({ id: booked.id, entry, patientId, professionalId });
     });
   }
+  return created;
 }
 
 /** Carries an appointment from `scheduled` to the status the demo wants it in. */

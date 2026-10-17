@@ -1,5 +1,7 @@
 import { parseArgs } from 'node:util';
 
+import { createFakeScanner } from '../src/adapters/fake-scanner/index.js';
+import { createS3ObjectStorage } from '../src/adapters/s3/index.js';
 import {
   DEMO_ACCOUNTS,
   DEMO_PASSWORD,
@@ -43,6 +45,8 @@ async function main(): Promise<void> {
 
   const owner = createOwnerDb(ownerUrl);
   const runtime = createRuntimeDb(config.databaseUrl);
+  // With a bucket configured (S3_BUCKET) the demo gets its files too, scanned by the fake scanner.
+  const storage = config.storage ? createS3ObjectStorage(config.storage) : undefined;
   try {
     // The payers of the demo coverage live in the platform catalog.
     await seedPlatformCatalogs(owner.db);
@@ -57,6 +61,7 @@ async function main(): Promise<void> {
         consentText: consentTextFor(runtime.db),
         clock: () => new Date(),
         environment: config.nodeEnv,
+        ...(storage ? { documents: { storage, scanner: createFakeScanner() } } : {}),
       },
       tenant.id,
     ).catch((error: unknown) => {
@@ -83,6 +88,7 @@ async function main(): Promise<void> {
       ].join('\n'),
     );
   } finally {
+    storage?.close();
     await Promise.all([owner.close(), runtime.close()]);
   }
 }

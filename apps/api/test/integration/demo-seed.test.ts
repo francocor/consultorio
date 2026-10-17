@@ -5,7 +5,12 @@ import { eq, sql } from 'drizzle-orm';
 import type { FastifyInstance } from 'fastify';
 import { afterAll, beforeAll, describe, expect, inject, it } from 'vitest';
 
+import { createFakeScanner } from '../../src/adapters/fake-scanner/index.js';
 import { createLocalKeyManagement } from '../../src/adapters/local-kek/index.js';
+import {
+  createMemoryObjectStorage,
+  type MemoryObjectStorage,
+} from '../../src/adapters/memory-storage/index.js';
 import { auditEvent } from '../../src/db/schema/audit.js';
 import { membership, userAccount } from '../../src/db/schema/identity.js';
 import { patient } from '../../src/db/schema/patients.js';
@@ -26,6 +31,7 @@ import { createTestTenant } from '../support/tenants.js';
 let runtime: DbHandle;
 let app: FastifyInstance;
 let deps: DemoSeedDeps;
+let storage: MemoryObjectStorage;
 const clock = () => new Date('2026-03-02T12:00:00Z');
 const SYSTEM = '00000000-0000-0000-0000-000000000000';
 
@@ -39,6 +45,7 @@ beforeAll(async () => {
   await seedPlatformCatalogs(owner.db);
   await owner.close();
   runtime = createRuntimeDb(inject('runtimeUrl'));
+  storage = createMemoryObjectStorage();
   deps = {
     withTenant: createWithTenant(runtime.db),
     hasher: createPasswordHasher(),
@@ -47,6 +54,7 @@ beforeAll(async () => {
     }),
     consentText: { textKey: 'consent.data_processing', version: '1' },
     clock,
+    documents: { storage, scanner: createFakeScanner() },
   };
   // The application reads what the seed encrypted, so both share the same key service.
   app = buildTestApplication(runtime, { clock, keys: deps.keys });
@@ -177,7 +185,8 @@ describe('seedDemoTenant', () => {
     await seedDemoTenant(deps, id);
 
     const snapshot = await snapshotDemoTenant(deps.withTenant, id);
-    expect(snapshot.notes).toHaveLength(data.notes.length);
+    // The story of the day (consultations opened from appointments) adds its own notes on top.
+    expect(snapshot.notes.filter((note) => !note.fromAppointment)).toHaveLength(data.notes.length);
     const byAuthor = (specialty: string) =>
       snapshot.notes.filter((note) => note.specialties.includes(specialty));
     expect(
@@ -185,12 +194,51 @@ describe('seedDemoTenant', () => {
     ).toBeGreaterThanOrEqual(3);
     expect(byAuthor('Pediatría').every((note) => note.template === 'general')).toBe(true);
     expect(byAuthor('Psicología').every((note) => note.template === 'psychology')).toBe(true);
-    expect(snapshot.notes.filter((note) => note.status === 'draft')).toHaveLength(
-      data.notes.filter((note) => note.state === 'draft').length,
-    );
+    expect(
+      snapshot.notes.filter((note) => note.status === 'draft' && !note.fromAppointment),
+    ).toHaveLength(data.notes.filter((note) => note.state === 'draft').length);
     expect(snapshot.notes.some((note) => note.addenda > 0)).toBe(true);
     expect(snapshot.notes.some((note) => note.status === 'entered_in_error')).toBe(true);
     expect(snapshot.notes.some((note) => note.visibility === 'author_only')).toBe(true);
+  }, 120_000);
+
+  it('tells the Stage 2 story of the day: consultations opened from appointments, an addendum, scanned documents and a refusal', async () => {
+    const id = await newDemoTenant('seed-stage2');
+
+    await seedDemoTenant(deps, id);
+
+    const snapshot = await snapshotDemoTenant(deps.withTenant, id);
+    // Consultations opened from an appointment (D20): signed ones, and the visit in progress as a draft.
+    const fromAppointment = snapshot.notes.filter((note) => note.fromAppointment);
+    expect(fromAppointment.length).toBeGreaterThanOrEqual(3);
+    expect(fromAppointment.some((note) => note.status === 'signed')).toBe(true);
+    expect(fromAppointment.some((note) => note.status === 'signed' && note.addenda > 0)).toBe(true);
+    // Documents: both classifications, the verdict of the scan, and the links to the visit.
+    expect(snapshot.documents.length).toBeGreaterThanOrEqual(6);
+    expect(new Set(snapshot.documents.map((file) => file.classification))).toEqual(
+      new Set(['administrative', 'clinical']),
+    );
+    const available = snapshot.documents.filter((file) => file.status === 'available');
+    expect(available.length).toBeGreaterThanOrEqual(5);
+    expect(available.every((file) => file.scanResult === 'clean')).toBe(true);
+    expect(snapshot.documents.some((file) => file.linkedTo.includes('encounter'))).toBe(true);
+    expect(snapshot.documents.some((file) => file.linkedTo.includes('appointment'))).toBe(true);
+    const refused = snapshot.documents.filter((file) => file.status === 'rejected');
+    expect(refused).toHaveLength(1);
+    expect(refused[0]).toMatchObject({ scanResult: 'infected', name: 'Archivo sospechoso.txt' });
+  }, 120_000);
+
+  it('stores every available document in the bucket, released from quarantine, and nothing of the refused one', async () => {
+    const id = await newDemoTenant('seed-stage2-objects');
+
+    await seedDemoTenant(deps, id);
+
+    const keys = storage.keys().filter((key) => key.startsWith(`t/${id}/`));
+    const snapshot = await snapshotDemoTenant(deps.withTenant, id);
+    expect(keys.filter((key) => key.includes('/docs/'))).toHaveLength(
+      snapshot.documents.filter((file) => file.status === 'available').length,
+    );
+    expect(keys.filter((key) => key.includes('/quarantine/'))).toEqual([]);
   }, 120_000);
 
   it('applies the Aillu look and keeps the organization out of billing', async () => {

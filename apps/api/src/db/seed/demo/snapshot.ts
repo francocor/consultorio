@@ -3,8 +3,9 @@ import { asc, eq } from 'drizzle-orm';
 import { SYSTEM_USER_ID, type WithTenant } from '../../../platform/db/tenant-context.js';
 import { membershipLocation } from '../../schema/access.js';
 import { careAssignment } from '../../schema/care.js';
-import { addendum, clinicalNote } from '../../schema/clinical.js';
+import { addendum, clinicalNote, encounter } from '../../schema/clinical.js';
 import { patientCoverage, payerPlan } from '../../schema/coverage.js';
+import { document } from '../../schema/documents.js';
 import { membership, userAccount } from '../../schema/identity.js';
 import { patient, patientRepresentative } from '../../schema/patients.js';
 import { payer } from '../../schema/platform-catalogs.js';
@@ -48,6 +49,18 @@ export interface DemoSnapshot {
     status: string;
     visibility: string;
     addenda: number;
+    /** Opened from an appointment of the agenda (decision D20). */
+    fromAppointment: boolean;
+  }[];
+  /** The files of the organization with the verdict of the scan; the bytes are not compared. */
+  documents: {
+    patient: string;
+    name: string;
+    category: string;
+    classification: string;
+    status: string;
+    scanResult: string | null;
+    linkedTo: string[];
   }[];
 }
 
@@ -81,9 +94,11 @@ export async function snapshotDemoTenant(
             visibility: clinicalNote.visibility,
             family: patient.familyName,
             given: patient.givenNames,
+            appointmentId: encounter.appointmentId,
           })
           .from(clinicalNote)
           .innerJoin(patient, eq(patient.id, clinicalNote.patientId))
+          .innerJoin(encounter, eq(encounter.id, clinicalNote.encounterId))
           .where(eq(clinicalNote.authorProfessionalId, author.id));
         const extra = await tx.select({ noteId: addendum.noteId }).from(addendum);
         return written.map((row) => ({
@@ -101,6 +116,7 @@ export async function snapshotDemoTenant(
         status: row.status,
         visibility: row.visibility,
         addenda: row.addenda,
+        fromAppointment: row.appointmentId !== null,
       });
     }
   }
@@ -150,6 +166,21 @@ export async function snapshotDemoTenant(
       .select({ patientId: dataProcessingConsent.patientId })
       .from(dataProcessingConsent);
     const guardians = await tx.select().from(patientRepresentative);
+    const files = await tx
+      .select({
+        family: patient.familyName,
+        given: patient.givenNames,
+        name: document.originalName,
+        category: document.category,
+        classification: document.classification,
+        status: document.status,
+        scanResult: document.scanResult,
+        encounterId: document.encounterId,
+        appointmentId: document.appointmentId,
+      })
+      .from(document)
+      .innerJoin(patient, eq(patient.id, document.patientId))
+      .orderBy(asc(patient.familyName), asc(document.originalName));
     const care = await tx
       .select({ patientId: careAssignment.patientId, name: membership.displayName })
       .from(careAssignment)
@@ -205,6 +236,18 @@ export async function snapshotDemoTenant(
         };
       }),
       notes,
+      documents: files.map((file) => ({
+        patient: `${file.family}, ${file.given}`,
+        name: file.name,
+        category: file.category,
+        classification: file.classification,
+        status: file.status,
+        scanResult: file.scanResult,
+        linkedTo: [
+          ...(file.encounterId ? ['encounter'] : []),
+          ...(file.appointmentId ? ['appointment'] : []),
+        ],
+      })),
     };
   });
 }

@@ -6,6 +6,8 @@ import { createOperatorRun } from '../../../modules/operator/application/context
 import type { DemoResetPort } from '../../../modules/operator/application/tenants.js';
 import { writePlatformAudit } from '../../../platform/audit/platform-audit.js';
 import type { Db } from '../../../platform/db/pool.js';
+import { SYSTEM_USER_ID } from '../../../platform/db/tenant-context.js';
+import { document } from '../../schema/documents.js';
 
 import type { DemoStaff } from './dataset.js';
 import { DemoSeedError, seedDemoTenant, type DemoSeedDeps, type SeededCredential } from './seed.js';
@@ -73,6 +75,14 @@ export async function resetDemoTenant(
   }
   const run = createOperatorRun(deps.operatorDb);
 
+  // The files of the demo are listed BEFORE their rows go; they leave the bucket after the reset has
+  // succeeded, so a refused or failed reset never costs a download.
+  const files = deps.documents
+    ? await deps.withTenant({ tenantId, userId: SYSTEM_USER_ID }, (tx) =>
+        tx.select({ key: document.objectKey }).from(document),
+      )
+    : [];
+
   const outcome = await run({ tenantId, operatorId: actor.operatorId }, async (tx) => {
     const result = await tx.execute<{ outcome: PrivilegedOutcome }>(
       sql`SELECT app.demo_reset(${tenantId}::uuid) AS outcome`,
@@ -85,6 +95,10 @@ export async function resetDemoTenant(
     lastSeq: outcome.lastSeq === null ? null : Number(outcome.lastSeq),
     lastHash: outcome.lastHash,
   };
+  const storage = deps.documents?.storage;
+  if (storage) {
+    for (const file of files) await storage.remove(tenantId, file.key).catch(() => undefined);
+  }
   const deletedRows = Object.values(outcome.deleted).reduce((sum, count) => sum + count, 0);
 
   const rotate = deps.rotateCredentials === true;
@@ -97,6 +111,7 @@ export async function resetDemoTenant(
     clock: deps.clock,
     environment: deps.environment,
     ...(deps.emailFor ? { emailFor: deps.emailFor } : {}),
+    ...(deps.documents ? { documents: deps.documents } : {}),
   };
   const seeded = await seedDemoTenant(
     {

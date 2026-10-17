@@ -4,7 +4,9 @@ import { sql } from 'drizzle-orm';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, inject, it } from 'vitest';
 
+import { createFakeScanner } from '../../src/adapters/fake-scanner/index.js';
 import { createLocalKeyManagement } from '../../src/adapters/local-kek/index.js';
+import { createMemoryObjectStorage } from '../../src/adapters/memory-storage/index.js';
 import { resetDemoTenant } from '../../src/db/seed/demo/reset.js';
 import { seedDemoTenant, type DemoSeedDeps } from '../../src/db/seed/demo/seed.js';
 import { seedPlatformCatalogs } from '../../src/db/seed/platform.js';
@@ -30,8 +32,6 @@ const RESET_BUDGET_MS = 30_000;
  */
 const NO_SEED_DATA: Record<string, string> = {
   action_token: 'One-time links are created by people inviting or resetting; none is pending.',
-  document:
-    'Files are added by staff; the Stage 2 demo extension (S2.31, fake PDFs through the fake scanner) seeds them and removes this entry.',
   job_execution: 'Idempotence markers of background jobs; created when a job runs.',
   login_challenge: 'A pending second-factor step; exists for minutes while somebody signs in.',
   patient_rights_request:
@@ -63,6 +63,7 @@ beforeAll(async () => {
     keys: createTenantKeys({ kms: createLocalKeyManagement(randomBytes(32).toString('base64')) }),
     consentText: { textKey: 'consent.data_processing', version: '1' },
     clock: () => new Date('2026-03-02T12:00:00Z'),
+    documents: { storage: createMemoryObjectStorage(), scanner: createFakeScanner() },
   };
 }, 120_000);
 
