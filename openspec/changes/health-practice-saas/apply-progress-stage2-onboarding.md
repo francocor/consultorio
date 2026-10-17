@@ -56,12 +56,14 @@ Strict TDD. Worktree `consultorio-wt-onboarding`, branch `feat/stage-2-onboardin
 | `corepack pnpm lint` | exit 0 |
 | `corepack pnpm format:check` | exit 0 |
 | `corepack pnpm test` | **171 files, 2260 tests passed** |
-| `corepack pnpm test:integration` | INTEGRATION_RESULT |
+| `corepack pnpm test:integration` | **93 files, 1453 tests passed** (Postgres 17, MinIO, Mailpit) |
 | `corepack pnpm build` | exit 0 |
 | `corepack pnpm db:check` | "No migration drift." |
-| `corepack pnpm test:e2e` | E2E_RESULT |
+| `corepack pnpm test:e2e` | **115 passed** (112 plus the three onboarding journeys; private ports 3310 and 4310, `--workers=3`, stack started by hand) |
 
-Shared Docker: an earlier full integration run had two timing failures (`demo-coverage` reset time and `worker` sealing) while other worktrees used the machine; both pass alone.
+Shared Docker: one earlier full integration run had two timing failures (`demo-coverage` reset time and `worker` sealing) while other worktrees used the machine; both passed alone. A later run failed one onboarding test that depended on the row order of an unordered `select` (a test bug, fixed in `dae4724`: the booking now uses the owner's professional); the final run is clean.
+
+The `export-registry` guard (a module without an export contributor) failed once in `pnpm test` and led to `28f647b`.
 
 ## Decisions and deviations
 
