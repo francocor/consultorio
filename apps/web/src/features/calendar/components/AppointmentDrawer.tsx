@@ -56,6 +56,8 @@ export interface AppointmentDrawerProps {
   /** The organization is read-only: only cancelling stays possible. */
   readOnly: boolean;
   now?: Date;
+  /** Open straight on a step (the front desk's "Registrar llegada" with the identity pending). */
+  startWith?: 'check_in';
 }
 
 /**
@@ -93,10 +95,11 @@ function DrawerBody({
   permissions,
   readOnly,
   now,
+  startWith,
 }: AppointmentDrawerProps & { appointmentId: string }) {
   const { t } = useTranslation(['scheduling', 'common']);
   const api = useApi();
-  const [panel, setPanel] = useState<Panel | null>(null);
+  const [panel, setPanel] = useState<Panel | null>(startWith ?? null);
   const [notice, setNotice] = useState<string | null>(null);
 
   const appointment = useQuery({

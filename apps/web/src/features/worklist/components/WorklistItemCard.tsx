@@ -1,0 +1,293 @@
+import type { WorklistItemDto, LocationDto } from '@consultorio/contracts';
+import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { Link } from '@tanstack/react-router';
+import { useId, useState } from 'react';
+import { useTranslation } from 'react-i18next';
+
+import { useApi } from '../../../app/providers.js';
+import { formatDateTime, formatDayLong, formatTime } from '../../../shared/lib/format.js';
+import {
+  AlertDialog,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogDestructiveAction,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '../../../shared/ui/alert-dialog.js';
+import { Badge } from '../../../shared/ui/badge.js';
+import { Button } from '../../../shared/ui/button.js';
+import { localDateOf } from '../../../shared/ui/calendar/zoned-time.js';
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableContainer,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from '../../../shared/ui/table.js';
+import { toast } from '../../../shared/ui/toaster.js';
+import { calendarApi } from '../../calendar/api/calendar-api.js';
+import { ErrorNotice } from '../../calendar/components/drawer/ErrorNotice.js';
+import { STATUS_PRESENTATION, statusLabel } from '../../calendar/domain/calendar-events.js';
+import { worklistApi, worklistKeys } from '../api/worklist-api.js';
+import { identityDifferences } from '../domain/worklist-items.js';
+
+import { ConfirmIdentityDialog } from './ConfirmIdentityDialog.js';
+import { DetachPatientDialog } from './DetachPatientDialog.js';
+import { KIND_ICONS } from './kinds.js';
+
+/** One thing that needs a person: what it is about, what differs, and the ways to settle it. */
+export function WorklistItemCard({
+  item,
+  locations,
+  professionalName,
+}: {
+  item: WorklistItemDto;
+  locations: readonly LocationDto[];
+  professionalName: string | undefined;
+}) {
+  const { t } = useTranslation(['scheduling', 'common']);
+  const api = useApi();
+  const queryClient = useQueryClient();
+  const headingId = useId();
+  const [dialog, setDialog] = useState<'identity' | 'detach' | 'dismiss' | null>(null);
+
+  const location = locations.find((entry) => entry.id === item.locationId);
+  const timeZone = location?.timeZone ?? locations[0]?.timeZone ?? 'America/Argentina/Buenos_Aires';
+  const KindIcon = KIND_ICONS[item.kind];
+  const appointment = item.appointment;
+  const differences = identityDifferences(item.detail);
+
+  const refresh = async () => {
+    await queryClient.invalidateQueries({ queryKey: worklistKeys.all });
+    await queryClient.invalidateQueries({ queryKey: ['calendar'] });
+  };
+
+  const close = useMutation({
+    mutationFn: (how: 'resolve' | 'dismiss') =>
+      how === 'resolve' ? worklistApi(api).resolve(item.id) : worklistApi(api).dismiss(item.id),
+    onSuccess: async (_result, how) => {
+      toast.success(t(`scheduling:worklist.done.${how}`));
+      setDialog(null);
+      await refresh();
+    },
+  });
+
+  const approve = useMutation({
+    mutationFn: async () => {
+      if (!appointment) throw new Error('only an appointment can be approved');
+      const current = await calendarApi(api).get(appointment.id);
+      return calendarApi(api).transition(appointment.id, 'approve', current.version);
+    },
+    onSuccess: async () => {
+      toast.success(t('scheduling:drawer.done.approve'));
+      await refresh();
+    },
+  });
+
+  const error = close.error ?? approve.error;
+  const status = appointment ? STATUS_PRESENTATION[appointment.status] : null;
+
+  return (
+    <li aria-labelledby={headingId} className="grid gap-3 rounded-lg border bg-card p-4">
+      <div className="flex flex-wrap items-start justify-between gap-2">
+        <h2 id={headingId} className="flex items-center gap-2 font-display text-base font-semibold">
+          <KindIcon className="size-4 shrink-0 text-primary-ink" aria-hidden="true" />
+          {t(`scheduling:worklist.kind.${item.kind}`)}
+        </h2>
+        <span className="text-xs text-muted-foreground">
+          <time dateTime={item.createdAt}>{formatDateTime(item.createdAt, { timeZone })}</time>
+        </span>
+      </div>
+
+      {appointment ? (
+        <div className="grid gap-1 text-sm">
+          <p className="font-medium">{appointment.patientName}</p>
+          <p className="tabular text-muted-foreground">
+            {`${formatDayLong(localDateOf(appointment.startsAt, timeZone))}, ${t(
+              'scheduling:calendar.eventTime',
+              {
+                start: formatTime(appointment.startsAt, { timeZone }),
+                end: formatTime(appointment.endsAt, { timeZone }),
+              },
+            )}`}
+          </p>
+          <p className="flex flex-wrap items-center gap-2 text-muted-foreground">
+            {professionalName ? <span>{professionalName}</span> : null}
+            {status ? (
+              <Badge tone={status.tone}>
+                <status.icon aria-hidden="true" />
+                {statusLabel(t, appointment.status)}
+              </Badge>
+            ) : null}
+          </p>
+        </div>
+      ) : (
+        <p className="text-sm text-muted-foreground">{t('scheduling:worklist.noAppointment')}</p>
+      )}
+
+      <p className="text-sm text-muted-foreground">
+        {location?.name ?? t('scheduling:worklist.wholeOrganization')}
+      </p>
+
+      {differences.length > 0 ? (
+        <TableContainer aria-label={t('scheduling:worklist.differences.region')}>
+          <Table>
+            <caption className="sr-only">{t('scheduling:worklist.differences.table')}</caption>
+            <TableHeader>
+              <TableRow>
+                <TableHead>{t('scheduling:worklist.differences.field')}</TableHead>
+                <TableHead>{t('scheduling:worklist.differences.submitted')}</TableHead>
+                <TableHead>{t('scheduling:worklist.differences.onFile')}</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {differences.map((difference) => (
+                <TableRow key={difference.field}>
+                  <TableCell>
+                    {t(`scheduling:worklist.differences.fields.${difference.field}`, {
+                      defaultValue: t('scheduling:worklist.differences.fields.other'),
+                    })}
+                  </TableCell>
+                  <TableCell>{difference.submitted ?? '-'}</TableCell>
+                  <TableCell>{difference.onFile ?? '-'}</TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        </TableContainer>
+      ) : null}
+
+      {error ? <ErrorNotice error={error} /> : null}
+
+      {item.actions.length > 0 ? (
+        <div className="flex flex-wrap gap-2">
+          {item.actions.map((action) => {
+            switch (action) {
+              case 'open_appointment':
+                return appointment ? (
+                  <Button key={action} asChild variant="outline">
+                    <Link
+                      to="/calendar"
+                      search={{
+                        view: 'day',
+                        date: localDateOf(appointment.startsAt, timeZone),
+                        appointment: appointment.id,
+                      }}
+                    >
+                      {t('scheduling:worklist.action.open_appointment')}
+                    </Link>
+                  </Button>
+                ) : null;
+              case 'approve':
+                return (
+                  <Button
+                    key={action}
+                    loading={approve.isPending}
+                    onClick={() => {
+                      approve.mutate();
+                    }}
+                  >
+                    {t('scheduling:drawer.action.approve')}
+                  </Button>
+                );
+              case 'confirm_identity':
+                return (
+                  <Button
+                    key={action}
+                    onClick={() => {
+                      setDialog('identity');
+                    }}
+                  >
+                    {t('scheduling:worklist.action.confirm_identity')}
+                  </Button>
+                );
+              case 'detach_patient':
+                return (
+                  <Button
+                    key={action}
+                    variant="outline"
+                    onClick={() => {
+                      setDialog('detach');
+                    }}
+                  >
+                    {t('scheduling:worklist.action.detach_patient')}
+                  </Button>
+                );
+              case 'resolve':
+                return (
+                  <Button
+                    key={action}
+                    variant="secondary"
+                    loading={close.isPending}
+                    onClick={() => {
+                      close.mutate('resolve');
+                    }}
+                  >
+                    {t('scheduling:worklist.action.resolve')}
+                  </Button>
+                );
+              case 'dismiss':
+                return (
+                  <Button
+                    key={action}
+                    variant="outline"
+                    onClick={() => {
+                      setDialog('dismiss');
+                    }}
+                  >
+                    {t('scheduling:worklist.action.dismiss')}
+                  </Button>
+                );
+            }
+          })}
+        </div>
+      ) : null}
+
+      {dialog === 'identity' ? (
+        <ConfirmIdentityDialog
+          item={item}
+          onClose={() => {
+            setDialog(null);
+          }}
+        />
+      ) : null}
+      {dialog === 'detach' ? (
+        <DetachPatientDialog
+          item={item}
+          onClose={() => {
+            setDialog(null);
+          }}
+        />
+      ) : null}
+      <AlertDialog
+        open={dialog === 'dismiss'}
+        onOpenChange={(open) => {
+          if (!open) setDialog(null);
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>{t('scheduling:worklist.dismissDialog.title')}</AlertDialogTitle>
+            <AlertDialogDescription>
+              {t('scheduling:worklist.dismissDialog.description')}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>{t('common:action.cancel')}</AlertDialogCancel>
+            <AlertDialogDestructiveAction
+              onClick={() => {
+                close.mutate('dismiss');
+              }}
+            >
+              {t('scheduling:worklist.dismissDialog.confirm')}
+            </AlertDialogDestructiveAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    </li>
+  );
+}

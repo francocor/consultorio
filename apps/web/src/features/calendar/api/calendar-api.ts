@@ -9,7 +9,6 @@ import {
   SeriesCommitResponse,
   SeriesPreviewResponse,
   StaffListResponse,
-  WorklistResponse,
   type BookAppointmentRequest,
   type BookSeriesRequest,
   type CancelAppointmentRequest,
@@ -69,7 +68,6 @@ export const calendarKeys = {
   types: (includeInactive: boolean) => ['calendar', 'types', { includeInactive }] as const,
   professionals: ['calendar', 'professionals'] as const,
   holidays: (year: number) => ['calendar', 'holidays', year] as const,
-  worklistBadge: ['worklist', 'badge'] as const,
 };
 
 /**
@@ -139,13 +137,5 @@ export function calendarApi(api: ApiClient) {
       api.post(`/appointments/${id}/detach-patient`, { body, schema: AppointmentDto }),
     series: (body: BookSeriesRequest) =>
       api.post('/appointments/series', { body, schema: SeriesResponse }),
-
-    worklistOpenCount: async () =>
-      (
-        await api.get('/worklist', {
-          query: { status: 'open', limit: 1 },
-          schema: WorklistResponse,
-        })
-      ).openCount,
   };
 }

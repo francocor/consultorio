@@ -210,6 +210,33 @@ function buildRouteTree() {
     ),
   });
 
+  const todayRoute = createRoute({
+    getParentRoute: () => authedRoute,
+    path: '/today',
+    component: guarded(
+      ['scheduling.read'],
+      lazyRouteComponent(() => import('../features/today/TodayPage.js'), 'TodayPage'),
+    ),
+  });
+
+  const checkInRoute = createRoute({
+    getParentRoute: () => authedRoute,
+    path: '/check-in',
+    component: lazyRouteComponent(
+      () => import('../features/checkin/CheckInPage.js'),
+      'CheckInPage',
+    ),
+  });
+
+  const worklistRoute = createRoute({
+    getParentRoute: () => authedRoute,
+    path: '/worklist',
+    component: guarded(
+      ['worklist.manage'],
+      lazyRouteComponent(() => import('../features/worklist/WorklistPage.js'), 'WorklistPage'),
+    ),
+  });
+
   const staffRoute = createRoute({
     getParentRoute: () => authedRoute,
     path: '/staff',
@@ -313,6 +340,9 @@ function buildRouteTree() {
       newPatientRoute,
       patientRoute,
       calendarRoute,
+      todayRoute,
+      checkInRoute,
+      worklistRoute,
       staffRoute,
       auditRoute,
       settingsRoute.addChildren([

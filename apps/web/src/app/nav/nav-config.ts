@@ -30,13 +30,7 @@ export const ENABLED_STAGE = 2;
  * Entries of the enabled stage whose screens are not built yet. They stay out of the navigation
  * (no dead links) and leave this list as their slices land.
  */
-const NOT_BUILT_YET: ReadonlySet<NavId> = new Set([
-  'today',
-  'check-in',
-  'worklist',
-  'drafts',
-  'prescriptions',
-]);
+const NOT_BUILT_YET: ReadonlySet<NavId> = new Set(['drafts', 'prescriptions']);
 
 export type NavId =
   | 'home'
@@ -98,7 +92,7 @@ export const NAV_ITEMS: Record<NavId, NavItem> = {
     labelKey: 'nav.worklist',
     icon: ListTodo,
     stage: 2,
-    anyOf: ['scheduling.checkin'],
+    anyOf: ['worklist.manage'],
   },
   patients: {
     id: 'patients',
@@ -178,9 +172,9 @@ type Layout = 'professional' | 'reception' | 'admin';
 
 /** The order of each role's area (design, section 8). */
 const LAYOUTS: Record<Layout, readonly NavId[]> = {
-  professional: ['today', 'patients', 'drafts', 'prescriptions'],
+  professional: ['today', 'calendar', 'patients', 'drafts', 'prescriptions'],
   reception: ['calendar', 'check-in', 'worklist', 'patients', 'cash'],
-  admin: ['calendar', 'patients', 'staff', 'reports', 'billing', 'audit', 'settings'],
+  admin: ['calendar', 'worklist', 'patients', 'staff', 'reports', 'billing', 'audit', 'settings'],
 };
 
 const LAYOUT_OF_ROLE: Partial<Record<Role, Layout>> = {
