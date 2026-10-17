@@ -30,6 +30,10 @@ const ALLOWED: Record<string, readonly string[]> = {
   'app.care_adjust(uuid,uuid,uuid,integer,integer)': [],
   'app.care_assignment_sync()': [],
   'app.care_set_assigned(uuid,uuid,uuid,boolean)': [],
+  // Clinical triggers (Stage 2) that feed the care relationship: an encounter counts, an entry
+  // marked in error stops counting. The runtime role writes the encounter, never this table.
+  'app.encounter_care_sync()': [],
+  'app.clinical_note_care_sync()': [],
 };
 
 let owner: pg.Client;
