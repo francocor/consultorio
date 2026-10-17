@@ -25,7 +25,7 @@ import { tenantTable } from './_helpers.js';
 import { patient } from './patients.js';
 import { appointment } from './scheduling.js';
 import { professional } from './staff.js';
-import { tenant } from './tenant.js';
+import { location, tenant } from './tenant.js';
 
 const list = (values: readonly string[]) => values.map((value) => `'${value}'`).join(', ');
 
@@ -174,6 +174,54 @@ export const messageAttempt = tenantTable(
 );
 
 export type MessageAttemptRow = typeof messageAttempt.$inferSelect;
+
+/**
+ * What a waitlist offer message needs to be written and sent: the slot it offers and the link that
+ * accepts it. An offer is not about an appointment, so the message has nothing else to read. The
+ * link is the one thing a message log must not hold (the log is metadata only), so it lives here,
+ * apart from the log: it is read by the sending job, and cleared by the hourly sweep once the offer
+ * has expired (the link is worthless then). The row is created with the message and never deleted.
+ */
+export const messageOffer = tenantTable(
+  'message_offer',
+  {
+    messageId: uuid('message_id').notNull(),
+    /** The offer of the waitlist module this message carries (no foreign key: another module). */
+    offerId: uuid('offer_id').notNull(),
+    locationId: uuid('location_id').notNull(),
+    startsAt: timestamp('starts_at', { withTimezone: true }).notNull(),
+    endsAt: timestamp('ends_at', { withTimezone: true }).notNull(),
+    /** After this moment the message is not sent and the link is cleared. */
+    expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+    /** The single-use address that accepts the offer. Null once the offer expired. */
+    url: text('url'),
+  },
+  (table) => [
+    foreignKey({
+      name: 'message_offer_tenant_id_fkey',
+      columns: [table.tenantId],
+      foreignColumns: [tenant.id],
+    }),
+    foreignKey({
+      name: 'message_offer_message_fkey',
+      columns: [table.tenantId, table.messageId],
+      foreignColumns: [message.tenantId, message.id],
+    }),
+    foreignKey({
+      name: 'message_offer_location_fkey',
+      columns: [table.tenantId, table.locationId],
+      foreignColumns: [location.tenantId, location.id],
+    }),
+    check('message_offer_window_check', sql`${table.startsAt} < ${table.endsAt}`),
+    unique('message_offer_tenant_id_message_id_key').on(table.tenantId, table.messageId),
+    // The sweep looks for links still held after their offer expired.
+    index('message_offer_url_idx')
+      .on(table.tenantId, table.expiresAt)
+      .where(sql`${table.url} is not null`),
+  ],
+);
+
+export type MessageOfferRow = typeof messageOffer.$inferSelect;
 
 /** What a provider event did to the message it is about. */
 export const MESSAGE_EVENT_STATUSES = ['sent', 'delivered', 'read', 'failed'] as const;

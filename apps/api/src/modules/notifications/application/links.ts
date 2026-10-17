@@ -24,6 +24,34 @@ export interface LinkDeps {
   clock: () => Date;
 }
 
+/** The link that stops reminders by email for a patient (every email carries one). */
+async function optOutLink(
+  deps: LinkDeps,
+  tx: Tx,
+  input: { tenantSlug: string; patientId: string },
+): Promise<string | undefined> {
+  if (!isEnabledKind('notification_opt_out')) return undefined;
+  const issued = await deps.tokens.issue(tx, {
+    kind: 'notification_opt_out',
+    subjectId: input.patientId,
+    payload: { channel: 'email' },
+  });
+  return `${deps.origins(input.tenantSlug)}${TOKEN_PATH}${issued.token}`;
+}
+
+/**
+ * The links of an email that offers a waitlist slot: the address that accepts or declines the offer
+ * (built by the waitlist) and the way to stop receiving them.
+ */
+export async function issueOfferEmailLinks(
+  deps: LinkDeps,
+  tx: Tx,
+  input: { tenantSlug: string; patientId: string; offerUrl: string },
+): Promise<EmailLinks> {
+  const optOutUrl = await optOutLink(deps, tx, input);
+  return { offerUrl: input.offerUrl, ...(optOutUrl === undefined ? {} : { optOutUrl }) };
+}
+
 /**
  * Issues the single-purpose links of an email and builds their addresses from the configured
  * origin (never from a request). A kind whose capability is not enabled yet is left out, so the
@@ -59,13 +87,7 @@ export async function issueEmailLinks(
     const cancelUrl = await appointmentLink('appointment_cancel');
     if (cancelUrl !== undefined) links.cancelUrl = cancelUrl;
   }
-  if (isEnabledKind('notification_opt_out')) {
-    const issued = await deps.tokens.issue(tx, {
-      kind: 'notification_opt_out',
-      subjectId: subject.patientId,
-      payload: { channel: 'email' },
-    });
-    links.optOutUrl = url(issued.token);
-  }
+  const optOutUrl = await optOutLink(deps, tx, subject);
+  if (optOutUrl !== undefined) links.optOutUrl = optOutUrl;
   return links;
 }

@@ -7,10 +7,16 @@ import type {
 } from '@consultorio/contracts';
 import { and, desc, eq, inArray, sql } from 'drizzle-orm';
 
-import { message, messageAttempt, type MessageRow } from '../../../db/schema/notifications.js';
+import {
+  message,
+  messageAttempt,
+  messageOffer,
+  type MessageRow,
+} from '../../../db/schema/notifications.js';
 import { SYSTEM_USER_ID, type Tx } from '../../../platform/db/tenant-context.js';
 import type { EmailSender } from '../../../platform/mail/email-sender.js';
 import { readOrganizationName } from '../../tenancy/index.js';
+import type { EmailLinks } from '../assets/es-AR/email.js';
 import { hashAddress } from '../domain/address.js';
 import {
   selectChannels,
@@ -28,7 +34,8 @@ import {
   type TenantState,
 } from './context.js';
 import type { MessagingDeps, TenantRef } from './deps.js';
-import { issueEmailLinks } from './links.js';
+import { issueEmailLinks, issueOfferEmailLinks } from './links.js';
+import { copyOffer, loadOfferPlace } from './offer-facts.js';
 import type { WhatsAppSender } from './ports.js';
 import {
   dedupeKeyFor,
@@ -79,7 +86,8 @@ export interface PendingSend {
   to: string;
   rendered: RenderedMessage;
   sender: EmailSender | WhatsAppSender;
-  appointmentId: string;
+  /** Null for a waitlist offer, which is not about an appointment. */
+  appointmentId: string | null;
   patientId: string;
   professionalId: string | null;
   locationId: string;
@@ -181,7 +189,7 @@ async function queueFallback(
   const group = groupKeyOf(row.dedupeKey);
   for (const channel of decision.channels) {
     if (channel === row.channel || (await groupHasChannel(tx, group, channel))) continue;
-    await queueMessage(deps, tx, {
+    const queued = await queueMessage(deps, tx, {
       kind: row.kind as MessageKind,
       channel,
       patientId: row.patientId,
@@ -193,9 +201,184 @@ async function queueFallback(
       dedupeKey: dedupeKeyFor(group, channel),
       trigger: row.trigger === 'manual' ? 'manual' : 'automatic',
     });
+    // The offer message is written from the slot kept with it: the fallback needs the same.
+    if (queued.created && row.kind === 'waitlist_offer') await copyOffer(tx, row.id, queued.id);
     return channel;
   }
   return null;
+}
+
+/** What starting an attempt leaves: nothing more to do, or the attempt number to send under. */
+type Attempt = { settled: true } | { settled: false; attemptNo: number };
+
+/**
+ * Records the attempt that is about to be made. A started attempt without an outcome means a
+ * worker died after (maybe) handing the message over: an email is then marked sent and not sent
+ * again; a WhatsApp message goes again under the same idempotency key.
+ */
+async function startAttempt(
+  tx: Tx,
+  row: MessageRow,
+  channel: MessageChannel,
+  to: string,
+  now: Date,
+): Promise<Attempt> {
+  const [open] = await tx
+    .select({ attemptNo: messageAttempt.attemptNo, id: messageAttempt.id })
+    .from(messageAttempt)
+    .where(and(eq(messageAttempt.messageId, row.id), eq(messageAttempt.outcome, 'started')))
+    .orderBy(desc(messageAttempt.attemptNo))
+    .limit(1);
+  if (open && channel === 'email') {
+    await tx
+      .update(messageAttempt)
+      .set({ outcome: 'error', reason: 'unconfirmed' })
+      .where(eq(messageAttempt.id, open.id));
+    await tx
+      .update(message)
+      .set({ status: 'sent', sentAt: now, addressHash: hashAddress(channel, to) })
+      .where(and(eq(message.id, row.id), eq(message.status, 'queued')));
+    return { settled: true };
+  }
+
+  const attemptNo = open?.attemptNo ?? row.attempts + 1;
+  if (!open) {
+    await tx.insert(messageAttempt).values({
+      tenantId: sql`current_setting('app.tenant_id')::uuid`,
+      messageId: row.id,
+      attemptNo,
+      outcome: 'started',
+    });
+    await tx
+      .update(message)
+      .set({ attempts: attemptNo, addressHash: hashAddress(channel, to) })
+      .where(eq(message.id, row.id));
+  }
+  return { settled: false, attemptNo };
+}
+
+/**
+ * The channel of the message cannot carry it now (opted out, switched off, no provider, no quota):
+ * the message is cancelled with the reason, and the next channel the policy allows gets it, except
+ * after a patient's own opt-out. With nothing left, reception is told (appointment messages only).
+ */
+async function settleUnavailable(
+  deps: MessagingDeps,
+  tx: Tx,
+  row: MessageRow,
+  decision: ChannelDecision,
+  appointment: AppointmentContext | null,
+): Promise<void> {
+  const channel = row.channel as MessageChannel;
+  const skip = decision.skipped.find((entry) => entry.channel === channel)?.reason;
+  await cancelRow(tx, row, cancelReasonOf(skip));
+  const fallback = triesOtherChannel(skip) ? await queueFallback(deps, tx, row, decision) : null;
+  if (
+    fallback === null &&
+    appointment !== null &&
+    decision.channels.every((entry) => entry === channel)
+  ) {
+    await openWorklist(deps, tx, row.kind as MessageKind, {
+      worklistKind: 'reminder_not_sent',
+      appointmentId: appointment.id,
+      locationId: appointment.locationId,
+    });
+  }
+}
+
+/**
+ * Step 1 for a waitlist offer. It has no appointment: the message is written from the slot kept
+ * with it (`message_offer`), and it is not sent once the offer has expired. Everything else (the
+ * patient's choices, the providers, the attempt) is as for any other message.
+ */
+async function prepareOfferDelivery(
+  deps: MessagingDeps,
+  tx: Tx,
+  row: MessageRow,
+  context: { tenantId: string; state: TenantState; tenant: TenantRef; now: Date },
+): Promise<Prepared> {
+  const { tenantId, state, tenant, now } = context;
+  const channel = row.channel as MessageChannel;
+  const [offer] = await tx.select().from(messageOffer).where(eq(messageOffer.messageId, row.id));
+  if (!offer || offer.url === null || offer.expiresAt.getTime() <= now.getTime()) {
+    await cancelRow(tx, row, 'offer_expired');
+    return { kind: 'settled' };
+  }
+
+  const recipient = await loadRecipient(tx, row.patientId);
+  const settings = await loadMessagingSettings(tx);
+  if (!recipient) {
+    await cancelRow(tx, row, 'no_channel');
+    return { kind: 'settled' };
+  }
+  const decision = selectChannels(
+    'waitlist_offer',
+    recipient.facts,
+    await channelOptions(deps, tx, { tenant, settings }, row.professionalId),
+  );
+  const sender = channel === 'email' ? deps.channels.email(tenant) : deps.channels.whatsapp(tenant);
+  if (!decision.channels.includes(channel) || sender === undefined) {
+    await settleUnavailable(deps, tx, row, decision, null);
+    return { kind: 'settled' };
+  }
+  const to = channel === 'email' ? recipient.email : recipient.phone;
+  if (to === null) {
+    await cancelRow(tx, row, 'no_channel');
+    return { kind: 'settled' };
+  }
+  const attempt = await startAttempt(tx, row, channel, to, now);
+  if (attempt.settled) return { kind: 'settled' };
+
+  const place = await loadOfferPlace(tx, offer.locationId, row.professionalId);
+  const links: EmailLinks | undefined =
+    channel === 'email'
+      ? await issueOfferEmailLinks(deps, tx, {
+          tenantSlug: state.slug,
+          patientId: row.patientId,
+          offerUrl: offer.url,
+        })
+      : { offerUrl: offer.url };
+  const rendered = renderMessage({
+    kind: 'waitlist_offer',
+    channel,
+    facts: {
+      organizationName: await readOrganizationName(tx),
+      patientGivenNames: recipient.givenNames,
+      startsAt: offer.startsAt,
+      timeZone: place.timeZone,
+      locationName: place.locationName,
+      professionalName: place.professionalName,
+      appointmentTypeName: null,
+      offerExpiresAt: offer.expiresAt,
+    },
+    wording: {
+      hideProfessional: settings.notifications.hideProfessional,
+      hideAppointmentType: settings.notifications.hideAppointmentType,
+    },
+    links,
+  });
+  return {
+    kind: 'send',
+    send: {
+      tenantId,
+      messageId: row.id,
+      dedupeKey: row.dedupeKey,
+      kind: 'waitlist_offer',
+      channel,
+      attemptNo: attempt.attemptNo,
+      tenant,
+      to,
+      rendered,
+      sender,
+      appointmentId: null,
+      patientId: row.patientId,
+      professionalId: row.professionalId,
+      locationId: offer.locationId,
+      // A failed send is retried only while the offer is still open.
+      startsAt: offer.expiresAt,
+      appointmentVersion: null,
+    },
+  };
 }
 
 /** Step 1. Runs in a transaction of its own, which is committed before the provider is called. */
@@ -223,6 +406,9 @@ export function prepareDelivery(
       return { kind: 'settled' };
     }
     const tenant: TenantRef = { id: state.id, isDemo: false };
+    if (kind === 'waitlist_offer') {
+      return prepareOfferDelivery(deps, tx, row, { tenantId, state, tenant, now });
+    }
 
     const appointment =
       row.appointmentId !== null ? await loadAppointment(tx, row.appointmentId) : null;
@@ -252,18 +438,7 @@ export function prepareDelivery(
       channel === 'email' ? deps.channels.email(tenant) : deps.channels.whatsapp(tenant);
 
     if (!decision.channels.includes(channel) || sender === undefined) {
-      const skip = decision.skipped.find((entry) => entry.channel === channel)?.reason;
-      await cancelRow(tx, row, cancelReasonOf(skip));
-      const fallback = triesOtherChannel(skip)
-        ? await queueFallback(deps, tx, row, decision)
-        : null;
-      if (fallback === null && decision.channels.every((entry) => entry === channel)) {
-        await openWorklist(deps, tx, kind, {
-          worklistKind: 'reminder_not_sent',
-          appointmentId: appointment.id,
-          locationId: appointment.locationId,
-        });
-      }
+      await settleUnavailable(deps, tx, row, decision, appointment);
       return { kind: 'settled' };
     }
 
@@ -273,38 +448,8 @@ export function prepareDelivery(
       return { kind: 'settled' };
     }
 
-    // A started attempt without an outcome: a worker died after (maybe) handing the message over.
-    const [open] = await tx
-      .select({ attemptNo: messageAttempt.attemptNo, id: messageAttempt.id })
-      .from(messageAttempt)
-      .where(and(eq(messageAttempt.messageId, row.id), eq(messageAttempt.outcome, 'started')))
-      .orderBy(desc(messageAttempt.attemptNo))
-      .limit(1);
-    if (open && channel === 'email') {
-      await tx
-        .update(messageAttempt)
-        .set({ outcome: 'error', reason: 'unconfirmed' })
-        .where(eq(messageAttempt.id, open.id));
-      await tx
-        .update(message)
-        .set({ status: 'sent', sentAt: now, addressHash: hashAddress(channel, to) })
-        .where(and(eq(message.id, row.id), eq(message.status, 'queued')));
-      return { kind: 'settled' };
-    }
-
-    const attemptNo = open?.attemptNo ?? row.attempts + 1;
-    if (!open) {
-      await tx.insert(messageAttempt).values({
-        tenantId: sql`current_setting('app.tenant_id')::uuid`,
-        messageId: row.id,
-        attemptNo,
-        outcome: 'started',
-      });
-      await tx
-        .update(message)
-        .set({ attempts: attemptNo, addressHash: hashAddress(channel, to) })
-        .where(eq(message.id, row.id));
-    }
+    const attempt = await startAttempt(tx, row, channel, to, now);
+    if (attempt.settled) return { kind: 'settled' };
 
     const organizationName = await readOrganizationName(tx);
     const links =
@@ -351,7 +496,7 @@ export function prepareDelivery(
         dedupeKey: row.dedupeKey,
         kind,
         channel,
-        attemptNo,
+        attemptNo: attempt.attemptNo,
         tenant,
         to,
         rendered,

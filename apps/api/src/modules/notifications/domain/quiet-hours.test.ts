@@ -1,12 +1,45 @@
 import { describe, expect, it } from 'vitest';
 
-import { applyQuietHours, isInQuietHours } from './quiet-hours.js';
+import { applyQuietHours, isInQuietHours, quietHoursEnd } from './quiet-hours.js';
 
 const BUENOS_AIRES = 'America/Argentina/Buenos_Aires';
 const DEFAULT = { start: '21:00', end: '08:00' };
 
 /** A Buenos Aires wall-clock time (UTC-3 all year) as an instant. */
 const ba = (date: string, time: string) => new Date(`${date}T${time}:00-03:00`);
+
+describe('quietHoursEnd', () => {
+  it('is null outside quiet hours', () => {
+    expect(quietHoursEnd(ba('2031-05-12', '12:00'), BUENOS_AIRES, DEFAULT)).toBeNull();
+    expect(quietHoursEnd(ba('2031-05-12', '20:59'), BUENOS_AIRES, DEFAULT)).toBeNull();
+    expect(quietHoursEnd(ba('2031-05-12', '08:00'), BUENOS_AIRES, DEFAULT)).toBeNull();
+  });
+
+  it('is the next 08:00 of the location when asked at night, before and after midnight', () => {
+    expect(quietHoursEnd(ba('2031-05-12', '22:00'), BUENOS_AIRES, DEFAULT)).toEqual(
+      ba('2031-05-13', '08:00'),
+    );
+    expect(quietHoursEnd(ba('2031-05-13', '03:00'), BUENOS_AIRES, DEFAULT)).toEqual(
+      ba('2031-05-13', '08:00'),
+    );
+  });
+
+  it('is null when quiet hours are switched off', () => {
+    expect(
+      quietHoursEnd(ba('2031-05-12', '23:00'), BUENOS_AIRES, { start: '00:00', end: '00:00' }),
+    ).toBeNull();
+  });
+
+  it('reads the window in the zone of the location', () => {
+    // 17:00 in Buenos Aires is 22:00 in Madrid (CEST, UTC+2): inside quiet hours there only.
+    const at = ba('2031-05-12', '17:00');
+
+    expect(quietHoursEnd(at, BUENOS_AIRES, DEFAULT)).toBeNull();
+    expect(quietHoursEnd(at, 'Europe/Madrid', DEFAULT)).toEqual(
+      new Date('2031-05-13T08:00:00+02:00'),
+    );
+  });
+});
 
 describe('isInQuietHours', () => {
   it('knows a window that wraps midnight', () => {

@@ -76,6 +76,7 @@
   "log.reason.integration_off": "WhatsApp está desactivado",
   "log.reason.quota_exhausted": "se agotó el cupo de WhatsApp",
   "log.reason.no_channel": "no hay un canal disponible",
+  "log.reason.offer_expired": "la oferta ya había vencido",
   "log.reason.not_on_whatsapp": "el número no tiene WhatsApp",
   "log.reason.template_rejected": "WhatsApp rechazó la plantilla",
   "log.reason.invalid_number": "el número no es válido",

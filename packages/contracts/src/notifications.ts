@@ -48,6 +48,8 @@ export const MESSAGE_CANCEL_REASONS = [
   /** The professional's WhatsApp quota is spent and the plan has no overage. */
   'quota_exhausted',
   'no_channel',
+  /** A waitlist offer that was no longer open when its turn to be sent came. */
+  'offer_expired',
 ] as const;
 export type MessageCancelReason = (typeof MESSAGE_CANCEL_REASONS)[number];
 

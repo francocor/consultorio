@@ -71,7 +71,7 @@ describe('message kinds', () => {
 
   it('names why a message is cancelled and why it failed, with the reasons the spec asks for', () => {
     expect(MESSAGE_CANCEL_REASONS).toEqual(
-      expect.arrayContaining(['tenant_read_only', 'demo_tenant', 'opted_out']),
+      expect.arrayContaining(['tenant_read_only', 'demo_tenant', 'opted_out', 'offer_expired']),
     );
     expect(MESSAGE_FAILURE_REASONS).toEqual(
       expect.arrayContaining(['not_on_whatsapp', 'template_rejected', 'invalid_number']),

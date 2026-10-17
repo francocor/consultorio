@@ -40,6 +40,18 @@ function videoLine(vars: Vars): string[] {
   ];
 }
 
+/** How to take an offer: the single-use address, and until when it is open. */
+function offerLines(vars: Vars): string[] {
+  const url = vars['offerUrl'];
+  if (url === undefined) return [];
+  const until = vars['offerExpires'];
+  return [
+    until === undefined
+      ? `Para aceptarlo o rechazarlo, abra este enlace: ${url}`
+      : `Para aceptarlo o rechazarlo, abra este enlace antes de las ${until}: ${url}`,
+  ];
+}
+
 const BODIES: Record<WhatsAppTemplateKey, (vars: Vars) => string> = {
   appointment_reminder: (vars) =>
     [
@@ -59,6 +71,7 @@ const BODIES: Record<WhatsAppTemplateKey, (vars: Vars) => string> = {
     [
       `Hola ${vars['name'] ?? ''}, hay un turno disponible en ${vars['organization'] ?? ''}.`,
       appointmentLines(vars),
+      ...offerLines(vars),
       'Responda BAJA para dejar de recibir estos mensajes.',
     ].join('\n\n'),
   optout_ack: () =>

@@ -229,6 +229,71 @@ describe('renderMessage for WhatsApp', () => {
   });
 });
 
+describe('renderMessage for a waitlist offer', () => {
+  const offerUrl = 'https://aillu.example.test/public/t/OFFER';
+  const offerFacts = {
+    ...facts,
+    appointmentTypeName: null,
+    offerExpiresAt: new Date('2031-05-12T12:30:00.000Z'),
+  };
+
+  it('says until what time the offer is open, in the zone of the location', () => {
+    const rendered = email({ kind: 'waitlist_offer', facts: offerFacts, links: { offerUrl } });
+
+    // 12:30 UTC is 09:30 in Buenos Aires.
+    expect(rendered.text).toContain(
+      'Para aceptarlo o rechazarlo, abra este enlace antes de las 09:30:',
+    );
+    expect(rendered.text).toContain(offerUrl);
+    expect(rendered.html).toContain(`href="${offerUrl}"`);
+  });
+
+  it('keeps the plain sentence when the expiry is not known', () => {
+    const rendered = email({ kind: 'waitlist_offer', links: { offerUrl } });
+
+    expect(rendered.text).toContain('antes de que venza la oferta');
+  });
+
+  it('gives the WhatsApp template the address that accepts the offer, and the time it closes', () => {
+    const rendered = renderMessage({
+      kind: 'waitlist_offer',
+      channel: 'whatsapp',
+      facts: offerFacts,
+      wording: showAll,
+      links: { offerUrl },
+    });
+
+    expect(rendered.channel === 'whatsapp' && rendered.vars).toMatchObject({
+      offerUrl,
+      offerExpires: '09:30',
+    });
+  });
+
+  it('refuses an offer address that is not a web link on WhatsApp either', () => {
+    expect(() =>
+      renderMessage({
+        kind: 'waitlist_offer',
+        channel: 'whatsapp',
+        facts,
+        wording: showAll,
+        links: { offerUrl: 'javascript:alert(1)' },
+      }),
+    ).toThrow('http(s)');
+  });
+
+  it('does not put an offer address in a reminder', () => {
+    const rendered = renderMessage({
+      kind: 'reminder',
+      channel: 'whatsapp',
+      facts,
+      wording: showAll,
+      links: { offerUrl },
+    });
+
+    expect(rendered.channel === 'whatsapp' && rendered.vars).not.toHaveProperty('offerUrl');
+  });
+});
+
 describe('renderMessage for a video consultation', () => {
   const join = 'https://aillu.example.test/public/v/JOIN';
 

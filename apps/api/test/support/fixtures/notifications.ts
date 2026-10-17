@@ -1,6 +1,7 @@
 import { sql } from 'drizzle-orm';
 
 import {
+  insertLocation,
   insertPatient,
   insertProfessional,
   returningId,
@@ -52,6 +53,20 @@ export const fixtures: Record<string, TenantTableFixture> = {
               VALUES (${tenantId},
                       ${overrides?.['professional_id'] ?? (await insertProfessional(tx, tenantId))},
                       '2031-05', 80)
+              RETURNING id`,
+      ),
+  },
+  message_offer: {
+    insert: async (tx, tenantId, overrides) =>
+      returningId(
+        tx,
+        sql`INSERT INTO message_offer (tenant_id, message_id, offer_id, location_id, starts_at, ends_at, expires_at, url)
+              VALUES (${tenantId},
+                      ${overrides?.['message_id'] ?? (await insertMessage(tx, tenantId))},
+                      gen_random_uuid(),
+                      ${overrides?.['location_id'] ?? (await insertLocation(tx, tenantId))},
+                      '2031-05-12 13:00+00', '2031-05-12 13:30+00', '2031-05-12 12:30+00',
+                      'https://example.test/public/t/FIXTURE')
               RETURNING id`,
       ),
   },

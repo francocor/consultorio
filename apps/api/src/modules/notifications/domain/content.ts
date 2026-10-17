@@ -19,6 +19,8 @@ export interface AppointmentFacts {
   professionalName: string | null;
   /** Null when the organization hides it. */
   appointmentTypeName: string | null;
+  /** A waitlist offer only: when the offer stops being open. */
+  offerExpiresAt?: Date;
 }
 
 /**
@@ -42,6 +44,8 @@ export interface MessageVars {
   place: string;
   professional?: string;
   type?: string;
+  /** A waitlist offer only: the time the offer closes, read in the zone of the location. */
+  offerExpires?: string;
 }
 
 const LOCALE = 'es-AR';
@@ -81,6 +85,9 @@ export function describeAppointment(facts: AppointmentFacts, wording: Wording): 
   }
   if (!wording.hideAppointmentType && facts.appointmentTypeName !== null) {
     vars.type = facts.appointmentTypeName;
+  }
+  if (facts.offerExpiresAt !== undefined) {
+    vars.offerExpires = formatTime(facts.offerExpiresAt, facts.timeZone);
   }
   return vars;
 }

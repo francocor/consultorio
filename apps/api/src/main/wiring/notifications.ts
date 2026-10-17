@@ -10,6 +10,7 @@ import {
 } from '../../adapters/whatsapp-local/index.js';
 import {
   REMINDER_SWEEP_JOB,
+  bindOfferDelivery,
   createNotificationJobs,
   createNotifications,
   createWorklist,
@@ -134,8 +135,15 @@ export const notificationsWiring: ModuleWiring = {
     const now = clock ?? (() => new Date());
     const origins = originsFromConfig(config);
     const keys = createTenantKeys({ kms: createKeyManagement(config.kms) });
-    const jobsOf = ({ client, db }: Pick<WorkerJobContext, 'client' | 'db'>) =>
-      createNotificationJobs({
+    const jobsOf = ({ client, db }: Pick<WorkerJobContext, 'client' | 'db'>) => {
+      // The waitlist also delivers its offers from the worker (an offer that expired passes to the
+      // next patient), through the same entry point.
+      bindOfferDelivery({
+        jobs: client,
+        clock: now,
+        whatsappAvailable: (tenant) => adapters.forTenant(tenant, 'whatsapp') !== undefined,
+      });
+      return createNotificationJobs({
         withTenant: createWithTenant(db),
         // Each organization gets the provider the resolver picks for it: a demo organization only
         // ever the fakes. A channel nobody configured is `undefined` and counts as unavailable.
@@ -151,6 +159,7 @@ export const notificationsWiring: ModuleWiring = {
         // Reminders of a virtual appointment carry the join address teleconsultation registered.
         videoJoin: videoJoin.resolver,
       });
+    };
     return {
       jobs: (context) => jobsOf(context).all,
       schedules: ({ client, db }) => [

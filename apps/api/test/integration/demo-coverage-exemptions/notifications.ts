@@ -8,6 +8,8 @@ export const exemptions: Record<string, string> = {
   whatsapp_usage_event:
     'Counts the WhatsApp messages the provider accepted; S3.16 seeds some usage.',
   whatsapp_usage_alert: 'Written when a quota threshold is crossed; the demo stays below.',
+  message_offer:
+    'The slot and link of a waitlist offer message; the offers arrive with the waitlist demo (S3.16).',
   message_event: 'Status events of the WhatsApp provider; they follow the messages S3.16 seeds.',
   inbound_message: 'Replies of patients arrive by webhook; S3.16 seeds a couple.',
   channel_preference:

@@ -52,6 +52,15 @@ function nextLocalTime(from: Date, timeZone: string, clock: string): Date {
   return (target.toMillis() > local.toMillis() ? target : target.plus({ days: 1 })).toJSDate();
 }
 
+/**
+ * When quiet hours end, if `instant` falls inside them; null otherwise (including when they are
+ * switched off). A caller that cannot send now uses it to decide whether to wait.
+ */
+export function quietHoursEnd(instant: Date, timeZone: string, quiet: QuietWindow): Date | null {
+  if (!isInQuietHours(instant, timeZone, quiet)) return null;
+  return nextLocalTime(instant, timeZone, quiet.end);
+}
+
 export function applyQuietHours(input: {
   /** When the reminder falls due. */
   due: Date;

@@ -21,6 +21,7 @@ import { readOrganizationName, type ExportRegistry } from '../tenancy/index.js';
 
 import type { Channels, MessagingDeps, TenantRef } from './application/deps.js';
 import { exportNotifications } from './application/export-contributor.js';
+import { bindOfferDelivery } from './application/offer-delivery.js';
 import { createReminderPlanner } from './application/plan-reminders.js';
 import type { WhatsAppSender } from './application/ports.js';
 import { createLinkRevoker } from './application/revoke-links.js';
@@ -121,6 +122,18 @@ export function createNotifications(options: NotificationsOptions): Notification
   const revoker = createLinkRevoker(tokens);
   options.events.subscribe((tx, event) => revoker.handle(tx, event));
 
+  // The waitlist hands its offers to `deliverWaitlistOffer`, which queues them with these.
+  bindOfferDelivery(
+    options.jobs
+      ? {
+          jobs: options.jobs,
+          clock,
+          whatsappAvailable: options.whatsappAvailable ?? (() => true),
+          quota: options.quota,
+        }
+      : undefined,
+  );
+
   if (options.jobs) {
     const planner = createReminderPlanner({
       jobs: options.jobs,
@@ -197,6 +210,16 @@ export function createNotifications(options: NotificationsOptions): Notification
   };
 }
 
+export {
+  bindOfferDelivery,
+  deliverWaitlistOffer,
+  offerQuietHoursEnd,
+} from './application/offer-delivery.js';
+export type {
+  OfferDeliveryDeps,
+  WaitlistOfferDelivery,
+  WaitlistOfferInput,
+} from './application/offer-delivery.js';
 export { createVideoJoinRegistry } from './application/video-join.js';
 export type { VideoJoin, VideoJoinRegistry, VideoJoinResolver } from './application/video-join.js';
 export { UNLIMITED_QUOTA } from './application/usage.js';

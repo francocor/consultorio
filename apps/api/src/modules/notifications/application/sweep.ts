@@ -1,7 +1,7 @@
 import type { AppointmentStatus } from '@consultorio/contracts';
-import { and, asc, eq, gt, inArray, lt, sql } from 'drizzle-orm';
+import { and, asc, eq, gt, inArray, isNotNull, lt, sql } from 'drizzle-orm';
 
-import { message } from '../../../db/schema/notifications.js';
+import { message, messageOffer } from '../../../db/schema/notifications.js';
 import { appointment } from '../../../db/schema/scheduling.js';
 import type { Tx } from '../../../platform/db/tenant-context.js';
 import type { AppointmentFacts } from '../../../platform/events/appointment-events.js';
@@ -28,6 +28,9 @@ const BATCH = 500;
  * while the organization was read-only (a retry waits minutes, not hours).
  */
 const STALE_AFTER_MS = 2 * 3_600_000;
+
+/** How long past its expiry the link of an offer is kept. */
+const OFFER_LINK_GRACE_MS = 3_600_000;
 
 const LIVE_MESSAGE = ['queued', 'sent', 'delivered', 'read'] as const;
 
@@ -61,6 +64,22 @@ export function createReminderSweepJob(deps: MessagingDeps) {
         and(
           eq(message.status, 'queued'),
           lt(message.sendAt, new Date(now.getTime() - STALE_AFTER_MS)),
+        ),
+      );
+  }
+
+  /**
+   * The link of a waitlist offer is worthless once the offer expired: it is not kept. An hour of
+   * grace, so a message that was still being retried at the expiry finds what it needs.
+   */
+  async function clearExpiredOfferLinks(tx: Tx, now: Date): Promise<void> {
+    await tx
+      .update(messageOffer)
+      .set({ url: null })
+      .where(
+        and(
+          isNotNull(messageOffer.url),
+          lt(messageOffer.expiresAt, new Date(now.getTime() - OFFER_LINK_GRACE_MS)),
         ),
       );
   }
@@ -154,6 +173,7 @@ export function createReminderSweepJob(deps: MessagingDeps) {
     payload: JobPayload,
     handler: async ({ tx, tenantId }) => {
       await closeStale(tx, deps.clock());
+      await clearExpiredOfferLinks(tx, deps.clock());
       await sweepAppointments(tx, tenantId, deps.clock());
     },
   });

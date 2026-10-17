@@ -112,7 +112,10 @@ function appointmentEmailParts(
         intro: `Hay un turno disponible en ${organization}, que usted esperaba.`,
         actions: [
           {
-            sentence: 'Para aceptarlo o rechazarlo, abra este enlace antes de que venza la oferta:',
+            sentence:
+              vars.offerExpires === undefined
+                ? 'Para aceptarlo o rechazarlo, abra este enlace antes de que venza la oferta:'
+                : `Para aceptarlo o rechazarlo, abra este enlace antes de las ${vars.offerExpires}:`,
             label: 'Ver la oferta',
             url: links.offerUrl,
           },

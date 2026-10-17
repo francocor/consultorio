@@ -151,6 +151,14 @@ function renderWhatsApp(input: RenderInput, vars: MessageVars): RenderedWhatsApp
   };
   if (vars.professional !== undefined) out['professional'] = vars.professional;
   if (vars.type !== undefined) out['type'] = vars.type;
+  if (input.kind === 'waitlist_offer') {
+    const offerUrl = input.links?.offerUrl;
+    if (offerUrl !== undefined) {
+      assertWebLink(offerUrl);
+      out['offerUrl'] = offerUrl;
+    }
+    if (vars.offerExpires !== undefined) out['offerExpires'] = vars.offerExpires;
+  }
   if (input.video !== undefined) out['mode'] = VIDEO_MODE;
   if (input.video?.kind === 'link') {
     assertWebLink(input.video.url);

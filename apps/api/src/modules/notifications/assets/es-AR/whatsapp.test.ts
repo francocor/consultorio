@@ -10,6 +10,20 @@ const vars = {
   place: 'Sede Centro',
 };
 
+describe('the WhatsApp text of a waitlist offer', () => {
+  it('carries the address that accepts the offer and the time it closes', () => {
+    const body = whatsappBody('waitlist_offer', {
+      ...vars,
+      offerUrl: 'https://aillu.example.test/public/t/OFFER',
+      offerExpires: '09:30',
+    });
+
+    expect(body).toContain('https://aillu.example.test/public/t/OFFER');
+    expect(body).toContain('09:30');
+    expect(body).toContain('BAJA');
+  });
+});
+
 describe('the WhatsApp reminder text of a video consultation', () => {
   it('shows the mode and the join address when the message carries one', () => {
     const body = whatsappBody('appointment_reminder', {
