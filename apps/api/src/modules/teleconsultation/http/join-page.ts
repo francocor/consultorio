@@ -6,11 +6,13 @@ import { createHash } from 'node:crypto';
  * the colors of the organization, and it never contains the provider's address or the room.
  *
  * It is a page with no script and no external resource: the only style is one inline block, which
- * the content policy allows by its hash. The page has nothing that varies per visitor, so every
+ * the content policy allows by its hash. The `ready` page has one form, whose button posts to the
+ * address of the page itself: looking at the link never enters the call (a mail scanner opens
+ * links), and the patient always sees the notice about the third-party service before entering. The page has nothing that varies per visitor, so every
  * answer of one kind is byte for byte the same (an unavailable link teaches nothing).
  */
 
-export type JoinPageKind = 'early' | 'closed' | 'pending' | 'unavailable';
+export type JoinPageKind = 'ready' | 'early' | 'closed' | 'pending' | 'unavailable';
 
 export interface JoinPageModel {
   kind: JoinPageKind;
@@ -27,6 +29,11 @@ const COPY = {
   notice:
     'Esta consulta se realiza mediante un servicio de videollamada de terceros. El centro no graba ni guarda el audio ni el video de la consulta.',
   noticeLabel: 'Aviso sobre la videollamada',
+  ready: {
+    title: 'Su videoconsulta está lista',
+    body: 'Cuando quiera comenzar, entre a la sala con el botón de abajo.',
+    button: 'Entrar a la videoconsulta',
+  },
   early: {
     title: 'Su videoconsulta todavía no comenzó',
     body: (when: { date: string; time: string }) =>
@@ -64,6 +71,8 @@ function accentOf(value: string): string {
 
 function contentOf(model: JoinPageModel): { title: string; body: string; withNotice: boolean } {
   switch (model.kind) {
+    case 'ready':
+      return { title: COPY.ready.title, body: COPY.ready.body, withNotice: true };
     case 'early':
       return {
         title: COPY.early.title,
@@ -91,6 +100,8 @@ export interface RenderedJoinPage {
   html: string;
   /** The content policy that goes with the page: the hash of its one style block, nothing else. */
   contentSecurityPolicy: string;
+  /** True when the page posts back to its own address (it needs `Referrer-Policy: same-origin`). */
+  hasForm: boolean;
 }
 
 export function renderJoinPage(model: JoinPageModel): RenderedJoinPage {
@@ -109,12 +120,20 @@ h2{margin:0 0 .25rem;font-size:1rem}
 p{margin:0 0 1rem}
 .notice{margin-top:1.5rem;padding:1rem;background:#f1f5f9;border-radius:.5rem;color:#1e293b}
 .notice p{margin:0;font-size:.9375rem}
+form{margin:1rem 0 0}
+button{font:inherit;font-weight:600;padding:.75rem 1.25rem;border:0;border-radius:.5rem;background:#1e293b;color:#ffffff;cursor:pointer}
+button:focus-visible{outline:3px solid #0f172a;outline-offset:2px}
 `;
   const styleHash = createHash('sha256').update(css).digest('base64');
 
   const notice = withNotice
     ? `<section class="notice" aria-labelledby="notice-title"><h2 id="notice-title">${escapeHtml(COPY.noticeLabel)}</h2><p>${escapeHtml(COPY.notice)}</p></section>`
     : '';
+
+  const form =
+    model.kind === 'ready'
+      ? `<form method="post"><button type="submit">${escapeHtml(COPY.ready.button)}</button></form>`
+      : '';
 
   const html = `<!doctype html>
 <html lang="es-AR">
@@ -131,6 +150,7 @@ p{margin:0 0 1rem}
 <p class="org">${organization}</p>
 <h1>${escapeHtml(title)}</h1>
 <p>${escapeHtml(body)}</p>
+${form}
 ${notice}
 </div>
 </main>
@@ -140,6 +160,7 @@ ${notice}
 
   return {
     html,
-    contentSecurityPolicy: `default-src 'none'; style-src 'sha256-${styleHash}'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'`,
+    contentSecurityPolicy: `default-src 'none'; style-src 'sha256-${styleHash}'; base-uri 'none'; form-action ${model.kind === 'ready' ? "'self'" : "'none'"}; frame-ancestors 'none'`,
+    hasForm: model.kind === 'ready',
   };
 }

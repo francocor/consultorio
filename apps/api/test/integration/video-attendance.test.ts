@@ -74,11 +74,16 @@ async function issueToken(created: AppointmentDto) {
   return issued.token;
 }
 
+/** The button of the page behind the address: the patient enters the call. */
 const openLink = (token: string) =>
   world.app.inject({
-    method: 'GET',
+    method: 'POST',
     url: `/public/v/${token}`,
-    headers: { host: hostOf(world.slug), 'user-agent': 'vitest-patient' },
+    headers: {
+      host: hostOf(world.slug),
+      origin: `https://${hostOf(world.slug)}`,
+      'user-agent': 'vitest-patient',
+    },
   });
 
 describe('virtual appointment attendance', () => {

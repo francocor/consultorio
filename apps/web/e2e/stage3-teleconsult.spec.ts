@@ -178,8 +178,18 @@ async function patientLink(
 }
 
 /** Where the call opens, without following it: the address of the redirect. */
+/**
+ * What the patient's browser does with the address: the page offers a button (a GET never enters
+ * the call), and the button posts from the same origin and is forwarded.
+ */
 async function redirectOf(api: APIRequestContext, link: string): Promise<string | null> {
-  const response = await api.get(link, { maxRedirects: 0 });
+  const page = await api.get(link, { maxRedirects: 0 });
+  expect(page.status()).toBe(200);
+  expect(await page.text()).toContain('Entrar a la videoconsulta');
+  const response = await api.post(link, {
+    maxRedirects: 0,
+    headers: { origin: new URL(link).origin },
+  });
   expect(response.status()).toBe(302);
   return response.headers()['location'] ?? null;
 }

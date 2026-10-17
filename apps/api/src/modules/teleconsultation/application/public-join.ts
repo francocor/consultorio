@@ -19,6 +19,8 @@ import { loadAppointmentFacts, loadSession, readVideoPolicy } from './video-stat
 export type PublicJoinOutcome =
   /** Inside the window with a link: send the patient to the call. */
   | { kind: 'redirect'; url: string }
+  /** Looking only: the call can be entered now. Nothing was spent and nothing was recorded. */
+  | { kind: 'ready' }
   /** Before the window: say when it opens. Nothing about the provider. */
   | { kind: 'early'; opensAt: Date; timeZone: string }
   /** After the window, or the session was closed. */
@@ -28,6 +30,11 @@ export type PublicJoinOutcome =
   | { kind: 'unavailable' };
 
 export interface PublicJoinInput {
+  /**
+   * `view` (a GET) only looks: mail scanners and link previews open links, so it never spends a use
+   * of the link nor says the patient opened it. `enter` (the POST of the button) does both.
+   */
+  mode: 'view' | 'enter';
   token: string;
   /** Who is asking, for the audit entry (address and browser; never a user). */
   actor: AuditActor;
@@ -68,6 +75,7 @@ export async function openPublicJoin(
       ? provider.joinUrl(facts.videoRoom)
       : null);
   if (target === null) return { kind: 'pending' };
+  if (input.mode === 'view') return { kind: 'ready' };
 
   // The use is spent only now, when the patient really goes to the call.
   const used = await deps.tokens.redeem(tx, 'video_join', input.token);

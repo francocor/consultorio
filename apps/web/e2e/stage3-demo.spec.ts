@@ -495,7 +495,13 @@ test('a patient books online, is reminded and confirms, has a video visit, and a
 
   await test.step('the address opens the call, and the professional joins from the appointment', async () => {
     const anonymous = await playwright.request.newContext();
-    const opened = await anonymous.get(call.link, { maxRedirects: 0 });
+    // Looking at the address only shows the button; pressing it (a POST from the same origin) enters.
+    const looked = await anonymous.get(call.link, { maxRedirects: 0 });
+    expect(looked.status()).toBe(200);
+    const opened = await anonymous.post(call.link, {
+      maxRedirects: 0,
+      headers: { origin: new URL(call.link).origin },
+    });
     expect(opened.status()).toBe(302);
     expect(opened.headers()['location']).toBe(MANUAL_CALL);
 
