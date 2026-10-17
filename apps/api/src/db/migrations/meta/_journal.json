@@ -358,6 +358,13 @@
       "when": 1792249322566,
       "tag": "0342_public_hold",
       "breakpoints": true
+    },
+    {
+      "idx": 51,
+      "version": "7",
+      "when": 1792249322567,
+      "tag": "0370_video_session",
+      "breakpoints": true
     }
   ]
 }

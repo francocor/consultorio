@@ -47,7 +47,9 @@ export const TOKEN_KIND_REGISTRY: Record<TokenKind, KindSpec> = {
   // A booking can be made up to a year ahead (the horizon setting), and its link lives until the start.
   appointment_reschedule: { ttlMs: 366 * DAY, maxUses: 1, sessionBound: false, enabled: true },
   waitlist_offer: { ttlMs: 2 * DAY, maxUses: 1, sessionBound: false, enabled: false },
-  video_join: { ttlMs: 3 * HOUR, maxUses: 20, sessionBound: false, enabled: false },
+  // Reminders issue the link a day or more ahead, so the kind allows three days; the issuer asks
+  // for the join window it needs (until the window closes plus the hours the address stays known).
+  video_join: { ttlMs: 3 * DAY, maxUses: 20, sessionBound: false, enabled: true },
   notification_opt_out: { ttlMs: 3650 * DAY, maxUses: 1, sessionBound: false, enabled: true },
   whatsapp_opt_in: { ttlMs: 7 * DAY, maxUses: 1, sessionBound: false, enabled: true },
   document_download: { ttlMs: 5 * MINUTE, maxUses: 1, sessionBound: true, enabled: true },
