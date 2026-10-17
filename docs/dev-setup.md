@@ -136,24 +136,27 @@ To try the production image locally: `docker compose --env-file .env -f infra/do
 
 ## Everyday commands
 
-| Command                                         | What it does                                                                                                       |
-| ----------------------------------------------- | ------------------------------------------------------------------------------------------------------------------ |
-| `pnpm typecheck`                                | TypeScript across all packages                                                                                     |
-| `pnpm lint` / `pnpm format:check`               | ESLint and Prettier (`pnpm format` fixes formatting)                                                               |
-| `pnpm test`                                     | Unit tests (Vitest: api and contracts in Node, web in jsdom)                                                       |
-| `pnpm test:coverage`                            | Same, with a v8 coverage report in `coverage/`                                                                     |
-| `pnpm test:integration`                         | Integration tests against a real Postgres 17 (needs Docker)                                                        |
-| `pnpm test:e2e`                                 | Builds the web app and runs Playwright on mobile and desktop                                                       |
-| `pnpm demo:seed`                                | Seeds the demo organization "aillu" in your local database                                                         |
-| `pnpm demo:reset`                               | Puts a demo organization back to its starting content                                                              |
-| `pnpm demo:stack`                               | A throwaway Docker stack with two demo organizations                                                               |
-| `pnpm backup:local`                             | Backs up the local database and bucket; `verify` and `restore` subcommands (see `docs/runbooks/backup-restore.md`) |
-| `pnpm --filter @consultorio/api bench:clinical` | Benchmarks the clinical row level security with 100,000 notes (`docs/perf/clinical-readable.md`)                   |
-| `pnpm build`                                    | Builds the web app and bundles the API into `apps/api/dist`                                                        |
-| `pnpm db:check`                                 | Fails when the Drizzle schema and the migrations disagree                                                          |
-| `pnpm --filter @consultorio/api db:generate`    | Generates a migration from schema changes                                                                          |
+| Command                                         | What it does                                                                                                                                                   |
+| ----------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `pnpm typecheck`                                | TypeScript across all packages                                                                                                                                 |
+| `pnpm lint` / `pnpm format:check`               | ESLint and Prettier (`pnpm format` fixes formatting)                                                                                                           |
+| `pnpm test`                                     | Unit tests (Vitest: api and contracts in Node, web in jsdom)                                                                                                   |
+| `pnpm test:coverage`                            | Same, with a v8 coverage report in `coverage/`                                                                                                                 |
+| `pnpm test:integration`                         | Integration tests against a real Postgres 17 (needs Docker)                                                                                                    |
+| `pnpm test:e2e`                                 | Builds the web app and runs Playwright on mobile and desktop                                                                                                   |
+| `pnpm demo:seed`                                | Seeds the demo organization "aillu" in your local database                                                                                                     |
+| `pnpm demo:reset`                               | Puts a demo organization back to its starting content                                                                                                          |
+| `pnpm demo:stack`                               | A throwaway Docker stack with two demo organizations                                                                                                           |
+| `pnpm backup:local`                             | Backs up the local database and bucket; `verify` and `restore` subcommands (see `docs/runbooks/backup-restore.md`)                                             |
+| `pnpm --filter @consultorio/api bench:clinical` | Benchmarks the clinical row level security with 100,000 notes (`docs/perf/clinical-readable.md`)                                                               |
+| `pnpm build`                                    | Builds the web app and bundles the API into `apps/api/dist`                                                                                                    |
+| `pnpm db:check`                                 | Fails when the migration journal is unsound (a stamp that does not rise, a duplicate or out-of-range number) or the Drizzle schema and the migrations disagree |
+| `pnpm db:new <track> <name>`                    | Creates the next migration of a track, in its range (`docs/migration-ranges.md`)                                                                               |
+| `pnpm db:restamp`                               | After a merge or a rebase: raises stamps that do not rise and re-chains the snapshots                                                                          |
 
 Migrations are forward-only. Never edit a migration that has been merged; add a new one.
+
+**Migrations in parallel tracks.** Stages 3 to 6 are built by parallel tracks, so migrations are numbered by range (Stage 3 is `0300`-`0399`, split by track) and are created with `pnpm db:new <track> <name>`, for example `pnpm db:new 3a notifications_core`. Never run `drizzle-kit generate` by hand (`db:generate` refuses): it names files by position, not by range, and takes the wrong snapshot as the current state once ranges interleave. After merging or rebasing a branch that has migrations, run `pnpm db:restamp` and `pnpm db:check`, then commit what they changed. The reasons (Drizzle's migrator skips an entry whose stamp is older than the last one a database ran), the ranges of every track and the exact workflow are in `docs/migration-ranges.md`.
 
 `pnpm test:e2e` starts its own stack (Postgres, MinIO, Mailpit, API and worker in Docker) and the preview server: the web on port 4173, the API on 3100 and the document storage (MinIO) on 9190. When another run holds those ports (several worktrees on one machine), give the run its own, and Playwright starts everything on them:
 
