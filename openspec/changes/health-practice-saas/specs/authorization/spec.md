@@ -259,6 +259,20 @@ A health professional MUST read clinical content only of patients with whom they
 - THEN access is denied, because a pending appointment never creates a care relationship
 - AND after approval, access also requires the identity to be confirmed when the booking matched an existing patient
 
+### Requirement: Opening an encounter does not create access
+
+Opening an encounter MUST NOT, by itself, give the professional a care relationship with the patient. The relationship MUST come from an appointment with confirmed identity, an explicit assignment or a signed encounter that already exists, with the single exception of a patient nobody has written about yet. An encounter that is still a draft MUST NOT count as a source. The database MUST refuse an encounter that the service would refuse. (Decision D20, orchestrator decision pending owner confirmation; the clinical-records spec has the full rule.)
+
+#### Scenario: Opening an encounter to read a record
+- GIVEN patient P has signed notes by professional A and professional B has no care relationship with P
+- WHEN B posts an encounter for P in order to read P's record
+- THEN the request is denied and audited, no encounter is created and B gains no access
+
+#### Scenario: Backstop under the service
+- GIVEN the same situation and a write that reaches the database without passing through the service
+- WHEN the encounter is inserted
+- THEN the database refuses it
+
 ### Requirement: Explicit patient assignment
 
 An owner/admin or a user holding the patient-administration permission MUST be able to assign a patient to a professional and to remove that assignment. The assignment MUST create a care relationship for that professional. A professional MUST NOT be able to assign a patient to themselves. Assignment and removal MUST be audited. This action MUST be available from Stage 1, so that a professional can record anamnesis before any appointment exists.

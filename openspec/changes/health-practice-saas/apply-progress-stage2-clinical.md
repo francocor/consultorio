@@ -4,7 +4,7 @@ Change `health-practice-saas`. Mode: **Strict TDD**. Artifact store: openspec. W
 
 ## Status
 
-Tasks 2.47 to 2.74 (slices S2.17 to S2.24) are done and marked `[x]` in `tasks.md`. Nothing is merged and no pull request is open; the branch is pushed.
+Tasks 2.47 to 2.74 (slices S2.17 to S2.24) are done and marked `[x]` in `tasks.md`. Nothing is merged and no pull request is open; the branch is pushed. A fresh security review came back FIX BEFORE MERGE; its fixes are in the section "Security review fixes (round 2)" below.
 
 | Slice | Tasks | Commits |
 |---|---|---|
@@ -17,13 +17,15 @@ Tasks 2.47 to 2.74 (slices S2.17 to S2.24) are done and marked `[x]` in `tasks.m
 | Demo seed (signed notes per specialty) | n/a | `b202ee2` |
 | Playwright journeys | 2.69, 2.74 | `6b531e9` |
 | Test timeouts, task marks, this file | n/a | `4d3325e` and the commit that adds this file |
+| Security review fixes (H1/D20, M1, M2, L1; L2) | n/a | `4c31b3f`, `a29b7d2`, then the docs commit |
 
 ## Migrations added
 
-Numbered 0060 and up, as the orchestrator asked (scheduling uses 0023 to 0039, documents 0040 and up). The journal `idx` values are 23 and 24 (what drizzle-kit wrote); only the file tags and snapshot names were renamed, so the orchestrator renumbers at merge.
+Numbered 0060 and up, as the orchestrator asked (scheduling uses 0023 to 0039, documents 0040 and up). The journal `idx` values are 23, 24 and 25 (what drizzle-kit wrote); only the file tags and snapshot names were renamed, so the orchestrator renumbers at merge.
 
 - `0060_clinical.sql`: `encounter`, `clinical_note`, `note_version`, `addendum`; tenant policies (FORCE RLS), the two RESTRICTIVE clinical policies on each, a RESTRICTIVE policy that keeps a draft private to its author, a RESTRICTIVE insert policy so only a treating professional adds an addendum, `REVOKE DELETE, TRUNCATE` on all four, `REVOKE UPDATE` on versions and addenda, column-level `UPDATE (visibility, updated_at)` on encounters.
-- `0061_clinical_triggers.sql`: immutability and care triggers (see decisions). Two new SECURITY DEFINER functions, `app.encounter_care_sync()` and `app.clinical_note_care_sync()`, executable by nobody (only trigger firing); both are in the allowlist of `definer-functions.test.ts`.
+- `0061_clinical_triggers.sql`: immutability and care triggers (see decisions). Two SECURITY DEFINER functions, `app.encounter_care_sync()` and `app.clinical_note_care_sync()`, executable by nobody (only trigger firing); both were in the allowlist of `definer-functions.test.ts`. Migration 0062 later removed the first.
+- `0062_clinical_d20.sql` (security review round 2): encrypted reasons, the discarded draft copy, `clinical_footprint`, D20 in `encounter_guard`, counting on signature (see the section below).
 
 ## What was built
 
@@ -75,14 +77,14 @@ Node v24, pnpm 10.34.7 via corepack, Docker Desktop running. The host was heavil
 
 ## Decisions and deviations
 
-1. **Encounters and care relationship (task 2.49).** An encounter counts for the author as soon as it is opened (draft included), as source 2 of the care relationship. An entry marked in error stops counting (`care_adjust(..., -1)`), because otherwise opening an encounter on the wrong patient would leave the professional with access to that patient's record. The design only says "an encounter by the professional"; this is the safer reading. Both triggers run as the owner because `app_rw` cannot write `care_relationship`.
+1. **Encounters and care relationship (task 2.49).** *Superseded by D20 (see the security review fixes): only a SIGNED encounter counts.* In the first pass an encounter counted for the author as soon as it was opened (draft included), as source 2 of the care relationship. An entry marked in error stops counting (`care_adjust(..., -1)`), because otherwise opening an encounter on the wrong patient would leave the professional with access to that patient's record. The design only says "an encounter by the professional"; this is the safer reading. Both triggers run as the owner because `app_rw` cannot write `care_relationship`.
 2. **A draft is private to its author** (RESTRICTIVE policy `clinical_draft_author_only`), even from a professional who treats the patient. The spec lets only the author edit a draft; reading it was not specified, and a working copy is not part of the shared record. An author may also mark their own **draft** as entered in error (a draft opened on the wrong patient could never be removed otherwise); the design allowed it only from signed.
 3. **`signed_by` was dropped** from `clinical_note` and `note_version`: only the author can sign (the trigger enforces it), so the signer is `author_professional_id`. `error_marked_by` has no foreign key (the trigger sets it to the acting professional). Both keep the composite-key set of the generic isolation suite simple: every composite key is `(tenant_id, x_id)`.
 4. **Encounter repeats `visibility` and `template_kind`** of its note so the policies decide on one row; a trigger keeps the visibility equal while the note is a draft. One note per encounter (unique index).
 5. **`appointment_id` is nullable with no foreign key** on `encounter` (an extension point, indexed). `POST /encounters` accepts `appointmentId`; scheduling can add the foreign key and the "in progress" prefill. The web link is `/encounters/new?patientId=&appointmentId=`. Today and the appointment drawer (S2.15) do not exist on this base, so task 2.68 is met through the patient chart, the drafts view and that link.
 6. **Content is encrypted per row**: the draft with the AAD of the note, the signed version with the AAD of the version, the addendum with its own. The stored plaintext is the canonical JSON (sorted keys), so the stored SHA-256 is the hash of exactly what was encrypted. Signing clears the working copy.
 7. **Optimistic signing**: `POST /notes/:id/sign` also accepts `expectedRevision` (the editor sends it) so a second tab's newer save is never signed unseen (409 `stale_revision`).
-8. **Reasons (`reason`, `error_reason`) are plaintext columns**, as in the design's ERD, protected by the clinical policies; encrypting them would remove the database-level non-empty check. Noted as a risk.
+8. **Reasons (`reason`, `error_reason`) were plaintext columns** in the first pass. Superseded: they are encrypted since migration 0062 (see the security review fixes).
 9. **Hidden-or-missing notes answer 404** (`GET /notes/:id`), uniform with the rest; the spec's "denied and audited" is met on the timeline and the search (403 plus a deny entry) where the patient is known. Refusals decided by a service carry the patient and the entry in their deny audit row.
 10. **Read-only organization (D16)**: the addendum route has the `rectification_addendum` category, so the policy lets it in, and the service refuses any other kind with 402. New encounters, drafts, signatures, other addenda and error marks are refused by the `write` category.
 11. **Audit volume**: each autosave writes a `clinical.note.updated` entry (clinical writes must be audited and a write must not complete without its entry). With a 1.5 s debounce this is a handful per consultation.
@@ -95,9 +97,49 @@ Node v24, pnpm 10.34.7 via corepack, Docker Desktop running. The host was heavil
 18. **Local-only tooling, not committed**: a persistent Postgres 17 container (`consultorio_clin_pg`, 127.0.0.1:55432), `apps/api/test/support/local-postgres.ts`, `apps/api/vitest.local.config.ts` and two stack scripts (all excluded through `.git/info/exclude`) were used because Testcontainers could not start Postgres inside its two-minute limit while the host was loaded. They run the same roles script and migrations.
 19. **TDD deviations (honest list)**: the editor, the specialty field components and the chart components were written before their component tests; the tests were then written in full and all pass, including axe. The contract test files were written before their modules but their failing run was not executed. Everything in the backend followed RED first with a seen failing run (schema, triggers) or a missing-route run.
 
+## Security review fixes (round 2)
+
+A fresh security review of the track came back FIX BEFORE MERGE. Each finding was reproduced by a failing test first (RED: 16 of 23 new tests failed before any fix), then fixed. Migration `0062_clinical_d20.sql` (journal idx 25) carries every schema change; no earlier migration was edited.
+
+| Finding | Commit | What changed | Test |
+|---|---|---|---|
+| H1 (HIGH), D20 | `4c31b3f` | `open()` refuses (403 plus a deny audit entry naming the patient, reason `encounter_requires_relationship`) unless the professional already treats the patient or the patient has no clinical footprint; `encounter_guard` repeats the rule (42501) as a database backstop; `clinical_note_care_sync` counts an encounter only when its note is SIGNED (a signed entry marked in error still takes it back, a draft marked in error never counted); trigger `encounter_care_sync` dropped; new table `clinical_footprint` (written by definer triggers on the first note or anamnesis; backfilled) and invoker function `app.has_clinical_footprint`; `appointmentId` is checked through an injected `AppointmentLookup` (patient and professional must match, `appointment_mismatch`; no lookup configured means the link is refused) | `clinical-encounter-access.test.ts` (14 cases), `clinical-immutability.test.ts` (care relationship block rewritten) |
+| M1 | `4c31b3f` | Marking an entry in error sets `draft_content_enc = NULL`; the trigger refuses an error mark that keeps it (23000) and `clinical_note_state_check` requires it; `openContent` returns `{}` for such a note, so the entry, the timeline and the history show nothing | `clinical-hardening.test.ts` (M1, 3 cases) |
+| M2 | `4c31b3f` | `addendum.reason` and `clinical_note.error_reason` replaced by `reason_enc` / `error_reason_enc`, encrypted with the row-bound field encryption like the content; every reader (note, history, timeline, search, export) decrypts; the non-blank rule now lives in the contract (400) and the database only insists on a value | `clinical-hardening.test.ts` (M2, 3 cases), `clinical-immutability.test.ts` |
+| L1 | `4c31b3f` | `expectedRevision` is required on `POST /notes/:id/sign` (400 without it, 409 `stale_revision` when it is not the current one) | `clinical-hardening.test.ts` (L1) |
+| L2 | `a29b7d2` | `GET /patients/:id/clinical/search` counts per user (`clinical.search|tenant|user`) on the existing `RateLimitStore`: default 30 a minute, 429 with `Retry-After` and `rate_limited`; configurable through `ApplicationOptions.clinical.searchRateLimit`; no other clinical read is counted | `clinical-hardening.test.ts` (L2, 2 cases) |
+| L3 | n/a | Left as is, handled at merge | n/a |
+
+### D20: orchestrator decision, pending owner confirmation
+
+Opening an encounter must require an ALREADY active care relationship from another source: an appointment with confirmed identity (D14/D18), a care assignment, or a previously SIGNED encounter. A patient with no clinical footprint (no notes, no anamnesis, no clinical documents, no care relationship with anyone) may get a first encounter. A draft does not count as a care source until its note is signed. `appointmentId`, when given, must reference an appointment of the same patient and professional (application-level check now, foreign key at merge). Enforced in the service and as a database backstop in `encounter_guard`. Specs updated: clinical-records ("Opening an encounter needs a care relationship", plus scenarios for signing without a revision, a draft marked in error, and the search rate limit) and authorization ("Opening an encounter does not create access"). Design 3.4 updated for the encrypted reasons and the footprint table.
+
+Consequences worth knowing:
+
+- The footprint counts any note, including one marked in error. A professional who marks their own never-signed draft in error cannot open another encounter on that patient without another source (an assignment or an appointment). Chosen on purpose: the footprint says "somebody wrote here", and forgetting it would reopen the hole.
+- Documents classified as clinical must also mark `clinical_footprint` when that module lands (a trigger calling `app.clinical_footprint_mark()`); until then documents do not count.
+- Until scheduling provides the appointment lookup (`clinical.appointments` in `createApplication`), an encounter cannot name an appointment (403 `appointment_mismatch`). The web link `/encounters/new?appointmentId=` therefore fails closed until the merge wires the lookup. Scheduling also has to feed the appointment source of `care_relationship`, which is what makes the first encounter possible for a patient who already has a record.
+- The migration drops the old encounter-time counting and recounts `care_relationship.encounters` from signed entries. It adds `reason_enc NOT NULL` without a default, so it fails closed on a database that already holds addenda (none exists outside demo and test data; the demo is reseeded).
+- Decision 1 and decision 8 of the list below are superseded by this section.
+
+### Verification of the fixes
+
+Run on the final tree. Host shared with other writers; the unit suite had one jsdom timing failure under load (`clinical-editor.test.tsx`) that passes alone (14 of 14).
+
+| Command | Result |
+|---|---|
+| `corepack pnpm typecheck` | exit 0 |
+| `corepack pnpm lint` / `format:check` | exit 0 / exit 0 (the local-only files described in decision 18 were moved aside, as in CI, because ESLint cannot parse `vitest.local.config.ts`) |
+| `corepack pnpm test` | 157 files, 1861 tests: 1860 passed, 1 jsdom timing failure under load that passes alone |
+| `corepack pnpm test:integration` (Testcontainers, the official runner) | **87 files, 1298 tests passed** |
+| Same suite against the persistent local Postgres | 87 files; the only failures were the 5 generated isolation tests for the new table, fixed by registering a `clinical_footprint` fixture; the tenancy, RLS and definer files then passed (133 tests) |
+| `corepack pnpm build` | exit 0 |
+| `corepack pnpm db:check` | "No migration drift." (before and after the commits) |
+| Playwright (ports 3200 / 4273, fresh stack, desktop and mobile-360) | **137 passed** |
+
 ## Shared files touched
 
-`packages/contracts/src/index.ts` (exports), `apps/api/src/main/application.ts` (module registration and the optional `clinical.searchCap` test option), `apps/api/src/main/export-contributors.ts`, `apps/api/src/db/schema/index.ts`, `apps/api/src/db/migrations/meta/_journal.json`, `apps/api/src/modules/patients/index.ts` (exports `isTreating`), `apps/api/test/integration/definer-functions.test.ts` (two allowlist entries), `apps/api/test/policy/audit-scenarios.ts` (clinical actions now point at tests), `apps/api/test/support/fixtures.ts` (four clinical fixtures), the demo seed (`dataset.ts`, `seed.ts`, `snapshot.ts` and their tests), `apps/web/src/app/{i18n.ts,router.tsx}` and `shared/lib/translate.ts` (namespace `clinical`, routes `/notes/$noteId`, `/encounters/new`, `/drafts`, and `?tab=chart` on the patient route), `apps/web/src/features/patients/PatientDetailPage.tsx` (chart tab), `apps/web/playwright.config.ts`, `docs/demo.md`, `tasks.md`. The navigation (`nav-config.ts`) was not changed: the `drafts` entry already exists and shows when `ENABLED_STAGE` reaches 2.
+`packages/contracts/src/index.ts` (exports), `apps/api/src/main/application.ts` (module registration and the optional `clinical.searchCap` test option), `apps/api/src/main/export-contributors.ts`, `apps/api/src/db/schema/index.ts`, `apps/api/src/db/migrations/meta/_journal.json`, `apps/api/src/modules/patients/index.ts` (exports `isTreating`), `apps/api/test/integration/definer-functions.test.ts` (allowlist entries: `app.clinical_note_care_sync()` and `app.clinical_footprint_mark()`), `apps/api/test/policy/audit-scenarios.ts` (clinical actions now point at tests), `apps/api/test/support/fixtures.ts` (four clinical fixtures), the demo seed (`dataset.ts`, `seed.ts`, `snapshot.ts` and their tests), `apps/web/src/app/{i18n.ts,router.tsx}` and `shared/lib/translate.ts` (namespace `clinical`, routes `/notes/$noteId`, `/encounters/new`, `/drafts`, and `?tab=chart` on the patient route), `apps/web/src/features/patients/PatientDetailPage.tsx` (chart tab), `apps/web/playwright.config.ts`, `docs/demo.md`, `tasks.md`. The navigation (`nav-config.ts`) was not changed: the `drafts` entry already exists and shows when `ENABLED_STAGE` reaches 2.
 
 ## Gotchas worth keeping
 
@@ -111,5 +153,5 @@ Node v24, pnpm 10.34.7 via corepack, Docker Desktop running. The host was heavil
 
 - Merge: scheduling and documents also edit `application.ts`, `router.tsx`, `audit-scenarios.ts`, `fixtures.ts`, `definer-functions.test.ts`, `i18n.ts`, `tasks.md` and the demo seed. The orchestrator renumbers the two migrations; the new definer functions need no renumbering. When scheduling adds `appointment`, add the foreign key on `encounter.appointment_id` and the appointment source to `care_relationship`.
 - Re-authentication for signing (a spec SHOULD) is not implemented.
-- The organization-level toggle for templates and the reasons as plaintext columns (decision 8, 12) are open.
+- The organization-level toggle for templates (decision 12) is open. D20 needs the owner's confirmation.
 - The integration suite is load-sensitive on this host (tests with 15 to 30 s budgets); CI runners are quieter.
