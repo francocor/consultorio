@@ -15,6 +15,7 @@ export * from './coverage.js';
 export * from './documents.js';
 export * from './errors.js';
 export * from './health.js';
+export * from './onboarding.js';
 export * from './operator.js';
 export * from './password.js';
 export * from './patients.js';

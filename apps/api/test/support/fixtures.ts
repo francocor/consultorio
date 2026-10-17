@@ -659,6 +659,18 @@ export const TENANT_FIXTURES: Record<string, TenantTableFixture> = {
               RETURNING id`,
       ),
   },
+  onboarding_state: {
+    // One row per organization: the suite inserts for the same tenant several times, so the
+    // fixture updates the row that is already there (the policy still checks the proposed row).
+    insert: (tx, tenantId) =>
+      returningId(
+        tx,
+        sql`INSERT INTO onboarding_state (tenant_id, answers)
+              VALUES (${tenantId}, '{"isProfessional": true}'::jsonb)
+              ON CONFLICT (tenant_id) DO UPDATE SET answers = EXCLUDED.answers
+              RETURNING id`,
+      ),
+  },
   tenant_feature: {
     insert: (tx, tenantId) =>
       returningId(

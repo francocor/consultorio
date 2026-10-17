@@ -22,6 +22,7 @@ import { uuidv7 } from '../../../platform/db/uuid.js';
 import { membershipLocation } from '../../schema/access.js';
 import { patientCoverage, payerPlan } from '../../schema/coverage.js';
 import { membership, userAccount } from '../../schema/identity.js';
+import { onboardingState } from '../../schema/onboarding.js';
 import { patient, patientRepresentative, patientVersion } from '../../schema/patients.js';
 import { payer } from '../../schema/platform-catalogs.js';
 import { dataProcessingConsent } from '../../schema/privacy.js';
@@ -411,6 +412,19 @@ export async function seedDemoTenant(
       );
     }
   }
+
+  // 6. The demo organization is already set up: it opens on its agenda, with no setup wizard and no
+  // first-run checklist on its pages (a fresh organization created by the operator shows both).
+  await deps.withTenant({ tenantId, userId: owner.userId }, (tx) =>
+    tx.insert(onboardingState).values({
+      tenantId,
+      answers: { isProfessional: false, path: 'center' },
+      wizardCompletedAt: now,
+      wizardCompletedBy: owner.userId,
+      checklistDismissedAt: now,
+      checklistDismissedBy: owner.userId,
+    }),
+  );
 
   return { credentials };
 }

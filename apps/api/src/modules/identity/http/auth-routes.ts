@@ -4,6 +4,7 @@ import {
   MeResponse,
   SessionList,
   effectivePermissions,
+  type Permission,
 } from '@consultorio/contracts';
 import { eq } from 'drizzle-orm';
 import type { FastifyInstance } from 'fastify';
@@ -14,7 +15,7 @@ import { userAccount } from '../../../db/schema/identity.js';
 import { tenant } from '../../../db/schema/tenant.js';
 import { audit } from '../../../platform/audit/writer.js';
 import { noGrants, type GrantsRepo } from '../../../platform/authz/guard.js';
-import type { WithTenant } from '../../../platform/db/tenant-context.js';
+import type { Tx, WithTenant } from '../../../platform/db/tenant-context.js';
 import { primaryRole } from '../../../platform/http/auth-guard.js';
 import { AppError, denied } from '../../../platform/http/problem.js';
 import {
@@ -37,6 +38,11 @@ export interface AuthRoutesDeps {
   grants?: GrantsRepo;
   /** Sign-in attempts per client address and tenant. */
   loginRateLimit?: { max: number; timeWindow: number };
+  /**
+   * Whether the person must run the setup wizard (the onboarding module answers). Without it the
+   * profile never asks for the wizard.
+   */
+  needsWizard?: (tx: Tx, permissions: readonly Permission[]) => Promise<boolean>;
 }
 
 const SessionIdParams = z.strictObject({ id: z.uuid() });
@@ -165,10 +171,18 @@ export function authRoutes(deps: AuthRoutesDeps) {
           organizationRequires: profile.settings?.['require_2fa'] === true,
           now: new Date(),
         });
+        const permissions = effectivePermissions(current.roles, grants);
+        const needsWizard =
+          current.scope === 'full' && deps.needsWizard
+            ? await deps.withTenant(
+                { tenantId: current.tenantId, userId: current.userId },
+                (tx) => deps.needsWizard?.(tx, permissions) ?? Promise.resolve(false),
+              )
+            : false;
         return {
           user: { id: current.userId, email },
           roles: [...current.roles],
-          permissions: effectivePermissions(current.roles, grants),
+          permissions,
           scope: current.scope,
           twoFactor: {
             enrolled: profile.enrolled,
@@ -177,6 +191,7 @@ export function authRoutes(deps: AuthRoutesDeps) {
           },
           tenantStatus:
             request.hostContext?.kind === 'tenant' ? request.hostContext.tenant.status : 'active',
+          needsWizard,
         };
       },
     );

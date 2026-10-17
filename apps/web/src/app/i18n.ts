@@ -8,6 +8,7 @@ import clinical from '../locales/es-AR/clinical.json';
 import common from '../locales/es-AR/common.json';
 import documents from '../locales/es-AR/documents.json';
 import errors from '../locales/es-AR/errors.json';
+import onboarding from '../locales/es-AR/onboarding.json';
 import operator from '../locales/es-AR/operator.json';
 import patients from '../locales/es-AR/patients.json';
 import scheduling from '../locales/es-AR/scheduling.json';
@@ -36,6 +37,7 @@ const RESOURCES = {
   country,
   documents,
   errors,
+  onboarding,
   operator,
   patients,
   scheduling,

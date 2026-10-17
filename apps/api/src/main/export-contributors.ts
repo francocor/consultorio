@@ -3,6 +3,7 @@ import { registerAuditExportContributors } from '../modules/audit/index.js';
 import { registerClinicalExportContributors } from '../modules/clinical/index.js';
 import { registerDocumentsExportContributors } from '../modules/documents/index.js';
 import { registerIdentityExportContributors } from '../modules/identity/index.js';
+import { registerOnboardingExportContributors } from '../modules/onboarding/index.js';
 import { registerPatientsExportContributors } from '../modules/patients/index.js';
 import { registerSchedulingExportContributors } from '../modules/scheduling/index.js';
 import { registerStaffExportContributors } from '../modules/staff/index.js';
@@ -27,6 +28,7 @@ export function registerAllExportContributors(
   registerPatientsExportContributors(registry);
   registerSchedulingExportContributors(registry);
   registerDocumentsExportContributors(registry);
+  registerOnboardingExportContributors(registry);
   registerAuditExportContributors(registry);
   registerClinicalExportContributors(registry, deps);
 }

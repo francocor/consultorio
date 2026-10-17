@@ -46,6 +46,7 @@ describe('api client: successful responses', () => {
       scope: 'full',
       twoFactor: { enrolled: false, required: false, graceEndsAt: null },
       tenantStatus: 'active',
+      needsWizard: false,
     };
     const { client, fetchMock } = clientWith(() => json(me));
 

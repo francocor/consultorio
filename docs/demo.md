@@ -90,6 +90,7 @@ Good paths to show:
 3. **The owner** opens the audit trail, filters by that patient, exports it, and changes the branding: the new color is there after a reload, with no flash.
 4. **Dra. Paz** opens the clinical chart of a patient (tab "Historia clínica"): signed notes with their addenda, the search of that record (try "hipertension" without the accent), the note entered in error behind "Mostrar las entradas marcadas como error", and a new consultation that saves by itself while she types. The pediatrician, who does not treat that patient, is told she has no access; reception and the owner have no such tab.
 5. In the **operator console**, create an organization and read the owner's invitation in Mailpit.
+6. **The first run.** The demo organizations are already set up (their wizard is finished and their checklist is dismissed, so it opens on the agenda). To show what a new customer sees, create an organization in the operator console, accept the owner's invitation from Mailpit and sign in: the setup wizard opens by itself, with the quick setup for a solo professional (a consultorio ready to book in one screen) and the step by step for a center. The checklist "Primeros pasos" then sits on the start page and in the account menu.
 
 ## Resetting the demo
 

@@ -37,12 +37,17 @@ Until self-service signup exists, and afterwards for tenants created by the oper
 
 ### Requirement: Tenant defaults and initial roles
 
-On creation the system MUST set the organization's country to Argentina, default time zone and locale es-AR, and MUST give the first user the owner role. The first run MUST ask whether the owner is also a health professional. If yes, a professional profile MUST be created for the owner, whose matrícula is recorded to unlock clinical work and verified before prescribing (`staff-professionals`, `e-prescription`), and who MUST read clinical data only through the professional role. If no, the owner MUST NOT gain clinical access.
+On creation the system MUST set the organization's country to Argentina, default time zone and locale es-AR, and MUST give the first user the owner role. The first run MUST ask whether the owner is also a health professional. If yes, a professional profile MUST be created for the owner, whose matrícula is recorded to unlock clinical work and verified before prescribing (`staff-professionals`, `e-prescription`), and who MUST read clinical data only through the professional role. If no, the owner MUST NOT gain clinical access. Because roles are otherwise never self-assigned (`authorization`), the professional role of the owner MUST be added by one narrow path (decision D21): an active owner MAY add the professional role to their own membership during the first run, exactly once, only that role, audited as a role change that names the onboarding path, and the path MUST close when the wizard is finished.
 
 #### Scenario: Owner is also a professional
 - GIVEN the owner answers that they are a health professional
 - WHEN the first run completes the profile step
 - THEN the owner MUST have both the owner role and a professional profile
+
+#### Scenario: The owner role-assignment path closes with the wizard
+- GIVEN an owner who finished the setup wizard
+- WHEN they try to add the professional role to themselves through the onboarding path
+- THEN the request is refused and another owner is needed
 
 #### Scenario: Owner is not a professional
 - GIVEN the owner answers that they are not a health professional

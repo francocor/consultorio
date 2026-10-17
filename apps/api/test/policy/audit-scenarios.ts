@@ -127,6 +127,13 @@ export const AUDIT_SCENARIOS: Record<AuditAction, AuditScenario> = {
   'archive.read': { pending: 'Stage 6: archive access' },
   'audit.exported': t('audit-viewer.test.ts'),
 
+  // The guided first run.
+  'onboarding.step_updated': t('onboarding-api.test.ts'),
+  'onboarding.completed': t('onboarding-api.test.ts'),
+  'onboarding.fast_path': t('onboarding-api.test.ts'),
+  'onboarding.checklist_dismissed': t('onboarding-api.test.ts'),
+  'onboarding.checklist_restored': t('onboarding-api.test.ts'),
+
   // Platform operator.
   'support.access': t('operator-support.test.ts'),
   'support.grant.created': t('operator-support.test.ts'),

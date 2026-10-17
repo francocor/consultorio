@@ -2,11 +2,12 @@
  * Public API of the identity module: accounts, sessions and sign-in. Other modules and the
  * composition root import from here only.
  */
+import type { Permission } from '@consultorio/contracts';
 import type { FastifyInstance } from 'fastify';
 
 import type { GrantsRepo } from '../../platform/authz/guard.js';
 import type { TenantKeys } from '../../platform/crypto/tenant-keys.js';
-import { SYSTEM_USER_ID, type WithTenant } from '../../platform/db/tenant-context.js';
+import { SYSTEM_USER_ID, type Tx, type WithTenant } from '../../platform/db/tenant-context.js';
 import type { Authenticate } from '../../platform/http/auth-guard.js';
 import type { PublicOrigins } from '../../platform/http/public-origin.js';
 import type { RateLimitStore } from '../../platform/http/rate-limit.js';
@@ -63,6 +64,8 @@ export interface IdentityOptions {
   hasher?: PasswordHasher;
   lockout?: LockoutPolicy;
   loginRateLimit?: { max: number; timeWindow: number };
+  /** Whether the person must run the setup wizard; the onboarding module provides it. */
+  needsWizard?: (tx: Tx, permissions: readonly Permission[]) => Promise<boolean>;
 }
 
 export interface Identity {
@@ -143,6 +146,7 @@ export function createIdentity(options: IdentityOptions): Identity {
     twoFactor,
     cookieSecure: options.cookieSecure,
     ...(options.grants ? { grants: options.grants } : {}),
+    ...(options.needsWizard ? { needsWizard: options.needsWizard } : {}),
     ...loginRateLimit,
   });
   const factorRoutes = twoFactorRoutes({

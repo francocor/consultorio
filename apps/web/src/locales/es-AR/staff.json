@@ -96,6 +96,8 @@
   "permission.cash.operate.description": "Puede abrir y cerrar la caja y registrar cobros.",
   "permission.patients.administer.title": "Administrar pacientes",
   "permission.patients.administer.description": "Puede fusionar duplicados, desactivar pacientes y gestionar derechos de datos.",
+  "permission.onboarding.manage.title": "Configuración inicial",
+  "permission.onboarding.manage.description": "Puede usar el asistente de configuración inicial y ver los primeros pasos de la organización.",
   "locations.title": "Sedes de esta persona",
   "locations.description": "Solo verá turnos y agenda de las sedes asignadas.",
   "locations.empty": "Todavía no hay sedes. Cree una en Configuración.",

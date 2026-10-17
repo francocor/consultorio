@@ -20,6 +20,7 @@ export function meFor(
     scope: 'full',
     twoFactor: { enrolled: true, required: true, graceEndsAt: null },
     tenantStatus: 'active',
+    needsWizard: false,
     ...rest,
   };
 }

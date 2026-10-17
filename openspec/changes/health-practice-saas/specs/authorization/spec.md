@@ -62,12 +62,20 @@ Every permission decision MUST be made on the server using the roles of the auth
 
 ### Requirement: No self-assignment or silent escalation of roles
 
-A user MUST NOT be able to grant themselves a role or permission, or change their own role, organization or permissions, including during signup or profile edit. Only an owner/admin MAY assign or revoke staff roles and grantable permissions, and every change MUST be audited. An organization MUST always retain at least one active owner.
+A user MUST NOT be able to grant themselves a role or permission, or change their own role, organization or permissions, including during signup or profile edit. Only an owner/admin MAY assign or revoke staff roles and grantable permissions, and every change MUST be audited. An organization MUST always retain at least one active owner. One narrow exception exists (decision D21): while the guided first run is unfinished, an active owner MAY add the professional role, and only that role, to their own membership, exactly once, audited with the onboarding path; the exception closes when the wizard is finished.
 
 #### Scenario: Self-promotion attempt
 - GIVEN a reception user
 - WHEN the user submits a profile update that sets role to owner
 - THEN the system rejects the change and audits the attempt
+
+#### Scenario: The owner adds the professional role to themselves during the first run (decision D21)
+- GIVEN an active owner of an organization whose setup wizard is not finished
+- WHEN the owner answers in the wizard that they are a health professional
+- THEN the professional role is added to their own membership, once, with a professional profile
+- AND the change is audited as a role change that names the onboarding path
+- AND the same request after the wizard is finished is refused
+- AND no other role or permission can be added through this path, and no other member can use it
 
 #### Scenario: Removing the last owner
 - GIVEN an organization with one active owner
@@ -366,7 +374,7 @@ Readers who are not treating professionals MUST have read-only access. Sharing M
 
 ### Requirement: Grantable non-clinical permissions
 
-An owner/admin MUST be able to grant, per user, a fixed set of non-clinical permissions that organizations commonly delegate: register out-of-hours appointments (override), book over an active slot hold that another person is completing (override hold), register past appointments, access another professional's calendar (delegated calendar), operate the cash register, and administer patients (including explicit patient assignment). Each grant and revocation MUST be audited. A permission MUST apply only inside the organization and MUST NOT widen clinical access. Default grants MUST be: reception holds patient administration and cash register; owner/admin holds all; professionals hold none beyond their own calendar.
+An owner/admin MUST be able to grant, per user, a fixed set of non-clinical permissions that organizations commonly delegate: register out-of-hours appointments (override), book over an active slot hold that another person is completing (override hold), register past appointments, access another professional's calendar (delegated calendar), operate the cash register, administer patients (including explicit patient assignment), and run the guided first run of the organization (onboarding). Each grant and revocation MUST be audited. A permission MUST apply only inside the organization and MUST NOT widen clinical access. Default grants MUST be: reception holds patient administration and cash register; the owner holds all; an admin holds all except running the guided first run, which needs an explicit grant; professionals hold none beyond their own calendar.
 
 #### Scenario: Grant the cash register to a professional
 - GIVEN a solo center where a professional also collects payments
@@ -384,6 +392,12 @@ An owner/admin MUST be able to grant, per user, a fixed set of non-clinical perm
 - WHEN the reception user books that time asking to override the hold
 - THEN the request is refused as forbidden and the hold stays active
 - AND once the owner grants the permission, the same request succeeds and the hold ends as invalidated
+
+#### Scenario: Running the first run needs its own permission
+- GIVEN an admin without the onboarding permission
+- WHEN the admin opens the setup wizard state
+- THEN the request is refused as forbidden
+- AND once the owner grants the permission, the same request succeeds
 
 #### Scenario: Revocation takes effect at once
 - GIVEN a reception user holding the past-booking permission

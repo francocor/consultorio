@@ -44,7 +44,7 @@ A health professional MUST be able to create an encounter note for a patient of 
 
 ### Requirement: Opening an encounter needs a care relationship
 
-A professional MUST NOT create the care relationship by opening an encounter. Opening an encounter for a patient MUST require that the professional already has an active care relationship with the patient from another source: an appointment with confirmed identity, an explicit care assignment, or an earlier SIGNED encounter. The one exception is a patient with no clinical footprint, meaning no clinical notes, no anamnesis, no clinical documents and no care relationship with any professional; any professional MAY open the first encounter for such a patient. A draft encounter MUST NOT count as a care source until its note is signed, and an entry marked in error MUST stop counting as one. When an encounter names an appointment, the appointment MUST belong to the same patient and the same professional, and a deployment that cannot check appointments MUST refuse the link. The rule MUST be enforced by the service and by the database. A refusal MUST answer 403 and write a deny audit entry that names the patient. (Decision D20, orchestrator decision pending owner confirmation.)
+A professional MUST NOT create the care relationship by opening an encounter. Opening an encounter for a patient MUST require that the professional already has an active care relationship with the patient from another source: an appointment with confirmed identity, an explicit care assignment, or an earlier SIGNED encounter. The one exception is a patient with no clinical footprint, meaning no clinical notes, no anamnesis, no clinical documents and no care relationship with any professional; any professional MAY open the first encounter for such a patient. A draft encounter MUST NOT count as a care source until its note is signed, and an entry marked in error MUST stop counting as one. When an encounter names an appointment, the appointment MUST belong to the same patient and the same professional, MUST have a confirmed identity and MUST have a status that counts for the care relationship (not cancelled, not pending approval); a deployment that cannot check appointments MUST refuse the link. Composite foreign keys tie the encounter to its appointment (and a document to its encounter) inside the organization. The rule MUST be enforced by the service and by the database. A refusal MUST answer 403 and write a deny audit entry that names the patient. (Decision D20, orchestrator decision pending owner confirmation.)
 
 #### Scenario: A professional cannot read a record by opening an encounter
 - GIVEN patient P has signed notes by professional A and professional B has no care relationship with P
@@ -71,6 +71,17 @@ A professional MUST NOT create the care relationship by opening an encounter. Op
 - GIVEN an appointment that belongs to another patient, or to another professional
 - WHEN a professional opens an encounter linked to it
 - THEN the request is refused and audited with the reason "appointment_mismatch"
+
+#### Scenario: Appointment whose identity nobody confirmed
+- GIVEN an appointment the professional booked with themselves for an existing patient, or an online booking that matched an existing patient, and nobody confirmed the identity
+- WHEN the professional opens an encounter linked to it
+- THEN the request is refused (403) and audited with the reason "appointment_identity_unconfirmed"
+- AND once reception confirms the identity, the same request succeeds
+
+#### Scenario: Appointment with confirmed identity
+- GIVEN a patient other professionals have written about and an appointment booked by reception with the professional
+- WHEN the professional opens an encounter from that appointment
+- THEN the encounter is created, linked to the appointment, and the care relationship comes from the appointment
 
 ---
 

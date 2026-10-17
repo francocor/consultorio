@@ -30,6 +30,10 @@ export function registerStaffExportContributors(registry: ExportRegistry): void 
 
 export type { MatriculaRules } from './application/profile.js';
 export { managesStaff } from './application/profile.js';
+export { createProfileService } from './application/profile.js';
+export type { ProfileService } from './application/profile.js';
+export { createHoursService } from './application/hours.js';
+export type { HoursService } from './application/hours.js';
 export { findHoursProblems, formatClock, parseClock, zoneOffsetMinutes } from './domain/hours.js';
 export type { HoursEntry } from './domain/hours.js';
 
