@@ -50,11 +50,14 @@ describe('holiday_catalog', () => {
             FROM holiday_catalog WHERE country = 'AR' GROUP BY 1 ORDER BY 1`,
     );
 
-    // Other suites load the catalogs around today's date too, so the window may start earlier: the
-    // three years the scheduling tests rely on must be there, each with a full calendar.
+    // Other suites load the catalogs around today's date too, and the operator suite adds a few
+    // holidays to a far year of its own: the three years the scheduling tests rely on must be
+    // there, each with a full calendar.
     const years = result.rows.map((row) => row.year);
     expect(years).toEqual(expect.arrayContaining([2026, 2027, 2028]));
-    for (const row of result.rows) expect(row.n).toBeGreaterThan(14);
+    for (const row of result.rows.filter((entry) => entry.year >= 2026 && entry.year <= 2028)) {
+      expect(row.n).toBeGreaterThan(14);
+    }
   });
 
   it('seeding again changes nothing (idempotent loaders)', async () => {
