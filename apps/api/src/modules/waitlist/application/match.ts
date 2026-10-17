@@ -1,10 +1,8 @@
-import type { WaitlistCallReason } from '@consultorio/contracts';
 import { and, asc, desc, eq, gt, inArray, lt, notInArray, sql } from 'drizzle-orm';
 
 import { appointment } from '../../../db/schema/scheduling.js';
 import { professional } from '../../../db/schema/staff.js';
 import {
-  waitlistCall,
   waitlistEntry,
   waitlistOffer,
   type WaitlistEntryRow,
@@ -22,6 +20,7 @@ import {
   type WaitingEntry,
 } from '../domain/matching.js';
 
+import { recordCall, type CallSlot } from './calls.js';
 import { typeOffered } from './entries.js';
 import { createOffer, slotKeyOf, SYSTEM_ACTOR } from './offers.js';
 import { reachOf } from './reachability.js';
@@ -58,6 +57,15 @@ interface Candidate {
   startsAt: Date;
   endsAt: Date;
 }
+
+const callSlot = (row: WaitlistEntryRow, candidate: Candidate): CallSlot => ({
+  entryId: row.id,
+  professionalId: candidate.professionalId,
+  locationId: candidate.locationId,
+  appointmentTypeId: candidate.typeId,
+  startsAt: candidate.startsAt,
+  endsAt: candidate.endsAt,
+});
 
 const toWaiting = (row: WaitlistEntryRow): WaitingEntry => ({
   id: row.id,
@@ -121,35 +129,6 @@ async function workedLocations(
       ...hours.periods.flatMap((period) => period.rows.map((row) => row.locationId)),
     ]),
   ];
-}
-
-/** Shows reception a slot to fill by phone, with the entry to call. */
-async function recordCall(
-  tx: Tx,
-  ports: SchedulingPorts,
-  row: WaitlistEntryRow,
-  candidate: Candidate,
-  reason: WaitlistCallReason,
-): Promise<void> {
-  await tx
-    .insert(waitlistCall)
-    .values({
-      tenantId: sql`current_setting('app.tenant_id')::uuid`,
-      entryId: row.id,
-      professionalId: candidate.professionalId,
-      locationId: candidate.locationId,
-      appointmentTypeId: candidate.typeId,
-      startsAt: candidate.startsAt,
-      endsAt: candidate.endsAt,
-      reason,
-    })
-    .onConflictDoNothing();
-  await ports.openWorklistItem({
-    kind: 'waitlist_manual_contact',
-    subjectType: 'waitlist_entry',
-    subjectId: row.id,
-    locationId: candidate.locationId,
-  });
 }
 
 /**
@@ -330,7 +309,7 @@ export async function matchFreedSlot(
 
       if (row.manualContactOnly) {
         if (calls < MAX_CALLS) {
-          await recordCall(tx, ports, row, candidate, 'manual_contact_only');
+          await recordCall(tx, ports, callSlot(row, candidate), 'manual_contact_only');
           calls += 1;
         }
         handled.add(row.patientId);
@@ -347,7 +326,7 @@ export async function matchFreedSlot(
       });
       if (timing.kind === 'manual') {
         if (calls < MAX_CALLS) {
-          await recordCall(tx, ports, row, candidate, timing.reason);
+          await recordCall(tx, ports, callSlot(row, candidate), timing.reason);
           calls += 1;
         }
         handled.add(row.patientId);

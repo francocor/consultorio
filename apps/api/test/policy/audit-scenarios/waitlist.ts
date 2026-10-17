@@ -15,6 +15,6 @@ export const WAITLIST_SCENARIOS: Record<(typeof WAITLIST_AUDIT_ACTIONS)[number],
   'waitlist.offer.created': t('waitlist-matching.test.ts'),
   'waitlist.offer.accepted': { pending: 'S3.12 (task 3.56): acceptance of an offer' },
   'waitlist.offer.declined': { pending: 'S3.12 (task 3.56): decline of an offer' },
-  'waitlist.offer.expired': { pending: 'S3.12 (task 3.55): expiry of an offer' },
+  'waitlist.offer.expired': t('waitlist-offers.test.ts'),
   'waitlist.priority.overridden': t('waitlist-entries.test.ts'),
 };

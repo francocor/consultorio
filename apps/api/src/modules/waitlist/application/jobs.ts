@@ -7,7 +7,10 @@ import { defineJob } from '../../../platform/jobs/define-job.js';
 import type { ActionTokens } from '../../../platform/tokens/index.js';
 import type { SchedulingPorts } from '../../scheduling/index.js';
 
+import { deliverOffer } from './delivery.js';
+import { expireOffer, sweepWaitlist } from './expiry.js';
 import { matchFreedSlot } from './match.js';
+import { WAITLIST_EXPIRE_JOB, WAITLIST_OFFER_JOB } from './offers.js';
 import type { DeliverWaitlistOffer } from './ports.js';
 import { WAITLIST_MATCH_JOB } from './trigger.js';
 
@@ -32,6 +35,10 @@ const MatchPayload = JobPayload.extend({
   endsAt: z.iso.datetime(),
   cause: z.enum(['cancelled', 'rescheduled', 'reassigned', 'block_removed', 'offer_ended']),
 });
+
+const OfferPayload = JobPayload.extend({ offerId: z.uuid() });
+/** An offer id closes that offer if it is due; none is the sweep of the whole organization. */
+const ExpirePayload = JobPayload.extend({ offerId: z.uuid().optional() });
 
 export function createWaitlistJobs(deps: WaitlistJobDeps) {
   /**
@@ -58,7 +65,49 @@ export function createWaitlistJobs(deps: WaitlistJobDeps) {
     },
   });
 
-  return { match };
+  /**
+   * `waitlist.offer`: sends one offer to the patient, when it is due (right away, or at the end of
+   * quiet hours). Idempotent: an offer that was delivered, or that is no longer open, is skipped.
+   */
+  const offer = defineJob({
+    name: WAITLIST_OFFER_JOB,
+    category: 'write',
+    payload: OfferPayload,
+    handler: async ({ tx, payload }) => {
+      await deliverOffer(
+        tx,
+        {
+          portsOf: (inner) => deps.portsOf(inner),
+          jobs: deps.jobs,
+          tokens: deps.tokens,
+          origins: deps.origins,
+          deliver: deps.deliver,
+        },
+        { offerId: payload.offerId, now: deps.clock() },
+      );
+    },
+  });
+
+  /**
+   * `waitlist.expire`: an offer ran out of time (queued for its exact expiry), or the minutely
+   * sweep of the organization (no offer named): the offers that are due, and the entries that ran
+   * out. The next entry in line is offered the slot by the match this queues.
+   */
+  const expire = defineJob({
+    name: WAITLIST_EXPIRE_JOB,
+    category: 'write',
+    payload: ExpirePayload,
+    handler: async ({ tx, payload }) => {
+      const now = deps.clock();
+      if (payload.offerId === undefined) {
+        await sweepWaitlist(tx, { jobs: deps.jobs }, { now });
+      } else {
+        await expireOffer(tx, { jobs: deps.jobs }, { offerId: payload.offerId, now });
+      }
+    },
+  });
+
+  return { match, offer, expire };
 }
 
 export type WaitlistJobs = ReturnType<typeof createWaitlistJobs>;

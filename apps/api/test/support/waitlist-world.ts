@@ -29,7 +29,7 @@ export interface DeliveredOffer extends WaitlistOfferDelivery {
   token: string;
 }
 
-export interface WaitlistWorld extends SchedulingHttpWorld {
+export interface WaitlistWorld extends Omit<SchedulingHttpWorld, 'setNow'> {
   jobs: RecordingJobClient;
   events: AppointmentEvents;
   /** The jobs of the module, built with the fakes of this world. */
@@ -40,8 +40,12 @@ export interface WaitlistWorld extends SchedulingHttpWorld {
   deliveryChannel: { current: 'email' | 'whatsapp' | 'none' };
   /** Makes the fake delivery throw, to see a retry. */
   deliveryFails: { current: boolean };
-  /** Moves the clock of the whole application (scheduling, waitlist, sessions). */
-  advance(ms: number): void;
+  /**
+   * Moves the clock of the whole application (scheduling, waitlist, sessions). Staff sessions end
+   * after 30 idle minutes, so a long move signs the members in again, as people would.
+   */
+  advance(ms: number): Promise<void>;
+  setNow(date: Date): Promise<void>;
   /** A patient with an email address and a mobile number. */
   patient(options?: { email?: boolean; phone?: boolean }): Promise<string>;
   /** Reception puts a patient on the waitlist for the Consulta type, the way the screen does. */
@@ -50,7 +54,7 @@ export interface WaitlistWorld extends SchedulingHttpWorld {
   run(...queues: string[]): Promise<{ name: string; result: JobRunResult }[]>;
   /** Cancels an appointment as reception does for a patient who called. */
   cancel(appointment: AppointmentDto, by?: TestSession): Promise<void>;
-  /** Closes every entry and offer and forgets the jobs and deliveries, for the next test. */
+  /** Closes every entry and offer, forgets the jobs and deliveries and sets the clock back. */
   reset(): Promise<void>;
   /** The state of an entry, read straight from the database. */
   entryRow(id: string): Promise<Record<string, unknown>>;
@@ -73,7 +77,8 @@ export async function createWaitlistWorld(
   runtime: Parameters<typeof createSchedulingHttpWorld>[0],
   options: { slug: string; now?: Date },
 ): Promise<WaitlistWorld> {
-  let current = options.now ?? new Date('2031-05-05T12:00:00.000Z');
+  const initial = options.now ?? new Date('2031-05-05T12:00:00.000Z');
+  let current = initial;
   const jobs = createRecordingJobClient();
   const events = createAppointmentEvents();
   const email = createFakeEmailSender();
@@ -105,6 +110,18 @@ export async function createWaitlistWorld(
     deliver,
   });
 
+  // The members stay signed in across the jumps the tests make: a long jump signs them in again.
+  const members = [base.owner, base.admin, base.reception, base.doctor, base.colleague];
+  let signedInAt = current;
+  const moveTo = async (date: Date) => {
+    const jump = Math.abs(date.getTime() - signedInAt.getTime());
+    current = date;
+    base.setNow(date);
+    if (jump < 20 * 60_000) return;
+    for (const member of members) member.cookie = (await base.signIn(member.user)).cookie;
+    signedInAt = date;
+  };
+
   const entryRow = (id: string) =>
     base.inTenant(async (tx) => {
       const rows = (await tx.execute(sql`SELECT * FROM waitlist_entry WHERE id = ${id}`)).rows;
@@ -121,15 +138,9 @@ export async function createWaitlistWorld(
     deliveries,
     deliveryChannel,
     deliveryFails,
-    setNow: (date) => {
-      current = date;
-      base.setNow(date);
-    },
+    setNow: moveTo,
     now: () => current,
-    advance: (ms) => {
-      current = new Date(current.getTime() + ms);
-      base.setNow(current);
-    },
+    advance: (ms) => moveTo(new Date(current.getTime() + ms)),
     patient: async (patientOptions = {}) => {
       patients += 1;
       return base.inTenant(async (tx) => {
@@ -175,6 +186,8 @@ export async function createWaitlistWorld(
           sql`UPDATE waitlist_entry SET status = 'closed', close_reason = 'cancelled', closed_at = now() WHERE status <> 'closed'`,
         );
       });
+      // Back to midday: where the clock stopped decides whether an offer falls in quiet hours.
+      await moveTo(initial);
       jobs.jobs.length = 0;
       deliveries.length = 0;
       deliveryChannel.current = 'email';

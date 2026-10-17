@@ -44,7 +44,7 @@ const nextWeek = () => {
 async function waiting(count: number, extra: Record<string, unknown> = {}) {
   const entries = [];
   for (let index = 0; index < count; index += 1) {
-    world.advance(60_000);
+    await world.advance(60_000);
     entries.push(await world.join(await world.patient(), extra));
   }
   return entries;
@@ -107,11 +107,11 @@ describe('a cancellation frees a slot', () => {
 
   it('does not offer a morning slot to an entry that accepts only afternoons', async () => {
     const weeks = nextWeek();
-    world.advance(60_000);
+    await world.advance(60_000);
     const afternoon = await world.join(await world.patient(), {
       timeRanges: [{ from: '14:00', to: '18:00' }],
     });
-    world.advance(60_000);
+    await world.advance(60_000);
     const anyTime = await world.join(await world.patient());
 
     await world.cancel(await world.book(weeks, '10:00'));
@@ -123,11 +123,11 @@ describe('a cancellation frees a slot', () => {
 
   it('does not offer a slot to an entry that wants another professional', async () => {
     const weeks = nextWeek();
-    world.advance(60_000);
+    await world.advance(60_000);
     const wantsColleague = await world.join(await world.patient(), {
       professionalId: world.colleague.professionalId,
     });
-    world.advance(60_000);
+    await world.advance(60_000);
     const wantsDoctor = await world.join(await world.patient(), {
       professionalId: world.doctor.professionalId,
     });
@@ -142,9 +142,9 @@ describe('a cancellation frees a slot', () => {
   it('skips a patient who has another appointment at that time', async () => {
     const weeks = nextWeek();
     const busyPatient = await world.patient();
-    world.advance(60_000);
+    await world.advance(60_000);
     const busy = await world.join(busyPatient);
-    world.advance(60_000);
+    await world.advance(60_000);
     const free = await world.join(await world.patient());
     const response = await world.api.post(
       '/appointments',
@@ -165,10 +165,10 @@ describe('a cancellation frees a slot', () => {
 
   it('offers nothing when no entry matches, and does not offer a paused or expired entry', async () => {
     const weeks = nextWeek();
-    world.advance(60_000);
+    await world.advance(60_000);
     const paused = await world.join(await world.patient());
     await world.api.post(`/waitlist/${paused.id}/pause`, world.reception, {});
-    world.advance(60_000);
+    await world.advance(60_000);
     const expired = await world.join(await world.patient());
     await world.inTenant(async (tx) => {
       await tx.execute(
@@ -357,9 +357,9 @@ describe('a slot that is taken before anybody answers', () => {
 describe('entries that reception has to call', () => {
   it('shows a manual contact only entry the slot instead of offering it', async () => {
     const weeks = nextWeek();
-    world.advance(60_000);
+    await world.advance(60_000);
     const manual = await world.join(await world.patient(), { offersOptIn: false });
-    world.advance(60_000);
+    await world.advance(60_000);
     const automatic = await world.join(await world.patient());
     const booked = await world.book(weeks, '10:00');
 
@@ -397,7 +397,7 @@ describe('entries that reception has to call', () => {
     const before = world.now();
     try {
       // Thirty minutes before the start; the organization wants an hour.
-      world.setNow(new Date(new Date(booked.startsAt).getTime() - 30 * 60_000));
+      await world.setNow(new Date(new Date(booked.startsAt).getTime() - 30 * 60_000));
 
       // The clock moved days: a new session, as the receptionist signing in that morning.
       await world.cancel(booked, await world.signIn(world.reception.user));
@@ -409,14 +409,14 @@ describe('entries that reception has to call', () => {
       expect((await world.callsOf(second.id))[0]).toMatchObject({ reason: 'slot_too_close' });
       expect(await world.entryRow(first.id)).toMatchObject({ status: 'active' });
     } finally {
-      world.setNow(before);
+      await world.setNow(before);
     }
   });
 
   it('turns an entry whose patient opted out since into manual contact only, and shows it', async () => {
     const weeks = nextWeek();
     const patientId = await world.patient();
-    world.advance(60_000);
+    await world.advance(60_000);
     const entry = await world.join(patientId);
     await world.inTenant(async (tx) => {
       await tx.execute(
