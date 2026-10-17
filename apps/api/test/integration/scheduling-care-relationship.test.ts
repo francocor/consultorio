@@ -247,7 +247,7 @@ describe('what the appointment gives a professional', () => {
 
     await post(created.id, 'correct', world.reception, {
       toStatus: 'scheduled',
-      reason: 'Cancelled by mistake',
+      reasonCode: 'entered_by_mistake',
     });
 
     expect(await readable(world.doctor, patientId)).toBe(1);

@@ -516,7 +516,8 @@ export function appointmentRoutes(deps: AppointmentRoutesDeps) {
             correctStatus(portsOf(tx), {
               appointmentId: request.params.id,
               toStatus: request.body.toStatus,
-              reason: request.body.reason,
+              reasonCode: request.body.reasonCode,
+              note: request.body.note,
               actor: who,
               auditActor: audit,
               now: deps.clock(),

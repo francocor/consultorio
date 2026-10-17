@@ -118,7 +118,7 @@ describe('a professional works in their own calendar', () => {
       }),
       world.act(theirs, 'correct', world.doctor, {
         toStatus: 'attended',
-        reason: 'x',
+        reasonCode: 'other',
       }),
       world.api.get(`/appointments/${theirs.id}/history`, world.doctor),
       world.api.get(`/appointments/${theirs.id}`, world.doctor),

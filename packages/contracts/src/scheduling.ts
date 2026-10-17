@@ -155,10 +155,25 @@ export const CancelAppointmentRequest = z.strictObject({
 });
 export type CancelAppointmentRequest = z.infer<typeof CancelAppointmentRequest>;
 
-/** An authorized correction of a terminal status needs a reason (audited). */
+/** Reasons for correcting a terminal status. A code, so the audit trail never carries free text. */
+export const CORRECTION_REASONS = [
+  'entered_by_mistake',
+  'patient_arrived_late',
+  'recorded_late',
+  'other',
+] as const;
+export type CorrectionReason = (typeof CORRECTION_REASONS)[number];
+
+/**
+ * An authorized correction of a terminal status needs a reason code (audited). The optional note
+ * stays in the appointment history; like the note of a cancellation it never reaches the audit
+ * trail. Into `in_progress` or `attended` only the appointment's professional may correct: that is
+ * clinical work.
+ */
 export const CorrectStatusRequest = z.strictObject({
   toStatus: z.enum(APPOINTMENT_STATUSES),
-  reason: z.string().trim().min(1).max(200),
+  reasonCode: z.enum(CORRECTION_REASONS),
+  note: z.string().trim().max(200).optional(),
   expectedVersion: ExpectedVersion,
 });
 export type CorrectStatusRequest = z.infer<typeof CorrectStatusRequest>;

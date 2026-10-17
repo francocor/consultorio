@@ -7,6 +7,7 @@ import {
   CancelAppointmentRequest,
   CheckInRequest,
   ConfirmIdentityRequest,
+  CORRECTION_REASONS,
   CorrectStatusRequest,
   DetachPatientRequest,
   RescheduleRequest,
@@ -148,7 +149,7 @@ describe('lifecycle requests', () => {
 
   it('need the version on every other write of an appointment', () => {
     const cancel = { cancelledBy: 'patient', reasonCode: 'illness' };
-    const correct = { toStatus: 'attended', reason: 'Arrived late' };
+    const correct = { toStatus: 'attended', reasonCode: 'patient_arrived_late' };
     const detach = { resolution: 'move_to_patient', patientId: ID };
 
     expect(CheckInRequest.safeParse({}).success).toBe(false);
@@ -193,25 +194,22 @@ describe('lifecycle requests', () => {
     );
   });
 
-  it('a correction needs a status of the eight and a reason', () => {
-    expect(
-      CorrectStatusRequest.safeParse({
-        toStatus: 'attended',
-        reason: 'Arrived late',
-        expectedVersion: 1,
-      }).success,
-    ).toBe(true);
-    expect(
-      CorrectStatusRequest.safeParse({ toStatus: 'attended', reason: '', expectedVersion: 1 })
-        .success,
-    ).toBe(false);
-    expect(
-      CorrectStatusRequest.safeParse({
-        toStatus: 'rescheduled',
-        reason: 'x',
-        expectedVersion: 1,
-      }).success,
-    ).toBe(false);
+  it('a correction needs a status of the eight, a reason code and the version', () => {
+    const ok = { toStatus: 'attended', reasonCode: 'patient_arrived_late', expectedVersion: 1 };
+
+    expect(CorrectStatusRequest.safeParse(ok).success).toBe(true);
+    expect(CorrectStatusRequest.safeParse({ ...ok, note: 'x'.repeat(200) }).success).toBe(true);
+    expect(CorrectStatusRequest.safeParse({ ...ok, note: 'x'.repeat(201) }).success).toBe(false);
+    expect(CorrectStatusRequest.safeParse({ ...ok, reasonCode: 'because' }).success).toBe(false);
+    expect(CorrectStatusRequest.safeParse({ ...ok, toStatus: 'rescheduled' }).success).toBe(false);
+    // The free-text reason of before is gone: only a code reaches the audit trail.
+    expect(CorrectStatusRequest.safeParse({ ...ok, reason: 'Arrived late' }).success).toBe(false);
+    expect([...CORRECTION_REASONS]).toEqual([
+      'entered_by_mistake',
+      'patient_arrived_late',
+      'recorded_late',
+      'other',
+    ]);
   });
 
   it('a reschedule needs the version and at least one thing to change', () => {

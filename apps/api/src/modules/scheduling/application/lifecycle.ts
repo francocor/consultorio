@@ -5,6 +5,7 @@ import type {
   AppointmentStatus,
   CancelledBy,
   CancellationReason,
+  CorrectionReason,
   LocalStart,
   OverrideHours,
 } from '@consultorio/contracts';
@@ -56,6 +57,9 @@ const TARGET: Record<TransitionAction, AppointmentStatus> = {
 };
 
 const HOUR_MS = 3_600_000;
+
+/** The statuses only the appointment's own professional puts an appointment in. */
+const CLINICAL_STATUSES: ReadonlySet<AppointmentStatus> = new Set(['in_progress', 'attended']);
 
 /**
  * Locks what a change to one appointment must serialize with: the professional(s) first, in a fixed
@@ -249,7 +253,9 @@ async function dismissWorklistItems(
 export interface CorrectInput {
   appointmentId: string;
   toStatus: AppointmentStatus;
-  reason: string;
+  reasonCode: CorrectionReason;
+  /** Free text for the history; it never goes to the audit trail. */
+  note?: string | undefined;
   actor: BookActor;
   auditActor: AuditActor;
   now: Date;
@@ -268,6 +274,14 @@ export async function correctStatus(
   const record = await lockForChange(ports, input.appointmentId, [], input.actor);
   checkVersion(record, input.expectedVersion);
   if (!canCorrect(record.status, input.toStatus)) throw new AppError('conflict');
+  // Putting an appointment back into the clinical statuses is clinical work, like starting and
+  // finishing it: only the professional of the appointment.
+  if (
+    CLINICAL_STATUSES.has(input.toStatus) &&
+    input.actor.professionalId !== record.professionalId
+  ) {
+    throw new AccessRefused('not_the_appointment_professional');
+  }
 
   const patch: AppointmentPatch = { status: input.toStatus };
   let updatePlan: { planInput: PlanInput; plan: Plan } | null = null;
@@ -314,7 +328,7 @@ export async function correctStatus(
     toStatus: input.toStatus,
     actorUserId: input.actor.userId,
     actorKind: 'staff',
-    details: { reason: input.reason },
+    details: { reasonCode: input.reasonCode, ...(input.note ? { note: input.note } : {}) },
   });
   await ports.audit({
     action: 'appointment.status_corrected',
@@ -323,7 +337,7 @@ export async function correctStatus(
     resourceType: 'appointment',
     resourceId: record.id,
     patientId: record.patientId,
-    metadata: { from: record.status, to: input.toStatus, reason: input.reason },
+    metadata: { from: record.status, to: input.toStatus, reasonCode: input.reasonCode },
   });
   return updated;
 }

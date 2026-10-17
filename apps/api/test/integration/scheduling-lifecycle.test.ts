@@ -303,9 +303,10 @@ describe('correcting a status', () => {
     afterStart(created);
     await world.act(created, 'no-show', world.reception, {});
 
-    const response = await world.act(created, 'correct', world.reception, {
+    const response = await world.act(created, 'correct', world.doctor, {
       toStatus: 'attended',
-      reason: 'Patient arrived late',
+      reasonCode: 'patient_arrived_late',
+      note: 'Came in through the side door',
     });
     backToStart();
 
@@ -313,16 +314,42 @@ describe('correcting a status', () => {
     const [row] = await audits('appointment.status_corrected');
     expect(row).toMatchObject({
       resourceId: created.id,
-      actorUserId: world.reception.user.id,
-      metadata: { from: 'no_show', to: 'attended', reason: 'Patient arrived late' },
+      actorUserId: world.doctor.user.id,
+      metadata: { from: 'no_show', to: 'attended', reasonCode: 'patient_arrived_late' },
     });
+    // The free text stays out of the audit trail and lives in the history.
+    expect(JSON.stringify(row)).not.toContain('side door');
     const history = (
       await world.api.get(url(created, 'history'), world.reception)
     ).json<AppointmentHistoryResponse>();
     expect(history.events.at(-1)).toMatchObject({
       kind: 'status_corrected',
-      details: { reason: 'Patient arrived late' },
+      details: { reasonCode: 'patient_arrived_late', note: 'Came in through the side door' },
     });
+  });
+
+  it('is clinical work when it goes into attended or in progress: reception and the colleague are refused', async () => {
+    backToStart();
+    const created = await world.book(26, '10:00');
+    afterStart(created);
+    await world.act(created, 'no-show', world.reception, {});
+    const body = { toStatus: 'attended', reasonCode: 'patient_arrived_late' };
+
+    const byReception = await world.act(created, 'correct', world.reception, body);
+    const byAdmin = await world.act(created, 'correct', world.admin, body);
+    const byColleague = await world.act(created, 'correct', world.colleague, body);
+    backToStart();
+
+    expect([byReception.statusCode, byAdmin.statusCode, byColleague.statusCode]).toEqual([
+      403, 403, 403,
+    ]);
+    expect((await stored(created))?.status).toBe('no_show');
+    // Putting a no-show back among the appointments to come is not clinical.
+    const restored = await world.act(created, 'correct', world.reception, {
+      toStatus: 'scheduled',
+      reasonCode: 'entered_by_mistake',
+    });
+    expect(restored.statusCode, restored.body).toBe(200);
   });
 
   it('is rejected, showing the conflicting range, when the slot was rebooked for someone else', async () => {
@@ -333,9 +360,9 @@ describe('correcting a status', () => {
     backToStart();
     await world.book(13, '10:00', {}, world.admin);
 
-    const response = await world.act(created, 'correct', world.reception, {
+    const response = await world.act(created, 'correct', world.doctor, {
       toStatus: 'attended',
-      reason: 'Late',
+      reasonCode: 'recorded_late',
     });
 
     expect(response.statusCode).toBe(409);
@@ -346,23 +373,23 @@ describe('correcting a status', () => {
     expect((await stored(created))?.status).toBe('no_show');
   });
 
-  it('needs a reason and refuses a status that is not terminal', async () => {
+  it('needs a reason code and refuses a status that is not terminal', async () => {
     backToStart();
     const created = await world.book(14, '10:00');
 
     expect(
       (
-        await world.act(created, 'correct', world.reception, {
+        await world.act(created, 'correct', world.doctor, {
           toStatus: 'attended',
-          reason: '',
+          reasonCode: 'because',
         })
       ).statusCode,
     ).toBe(400);
     expect(
       (
-        await world.act(created, 'correct', world.reception, {
+        await world.act(created, 'correct', world.doctor, {
           toStatus: 'attended',
-          reason: 'Why not',
+          reasonCode: 'other',
         })
       ).statusCode,
     ).toBe(409);
@@ -523,7 +550,7 @@ describe('a read-only organization', () => {
         world.act(toKeep, 'confirm', world.reception, {}),
         world.act(toKeep, 'correct', world.reception, {
           toStatus: 'attended',
-          reason: 'x',
+          reasonCode: 'other',
         }),
       ]);
       const cancel = await world.act(toCancel, 'cancel', world.reception, {
