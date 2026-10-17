@@ -603,7 +603,7 @@ describe('correcting a terminal status', () => {
     ]);
   });
 
-  it('needs a reason and sends it with the version', async () => {
+  it('needs a reason code and sends it with the optional note and the version', async () => {
     const user = userEvent.setup();
     const bodies: unknown[] = [];
     await opened({
@@ -621,13 +621,59 @@ describe('correcting a terminal status', () => {
     await user.selectOptions(within(panel).getByLabelText('Nuevo estado'), 'confirmed');
     const apply = within(panel).getByRole('button', { name: 'Corregir el estado' });
     expect(apply).toBeDisabled();
-    await user.type(within(panel).getByLabelText('Motivo de la corrección'), 'Marcado por error');
+
+    const reasons = within(within(panel).getByLabelText('Motivo de la corrección'))
+      .getAllByRole('option')
+      .map((option) => option.textContent);
+    expect(reasons).toEqual([
+      '',
+      'Se marcó por error',
+      'El paciente llegó tarde',
+      'Se registró tarde',
+      'Otro',
+    ]);
+
+    await user.selectOptions(
+      within(panel).getByLabelText('Motivo de la corrección'),
+      'entered_by_mistake',
+    );
+    expect(apply).toBeEnabled();
+    await user.type(within(panel).getByLabelText('Detalle (opcional)'), 'Era otro paciente');
     await user.click(apply);
 
     await waitFor(() => {
       expect(bodies).toEqual([
-        { toStatus: 'confirmed', reason: 'Marcado por error', expectedVersion: 3 },
+        {
+          toStatus: 'confirmed',
+          reasonCode: 'entered_by_mistake',
+          note: 'Era otro paciente',
+          expectedVersion: 3,
+        },
       ]);
+    });
+  });
+
+  it('leaves the note out of the request when there is none', async () => {
+    const user = userEvent.setup();
+    const bodies: unknown[] = [];
+    await opened({
+      status: 'no_show',
+      routes: {
+        [`POST /api/appointments/${ID}/correct`]: (_url, init) => {
+          bodies.push(jsonBody(init));
+          return jsonResponse(appointmentOf({ status: 'confirmed', version: 4 }));
+        },
+      },
+    });
+
+    await user.click(screen.getByRole('button', { name: 'Corregir estado' }));
+    const panel = await screen.findByRole('group', { name: 'Corregir el estado' });
+    await user.selectOptions(within(panel).getByLabelText('Nuevo estado'), 'confirmed');
+    await user.selectOptions(within(panel).getByLabelText('Motivo de la corrección'), 'other');
+    await user.click(within(panel).getByRole('button', { name: 'Corregir el estado' }));
+
+    await waitFor(() => {
+      expect(bodies).toEqual([{ toStatus: 'confirmed', reasonCode: 'other', expectedVersion: 3 }]);
     });
   });
 
@@ -640,7 +686,10 @@ describe('correcting a terminal status', () => {
 
     await user.click(screen.getByRole('button', { name: 'Corregir estado' }));
     const panel = await screen.findByRole('group', { name: 'Corregir el estado' });
-    await user.type(within(panel).getByLabelText('Motivo de la corrección'), 'Llegó tarde');
+    await user.selectOptions(
+      within(panel).getByLabelText('Motivo de la corrección'),
+      'patient_arrived_late',
+    );
     await user.click(within(panel).getByRole('button', { name: 'Corregir el estado' }));
 
     expect(await within(panel).findByRole('alert')).toHaveTextContent(/No tiene permiso/);
@@ -656,6 +705,56 @@ describe('an organization in read-only mode', () => {
     const confirm = within(dialog).getByRole('button', { name: 'Confirmar turno' });
     expect(confirm).toHaveAttribute('aria-disabled', 'true');
     expect(confirm).toHaveAccessibleDescription('No disponible en modo de solo lectura.');
+  });
+
+  it('offers only the cancellation the patient asked for, because the API refuses the rest', async () => {
+    const user = userEvent.setup();
+    const bodies: unknown[] = [];
+    await opened({
+      readOnly: true,
+      routes: {
+        [`POST /api/appointments/${ID}/cancel`]: (_url, init) => {
+          bodies.push(jsonBody(init));
+          return jsonResponse(appointmentOf({ status: 'cancelled', version: 4 }));
+        },
+      },
+    });
+
+    await user.click(screen.getByRole('button', { name: 'Cancelar turno' }));
+    const panel = await screen.findByRole('group', { name: 'Cancelar el turno' });
+    const who = within(panel).getByLabelText('Quién cancela');
+    expect(
+      within(who)
+        .getAllByRole('option')
+        .map((option) => option.textContent),
+    ).toEqual(['', 'El paciente']);
+    expect(who).toHaveAccessibleDescription(
+      'En modo de solo lectura solo se registra la cancelación que pidió el paciente.',
+    );
+
+    await user.selectOptions(who, 'patient');
+    await user.selectOptions(within(panel).getByLabelText('Motivo'), 'illness');
+    await user.click(within(panel).getByRole('button', { name: 'Cancelar el turno' }));
+    await waitFor(() => {
+      expect(bodies).toEqual([
+        { cancelledBy: 'patient', reasonCode: 'illness', expectedVersion: 3 },
+      ]);
+    });
+  });
+
+  it('keeps the three options of who cancels when the organization is not read-only', async () => {
+    const user = userEvent.setup();
+    await opened();
+
+    await user.click(screen.getByRole('button', { name: 'Cancelar turno' }));
+    const panel = await screen.findByRole('group', { name: 'Cancelar el turno' });
+    const who = within(panel).getByLabelText('Quién cancela');
+    expect(
+      within(who)
+        .getAllByRole('option')
+        .map((option) => option.textContent),
+    ).toEqual(['', 'El paciente', 'El profesional', 'La organización']);
+    expect(who).not.toHaveAccessibleDescription();
   });
 });
 

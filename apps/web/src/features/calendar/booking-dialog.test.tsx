@@ -330,6 +330,24 @@ describe('when the time was taken meanwhile (409 slot_taken)', () => {
   });
 });
 
+describe('a booking the API refuses for lack of permission (403)', () => {
+  it('says so and keeps the dialog open, as for a time that needs the hold override', async () => {
+    const user = userEvent.setup();
+    const app = mount({
+      props: FROM_GRID,
+      routes: { 'POST /api/appointments': () => problem(403, 'forbidden') },
+    });
+    await screen.findByText(/Horario elegido/);
+    await pickPatient(user);
+    await user.click(screen.getByRole('button', { name: 'Dar turno' }));
+
+    const alert = await screen.findByRole('alert');
+    expect(alert).toHaveTextContent('No tiene permiso para realizar esta acción.');
+    expect(app.onBooked).not.toHaveBeenCalled();
+    expect(screen.getByRole('dialog', { name: 'Nuevo turno' })).toBeInTheDocument();
+  });
+});
+
 describe('a time outside the working hours', () => {
   const OUTSIDE = {
     initial: { professionalId: IDS.ana, start: new Date('2026-10-17T09:00:00.000Z') },

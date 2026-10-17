@@ -23,13 +23,19 @@ interface Cancellation {
   note: string;
 }
 
-/** Cancelling: who asked, why (a code, so reports can group them) and a note when it is "other". */
+/**
+ * Cancelling: who asked, why (a code, so reports can group them) and a note when it is "other".
+ * In a read-only organization only the cancellation the patient asked for goes through (the API
+ * refuses the others with 402), so that is the only one offered.
+ */
 export function CancelPanel({
   entry,
+  readOnly,
   onBack,
   onDone,
 }: {
   entry: CalendarEntryDto;
+  readOnly: boolean;
   onBack: () => void;
   onDone: (updated: AppointmentDto) => void;
 }) {
@@ -52,6 +58,9 @@ export function CancelPanel({
     },
   );
 
+  const cancellers = readOnly
+    ? CANCELLED_BY.filter((option) => option === 'patient')
+    : CANCELLED_BY;
   const needsNote = reason === 'other';
   const ready = by !== '' && reason !== '' && (!needsNote || note.trim() !== '');
 
@@ -61,18 +70,24 @@ export function CancelPanel({
         <Label htmlFor="cancel-by">{t('drawer.cancel.by')}</Label>
         <Select
           id="cancel-by"
+          aria-describedby={readOnly ? 'cancel-by-read-only' : undefined}
           value={by}
           onChange={(event) => {
             setBy(event.target.value as CancelledBy | '');
           }}
         >
           <option value="" />
-          {CANCELLED_BY.map((option) => (
+          {cancellers.map((option) => (
             <option key={option} value={option}>
               {t(`drawer.cancel.byOption.${option}`)}
             </option>
           ))}
         </Select>
+        {readOnly ? (
+          <p id="cancel-by-read-only" className="text-sm text-muted-foreground">
+            {t('drawer.cancel.byReadOnly')}
+          </p>
+        ) : null}
       </div>
       <div className="grid gap-1.5">
         <Label htmlFor="cancel-reason">{t('drawer.cancel.reason')}</Label>

@@ -76,4 +76,17 @@ test('book, confirm, check in, start and attend', async ({ page, browser }) => {
   await page.goto(urlOf('aillu', agenda));
   drawer = await openAppointment(page, new RegExp(`${when}.*Gómez, Valentina.*Atendido`));
   await expect(drawer.getByText('Atendido', { exact: true })).toBeVisible();
+
+  // The professional marked it by mistake: a correction takes a reason code and the version.
+  await theirs.getByRole('button', { name: 'Corregir estado' }).click();
+  const correction = theirs.getByRole('group', { name: 'Corregir el estado' });
+  await correction.getByLabel('Nuevo estado').selectOption({ label: 'Ausente' });
+  await expect(correction.getByRole('button', { name: 'Corregir el estado' })).toBeDisabled();
+  await correction
+    .getByLabel('Motivo de la corrección')
+    .selectOption({ label: 'Se marcó por error' });
+  await correction.getByLabel('Detalle (opcional)').fill('Se abrió el turno equivocado');
+  await correction.getByRole('button', { name: 'Corregir el estado' }).click();
+  await expect(theirs.getByText('Ausente', { exact: true })).toBeVisible();
+  expect(await axeViolations(professional)).toEqual([]);
 });

@@ -240,6 +240,7 @@ function DrawerBody({
       {panel === 'cancel' ? (
         <CancelPanel
           entry={entry}
+          readOnly={readOnly}
           onBack={() => {
             setPanel(null);
           }}
