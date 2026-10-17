@@ -128,6 +128,8 @@ export const CLINICAL_TABLES: ReadonlySet<string> = new Set([
   'clinical_note',
   'note_version',
   'addendum',
+  // No content, but only a professional reads it (JD-S2 S7).
+  'clinical_footprint',
 ]);
 
 /** Row id -> professional who authored it, for the clinical fixtures below. */
@@ -387,9 +389,9 @@ export const TENANT_FIXTURES: Record<string, TenantTableFixture> = {
       const patientId = overrides?.['patient_id'] ?? (await insertPatient(tx, tenantId));
       const opened = await insertEncounter(tx, tenantId, authorId, patientId);
       await insertNote(tx, tenantId, opened, authorId);
-      return returningId(
-        tx,
-        sql`SELECT id FROM clinical_footprint WHERE patient_id = ${patientId}`,
+      // Only a professional reads the footprint.
+      return actingAs(tx, authorId, () =>
+        returningId(tx, sql`SELECT id FROM clinical_footprint WHERE patient_id = ${patientId}`),
       );
     },
   },

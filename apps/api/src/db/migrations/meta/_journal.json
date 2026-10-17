@@ -288,6 +288,13 @@
       "when": 1792236666494,
       "tag": "0040_lane_capacity_on_change",
       "breakpoints": true
+    },
+    {
+      "idx": 41,
+      "version": "7",
+      "when": 1792237273640,
+      "tag": "0041_footprint_professionals_only",
+      "breakpoints": true
     }
   ]
 }

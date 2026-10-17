@@ -243,3 +243,41 @@ describe('the keys keep a row inside its organization and its patient', () => {
     }
   });
 });
+
+describe('the clinical footprint is for professionals only (JD-S2 S7)', () => {
+  const footprintRows = (professionalId?: string) =>
+    (professionalId === undefined
+      ? asTenant(runtime, a.id, (tx) =>
+          tx.execute<{ patient_id: string }>(sql`SELECT patient_id FROM clinical_footprint`),
+        )
+      : asProfessional(runtime, a.id, professionalId, (tx) =>
+          tx.execute<{ patient_id: string }>(sql`SELECT patient_id FROM clinical_footprint`),
+        )
+    ).then((result) => result.rows.map((row) => row.patient_id));
+
+  it('shows a professional of the organization that a record was started, and reception or the administration nothing', async () => {
+    expect(await footprintRows(colleague)).toContain(patientId);
+    expect(await footprintRows(author)).toContain(patientId);
+    expect(await footprintRows()).toEqual([]);
+  });
+
+  it('carries the restrictive professionals-only policy besides the tenant one', async () => {
+    const result = await owner.query<{ policyname: string; permissive: string }>(
+      `SELECT policyname, permissive FROM pg_policies WHERE tablename = 'clinical_footprint' ORDER BY policyname`,
+    );
+
+    expect(result.rows).toEqual([
+      { policyname: 'clinical_professionals_only', permissive: 'RESTRICTIVE' },
+      { policyname: 'tenant_isolation', permissive: 'PERMISSIVE' },
+    ]);
+  });
+
+  it('is still written by the triggers when the note is created', async () => {
+    const fresh = await createTestPatient(runtime, a.id);
+    await asProfessional(runtime, a.id, author, (tx) =>
+      openDraft(tx, { tenantId: a.id, patientId: fresh, authorId: author }),
+    );
+
+    expect(await footprintRows(colleague)).toContain(fresh);
+  });
+});
