@@ -305,6 +305,13 @@ describe('confirming from the worklist', () => {
 
     expect(((await thrown(confirm(ports, reception))) as AppError).code).toBe('conflict');
   });
+
+  it('refuses a cancelled appointment and confirms nothing', async () => {
+    const { ports, state } = world(appointment({ status: 'cancelled' }));
+
+    expect(((await thrown(confirm(ports, reception))) as AppError).code).toBe('conflict');
+    expect(state.updates).toEqual([]);
+  });
 });
 
 describe('rejecting the match (detach)', () => {
@@ -394,6 +401,29 @@ describe('rejecting the match (detach)', () => {
         )) as AppError
       ).code,
     ).toBe('conflict');
+  });
+
+  it('has nothing to reject on a cancelled appointment', async () => {
+    const { ports, state } = world(appointment({ status: 'cancelled' }));
+
+    const error = await thrown(
+      detach(ports, reception, { kind: 'move_to_patient', patientId: 'patient-2' }),
+    );
+
+    expect((error as AppError).code).toBe('conflict');
+    expect(state.updates).toEqual([]);
+  });
+
+  it('closes the review once when it cancels: as rejected, not as a plain cancellation', async () => {
+    const { ports, state } = world();
+
+    await detach(ports, reception, {
+      kind: 'cancel',
+      cancellation: { cancelledBy: 'organization', reasonCode: 'other' },
+    });
+
+    const reviews = state.closedItems.filter((item) => item.kind === 'identity_review');
+    expect(reviews[0]).toMatchObject({ status: 'resolved', resolution: 'identity_rejected' });
   });
 
   it('has nothing to reject on an appointment whose identity is confirmed', async () => {

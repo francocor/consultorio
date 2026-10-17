@@ -384,6 +384,40 @@ describe('cancellation', () => {
     expect(((await thrown(cancel(ports))) as AppError).code).toBe('conflict');
   });
 
+  it('dismisses the open identity review of the appointment it cancels', async () => {
+    const { ports, state } = world(appointment({ identityConfirmed: false }));
+
+    await cancel(ports);
+
+    expect(state.closedItems).toContainEqual({
+      kind: 'identity_review',
+      subjectId: 'appt-1',
+      status: 'dismissed',
+      resolution: 'appointment_cancelled',
+    });
+  });
+
+  it('dismisses the pending approval item of the appointment it cancels', async () => {
+    const { ports, state } = world(appointment({ status: 'pending_approval' }));
+
+    await cancel(ports);
+
+    expect(state.closedItems).toContainEqual({
+      kind: 'pending_approval',
+      subjectId: 'appt-1',
+      status: 'dismissed',
+      resolution: 'appointment_cancelled',
+    });
+  });
+
+  it('closes nothing when the appointment is not cancelled', async () => {
+    const { ports, state } = world(appointment({ identityConfirmed: false }));
+
+    await move(ports, 'confirm');
+
+    expect(state.closedItems).toEqual([]);
+  });
+
   it('needs the cancellation details', async () => {
     const { ports } = world();
 

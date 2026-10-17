@@ -218,7 +218,30 @@ export async function transitionAppointment(
       actor: input.auditActor,
     });
   }
+  if (input.action === 'cancel') await dismissWorklistItems(ports, record.id, input.auditActor);
   return updated;
+}
+
+/**
+ * A cancelled appointment has nothing left for a person to decide: its open reception items (an
+ * identity review, a pending approval) are dismissed, so the worklist never offers an action on it.
+ * Closing an item that is not open does nothing.
+ */
+async function dismissWorklistItems(
+  ports: SchedulingPorts,
+  appointmentId: string,
+  actor: AuditActor & { userId: string },
+): Promise<void> {
+  for (const kind of ['identity_review', 'pending_approval'] as const) {
+    await ports.closeWorklistItem({
+      kind,
+      subjectType: 'appointment',
+      subjectId: appointmentId,
+      status: 'dismissed',
+      resolution: 'appointment_cancelled',
+      actor,
+    });
+  }
 }
 
 export interface CorrectInput {
