@@ -1,5 +1,5 @@
 import { WIZARD_STEPS, WizardAnswers, type WizardStep } from '@consultorio/contracts';
-import { sql } from 'drizzle-orm';
+import { eq, sql } from 'drizzle-orm';
 
 import { onboardingState, type OnboardingStateRow } from '../../../db/schema/onboarding.js';
 import { tenant } from '../../../db/schema/tenant.js';
@@ -106,7 +106,11 @@ export const SELF_ROLE_WINDOW_DAYS = 30;
  */
 export async function isSelfRoleOpen(tx: Tx, now: Date): Promise<boolean> {
   if (await isWizardCompleted(tx)) return false;
-  const [row] = await tx.select({ createdAt: tenant.createdAt }).from(tenant);
+  // Row level security already limits the table to this organization; the filter says it too.
+  const [row] = await tx
+    .select({ createdAt: tenant.createdAt })
+    .from(tenant)
+    .where(eq(tenant.id, sql`current_setting('app.tenant_id')::uuid`));
   if (!row) return false;
   return now.getTime() - row.createdAt.getTime() < SELF_ROLE_WINDOW_DAYS * 24 * 60 * 60 * 1000;
 }
