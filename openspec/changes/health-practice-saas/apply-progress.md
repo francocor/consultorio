@@ -850,3 +850,85 @@ Routes (under `/api/v1`, session cookie, `Origin` checked; contracts in `package
 - Reminders, the waitlist and public booking (Stage 3) will add worklist items through `worklist.openItem`; the kinds already exist.
 - `slot_hold` has no demo row (listed with a reason in the coverage test).
 - Nothing was verified in CI (never polled).
+
+## Batch 9: Stage 2, slices S2.12 to S2.16 (the scheduling web)
+
+Strict TDD. Branch `feat/stage-2-practice-core`, work-unit commits with the slice id, automatic mode, delivery `size:exception` as in batch 8, draft PR #15 (base `feat/stage-1-secure-core`), no merge, CI not polled. Only `apps/web`, one shared contracts file, docs and the openspec artifacts changed: no backend file was edited (a separate agent owns the backend review fixes).
+
+### Commits (in order, after batch 8)
+
+| Slice | Commits | Tasks |
+|---|---|---|
+| S2.12 Calendar view | `76949de` lifecycle table shared through contracts; `7799cda` API client keeps the 409 extensions; `9ee0297` `CalendarView` (day, week, month, list) and the ADR; `b74b34a` agenda page, filters, legend, URL state, navigation; `e63962b` Playwright at 360 and 1280 px | 2.34 to 2.36 |
+| S2.13 Booking UI | `62f0beb` booking dialog, slot grid, conflict handling, optimistic move with undo, Playwright booking | 2.37 to 2.39 |
+| S2.14 Appointment drawer | `60cfff1` drawer, arrival and identity step, cancel, move, correction, history, series review, Playwright full day | 2.40 to 2.42 |
+| S2.15 Worklist, Today, Check-in | `d9d731c` worklist with badge, Today, Check-in, role matrix | 2.43, 2.44 |
+| S2.16 Scheduling settings | `6539001` types, blocks, holidays, overbooking; `33268e5` operator holiday catalog | 2.45, 2.46 |
+| Follow-ups found by the full e2e run | `3730786` the shell spec follows the new entries, tabs no longer widen the page at 360 px, the free-time search reaches past the seeded weeks; `060eb20` the booking specs use a pediatric time at the locations reception works at | (S2.12 to S2.16) |
+
+### What was built
+
+- **Calendar (`shared/ui/calendar`).** A custom grid behind a presentational API (`resources`, `events`, `backgrounds`, `closedDays`): day with a column per professional, week with a column per day, month with counts, and a list presentation that phones always use. All time arithmetic is in the zone of the location (`zoned-time.ts`, DST under test); overlaps share a column (`layoutOverlaps`, so overbooking is visible); keyboard: events are buttons, `Alt` + arrows move an appointment by 15 minutes or to the next column. Dragging with a mouse is optimistic. Status is an icon and a word, never a color.
+- **Agenda page.** Day, week, month; location filter; professional chips; cancelled toggle; legend; state in the address (`?view&date&location&pros&cancelled&list&appointment`) so a reload or a shared link lands in the same place; a professional is always asked for by name (their own agenda) and sees colleagues only with the delegated-calendar permission; the `truncated` flag shows a non-blocking notice.
+- **Booking.** From a time chosen on the grid only the patient is missing; from the button the dialog opens on the day and professional on screen; a taken time (`409 slot_taken`) shows the next free times one tap away; out-of-hours asks for a reason only for who holds the permission; a weekly series is reviewed in a table before anything exists (skip or go back).
+- **Drawer.** Only the actions the lifecycle allows (the same table as the API, now in `@consultorio/contracts`) and the permissions cover; arrival with the identity step (staff wording, and the solo-practice wording for the appointment's own professional), cancel (who and why, note required for "other"), reschedule or reassign with free times and next times, correction (statuses limited by who may speak for the consultation, 403 explained), history with the rescheduled count, read-only mode (only cancelling stays on).
+- **Worklist, Today, Check-in.** "Pendientes" (kind chips with counts, location filter, resolve, dismiss with confirmation, approve, confirm identity, correct the patient, differences table) with its count as a badge on the navigation; "Hoy" for professionals (who is next, one button to start, in progress, waiting, to arrive, done); "Llegadas" for reception (search, one-click arrival, identity pending opens the arrival step).
+- **Settings.** Settings > Turnos: appointment types (create, edit sending only what changed, deactivate with confirmation, restrict to professionals), blocks (zone-aware, whole days or hours, weekly repetition, the appointments inside are listed and NOT touched, remove one or the series), holidays and days off (merged year view, add and remove the organization's own), overbooking (confirmation from two simultaneous appointments). Operator console: holiday catalog editor (a change reaches every organization with no release, proven end to end).
+- **Shared fixes found on the way.** The API client dropped the whole problem when a 409 carried extra members (`slot_taken` with `nextSlots` was reported as a plain conflict): fixed with validated extensions. A flex/grid child widened the page past 360 px (`grid-cols-1`). Toast fade made axe read half-transparent colors (the specs use reduced motion).
+
+### Path finding (the question of `/api/v1`)
+
+The server has NO `/api/v1` prefix: `rg` over `apps/api/src` finds the routes registered as `/appointments`, `/availability`, `/worklist`, `/appointment-types`, `/schedule-blocks`, `/holidays`, `/days-off`, `/slot-holds` and `/staff` (batch 5 was right; batch 8's "under `/api/v1`" and the task text `POST /api/v1/appointments` repeat the original plan). The web calls `API_BASE = '/api'` and the proxy strips it, exactly as for every Stage 1 route, so every new call is `/api/appointments...` in the browser and `/appointments...` at the server. A `/api/v1` prefix, if it is ever added, is one constant in `buildServer` plus the proxy rule.
+
+### TDD Cycle Evidence
+
+RED means the test file was written before the production code it exercises (a missing module is the failure) and, where a run was seen failing, it is said so.
+
+| Tasks | Test file(s) | Layer | Notes |
+|---|---|---|---|
+| 2.34 | `zoned-time.test.ts` (15), `calendar-layout.test.ts` (14), `CalendarView.test.tsx` (27), contracts `appointment-lifecycle.test.ts` | Unit + component + axe | RED first. A real bug showed as a failing drag test (the drop was measured after the press state was cleared) |
+| 2.35 | `calendar-events.test.ts`, `appointment-actions.test.ts`, `period.test.ts`, `search.test.ts`, `time-zone.test.ts`, `use-calendar.test.tsx`, `calendar-page.test.tsx`, `api-client.test.ts` | Unit + hook + component | RED observed for the API client (3 failed: extensions lost). Page tests: 17 of 18 passed at the first run, the failing one was a test flaw (cache) |
+| 2.36 | `calendar.responsive.spec.ts` | e2e 360 + 1280, axe | RED observed: 296 px of horizontal overflow at 360 px, then fixed |
+| 2.37 | `booking-dialog.test.tsx` (12) | Component + axe | RED first; one race in the test fixed |
+| 2.38 | `calendar-page.test.tsx` (moving), `CalendarView.test.tsx` | Component | Optimistic move, rollback with next times, undo with the new version |
+| 2.39 | `calendar.booking.spec.ts` | e2e | At most 6 actions and 30 s asserted; the lost race shows the next times |
+| 2.40, 2.41 | `appointment-drawer.test.tsx` (33), `booking-series.test.tsx` (6) | Component + axe | RED first; 32 of 33 passed at the first run (one test query too broad) |
+| 2.42 | `calendar.day.spec.ts` | e2e | Reception books, confirms, checks in; the professional starts and attends; axe at each step |
+| 2.43 | `worklist-items.test.ts` (6), `worklist-page.test.tsx` (16), `nav-badge.test.tsx` (5) | Unit + component | RED first; the badge name needed an explicit `aria-label` (inline spans lose the space) |
+| 2.44 | `day-flow.test.ts`, `today-page.test.tsx` (9), `checkin-page.test.tsx` (7), `scheduling.roles.spec.ts`, `scheduling.responsive.spec.ts` | Unit + component + e2e | Role matrix: reception, professional, owner |
+| 2.45 | `type-form.test.ts` (9), `overbooking.test.ts`, `block-form.test.ts`, `scheduling-settings.test.tsx` (26), `scheduling.settings.responsive.spec.ts` | Unit + component + e2e | RED first |
+| 2.46 | `holidays.test.tsx` (8), `operator.holidays.spec.ts`, `operator.holidays.responsive.spec.ts` | Component + e2e | The operator adds a holiday and an organization reads it at once |
+
+### Test summary and verification (tip of `feat/stage-2-practice-core`, Node 24, pnpm 10.34.7, Docker running)
+
+| Command | Result |
+|---|---|
+| `corepack pnpm install --frozen-lockfile` | not needed: no dependency was added (the lockfile is unchanged) |
+| `corepack pnpm typecheck` | exit 0 (contracts, api, web) |
+| `corepack pnpm lint` | exit 0 |
+| `corepack pnpm format:check` | exit 0 |
+| `corepack pnpm test` | **190 files, 2443 tests passed** (it was 165 files, 2149 tests) |
+| `corepack pnpm test:integration` | **90 files, 1386 tests**, same count as batch 8. The full run failed 8 tests in 3 files (`staff-lifecycle`, `jobs`, `no-delete`) on 30-second timeouts while the machine was saturated by other worktrees (Docker answered `docker info` in 110 s); those three files, re-run once on their own, passed (3 files, 62 tests) |
+| `corepack pnpm build` | exit 0 |
+| `corepack pnpm test:e2e` | **140 passed** on a fresh stack (it was 112; +28 specs: calendar 360 and 1280, booking, full day, roles, settings, operator holidays). Two earlier full runs failed: on a reused stack (state left by `auth` and `staff` specs, which expect a fresh one), on a slow lazy chunk (10 s) and on two of my specs fighting for the same free time; fixed (see commits `3730786` and `060eb20`) |
+
+Browser checks beyond the suite: axe at 360 and 1280 px on the agenda (day, week, month), the booking dialog, the drawer, Hoy, Llegadas, Pendientes, every section of Settings > Turnos and the operator catalog.
+
+### Decisions and deviations
+
+1. **Q6: a custom grid, not react-big-calendar.** Measured, not guessed: react-big-calendar 1.20 in a scratch folder under jsdom + axe gave 2 critical violations in the day view and 2 in the week view, no per-location time zone (device zone; the workaround is a process-wide default), a 12-hour clock, no keyboard path to an empty slot, mouse-only drag. Record and numbers in `docs/adr/calendar.md`.
+2. **Resize is not offered.** An appointment's end is derived from its type (spec), and the API has no way to set it; dragging an edge would promise something impossible. Task 2.38 says "move and resize": only move is built, with a keyboard equivalent.
+3. **The legend uses its own badge.** The shared `StatusBadge` has another status set; scheduling has eight, each with its own icon and word (`STATUS_PRESENTATION`).
+4. **The lifecycle table moved to `@consultorio/contracts`** (new `appointment-lifecycle.ts`) so the screens offer exactly what the API allows. The API keeps its own copy for now (its hand-written exhaustive test is the guard) to avoid editing backend files while another agent works there; switching it to the shared table is a three-line change.
+5. **"Who am I" in the agenda.** `/auth/me` carries no professional id, so the screens find the signed-in professional in the staff directory by email (the directory shows a person their own email). If the directory is hidden for a role, the professional's own screens fall back to an empty state.
+6. **Differences of an identity review.** The producer (online booking, Stage 3) does not exist yet; the card reads `detail.differences` (`field`, `submitted`, `onFile`) when present. Staff bookings carry none.
+7. **Blocks over appointments.** The API does not list affected appointments, so the dialog reads the calendar feed for the block's window and lists them; creating needs the person to confirm they know the appointments stay as they are.
+8. **Navigation.** The owner/admin layout also gets Agenda and Pendientes (the spec lets them manage appointments and see the worklist; the design table listed only dashboard/staff/reports/billing/settings), and the professional layout gets Agenda (the spec says they open their calendar). `NOT_BUILT_YET` keeps Borradores and Recetas out until Stage 2 clinical.
+9. **Coordinator's contract notes honored without touching the backend.** Every mutating call sends the appointment's current `expectedVersion` (a `Versioned<>` type makes it a compile error to forget; the worklist and the Today buttons read the version just before sending); `truncated` is read through a local `CalendarFeed` schema that already accepts it; a `slot_taken` without the extension is handled everywhere; corrections to "in progress" or "attended" are offered only to the appointment's own professional and a 403 is explained.
+10. **Tests with toasts use reduced motion** in the specs that run axe with a toast on screen.
+
+### Remaining
+
+- S2.17 to S2.34 (clinical schema and UI, documents, onboarding, gate, legacy removal).
+- The booking dialog has no hold step yet (holds exist in the API; the public flow in Stage 3 uses them).
+- Nothing was verified in CI (never polled).

@@ -578,39 +578,39 @@ Depends: S2.05.
 
 Depends: S2.11, Stage 1 web.
 
-- [ ] 2.34 `shared/ui/calendar/CalendarView.tsx`: presentational wrapper over react-big-calendar (day, week, month, resource columns per professional, location time zone, keyboard-accessible list fallback). Record the Q6 decision (polish versus a custom grid) in `docs/adr/calendar.md`. [SCH-01] Test: component tests for resource columns.
-- [ ] 2.35 `features/calendar/{api,containers}`: query keys, `useCalendar` hook (range, location and professional filters), status legend with `StatusBadge` (never color only). [SCH-01] Test: hook tests.
-- [ ] 2.36 Playwright at 360 px: day view default on mobile with an agenda list. [SCH-01, SHL-02] Test: that spec.
+- [x] 2.34 `shared/ui/calendar/CalendarView.tsx`: presentational wrapper over react-big-calendar (day, week, month, resource columns per professional, location time zone, keyboard-accessible list fallback). Record the Q6 decision (polish versus a custom grid) in `docs/adr/calendar.md`. [SCH-01] Test: component tests for resource columns. (Done: a custom grid instead of react-big-calendar, decided in `docs/adr/calendar.md` from a measured spike: axe failures in the day and week views, no location time zone, no keyboard path. The wrapper API stays presentational and swappable.)
+- [x] 2.35 `features/calendar/{api,containers}`: query keys, `useCalendar` hook (range, location and professional filters), status legend with `StatusBadge` (never color only). [SCH-01] Test: hook tests. (Done: the legend uses its own icon + word badge for the eight statuses, because the shared `StatusBadge` has a different status set.)
+- [x] 2.36 Playwright at 360 px: day view default on mobile with an agenda list. [SCH-01, SHL-02] Test: that spec.
 
 ## S2.13 Booking UI (~400 lines)
 
 Depends: S2.12, S2.10.
 
-- [ ] 2.37 `features/calendar/components/BookingDialog` with `PatientPicker`, `SlotGrid`, type select, out-of-hours override reason, and handling of `409 slot_taken` with next slots. [SCH-03, SCH-06] Test: component tests.
-- [ ] 2.38 Drag to move and resize, optimistic with rollback on 409 and an undo toast. [SCH-09] Test: component test of rollback.
-- [ ] 2.39 Playwright: reception books an existing patient in 30 seconds or less (step count asserted); overlap conflict message. [SCH-03] Test: that spec.
+- [x] 2.37 `features/calendar/components/BookingDialog` with `PatientPicker`, `SlotGrid`, type select, out-of-hours override reason, and handling of `409 slot_taken` with next slots. [SCH-03, SCH-06] Test: component tests.
+- [x] 2.38 Drag to move and resize, optimistic with rollback on 409 and an undo toast. [SCH-09] Test: component test of rollback. (Done: drag to move, with `Alt` + arrows as the keyboard equivalent. Resize is NOT offered: the end of an appointment is derived from its type, and the API cannot set it.)
+- [x] 2.39 Playwright: reception books an existing patient in 30 seconds or less (step count asserted); overlap conflict message. [SCH-03] Test: that spec.
 
 ## S2.14 Appointment drawer (~400 lines)
 
 Depends: S2.13, S2.07.
 
-- [ ] 2.40 `AppointmentDrawer`: only valid transitions shown, check-in step with identity confirmation (ID document prompt, solo self-confirm wording), cancel with reason, reschedule, event history. [SCH-11, SCH-10, SCH-09] Test: component tests per status.
-- [ ] 2.41 Recurring series UI with a conflict review table (skip or abort). [SCH-12] Test: component test.
-- [ ] 2.42 Playwright full day: book, confirm, check in, start, attend; axe. [SCH-11] Test: that spec.
+- [x] 2.40 `AppointmentDrawer`: only valid transitions shown, check-in step with identity confirmation (ID document prompt, solo self-confirm wording), cancel with reason, reschedule, event history. [SCH-11, SCH-10, SCH-09] Test: component tests per status.
+- [x] 2.41 Recurring series UI with a conflict review table (skip or abort). [SCH-12] Test: component test.
+- [x] 2.42 Playwright full day: book, confirm, check in, start, attend; axe. [SCH-11] Test: that spec.
 
 ## S2.15 Worklist, Today and Check-in views (~350 lines)
 
 Depends: S2.14, S2.06.
 
-- [ ] 2.43 `features/worklist/*`: list by location, kind filters, nav badge, resolve and dismiss; `identity_review` shows submitted versus on-file differences. [SCH-13] Test: component tests.
-- [ ] 2.44 Professional "Today" view and reception "Check-in" view. [SHL-01, SCH-11] Test: Playwright role matrix.
+- [x] 2.43 `features/worklist/*`: list by location, kind filters, nav badge, resolve and dismiss; `identity_review` shows submitted versus on-file differences. [SCH-13] Test: component tests. (Done: `identity_review` shows `detail.differences` when the producer fills it; staff bookings carry none until online booking in Stage 3.)
+- [x] 2.44 Professional "Today" view and reception "Check-in" view. [SHL-01, SCH-11] Test: Playwright role matrix.
 
 ## S2.16 Scheduling settings UI (~400 lines)
 
 Depends: S2.12.
 
-- [ ] 2.45 `features/settings/scheduling`: appointment types, blocks, days off, overbooking `max_simultaneous` per professional (at least 2 requires confirmation), holiday viewer. [SCH-02, SCH-04, SCH-07] Test: component tests.
-- [ ] 2.46 `features/operator/holidays` catalog editor. [SCH-07, CTR-05] Test: Playwright as operator.
+- [x] 2.45 `features/settings/scheduling`: appointment types, blocks, days off, overbooking `max_simultaneous` per professional (at least 2 requires confirmation), holiday viewer. [SCH-02, SCH-04, SCH-07] Test: component tests.
+- [x] 2.46 `features/operator/holidays` catalog editor. [SCH-07, CTR-05] Test: Playwright as operator.
 
 ## S2.17 Clinical schema and immutability triggers (~400 lines)
 
