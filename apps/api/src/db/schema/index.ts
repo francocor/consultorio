@@ -13,6 +13,7 @@ export * from './patients.js';
 export * from './platform-catalogs.js';
 export * from './privacy.js';
 export * from './scheduling-config.js';
+export * from './scheduling.js';
 export * from './staff.js';
 export * from './tenant-key.js';
 export * from './tenant.js';

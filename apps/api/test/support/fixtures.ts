@@ -85,6 +85,39 @@ async function insertPatient(tx: Tx, tenantId: string): Promise<string> {
   );
 }
 
+async function insertLocation(tx: Tx, tenantId: string): Promise<string> {
+  return returningId(
+    tx,
+    sql`INSERT INTO location (tenant_id, name, time_zone)
+          VALUES (${tenantId}, ${unique('Location')}, 'America/Argentina/Buenos_Aires')
+          RETURNING id`,
+  );
+}
+
+let appointmentDay = 0;
+/** An appointment on a day of its own, so repeated fixtures never overlap. */
+async function insertAppointmentRow(
+  tx: Tx,
+  tenantId: string,
+  overrides?: Readonly<Record<string, string>>,
+): Promise<string> {
+  appointmentDay += 1;
+  return returningId(
+    tx,
+    sql`INSERT INTO appointment
+          (tenant_id, patient_id, professional_id, location_id, appointment_type_id, starts_at, ends_at, booked_by)
+          VALUES (${tenantId},
+                  ${overrides?.['patient_id'] ?? (await insertPatient(tx, tenantId))},
+                  ${overrides?.['professional_id'] ?? (await insertProfessional(tx, tenantId))},
+                  ${overrides?.['location_id'] ?? (await insertLocation(tx, tenantId))},
+                  ${overrides?.['appointment_type_id'] ?? (await returningId(tx, sql`INSERT INTO appointment_type (tenant_id, name, duration_minutes) VALUES (${tenantId}, ${unique('Consulta')}, 30) RETURNING id`))},
+                  (timestamptz '2031-01-01T10:00:00Z' + ${appointmentDay}::int * interval '1 day'),
+                  (timestamptz '2031-01-01T10:30:00Z' + ${appointmentDay}::int * interval '1 day'),
+                  ${randomUUID()})
+          RETURNING id`,
+  );
+}
+
 /**
  * Tables that hold clinical content. Their rows are only visible to a health professional's
  * transaction, so the isolation suite reads them acting as the professional who wrote them.
@@ -387,6 +420,58 @@ export const TENANT_FIXTURES: Record<string, TenantTableFixture> = {
                       ${overrides?.['professional_id'] ?? (await insertProfessional(tx, tenantId))},
                       ${randomUUID()}, '2026-12-01', '2026-12-15', ${locationId}, 1, 540, 780, ${randomUUID()})
               RETURNING id`,
+      );
+    },
+  },
+  appointment: {
+    insert: async (tx, tenantId, overrides) => insertAppointmentRow(tx, tenantId, overrides),
+  },
+  appointment_event: {
+    insert: async (tx, tenantId, overrides) =>
+      returningId(
+        tx,
+        sql`INSERT INTO appointment_event (tenant_id, appointment_id, kind, to_status)
+              VALUES (${tenantId}, ${overrides?.['appointment_id'] ?? (await insertAppointmentRow(tx, tenantId))}, 'created', 'scheduled')
+              RETURNING id`,
+      ),
+  },
+  slot_hold: {
+    insert: async (tx, tenantId, overrides) => {
+      const professionalId =
+        overrides?.['professional_id'] ?? (await insertProfessional(tx, tenantId));
+      const locationId = overrides?.['location_id'] ?? (await insertLocation(tx, tenantId));
+      return returningId(
+        tx,
+        sql`INSERT INTO slot_hold
+              (tenant_id, professional_id, location_id, starts_at, ends_at, expires_at, source_key, appointment_id, status)
+              VALUES (${tenantId}, ${professionalId}, ${locationId},
+                      '2031-01-01T10:00:00Z', '2031-01-01T10:30:00Z', now() + interval '10 minutes',
+                      ${randomUUID()}, ${overrides?.['appointment_id'] ?? null},
+                      ${overrides?.['appointment_id'] ? 'converted' : 'expired'})
+              RETURNING id`,
+      );
+    },
+  },
+  slot_occupancy: {
+    // The runtime role cannot write this table: a row appears when an appointment is inserted.
+    // The foreign keys that only the triggers can set are exercised through the tables that point
+    // at the same parents, as for the care relationship.
+    insert: async (tx, tenantId, overrides) => {
+      if (
+        overrides?.['appointment_id'] !== undefined ||
+        overrides?.['slot_hold_id'] !== undefined
+      ) {
+        return returningId(
+          tx,
+          sql`INSERT INTO appointment_event (tenant_id, appointment_id, kind)
+                VALUES (${tenantId}, ${overrides['appointment_id'] ?? overrides['slot_hold_id']}, 'created')
+                RETURNING id`,
+        );
+      }
+      const appointmentId = await insertAppointmentRow(tx, tenantId, overrides);
+      return returningId(
+        tx,
+        sql`SELECT id FROM slot_occupancy WHERE appointment_id = ${appointmentId}`,
       );
     },
   },

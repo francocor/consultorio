@@ -176,6 +176,13 @@
       "when": 1792199145797,
       "tag": "0024_holiday_catalog_removed",
       "breakpoints": true
+    },
+    {
+      "idx": 25,
+      "version": "7",
+      "when": 1792199687309,
+      "tag": "0025_scheduling",
+      "breakpoints": true
     }
   ]
 }

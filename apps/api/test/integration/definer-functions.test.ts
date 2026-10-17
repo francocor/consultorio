@@ -30,6 +30,9 @@ const ALLOWED: Record<string, readonly string[]> = {
   'app.care_adjust(uuid,uuid,uuid,integer,integer)': [],
   'app.care_assignment_sync()': [],
   'app.care_set_assigned(uuid,uuid,uuid,boolean)': [],
+  // Mirror appointments and holds into the occupancy (S2.02); only their triggers call them.
+  'app.sync_appointment_occupancy()': [],
+  'app.sync_hold_occupancy()': [],
 };
 
 let owner: pg.Client;

@@ -490,9 +490,9 @@ Goal: a solo professional books a first appointment within 10 minutes; a multi-p
 
 Depends: Stage 1.
 
-- [ ] 2.1 `db/schema/scheduling-config.ts` + migration: `appointment_type` (duration, buffer, virtual, requires approval, color, active), `schedule_block`, `tenant_day_off`; register fixtures. [SCH-02, SCH-07] Test: isolation suite covers the tables.
-- [ ] 2.2 `modules/scheduling` API for types, blocks, days off (permission `scheduling.configure`, deactivate not delete, audited). [SCH-02, SCH-07, SCH-14] Test: integration CRUD plus denials.
-- [ ] 2.3 `application/holidays.ts` merging `holiday_catalog` with `tenant_day_off`, and the operator catalog API `/operator/holidays` (platform audit). [SCH-07, CTR-05] Test: moved holiday needs no release; operator-only.
+- [x] 2.1 `db/schema/scheduling-config.ts` + migration: `appointment_type` (duration, buffer, virtual, requires approval, color, active), `schedule_block`, `tenant_day_off`; register fixtures. [SCH-02, SCH-07] Test: isolation suite covers the tables.
+- [x] 2.2 `modules/scheduling` API for types, blocks, days off (permission `scheduling.configure`, deactivate not delete, audited). [SCH-02, SCH-07, SCH-14] Test: integration CRUD plus denials.
+- [x] 2.3 `application/holidays.ts` merging `holiday_catalog` with `tenant_day_off`, and the operator catalog API `/operator/holidays` (platform audit). [SCH-07, CTR-05] Test: moved holiday needs no release; operator-only.
 
 ## S2.02 Appointment and occupancy schema (~400 lines)
 
@@ -508,7 +508,7 @@ Depends: S2.02.
 
 - [ ] 2.7 `modules/scheduling/domain/lanes.ts`: `assignLane` and greedy `relane` (pure). [SCH-04] Test: unit tables.
 - [ ] 2.8 Property tests (fast-check): random interval sets never exceed capacity, no overlap per lane, `relane` fits whenever feasible. [SCH-04] Test: that file.
-- [ ] 2.9 `domain/time.ts`: location time zone conversions with DST gap and overlap handling (use a maintained library such as luxon). [SCH-08] Test: spring-forward and fall-back cases in a DST zone.
+- [x] 2.9 `domain/time.ts`: location time zone conversions with DST gap and overlap handling (use a maintained library such as luxon). [SCH-08] Test: spring-forward and fall-back cases in a DST zone.
 
 ## S2.04 Booking service (~400 lines)
 
