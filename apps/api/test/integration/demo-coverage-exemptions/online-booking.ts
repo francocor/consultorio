@@ -1,11 +1,11 @@
 /**
- * Tables of online booking that the demo organization does not fill yet. The Stage 3 seed slice
- * (S3.16) seeds them and deletes this file. Each entry says why the table is empty until then.
+ * Tables of online booking that the demo organization leaves empty on purpose. The booking links
+ * are seeded (Stage 3 demo seed); what remains is transient by design.
  */
 export const exemptions: Record<string, string> = {
-  booking_link: 'S3.16 seeds the public booking links of the demo organization.',
   booking_submission:
-    'Transient by design: an unverified form is deleted after 24 hours, so a demo has none to show.',
-  public_hold: 'S3.16 seeds the public holds with the bookings of the demo organization.',
+    'An unverified form is deleted after 24 hours and a verified one keeps only its consent evidence; the demo seed writes the bookings themselves, so there are none to show.',
+  public_hold:
+    'A public hold lives ten minutes and becomes the appointment; the demo seed books the appointments directly.',
   otp_challenge: 'Transient by design: a one-time code lives ten minutes.',
 };

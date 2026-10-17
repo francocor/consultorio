@@ -20,6 +20,7 @@ import { DEMO_ACCOUNTS, DEMO_PASSWORD } from '../../src/db/seed/demo/credentials
 import { buildDemoDataset } from '../../src/db/seed/demo/dataset.js';
 import { DemoSeedError, seedDemoTenant, type DemoSeedDeps } from '../../src/db/seed/demo/seed.js';
 import { snapshotDemoTenant } from '../../src/db/seed/demo/snapshot.js';
+import { ONLINE_PATIENTS } from '../../src/db/seed/demo/stage3/online-booking.js';
 import { seedPlatformCatalogs } from '../../src/db/seed/platform.js';
 import { createPasswordHasher } from '../../src/modules/identity/infrastructure/argon2.js';
 import { createTenantKeys } from '../../src/platform/crypto/tenant-keys.js';
@@ -102,9 +103,10 @@ describe('seedDemoTenant', () => {
     expect(counts.professionals).toBe(3);
     expect(counts.hours).toBeGreaterThan(8);
     expect(counts.locations).toBe(data.locations.length);
-    expect(counts.patients).toBe(data.patients.length);
+    // The dataset plus the two people who registered themselves through the public booking (Stage 3).
+    expect(counts.patients).toBe(data.patients.length + ONLINE_PATIENTS);
     expect(counts.coverages).toBe(data.patients.filter((p) => p.coverage).length);
-    expect(counts.consents).toBe(data.patients.filter((p) => p.consent).length);
+    expect(counts.consents).toBe(data.patients.filter((p) => p.consent).length + ONLINE_PATIENTS);
     expect(counts.representatives).toBe(data.patients.filter((p) => p.representative).length);
     expect(counts.audit).toBeGreaterThan(30);
     expect(counts.assignments).toBe(data.care.length);
