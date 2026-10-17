@@ -531,9 +531,9 @@ Depends: S2.04.
 
 Depends: S2.02.
 
-- [ ] 2.17 `db/schema/worklist.ts`: `worklist_item` with the 6 canonical kinds, subject, location, status, encrypted detail, resolver; no delete. [SCH-13] Test: isolation suite; invalid kind rejected.
-- [ ] 2.18 `modules/scheduling/worklist/index.ts` `openItem`/`resolve` and routes `GET /worklist`, `POST /worklist/:id/resolve|dismiss` (permission `worklist.manage`, filtered by the user's locations, audited). [SCH-13, AUZ-13] Test: location filtering; idempotent open.
-- [ ] 2.19 Activate `eslint-plugin-boundaries` for `modules/*` (cross-module imports only through `index.ts`). Test: lint fixture that reaches into another module's internals fails.
+- [x] 2.17 `db/schema/worklist.ts`: `worklist_item` with the 6 canonical kinds, subject, location, status, encrypted detail, resolver; no delete. [SCH-13] Test: isolation suite; invalid kind rejected.
+- [x] 2.18 `modules/scheduling/worklist/index.ts` `openItem`/`resolve` and routes `GET /worklist`, `POST /worklist/:id/resolve|dismiss` (permission `worklist.manage`, filtered by the user's locations, audited). [SCH-13, AUZ-13] Test: location filtering; idempotent open.
+- [x] 2.19 Activate `eslint-plugin-boundaries` for `modules/*` (cross-module imports only through `index.ts`). Test: lint fixture that reaches into another module's internals fails.
 
 ## S2.07 Identity confirmation (D14, D18) (~350 lines)
 

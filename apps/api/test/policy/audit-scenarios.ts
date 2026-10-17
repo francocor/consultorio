@@ -98,6 +98,8 @@ export const AUDIT_SCENARIOS: Record<AuditAction, AuditScenario> = {
   'appointment.status_changed': t('scheduling-lifecycle.test.ts'),
   'appointment.cancelled': t('scheduling-lifecycle.test.ts'),
   'appointment.status_corrected': t('scheduling-lifecycle.test.ts'),
+  'worklist.resolved': t('scheduling-worklist.test.ts'),
+  'worklist.dismissed': t('scheduling-worklist.test.ts'),
 
   // Scheduling setup.
   'appointment_type.created': t('scheduling-config-api.test.ts'),

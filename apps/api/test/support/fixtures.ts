@@ -475,6 +475,15 @@ export const TENANT_FIXTURES: Record<string, TenantTableFixture> = {
       );
     },
   },
+  worklist_item: {
+    insert: (tx, tenantId, overrides) =>
+      returningId(
+        tx,
+        sql`INSERT INTO worklist_item (tenant_id, kind, subject_type, subject_id, location_id)
+              VALUES (${tenantId}, 'reminder_not_sent', 'appointment', ${randomUUID()}, ${overrides?.['location_id'] ?? null})
+              RETURNING id`,
+      ),
+  },
   tenant_feature: {
     insert: (tx, tenantId) =>
       returningId(

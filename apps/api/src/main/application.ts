@@ -224,6 +224,7 @@ export function createApplication(options: ApplicationOptions): FastifyInstance 
   const scheduling = createScheduling({
     withTenant,
     auditDeny,
+    keys: options.keys,
     ...(schedulingClock ? { clock: schedulingClock } : {}),
   });
 

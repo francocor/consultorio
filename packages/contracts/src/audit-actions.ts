@@ -84,6 +84,9 @@ export const AUDIT_ACTIONS = [
   'appointment.status_changed',
   'appointment.cancelled',
   'appointment.status_corrected',
+  // The reception worklist: every item is resolved or dismissed by a person.
+  'worklist.resolved',
+  'worklist.dismissed',
   // Scheduling setup: what can be booked, when the calendar is closed, hours for a range of dates.
   'appointment_type.created',
   'appointment_type.updated',

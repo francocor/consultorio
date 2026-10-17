@@ -1,9 +1,14 @@
+import { randomBytes } from 'node:crypto';
+
 import type { AppointmentDto, AppointmentTypeDto, LocationDto } from '@consultorio/contracts';
 import { sql } from 'drizzle-orm';
 import type { FastifyInstance, LightMyRequestResponse } from 'fastify';
 import { expect } from 'vitest';
 
+import { createLocalKeyManagement } from '../../src/adapters/local-kek/index.js';
+import { createTenantKeys, type TenantKeys } from '../../src/platform/crypto/tenant-keys.js';
 import type { DbHandle } from '../../src/platform/db/pool.js';
+import type { Tx } from '../../src/platform/db/tenant-context.js';
 
 import { buildTestApplication } from './app.js';
 import { insertPatient } from './scheduling.js';
@@ -21,8 +26,13 @@ export type Doctor = TestSession & { professionalId: string; membershipId: strin
  * tests never collide.
  */
 export interface SchedulingHttpWorld {
+  runtime: DbHandle;
   app: FastifyInstance;
   api: ReturnType<typeof clientFor>;
+  /** The same key service the application uses, with the organization's data key in place. */
+  keys: TenantKeys;
+  /** Runs work as the organization, straight on the database. */
+  inTenant<T>(fn: (tx: Tx) => Promise<T>): Promise<T>;
   tenant: TestTenant;
   slug: string;
   /** The clock of the application; `setNow` moves it. */
@@ -66,7 +76,11 @@ export async function createSchedulingHttpWorld(
   let current = options.now ?? new Date('2031-05-05T12:00:00.000Z');
   const tenant = await createTestTenant(runtime, { slug: options.slug });
   // Only scheduling runs on the moving clock: sessions keep the real one, so they do not expire.
-  const app = buildTestApplication(runtime, { schedulingClock: () => current });
+  const keys = createTenantKeys({
+    kms: createLocalKeyManagement(randomBytes(32).toString('base64')),
+  });
+  await asTenant(runtime, tenant.id, (tx) => keys.ensureTenantKey(tx));
+  const app = buildTestApplication(runtime, { schedulingClock: () => current, keys });
   const api = clientFor(app, options.slug);
 
   const signIn = async (user: TestUser): Promise<Member> => ({
@@ -150,8 +164,11 @@ export async function createSchedulingHttpWorld(
 
   await app.ready();
   return {
+    runtime,
     app,
     api,
+    keys,
+    inTenant: (fn) => asTenant(runtime, tenant.id, fn),
     tenant,
     slug: options.slug,
     now: () => current,

@@ -205,3 +205,82 @@ export const AppointmentHistoryResponse = z.strictObject({
   events: z.array(AppointmentEventDto),
 });
 export type AppointmentHistoryResponse = z.infer<typeof AppointmentHistoryResponse>;
+
+// Reception worklist --------------------------------------------------------------------------
+
+/**
+ * The six kinds of item that need a person (scheduling, "Reception worklist"). Other capabilities
+ * add their items here instead of keeping queues of their own.
+ */
+export const WORKLIST_KINDS = [
+  'pending_approval',
+  'identity_review',
+  'reminder_not_sent',
+  'reminder_not_delivered',
+  'reply_to_review',
+  'waitlist_manual_contact',
+] as const;
+export type WorklistKind = (typeof WORKLIST_KINDS)[number];
+
+export const WORKLIST_SUBJECT_TYPES = ['appointment', 'waitlist_entry', 'inbound_message'] as const;
+export type WorklistSubjectType = (typeof WORKLIST_SUBJECT_TYPES)[number];
+
+export const WORKLIST_STATUSES = ['open', 'resolved', 'dismissed'] as const;
+export type WorklistStatus = (typeof WORKLIST_STATUSES)[number];
+
+/** What a person can do with an item; the screen links each one to its action. */
+export const WORKLIST_ACTIONS = [
+  'open_appointment',
+  'approve',
+  'confirm_identity',
+  'detach_patient',
+  'resolve',
+  'dismiss',
+] as const;
+export type WorklistAction = (typeof WORKLIST_ACTIONS)[number];
+
+/** The appointment an item is about, with administrative data only. */
+export const WorklistAppointmentDto = z.strictObject({
+  id: z.uuid(),
+  startsAt: Instant,
+  endsAt: Instant,
+  status: z.enum(APPOINTMENT_STATUSES),
+  professionalId: z.uuid(),
+  patientId: z.uuid(),
+  patientName: z.string(),
+  locationId: z.uuid(),
+  identityConfirmed: z.boolean(),
+});
+export type WorklistAppointmentDto = z.infer<typeof WorklistAppointmentDto>;
+
+export const WorklistItemDto = z.strictObject({
+  id: z.uuid(),
+  kind: z.enum(WORKLIST_KINDS),
+  subjectType: z.enum(WORKLIST_SUBJECT_TYPES),
+  subjectId: z.uuid(),
+  locationId: z.uuid().nullable(),
+  status: z.enum(WORKLIST_STATUSES),
+  createdAt: Instant,
+  resolvedAt: Instant.nullable(),
+  resolvedBy: z.uuid().nullable(),
+  resolution: z.string().nullable(),
+  /** Administrative detail, for example the differences between a booking and the record. */
+  detail: z.record(z.string(), z.unknown()).nullable(),
+  appointment: WorklistAppointmentDto.nullable(),
+  actions: z.array(z.enum(WORKLIST_ACTIONS)),
+});
+export type WorklistItemDto = z.infer<typeof WorklistItemDto>;
+
+export const WorklistQuery = z.strictObject({
+  status: z.enum(WORKLIST_STATUSES).optional(),
+  kind: z.enum(WORKLIST_KINDS).optional(),
+  limit: z.coerce.number().int().min(1).max(200).optional(),
+});
+export type WorklistQuery = z.infer<typeof WorklistQuery>;
+
+export const WorklistResponse = z.strictObject({
+  items: z.array(WorklistItemDto),
+  /** Open items the viewer can see, for the badge on the navigation. */
+  openCount: z.number().int(),
+});
+export type WorklistResponse = z.infer<typeof WorklistResponse>;

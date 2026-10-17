@@ -17,3 +17,4 @@ export * from './scheduling.js';
 export * from './staff.js';
 export * from './tenant-key.js';
 export * from './tenant.js';
+export * from './worklist.js';
