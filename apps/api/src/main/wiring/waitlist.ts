@@ -45,6 +45,9 @@ export const waitlistWiring: ModuleWiring = {
       keys: context.keys,
       events: context.appointmentEvents,
       jobs: context.jobs,
+      email: context.email,
+      rateLimitStore: context.rateLimitStore,
+      adapters: context.adapters,
       ...(context.clock ? { clock: context.clock } : {}),
     }),
   worker: ({ config, adapters, clock }) => {
