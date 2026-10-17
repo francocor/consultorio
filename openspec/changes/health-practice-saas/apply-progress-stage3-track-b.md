@@ -37,7 +37,10 @@ Change: `health-practice-saas`. Branch `feat/stage-3-track-3b`, from the seam ti
 | `221b8c3` | S3.09, 3.43                  | `public_hold`, migration 0342.                                          |
 | `912d0d3` | S3.09, 3.43 to 3.46          | Confirm booking (D14), approval, ICS, self-service by link.             |
 | `53e18cc` | S3.10, 3.47 to 3.50          | Public booking UI, e2e spec, removal of the `features/booking` placeholder. |
-| (last)    | S3.07 to S3.10               | Per-address hold limit, video rule test, tasks.md marks.                |
+| `fbb018e` | S3.07 to S3.10               | Per-address hold limit, video rule test, tasks.md marks.                |
+| `e785ef7` | tests                        | Schema and export tests use unique professionals (shared database).     |
+| `c27eab8` | tests                        | The booking e2e uses the demo psychologist (no competition with other specs). |
+| `5178296` | docs                         | This file.                                                              |
 
 ## Migrations (range 0340 to 0359)
 
