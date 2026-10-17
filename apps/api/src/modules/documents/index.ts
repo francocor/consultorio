@@ -8,15 +8,24 @@ import type { AuthzOptions } from '../../platform/authz/guard.js';
 import type { WithTenant } from '../../platform/db/tenant-context.js';
 import type { JobClient } from '../../platform/jobs/boss.js';
 import type { ObjectStorage } from '../../platform/storage/object-storage.js';
+import { createActionTokens } from '../../platform/tokens/index.js';
 import type { ExportRegistry } from '../tenancy/index.js';
 
+import { createDownloadService } from './application/downloads.js';
 import {
   exportAdministrativeDocuments,
   exportClinicalDocuments,
 } from './application/export-contributor.js';
+import { createLifecycleService } from './application/lifecycle.js';
+import { createListingService } from './application/listing.js';
 import { createUploadService } from './application/uploads.js';
+import { accessRoutes } from './http/access-routes.js';
 import { uploadRoutes } from './http/document-routes.js';
 
+export {
+  CLEANUP_JOB,
+  createCleanupJob as createDocumentCleanup,
+} from './application/cleanup-job.js';
 export { createDocumentJobs } from './application/jobs.js';
 export type { DocumentJobs, DocumentJobsDeps } from './application/jobs.js';
 export type { RejectionNotice, ScanAlert } from './application/scan-job.js';
@@ -44,16 +53,24 @@ export interface Documents {
 
 export function createDocuments(options: DocumentsOptions): Documents {
   const clock = options.clock ?? (() => new Date());
-  const uploads = createUploadService({ storage: options.storage, jobs: options.jobs, clock });
+  const common = { withTenant: options.withTenant, auditDeny: options.auditDeny };
   const upload = uploadRoutes({
-    withTenant: options.withTenant,
-    auditDeny: options.auditDeny,
-    uploads,
+    ...common,
+    uploads: createUploadService({ storage: options.storage, jobs: options.jobs, clock }),
+  });
+  const access = accessRoutes({
+    ...common,
+    storage: options.storage,
+    listing: createListingService(),
+    // The five minutes of a link are counted on the same clock as the rest of the module.
+    downloads: createDownloadService({ tokens: createActionTokens({ clock }) }),
+    lifecycle: createLifecycleService({ clock }),
   });
 
   return {
     routes: (app) => {
       upload(app);
+      access(app);
     },
   };
 }

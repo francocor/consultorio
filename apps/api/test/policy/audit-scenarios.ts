@@ -49,6 +49,9 @@ export const AUDIT_SCENARIOS: Record<AuditAction, AuditScenario> = {
   // Documents.
   'document.uploaded': t('documents-uploads.test.ts'),
   'document.scanned': t('documents-scan.test.ts'),
+  'document.downloaded': t('documents-download.test.ts'),
+  'document.hidden': t('documents-lifecycle.test.ts'),
+  'document.reclassified': t('documents-access.test.ts'),
 
   // Patient identity data.
   'patient.created': t('patients-api.test.ts'),

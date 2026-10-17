@@ -26,6 +26,10 @@ const ALLOWED: Record<string, readonly string[]> = {
   'app.active_support_grant_id(uuid)': ['app_operator'],
   'app.tenant_is_unclaimed(uuid)': ['app_operator'],
   'app.demo_reset(uuid)': ['app_operator'],
+  // Documents: tell a clinical document the caller may not read from one that does not exist,
+  // and give reception the metadata of clinical documents when the organization allows it.
+  'app.document_probe(uuid)': ['app_rw'],
+  'app.reception_clinical_documents(uuid)': ['app_rw'],
   // Called only by triggers, never directly.
   'app.care_adjust(uuid,uuid,uuid,integer,integer)': [],
   'app.care_assignment_sync()': [],

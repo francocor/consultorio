@@ -699,10 +699,10 @@ Depends: S2.25, S2.17.
 
 Depends: S2.26.
 
-- [ ] 2.80 `POST /documents/:id/download-link` and `GET /files/:token` per design 5.6 (token kind `document_download`, bound to the session, 5 minutes, single use, authz re-run at redemption, `nosniff`, `no-store`, sanitized disposition). [DOC-03] Test: expiry, reuse, other session, access lost meanwhile.
-- [ ] 2.81 Classification rules: clinical documents follow clinical read rules, administrative ones are visible to reception, `reception_sees_clinical_metadata` exposes metadata only, admins never see clinical documents. [DOC-04, AUZ-07, AUZ-06] Test: role matrix.
-- [ ] 2.82 Replace and hide (original retained, never deleted), duplicate detection by sha256 per patient (warning), cleanup job `document.cleanup` for abandoned uploads (marks rows abandoned, may delete orphan objects, never table rows). [DOC-05, DOC-06] Test: replace keeps the original; duplicate warning.
-- [ ] 2.83 Lists return metadata only; `REVOKE DELETE` on `document`. [DOC-03, DOC-07] Test: list payload has no content fields.
+- [x] 2.80 `POST /documents/:id/download-link` and `GET /files/:token` per design 5.6 (token kind `document_download`, bound to the session, 5 minutes, single use, authz re-run at redemption, `nosniff`, `no-store`, sanitized disposition). [DOC-03] Test: expiry, reuse, other session, access lost meanwhile.
+- [x] 2.81 Classification rules: clinical documents follow clinical read rules, administrative ones are visible to reception, `reception_sees_clinical_metadata` exposes metadata only, admins never see clinical documents. [DOC-04, AUZ-07, AUZ-06] Test: role matrix.
+- [x] 2.82 Replace and hide (original retained, never deleted), duplicate detection by sha256 per patient (warning), cleanup job `document.cleanup` for abandoned uploads (marks rows abandoned, may delete orphan objects, never table rows). [DOC-05, DOC-06] Test: replace keeps the original; duplicate warning.
+- [x] 2.83 Lists return metadata only; `REVOKE DELETE` on `document`. [DOC-03, DOC-07] Test: list payload has no content fields.
 
 ## S2.28 Documents UI (~300 lines)
 

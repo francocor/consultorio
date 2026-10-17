@@ -37,6 +37,9 @@ export const AUDIT_ACTIONS = [
   // Documents: attachments of a patient (uploads, downloads, hiding, reclassifying).
   'document.uploaded',
   'document.scanned',
+  'document.downloaded',
+  'document.hidden',
+  'document.reclassified',
   // Patient identity data.
   'patient.created',
   'patient.updated',

@@ -1,6 +1,6 @@
 import { createRejectionNotifier } from '../modules/documents/application/rejection-email.js';
-import { createDocumentJobs } from '../modules/documents/index.js';
-import type { WorkerOptions } from '../platform/jobs/worker.js';
+import { CLEANUP_JOB, createDocumentJobs } from '../modules/documents/index.js';
+import { fanOut, type WorkerOptions } from '../platform/jobs/worker.js';
 import type { EmailSender } from '../platform/mail/email-sender.js';
 import type { MalwareScanner } from '../platform/scanning/malware-scanner.js';
 import type { ObjectStorage } from '../platform/storage/object-storage.js';
@@ -12,11 +12,17 @@ export interface DocumentWorkerDeps {
   email: EmailSender;
 }
 
+/** How often every organization's abandoned uploads are looked at. */
+const CLEANUP_EVERY_MS = 3_600_000;
+
 /**
- * The documents module's part of the worker: the scan job, wired to the worker's queue client,
- * metrics and log. The platform worker knows no module; the composition root hands it these.
+ * The documents module's part of the worker: the scan and cleanup jobs wired to the worker's queue
+ * client, metrics and log, and the hourly tick that queues the cleanup of every organization. The
+ * platform worker knows no module; the composition root hands it these.
  */
-export function documentWorker(deps: DocumentWorkerDeps): Pick<WorkerOptions, 'jobs'> {
+export function documentWorker(
+  deps: DocumentWorkerDeps,
+): Pick<WorkerOptions, 'jobs' | 'schedules'> {
   return {
     jobs: ({ client, metrics, log }) =>
       createDocumentJobs({
@@ -39,5 +45,15 @@ export function documentWorker(deps: DocumentWorkerDeps): Pick<WorkerOptions, 'j
           );
         },
       }).all,
+    schedules: ({ client, db }) => [
+      {
+        name: 'document.cleanup tick',
+        intervalMs: CLEANUP_EVERY_MS,
+        run: async () => {
+          // One cleanup per organization and per hour at most, even with several workers.
+          await fanOut(db, client, CLEANUP_JOB, { singletonSeconds: 3000 });
+        },
+      },
+    ],
   };
 }

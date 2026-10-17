@@ -49,7 +49,7 @@ export const TOKEN_KIND_REGISTRY: Record<TokenKind, KindSpec> = {
   video_join: { ttlMs: 3 * HOUR, maxUses: 20, sessionBound: false, enabled: false },
   notification_opt_out: { ttlMs: 3650 * DAY, maxUses: 1, sessionBound: false, enabled: false },
   whatsapp_opt_in: { ttlMs: 7 * DAY, maxUses: 1, sessionBound: false, enabled: false },
-  document_download: { ttlMs: 5 * MINUTE, maxUses: 1, sessionBound: true, enabled: false },
+  document_download: { ttlMs: 5 * MINUTE, maxUses: 1, sessionBound: true, enabled: true },
   archive_release: { ttlMs: 72 * HOUR, maxUses: 1, sessionBound: false, enabled: false },
 };
 

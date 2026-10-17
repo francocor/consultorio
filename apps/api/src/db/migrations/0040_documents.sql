@@ -70,10 +70,13 @@ CREATE POLICY "tenant_isolation" ON "document" USING ("tenant_id" = current_sett
 -- app.clinical_readable (author, treating professional, sharing scope). An owner, an admin or
 -- reception therefore reads ZERO clinical rows, even in plain SQL. Background jobs act as the
 -- system user (the nil UUID that withTenant is given by the job runner) and see both, because
--- they have to scan every file. Documents follow the general ceiling of the sharing scope.
+-- they have to scan every file. The two definer functions below run as the owner role, which
+-- row level security also binds (FORCE), so the policy lets that role through. Documents follow the
+-- general ceiling of the sharing scope.
 CREATE POLICY "document_classification" ON "document" AS RESTRICTIVE USING (
   "classification" = 'administrative'
   OR current_setting('app.user_id', true) = '00000000-0000-0000-0000-000000000000'
+  OR current_user = 'app_owner'
   OR (
     nullif(current_setting('app.professional_id', true), '') IS NOT NULL
     AND app.clinical_readable("patient_id", "author_professional_id", 'default', NULL::text)
@@ -132,3 +135,72 @@ CREATE FUNCTION app.guard_document() RETURNS trigger
 CREATE TRIGGER document_guard
   BEFORE UPDATE ON "document"
   FOR EACH ROW EXECUTE FUNCTION app.guard_document();
+--> statement-breakpoint
+-- Tells a clinical document the caller may not read apart from one that does not exist. Row level
+-- security hides the first from reception and the administration, so without this the API could
+-- only answer "not found" to both, and the trail would never show who asked for a clinical
+-- document. It answers nothing but the class of a confirmed document of THIS organization.
+CREATE FUNCTION app.document_probe(p_id uuid)
+RETURNS text
+LANGUAGE sql STABLE SECURITY DEFINER
+SET search_path = pg_catalog, public, pg_temp
+AS $$
+  SELECT d.classification
+    FROM public.document d
+   WHERE d.id = p_id
+     AND d.tenant_id = current_setting('app.tenant_id')::uuid
+     AND d.upload_completed_at IS NOT NULL
+     AND d.abandoned_at IS NULL
+$$;
+--> statement-breakpoint
+REVOKE ALL ON FUNCTION app.document_probe(uuid) FROM PUBLIC;
+--> statement-breakpoint
+GRANT EXECUTE ON FUNCTION app.document_probe(uuid) TO app_rw;
+--> statement-breakpoint
+-- The metadata of the clinical documents of a patient, for reception, when the organization has
+-- turned on "reception sees clinical metadata". Name, category, size and dates: no file, no
+-- hash, no storage key. Nothing is returned unless BOTH hold, checked here and not in the
+-- application: the setting is on, and the caller is an active reception member of this
+-- organization. An owner or an admin gets zero rows whatever the setting says.
+CREATE FUNCTION app.reception_clinical_documents(p_patient uuid)
+RETURNS TABLE (
+  id uuid,
+  patient_id uuid,
+  category text,
+  original_name text,
+  size_bytes integer,
+  content_type text,
+  created_at timestamp with time zone,
+  uploaded_by uuid,
+  replaces_document_id uuid
+)
+LANGUAGE sql STABLE SECURITY DEFINER
+SET search_path = pg_catalog, public, pg_temp
+AS $$
+  SELECT d.id, d.patient_id, d.category, d.original_name, d.size_bytes, d.content_type,
+         d.created_at, d.uploaded_by, d.replaces_document_id
+    FROM public.document d
+   WHERE d.tenant_id = current_setting('app.tenant_id')::uuid
+     AND d.patient_id = p_patient
+     AND d.classification = 'clinical'
+     AND d.status = 'available'
+     AND d.upload_completed_at IS NOT NULL
+     AND d.abandoned_at IS NULL
+     AND EXISTS (
+       SELECT 1 FROM public.tenant t
+        WHERE t.id = d.tenant_id
+          AND t.settings -> 'reception_sees_clinical_metadata' = 'true'::jsonb
+     )
+     AND EXISTS (
+       SELECT 1 FROM public.membership m
+        WHERE m.tenant_id = d.tenant_id
+          AND m.user_id = nullif(current_setting('app.user_id', true), '')::uuid
+          AND m.status = 'active'
+          AND 'reception' = ANY (m.roles)
+     )
+   ORDER BY d.created_at DESC, d.id DESC
+$$;
+--> statement-breakpoint
+REVOKE ALL ON FUNCTION app.reception_clinical_documents(uuid) FROM PUBLIC;
+--> statement-breakpoint
+GRANT EXECUTE ON FUNCTION app.reception_clinical_documents(uuid) TO app_rw;

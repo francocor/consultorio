@@ -9,6 +9,7 @@ import { refuseRequest } from '../../../platform/authz/refuse.js';
 import type { WithTenant } from '../../../platform/db/tenant-context.js';
 import { AppError } from '../../../platform/http/problem.js';
 import { AccessRefused } from '../../access/index.js';
+import { DocumentRefused } from '../application/refusal.js';
 import type { UploadService } from '../application/uploads.js';
 
 export interface DocumentRoutesDeps {
@@ -46,10 +47,13 @@ export async function refuse(
   error: AccessRefused,
   extra: { resourceId?: string; patientId?: string } = {},
 ): Promise<never> {
+  // What the service knew about the document wins over what the route knew from the address.
+  const known = error instanceof DocumentRefused ? error.context : {};
   return refuseRequest(deps.auditDeny, request, {
     reason: error.reason,
     resourceType: 'document',
     ...extra,
+    ...known,
   });
 }
 
