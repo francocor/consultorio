@@ -393,6 +393,13 @@
       "when": 1792279787360,
       "tag": "0392_message_lookup_definer",
       "breakpoints": true
+    },
+    {
+      "idx": 56,
+      "version": "7",
+      "when": 1792280387377,
+      "tag": "0393_message_checks_not_valid",
+      "breakpoints": true
     }
   ]
 }
