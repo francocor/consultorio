@@ -1,0 +1,53 @@
+import type { WorklistKind, WorklistSubjectType } from '@consultorio/contracts';
+
+import type { Tx, WithTenant } from '../../../platform/db/tenant-context.js';
+import type { PublicOrigins } from '../../../platform/http/public-origin.js';
+import type { JobClient } from '../../../platform/jobs/boss.js';
+import type { EmailSender } from '../../../platform/mail/email-sender.js';
+import type { ActionTokens } from '../../../platform/tokens/index.js';
+
+import type { WhatsAppSender } from './ports.js';
+
+/** The organization a message is about; a demo organization never reaches a real provider. */
+export interface TenantRef {
+  id: string;
+  isDemo: boolean;
+}
+
+/**
+ * Which provider serves which organization. The wiring builds these from the adapter resolver, so
+ * the module never knows the resolver, the registry or the environment. `undefined` means the
+ * channel is not configured for that organization (no mail server, no WhatsApp provider).
+ */
+export interface Channels {
+  email(tenant: TenantRef): EmailSender | undefined;
+  whatsapp(tenant: TenantRef): WhatsAppSender | undefined;
+}
+
+/** What messaging asks of the reception worklist (the queue itself belongs to scheduling). */
+export interface WorklistItem {
+  kind: Extract<WorklistKind, 'reminder_not_sent' | 'reminder_not_delivered' | 'reply_to_review'>;
+  subjectType: WorklistSubjectType;
+  subjectId: string;
+  locationId: string | null;
+}
+
+export interface Worklist {
+  /** Idempotent: an open item of the same kind and subject is left as it is. */
+  open(tx: Tx, item: WorklistItem): Promise<void>;
+  /** Closes the open item of that kind about that subject, if there is one. */
+  close(tx: Tx, item: Pick<WorklistItem, 'kind' | 'subjectType' | 'subjectId'>): Promise<void>;
+}
+
+/** What the sending jobs and the planner use. The composition root builds it once per process. */
+export interface MessagingDeps {
+  withTenant: WithTenant;
+  channels: Channels;
+  /** Enqueues jobs in the caller's transaction (retries, fallbacks, planned reminders). */
+  jobs: JobClient;
+  clock: () => Date;
+  /** Where the links in an email point (never the Host header of a request). */
+  origins: PublicOrigins;
+  tokens: ActionTokens;
+  worklist: Worklist;
+}

@@ -14,6 +14,7 @@ CREATE TABLE "message" (
 	"provider_message_id" text,
 	"dedupe_key" text NOT NULL,
 	"address_hash" text,
+	"planned_starts_at" timestamp with time zone,
 	"appointment_version" integer,
 	"send_at" timestamp with time zone NOT NULL,
 	"sent_at" timestamp with time zone,
@@ -27,7 +28,7 @@ CREATE TABLE "message" (
 	CONSTRAINT "message_channel_check" CHECK ("channel" in ('email', 'whatsapp')),
 	CONSTRAINT "message_status_check" CHECK ("status" in ('queued', 'sent', 'delivered', 'read', 'failed', 'cancelled')),
 	CONSTRAINT "message_whatsapp_kind_check" CHECK ("channel" = 'email' or "kind" in ('reminder', 'confirmation', 'waitlist_offer')),
-	CONSTRAINT "message_cancel_reason_check" CHECK (("status" = 'cancelled') = ("cancel_reason" is not null) and ("cancel_reason" is null or "cancel_reason" in ('tenant_read_only', 'demo_tenant', 'opted_out', 'appointment_changed', 'appointment_cancelled', 'appointment_over', 'integration_off', 'no_channel'))),
+	CONSTRAINT "message_cancel_reason_check" CHECK (("status" = 'cancelled') = ("cancel_reason" is not null) and ("cancel_reason" is null or "cancel_reason" in ('tenant_read_only', 'demo_tenant', 'opted_out', 'appointment_changed', 'appointment_cancelled', 'appointment_over', 'integration_off', 'quota_exhausted', 'no_channel'))),
 	CONSTRAINT "message_failure_reason_check" CHECK (("status" = 'failed') = ("failure_reason" is not null) and ("failure_reason" is null or "failure_reason" in ('not_on_whatsapp', 'template_rejected', 'invalid_number', 'mailbox_unavailable', 'retries_exhausted'))),
 	CONSTRAINT "message_trigger_check" CHECK ("trigger" in ('automatic', 'manual')),
 	CONSTRAINT "message_attempts_check" CHECK ("message"."attempts" >= 0),
@@ -48,7 +49,7 @@ CREATE TABLE "message_attempt" (
 	"reason" text,
 	CONSTRAINT "message_attempt_tenant_id_id_key" UNIQUE("tenant_id","id"),
 	CONSTRAINT "message_attempt_tenant_id_message_id_attempt_no_key" UNIQUE("tenant_id","message_id","attempt_no"),
-	CONSTRAINT "message_attempt_outcome_check" CHECK ("outcome" in ('accepted', 'retryable', 'rejected', 'error')),
+	CONSTRAINT "message_attempt_outcome_check" CHECK ("outcome" in ('started', 'accepted', 'retryable', 'rejected', 'error')),
 	CONSTRAINT "message_attempt_no_check" CHECK ("message_attempt"."attempt_no" >= 1),
 	CONSTRAINT "message_attempt_tenant_id_fkey" FOREIGN KEY ("tenant_id") REFERENCES "public"."tenant"("id")
 );

@@ -28,8 +28,12 @@ import { tenant } from './tenant.js';
 
 const list = (values: readonly string[]) => values.map((value) => `'${value}'`).join(', ');
 
-/** How an attempt to hand a message to its provider ended. */
-export const ATTEMPT_OUTCOMES = ['accepted', 'retryable', 'rejected', 'error'] as const;
+/**
+ * How an attempt to hand a message to its provider ended. `started` is written (and committed)
+ * BEFORE the provider is called and replaced by the real outcome afterwards: a worker that dies in
+ * between leaves it behind, and the retry knows the provider may already have the message.
+ */
+export const ATTEMPT_OUTCOMES = ['started', 'accepted', 'retryable', 'rejected', 'error'] as const;
 
 /** Who started a message: the planner (`automatic`) or a person pressing "resend" (`manual`). */
 export const MESSAGE_TRIGGERS = ['automatic', 'manual'] as const;
@@ -64,7 +68,9 @@ export const message = tenantTable(
     dedupeKey: text('dedupe_key').notNull(),
     /** SHA-256 of the address the message went to (lower-case email, E.164 number). */
     addressHash: text('address_hash'),
-    /** The version of the appointment the message was planned for; a newer one replaces it. */
+    /** The start of the appointment the message was planned for; a move makes the message stale. */
+    plannedStartsAt: timestamp('planned_starts_at', { withTimezone: true }),
+    /** The version of the appointment when the message was planned (informational). */
     appointmentVersion: integer('appointment_version'),
     /** When the message is due. */
     sendAt: timestamp('send_at', { withTimezone: true }).notNull(),

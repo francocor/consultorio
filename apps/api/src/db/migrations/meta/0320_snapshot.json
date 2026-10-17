@@ -1,5 +1,5 @@
 {
-  "id": "2cb0f16e-06c3-4091-8be6-59b6f72af86a",
+  "id": "cf674646-7170-4613-9663-343c0dda8875",
   "prevId": "a4ff06fc-6034-4a2f-8ebd-a2b2c7513876",
   "version": "7",
   "dialect": "postgresql",
@@ -4023,6 +4023,12 @@
           "primaryKey": false,
           "notNull": false
         },
+        "planned_starts_at": {
+          "name": "planned_starts_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
         "appointment_version": {
           "name": "appointment_version",
           "type": "integer",
@@ -4289,7 +4295,7 @@
         },
         "message_cancel_reason_check": {
           "name": "message_cancel_reason_check",
-          "value": "(\"status\" = 'cancelled') = (\"cancel_reason\" is not null) and (\"cancel_reason\" is null or \"cancel_reason\" in ('tenant_read_only', 'demo_tenant', 'opted_out', 'appointment_changed', 'appointment_cancelled', 'appointment_over', 'integration_off', 'no_channel'))"
+          "value": "(\"status\" = 'cancelled') = (\"cancel_reason\" is not null) and (\"cancel_reason\" is null or \"cancel_reason\" in ('tenant_read_only', 'demo_tenant', 'opted_out', 'appointment_changed', 'appointment_cancelled', 'appointment_over', 'integration_off', 'quota_exhausted', 'no_channel'))"
         },
         "message_failure_reason_check": {
           "name": "message_failure_reason_check",
@@ -4417,7 +4423,7 @@
       "checkConstraints": {
         "message_attempt_outcome_check": {
           "name": "message_attempt_outcome_check",
-          "value": "\"outcome\" in ('accepted', 'retryable', 'rejected', 'error')"
+          "value": "\"outcome\" in ('started', 'accepted', 'retryable', 'rejected', 'error')"
         },
         "message_attempt_no_check": {
           "name": "message_attempt_no_check",

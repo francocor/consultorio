@@ -21,6 +21,25 @@ export type {
   WhatsAppSendResult,
 } from './application/ports.js';
 
+// Sending: the jobs the worker registers, and what they are built from.
+export { createNotificationJobs, createReminderSendJob } from './application/jobs.js';
+export type { NotificationJobs } from './application/jobs.js';
+export type {
+  Channels,
+  MessagingDeps,
+  TenantRef,
+  Worklist,
+  WorklistItem,
+} from './application/deps.js';
+export { REMINDER_SEND_JOB } from './application/queue.js';
+export { createWorklist } from './application/worklist.js';
+export {
+  isApprovedTemplate,
+  whatsappBody,
+  WHATSAPP_TEMPLATE_KEYS,
+} from './assets/es-AR/whatsapp.js';
+export type { WhatsAppTemplateKey } from './assets/es-AR/whatsapp.js';
+
 /** Registers what notifications takes with an organization that leaves (the cancellation export). */
 export function registerNotificationsExportContributors(registry: ExportRegistry): void {
   registry.registerExportContributor('administrative', 'notifications', exportNotifications);

@@ -1,5 +1,6 @@
 import {
   APPOINTMENT_MESSAGE_KINDS,
+  type AppointmentMessageKind,
   type MessageChannel,
   type MessageKind,
 } from '@consultorio/contracts';
@@ -46,7 +47,7 @@ export interface ChannelDecision {
   skipped: { channel: MessageChannel; reason: SkipReason }[];
 }
 
-export function isAppointmentKind(kind: MessageKind): boolean {
+export function isAppointmentKind(kind: MessageKind): kind is AppointmentMessageKind {
   return APPOINTMENT_MESSAGE_KINDS.some((appointmentKind) => appointmentKind === kind);
 }
 

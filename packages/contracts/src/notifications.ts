@@ -43,6 +43,8 @@ export const MESSAGE_CANCEL_REASONS = [
   /** The appointment was attended, missed or has already started. */
   'appointment_over',
   'integration_off',
+  /** The professional's WhatsApp quota is spent and the plan has no overage. */
+  'quota_exhausted',
   'no_channel',
 ] as const;
 export type MessageCancelReason = (typeof MESSAGE_CANCEL_REASONS)[number];
