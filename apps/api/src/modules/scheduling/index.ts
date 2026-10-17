@@ -33,6 +33,20 @@ export { createAppointmentTypeService } from './application/appointment-types.js
 export type { AppointmentTypeService } from './application/appointment-types.js';
 export { HOLD_EXPIRE_JOB, holdExpireJob } from './application/hold-expiry.js';
 
+// The use cases the capability modules of Stage 3 (online booking, the waitlist, notifications,
+// teleconsultation) call: they book, move, hold and read availability through here, never through
+// the files of this module.
+export { availability } from './application/availability.js';
+export { bookAppointment } from './application/book-appointment.js';
+export type { BookInput } from './application/book-appointment.js';
+export { createSchedulingPorts } from './application/drizzle-ports.js';
+export { createHold, HOLD_MINUTES, releaseHold } from './application/holds.js';
+export { rescheduleAppointment, transitionAppointment } from './application/lifecycle.js';
+export type { RescheduleInput, TransitionInput } from './application/lifecycle.js';
+export { SlotNoLongerAvailableError, SlotTakenError } from './application/placement.js';
+export type { BookActor } from './application/placement.js';
+export type { SchedulingPorts } from './application/ports.js';
+
 /** Registers what scheduling takes with an organization that leaves (the cancellation export). */
 export function registerSchedulingExportContributors(registry: ExportRegistry): void {
   registry.registerExportContributor('administrative', 'scheduling', exportScheduling);
