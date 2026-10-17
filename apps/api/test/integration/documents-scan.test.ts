@@ -2,8 +2,8 @@ import { createHash, randomUUID } from 'node:crypto';
 
 import type { AuditAction } from '@consultorio/contracts';
 import { DOCUMENT_MAX_BYTES } from '@consultorio/contracts';
-import { and, desc, eq, sql } from 'drizzle-orm';
-import { afterAll, beforeAll, describe, expect, inject, it } from 'vitest';
+import { and, desc, eq } from 'drizzle-orm';
+import { afterAll, afterEach, beforeAll, describe, expect, inject, it } from 'vitest';
 
 import { auditEvent } from '../../src/db/schema/audit.js';
 import { document } from '../../src/db/schema/documents.js';
@@ -30,6 +30,11 @@ let h: ScanningHarness;
 beforeAll(async () => {
   runtime = createRuntimeDb(inject('runtimeUrl'));
   h = withScanning(await createDocumentsHarness(runtime, 'docs-scan'));
+});
+
+// A test that fails while the scanner is switched off must not leave it off for the next ones.
+afterEach(() => {
+  h.scanner.setAvailable(true);
 });
 
 afterAll(async () => {
@@ -308,10 +313,11 @@ describe('when the scanner cannot be reached (fail closed)', () => {
     h.scanner.setAvailable(false);
     const fresh = await uploadAndScan(minimalPdf('reciente'));
     const stale = await uploadAndScan(minimalPdf('vieja'));
+    // The job reads the clock of this process, so the age is set from the same clock: the database
+    // clock (inside a container) may be a few seconds apart from the host's.
+    const staleSince = new Date(Date.now() - 61 * 60_000);
     await asSystem(runtime, h.tenant.id, (tx) =>
-      tx.execute(
-        sql`update document set upload_completed_at = now() - interval '61 minutes' where id = ${stale.id}`,
-      ),
+      tx.update(document).set({ uploadCompletedAt: staleSince }).where(eq(document.id, stale.id)),
     );
     h.alerts.length = 0;
 
@@ -417,5 +423,51 @@ describe('a file replaced between the scan and the release (JD-S2 C5)', () => {
       rejectionReason: 'infected',
     });
     expect(h.storage.keys().filter((key) => key.includes(uploaded.id))).toEqual([]);
+  });
+
+  it('gives up after a few scans of a file that keeps changing, rejects it as corrupt and raises the alarm (JD-S2 R2-C3)', async () => {
+    const patientId = await h.patient();
+    const uploaded = await h.upload(h.sessions.professional, {
+      patientId,
+      category: 'lab_result',
+      bytes: minimalPdf('cambia siempre'),
+    });
+    const quarantineKey = `t/${h.tenant.id}/quarantine/${uploaded.id}`;
+    // Someone overwrites the object during every single scan, so no attempt can ever release it.
+    let swaps = 0;
+    const always: MalwareScanner = {
+      async scan() {
+        swaps += 1;
+        await h.storage.put(h.tenant.id, quarantineKey, {
+          body: minimalPdf(`otra version ${String(swaps)}`),
+          contentType: 'application/pdf',
+        });
+        return { status: 'clean' };
+      },
+    };
+    const racingJobs = createDocumentJobs({
+      storage: h.storage,
+      scanner: always,
+      jobs: h.jobs,
+      clock: () => new Date(),
+      alert: (alert) => {
+        h.alerts.push(alert);
+      },
+    });
+    h.alerts.length = 0;
+
+    for (let round = 0; round < 12; round += 1) {
+      await runPending(h.runtime.db, h.jobs, [racingJobs.scan]);
+    }
+
+    expect(await rowOf(uploaded.id)).toMatchObject({
+      status: 'rejected',
+      rejectionReason: 'corrupt',
+    });
+    // The first scan and five more; the sixth swap is the last.
+    expect(swaps).toBe(6);
+    expect(h.alerts.map((alert) => alert.documentId)).toEqual([uploaded.id]);
+    expect(h.storage.keys().filter((key) => key.includes(uploaded.id))).toEqual([]);
+    expect(h.jobs.pending('document.scan')).toEqual([]);
   });
 });

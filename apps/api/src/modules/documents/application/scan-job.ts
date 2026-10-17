@@ -33,6 +33,13 @@ const SYSTEM_ACTOR: AuditActor = {
   requestId: null,
 };
 
+/**
+ * How many times a file may be found changed after it was scanned before it is refused. A person
+ * who keeps overwriting the quarantined object can never be released, and must not keep the job
+ * going forever.
+ */
+export const MAX_RESCANS = 5;
+
 /** What the uploader is told when a file is refused. */
 export interface RejectionNotice {
   tenantId: string;
@@ -179,7 +186,7 @@ export function createScanJob(deps: ScanJobDeps) {
         moved = false;
       }
       // Replaced (or gone) since it was scanned: nothing was released. Look at what is there now.
-      if (!moved) return scanAgain(tx, row, tenantId);
+      if (!moved) return scanAgain(tx, row, tenantId, located.key);
       // The released object is the one that was scanned: the hash is the proof.
       const released = await storage.get(tenantId, releasedKey);
       const releasedRead = released ? await readCapped(released.stream, DOCUMENT_MAX_BYTES) : null;
@@ -226,8 +233,26 @@ export function createScanJob(deps: ScanJobDeps) {
     });
   }
 
-  /** The object changed after it was scanned: stay quarantined and scan what is there now. */
-  async function scanAgain(tx: Tx, row: DocumentRow, tenantId: string): Promise<void> {
+  /**
+   * The object changed after it was scanned: stay quarantined and scan what is there now. After
+   * `MAX_RESCANS` rounds the file is refused as corrupt and the alarm is raised.
+   */
+  async function scanAgain(tx: Tx, row: DocumentRow, tenantId: string, key: string): Promise<void> {
+    const rescans = row.rescanAttempts + 1;
+    if (rescans > MAX_RESCANS) {
+      const now = clock();
+      deps.alert?.({
+        kind: 'document_scan_overdue',
+        tenantId,
+        documentId: row.id,
+        attempts: row.rescanAttempts,
+        waitingMinutes: row.uploadCompletedAt
+          ? Math.floor((now.getTime() - row.uploadCompletedAt.getTime()) / 60_000)
+          : 0,
+      });
+      return reject(tx, row, tenantId, 'corrupt', key);
+    }
+    await tx.update(document).set({ rescanAttempts: rescans }).where(eq(document.id, row.id));
     await deps.jobs.enqueue(tx, SCAN_JOB, { tenantId, documentId: row.id }, { startAfter: 5 });
   }
 
