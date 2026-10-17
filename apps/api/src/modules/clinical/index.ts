@@ -7,6 +7,7 @@ import type { FastifyInstance } from 'fastify';
 import type { AuthzOptions } from '../../platform/authz/guard.js';
 import type { TenantKeys } from '../../platform/crypto/tenant-keys.js';
 import type { WithTenant } from '../../platform/db/tenant-context.js';
+import type { RateLimit, RateLimitStore } from '../../platform/http/rate-limit.js';
 import type { ExportRegistry } from '../tenancy/index.js';
 
 import { createAmendmentService } from './application/amendments.js';
@@ -43,6 +44,8 @@ export interface ClinicalOptions {
    * appointment.
    */
   appointments?: AppointmentLookup;
+  /** The counters of the per-user search limit (default 30 a minute; a test lowers it). */
+  rateLimit?: { store: RateLimitStore; search?: RateLimit };
 }
 
 export type { AppointmentLookup } from './application/notes.js';
@@ -62,6 +65,9 @@ export function createClinical(options: ClinicalOptions): Clinical {
   const record = timelineRoutes({
     ...deps,
     timeline: createTimelineService({ keys }),
+    searchLimit: options.rateLimit
+      ? { store: options.rateLimit.store, limit: options.rateLimit.search }
+      : undefined,
     search: createSearchService({
       keys,
       ...(options.searchCap === undefined ? {} : { cap: options.searchCap }),

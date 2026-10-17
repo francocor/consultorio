@@ -92,6 +92,8 @@ export interface ApplicationOptions {
     searchCap?: number;
     /** Finds an appointment, to check the one an encounter is opened from (the agenda provides it). */
     appointments?: AppointmentLookup;
+    /** The per-user allowance of the record search (default 30 a minute). */
+    searchRateLimit?: RateLimit;
   };
   /** Routes of the capability modules, registered after identity. */
   modules?: readonly FeatureRoutes[];
@@ -227,6 +229,10 @@ export function createApplication(options: ApplicationOptions): FastifyInstance 
     keys: options.keys,
     ...(options.clinical?.searchCap === undefined ? {} : { searchCap: options.clinical.searchCap }),
     ...(options.clinical?.appointments ? { appointments: options.clinical.appointments } : {}),
+    rateLimit: {
+      store: rateLimitStore,
+      ...(options.clinical?.searchRateLimit ? { search: options.clinical.searchRateLimit } : {}),
+    },
   });
 
   const auditViewer = createAudit({ withTenant });

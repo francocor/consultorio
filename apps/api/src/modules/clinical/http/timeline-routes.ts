@@ -14,10 +14,13 @@ import type { SearchService } from '../application/search.js';
 import type { TimelineService } from '../application/timeline.js';
 
 import { runAsProfessional, type ClinicalRoutesDeps } from './guard.js';
+import { searchRateLimit, type SearchLimitSettings } from './search-limit.js';
 
 export interface TimelineRoutesDeps extends ClinicalRoutesDeps {
   timeline: TimelineService;
   search: SearchService;
+  /** The per-user allowance of the search; without it the search is not limited. */
+  searchLimit?: SearchLimitSettings | undefined;
 }
 
 const PatientParams = z.strictObject({ id: z.uuid() });
@@ -29,6 +32,7 @@ const PatientParams = z.strictObject({ id: z.uuid() });
 export function timelineRoutes(deps: TimelineRoutesDeps) {
   return (app: FastifyInstance): void => {
     const typed = app.withTypeProvider<ZodTypeProvider>();
+    const limitSearch = deps.searchLimit ? [searchRateLimit(deps.searchLimit)] : [];
 
     typed.get(
       '/patients/:id/clinical/timeline',
@@ -65,6 +69,7 @@ export function timelineRoutes(deps: TimelineRoutesDeps) {
           permission: 'clinical.search',
           audits: ['clinical.search', 'clinical.note.read'],
         },
+        preHandler: limitSearch,
         schema: {
           params: PatientParams,
           querystring: ClinicalSearchQuery,

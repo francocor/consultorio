@@ -15,7 +15,7 @@ import { asProfessional } from '../support/clinical.js';
 /**
  * Findings of the security review of the clinical track: an entry marked in error must not leave its
  * working copy readable (M1), the reasons are encrypted like the content (M2), signing always names
- * the revision the author saw (L1).
+ * the revision the author saw (L1) and the per-record search is rate limited per user (L2).
  */
 let runtime: DbHandle;
 let owner: pg.Client;
@@ -27,7 +27,9 @@ beforeAll(async () => {
   runtime = createRuntimeDb(inject('runtimeUrl'));
   owner = new pg.Client({ connectionString: inject('ownerUrl') });
   await owner.connect();
-  world = await createClinicalWorld(runtime, 'clinical-hardening');
+  world = await createClinicalWorld(runtime, 'clinical-hardening', {
+    clinical: { searchRateLimit: { max: 2, windowMs: 60_000 } },
+  });
   author = await world.professional();
   colleague = await world.professional();
 });
@@ -180,5 +182,34 @@ describe('L1: signing always names the revision the author saw', () => {
       expectedRevision: 1,
     });
     expect(ok.statusCode).toBe(200);
+  });
+});
+
+describe('L2: the per-record search is rate limited per user', () => {
+  it('answers 429 with Retry-After after the allowance, counted per user and not per address', async () => {
+    const patientId = await world.patient([author, colleague]);
+    const search = (by: Professional) =>
+      world.api.get(`/patients/${patientId}/clinical/search?q=consulta`, by.session);
+
+    const first = await search(author);
+    const second = await search(author);
+    const third = await search(author);
+    const other = await search(colleague);
+
+    expect([first.statusCode, second.statusCode]).toEqual([200, 200]);
+    expect(third.statusCode).toBe(429);
+    expect(Number(third.headers['retry-after'])).toBeGreaterThan(0);
+    expect(Problem.parse(third.json()).code).toBe('rate_limited');
+    // Everybody in the test shares one address: a second user is not held back by the first.
+    expect(other.statusCode).toBe(200);
+  });
+
+  it('does not count the other clinical reads', async () => {
+    const patientId = await world.patient([author]);
+    const draft = await draftWithText(patientId);
+
+    for (let index = 0; index < 5; index += 1) {
+      expect((await world.api.get(`/notes/${draft.id}`, author.session)).statusCode).toBe(200);
+    }
   });
 });
