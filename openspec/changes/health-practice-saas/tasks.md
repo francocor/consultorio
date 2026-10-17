@@ -738,24 +738,24 @@ Depends: S2.29, S2.16.
 
 Depends: S2.30, S2.28, S2.24, S2.16.
 
-- [ ] 2.94 Demo seed extension `db/seed/demo/stage2.ts`: appointments in all 8 statuses, encounters, notes, odontogram, documents (fake PDFs through the fake scanner), worklist items, completed onboarding; every module registers a seed contributor. [DEM-04, DEM-02] Test: gap check fails for a module without a contributor.
-- [ ] 2.95 `e2e/stage2-solo.spec.ts` (operator creates tenant, owner invitation from Mailpit, fast path, register patient, book, all at 360 px with a recorded timing under 10 minutes) and `e2e/stage2-center.spec.ts` (multi-professional full day). [ONB-04, SCH-03] Test: those specs.
-- [ ] 2.96 Reset timing re-test with Stage 2 data. [DEM-05] Test: under 60 s.
-- [ ] 2.97 Benchmark `clinical_readable` with 100k seeded notes; record the result in `docs/perf/clinical-readable.md` and fix the index if the target is missed (design risk table). Test: benchmark script.
+- [x] 2.94 Demo seed extension `db/seed/demo/stage2.ts`: appointments in all 8 statuses, encounters, notes, odontogram, documents (fake PDFs through the fake scanner), worklist items, completed onboarding; every module registers a seed contributor. [DEM-04, DEM-02] Test: gap check fails for a module without a contributor. (Done: `db/seed/demo/stage2.ts` seeds consultations opened from appointments (signed, in progress, an addendum) and eight documents that go through the real upload and the fake scanner, one of them refused; `NO_SEED_DATA.document` is gone; the seed takes a `documents` dependency, the reset empties the bucket. The gap check is the existing `demo-coverage` test. Appointments in all statuses, worklist items and the completed onboarding were already seeded.)
+- [x] 2.95 `e2e/stage2-solo.spec.ts` (operator creates tenant, owner invitation from Mailpit, fast path, register patient, book, all at 360 px with a recorded timing under 10 minutes) and `e2e/stage2-center.spec.ts` (multi-professional full day). [ONB-04, SCH-03] Test: those specs. (Done: `e2e/stage2-solo.spec.ts` at 360 px records the time from the first sign-in to the first booked appointment (seconds; the budget is 10 minutes) and `e2e/stage2-center.spec.ts` runs a full day across roles with documents; the Playwright stack now runs MinIO and the worker. Found and fixed a real defect: the upload dialog lost its summary when the first file turned the empty list into a list.)
+- [x] 2.96 Reset timing re-test with Stage 2 data. [DEM-05] Test: under 60 s. (Done: the reset budget test runs with the Stage 2 data and the documents; see apply-progress for the measured time.)
+- [x] 2.97 Benchmark `clinical_readable` with 100k seeded notes; record the result in `docs/perf/clinical-readable.md` and fix the index if the target is missed (design risk table). Test: benchmark script. (Done: `pnpm --filter @consultorio/api bench:clinical`; with 102,000 notes a chart answers in about 1 ms and a 2,000-entry chart in 26 ms at p95, so no index change; `docs/perf/clinical-readable.md`.)
 
 ## S2.32 Delivery pipeline and backups (~300 lines)
 
 Depends: S2.31. May slip to Stage 3 without blocking the Stage 2 gate. Blocked by decision Q1 (region).
 
-- [ ] 2.98 `.github/workflows/deploy.yml`: push the image to ECR and deploy staging on `master`, run migrations as a one-off task first, tags deploy to production behind a manual approval environment. Infrastructure provisioning is out of scope here and is documented in `docs/runbooks/deploy.md`. Test: dry-run on a fork.
-- [ ] 2.99 `docs/runbooks/backup-restore.md` (PITR, weekly logical dump, quarterly restore drill). Test: drill checklist.
+- [ ] 2.98 `.github/workflows/deploy.yml`: push the image to ECR and deploy staging on `master`, run migrations as a one-off task first, tags deploy to production behind a manual approval environment. Infrastructure provisioning is out of scope here and is documented in `docs/runbooks/deploy.md`. Test: dry-run on a fork. (DEFERRED, owner action: needs the cloud account, region (Q1), registry and environments; nothing depends on it. `docs/runbooks/deploy.md` records what is ready and what the owner must provide.)
+- [x] 2.99 `docs/runbooks/backup-restore.md` (PITR, weekly logical dump, quarterly restore drill). Test: drill checklist. (Done for the local environment: `pnpm backup:local` with `verify` and `restore`, a restore drill test on throwaway containers, `docs/runbooks/backup-restore.md` with the production design and the quarterly drill checklist. The cloud PITR and the weekly dump are the design the infrastructure must meet; they wait for 2.98.)
 
 ## S2.33 Stage 2 gate (~150 lines)
 
 Depends: S2.31.
 
-- [ ] 2.100 Fresh-context review (`judgment-day`) of scheduling concurrency, clinical access and the documents pipeline; fix findings. Test: review report attached.
-- [ ] 2.101 `docs/legacy-parity.md` mapping legacy domains (auth, pacientes, profesionales, turnos, horarios, atencion, historias clinicas, asistencias) to the new features; facturacion and recetas stay reference-only until Stages 4 and 5 and remain recoverable from the legacy repository. Owner signs off. Test: checklist.
+- [ ] 2.100 Fresh-context review (`judgment-day`) of scheduling concurrency, clinical access and the documents pipeline; fix findings. Test: review report attached. (PENDING, for the orchestrator: a fresh-context review cannot be run by the executor. The executor read the three areas again while integrating and found the defects recorded in apply-progress "Stage 2 integration 2"; the independent `judgment-day` review is still to be run and its report attached.)
+- [ ] 2.101 `docs/legacy-parity.md` mapping legacy domains (auth, pacientes, profesionales, turnos, horarios, atencion, historias clinicas, asistencias) to the new features; facturacion and recetas stay reference-only until Stages 4 and 5 and remain recoverable from the legacy repository. Owner signs off. Test: checklist. (Document written: `docs/legacy-parity.md`. The owner's sign-off is pending.)
 
 ## S2.34 Legacy removal (N/A: legacy lives in a separate repo)
 

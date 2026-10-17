@@ -122,30 +122,33 @@ To try the production image locally: `docker compose --env-file .env -f infra/do
 
 ## Everyday commands
 
-| Command                                      | What it does                                                 |
-| -------------------------------------------- | ------------------------------------------------------------ |
-| `pnpm typecheck`                             | TypeScript across all packages                               |
-| `pnpm lint` / `pnpm format:check`            | ESLint and Prettier (`pnpm format` fixes formatting)         |
-| `pnpm test`                                  | Unit tests (Vitest: api and contracts in Node, web in jsdom) |
-| `pnpm test:coverage`                         | Same, with a v8 coverage report in `coverage/`               |
-| `pnpm test:integration`                      | Integration tests against a real Postgres 17 (needs Docker)  |
-| `pnpm test:e2e`                              | Builds the web app and runs Playwright on mobile and desktop |
-| `pnpm demo:seed`                             | Seeds the demo organization "aillu" in your local database   |
-| `pnpm demo:reset`                            | Puts a demo organization back to its starting content        |
-| `pnpm demo:stack`                            | A throwaway Docker stack with two demo organizations         |
-| `pnpm build`                                 | Builds the web app and bundles the API into `apps/api/dist`  |
-| `pnpm db:check`                              | Fails when the Drizzle schema and the migrations disagree    |
-| `pnpm --filter @consultorio/api db:generate` | Generates a migration from schema changes                    |
+| Command                                         | What it does                                                                                                       |
+| ----------------------------------------------- | ------------------------------------------------------------------------------------------------------------------ |
+| `pnpm typecheck`                                | TypeScript across all packages                                                                                     |
+| `pnpm lint` / `pnpm format:check`               | ESLint and Prettier (`pnpm format` fixes formatting)                                                               |
+| `pnpm test`                                     | Unit tests (Vitest: api and contracts in Node, web in jsdom)                                                       |
+| `pnpm test:coverage`                            | Same, with a v8 coverage report in `coverage/`                                                                     |
+| `pnpm test:integration`                         | Integration tests against a real Postgres 17 (needs Docker)                                                        |
+| `pnpm test:e2e`                                 | Builds the web app and runs Playwright on mobile and desktop                                                       |
+| `pnpm demo:seed`                                | Seeds the demo organization "aillu" in your local database                                                         |
+| `pnpm demo:reset`                               | Puts a demo organization back to its starting content                                                              |
+| `pnpm demo:stack`                               | A throwaway Docker stack with two demo organizations                                                               |
+| `pnpm backup:local`                             | Backs up the local database and bucket; `verify` and `restore` subcommands (see `docs/runbooks/backup-restore.md`) |
+| `pnpm --filter @consultorio/api bench:clinical` | Benchmarks the clinical row level security with 100,000 notes (`docs/perf/clinical-readable.md`)                   |
+| `pnpm build`                                    | Builds the web app and bundles the API into `apps/api/dist`                                                        |
+| `pnpm db:check`                                 | Fails when the Drizzle schema and the migrations disagree                                                          |
+| `pnpm --filter @consultorio/api db:generate`    | Generates a migration from schema changes                                                                          |
 
 Migrations are forward-only. Never edit a migration that has been merged; add a new one.
 
-`pnpm test:e2e` expects the preview server on port 4173 and the API on 3100. When another run holds those ports (several worktrees on one machine), start the stack and the preview by hand on free ports and tell Playwright:
+`pnpm test:e2e` starts its own stack (Postgres, MinIO, Mailpit, API and worker in Docker) and the preview server: the web on port 4173, the API on 3100 and the document storage (MinIO) on 9190. When another run holds those ports (several worktrees on one machine), give the run its own, and Playwright starts everything on them:
 
 ```bash
-pnpm --filter @consultorio/api exec tsx scripts/e2e-stack.ts --port 3310 --info ../web/e2e/.stack/info.json
-API_PROXY_TARGET=http://127.0.0.1:3310 pnpm --filter @consultorio/web exec vite preview --port 4310 --strictPort
-E2E_WEB_PORT=4310 E2E_API_PORT=3310 pnpm --filter @consultorio/web exec playwright test --workers=3
+cd apps/web && pnpm exec vite build
+E2E_WEB_PORT=4310 E2E_API_PORT=3310 E2E_MINIO_PORT=9310 pnpm exec playwright test --workers=3
 ```
+
+The preview server's Content Security Policy allows the storage origin (`CSP_CONNECT_SOURCES`, set by `playwright.config.ts` from `E2E_MINIO_PORT`), because the browser uploads documents straight to MinIO.
 
 ## Troubleshooting
 
