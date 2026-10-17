@@ -1,5 +1,6 @@
 import type { AppointmentDto, WaitlistEntryDto } from '@consultorio/contracts';
 import { sql } from 'drizzle-orm';
+import type { LightMyRequestResponse } from 'fastify';
 import { expect } from 'vitest';
 
 import { createFakeEmailSender } from '../../src/adapters/fake-email/index.js';
@@ -18,7 +19,7 @@ import { createPublicOrigins } from '../../src/platform/http/public-origin.js';
 import type { JobDefinition, JobRunResult } from '../../src/platform/jobs/define-job.js';
 import { createActionTokens } from '../../src/platform/tokens/index.js';
 
-import { BASE_DOMAIN } from './app.js';
+import { BASE_DOMAIN, hostOf } from './app.js';
 import { createRecordingJobClient, runPending, type RecordingJobClient } from './jobs.js';
 import { createSchedulingHttpWorld, type SchedulingHttpWorld } from './scheduling-world.js';
 import { insertPatient } from './scheduling.js';
@@ -64,9 +65,12 @@ export interface WaitlistWorld extends Omit<SchedulingHttpWorld, 'setNow'> {
   callsOf(entryId: string): Promise<Record<string, unknown>[]>;
   /** The token of the offer link that was delivered for an offer. */
   tokenOf(offerId: string): string;
+  /** A visitor presses a button of the page behind an offer link (`accept` or `decline`). */
+  press(token: string, choice: 'accept' | 'decline'): Promise<LightMyRequestResponse>;
 }
 
 let patients = 0;
+let presses = 0;
 
 /**
  * The scheduling world with the waitlist wired the way production wires it, except for what leaves
@@ -212,6 +216,21 @@ export async function createWaitlistWorld(
             )
           ).rows,
       ),
+    press: (token, choice) => {
+      presses += 1;
+      return base.app.inject({
+        method: 'POST',
+        url: `/public/t/${token}`,
+        headers: {
+          host: hostOf(options.slug),
+          origin: `https://${hostOf(options.slug)}`,
+          'user-agent': 'vitest-visitor',
+          'content-type': 'application/x-www-form-urlencoded',
+        },
+        remoteAddress: `10.77.${String(Math.floor(presses / 250))}.${String(presses % 250)}`,
+        payload: `choice=${choice}`,
+      });
+    },
     tokenOf: (offerId) => {
       const delivered = deliveries.find((entry) => entry.offerId === offerId);
       if (!delivered) throw new Error(`offer ${offerId} was not delivered`);

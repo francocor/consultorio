@@ -28,6 +28,8 @@ import { publicRoutes } from './http/public-routes.js';
 
 export { closeEntriesOfOptedOutPatient, closeExpiredEntries } from './application/entries.js';
 export { createWaitlistJobs } from './application/jobs.js';
+export { waitlistOutcomes } from './application/outcomes.js';
+export type { WaitlistOutcomes } from './application/outcomes.js';
 export type { WaitlistJobDeps, WaitlistJobs } from './application/jobs.js';
 export type {
   DeliverWaitlistOffer,
@@ -91,7 +93,10 @@ export function createWaitlist(options: WaitlistOptions): Waitlist {
     }),
   );
 
-  const entryDeps = { portsOf: (tx: Tx) => createSchedulingPorts(tx, { keys: options.keys }) };
+  const entryDeps = {
+    portsOf: (tx: Tx) => createSchedulingPorts(tx, { keys: options.keys }),
+    jobs: options.jobs,
+  };
   const entries = entryRoutes({ withTenant: options.withTenant, entries: entryDeps, clock });
   const pages = publicRoutes({
     withTenant: options.withTenant,

@@ -85,6 +85,6 @@ export async function sweepWaitlist(
   for (const offer of due) {
     if (await expireOffer(tx, deps, { offerId: offer.id, now: input.now })) offers += 1;
   }
-  const entries = await closeExpiredEntries(tx, { now: input.now });
+  const entries = await closeExpiredEntries(tx, { now: input.now, jobs: deps.jobs });
   return { offers, entries };
 }

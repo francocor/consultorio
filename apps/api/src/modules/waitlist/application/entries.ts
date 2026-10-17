@@ -15,10 +15,12 @@ import {
   waitlistEntry,
   waitlistOffer,
   type WaitlistEntryRow,
+  type WaitlistOfferRow,
 } from '../../../db/schema/waitlist.js';
 import { audit, type AuditActor } from '../../../platform/audit/writer.js';
 import type { Tx } from '../../../platform/db/tenant-context.js';
 import { AppError } from '../../../platform/http/problem.js';
+import type { JobClient } from '../../../platform/jobs/boss.js';
 import type { SchedulingPorts } from '../../scheduling/index.js';
 import { manualContactReason } from '../domain/manual-contact.js';
 
@@ -27,6 +29,7 @@ import { lockOpenOffersOf } from './offer-lock.js';
 import { invalidateOpenOffers } from './offer-state.js';
 import { reachOf } from './reachability.js';
 import { loadWaitlistConfig } from './settings.js';
+import { enqueueRematch } from './trigger.js';
 
 const DAY_MS = 86_400_000;
 
@@ -44,6 +47,11 @@ export class DuplicateEntryError extends Error {
 export interface EntryDeps {
   /** Scheduling's view of the professionals, types, places and patients of the organization. */
   portsOf(tx: Tx): SchedulingPorts;
+  /**
+   * Enqueues the match that offers a slot on when the offer for it ends because its entry stopped
+   * waiting. Absent in a deployment without a queue: the slot is not offered on.
+   */
+  jobs?: JobClient | undefined;
 }
 
 /** Entries that still wait, are paused or have an offer open. */
@@ -389,16 +397,18 @@ function isChannel(value: string): value is WaitlistChannel {
 /** Stops automated offers for an entry until it is resumed. */
 export async function pauseEntry(
   tx: Tx,
+  deps: Pick<EntryDeps, 'jobs'>,
   input: { id: string; actor: EntryActor; now: Date },
 ): Promise<WaitlistEntryDto> {
   const row = await lockEntry(tx, input.id);
   assertOpen(row);
   if (row.status === 'paused') throw new AppError('conflict');
   // An offer in flight no longer stands: the patient asked not to be offered anything.
-  await invalidateOpenOffers(tx, eq(waitlistOffer.entryId, row.id), {
+  const ended = await invalidateOpenOffers(tx, eq(waitlistOffer.entryId, row.id), {
     reason: 'entry_closed',
     now: input.now,
   });
+  await enqueueRematch(tx, deps.jobs, ended);
   await tx.update(waitlistEntry).set({ status: 'paused' }).where(eq(waitlistEntry.id, row.id));
   await audit(tx, {
     action: 'waitlist.entry.updated',
@@ -441,8 +451,8 @@ export async function closeEntryRow(
   tx: Tx,
   row: WaitlistEntryRow,
   input: { reason: WaitlistCloseReason; actor: EntryActor; now: Date },
-): Promise<void> {
-  await invalidateOpenOffers(tx, eq(waitlistOffer.entryId, row.id), {
+): Promise<WaitlistOfferRow[]> {
+  const ended = await invalidateOpenOffers(tx, eq(waitlistOffer.entryId, row.id), {
     reason: input.reason === 'patient_opted_out' ? 'patient_opted_out' : 'entry_closed',
     now: input.now,
   });
@@ -459,16 +469,18 @@ export async function closeEntryRow(
     patientId: row.patientId,
     metadata: { reason: input.reason },
   });
+  return ended;
 }
 
 /** A staff member closes an entry: the patient was booked elsewhere, or no longer wants a turn. */
 export async function closeEntry(
   tx: Tx,
+  deps: Pick<EntryDeps, 'jobs'>,
   input: { id: string; reason: 'fulfilled' | 'cancelled'; actor: EntryActor; now: Date },
 ): Promise<WaitlistEntryDto> {
   const row = await lockEntry(tx, input.id);
   assertOpen(row);
-  await closeEntryRow(tx, row, input);
+  await enqueueRematch(tx, deps.jobs, await closeEntryRow(tx, row, input));
   return present(tx, row.id);
 }
 
@@ -512,7 +524,10 @@ const SYSTEM_ACTOR: EntryActor = {
  * Closes the entries whose time ran out, as `expired`, and keeps them (waitlist, "Entry expiry").
  * Returns how many it closed.
  */
-export async function closeExpiredEntries(tx: Tx, input: { now: Date }): Promise<number> {
+export async function closeExpiredEntries(
+  tx: Tx,
+  input: { now: Date; jobs?: JobClient | undefined },
+): Promise<number> {
   const dueWhere = and(
     inArray(waitlistEntry.status, ['active', 'paused', 'offered']),
     sql`${waitlistEntry.expiresAt} <= ${input.now.toISOString()}::timestamptz`,
@@ -524,7 +539,12 @@ export async function closeExpiredEntries(tx: Tx, input: { now: Date }): Promise
   );
   const due = await tx.select().from(waitlistEntry).where(dueWhere).for('update');
   for (const row of due) {
-    await closeEntryRow(tx, row, { reason: 'expired', actor: SYSTEM_ACTOR, now: input.now });
+    const ended = await closeEntryRow(tx, row, {
+      reason: 'expired',
+      actor: SYSTEM_ACTOR,
+      now: input.now,
+    });
+    await enqueueRematch(tx, input.jobs, ended);
   }
   return due.length;
 }
@@ -536,7 +556,7 @@ export async function closeExpiredEntries(tx: Tx, input: { now: Date }): Promise
  */
 export async function closeEntriesOfOptedOutPatient(
   tx: Tx,
-  input: { patientId: string; now: Date },
+  input: { patientId: string; now: Date; jobs?: JobClient | undefined },
 ): Promise<number> {
   const theirs = and(eq(waitlistEntry.patientId, input.patientId), IN_PLAY);
   const ids = await tx.select({ id: waitlistEntry.id }).from(waitlistEntry).where(theirs);
@@ -546,11 +566,12 @@ export async function closeEntriesOfOptedOutPatient(
   );
   const rows = await tx.select().from(waitlistEntry).where(theirs).for('update');
   for (const row of rows) {
-    await closeEntryRow(tx, row, {
+    const ended = await closeEntryRow(tx, row, {
       reason: 'patient_opted_out',
       actor: SYSTEM_ACTOR,
       now: input.now,
     });
+    await enqueueRematch(tx, input.jobs, ended);
   }
   return rows.length;
 }

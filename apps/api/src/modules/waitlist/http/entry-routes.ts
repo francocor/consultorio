@@ -177,7 +177,7 @@ export function entryRoutes(deps: EntryRoutesDeps) {
       },
       async (request, reply) =>
         await change(request, reply, (tx, actor, now) =>
-          pauseEntry(tx, { id: request.params.id, actor, now }),
+          pauseEntry(tx, deps.entries, { id: request.params.id, actor, now }),
         ),
     );
 
@@ -213,7 +213,12 @@ export function entryRoutes(deps: EntryRoutesDeps) {
       },
       async (request, reply) =>
         await change(request, reply, (tx, actor, now) =>
-          closeEntry(tx, { id: request.params.id, reason: request.body.reason, actor, now }),
+          closeEntry(tx, deps.entries, {
+            id: request.params.id,
+            reason: request.body.reason,
+            actor,
+            now,
+          }),
         ),
     );
 
