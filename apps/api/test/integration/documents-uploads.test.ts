@@ -15,6 +15,7 @@ import {
   forceAvailable,
   type DocumentsHarness,
 } from '../support/documents.js';
+import { at, createSchedulingWorld, insertAppointment } from '../support/scheduling.js';
 import { asTenant } from '../support/tenants.js';
 
 let runtime: DbHandle;
@@ -94,6 +95,38 @@ describe('asking to upload: POST /documents/uploads', () => {
       uploadCompletedAt: null,
       authorProfessionalId: h.professionalId,
     });
+  });
+
+  it('keeps the appointment the document came with, and refuses one of another patient', async () => {
+    const patientId = await h.patient();
+    const otherPatientId = await h.patient();
+    const world = await createSchedulingWorld(runtime, h.tenant.id);
+    const appointment = await asTenant(runtime, h.tenant.id, (tx) =>
+      insertAppointment(tx, world, { start: at(0), patientId }),
+    );
+
+    const linked = await h.api.post(
+      '/documents/uploads',
+      h.sessions.professional,
+      request(patientId, { appointmentId: appointment.id }),
+    );
+    const ofAnotherPatient = await h.api.post(
+      '/documents/uploads',
+      h.sessions.professional,
+      request(otherPatientId, { appointmentId: appointment.id }),
+    );
+    const unknown = await h.api.post(
+      '/documents/uploads',
+      h.sessions.professional,
+      request(patientId, { appointmentId: randomUUID() }),
+    );
+
+    expect(linked.statusCode).toBe(200);
+    expect((await rowsOf(patientId)).map((row) => row.appointmentId)).toEqual([appointment.id]);
+    expect(ofAnotherPatient.statusCode).toBe(404);
+    expect(unknown.statusCode).toBe(404);
+    expect(await rowsOf(otherPatientId)).toHaveLength(0);
+    expect(await rowsOf(patientId)).toHaveLength(1);
   });
 
   it('refuses 11 files in one request and stores nothing', async () => {

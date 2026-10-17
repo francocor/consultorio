@@ -22,6 +22,7 @@ import {
 
 import { tenantTable } from './_helpers.js';
 import { patient } from './patients.js';
+import { appointment } from './scheduling.js';
 import { professional } from './staff.js';
 import { tenant } from './tenant.js';
 
@@ -43,8 +44,9 @@ const list = (values: readonly string[]) => sql.raw(values.map((v) => `'${v}'`).
  * or reception reads zero clinical rows even if the application had a bug. Background jobs act as
  * the system user and see both, to scan them.
  *
- * `encounter_id` and `appointment_id` are extension points: the tables they point at arrive with
- * the clinical record and the scheduling modules, which add the foreign keys.
+ * `appointment_id` points at the appointment the document came with (same organization, by the
+ * composite key). `encounter_id` is an extension point: the table it points at arrives with the
+ * clinical record, which adds the foreign key.
  */
 export const document = tenantTable(
   'document',
@@ -101,6 +103,11 @@ export const document = tenantTable(
       name: 'document_author_professional_fkey',
       columns: [table.tenantId, table.authorProfessionalId],
       foreignColumns: [professional.tenantId, professional.id],
+    }),
+    foreignKey({
+      name: 'document_appointment_fkey',
+      columns: [table.tenantId, table.appointmentId],
+      foreignColumns: [appointment.tenantId, appointment.id],
     }),
     foreignKey({
       name: 'document_replaces_fkey',

@@ -9,6 +9,7 @@ import { and, asc, eq, ne, sql } from 'drizzle-orm';
 
 import { document } from '../../../db/schema/documents.js';
 import { patient } from '../../../db/schema/patients.js';
+import { appointment } from '../../../db/schema/scheduling.js';
 import { audit, type AuditActor } from '../../../platform/audit/writer.js';
 import type { Actor } from '../../../platform/authz/actor.js';
 import type { Tx } from '../../../platform/db/tenant-context.js';
@@ -125,6 +126,20 @@ export function createUploadService(deps: UploadDeps): UploadService {
         .from(patient)
         .where(eq(patient.id, request.patientId));
       if (!found) throw new AppError('not_found');
+
+      // The appointment the document came with must be this patient's own.
+      if (request.appointmentId !== undefined) {
+        const [linked] = await tx
+          .select({ id: appointment.id })
+          .from(appointment)
+          .where(
+            and(
+              eq(appointment.id, request.appointmentId),
+              eq(appointment.patientId, request.patientId),
+            ),
+          );
+        if (!linked) throw new AppError('not_found');
+      }
 
       if (
         classification === 'clinical' &&
