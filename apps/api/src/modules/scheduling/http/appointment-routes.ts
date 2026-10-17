@@ -406,7 +406,11 @@ export function appointmentRoutes(deps: AppointmentRoutesDeps) {
         config: {
           readOnly: 'write',
           permission: 'worklist.manage',
-          audits: ['appointment.identity.rejected', 'appointment.cancelled'],
+          audits: [
+            'appointment.identity.rejected',
+            'appointment.identity.confirmed',
+            'appointment.cancelled',
+          ],
         },
         schema: { params: IdParams, body: DetachPatientRequest, response: { 200: AppointmentDto } },
       },

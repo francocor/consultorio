@@ -373,6 +373,31 @@ describe('rejecting the match (detach)', () => {
     });
   });
 
+  it('records which patient it left and which it joined, in the history and the audit trail (JD-S2 S3)', async () => {
+    const { ports, state } = world();
+
+    await detach(ports, reception, { kind: 'move_to_patient', patientId: 'patient-2' });
+
+    expect(state.events[0]).toMatchObject({
+      kind: 'identity_rejected',
+      details: { resolution: 'moved', fromPatientId: 'patient-1', toPatientId: 'patient-2' },
+    });
+    expect(state.audits.map((audit) => audit.action)).toEqual([
+      'appointment.identity.rejected',
+      'appointment.identity.confirmed',
+    ]);
+    expect(state.audits[0]).toMatchObject({
+      patientId: 'patient-1',
+      metadata: { resolution: 'moved', fromPatientId: 'patient-1', toPatientId: 'patient-2' },
+    });
+    // The confirmation staff gave to the appointment on its new record is on the trail too.
+    expect(state.audits[1]).toMatchObject({
+      patientId: 'patient-2',
+      actor: { userId: USER_RECEPTION },
+      metadata: { how: 'staff', channel: 'worklist', viaDetach: true },
+    });
+  });
+
   it('cancels the appointment instead', async () => {
     const { ports, state } = world();
 

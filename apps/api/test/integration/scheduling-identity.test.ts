@@ -323,7 +323,19 @@ describe('rejecting the match', () => {
     expect(after).toEqual(before);
     expect((await openReviews()).some((item) => item.subjectId === created.id)).toBe(false);
     const [row] = await auditRows('appointment.identity.rejected');
-    expect(row).toMatchObject({ resourceId: created.id, metadata: { resolution: 'moved' } });
+    expect(row).toMatchObject({
+      resourceId: created.id,
+      metadata: { resolution: 'moved', fromPatientId: matched, toPatientId: other },
+    });
+    // The confirmation the appointment got on its new record is on the trail as well.
+    const confirmed = (await auditRows('appointment.identity.confirmed')).find(
+      (entry) => entry.resourceId === created.id,
+    );
+    expect(confirmed).toMatchObject({
+      patientId: other,
+      actorUserId: world.reception.user.id,
+      metadata: { viaDetach: true },
+    });
   });
 
   it('cancels the appointment instead', async () => {
