@@ -230,6 +230,15 @@ function buildRouteTree() {
     ),
   });
 
+  const draftsRoute = createRoute({
+    getParentRoute: () => authedRoute,
+    path: '/drafts',
+    component: guarded(
+      ['clinical.note.write'],
+      lazyRouteComponent(() => import('../features/clinical/DraftsPage.js'), 'DraftsPage'),
+    ),
+  });
+
   const staffRoute = createRoute({
     getParentRoute: () => authedRoute,
     path: '/staff',
@@ -334,6 +343,7 @@ function buildRouteTree() {
       patientRoute,
       noteRoute,
       newEncounterRoute,
+      draftsRoute,
       staffRoute,
       auditRoute,
       settingsRoute.addChildren([
