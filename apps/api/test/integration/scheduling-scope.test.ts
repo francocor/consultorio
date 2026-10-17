@@ -5,10 +5,11 @@ import type {
   CalendarResponse,
   Problem,
 } from '@consultorio/contracts';
-import { and, desc, eq } from 'drizzle-orm';
+import { and, desc, eq, inArray } from 'drizzle-orm';
 import { afterAll, beforeAll, describe, expect, inject, it } from 'vitest';
 
 import { auditEvent } from '../../src/db/schema/audit.js';
+import { appointment } from '../../src/db/schema/scheduling.js';
 import { tenant as tenantTable } from '../../src/db/schema/tenant.js';
 import { createRuntimeDb, type DbHandle } from '../../src/platform/db/pool.js';
 import {
@@ -439,6 +440,56 @@ describe('a read-only organization: every scheduling route has a category and ho
       );
       expect(book.statusCode).toBe(402);
       expect(book.json<Problem>().code).toBe('tenant_read_only');
+    } finally {
+      await world.inTenant((tx) =>
+        tx
+          .update(tenantTable)
+          .set({ status: 'active', readOnlySince: null })
+          .where(eq(tenantTable.id, world.tenant.id)),
+      );
+    }
+  });
+  it('lets only a cancellation the patient asked for through; the organization’s own is a write', async () => {
+    const own = await world.book(19, '10:00');
+    const byProfessional = await world.book(19, '11:00');
+    const byPatient = await world.book(19, '12:00');
+    await world.inTenant((tx) =>
+      tx
+        .update(tenantTable)
+        .set({ status: 'read_only', readOnlySince: new Date() })
+        .where(eq(tenantTable.id, world.tenant.id)),
+    );
+    try {
+      const organization = await world.act(own, 'cancel', world.reception, {
+        cancelledBy: 'organization',
+        reasonCode: 'organization_closed',
+      });
+      const professional = await world.act(byProfessional, 'cancel', world.reception, {
+        cancelledBy: 'professional',
+        reasonCode: 'professional_unavailable',
+      });
+      const patient = await world.act(byPatient, 'cancel', world.reception, {
+        cancelledBy: 'patient',
+        reasonCode: 'patient_request',
+      });
+
+      expect([organization.statusCode, professional.statusCode, patient.statusCode]).toEqual([
+        402, 402, 200,
+      ]);
+      expect(organization.json<Problem>().code).toBe('tenant_read_only');
+      const statuses = await world.inTenant((tx) =>
+        tx
+          .select({ id: appointment.id, status: appointment.status })
+          .from(appointment)
+          .where(inArray(appointment.id, [own.id, byProfessional.id, byPatient.id])),
+      );
+      expect(new Map(statuses.map((row) => [row.id, row.status]))).toEqual(
+        new Map([
+          [own.id, 'scheduled'],
+          [byProfessional.id, 'scheduled'],
+          [byPatient.id, 'cancelled'],
+        ]),
+      );
     } finally {
       await world.inTenant((tx) =>
         tx

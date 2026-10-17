@@ -28,6 +28,7 @@ import { refuseRequest } from '../../../platform/authz/refuse.js';
 import type { TenantKeys } from '../../../platform/crypto/tenant-keys.js';
 import type { Tx, WithTenant } from '../../../platform/db/tenant-context.js';
 import { AppError, conflictCode } from '../../../platform/http/problem.js';
+import { refuseWhenReadOnly } from '../../../platform/read-only/index.js';
 import { AccessRefused } from '../../access/index.js';
 import { bookAppointment, SlotTakenError } from '../application/book-appointment.js';
 import type { createCalendar } from '../application/calendar.js';
@@ -462,8 +463,9 @@ export function appointmentRoutes(deps: AppointmentRoutesDeps) {
       );
     }
 
-    // Cancelling is a patient-protective write: it stays possible when the organization is
-    // read-only, because a patient must always be able to give a slot back.
+    // Cancelling is patient-protective when the patient asks for it: it stays possible when the
+    // organization is read-only, because a patient must always be able to give a slot back. The
+    // organization or a professional cancelling for their own reasons is an ordinary write.
     typed.post(
       '/appointments/:id/cancel',
       {
@@ -480,6 +482,7 @@ export function appointmentRoutes(deps: AppointmentRoutesDeps) {
       },
       (request, reply) => {
         const { expectedVersion, ...cancellation } = request.body;
+        if (cancellation.cancelledBy !== 'patient') refuseWhenReadOnly(request);
         return respond(request, reply, request.params.id, () =>
           runScoped(request, ({ tx, who, audit }) =>
             transitionAppointment(portsOf(tx), {
