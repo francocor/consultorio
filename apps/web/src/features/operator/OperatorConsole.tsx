@@ -9,8 +9,10 @@ import { isApiError } from '../../shared/lib/api-client.js';
 import { Button } from '../../shared/ui/button.js';
 import { ErrorState } from '../../shared/ui/states/error-state.js';
 import { FormSkeleton } from '../../shared/ui/states/loading-skeleton.js';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '../../shared/ui/tabs.js';
 
 import { operatorApi, operatorKeys } from './api/operator-api.js';
+import { HolidayCatalog } from './holidays/HolidayCatalog.js';
 import { OperatorLogin } from './OperatorLogin.js';
 import { TenantsPanel } from './TenantsPanel.js';
 
@@ -112,7 +114,18 @@ function Console({ operator, onSignedOut }: { operator: OperatorDto; onSignedOut
         </div>
       </header>
       <main id="main" className="mx-auto w-full max-w-6xl flex-1 px-4 py-8 md:px-8">
-        <TenantsPanel />
+        <Tabs defaultValue="tenants" className="grid gap-6">
+          <TabsList aria-label={t('nav.label')} className="justify-start">
+            <TabsTrigger value="tenants">{t('nav.tenants')}</TabsTrigger>
+            <TabsTrigger value="holidays">{t('nav.holidays')}</TabsTrigger>
+          </TabsList>
+          <TabsContent value="tenants">
+            <TenantsPanel />
+          </TabsContent>
+          <TabsContent value="holidays">
+            <HolidayCatalog />
+          </TabsContent>
+        </Tabs>
       </main>
     </div>
   );
