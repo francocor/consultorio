@@ -5,6 +5,7 @@ import { AppError } from '../../../platform/http/problem.js';
 import { AccessRefused } from '../../access/index.js';
 import { canConfirmIdentity } from '../domain/identity-confirmation.js';
 
+import { publishPatientChange } from './events.js';
 import { recordIdentityConfirmed } from './identity-records.js';
 import { checkVersion, lockForChange, transitionAppointment } from './lifecycle.js';
 import { invalid, type BookActor } from './placement.js';
@@ -114,6 +115,7 @@ export async function detachPatient(
       identityConfirmedBy: input.actor.userId,
       identityConfirmation: 'staff',
     });
+    await publishPatientChange(ports, { before: record, after: result });
   } else {
     result = await transitionAppointment(ports, {
       appointmentId: record.id,

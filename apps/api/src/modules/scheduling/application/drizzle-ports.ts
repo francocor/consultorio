@@ -12,7 +12,8 @@ import { professional, professionalHours } from '../../../db/schema/staff.js';
 import { location, tenant } from '../../../db/schema/tenant.js';
 import { audit } from '../../../platform/audit/writer.js';
 import type { TenantKeys } from '../../../platform/crypto/tenant-keys.js';
-import type { Tx } from '../../../platform/db/tenant-context.js';
+import { currentTenantId, type Tx } from '../../../platform/db/tenant-context.js';
+import type { AppointmentEvents } from '../../../platform/events/appointment-events.js';
 import { isSoloPractice } from '../domain/identity-confirmation.js';
 import type { HoursPeriod, HoursRow } from '../domain/working-hours.js';
 
@@ -106,9 +107,17 @@ interface OccupancyRow extends Record<string, unknown> {
 }
 
 /** The Drizzle implementation of the scheduling port, inside one tenant transaction. */
-export function createSchedulingPorts(tx: Tx, deps: { keys: TenantKeys }): SchedulingPorts {
+export function createSchedulingPorts(
+  tx: Tx,
+  deps: {
+    keys: TenantKeys;
+    /** Where appointment events go. Absent in scripts that book without subscribers (the demo seed). */
+    events?: AppointmentEvents;
+  },
+): SchedulingPorts {
   const holidays = createHolidayService();
   const worklist = createWorklistService({ keys: deps.keys });
+  let tenantId: string | undefined;
 
   return {
     async lockProfessional(id) {
@@ -482,6 +491,12 @@ export function createSchedulingPorts(tx: Tx, deps: { keys: TenantKeys }): Sched
         actorKind: event.actorKind,
         details: event.details ?? {},
       });
+    },
+
+    async publishEvent(event) {
+      if (!deps.events) return;
+      tenantId ??= await currentTenantId(tx);
+      await deps.events.publish(tx, { ...event, tenantId });
     },
 
     audit: (event) => audit(tx, event),

@@ -60,6 +60,16 @@ async function loadSharingSettings(tx: Tx): Promise<void> {
    where t.id = current_setting('app.tenant_id')::uuid`);
 }
 
+/** The organization a transaction was opened for (`app.tenant_id`). */
+export async function currentTenantId(tx: Tx): Promise<string> {
+  const result = await tx.execute<{ tenant: string }>(
+    sql`select current_setting('app.tenant_id') as tenant`,
+  );
+  const tenantId = result.rows[0]?.tenant;
+  if (!tenantId) throw new Error('This transaction has no tenant context');
+  return tenantId;
+}
+
 /** Nil UUID used as `app.user_id` when the system itself acts (jobs, sealing). */
 export const SYSTEM_USER_ID = '00000000-0000-0000-0000-000000000000';
 

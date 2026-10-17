@@ -7,6 +7,7 @@ import type {
 } from '@consultorio/contracts';
 
 import type { AuditActor, AuditEventInput } from '../../../platform/audit/writer.js';
+import type { AppointmentEventInput } from '../../../platform/events/appointment-events.js';
 import type { Occupancy } from '../domain/lanes.js';
 import type { HoursPeriod, HoursRow, TimeRange } from '../domain/working-hours.js';
 
@@ -243,5 +244,10 @@ export interface SchedulingPorts {
     actor: AuditActor & { userId: string };
   }): Promise<void>;
   insertEvent(event: NewEvent): Promise<void>;
+  /**
+   * Tells the subscribers of the appointment event bus (reminders, the waitlist, video links) what
+   * happened, inside this transaction: a subscriber that fails fails the business write.
+   */
+  publishEvent(event: AppointmentEventInput): Promise<void>;
   audit(event: AuditEventInput): Promise<void>;
 }

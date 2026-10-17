@@ -54,6 +54,10 @@ import { getCountryPack } from '../platform/country/country-pack.js';
 import type { TenantKeys } from '../platform/crypto/tenant-keys.js';
 import type { Db, DbHandle } from '../platform/db/pool.js';
 import { createWithTenant } from '../platform/db/tenant-context.js';
+import {
+  createAppointmentEvents,
+  type AppointmentEvents,
+} from '../platform/events/appointment-events.js';
 import type { HealthDeps } from '../platform/http/health.js';
 import { createPublicOrigins } from '../platform/http/public-origin.js';
 import { createMemoryRateLimitStore, type RateLimit } from '../platform/http/rate-limit.js';
@@ -134,6 +138,11 @@ export interface ApplicationOptions {
   onboardingCapabilities?: Capabilities;
   /** Routes of the capability modules, registered after identity. */
   modules?: readonly FeatureRoutes[];
+  /**
+   * The appointment event bus. Defaults to a new one per application; a test passes its own to
+   * listen to what scheduling publishes.
+   */
+  appointmentEvents?: AppointmentEvents;
 }
 
 export interface RequestLimits {
@@ -265,11 +274,13 @@ export function createApplication(options: ApplicationOptions): FastifyInstance 
     },
   });
 
+  const appointmentEvents = options.appointmentEvents ?? createAppointmentEvents();
   const schedulingClock = options.schedulingClock ?? options.clock;
   const scheduling = createScheduling({
     withTenant,
     auditDeny,
     keys: options.keys,
+    events: appointmentEvents,
     ...(schedulingClock ? { clock: schedulingClock } : {}),
   });
 

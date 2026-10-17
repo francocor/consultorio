@@ -7,7 +7,8 @@ import { scheduleBlock } from '../../../db/schema/scheduling-config.js';
 import { professional } from '../../../db/schema/staff.js';
 import { location } from '../../../db/schema/tenant.js';
 import { audit, type AuditActor } from '../../../platform/audit/writer.js';
-import type { Tx } from '../../../platform/db/tenant-context.js';
+import { currentTenantId, type Tx } from '../../../platform/db/tenant-context.js';
+import type { AppointmentEvents } from '../../../platform/events/appointment-events.js';
 import { AppError } from '../../../platform/http/problem.js';
 import { addLocalDays, localParts } from '../domain/time.js';
 
@@ -68,7 +69,12 @@ export function weeklyOccurrences(
   return occurrences;
 }
 
-export function createBlockService(): BlockService {
+export interface BlockServiceOptions {
+  /** Where `slot_freed` goes when a block is removed. Absent in scripts without subscribers. */
+  events?: AppointmentEvents;
+}
+
+export function createBlockService(options: BlockServiceOptions = {}): BlockService {
   return {
     async list(tx, query) {
       const conditions = [
@@ -169,7 +175,13 @@ export function createBlockService(): BlockService {
         .update(scheduleBlock)
         .set({ removedAt: now, removedBy: input.actor.userId })
         .where(scope)
-        .returning({ id: scheduleBlock.id });
+        .returning({
+          id: scheduleBlock.id,
+          professionalId: scheduleBlock.professionalId,
+          locationId: scheduleBlock.locationId,
+          startsAt: scheduleBlock.startsAt,
+          endsAt: scheduleBlock.endsAt,
+        });
       await audit(tx, {
         action: 'schedule_block.removed',
         outcome: 'allow',
@@ -178,6 +190,24 @@ export function createBlockService(): BlockService {
         resourceId: current.id,
         metadata: { occurrences: removed.length },
       });
+      // The time under a removed block is free again: the waitlist may have somebody for it.
+      if (options.events) {
+        const tenantId = await currentTenantId(tx);
+        for (const freed of removed) {
+          await options.events.publish(tx, {
+            kind: 'slot_freed',
+            tenantId,
+            cause: 'block_removed',
+            slot: {
+              professionalId: freed.professionalId,
+              locationId: freed.locationId,
+              startsAt: freed.startsAt,
+              endsAt: freed.endsAt,
+            },
+            appointment: null,
+          });
+        }
+      }
     },
   };
 }

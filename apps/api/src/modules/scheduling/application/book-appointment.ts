@@ -4,6 +4,7 @@ import type { AuditActor } from '../../../platform/audit/writer.js';
 import { AppError } from '../../../platform/http/problem.js';
 import { initialIdentityConfirmed } from '../domain/identity-confirmation.js';
 
+import { publishCreated } from './events.js';
 import {
   applyPlan,
   assertCalendar,
@@ -246,5 +247,6 @@ export async function persistAppointment(
       },
     });
   }
+  await publishCreated(ports, appointment);
   return appointment;
 }

@@ -21,6 +21,7 @@ import {
 } from '../domain/appointment-state-machine.js';
 import { canConfirmIdentity, type IdentityConfirmation } from '../domain/identity-confirmation.js';
 
+import { publishMove, publishStatusChange } from './events.js';
 import { recordIdentityConfirmed } from './identity-records.js';
 import {
   applyPlan,
@@ -225,6 +226,11 @@ export async function transitionAppointment(
     });
   }
   if (input.action === 'cancel') await dismissWorklistItems(ports, record.id, input.auditActor);
+  await publishStatusChange(ports, {
+    before: record,
+    after: updated,
+    cancelledBy: input.cancellation?.cancelledBy ?? null,
+  });
   return updated;
 }
 
@@ -339,6 +345,7 @@ export async function correctStatus(
     patientId: record.patientId,
     metadata: { from: record.status, to: input.toStatus, reasonCode: input.reasonCode },
   });
+  await publishStatusChange(ports, { before: record, after: updated, correction: true });
   return updated;
 }
 
@@ -479,5 +486,6 @@ export async function rescheduleAppointment(
       },
     });
   }
+  await publishMove(ports, { before: record, after: updated });
   return updated;
 }
