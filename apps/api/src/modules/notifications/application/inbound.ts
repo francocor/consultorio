@@ -13,9 +13,9 @@ import { classifyReply } from '../domain/keywords.js';
 
 import { loadAppointment, loadTenantState } from './context.js';
 import type { Channels, Worklist } from './deps.js';
+import { optOutChannel } from './opt-out.js';
 import { actForPatient, type PatientActionDeps } from './patient-actions.js';
 import type { WhatsAppEvent } from './ports.js';
-import { recordOptOut } from './preferences.js';
 
 type InboundEvent = Extract<WhatsAppEvent, { kind: 'inbound' }>;
 type InboundOutcome = (typeof INBOUND_OUTCOMES)[number];
@@ -111,7 +111,7 @@ export async function processInbound(
   const kind = classifyReply(event.text);
   if (kind === 'opt_out') {
     for (const patientId of patientIds) {
-      await recordOptOut(tx, {
+      await optOutChannel(tx, {
         patientId,
         channel: 'whatsapp',
         source: 'whatsapp_keyword',

@@ -7,8 +7,9 @@ import type {
 } from '../../../platform/public/token-router.js';
 import { readPatientContact } from '../../patients/index.js';
 import { loadAppointment, type AppointmentContext } from '../application/context.js';
+import { optOutChannel } from '../application/opt-out.js';
 import { actForPatient, type PatientActionDeps } from '../application/patient-actions.js';
-import { recordOptIn, recordOptOut } from '../application/preferences.js';
+import { recordOptIn } from '../application/preferences.js';
 import { loadMessagingSettings } from '../application/settings.js';
 import { formatDate, formatTime } from '../domain/content.js';
 import { withinCancelDeadline } from '../domain/validity.js';
@@ -173,7 +174,7 @@ export function createOptOutHandler(): TokenHandler {
     async perform(context) {
       const channel = channelOf(context.payload);
       if (!(await context.redeem())) return null;
-      await recordOptOut(context.tx, {
+      await optOutChannel(context.tx, {
         patientId: context.subjectId,
         channel,
         source: 'email_link',

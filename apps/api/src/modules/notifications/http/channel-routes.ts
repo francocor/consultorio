@@ -15,12 +15,12 @@ import { TOKEN_KIND_REGISTRY, type ActionTokens } from '../../../platform/tokens
 import { readPatientContact } from '../../patients/index.js';
 import { readOrganizationName } from '../../tenancy/index.js';
 import { TOKEN_PATH } from '../application/links.js';
+import { optOutChannel } from '../application/opt-out.js';
 import {
   describeChannel,
   loadPreferences,
   OptInRefused,
   recordOptIn,
-  recordOptOut,
 } from '../application/preferences.js';
 import { renderOptInRequestEmail } from '../assets/es-AR/opt-in-email.js';
 import { firstNameOf } from '../domain/content.js';
@@ -141,7 +141,7 @@ export function channelRoutes(deps: ChannelRoutesDeps) {
         const { id, channel } = request.params;
         return deps.withTenant({ tenantId, userId }, async (tx) => {
           await channelsOf(tx, id);
-          await recordOptOut(tx, {
+          await optOutChannel(tx, {
             patientId: id,
             channel: channel satisfies MessageChannel,
             source: 'staff',

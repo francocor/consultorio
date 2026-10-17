@@ -75,6 +75,11 @@ export function bindOfferDelivery(deps: OfferDeliveryDeps | undefined): void {
   bound = deps;
 }
 
+/** What the process bound: the queue, the clock and the providers. Undefined without a queue. */
+export function boundDelivery(): OfferDeliveryDeps | undefined {
+  return bound;
+}
+
 async function timeZoneOf(tx: Tx, locationId: string): Promise<string | null> {
   const [row] = await tx
     .select({ timeZone: location.timeZone })
