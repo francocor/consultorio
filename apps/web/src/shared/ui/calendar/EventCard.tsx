@@ -17,6 +17,7 @@ export function eventAccessibleName(event: CalendarEvent, timeLabel: string): st
     event.subtitle,
     event.resourceLabel,
     event.statusLabel,
+    event.marker?.label,
     event.note,
   ]
     .filter((part): part is string => part !== undefined && part !== '')
@@ -50,6 +51,7 @@ export function EventCard({
 }) {
   const { t } = useTranslation('scheduling');
   const Icon = event.statusIcon;
+  const Marker = event.marker?.icon;
   const height = typeof style.height === 'number' ? style.height : 0;
   const roomy = height >= TWO_LINES_PX;
 
@@ -76,6 +78,13 @@ export function EventCard({
     >
       <span className="flex min-w-0 items-baseline gap-1">
         <span className="tabular shrink-0 font-semibold">{startLabel}</span>
+        {Marker ? (
+          <Marker
+            data-testid="event-marker"
+            className="size-3 shrink-0 self-center"
+            aria-hidden="true"
+          />
+        ) : null}
         <span className={cn('truncate font-semibold', event.muted && 'line-through')}>
           {event.title}
         </span>

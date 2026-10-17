@@ -21,6 +21,7 @@ import {
 } from '../domain/appointment-state-machine.js';
 import { canConfirmIdentity, type IdentityConfirmation } from '../domain/identity-confirmation.js';
 
+import { publishMove, publishStatusChange } from './events.js';
 import { recordIdentityConfirmed } from './identity-records.js';
 import {
   applyPlan,
@@ -122,6 +123,11 @@ export interface TransitionInput {
    * only in a solo practice (D18).
    */
   confirmIdentity?: boolean | undefined;
+  /**
+   * Who the history says made the change. `patient` for what a patient does with their own link
+   * (confirm, cancel); the default is `staff`.
+   */
+  actorKind?: 'staff' | 'patient';
 }
 
 /**
@@ -192,7 +198,7 @@ export async function transitionAppointment(
     fromStatus: record.status,
     toStatus: target,
     actorUserId: input.actor.userId,
-    actorKind: 'staff',
+    actorKind: input.actorKind ?? 'staff',
     ...(input.cancellation
       ? {
           details: {
@@ -250,6 +256,11 @@ export async function transitionAppointment(
       actor: input.auditActor,
     });
   }
+  await publishStatusChange(ports, {
+    before: record,
+    after: updated,
+    cancelledBy: input.cancellation?.cancelledBy ?? null,
+  });
   return updated;
 }
 
@@ -380,6 +391,7 @@ export async function correctStatus(
       ...(revived ? { revivedFromCancelled: true } : {}),
     },
   });
+  await publishStatusChange(ports, { before: record, after: updated, correction: true });
   return updated;
 }
 
@@ -396,6 +408,8 @@ export interface RescheduleInput {
   auditActor: AuditActor;
   now: Date;
   authorizeLocation?: LocationAuthorizer;
+  /** `patient` for a move the patient made with their own link; the default is `staff`. */
+  actorKind?: 'staff' | 'patient';
 }
 
 /**
@@ -502,7 +516,7 @@ export async function rescheduleAppointment(
     fromStatus: record.status,
     toStatus: record.status,
     actorUserId: input.actor.userId,
-    actorKind: 'staff',
+    actorKind: input.actorKind ?? 'staff',
     details: {
       fromStartsAt: record.startsAt.toISOString(),
       fromEndsAt: record.endsAt.toISOString(),
@@ -541,5 +555,6 @@ export async function rescheduleAppointment(
       },
     });
   }
+  await publishMove(ports, { before: record, after: updated });
   return updated;
 }

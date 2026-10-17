@@ -1,0 +1,7 @@
+ALTER TABLE "message" DROP CONSTRAINT "message_kind_check";--> statement-breakpoint
+ALTER TABLE "message" DROP CONSTRAINT "message_whatsapp_kind_check";--> statement-breakpoint
+ALTER TABLE "message" DROP CONSTRAINT "message_cancel_reason_check";--> statement-breakpoint
+ALTER TABLE "message" ADD COLUMN "video_pending" boolean DEFAULT false NOT NULL;--> statement-breakpoint
+ALTER TABLE "message" ADD CONSTRAINT "message_kind_check" CHECK ("kind" in ('reminder', 'confirmation', 'waitlist_offer', 'video_link', 'otp_code', 'invitation', 'password_reset', 'portal_notice', 'consent_request', 'invoice', 'subscription_notice'));--> statement-breakpoint
+ALTER TABLE "message" ADD CONSTRAINT "message_whatsapp_kind_check" CHECK ("channel" = 'email' or "kind" in ('reminder', 'confirmation', 'waitlist_offer', 'video_link'));--> statement-breakpoint
+ALTER TABLE "message" ADD CONSTRAINT "message_cancel_reason_check" CHECK (("status" = 'cancelled') = ("cancel_reason" is not null) and ("cancel_reason" is null or "cancel_reason" in ('tenant_read_only', 'demo_tenant', 'opted_out', 'appointment_changed', 'appointment_cancelled', 'appointment_over', 'integration_off', 'quota_exhausted', 'no_channel', 'offer_expired', 'video_link_unavailable')));

@@ -1,6 +1,7 @@
 import { useTranslation } from 'react-i18next';
 
 import { RequirePermission } from '../../../app/guards.js';
+import { SlotOutlet } from '../../../app/slots.js';
 import { usePageTitle } from '../../../app/use-page-title.js';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../../../shared/ui/tabs.js';
 
@@ -25,29 +26,33 @@ function SchedulingSettings() {
   usePageTitle(t('settings:tab.scheduling'));
 
   return (
-    <Tabs defaultValue="types" className="grid grid-cols-1 gap-4">
-      <TabsList
-        aria-label={t('scheduling:config.sections')}
-        className="h-auto flex-wrap justify-start"
-      >
-        {SECTIONS.map((section) => (
-          <TabsTrigger key={section} value={section}>
-            {t(`scheduling:config.tab.${section}`)}
-          </TabsTrigger>
-        ))}
-      </TabsList>
-      <TabsContent value="types">
-        <AppointmentTypesSection />
-      </TabsContent>
-      <TabsContent value="blocks">
-        <BlocksSection />
-      </TabsContent>
-      <TabsContent value="holidays">
-        <HolidaysSection />
-      </TabsContent>
-      <TabsContent value="overbooking">
-        <OverbookingSection />
-      </TabsContent>
-    </Tabs>
+    <div className="grid gap-6">
+      <Tabs defaultValue="types" className="grid grid-cols-1 gap-4">
+        <TabsList
+          aria-label={t('scheduling:config.sections')}
+          className="h-auto flex-wrap justify-start"
+        >
+          {SECTIONS.map((section) => (
+            <TabsTrigger key={section} value={section}>
+              {t(`scheduling:config.tab.${section}`)}
+            </TabsTrigger>
+          ))}
+        </TabsList>
+        <TabsContent value="types">
+          <AppointmentTypesSection />
+        </TabsContent>
+        <TabsContent value="blocks">
+          <BlocksSection />
+        </TabsContent>
+        <TabsContent value="holidays">
+          <HolidaysSection />
+        </TabsContent>
+        <TabsContent value="overbooking">
+          <OverbookingSection />
+        </TabsContent>
+      </Tabs>
+      {/* What other features add to the scheduling settings (the video switch of a type, for one). */}
+      <SlotOutlet slot="settings-section" area="scheduling" />
+    </div>
   );
 }

@@ -4,119 +4,20 @@ import { sql } from 'drizzle-orm';
 
 import type { Tx } from '../../src/platform/db/tenant-context.js';
 
-/**
- * One fixture per tenant table. The generated isolation suite uses it to put a row into a table
- * without knowing the table: a table with no fixture here FAILS the suite, so adding a tenant
- * table forces whoever adds it to say how to create a valid row.
- */
-export interface TenantTableFixture {
-  /**
-   * Inserts one row owned by `tenantId` and returns its id. The caller has already set the tenant
-   * context, which may differ from `tenantId` (that is how cross-tenant writes are tested).
-   * `overrides` replaces foreign key columns, keyed by column name, with ids of another tenant.
-   */
-  insert(tx: Tx, tenantId: string, overrides?: Readonly<Record<string, string>>): Promise<string>;
-}
+import {
+  insertAppointmentRow,
+  insertLocation,
+  insertMembership,
+  insertPatient,
+  insertProfessional,
+  insertUser,
+  nextVersion,
+  returningId,
+  unique,
+  type TenantTableFixture,
+} from './fixture-helpers.js';
 
-async function returningId(tx: Tx, statement: ReturnType<typeof sql>): Promise<string> {
-  const result = await tx.execute<{ id: string }>(statement);
-  const id = result.rows[0]?.id;
-  if (!id) throw new Error('fixture insert returned no id');
-  return id;
-}
-
-let versionCounter = 100;
-/** Distinct key versions for fixtures (the version is unique per tenant). */
-function nextVersion(): number {
-  versionCounter += 1;
-  return versionCounter;
-}
-
-let counter = 0;
-/** Unique suffix so repeated fixtures never collide on a unique business key. */
-export function unique(prefix: string): string {
-  counter += 1;
-  return `${prefix}-${String(counter)}`;
-}
-
-/**
- * A new account, inserted the way the application does it: acting AS that user. The account
- * policy only accepts the row of `app.user_id`, so the fixture points it at the new id for the
- * insert and puts the caller's value back afterwards.
- */
-async function insertUser(tx: Tx): Promise<string> {
-  const id = randomUUID();
-  const previous = await tx.execute<{ value: string }>(
-    sql`select current_setting('app.user_id') as value`,
-  );
-  await tx.execute(sql`select set_config('app.user_id', ${id}, true)`);
-  await tx.execute(
-    sql`INSERT INTO user_account (id, email, password_hash)
-          VALUES (${id}, ${unique('fixture') + '@example.test'}, 'hash')`,
-  );
-  await tx.execute(sql`select set_config('app.user_id', ${previous.rows[0]?.value ?? ''}, true)`);
-  return id;
-}
-
-async function insertMembership(tx: Tx, tenantId: string, userId: string): Promise<string> {
-  return returningId(
-    tx,
-    sql`INSERT INTO membership (tenant_id, user_id, roles)
-          VALUES (${tenantId}, ${userId}, ARRAY['reception']) RETURNING id`,
-  );
-}
-
-async function insertProfessional(tx: Tx, tenantId: string): Promise<string> {
-  const membershipId = await insertMembership(tx, tenantId, await insertUser(tx));
-  return returningId(
-    tx,
-    sql`INSERT INTO professional (tenant_id, membership_id, specialties)
-          VALUES (${tenantId}, ${membershipId}, ARRAY['general'])
-          RETURNING id`,
-  );
-}
-
-async function insertPatient(tx: Tx, tenantId: string): Promise<string> {
-  return returningId(
-    tx,
-    sql`INSERT INTO patient (tenant_id, family_name, given_names, birth_date)
-          VALUES (${tenantId}, ${unique('Apellido')}, 'Nombre', '1990-01-01')
-          RETURNING id`,
-  );
-}
-
-async function insertLocation(tx: Tx, tenantId: string): Promise<string> {
-  return returningId(
-    tx,
-    sql`INSERT INTO location (tenant_id, name, time_zone)
-          VALUES (${tenantId}, ${unique('Location')}, 'America/Argentina/Buenos_Aires')
-          RETURNING id`,
-  );
-}
-
-let appointmentDay = 0;
-/** An appointment on a day of its own, so repeated fixtures never overlap. */
-async function insertAppointmentRow(
-  tx: Tx,
-  tenantId: string,
-  overrides?: Readonly<Record<string, string>>,
-): Promise<string> {
-  appointmentDay += 1;
-  return returningId(
-    tx,
-    sql`INSERT INTO appointment
-          (tenant_id, patient_id, professional_id, location_id, appointment_type_id, starts_at, ends_at, booked_by)
-          VALUES (${tenantId},
-                  ${overrides?.['patient_id'] ?? (await insertPatient(tx, tenantId))},
-                  ${overrides?.['professional_id'] ?? (await insertProfessional(tx, tenantId))},
-                  ${overrides?.['location_id'] ?? (await insertLocation(tx, tenantId))},
-                  ${overrides?.['appointment_type_id'] ?? (await returningId(tx, sql`INSERT INTO appointment_type (tenant_id, name, duration_minutes) VALUES (${tenantId}, ${unique('Consulta')}, 30) RETURNING id`))},
-                  (timestamptz '2031-01-01T10:00:00Z' + ${appointmentDay}::int * interval '1 day'),
-                  (timestamptz '2031-01-01T10:30:00Z' + ${appointmentDay}::int * interval '1 day'),
-                  ${randomUUID()})
-          RETURNING id`,
-  );
-}
+export { unique, type TenantTableFixture };
 
 /**
  * Tables that hold clinical content. Their rows are only visible to a health professional's
@@ -201,7 +102,7 @@ async function insertVersion(
   );
 }
 
-export const TENANT_FIXTURES: Record<string, TenantTableFixture> = {
+const CORE_FIXTURES: Record<string, TenantTableFixture> = {
   care_assignment: {
     insert: async (tx, tenantId, overrides) =>
       returningId(
@@ -661,25 +562,39 @@ export const TENANT_FIXTURES: Record<string, TenantTableFixture> = {
               RETURNING id`,
       ),
   },
-  onboarding_state: {
-    // One row per organization: the suite inserts for the same tenant several times, so the
-    // fixture updates the row that is already there (the policy still checks the proposed row).
-    insert: (tx, tenantId) =>
-      returningId(
-        tx,
-        sql`INSERT INTO onboarding_state (tenant_id, answers)
-              VALUES (${tenantId}, '{"isProfessional": true}'::jsonb)
-              ON CONFLICT (tenant_id) DO UPDATE SET answers = EXCLUDED.answers
-              RETURNING id`,
-      ),
-  },
-  tenant_feature: {
-    insert: (tx, tenantId) =>
-      returningId(
-        tx,
-        sql`INSERT INTO tenant_feature (tenant_id, feature, enabled)
-              VALUES (${tenantId}, ${unique('feature')}, true)
-              RETURNING id`,
-      ),
-  },
 };
+
+/**
+ * Joins fixture records into one. A table that two of them both fix is an error: the second would
+ * silently win, and the isolation suite would test the wrong row.
+ */
+export function mergeFixtures(
+  sources: readonly Readonly<Record<string, TenantTableFixture>>[],
+): Record<string, TenantTableFixture> {
+  const merged: Record<string, TenantTableFixture> = {};
+  for (const source of sources) {
+    for (const [table, fixture] of Object.entries(source)) {
+      if (table in merged) throw new Error(`The table "${table}" has two fixtures.`);
+      merged[table] = fixture;
+    }
+  }
+  return merged;
+}
+
+/**
+ * Every file of `test/support/fixtures/` exports `fixtures`: the fixtures of the tables it owns.
+ * A track that adds tenant tables adds a file there; this registry never changes.
+ */
+const files = import.meta.glob<{ fixtures: Record<string, TenantTableFixture> }>(
+  './fixtures/*.ts',
+  {
+    eager: true,
+  },
+);
+
+export const FIXTURE_FILES: readonly string[] = Object.keys(files).sort();
+
+export const TENANT_FIXTURES: Record<string, TenantTableFixture> = mergeFixtures([
+  CORE_FIXTURES,
+  ...FIXTURE_FILES.map((file) => files[file]?.fixtures ?? {}),
+]);

@@ -1,7 +1,7 @@
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, inject, it } from 'vitest';
 
-import allowlist from '../policy/no-delete.allowlist.json' with { type: 'json' };
+import { ALLOWLIST as allowlist } from '../policy/no-delete-allowlist.js';
 
 /**
  * The database says the same as the code (tenancy, "No deletion"): the application role can delete

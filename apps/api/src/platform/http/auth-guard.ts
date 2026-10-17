@@ -43,7 +43,20 @@ declare module 'fastify' {
   interface FastifyInstance {
     /** "METHOD /url" -> auth requirement, for every registered route. Read by the policy test. */
     routeAuth: Map<string, RouteAuth>;
+    /**
+     * "METHOD /url" -> what the route declared about itself that a policy test reads: the limit it
+     * carries and the shapes of its answers. Read by `test/policy/public-routes.test.ts`.
+     */
+    routeDeclarations: Map<string, RouteDeclaration>;
   }
+}
+
+/** What a route declares about its limit and its answers, for the policy tests. */
+export interface RouteDeclaration {
+  /** The route carries a rate limit of its own (`config.rateLimit`). */
+  rateLimited: boolean;
+  /** The response schemas by status code, as the route registered them. */
+  responseSchemas: Readonly<Record<string, unknown>>;
 }
 
 /**
@@ -116,6 +129,8 @@ export interface AuthGuardOptions {
 export function registerAuthGuard(app: FastifyInstance, options: AuthGuardOptions): void {
   const routeAuth = new Map<string, RouteAuth>();
   app.decorate('routeAuth', routeAuth);
+  const routeDeclarations = new Map<string, RouteDeclaration>();
+  app.decorate('routeDeclarations', routeDeclarations);
   app.decorateRequest('session', null);
 
   const routePermissions = new Map<string, Permission>();
@@ -126,6 +141,12 @@ export function registerAuthGuard(app: FastifyInstance, options: AuthGuardOption
     const permission: unknown = route.config?.permission;
     const methods = Array.isArray(route.method) ? route.method : [route.method];
     const label = `${methods.join(',')} ${route.url}`;
+    const response = (route.schema as { response?: Record<string, unknown> } | undefined)?.response;
+    const declaration: RouteDeclaration = {
+      rateLimited: (route.config as { rateLimit?: unknown } | undefined)?.rateLimit !== undefined,
+      responseSchemas: response ?? {},
+    };
+    for (const method of methods) routeDeclarations.set(`${method} ${route.url}`, declaration);
 
     if (permission !== undefined) {
       if (typeof permission !== 'string' || !PERMISSIONS.some((known) => known === permission)) {

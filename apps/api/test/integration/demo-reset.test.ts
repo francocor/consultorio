@@ -19,6 +19,7 @@ import { buildDemoDataset } from '../../src/db/seed/demo/dataset.js';
 import { resetDemoTenant } from '../../src/db/seed/demo/reset.js';
 import { seedDemoTenant, type DemoSeedDeps } from '../../src/db/seed/demo/seed.js';
 import { snapshotDemoTenant } from '../../src/db/seed/demo/snapshot.js';
+import { ONLINE_PATIENTS } from '../../src/db/seed/demo/stage3/online-booking.js';
 import { seedPlatformCatalogs } from '../../src/db/seed/platform.js';
 import { createPasswordHasher } from '../../src/modules/identity/infrastructure/argon2.js';
 import { sealTenant } from '../../src/platform/audit/sealer.js';
@@ -132,7 +133,8 @@ describe('app.demo_reset', () => {
 
     const outcome = await callReset(id);
 
-    expect(outcome.deleted['patient']).toBe(data.patients.length);
+    // The dataset plus the two people who registered themselves through the public booking (Stage 3).
+    expect(outcome.deleted['patient']).toBe(data.patients.length + ONLINE_PATIENTS);
     expect(outcome.deleted['membership']).toBe(data.staff.length);
     expect(outcome.deleted['anamnesis']).toBe(data.care.filter((entry) => entry.anamnesis).length);
     expect(outcome.deleted['care_assignment']).toBe(data.care.length);

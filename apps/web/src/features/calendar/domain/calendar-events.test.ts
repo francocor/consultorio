@@ -41,6 +41,7 @@ function entry(overrides: Partial<CalendarEntryDto> = {}): CalendarEntryDto {
     patientName: 'Gómez, Valentina',
     typeName: 'Control',
     typeColor: '#0f766e',
+    mode: 'in_person',
     ...overrides,
   };
 }
@@ -86,6 +87,15 @@ describe('toCalendarEvent', () => {
       statusLabel: 'Programado',
       accent: '#0f766e',
     });
+  });
+
+  it('marks a virtual appointment with an icon and the word "Virtual", and an in-person one with nothing', () => {
+    const virtual = toCalendarEvent(entry({ mode: 'virtual' }), options);
+    const inPerson = toCalendarEvent(entry({ mode: 'in_person' }), options);
+
+    expect(virtual.marker?.label).toBe('Virtual');
+    expect(virtual.marker?.icon).toBeDefined();
+    expect(inPerson.marker).toBeUndefined();
   });
 
   it('lets only an appointment that has not started be moved, and only by someone who may book', () => {

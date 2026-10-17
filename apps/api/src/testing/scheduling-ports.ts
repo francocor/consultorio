@@ -22,6 +22,7 @@ import type {
   TimeRange,
 } from '../modules/scheduling/domain/working-hours.js';
 import type { AuditEventInput } from '../platform/audit/writer.js';
+import type { AppointmentEventInput } from '../platform/events/appointment-events.js';
 
 /** The world the in-memory ports serve, and what the use case did to it. */
 export interface FakeSchedulingState {
@@ -57,6 +58,8 @@ export interface FakeSchedulingState {
   // What happened.
   inserted: NewAppointment[];
   events: NewEvent[];
+  /** What the use case told the appointment event bus, in order. */
+  published: AppointmentEventInput[];
   audits: AuditEventInput[];
   invalidatedHolds: string[];
   laneMoves: LaneMoveCommand[];
@@ -91,6 +94,7 @@ export function createFakeSchedulingPorts(overrides: Partial<FakeSchedulingState
     closedItems: [],
     inserted: [],
     events: [],
+    published: [],
     audits: [],
     invalidatedHolds: [],
     laneMoves: [],
@@ -298,6 +302,10 @@ export function createFakeSchedulingPorts(overrides: Partial<FakeSchedulingState
     },
     insertEvent: (event) => {
       state.events.push(event);
+      return Promise.resolve();
+    },
+    publishEvent: (event) => {
+      state.published.push(event);
       return Promise.resolve();
     },
     audit: (event) => {

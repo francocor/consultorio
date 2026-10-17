@@ -5,6 +5,7 @@ import { useTranslation } from 'react-i18next';
 
 import { useAppStatus } from '../../app/providers.js';
 import { useMe } from '../../app/session.js';
+import { SlotOutlet } from '../../app/slots.js';
 import { usePageTitle } from '../../app/use-page-title.js';
 import { formatDayLong, formatTime } from '../../shared/lib/format.js';
 import { PageHeader } from '../../shared/ui/page-header.js';
@@ -33,6 +34,10 @@ export function TodayPage() {
 
   const readOnly = status.readOnly || me.tenantStatus === 'read_only';
   const isProfessional = ownProfessionalId !== null;
+  /** What other features put beside an appointment of the day (joining a video call). */
+  const slotActions = (item: CalendarEntryDto) => (
+    <SlotOutlet slot="today-appointment" appointment={item} readOnly={readOnly} />
+  );
   const stepOf = (item: CalendarEntryDto) =>
     consultationStep({
       status: item.status,
@@ -107,16 +112,19 @@ export function TodayPage() {
                 })}
               </p>
             </div>
-            {readOnly ? null : stepOf(flow.next) === 'start' ? (
-              <StartConsultation entry={flow.next} step="start" size="lg" />
-            ) : (
-              <FlowAction
-                entry={flow.next}
-                step="start"
-                size="lg"
-                label={t('scheduling:drawer.action.start')}
-              />
-            )}
+            <div className="flex flex-wrap items-center gap-2">
+              {readOnly ? null : stepOf(flow.next) === 'start' ? (
+                <StartConsultation entry={flow.next} step="start" size="lg" />
+              ) : (
+                <FlowAction
+                  entry={flow.next}
+                  step="start"
+                  size="lg"
+                  label={t('scheduling:drawer.action.start')}
+                />
+              )}
+              {slotActions(flow.next)}
+            </div>
           </section>
         ) : null}
 
@@ -130,8 +138,11 @@ export function TodayPage() {
                 setOpenId(item.id);
               }}
               action={
-                readOnly ? null : (
+                readOnly ? (
+                  slotActions(item)
+                ) : (
                   <>
+                    {slotActions(item)}
                     {stepOf(item) === 'open' ? (
                       <StartConsultation entry={item} step="open" />
                     ) : null}
@@ -153,6 +164,7 @@ export function TodayPage() {
               key={item.id}
               entry={item}
               timeZone={timeZone}
+              action={slotActions(item)}
               onOpen={() => {
                 setOpenId(item.id);
               }}
@@ -165,6 +177,7 @@ export function TodayPage() {
               key={item.id}
               entry={item}
               timeZone={timeZone}
+              action={slotActions(item)}
               onOpen={() => {
                 setOpenId(item.id);
               }}

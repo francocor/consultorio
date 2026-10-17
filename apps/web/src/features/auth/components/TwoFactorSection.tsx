@@ -22,11 +22,11 @@ import {
 } from '../../../shared/ui/card.js';
 import { Input } from '../../../shared/ui/input.js';
 import { Label } from '../../../shared/ui/label.js';
+import { QrCode } from '../../../shared/ui/qr-code.js';
 import { toast } from '../../../shared/ui/toaster.js';
 import { authApi } from '../api/auth-api.js';
 
 import { PasswordConfirmDialog } from './PasswordConfirmDialog.js';
-import { QrCode } from './QrCode.js';
 import { RecoveryCodes } from './RecoveryCodes.js';
 
 type Dialog = 'replace' | 'disable' | 'regenerate' | null;

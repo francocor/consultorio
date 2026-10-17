@@ -27,6 +27,7 @@ import type { AuthzOptions } from '../../../platform/authz/guard.js';
 import { refuseRequest } from '../../../platform/authz/refuse.js';
 import type { TenantKeys } from '../../../platform/crypto/tenant-keys.js';
 import type { Tx, WithTenant } from '../../../platform/db/tenant-context.js';
+import type { AppointmentEvents } from '../../../platform/events/appointment-events.js';
 import { AppError, conflictCode } from '../../../platform/http/problem.js';
 import { refuseWhenReadOnly } from '../../../platform/read-only/index.js';
 import { AccessRefused } from '../../access/index.js';
@@ -53,6 +54,8 @@ import type { TimeRange } from '../domain/working-hours.js';
 export interface AppointmentRoutesDeps {
   withTenant: WithTenant;
   keys: TenantKeys;
+  /** Where the appointment events go (reminders, the waitlist, video links subscribe). */
+  events?: AppointmentEvents;
   auditDeny: AuthzOptions['auditDeny'];
   clock: () => Date;
   calendar: ReturnType<typeof createCalendar>;
@@ -157,7 +160,7 @@ export function appointmentRoutes(deps: AppointmentRoutesDeps) {
     const typed = app.withTypeProvider<ZodTypeProvider>();
 
     /** The ports of a transaction. */
-    const portsOf = (tx: Tx) => createSchedulingPorts(tx, { keys: deps.keys });
+    const portsOf = (tx: Tx) => createSchedulingPorts(tx, { keys: deps.keys, events: deps.events });
 
     /**
      * Runs work for the request's actor in one tenant transaction, with the actor's calendars and

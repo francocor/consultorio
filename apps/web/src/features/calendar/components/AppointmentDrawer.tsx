@@ -5,6 +5,7 @@ import { useState, type ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
 
 import { useApi } from '../../../app/providers.js';
+import { SlotOutlet } from '../../../app/slots.js';
 import { formatDayLong, formatTime } from '../../../shared/lib/format.js';
 import { useIsWideScreen } from '../../../shared/lib/use-media-query.js';
 import { Alert, AlertDescription } from '../../../shared/ui/alert.js';
@@ -277,6 +278,8 @@ function DrawerBody({
           onDone={finish(t('scheduling:drawer.done.correct'))}
         />
       ) : null}
+
+      <SlotOutlet slot="appointment-drawer" appointment={entry} readOnly={readOnly} />
 
       {history.isSuccess ? (
         <AppointmentHistory history={history.data} timeZone={timeZone} />

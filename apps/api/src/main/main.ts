@@ -1,24 +1,21 @@
-import { randomBytes } from 'node:crypto';
-
 import pino from 'pino';
 
-import { createFakeEmailSender } from '../adapters/fake-email/index.js';
 import { createFakeScanner } from '../adapters/fake-scanner/index.js';
-import { createLocalKeyManagement } from '../adapters/local-kek/index.js';
-import { createMemoryObjectStorage } from '../adapters/memory-storage/index.js';
 import { createS3ObjectStorage } from '../adapters/s3/index.js';
 import { consentTextFor, createDemoResetPort } from '../db/seed/demo/index.js';
 import { createPasswordHasher } from '../modules/identity/index.js';
+import { createVideoJoinRegistry } from '../modules/notifications/index.js';
 import { createOperatorSecrets } from '../modules/operator/index.js';
 import { holdExpireJob } from '../modules/scheduling/index.js';
 import { createTenantKeys } from '../platform/crypto/tenant-keys.js';
 import { createOperatorDb, createRuntimeDb } from '../platform/db/pool.js';
 import { createDbProbe } from '../platform/db/probe.js';
 import { createWithTenant } from '../platform/db/tenant-context.js';
-import { createBoss, createJobClient } from '../platform/jobs/boss.js';
+import { createBoss, createLazyJobs } from '../platform/jobs/boss.js';
 import { startWorker } from '../platform/jobs/worker.js';
 
-import { createAdapterResolver, createTenantRoutedEmail, fake, real } from './adapter-resolver.js';
+import { createAdapterResolver, createTenantRoutedEmail } from './adapter-resolver.js';
+import { buildAdapterRegistry } from './adapters.js';
 import { createApplication } from './application.js';
 import { ConfigError, loadConfig, type Config } from './config.js';
 import { deploymentFromConfig } from './deployment.js';
@@ -28,6 +25,7 @@ import { createKeyManagement } from './key-management.js';
 import { buildLoggerOptions } from './logger.js';
 import { loadPasswordValidator } from './password-validator.js';
 import { createConfiguredScanner } from './scanner.js';
+import { MODULE_WIRINGS, combineWorkerContributions } from './wiring/index.js';
 
 const ROLES = ['api', 'worker'] as const;
 type Role = (typeof ROLES)[number];
@@ -58,28 +56,24 @@ async function runApi(config: Config): Promise<void> {
   const email = createConfiguredEmail(config.mail);
   const storage = config.storage ? createS3ObjectStorage(config.storage) : undefined;
   // Confirming an upload queues its scan in the same transaction, so with a bucket the API also
-  // holds a queue client (it only enqueues; the worker is the one that runs the jobs).
-  const jobsBoss = storage ? createBoss(config.databaseUrl, 'api') : undefined;
-  await jobsBoss?.start();
+  // holds a queue client (it only enqueues; the worker is the one that runs the jobs). So does a
+  // module that enqueues from a request (reminders, codes).
+  const needsQueue = storage !== undefined || MODULE_WIRINGS.some((module) => module.needsJobs);
+  // The queue connects on the first enqueue: the process starts, and answers /health, without it.
+  const jobs = needsQueue ? createLazyJobs(createBoss(config.databaseUrl, 'api')) : undefined;
   // Which adapter serves which organization: a demo organization only ever gets the fakes. Email is
-  // routed by organization today; storage and key management are registered so the registry is
-  // complete, and join the routing when their call sites carry the organization.
-  const adapters = createAdapterResolver({
-    email: {
-      real: email.kind === 'smtp' ? real(email.sender) : fake(email.sender),
-      // Outside production the configured SMTP server is a development catcher (Mailpit): a demo
-      // organization's invitations show up there. In production nothing is ever delivered.
-      demo: fake(config.nodeEnv === 'production' ? createFakeEmailSender() : email.sender),
-    },
-    objectStorage: {
-      real: storage ? real(storage) : undefined,
-      demo: fake(createMemoryObjectStorage()),
-    },
-    keyManagement: {
-      real: real(kms),
-      demo: fake(createLocalKeyManagement(randomBytes(32).toString('base64'))),
-    },
-  });
+  // routed by organization today; the other ports are registered so the registry is complete, and
+  // join the routing when their call sites carry the organization.
+  const adapters = createAdapterResolver(
+    buildAdapterRegistry({
+      config,
+      email,
+      storage,
+      kms,
+      db: database.db,
+      wiring: MODULE_WIRINGS,
+    }),
+  );
   const passwordValidator = await loadPasswordValidator({
     breachCheck: config.passwordBreachCheck,
   });
@@ -94,10 +88,16 @@ async function runApi(config: Config): Promise<void> {
     cookieSecure: config.cookieSecure,
     keys,
     email: createTenantRoutedEmail(adapters),
+    adapters,
+    wiring: MODULE_WIRINGS,
+    localProviders: {
+      console: config.providers.localProvidersConsole,
+      providers: MODULE_WIRINGS.flatMap((module) => module.devProviders?.({ config }) ?? []),
+    },
     passwordValidator,
     lockout: config.lockout,
     ...(storage ? { storage } : {}),
-    ...(jobsBoss ? { jobs: createJobClient(jobsBoss) } : {}),
+    ...(jobs ? { jobs: jobs.client } : {}),
     ...(operatorDatabase
       ? {
           operator: {
@@ -142,7 +142,7 @@ async function runApi(config: Config): Promise<void> {
 
   app.log.info('shutting down');
   await app.close();
-  await jobsBoss?.stop({ graceful: true, timeout: 10_000 });
+  await jobs?.stop({ graceful: true, timeout: 10_000 });
   email.close();
   storage?.close();
   await database.close();
@@ -168,17 +168,37 @@ async function runWorker(config: Config): Promise<void> {
   if (storage && kind === 'fake') {
     log.warn('CLAMAV_HOST is not set: documents are scanned by the fake scanner (EICAR only)');
   }
+  // The same adapter registry as the API: a module's jobs resolve their providers through it.
+  const runtime = createRuntimeDb(config.databaseUrl);
+  const adapters = createAdapterResolver(
+    buildAdapterRegistry({
+      config,
+      email,
+      storage,
+      kms: createKeyManagement(config.kms),
+      db: runtime.db,
+      wiring: MODULE_WIRINGS,
+    }),
+  );
+  // One registry for the process: teleconsultation fills it, notifications asks it.
+  const videoJoin = createVideoJoinRegistry();
   const worker = await startWorker({
     databaseUrl: config.databaseUrl,
     sealerDatabaseUrl: config.auditSealerDatabaseUrl,
     log,
-    // Scheduling: the holds that ran out are ended every minute (they are also ended lazily).
-    tenantJobs: [{ definition: holdExpireJob, everyMs: 60_000 }],
-    ...(storage ? documentWorker({ storage, scanner, email: email.sender }) : {}),
+    ...combineWorkerContributions([
+      // Scheduling: the holds that ran out are ended every minute (they are also ended lazily).
+      { tenantJobs: [{ definition: holdExpireJob, everyMs: 60_000 }] },
+      ...(storage ? [documentWorker({ storage, scanner, email: email.sender })] : []),
+      ...MODULE_WIRINGS.map(
+        (module) => module.worker?.({ config, adapters, email: email.sender, videoJoin }) ?? {},
+      ),
+    ]),
   });
   log.info('worker started');
   await waitForShutdownSignal();
   await worker.stop();
+  await runtime.close();
   email.close();
   storage?.close();
   log.info('worker stopped');

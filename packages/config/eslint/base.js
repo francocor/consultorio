@@ -9,6 +9,27 @@ import reactHooks from 'eslint-plugin-react-hooks';
 import globals from 'globals';
 import tseslint from 'typescript-eslint';
 
+/** The web features of Stages 1 and 2, exempt from the feature boundary (see the policy below). */
+const LEGACY_WEB_FEATURES = [
+  'audit',
+  'auth',
+  'booking',
+  'calendar',
+  'checkin',
+  'clinical',
+  'documents',
+  'home',
+  'onboarding',
+  'operator',
+  'patients',
+  'portal',
+  'settings',
+  'shell',
+  'staff',
+  'today',
+  'worklist',
+];
+
 /**
  * Shared ESLint flat config.
  *
@@ -113,6 +134,22 @@ export default defineConfig(
               from: { element: { type: 'api-module' } },
               disallow: {
                 to: { element: { type: 'api-module', fileInternalPath: '!index.ts' } },
+              },
+            },
+            // The same rule on the web: a feature reaches another feature only through its
+            // `index.ts`. The shell (`app/`) and the shared kit are not features. The features
+            // that existed before Stage 3 import each other's files in many places (67 imports);
+            // they are exempt until someone gives them a public API, and every feature added
+            // from Stage 3 on is held to the rule from its first file.
+            {
+              from: {
+                element: {
+                  type: 'web-feature',
+                  captured: { feature: `!(${LEGACY_WEB_FEATURES.join('|')})` },
+                },
+              },
+              disallow: {
+                to: { element: { type: 'web-feature', fileInternalPath: '!index.ts' } },
               },
             },
           ],

@@ -1,5 +1,8 @@
 import { effectivePermissions, ROLE_PERMISSIONS, type Role } from '@consultorio/contracts';
+import { Users } from 'lucide-react';
 import { describe, expect, it } from 'vitest';
+
+import type { ContributedNavItem } from '../registry.js';
 
 import { buildNav, splitForMobile, ENABLED_STAGE } from './nav-config.js';
 
@@ -167,5 +170,76 @@ describe('splitForMobile', () => {
     expect(primary).toHaveLength(4);
     expect(more).toHaveLength(3);
     expect(primary.map((entry) => (entry as { id: string }).id)).toEqual(['a', 'b', 'c', 'd']);
+  });
+});
+
+describe('entries that features contribute (nav.ts)', () => {
+  const entry = (
+    id: string,
+    placements: ContributedNavItem['placements'],
+    anyOf: ContributedNavItem['anyOf'] = ['waitlist.manage'],
+  ): ContributedNavItem => ({
+    id,
+    to: `/${id}`,
+    labelKey: `${id}:nav.title`,
+    icon: Users,
+    anyOf,
+    placements,
+  });
+  const idsWith = (roles: readonly Role[], contributed: readonly ContributedNavItem[]) =>
+    buildNav({ permissions: effectivePermissions(roles, []), roles, contributed }).map(
+      (item) => item.id,
+    );
+
+  it('places an entry after the one it names, in the layouts that ask for it', () => {
+    const waitlist = entry('waitlist', [
+      { layout: 'reception', after: 'worklist' },
+      { layout: 'admin', after: 'calendar' },
+    ]);
+
+    expect(idsWith(['reception'], [waitlist])).toEqual([
+      'home',
+      'calendar',
+      'check-in',
+      'worklist',
+      'waitlist',
+      'patients',
+    ]);
+    expect(idsWith(['admin'], [waitlist]).slice(0, 3)).toEqual(['home', 'calendar', 'waitlist']);
+  });
+
+  it('puts it at the end of the layout when it names nobody, or somebody that is not there', () => {
+    expect(idsWith(['reception'], [entry('a', [{ layout: 'reception' }])]).at(-1)).toBe('a');
+    expect(
+      idsWith(['reception'], [entry('b', [{ layout: 'reception', after: 'ghost' }])]).at(-1),
+    ).toBe('b');
+  });
+
+  it('leaves it out for a role whose layout does not place it, and for a user without the permission', () => {
+    const waitlist = entry('waitlist', [{ layout: 'reception' }]);
+
+    expect(idsWith(['professional'], [waitlist])).not.toContain('waitlist');
+    expect(
+      idsWith(['reception'], [entry('links', [{ layout: 'reception' }], ['booking.manage'])]),
+    ).not.toContain('links');
+  });
+
+  it('shows it once when two roles of the user place it', () => {
+    const waitlist = entry('waitlist', [{ layout: 'reception' }, { layout: 'professional' }]);
+
+    const ids = idsWith(['reception', 'professional'], [waitlist]);
+
+    expect(ids.filter((id) => id === 'waitlist')).toHaveLength(1);
+  });
+
+  it('carries the namespace of the feature in the label key and leaves the shell entries as they were', () => {
+    const items = buildNav({
+      permissions: effectivePermissions(['reception'], []),
+      roles: ['reception'],
+      contributed: [entry('waitlist', [{ layout: 'reception' }])],
+    });
+
+    expect(items.find((item) => item.id === 'waitlist')?.labelKey).toBe('waitlist:nav.title');
+    expect(items.find((item) => item.id === 'calendar')?.labelKey).toBe('nav.calendar');
   });
 });

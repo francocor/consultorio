@@ -1,6 +1,6 @@
 import type { Permission } from '@consultorio/contracts';
 import { Link } from '@tanstack/react-router';
-import type { ReactNode } from 'react';
+import type { ComponentType, ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
 
 import { ForbiddenState } from '../shared/ui/states/forbidden-state.js';
@@ -37,3 +37,16 @@ export function RequirePermission({
   }
   return <>{children}</>;
 }
+
+/**
+ * A screen behind a permission: the screen itself is mounted only for a user who holds one of them,
+ * the "no access" state otherwise. Routes (the shell's and the ones features contribute) use this.
+ */
+export const guardedScreen = (anyOf: readonly Permission[], Screen: ComponentType) =>
+  function GuardedScreen() {
+    return (
+      <RequirePermission anyOf={anyOf}>
+        <Screen />
+      </RequirePermission>
+    );
+  };

@@ -1,6 +1,8 @@
 import { randomBytes } from 'node:crypto';
+import { existsSync } from 'node:fs';
 
 import { afterAll, describe, expect, it } from 'vitest';
+import { z } from 'zod';
 
 import { createFakeEmailSender } from '../../src/adapters/fake-email/index.js';
 import { createLocalKeyManagement } from '../../src/adapters/local-kek/index.js';
@@ -12,6 +14,8 @@ import {
 import { createTenantKeys } from '../../src/platform/crypto/tenant-keys.js';
 import { createRuntimeDb } from '../../src/platform/db/pool.js';
 import { findUnlistedPublicRoutes } from '../../src/platform/http/auth-guard.js';
+import { buildTestApplication } from '../support/app.js';
+import { createRecordingJobClient } from '../support/jobs.js';
 
 /**
  * Boot-time enumeration of the real application (design 4.5, identity-access "Authentication
@@ -81,5 +85,234 @@ describe('authentication of the real application', () => {
     ]);
 
     expect(findUnlistedPublicRoutes(routes)).toEqual(['GET /patients', 'POST /users/invite']);
+  });
+});
+
+/**
+ * The public surface of the whole product (tasks 3.74): the application as `main` builds it, with
+ * every module wired. Each route under `/public/` and `/webhooks/` has to declare how it protects
+ * itself, and which test probes that protection. A route that nobody declared fails the first
+ * test; a declaration of a route that is gone fails the second. The answers of the routes are
+ * probed in `test/security/`.
+ */
+const surfaceDatabase = createRuntimeDb('postgres://app_rw:unused@127.0.0.1:1/unused');
+const surface = buildTestApplication(surfaceDatabase, { jobs: createRecordingJobClient() });
+await surface.ready();
+
+afterAll(async () => {
+  await surface.close();
+  await surfaceDatabase.close();
+});
+
+/** How a public route protects itself. A route may use several. */
+type Guard =
+  /** Says nothing about anybody: the look of an organization, a puzzle. */
+  | 'open-metadata'
+  /** Reached by the public slug of a link; every address that is not live answers the same. */
+  | 'link-slug'
+  /** The bot challenge in front of the form: a puzzle solved once. */
+  | 'bot-challenge'
+  /** The anonymous session that made the hold. */
+  | 'hold-session'
+  /** The one-time code sent to the address in the form: ten minutes, five tries. */
+  | 'otp'
+  /** A single-purpose link: unknown, expired, spent and revoked all look alike. */
+  | 'token'
+  /** The signature of the provider, checked over the raw bytes. */
+  | 'signature'
+  /** Per-address bounds (a limit of the route, and the abuse counters of the flow). */
+  | 'rate-limit';
+
+interface Declaration {
+  guards: readonly Guard[];
+  /** The test files that probe it. */
+  probes: readonly string[];
+}
+
+const SURFACE_PROBES = 'test/security/public-surface.test.ts';
+const NONDISCLOSURE = 'test/security/public-nondisclosure.test.ts';
+const ABUSE = 'test/security/public-abuse.test.ts';
+const TOKENS = 'test/security/public-tokens.test.ts';
+const SELF_SERVICE = 'test/integration/booking-self-service.test.ts';
+const WAITLIST_JOIN = 'test/integration/waitlist-join.test.ts';
+
+const DECLARED: Record<string, Declaration> = {
+  'GET /public/boot': { guards: ['open-metadata'], probes: [SURFACE_PROBES] },
+  'GET /public/branding/logo': { guards: ['open-metadata'], probes: [SURFACE_PROBES] },
+  'GET /public/challenge': { guards: ['open-metadata', 'rate-limit'], probes: [ABUSE] },
+  'GET /public/:slug/booking': { guards: ['link-slug'], probes: [NONDISCLOSURE, SURFACE_PROBES] },
+  'GET /public/:slug/booking/availability': {
+    guards: ['link-slug'],
+    probes: [NONDISCLOSURE, SURFACE_PROBES],
+  },
+  'GET /public/:slug/p/:professionalSlug': {
+    guards: ['link-slug'],
+    probes: [NONDISCLOSURE, SURFACE_PROBES],
+  },
+  'POST /public/:slug/booking/holds': {
+    guards: ['link-slug', 'bot-challenge', 'rate-limit'],
+    probes: [ABUSE, NONDISCLOSURE],
+  },
+  'POST /public/:slug/booking/holds/:id/submission': {
+    guards: ['bot-challenge', 'hold-session', 'rate-limit'],
+    probes: [ABUSE, NONDISCLOSURE],
+  },
+  'POST /public/:slug/booking/holds/:id/code': {
+    guards: ['bot-challenge', 'hold-session', 'rate-limit'],
+    probes: [ABUSE],
+  },
+  'POST /public/:slug/booking/holds/:id/confirm': {
+    guards: ['otp', 'hold-session', 'rate-limit'],
+    probes: [ABUSE, NONDISCLOSURE],
+  },
+  'POST /public/:slug/waitlist': {
+    guards: ['link-slug', 'bot-challenge', 'rate-limit'],
+    probes: [NONDISCLOSURE, WAITLIST_JOIN],
+  },
+  'POST /public/:slug/waitlist/:id/code': {
+    guards: ['bot-challenge', 'rate-limit'],
+    probes: [WAITLIST_JOIN],
+  },
+  'POST /public/:slug/waitlist/:id/confirm': {
+    guards: ['otp', 'rate-limit'],
+    probes: [NONDISCLOSURE, WAITLIST_JOIN],
+  },
+  'GET /public/t/:token': { guards: ['token', 'rate-limit'], probes: [TOKENS, SURFACE_PROBES] },
+  'POST /public/t/:token': { guards: ['token', 'rate-limit'], probes: [TOKENS] },
+  'GET /public/t/:token/appointment': {
+    guards: ['token', 'rate-limit'],
+    probes: [SURFACE_PROBES, SELF_SERVICE],
+  },
+  'GET /public/t/:token/slots': {
+    guards: ['token', 'rate-limit'],
+    probes: [SURFACE_PROBES, SELF_SERVICE],
+  },
+  'POST /public/t/:token/cancel': { guards: ['token', 'rate-limit'], probes: [SELF_SERVICE] },
+  'POST /public/t/:token/reschedule': { guards: ['token', 'rate-limit'], probes: [SELF_SERVICE] },
+  'GET /public/v/:token': {
+    guards: ['token', 'rate-limit'],
+    probes: [SURFACE_PROBES, 'test/integration/video-join-public.test.ts'],
+  },
+  'POST /webhooks/whatsapp': {
+    guards: ['signature'],
+    probes: ['test/integration/whatsapp-webhook.test.ts'],
+  },
+};
+
+/** The routes under the prefixes of the surface; HEAD is the same handler as GET. */
+const surfaceRoutes = () =>
+  [...surface.routeAuth]
+    .filter(([route, auth]) => auth === 'public' && !route.startsWith('HEAD '))
+    .map(([route]) => route)
+    .filter((route) => /^[A-Z,]+ \/(public|webhooks)\//.test(route))
+    .sort();
+
+describe('the public surface of the whole product', () => {
+  it('enumerates the routes under /public/ and /webhooks/ (the list is not silently empty)', () => {
+    expect(surfaceRoutes().length).toBeGreaterThanOrEqual(20);
+  });
+
+  it('has a declared protection for every route, and no declaration without a route', () => {
+    const routes = surfaceRoutes();
+    const declared = Object.keys(DECLARED).sort();
+
+    expect(routes.filter((route) => DECLARED[route] === undefined)).toEqual([]);
+    expect(declared.filter((route) => !routes.includes(route))).toEqual([]);
+  });
+
+  it('protects every route with a guard, and every form with the challenge or the code', () => {
+    for (const [route, declaration] of Object.entries(DECLARED)) {
+      expect(declaration.guards.length, route).toBeGreaterThan(0);
+      if (route.startsWith('POST /public/') && !route.startsWith('POST /public/t/')) {
+        expect(
+          declaration.guards.some((guard) => guard === 'bot-challenge' || guard === 'otp'),
+          route,
+        ).toBe(true);
+      }
+    }
+  });
+
+  it('points each declaration at test files that exist', () => {
+    for (const [route, declaration] of Object.entries(DECLARED)) {
+      expect(declaration.probes.length, route).toBeGreaterThan(0);
+      for (const file of declaration.probes) {
+        expect(existsSync(new URL(`../../${file}`, import.meta.url)), `${route}: ${file}`).toBe(
+          true,
+        );
+      }
+    }
+  });
+
+  it('limits what it says it limits: the route carries a rate limit of its own', () => {
+    for (const route of [
+      'GET /public/t/:token',
+      'POST /public/t/:token',
+      'POST /public/:slug/booking/holds',
+      'POST /public/:slug/booking/holds/:id/submission',
+      'GET /public/challenge',
+    ]) {
+      expect(surface.routeDeclarations.get(route)?.rateLimited, route).toBe(true);
+    }
+  });
+
+  it('gives no answer a shape that holds personal data: the schemas of the public responses', () => {
+    // Fields that identify a patient or hold clinical content. `maskedEmail` is the visitor's own
+    // address with all but its first letter hidden.
+    const banned = new Set([
+      'patientId',
+      'patient',
+      'givenNames',
+      'familyName',
+      'birthDate',
+      'document',
+      'nationalId',
+      'phone',
+      'email',
+      'address',
+      'diagnosis',
+      'note',
+      'notes',
+      'reason',
+      'coverage',
+      'memberNumber',
+    ]);
+    const collect = (node: unknown, out: Set<string>): void => {
+      if (Array.isArray(node)) {
+        for (const item of node) collect(item, out);
+      } else if (typeof node === 'object' && node !== null) {
+        for (const [key, value] of Object.entries(node)) {
+          if (key === 'properties' && typeof value === 'object' && value !== null) {
+            for (const name of Object.keys(value as object)) out.add(name);
+          }
+          collect(value, out);
+        }
+      }
+    };
+
+    let checked = 0;
+    for (const route of surfaceRoutes()) {
+      const response = surface.routeDeclarations.get(route)?.responseSchemas ?? {};
+      for (const [status, schema] of Object.entries(response)) {
+        const names = new Set<string>();
+        collect(
+          z.toJSONSchema(schema as z.ZodType, { io: 'output', unrepresentable: 'any' }),
+          names,
+        );
+        expect(
+          [...names].filter((name) => banned.has(name)),
+          `${route} ${status}`,
+        ).toEqual([]);
+        checked += 1;
+      }
+    }
+    expect(checked).toBeGreaterThan(5);
+  });
+
+  it('would notice an undeclared route (the check proves itself)', () => {
+    const routes = [...surfaceRoutes(), 'POST /public/:slug/invented'];
+
+    expect(routes.filter((route) => DECLARED[route] === undefined)).toEqual([
+      'POST /public/:slug/invented',
+    ]);
   });
 });

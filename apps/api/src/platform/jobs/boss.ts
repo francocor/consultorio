@@ -71,3 +71,47 @@ export function createJobClient(boss: PgBoss): JobClient {
     },
   };
 }
+
+/**
+ * A job client whose queue connects the first time something is enqueued, not when the process
+ * boots. The API must start, and answer `/health`, without a database (`/ready` is the database
+ * probe); a queue that connected at boot would take the process down with the database. A failed
+ * start fails that enqueue (the request that asked for it gets an error) and is retried by the
+ * next one.
+ */
+export interface LazyJobs {
+  readonly client: JobClient;
+  /** Stops the queue if it ever started. */
+  stop(options?: Parameters<PgBoss['stop']>[0]): Promise<void>;
+}
+
+/** What the lazy client needs of the queue: a PgBoss, or a double with the same two methods. */
+interface Startable {
+  start(): Promise<unknown>;
+  stop(options?: Parameters<PgBoss['stop']>[0]): Promise<unknown>;
+}
+
+export function createLazyJobs(boss: Startable, inner?: JobClient): LazyJobs {
+  const real = inner ?? createJobClient(boss as PgBoss);
+  let starting: Promise<unknown> | undefined;
+  const started = () => {
+    starting ??= boss.start().catch((error: unknown) => {
+      starting = undefined;
+      throw error;
+    });
+    return starting;
+  };
+  return {
+    client: {
+      async enqueue(tx, name, payload, options) {
+        await started();
+        return real.enqueue(tx, name, payload, options);
+      },
+    },
+    async stop(options) {
+      if (starting === undefined) return;
+      await starting.catch(() => undefined);
+      await boss.stop(options);
+    },
+  };
+}

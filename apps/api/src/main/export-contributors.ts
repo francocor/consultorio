@@ -3,14 +3,18 @@ import { registerAuditExportContributors } from '../modules/audit/index.js';
 import { registerClinicalExportContributors } from '../modules/clinical/index.js';
 import { registerDocumentsExportContributors } from '../modules/documents/index.js';
 import { registerIdentityExportContributors } from '../modules/identity/index.js';
+import { registerNotificationsExportContributors } from '../modules/notifications/index.js';
 import { registerOnboardingExportContributors } from '../modules/onboarding/index.js';
+import { registerOnlineBookingExportContributors } from '../modules/online-booking/index.js';
 import { registerPatientsExportContributors } from '../modules/patients/index.js';
 import { registerSchedulingExportContributors } from '../modules/scheduling/index.js';
 import { registerStaffExportContributors } from '../modules/staff/index.js';
+import { registerTeleconsultationExportContributors } from '../modules/teleconsultation/index.js';
 import {
   registerTenancyExportContributors,
   type ExportRegistry,
 } from '../modules/tenancy/index.js';
+import { registerWaitlistExportContributors } from '../modules/waitlist/index.js';
 import type { TenantKeys } from '../platform/crypto/tenant-keys.js';
 
 /**
@@ -31,4 +35,8 @@ export function registerAllExportContributors(
   registerOnboardingExportContributors(registry);
   registerAuditExportContributors(registry);
   registerClinicalExportContributors(registry, deps);
+  registerNotificationsExportContributors(registry);
+  registerOnlineBookingExportContributors(registry);
+  registerWaitlistExportContributors(registry);
+  registerTeleconsultationExportContributors(registry);
 }

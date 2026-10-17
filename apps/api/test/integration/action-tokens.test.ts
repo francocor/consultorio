@@ -94,7 +94,8 @@ describe('issuing a token', () => {
   it('refuses a kind whose capability does not exist yet', async () => {
     const { issue } = setup();
 
-    await expect(issue('appointment_confirm')).rejects.toThrow(/not enabled/);
+    // A kind of a later stage: the Stage 3 kinds are switched on by their own tracks.
+    await expect(issue('archive_release')).rejects.toThrow(/not enabled/);
   });
 
   it('refuses a session-bound kind without a session', async () => {

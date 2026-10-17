@@ -1,4 +1,3 @@
-import type { Permission } from '@consultorio/contracts';
 import {
   Outlet,
   createRootRouteWithContext,
@@ -6,28 +5,26 @@ import {
   createRouter,
   lazyRouteComponent,
   redirect,
-  useParams,
   useRouter,
+  type AnyRoute,
   type RouterHistory,
 } from '@tanstack/react-router';
-import { lazy, type ComponentType } from 'react';
 
 import { AuthLayout } from '../features/auth/AuthLayout.js';
 import { LoginPage } from '../features/auth/LoginPage.js';
 import { validateCalendarSearch } from '../features/calendar/search.js';
 import { isWizardScreen } from '../features/onboarding/wizard-model.js';
 import { settingsTabsFor } from '../features/settings/settings-tabs.js';
-import { SettingsPage } from '../features/settings/SettingsPage.js';
 import { isApiError } from '../shared/lib/api-client.js';
 import { OfflineBanner } from '../shared/ui/states/banners.js';
 import { ErrorState } from '../shared/ui/states/error-state.js';
 import { ListSkeleton } from '../shared/ui/states/loading-skeleton.js';
 
-import { AppShell } from './AppShell.js';
-import { RequirePermission } from './guards.js';
+import { guardedScreen as guarded } from './guards.js';
 import { MinimalShell } from './MinimalShell.js';
 import { NotFoundPage } from './NotFoundPage.js';
 import { useAppStatus } from './providers.js';
+import type { AppRegistry, RouteMount } from './registry.js';
 import { safeRedirect } from './router-helpers.js';
 import type { AppServices } from './services.js';
 import { meQueryOptions } from './session.js';
@@ -70,7 +67,11 @@ function RoutePending() {
 }
 
 /** One route tree per router, so tests (and a tenant switch) never share route state. */
-function buildRouteTree() {
+function buildRouteTree(registry: AppRegistry) {
+  /** The routes that features contribute under a mount point. */
+  const contributed = (mount: RouteMount, parent: AnyRoute) =>
+    registry.routes.filter((entry) => entry.mount === mount).map((entry) => entry.create(parent));
+
   const rootRoute = createRootRouteWithContext<RouterContext>()({
     component: RootLayout,
     notFoundComponent: NotFoundPage,
@@ -144,7 +145,8 @@ function buildRouteTree() {
       }
       return { me };
     },
-    component: AppShell,
+    // The signed-in frame (menus, navigation) is not needed to sign in: it loads with the first screen.
+    component: lazyRouteComponent(() => import('./AppShell.js'), 'AppShell'),
   });
 
   const homeRoute = createRoute({
@@ -161,15 +163,6 @@ function buildRouteTree() {
       'AccountSecurityPage',
     ),
   });
-
-  const guarded = (anyOf: readonly Permission[], Screen: ComponentType) =>
-    function GuardedScreen() {
-      return (
-        <RequirePermission anyOf={anyOf}>
-          <Screen />
-        </RequirePermission>
-      );
-    };
 
   const patientsRoute = createRoute({
     getParentRoute: () => authedRoute,
@@ -316,14 +309,17 @@ function buildRouteTree() {
   const settingsRoute = createRoute({
     getParentRoute: () => authedRoute,
     path: '/settings',
-    component: SettingsPage,
+    component: lazyRouteComponent(
+      () => import('../features/settings/SettingsPage.js'),
+      'SettingsPage',
+    ),
   });
 
   const settingsIndexRoute = createRoute({
     getParentRoute: () => settingsRoute,
     path: '/',
     beforeLoad: ({ context }) => {
-      const first = settingsTabsFor(context.me.permissions)[0];
+      const first = settingsTabsFor(context.me.permissions, registry.settingsTabs)[0];
       if (first) throw redirect({ to: first.to });
     },
   });
@@ -384,19 +380,6 @@ function buildRouteTree() {
     component: lazyRouteComponent(() => import('../features/portal/PortalPage.js'), 'PortalPage'),
   });
 
-  const bookingRoute = createRoute({
-    getParentRoute: () => minimalRoute,
-    path: '/book/$slug',
-    component: function BookingRouteComponent() {
-      const params: unknown = useParams({ strict: false });
-      const slug =
-        typeof params === 'object' && params !== null && 'slug' in params
-          ? String(params.slug)
-          : '';
-      return <LazyBooking slug={slug} />;
-    },
-  });
-
   return rootRoute.addChildren([
     publicRoute.addChildren([loginRoute, forgotRoute, resetRoute, invitationRoute]),
     authedRoute.addChildren([
@@ -421,16 +404,14 @@ function buildRouteTree() {
         settingsSchedulingRoute,
         settingsBrandingRoute,
         settingsSecurityRoute,
+        ...contributed('settings', settingsRoute),
       ]),
+      ...contributed('authed', authedRoute),
       unknownRoute,
     ]),
-    minimalRoute.addChildren([portalRoute, bookingRoute]),
+    minimalRoute.addChildren([portalRoute, ...contributed('minimal', minimalRoute)]),
   ]);
 }
-
-const LazyBooking = lazy(() =>
-  import('../features/booking/BookingPage.js').then((module) => ({ default: module.BookingPage })),
-);
 
 /** The platform host has one screen: the operator console decides between sign-in and content. */
 function buildOperatorRouteTree() {
@@ -459,7 +440,7 @@ export function createAppRouter({
   history?: RouterHistory;
 }) {
   const router = createRouter({
-    routeTree: buildRouteTree(),
+    routeTree: buildRouteTree(services.registry),
     context: { services },
     ...(history ? { history } : {}),
     defaultPendingComponent: RoutePending,

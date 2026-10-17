@@ -73,6 +73,7 @@ async function selectEntries(
       givenNames: patient.givenNames,
       typeName: appointmentType.name,
       typeColor: appointmentType.color,
+      typeMode: appointmentType.mode,
     })
     .from(appointment)
     .innerJoin(
@@ -94,6 +95,7 @@ async function selectEntries(
     patientName: `${row.familyName}, ${row.givenNames}`,
     typeName: row.typeName,
     typeColor: row.typeColor,
+    mode: row.typeMode === 'virtual' ? 'virtual' : 'in_person',
   }));
 }
 

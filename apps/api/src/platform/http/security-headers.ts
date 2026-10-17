@@ -15,11 +15,13 @@ export function registerSecurityHeaders(app: FastifyInstance, options: { secure:
     const fixed: Record<string, string> = {
       'x-content-type-options': 'nosniff',
       'x-frame-options': 'DENY',
-      'referrer-policy': 'no-referrer',
       'cross-origin-resource-policy': 'same-origin',
     };
     for (const [name, value] of Object.entries(fixed)) void reply.header(name, value);
-    // Defaults a route may replace by setting the header before it answers.
+    // Defaults a route may replace by setting the header before it answers. The referrer policy is
+    // one: a page with a form that posts back to itself (the token pages) needs `same-origin`,
+    // because a browser sends `Origin: null` for a POST under `no-referrer`.
+    if (!reply.hasHeader('referrer-policy')) void reply.header('referrer-policy', 'no-referrer');
     if (!reply.hasHeader('cache-control')) void reply.header('cache-control', 'no-store');
     if (!reply.hasHeader('content-security-policy')) {
       void reply.header('content-security-policy', "default-src 'none'; frame-ancestors 'none'");

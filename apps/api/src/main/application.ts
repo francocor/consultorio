@@ -15,6 +15,7 @@ import { createDocuments } from '../modules/documents/index.js';
 import type { LockoutPolicy } from '../modules/identity/application/lockout.js';
 import type { PasswordValidator } from '../modules/identity/domain/password-policy.js';
 import { createIdentity, type PasswordHasher } from '../modules/identity/index.js';
+import { createVideoJoinRegistry } from '../modules/notifications/index.js';
 import {
   createOnboarding,
   createWizardGate,
@@ -55,15 +56,24 @@ import { getCountryPack } from '../platform/country/country-pack.js';
 import type { TenantKeys } from '../platform/crypto/tenant-keys.js';
 import type { Db, DbHandle } from '../platform/db/pool.js';
 import { createWithTenant } from '../platform/db/tenant-context.js';
+import {
+  createAppointmentEvents,
+  type AppointmentEvents,
+} from '../platform/events/appointment-events.js';
 import type { HealthDeps } from '../platform/http/health.js';
 import { createPublicOrigins } from '../platform/http/public-origin.js';
 import { createMemoryRateLimitStore, type RateLimit } from '../platform/http/rate-limit.js';
 import type { JobClient } from '../platform/jobs/boss.js';
+import { createDevRoutes, type DevProvider } from '../platform/local-providers/dev-routes.js';
 import type { EmailSender } from '../platform/mail/email-sender.js';
+import { resetTokenHandlers } from '../platform/public/token-router.js';
+import { createSettingsSectionRegistry } from '../platform/settings-sections.js';
 import type { ObjectStorage } from '../platform/storage/object-storage.js';
 
+import type { AdapterResolver } from './adapter-resolver.js';
 import { buildServer, type FeatureRoutes } from './server.js';
 import type { TrustProxySetting } from './trust-proxy.js';
+import type { ModuleWiring } from './wiring/types.js';
 
 export interface ApplicationOptions {
   /** The runtime database (connects as `app_rw`). */
@@ -135,6 +145,24 @@ export interface ApplicationOptions {
   onboardingCapabilities?: Capabilities;
   /** Routes of the capability modules, registered after identity. */
   modules?: readonly FeatureRoutes[];
+  /**
+   * The capability modules of the patient-engagement stages (`main/wiring`). `main` and the test
+   * application pass the same list. Each module is built with the shared services and returns its
+   * routes; it subscribes to the appointment events when it is built.
+   */
+  wiring?: readonly ModuleWiring[];
+  /** Which adapter serves which organization. Modules resolve their providers through it. */
+  adapters?: AdapterResolver;
+  /**
+   * The provider console (`LOCAL_PROVIDERS_CONSOLE`): with `console: false` no `/operator/dev`
+   * route exists. It lives inside the operator console, so it needs one.
+   */
+  localProviders?: { console: boolean; providers: readonly DevProvider[] };
+  /**
+   * The appointment event bus. Defaults to a new one per application; a test passes its own to
+   * listen to what scheduling publishes.
+   */
+  appointmentEvents?: AppointmentEvents;
 }
 
 export interface RequestLimits {
@@ -223,12 +251,19 @@ export function createApplication(options: ApplicationOptions): FastifyInstance 
         : 'UTC';
   };
 
+  // The sections of the organization settings that the modules own: registered once, here.
+  const settingsSections = createSettingsSectionRegistry();
+  for (const wiring of options.wiring ?? []) {
+    for (const section of wiring.settingsSections ?? []) settingsSections.register(section);
+  }
+
   const access = createAccess({
     withTenant,
     auditDeny,
     sessions: identity.sessions,
     grants,
     defaultTimeZone: countryTimeZone,
+    settingsSections,
     email: options.email,
     origins,
   });
@@ -268,11 +303,13 @@ export function createApplication(options: ApplicationOptions): FastifyInstance 
     },
   });
 
+  const appointmentEvents = options.appointmentEvents ?? createAppointmentEvents();
   const schedulingClock = options.schedulingClock ?? options.clock;
   const scheduling = createScheduling({
     withTenant,
     auditDeny,
     keys: options.keys,
+    events: appointmentEvents,
     ...(schedulingClock ? { clock: schedulingClock } : {}),
   });
 
@@ -311,8 +348,34 @@ export function createApplication(options: ApplicationOptions): FastifyInstance 
     ...(options.clock ? { clock: options.clock } : {}),
   });
 
+  // The links' registry belongs to one application: it starts empty, so a capability that claims
+  // a kind another one already took fails here instead of silently replacing it.
+  resetTokenHandlers();
+  const videoJoin = createVideoJoinRegistry();
+  const wired = (options.wiring ?? []).map((wiring) =>
+    wiring.create({
+      withTenant,
+      auditDeny,
+      keys: options.keys,
+      email: options.email,
+      origins,
+      rateLimitStore,
+      appointmentEvents,
+      worklist: scheduling.worklist,
+      videoJoin,
+      ...(options.clock ? { clock: options.clock } : {}),
+      ...(options.storage ? { storage: options.storage } : {}),
+      ...(options.jobs ? { jobs: options.jobs } : {}),
+      ...(options.adapters ? { adapters: options.adapters } : {}),
+    }),
+  );
+
   const auditViewer = createAudit({ withTenant });
   const supportAccess = createSupportAccess({ withTenant });
+  const devRoutes = createDevRoutes({
+    enabled: options.localProviders?.console ?? false,
+    providers: options.localProviders?.providers ?? [],
+  });
   const operatorConsole =
     options.operator && options.deployment.mode === 'multi'
       ? createOperatorConsole({
@@ -325,6 +388,7 @@ export function createApplication(options: ApplicationOptions): FastifyInstance 
           secureLinks: options.cookieSecure,
           loginRateLimit: limits.login,
           ...(options.operator.demoReset ? { demoReset: options.operator.demoReset } : {}),
+          ...(devRoutes ? { extensions: [devRoutes] } : {}),
           ...(options.clock ? { clock: options.clock } : {}),
         })
       : undefined;
@@ -378,6 +442,7 @@ export function createApplication(options: ApplicationOptions): FastifyInstance 
       branding.routes,
       supportAccess.routes,
       ...(operatorConsole ? [operatorConsole.routes] : []),
+      ...wired.flatMap((module) => (module.routes ? [module.routes] : [])),
       ...(options.modules ?? []),
     ],
   });

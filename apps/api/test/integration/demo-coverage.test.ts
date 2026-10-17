@@ -30,7 +30,7 @@ const RESET_BUDGET_MS = 30_000;
  * Tenant tables the demo seed leaves empty ON PURPOSE, each with the reason. A new module adds its
  * tables to the seed or, with a reason, to this list: the test fails until one of the two happens.
  */
-const NO_SEED_DATA: Record<string, string> = {
+const CORE_NO_SEED_DATA: Record<string, string> = {
   action_token: 'One-time links are created by people inviting or resetting; none is pending.',
   job_execution: 'Idempotence markers of background jobs; created when a job runs.',
   login_challenge: 'A pending second-factor step; exists for minutes while somebody signs in.',
@@ -43,6 +43,21 @@ const NO_SEED_DATA: Record<string, string> = {
     'A slot kept for a few minutes while somebody books; every hold has expired or become an appointment.',
   support_grant: 'Opened by an organization for the platform operator, for a stated reason.',
 };
+
+/**
+ * A track that adds a tenant table before the demo seed of its stage exists lists it in its own
+ * file of `demo-coverage-exemptions/` (exporting `exemptions`), with the slice that seeds it.
+ * The seed slice removes the entry. No track edits the list above.
+ */
+const exemptionFiles = import.meta.glob<{ exemptions: Record<string, string> }>(
+  './demo-coverage-exemptions/*.ts',
+  { eager: true },
+);
+const NO_SEED_DATA: Record<string, string> = Object.fromEntries(
+  [CORE_NO_SEED_DATA, ...Object.values(exemptionFiles).map((file) => file.exemptions)].flatMap(
+    (list) => Object.entries(list),
+  ),
+);
 
 let runtime: DbHandle;
 let owner: pg.Client;

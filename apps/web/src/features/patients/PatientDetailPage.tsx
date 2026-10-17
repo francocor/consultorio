@@ -6,6 +6,7 @@ import { useTranslation } from 'react-i18next';
 
 import { useApi } from '../../app/providers.js';
 import { hasAnyPermission, useMe } from '../../app/session.js';
+import { useSlot } from '../../app/slots.js';
 import { usePageTitle } from '../../app/use-page-title.js';
 import { isApiError } from '../../shared/lib/api-client.js';
 import { cn } from '../../shared/lib/cn.js';
@@ -28,6 +29,7 @@ import { HistoryTab } from './components/HistoryTab.js';
 import { fullNameOf, PatientHeader } from './components/PatientHeader.js';
 import { PrivacyTab } from './components/PrivacyTab.js';
 
+/** The built-in tabs. A tab a feature registers has the id `slot:<id>`. */
 type TabId =
   | 'data'
   | 'coverage'
@@ -55,7 +57,8 @@ function PatientRecord({ patientId }: { patientId: string }) {
   const me = useMe();
   const [editing, setEditing] = useState(false);
   const search: { tab?: 'chart' } = useSearch({ strict: false });
-  const [tab, setTab] = useState<TabId>(search.tab ?? 'data');
+  const [tab, setTab] = useState<TabId | `slot:${string}`>(search.tab ?? 'data');
+  const registeredTabs = useSlot('patient-detail-tab');
 
   const patient = useQuery({
     queryKey: patientKeys.detail(patientId),
@@ -116,7 +119,7 @@ function PatientRecord({ patientId }: { patientId: string }) {
       <Tabs
         value={tab}
         onValueChange={(next) => {
-          setTab(next as TabId);
+          setTab(next as TabId | `slot:${string}`);
         }}
       >
         <TabsList aria-label={t('patients:detail.sections')}>
@@ -135,6 +138,11 @@ function PatientRecord({ patientId }: { patientId: string }) {
           {canReadAudit ? (
             <TabsTrigger value="access">{t('patients:tab.access')}</TabsTrigger>
           ) : null}
+          {registeredTabs.map((piece) => (
+            <TabsTrigger key={piece.id} value={`slot:${piece.id}`}>
+              {t(piece.labelKey ?? '')}
+            </TabsTrigger>
+          ))}
         </TabsList>
         <TabsContent value="data">
           <DataTab patient={record} canWrite={canWrite} />
@@ -182,6 +190,11 @@ function PatientRecord({ patientId }: { patientId: string }) {
             <AccessReportTab patientId={record.id} />
           </TabsContent>
         ) : null}
+        {registeredTabs.map((piece) => (
+          <TabsContent key={piece.id} value={`slot:${piece.id}`}>
+            <piece.Component patientId={record.id} />
+          </TabsContent>
+        ))}
       </Tabs>
       {canWrite ? (
         <EditPatientDialog patient={record} open={editing} onOpenChange={setEditing} />

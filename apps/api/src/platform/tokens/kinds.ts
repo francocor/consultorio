@@ -42,13 +42,17 @@ export const TOKEN_KIND_REGISTRY: Record<TokenKind, KindSpec> = {
   signup_verification: { ttlMs: 24 * HOUR, maxUses: 1, sessionBound: false, enabled: true },
   portal_activation: { ttlMs: 7 * DAY, maxUses: 1, sessionBound: false, enabled: true },
 
-  appointment_confirm: { ttlMs: 60 * DAY, maxUses: 1, sessionBound: false, enabled: false },
-  appointment_cancel: { ttlMs: 60 * DAY, maxUses: 1, sessionBound: false, enabled: false },
-  appointment_reschedule: { ttlMs: 60 * DAY, maxUses: 1, sessionBound: false, enabled: false },
-  waitlist_offer: { ttlMs: 2 * DAY, maxUses: 1, sessionBound: false, enabled: false },
-  video_join: { ttlMs: 3 * HOUR, maxUses: 20, sessionBound: false, enabled: false },
-  notification_opt_out: { ttlMs: 3650 * DAY, maxUses: 1, sessionBound: false, enabled: false },
-  whatsapp_opt_in: { ttlMs: 7 * DAY, maxUses: 1, sessionBound: false, enabled: false },
+  appointment_confirm: { ttlMs: 60 * DAY, maxUses: 1, sessionBound: false, enabled: true },
+  appointment_cancel: { ttlMs: 60 * DAY, maxUses: 1, sessionBound: false, enabled: true },
+  // A booking can be made up to a year ahead (the horizon setting), and its link lives until the start.
+  appointment_reschedule: { ttlMs: 366 * DAY, maxUses: 1, sessionBound: false, enabled: true },
+  waitlist_offer: { ttlMs: 2 * DAY, maxUses: 1, sessionBound: false, enabled: true },
+  // A reminder issues the link when it is sent, up to 14 days ahead (the longest lead time an
+  // organization can set), so the kind allows 15 days; the issuer asks for the join window it
+  // needs (until the window closes plus the hours the address stays known).
+  video_join: { ttlMs: 15 * DAY, maxUses: 20, sessionBound: false, enabled: true },
+  notification_opt_out: { ttlMs: 3650 * DAY, maxUses: 1, sessionBound: false, enabled: true },
+  whatsapp_opt_in: { ttlMs: 7 * DAY, maxUses: 1, sessionBound: false, enabled: true },
   document_download: { ttlMs: 5 * MINUTE, maxUses: 1, sessionBound: true, enabled: true },
   archive_release: { ttlMs: 72 * HOUR, maxUses: 1, sessionBound: false, enabled: false },
 };

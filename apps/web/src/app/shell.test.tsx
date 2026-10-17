@@ -5,6 +5,7 @@ import { describe, expect, it } from 'vitest';
 import { a11yViolations } from '../shared/test/a11y.js';
 import { bootFor, meFor } from '../shared/test/fixtures.js';
 import { renderApp, renderInRouter } from '../shared/test/render-app.js';
+import { problemResponse } from '../shared/test/render.js';
 
 import { BottomNav } from './BottomNav.js';
 import { NAV_ITEMS } from './nav/nav-config.js';
@@ -20,9 +21,13 @@ describe('AppShell: navigation driven by the role', () => {
     expect(
       await screen.findByRole('heading', { level: 1, name: 'Bienvenido a Clínica Norte' }),
     ).toBeInTheDocument();
+    // The waitlist is a sixth entry of reception: a phone's bottom bar holds five, so the last
+    // ones (patients, waitlist) wait under "Más" there, while the sidebar lists them all.
+    expect(within(sidebar()).getByRole('link', { name: 'Pacientes' })).toBeInTheDocument();
+    expect(within(sidebar()).getByRole('link', { name: 'Lista de espera' })).toBeInTheDocument();
+    expect(within(bottom()).getByRole('button', { name: 'Más' })).toBeInTheDocument();
     for (const nav of [sidebar(), bottom()]) {
       expect(within(nav).getByRole('link', { name: 'Inicio' })).toBeInTheDocument();
-      expect(within(nav).getByRole('link', { name: 'Pacientes' })).toBeInTheDocument();
       for (const hidden of ['Equipo', 'Auditoría', 'Configuración', 'Recetas', 'Borradores']) {
         expect(within(nav).queryByRole('link', { name: hidden })).not.toBeInTheDocument();
       }
@@ -272,13 +277,17 @@ describe('minimal shells for the portal and public booking', () => {
     expect(screen.queryByRole('navigation')).not.toBeInTheDocument();
   });
 
-  it('/book/{slug} names the organization and shows no staff navigation', async () => {
-    renderApp({ me: null, path: '/book/clinica-norte' });
+  it('/book/{slug} is the booking page in the minimal frame, with no staff navigation', async () => {
+    renderApp({
+      me: null,
+      path: '/book/clinica-norte',
+      // An address that does not work looks the same whatever the reason.
+      routes: { 'GET /api/public/clinica-norte/booking': problemResponse(404, 'not_found') },
+    });
 
     expect(
-      await screen.findByRole('heading', { level: 1, name: 'Reserva de turnos en línea' }),
+      await screen.findByRole('heading', { level: 1, name: 'Este enlace no está disponible' }),
     ).toBeInTheDocument();
-    expect(screen.getByText('Organización: clinica-norte')).toBeInTheDocument();
     expect(screen.queryByRole('navigation')).not.toBeInTheDocument();
   });
 });

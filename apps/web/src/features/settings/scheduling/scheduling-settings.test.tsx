@@ -3,6 +3,7 @@ import { fireEvent, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it } from 'vitest';
 
+import { createRegistry, type AppRegistry } from '../../../app/registry.js';
 import { a11yViolations } from '../../../shared/test/a11y.js';
 import { bootFor, meFor } from '../../../shared/test/fixtures.js';
 import { renderApp } from '../../../shared/test/render-app.js';
@@ -59,6 +60,7 @@ const HOLIDAYS: HolidayDto[] = [
 ];
 
 interface OpenOptions {
+  registry?: AppRegistry;
   me?: ReturnType<typeof meFor>;
   routes?: Record<string, FetchHandler | Response>;
 }
@@ -67,6 +69,7 @@ function open(options: OpenOptions = {}) {
   const urls: string[] = [];
   const app = renderApp({
     me: options.me ?? meFor(['owner']),
+    ...(options.registry ? { registry: options.registry } : {}),
     path: '/settings/scheduling',
     boot: bootFor('Centro Médico Aillu'),
     routes: {
@@ -429,6 +432,7 @@ describe('blocks', () => {
                 patientName: 'Gómez, Valentina',
                 typeName: 'Control',
                 typeColor: null,
+                mode: 'in_person',
               },
             ],
             blocks: [],
@@ -721,5 +725,36 @@ describe('overbooking', () => {
     await user.click(within(panel).getByRole('button', { name: 'Guardar Dra. Ana Pérez' }));
 
     expect(await within(panel).findByText('Indique un número del 1 al 20.')).toBeInTheDocument();
+  });
+});
+
+describe('the settings area: sections that features register (slot settings-section)', () => {
+  const registry = createRegistry({
+    routes: {},
+    nav: {},
+    slots: {
+      '../features/teleconsultation/slots.tsx': {
+        default: [
+          {
+            slot: 'settings-section',
+            id: 'video',
+            Component: ({ area }: { area: string }) => <p>Video integration in {area}</p>,
+          },
+        ],
+      },
+    },
+  });
+
+  it('shows the section a feature registered under the scheduling settings', async () => {
+    open({ registry });
+
+    expect(await screen.findByText('Video integration in scheduling')).toBeInTheDocument();
+  });
+
+  it('shows nothing extra when no feature registered one', async () => {
+    open();
+
+    await screen.findByRole('tab', { name: 'Tipos de turno' });
+    expect(screen.queryByText(/Video integration/)).not.toBeInTheDocument();
   });
 });

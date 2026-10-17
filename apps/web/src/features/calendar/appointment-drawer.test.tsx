@@ -3,6 +3,7 @@ import { fireEvent, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
 
+import { createRegistry, type AppRegistry } from '../../app/registry.js';
 import { a11yViolations } from '../../shared/test/a11y.js';
 import { meFor } from '../../shared/test/fixtures.js';
 import { renderInRouter } from '../../shared/test/render-app.js';
@@ -86,7 +87,7 @@ function problem(status: number, code: string, extra: Record<string, unknown> = 
 
 /** What the API answers with: the appointment, without the names the feed adds. */
 function appointmentOf(overrides: Record<string, unknown>) {
-  const names = new Set(['patientName', 'typeName', 'typeColor']);
+  const names = new Set(['patientName', 'typeName', 'typeColor', 'mode']);
   const base = Object.fromEntries(Object.entries(entry()).filter(([key]) => !names.has(key)));
   return { ...base, ...overrides };
 }
@@ -100,6 +101,7 @@ interface Mount {
   readOnly?: boolean;
   identityConfirmed?: boolean;
   routes?: Record<string, FetchHandler | Response>;
+  registry?: AppRegistry;
 }
 
 function mount(options: Mount = {}) {
@@ -134,6 +136,7 @@ function mount(options: Mount = {}) {
     />,
     {
       me: meFor(roles),
+      ...(options.registry ? { registry: options.registry } : {}),
       routes: {
         [`GET /api/appointments/${ID}`]: () => jsonResponse(current),
         [`GET /api/appointments/${ID}/history`]: () => jsonResponse(HISTORY),
@@ -814,5 +817,42 @@ describe('starting the consultation from the appointment (D20)', () => {
     await opened(options);
 
     expect(screen.queryByRole('link', { name: 'Iniciar consulta' })).not.toBeInTheDocument();
+  });
+});
+
+describe('appointment drawer: pieces that features register (slot appointment-drawer)', () => {
+  const registry = createRegistry({
+    routes: {},
+    nav: {},
+    slots: {
+      '../features/messaging/slots.tsx': {
+        default: [
+          {
+            slot: 'appointment-drawer',
+            id: 'message-log',
+            Component: ({ appointment }: { appointment: { id: string; patientName: string } }) => (
+              <p>
+                Message log of {appointment.patientName} ({appointment.id})
+              </p>
+            ),
+          },
+        ],
+      },
+    },
+  });
+
+  it('shows the piece of a feature inside the drawer, with the appointment it is open on', async () => {
+    mount({ registry });
+
+    expect(
+      await screen.findByText(`Message log of ${entry().patientName} (${ID})`),
+    ).toBeInTheDocument();
+  });
+
+  it('shows nothing extra when no feature registered a piece', async () => {
+    mount();
+
+    await screen.findByRole('dialog');
+    expect(screen.queryByText(/Message log of/)).not.toBeInTheDocument();
   });
 });

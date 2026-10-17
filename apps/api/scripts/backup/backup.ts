@@ -24,6 +24,7 @@ import {
   type BackupManifest,
   type ObjectIndexEntry,
 } from './manifest.js';
+import { withTransientRetry } from './retry.js';
 
 /**
  * Backup and restore of the local environment: the Postgres database (a custom-format `pg_dump`)
@@ -265,10 +266,17 @@ export async function createBackup(
 }
 
 /** A restore fills a bucket that is new or empty; it never mixes its objects with existing ones. */
-async function assertBucketEmpty(target: BucketTarget): Promise<void> {
-  const client = s3Client(target);
+export async function assertBucketEmpty(
+  target: BucketTarget,
+  createClient: (target: BucketTarget) => S3Client = s3Client,
+): Promise<void> {
+  const client = createClient(target);
   try {
-    const page = await client.send(new ListObjectsV2Command({ Bucket: target.bucket, MaxKeys: 1 }));
+    // The store may reset a connection under load; that says nothing about the bucket, so ask again
+    // (a few times). Any other error still stops the restore: the guard never assumes "empty".
+    const page = await withTransientRetry(() =>
+      client.send(new ListObjectsV2Command({ Bucket: target.bucket, MaxKeys: 1 })),
+    );
     if ((page.KeyCount ?? 0) > 0) {
       throw new Error(`the target bucket ${target.bucket} is not empty: restore into a new bucket`);
     }
