@@ -1,8 +1,8 @@
 import { z } from 'zod';
 
-import { NOTIFICATION_ERRORS } from './notifications.js';
-import { ONLINE_BOOKING_ERRORS } from './online-booking.js';
-import { TELECONSULTATION_ERRORS } from './teleconsultation.js';
+import { NOTIFICATION_ERRORS } from './notifications-catalog.js';
+import { ONLINE_BOOKING_ERRORS } from './online-booking-catalog.js';
+import { TELECONSULTATION_ERRORS } from './teleconsultation-catalog.js';
 import { WAITLIST_ERRORS } from './waitlist.js';
 
 /**

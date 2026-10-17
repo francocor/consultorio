@@ -1,5 +1,10 @@
 import { z } from 'zod';
 
+export {
+  TELECONSULTATION_ERRORS,
+  TELECONSULTATION_AUDIT_ACTIONS,
+} from './teleconsultation-catalog.js';
+
 /**
  * Contracts of the teleconsultation module (platform join links for virtual appointments). This
  * file holds what is certain from the design and the spec; the teleconsultation track (S3.14,
@@ -29,31 +34,6 @@ const Instant = z.iso.datetime({ offset: true });
 
 /** The longest address a manual link may have. */
 export const MANUAL_VIDEO_LINK_MAX_LENGTH = 2048;
-
-/**
- * Error codes of the teleconsultation module, with their status and the key of the es-AR message. They join
- * the API catalog (errors.ts); the messages go in `locales/es-AR/errors.teleconsultation.json`, keyed by the
- * code.
- */
-export const TELECONSULTATION_ERRORS = {
-  // The professional asked to join outside the join window.
-  video_outside_window: { status: 409, i18nKey: 'errors.video_outside_window' },
-  // The appointment has no usable link (pending, closed or revoked).
-  video_link_unavailable: { status: 409, i18nKey: 'errors.video_link_unavailable' },
-  // The appointment is not a virtual one.
-  video_not_virtual: { status: 409, i18nKey: 'errors.video_not_virtual' },
-  // A no-show on a virtual appointment waits for the configured minutes after the start.
-  video_no_show_too_early: { status: 409, i18nKey: 'errors.video_no_show_too_early' },
-} as const satisfies Record<string, { status: number; i18nKey: string }>;
-
-/** Audit actions of video links. They are registered in the shared catalogue. */
-export const TELECONSULTATION_AUDIT_ACTIONS = [
-  'video.link.created',
-  'video.link.opened',
-  'video.link.revoked',
-  'video.link.joined',
-  'video.link.manual_attached',
-] as const;
 
 /** The `teleconsultation` section of the organization settings (spec defaults). */
 export const TeleconsultationSettings = z.strictObject({

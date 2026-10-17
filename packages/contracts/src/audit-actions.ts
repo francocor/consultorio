@@ -1,8 +1,8 @@
 import { z } from 'zod';
 
-import { NOTIFICATION_AUDIT_ACTIONS } from './notifications.js';
-import { ONLINE_BOOKING_AUDIT_ACTIONS } from './online-booking.js';
-import { TELECONSULTATION_AUDIT_ACTIONS } from './teleconsultation.js';
+import { NOTIFICATION_AUDIT_ACTIONS } from './notifications-catalog.js';
+import { ONLINE_BOOKING_AUDIT_ACTIONS } from './online-booking-catalog.js';
+import { TELECONSULTATION_AUDIT_ACTIONS } from './teleconsultation-catalog.js';
 import { WAITLIST_AUDIT_ACTIONS } from './waitlist.js';
 
 /**
