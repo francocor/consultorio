@@ -255,13 +255,14 @@ describe('reception sees only the locations it works at', () => {
   it('hides the detail of an appointment at another location, and shows one at its own', async () => {
     const mine = await world.book(6, '09:00');
 
+    // It looks like an appointment that does not exist (JD-S2 S6).
     expect(
       (await world.api.get(`/appointments/${norteAppointment.id}`, world.reception)).statusCode,
-    ).toBe(403);
+    ).toBe(404);
     expect(
       (await world.api.get(`/appointments/${norteAppointment.id}/history`, world.reception))
         .statusCode,
-    ).toBe(403);
+    ).toBe(404);
     const detail = await world.api.get(`/appointments/${mine.id}`, world.reception);
     expect(detail.statusCode).toBe(200);
     expect(detail.json<CalendarEntryDto>()).toMatchObject({ id: mine.id, typeName: 'Consulta' });
@@ -401,7 +402,7 @@ describe('looking at one appointment, its history or free time in a delegated ca
     expect(await auditCount('appointment.calendar_viewed')).toBe(before);
   });
 
-  it('is not audited when it is refused, which is a denial of its own', async () => {
+  it('is not audited when it is not found for the viewer, which looks like a missing appointment', async () => {
     const theirs = await world.book(13, '11:00', {
       professionalId: world.colleague.professionalId,
     });
@@ -409,7 +410,7 @@ describe('looking at one appointment, its history or free time in a delegated ca
 
     const refused = await world.api.get(`/appointments/${theirs.id}`, world.doctor);
 
-    expect(refused.statusCode).toBe(403);
+    expect(refused.statusCode).toBe(404);
     expect(await auditCount('appointment.calendar_viewed')).toBe(before);
   });
 });

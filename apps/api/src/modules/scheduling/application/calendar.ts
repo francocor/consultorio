@@ -148,12 +148,12 @@ export function createCalendar(deps: CalendarDeps) {
     ): Promise<CalendarEntryDto> {
       const [entry] = await selectEntries(tx, eq(appointment.id, input.id), 1);
       if (!entry) throw new AppError('not_found');
-      if (!calendarAccess(input.actor, entry.professionalId)) {
-        throw new AccessRefused('not_own_calendar');
-      }
+      // An appointment outside the viewer's calendars and locations looks like one that does not
+      // exist: a read must not tell them an id is in use.
+      if (!calendarAccess(input.actor, entry.professionalId)) throw new AppError('not_found');
       const access = await locationAccessOf(tx, input.actor);
       if (!access.may({ locationId: entry.locationId, professionalId: entry.professionalId })) {
-        throw new AccessRefused('location_not_assigned');
+        throw new AppError('not_found');
       }
       await auditDelegatedView(tx, {
         actor: input.actor,
