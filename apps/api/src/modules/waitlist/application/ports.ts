@@ -34,3 +34,15 @@ export type DeliverWaitlistOffer = (
   tx: Tx,
   input: WaitlistOfferDelivery,
 ) => Promise<WaitlistOfferDelivered>;
+
+/**
+ * When the quiet hours that cover `at` in the location's zone end, or `null` outside them. The
+ * notifications module sends nothing during quiet hours (offers are not exempt) and answers
+ * `channel: 'none'` for it, so the waitlist asks first and puts the offer off to the end of them: a
+ * `none` that comes from quiet hours is not a failed delivery. Optional in the jobs (without it the
+ * waitlist relies on its own deferral when it makes the offer).
+ */
+export type OfferQuietHoursEnd = (
+  tx: Tx,
+  input: { locationId: string; at: Date },
+) => Promise<Date | null>;

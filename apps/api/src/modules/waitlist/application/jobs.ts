@@ -11,7 +11,7 @@ import { deliverOffer } from './delivery.js';
 import { expireOffer, sweepWaitlist } from './expiry.js';
 import { matchFreedSlot } from './match.js';
 import { WAITLIST_EXPIRE_JOB, WAITLIST_OFFER_JOB } from './offers.js';
-import type { DeliverWaitlistOffer } from './ports.js';
+import type { DeliverWaitlistOffer, OfferQuietHoursEnd } from './ports.js';
 import { WAITLIST_MATCH_JOB } from './trigger.js';
 
 /** What the jobs of the waitlist are built from. The worker and the tests build them the same way. */
@@ -26,6 +26,8 @@ export interface WaitlistJobDeps {
   origins: PublicOrigins;
   /** Sends an offer to the patient; see `DeliverWaitlistOffer`. */
   deliver: DeliverWaitlistOffer;
+  /** When quiet hours end, if `at` falls in them; see `OfferQuietHoursEnd`. */
+  quietHoursEnd?: OfferQuietHoursEnd;
 }
 
 const MatchPayload = JobPayload.extend({
@@ -82,6 +84,7 @@ export function createWaitlistJobs(deps: WaitlistJobDeps) {
           tokens: deps.tokens,
           origins: deps.origins,
           deliver: deps.deliver,
+          ...(deps.quietHoursEnd ? { quietHoursEnd: deps.quietHoursEnd } : {}),
         },
         { offerId: payload.offerId, now: deps.clock() },
       );

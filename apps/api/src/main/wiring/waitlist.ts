@@ -71,6 +71,9 @@ export const waitlistWiring: ModuleWiring = {
             origins,
             // CONNECT AT MERGE: replace with the notifications module's `deliverWaitlistOffer`.
             deliver: createEmailOfferDelivery({ email }),
+            // CONNECT AT MERGE: pass the notifications module's `offerQuietHoursEnd` as
+            // `quietHoursEnd`, so an offer is put off to the end of quiet hours (not counted as a
+            // failed delivery). Without it the waitlist relies on its own deferral at match time.
           }),
         ),
       schedules: ({ client, db }) => [

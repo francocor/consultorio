@@ -33,6 +33,7 @@ export type { WaitlistOutcomes } from './application/outcomes.js';
 export type { WaitlistJobDeps, WaitlistJobs } from './application/jobs.js';
 export type {
   DeliverWaitlistOffer,
+  OfferQuietHoursEnd,
   WaitlistOfferDelivered,
   WaitlistOfferDelivery,
 } from './application/ports.js';

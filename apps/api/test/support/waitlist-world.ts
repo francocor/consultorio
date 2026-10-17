@@ -42,6 +42,11 @@ export interface WaitlistWorld extends Omit<SchedulingHttpWorld, 'setNow'> {
   /** Makes the fake delivery throw, to see a retry. */
   deliveryFails: { current: boolean };
   /**
+   * What the fake `offerQuietHoursEnd` answers: the dates in `script` one by one, then `current`
+   * (`null` is "not in quiet hours").
+   */
+  quietHoursEnd: { current: Date | null; script: (Date | null)[] };
+  /**
    * Moves the clock of the whole application (scheduling, waitlist, sessions). Staff sessions end
    * after 30 idle minutes, so a long move signs the members in again, as people would.
    */
@@ -95,6 +100,7 @@ export async function createWaitlistWorld(
   const deliveries: DeliveredOffer[] = [];
   const deliveryChannel: WaitlistWorld['deliveryChannel'] = { current: 'email' };
   const deliveryFails = { current: false };
+  const quietHoursEnd: WaitlistWorld['quietHoursEnd'] = { current: null, script: [] };
   const deliver: DeliverWaitlistOffer = (_tx, input) => {
     if (deliveryFails.current) return Promise.reject(new Error('the provider is down'));
     const token = input.offerTokenUrl.split('/public/t/')[1] ?? '';
@@ -112,6 +118,12 @@ export async function createWaitlistWorld(
     tokens: createActionTokens({ clock: () => current }),
     origins: createPublicOrigins({ mode: 'multi', baseDomain: BASE_DOMAIN }, { secure: true }),
     deliver,
+    quietHoursEnd: () =>
+      Promise.resolve(
+        quietHoursEnd.script.length > 0
+          ? (quietHoursEnd.script.shift() ?? null)
+          : quietHoursEnd.current,
+      ),
   });
 
   // The members stay signed in across the jumps the tests make: a long jump signs them in again.
@@ -142,6 +154,7 @@ export async function createWaitlistWorld(
     deliveries,
     deliveryChannel,
     deliveryFails,
+    quietHoursEnd,
     setNow: moveTo,
     now: () => current,
     advance: (ms) => moveTo(new Date(current.getTime() + ms)),
@@ -196,6 +209,8 @@ export async function createWaitlistWorld(
       deliveries.length = 0;
       deliveryChannel.current = 'email';
       deliveryFails.current = false;
+      quietHoursEnd.current = null;
+      quietHoursEnd.script.length = 0;
     },
     entryRow,
     offersOf: (entryId) =>

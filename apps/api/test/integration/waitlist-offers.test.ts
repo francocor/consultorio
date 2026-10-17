@@ -430,3 +430,77 @@ describe('quiet hours', () => {
     }
   });
 });
+
+describe('quiet hours decided by the notifications module', () => {
+  it('queues the offer again for the end of quiet hours and sends nothing meanwhile', async () => {
+    const { entries } = await offered();
+    const [entry] = entries;
+    if (!entry) throw new Error('entry missing');
+    const end = new Date(world.now().getTime() + 10 * MINUTE);
+    world.quietHoursEnd.current = end;
+
+    await world.run('waitlist.offer');
+
+    expect(world.deliveries).toEqual([]);
+    const queued = world.jobs.pending('waitlist.offer');
+    expect(queued.map((job) => new Date(job.options.startAfter as Date).getTime())).toEqual([
+      end.getTime(),
+    ]);
+    expect((await world.offersOf(entry.id))[0]).toMatchObject({
+      status: 'open',
+      delivered_at: null,
+    });
+    expect(await world.entryRow(entry.id)).toMatchObject({ manual_contact_only: false });
+
+    // Quiet hours are over: the same offer is delivered.
+    world.quietHoursEnd.current = null;
+    await world.setNow(end);
+    await world.run('waitlist.offer');
+    expect(world.deliveries).toHaveLength(1);
+  });
+
+  it('does not count a none that came with quiet hours as an unreachable patient', async () => {
+    const { entries } = await offered();
+    const [entry] = entries;
+    if (!entry) throw new Error('entry missing');
+    // Not in quiet hours when asked, in them when the message is handed over.
+    const end = new Date(world.now().getTime() + 10 * MINUTE);
+    world.quietHoursEnd.script.push(null, end);
+    world.deliveryChannel.current = 'none';
+
+    await world.run('waitlist.offer');
+
+    expect((await world.offersOf(entry.id))[0]).toMatchObject({
+      status: 'open',
+      delivered_at: null,
+    });
+    expect(await world.entryRow(entry.id)).toMatchObject({
+      manual_contact_only: false,
+      manual_reason: null,
+    });
+    expect(await world.callsOf(entry.id)).toEqual([]);
+    expect(world.jobs.pending('waitlist.offer')).toHaveLength(1);
+  });
+
+  it('ends the offer for reception and offers the slot on when quiet hours outlast it', async () => {
+    const weeks = nextWeek();
+    const [late, next] = await waiting(2);
+    if (!late || !next) throw new Error('entries missing');
+    const booked = await world.book(weeks, '10:00');
+    await world.cancel(booked);
+    await world.run('waitlist.match');
+    world.quietHoursEnd.script.push(new Date(world.now().getTime() + 6 * 60 * MINUTE));
+
+    await world.run('waitlist.offer');
+
+    expect(world.deliveries).toEqual([]);
+    expect((await world.offersOf(late.id))[0]).toMatchObject({
+      status: 'invalidated',
+      end_reason: 'undeliverable',
+    });
+    // The patient is reachable: the entry is not made manual-contact-only.
+    expect(await world.entryRow(late.id)).toMatchObject({ manual_contact_only: false });
+    expect((await world.callsOf(late.id))[0]).toMatchObject({ reason: 'quiet_hours' });
+    expect(world.jobs.pending('waitlist.match').length).toBeGreaterThan(0);
+  });
+});

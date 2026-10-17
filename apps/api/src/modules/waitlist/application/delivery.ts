@@ -13,7 +13,7 @@ import { expireOffer } from './expiry.js';
 import { lockOffer } from './offer-lock.js';
 import { invalidateOpenOffers } from './offer-state.js';
 import { SYSTEM_ACTOR, WAITLIST_OFFER_JOB } from './offers.js';
-import type { DeliverWaitlistOffer } from './ports.js';
+import type { DeliverWaitlistOffer, OfferQuietHoursEnd } from './ports.js';
 import { canBookSlot } from './slot-booking.js';
 import { enqueueRematch } from './trigger.js';
 
@@ -33,9 +33,10 @@ export interface DeliveryDeps {
   tokens: ActionTokens;
   origins: PublicOrigins;
   deliver: DeliverWaitlistOffer;
+  quietHoursEnd?: OfferQuietHoursEnd;
 }
 
-export type DeliveryOutcome = 'delivered' | 'skipped' | 'ended' | 'undeliverable';
+export type DeliveryOutcome = 'delivered' | 'skipped' | 'deferred' | 'ended' | 'undeliverable';
 
 /**
  * Sends one offer (the `waitlist.offer` job). The offer has to be open and not delivered yet, and
@@ -44,6 +45,10 @@ export type DeliveryOutcome = 'delivered' | 'skipped' | 'ended' | 'undeliverable
  * (the notifications module) chooses the channel the patient allows. If no channel is left the
  * entry becomes manual contact only, reception is shown the slot, and the next entry is offered
  * it. A failure of the delivery rolls the whole job back, and the retry sends it.
+ *
+ * Quiet hours are the waitlist's to defer: when the location is in them the offer is queued again
+ * for their end (or ended, when that is past its expiry) and nothing is counted against the entry,
+ * whether the port said so before the delivery or the delivery answered `none` because of them.
  */
 export async function deliverOffer(
   tx: Tx,
@@ -68,6 +73,9 @@ export async function deliverOffer(
     );
     return 'skipped';
   }
+
+  const quietEnd = await quietHoursEndAt(tx, deps, offer.locationId, now);
+  if (quietEnd) return deferOffer(tx, deps, ports, offer, quietEnd, now);
 
   const booking = await canBookSlot(ports, {
     patientId: offer.patientId,
@@ -106,6 +114,9 @@ export async function deliverOffer(
 
   if (delivered.channel === 'none') {
     await deps.tokens.revokeForSubject(tx, 'waitlist_offer', offer.id);
+    // Quiet hours began between the question and the delivery: that is not an unreachable patient.
+    const lateQuietEnd = await quietHoursEndAt(tx, deps, offer.locationId, now);
+    if (lateQuietEnd) return deferOffer(tx, deps, ports, offer, lateQuietEnd, now);
     await invalidateOpenOffers(tx, eq(waitlistOffer.id, offer.id), {
       reason: 'undeliverable',
       now,
@@ -136,4 +147,57 @@ export async function deliverOffer(
     .set({ channel: delivered.channel, deliveredAt: now, messageId: delivered.messageId })
     .where(eq(waitlistOffer.id, offer.id));
   return 'delivered';
+}
+
+async function quietHoursEndAt(
+  tx: Tx,
+  deps: Pick<DeliveryDeps, 'quietHoursEnd'>,
+  locationId: string,
+  at: Date,
+): Promise<Date | null> {
+  if (!deps.quietHoursEnd) return null;
+  const end = await deps.quietHoursEnd(tx, { locationId, at });
+  return end !== null && end.getTime() > at.getTime() ? end : null;
+}
+
+type LockedOffer = NonNullable<Awaited<ReturnType<typeof lockOffer>>>;
+
+/**
+ * Puts the offer off to the end of quiet hours. If the offer would be over by then it ends (the
+ * entry is not at fault, so it is not made manual-contact-only) and reception sees the slot with
+ * the reason; the next entry in line gets the match.
+ */
+async function deferOffer(
+  tx: Tx,
+  deps: DeliveryDeps,
+  ports: SchedulingPorts,
+  offer: LockedOffer,
+  quietEnd: Date,
+  now: Date,
+): Promise<DeliveryOutcome> {
+  if (quietEnd.getTime() < offer.expiresAt.getTime()) {
+    await deps.jobs.enqueue(
+      tx,
+      WAITLIST_OFFER_JOB,
+      { tenantId: offer.tenantId, offerId: offer.id },
+      { startAfter: quietEnd },
+    );
+    return 'deferred';
+  }
+  await invalidateOpenOffers(tx, eq(waitlistOffer.id, offer.id), { reason: 'undeliverable', now });
+  await recordCall(
+    tx,
+    ports,
+    {
+      entryId: offer.entryId,
+      professionalId: offer.professionalId,
+      locationId: offer.locationId,
+      appointmentTypeId: offer.appointmentTypeId,
+      startsAt: offer.startsAt,
+      endsAt: offer.endsAt,
+    },
+    'quiet_hours',
+  );
+  await enqueueRematch(tx, deps.jobs, [offer]);
+  return 'ended';
 }
