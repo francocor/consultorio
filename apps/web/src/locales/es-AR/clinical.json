@@ -48,6 +48,8 @@
   "new.restrict.help": "Ningún otro profesional la ve, ni siquiera quien atiende al paciente. Puede cambiarlo mientras sea un borrador.",
   "new.start": "Empezar la consulta",
   "new.cancel": "Cancelar",
+  "new.appointment": "Turno: {{type}}. El motivo de la consulta empieza con ese dato; puede cambiarlo.",
+  "new.appointmentOther": "El turno indicado no es de este paciente; la consulta se abre sin vincularlo.",
   "new.starting": "Abriendo la consulta",
   "new.failed": "No se pudo abrir la consulta.",
   "new.patientMissing": "Falta indicar el paciente de la consulta.",

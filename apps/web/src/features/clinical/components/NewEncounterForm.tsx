@@ -20,9 +20,14 @@ interface NewEncounterFormProps {
   patientId: string;
   /** Set when the encounter is opened from an appointment (scheduling links here). */
   appointmentId?: string | undefined;
+  /** What the appointment says the visit is about; starts the reason of the note (D20). */
+  prefillReason?: string | undefined;
   onOpened: (note: NoteDto) => void;
   onCancel?: () => void;
 }
+
+/** The templates whose first field is the reason for the consultation. */
+const TEMPLATES_WITH_REASON: ReadonlySet<ClinicalTemplateKind> = new Set(['general', 'odontology']);
 
 function asKind(value: string): ClinicalTemplateKind | undefined {
   return CLINICAL_TEMPLATE_KINDS.find((kind) => kind === value);
@@ -36,6 +41,7 @@ function asKind(value: string): ClinicalTemplateKind | undefined {
 export function NewEncounterForm({
   patientId,
   appointmentId,
+  prefillReason,
   onOpened,
   onCancel,
 }: NewEncounterFormProps) {
@@ -51,13 +57,25 @@ export function NewEncounterForm({
   });
 
   const open = useMutation({
-    mutationFn: () =>
-      clinicalApi(api).open({
+    mutationFn: async () => {
+      const opened = await clinicalApi(api).open({
         patientId,
         templateKind: template,
         ...(appointmentId ? { appointmentId } : {}),
         ...(restricted ? { visibility: 'author_only' as const } : {}),
-      }),
+      });
+      if (!prefillReason || !TEMPLATES_WITH_REASON.has(template)) return opened;
+      try {
+        // The first draft already carries the reason; the professional keeps editing from there.
+        return await clinicalApi(api).saveDraft(opened.encounterId, {
+          content: { reasonForConsultation: prefillReason },
+          baseRevision: opened.draftRevision,
+        });
+      } catch {
+        // The encounter is open either way: a prefill that could not be saved is only a convenience.
+        return opened;
+      }
+    },
     onSuccess: onOpened,
   });
 

@@ -20,6 +20,7 @@ import { useAppointmentAction } from '../containers/use-appointment-action.js';
 import type { SchedulingProfessional } from '../containers/use-scheduling-people.js';
 import { availableActions, type DrawerAction } from '../domain/appointment-actions.js';
 import { STATUS_PRESENTATION, statusLabel } from '../domain/calendar-events.js';
+import { consultationStep } from '../domain/consultation.js';
 
 import { AppointmentHistory } from './drawer/AppointmentHistory.js';
 import { CancelPanel } from './drawer/CancelPanel.js';
@@ -27,6 +28,7 @@ import { CheckInPanel } from './drawer/CheckInPanel.js';
 import { CorrectPanel } from './drawer/CorrectPanel.js';
 import { ErrorNotice } from './drawer/ErrorNotice.js';
 import { ReschedulePanel } from './drawer/ReschedulePanel.js';
+import { StartConsultation } from './StartConsultation.js';
 
 type Panel = 'check_in' | 'cancel' | 'reschedule' | 'correct';
 
@@ -214,6 +216,13 @@ function DrawerBody({
         <ActionBar
           entry={entry}
           actions={actions}
+          consultation={consultationStep({
+            status: entry.status,
+            identityConfirmed: entry.identityConfirmed,
+            isOwnProfessional,
+            permissions,
+            readOnly,
+          })}
           readOnly={readOnly}
           onPanel={setPanel}
           onDone={() => {
@@ -291,12 +300,15 @@ function Row({ label, children }: { label: string; children: ReactNode }) {
 function ActionBar({
   entry,
   actions,
+  consultation,
   readOnly,
   onPanel,
   onDone,
 }: {
   entry: CalendarEntryDto;
   actions: readonly DrawerAction[];
+  /** How the professional of the appointment reaches the clinical record from here, if they can. */
+  consultation: 'start' | 'open' | null;
   readOnly: boolean;
   onPanel: (panel: Panel) => void;
   onDone: () => void;
@@ -346,7 +358,12 @@ function ActionBar({
   return (
     <div className="grid gap-3">
       <div className="flex flex-wrap gap-2">
+        {consultation === 'open' ? <StartConsultation entry={entry} step="open" /> : null}
         {actions.map((action) => {
+          // Calling the patient in is also the way into the encounter (decision D20).
+          if (action === 'start' && consultation === 'start') {
+            return <StartConsultation key={action} entry={entry} step="start" />;
+          }
           // Cancelling is a patient-protective write: it stays possible when the organization is
           // read-only. Everything else is refused there, so it is shown off, with the reason.
           const blocked = readOnly && action !== 'cancel';

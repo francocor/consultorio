@@ -1,3 +1,4 @@
+import type { CalendarEntryDto } from '@consultorio/contracts';
 import { Stethoscope } from 'lucide-react';
 import { useState, type ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
@@ -13,7 +14,9 @@ import { ListSkeleton } from '../../shared/ui/states/loading-skeleton.js';
 import { AppointmentDrawer } from '../calendar/components/AppointmentDrawer.js';
 import { FlowAction } from '../calendar/components/FlowAction.js';
 import { FlowRow } from '../calendar/components/FlowRow.js';
+import { StartConsultation } from '../calendar/components/StartConsultation.js';
 import { useDayFlow } from '../calendar/containers/use-day-flow.js';
+import { consultationStep } from '../calendar/domain/consultation.js';
 
 /**
  * The professional's day, made for a phone between patients: who is in the room, who is next
@@ -30,6 +33,14 @@ export function TodayPage() {
 
   const readOnly = status.readOnly || me.tenantStatus === 'read_only';
   const isProfessional = ownProfessionalId !== null;
+  const stepOf = (item: CalendarEntryDto) =>
+    consultationStep({
+      status: item.status,
+      identityConfirmed: item.identityConfirmed,
+      isOwnProfessional: ownProfessionalId === item.professionalId,
+      permissions: me.permissions,
+      readOnly,
+    });
 
   let body: ReactNode;
   if (people.isSuccess && !isProfessional) {
@@ -96,7 +107,9 @@ export function TodayPage() {
                 })}
               </p>
             </div>
-            {readOnly ? null : (
+            {readOnly ? null : stepOf(flow.next) === 'start' ? (
+              <StartConsultation entry={flow.next} step="start" size="lg" />
+            ) : (
               <FlowAction
                 entry={flow.next}
                 step="start"
@@ -118,11 +131,17 @@ export function TodayPage() {
               }}
               action={
                 readOnly ? null : (
-                  <FlowAction
-                    entry={item}
-                    step="attend"
-                    label={t('scheduling:drawer.action.attend')}
-                  />
+                  <>
+                    {stepOf(item) === 'open' ? (
+                      <StartConsultation entry={item} step="open" />
+                    ) : null}
+                    <FlowAction
+                      entry={item}
+                      step="attend"
+                      variant={stepOf(item) === 'open' ? 'outline' : 'default'}
+                      label={t('scheduling:drawer.action.attend')}
+                    />
+                  </>
                 )
               }
             />

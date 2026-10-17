@@ -201,3 +201,48 @@ describe("a professional's day", () => {
     expect(app.feedUrls).toEqual([]);
   });
 });
+
+describe('the consultation starts from the appointment (D20)', () => {
+  it('links the consultation in progress to a new encounter tied to the appointment', async () => {
+    setViewport(360);
+    open();
+
+    const running = await screen.findByRole('region', { name: 'En consulta' });
+
+    const link = within(running).getByRole('link', { name: 'Iniciar consulta' });
+    const target = new URL(link.getAttribute('href') ?? '', 'http://app.test');
+    expect(target.pathname).toBe('/encounters/new');
+    expect(target.searchParams.get('appointmentId')).toBe(DAY[1]?.id);
+    expect(target.searchParams.get('patientId')).toBe(DAY[1]?.patientId);
+  });
+
+  it('opens the new encounter once the patient is called in', async () => {
+    setViewport(360);
+    const user = userEvent.setup();
+    const app = open({
+      routes: {
+        [`POST /api/appointments/${DAY[2]?.id ?? ''}/start`]: () =>
+          jsonResponse(
+            withoutNames({ ...(DAY[2] as CalendarEntryDto), status: 'in_progress', version: 4 }),
+          ),
+        'GET /api/clinical/templates': () => jsonResponse({ templates: [] }),
+        [`GET /api/patients/${DAY[2]?.patientId ?? ''}`]: () => new Response('{}', { status: 404 }),
+      },
+    });
+
+    await user.click(
+      within(await screen.findByRole('region', { name: 'Siguiente paciente' })).getByRole(
+        'button',
+        { name: 'Iniciar consulta' },
+      ),
+    );
+
+    await waitFor(() => {
+      expect(app.router.state.location.pathname).toBe('/encounters/new');
+    });
+    expect(app.router.state.location.search).toMatchObject({
+      appointmentId: DAY[2]?.id,
+      patientId: DAY[2]?.patientId,
+    });
+  });
+});

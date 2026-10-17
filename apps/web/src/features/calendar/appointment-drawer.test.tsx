@@ -770,3 +770,49 @@ describe('accessibility', () => {
     expect(await a11yViolations(screen.getByRole('dialog'))).toEqual([]);
   });
 });
+
+describe('starting the consultation from the appointment (D20)', () => {
+  const PROFESSIONAL = { roles: ['professional'] as Role[], ownProfessionalId: IDS.ana };
+
+  it('links an appointment in progress to the new encounter, tied to it', async () => {
+    await opened({ ...PROFESSIONAL, status: 'in_progress' });
+
+    const link = within(screen.getByRole('dialog')).getByRole('link', {
+      name: 'Iniciar consulta',
+    });
+    const target = new URL(link.getAttribute('href') ?? '', 'http://app.test');
+    expect(target.pathname).toBe('/encounters/new');
+    expect(target.searchParams.get('patientId')).toBe(IDS.patientGomez);
+    expect(target.searchParams.get('appointmentId')).toBe(ID);
+  });
+
+  it('starts the appointment and goes to the new encounter from "checked in"', async () => {
+    const user = userEvent.setup();
+    const app = await opened({ ...PROFESSIONAL, status: 'checked_in' });
+
+    await user.click(screen.getByRole('button', { name: 'Iniciar consulta' }));
+
+    await waitFor(() => {
+      expect(app.posts).toEqual([{ path: 'start', body: { expectedVersion: 3 } }]);
+    });
+  });
+
+  it.each<[string, Mount]>([
+    ['reception, who is not the professional', { roles: ['reception'], status: 'in_progress' }],
+    [
+      'another professional',
+      { ...PROFESSIONAL, ownProfessionalId: IDS.beto, status: 'in_progress' },
+    ],
+    [
+      'an identity nobody confirmed',
+      { ...PROFESSIONAL, status: 'in_progress', identityConfirmed: false },
+    ],
+    ['a read-only organization', { ...PROFESSIONAL, status: 'in_progress', readOnly: true }],
+    ['an appointment not yet started', { ...PROFESSIONAL, status: 'confirmed' }],
+    ['a finished appointment', { ...PROFESSIONAL, status: 'attended' }],
+  ])('is not offered to %s', async (_name, options) => {
+    await opened(options);
+
+    expect(screen.queryByRole('link', { name: 'Iniciar consulta' })).not.toBeInTheDocument();
+  });
+});

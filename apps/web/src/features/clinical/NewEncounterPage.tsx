@@ -4,9 +4,11 @@ import { useTranslation } from 'react-i18next';
 
 import { useApi } from '../../app/providers.js';
 import { usePageTitle } from '../../app/use-page-title.js';
+import { Alert, AlertDescription } from '../../shared/ui/alert.js';
 import { PageHeader } from '../../shared/ui/page-header.js';
 import { EmptyState } from '../../shared/ui/states/empty-state.js';
 import { DetailSkeleton } from '../../shared/ui/states/loading-skeleton.js';
+import { calendarApi, calendarKeys } from '../calendar/api/calendar-api.js';
 import { patientKeys, patientsApi } from '../patients/api/patients-api.js';
 import { fullNameOf } from '../patients/components/PatientHeader.js';
 
@@ -33,12 +35,26 @@ export function NewEncounterPage() {
     enabled: patientId !== '',
   });
 
+  // The appointment the consultation starts from: its type prefills the reason of the note. If it
+  // cannot be loaded the link is kept (the server decides), but nothing is prefilled.
+  const appointmentId = search.appointmentId ?? '';
+  const appointment = useQuery({
+    queryKey: calendarKeys.appointment(appointmentId),
+    queryFn: () => calendarApi(api).get(appointmentId),
+    enabled: appointmentId !== '' && patientId !== '',
+  });
+
   if (patientId === '') {
     return (
       <EmptyState title={t('clinical:new.title')} description={t('clinical:new.patientMissing')} />
     );
   }
-  if (patient.isPending) return <DetailSkeleton />;
+  if (patient.isPending || (appointmentId !== '' && appointment.isPending)) {
+    return <DetailSkeleton />;
+  }
+  // An address that names an appointment of somebody else never ties the encounter to it.
+  const foreign = appointment.data !== undefined && appointment.data.patientId !== patientId;
+  const linked = foreign ? undefined : appointment.data;
 
   return (
     <div className="mx-auto max-w-xl">
@@ -50,9 +66,21 @@ export function NewEncounterPage() {
             : t('clinical:new.description')
         }
       />
+      {foreign ? (
+        <Alert tone="warning" className="mb-4">
+          <AlertDescription>{t('clinical:new.appointmentOther')}</AlertDescription>
+        </Alert>
+      ) : linked ? (
+        <Alert tone="info" className="mb-4">
+          <AlertDescription>
+            {t('clinical:new.appointment', { type: linked.typeName })}
+          </AlertDescription>
+        </Alert>
+      ) : null}
       <NewEncounterForm
         patientId={patientId}
-        appointmentId={search.appointmentId}
+        appointmentId={foreign ? undefined : search.appointmentId}
+        prefillReason={linked?.typeName}
         onOpened={(note) => {
           queryClient.setQueryData(clinicalKeys.note(note.id), note);
           void navigate({ to: '/notes/$noteId', params: { noteId: note.id } });

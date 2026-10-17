@@ -6,6 +6,7 @@ import { a11yViolations } from '../../shared/test/a11y.js';
 import { bootFor, meFor } from '../../shared/test/fixtures.js';
 import { renderApp, type RenderedApp } from '../../shared/test/render-app.js';
 import { jsonBody, jsonResponse, problemResponse } from '../../shared/test/render.js';
+import { entry as appointmentEntry } from '../calendar/fixtures.js';
 import { patient } from '../patients/fixtures.js';
 
 import {
@@ -745,6 +746,108 @@ describe('the address a consultation is started from', () => {
     expect(bodies).toEqual([
       { patientId: ID, templateKind: 'general', appointmentId: appointment },
     ]);
+  });
+
+  it('prefills the consultation from the appointment: its type and time are shown, and the reason starts as the type', async () => {
+    const bodies: unknown[] = [];
+    const drafts: unknown[] = [];
+    const created = draftNote();
+    const appointment = '0190a000-0000-7000-8000-0000000000f9';
+    current = renderApp({
+      me: meFor(['professional']),
+      path: `/encounters/new?patientId=${ID}&appointmentId=${appointment}`,
+      boot: bootFor('Centro Médico Aillu'),
+      routes: {
+        [`GET /api/patients/${ID}`]: () => jsonResponse(patient({ id: ID })),
+        [`GET /api/appointments/${appointment}`]: () =>
+          jsonResponse(
+            appointmentEntry({
+              id: appointment,
+              patientId: ID,
+              typeName: 'Control cardiológico',
+              status: 'in_progress',
+            }),
+          ),
+        'GET /api/locations': () =>
+          jsonResponse({
+            locations: [
+              { id: 'x', name: 'Sede', timeZone: 'America/Argentina/Buenos_Aires', active: true },
+            ],
+          }),
+        'GET /api/clinical/templates': () =>
+          jsonResponse({
+            templates: [
+              {
+                kind: 'general',
+                version: 1,
+                labelKey: 'clinical.template.general',
+                requiredFields: ['reasonForConsultation'],
+              },
+            ],
+          }),
+        'POST /api/encounters': (_url: string, init: RequestInit) => {
+          bodies.push(jsonBody(init));
+          return jsonResponse(created, 201);
+        },
+        [`PUT /api/encounters/${created.encounterId}/note/draft`]: (
+          _url: string,
+          init: RequestInit,
+        ) => {
+          drafts.push(jsonBody(init));
+          return jsonResponse(
+            draftNote({
+              draftRevision: 1,
+              content: { reasonForConsultation: 'Control cardiológico' },
+            }),
+          );
+        },
+        [`GET /api/notes/${created.id}`]: () => jsonResponse(created),
+      },
+    });
+    const user = userEvent.setup();
+
+    expect(await screen.findByText(/Control cardiológico/)).toBeInTheDocument();
+    await user.click(await screen.findByRole('button', { name: 'Empezar la consulta' }));
+
+    expect(await screen.findByLabelText(/Motivo de la consulta/)).toHaveValue(
+      'Control cardiológico',
+    );
+    expect(bodies).toEqual([
+      { patientId: ID, templateKind: 'general', appointmentId: appointment },
+    ]);
+    expect(drafts).toEqual([
+      { content: { reasonForConsultation: 'Control cardiológico' }, baseRevision: 0 },
+    ]);
+  });
+
+  it('does not tie the encounter to an appointment of another patient, and says so', async () => {
+    const bodies: unknown[] = [];
+    const created = draftNote();
+    const appointment = '0190a000-0000-7000-8000-0000000000f9';
+    current = renderApp({
+      me: meFor(['professional']),
+      path: `/encounters/new?patientId=${ID}&appointmentId=${appointment}`,
+      boot: bootFor('Centro Médico Aillu'),
+      routes: {
+        [`GET /api/patients/${ID}`]: () => jsonResponse(patient({ id: ID })),
+        [`GET /api/appointments/${appointment}`]: () =>
+          jsonResponse(appointmentEntry({ id: appointment, status: 'in_progress' })),
+        'GET /api/clinical/templates': () => jsonResponse({ templates: [] }),
+        'POST /api/encounters': (_url: string, init: RequestInit) => {
+          bodies.push(jsonBody(init));
+          return jsonResponse(created, 201);
+        },
+        [`GET /api/notes/${created.id}`]: () => jsonResponse(created),
+      },
+    });
+    const user = userEvent.setup();
+
+    expect(await screen.findByText(/no es de este paciente/)).toBeInTheDocument();
+    await user.click(await screen.findByRole('button', { name: 'Empezar la consulta' }));
+
+    await waitFor(() => {
+      expect(bodies).toEqual([{ patientId: ID, templateKind: 'general' }]);
+    });
   });
 
   it('says the patient is missing when the address does not name one', async () => {
