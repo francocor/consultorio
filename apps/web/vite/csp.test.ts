@@ -3,7 +3,7 @@ import { resolve } from 'node:path';
 
 import { describe, expect, it } from 'vitest';
 
-import { contentSecurityPolicy, scriptHash } from './csp.js';
+import { connectOriginsFrom, contentSecurityPolicy, scriptHash } from './csp.js';
 import { buildThemeBootScript } from './theme-boot-plugin.js';
 
 const SOURCE = resolve(import.meta.dirname, '../src/shared/lib/theme-boot.ts');
@@ -82,5 +82,46 @@ describe('Content Security Policy of the web bundle (ASVS 14.4.7)', () => {
     });
 
     expect(directive(policy, 'script-src')).toContain(scriptHash(script));
+  });
+});
+
+describe('the storage origin of document uploads', () => {
+  it('is added to connect-src when the deployment names it, and only then', () => {
+    const hash = scriptHash('boot()');
+
+    const withStorage = contentSecurityPolicy({
+      scriptHashes: [hash],
+      mode: 'production',
+      connectSources: ['https://files.example.test'],
+    });
+    const without = contentSecurityPolicy({ scriptHashes: [hash], mode: 'production' });
+
+    expect(directive(withStorage, 'connect-src')).toEqual(["'self'", 'https://files.example.test']);
+    expect(directive(without, 'connect-src')).toEqual(["'self'"]);
+    // Nothing else opens up with it.
+    expect(directive(withStorage, 'script-src')).toEqual(directive(without, 'script-src'));
+    expect(directive(withStorage, 'default-src')).toEqual(["'self'"]);
+  });
+
+  it('reads the origins from a comma or space separated list and keeps only http(s) origins', () => {
+    expect(
+      connectOriginsFrom(
+        'https://files.example.test, http://localhost:9000  https://s3.sa-east-1.amazonaws.com/bucket',
+      ),
+    ).toEqual([
+      'https://files.example.test',
+      'http://localhost:9000',
+      'https://s3.sa-east-1.amazonaws.com',
+    ]);
+  });
+
+  it('drops anything that could widen the policy: wildcards, other schemes, keywords, garbage', () => {
+    expect(
+      connectOriginsFrom(
+        "* 'unsafe-inline' data: javascript:alert(1) ftp://x.test not-a-url https://ok.example.test",
+      ),
+    ).toEqual(['https://ok.example.test']);
+    expect(connectOriginsFrom(undefined)).toEqual([]);
+    expect(connectOriginsFrom('')).toEqual([]);
   });
 });

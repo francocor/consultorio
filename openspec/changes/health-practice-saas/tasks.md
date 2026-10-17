@@ -708,8 +708,8 @@ Depends: S2.26.
 
 Depends: S2.27.
 
-- [ ] 2.84 `features/documents/*`: multi-file upload with progress and Spanish rejection reasons, patient document list with status chips ("Scanning"), download via the link flow, hide and replace. [DOC-01, DOC-03, DOC-05] Test: component tests.
-- [ ] 2.85 Documents export contributor and retention note. [DOC-07, TEN-08] Test: registry test lists documents.
+- [x] 2.84 `features/documents/*`: multi-file upload with progress and Spanish rejection reasons, patient document list with status chips ("Scanning"), download via the link flow, hide and replace. [DOC-01, DOC-03, DOC-05] Test: component tests.
+- [x] 2.85 Documents export contributor and retention note. [DOC-07, TEN-08] Test: registry test lists documents.
 
 ## S2.29 Onboarding backend (~400 lines)
 

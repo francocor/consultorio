@@ -5,6 +5,7 @@ import { initReactI18next } from 'react-i18next';
 import audit from '../locales/es-AR/audit.json';
 import auth from '../locales/es-AR/auth.json';
 import common from '../locales/es-AR/common.json';
+import documents from '../locales/es-AR/documents.json';
 import errors from '../locales/es-AR/errors.json';
 import operator from '../locales/es-AR/operator.json';
 import patients from '../locales/es-AR/patients.json';
@@ -30,6 +31,7 @@ const RESOURCES = {
   auth,
   common,
   country,
+  documents,
   errors,
   operator,
   patients,
