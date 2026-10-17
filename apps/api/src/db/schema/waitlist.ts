@@ -1,4 +1,5 @@
 import {
+  WAITLIST_CALL_REASONS,
   WAITLIST_CHANNELS,
   WAITLIST_CLOSE_REASONS,
   WAITLIST_ENTRY_SOURCES,
@@ -280,3 +281,63 @@ export const waitlistOffer = tenantTable(
 );
 
 export type WaitlistOfferRow = typeof waitlistOffer.$inferSelect;
+
+/**
+ * A freed slot that reception can fill by phone (waitlist, "Matching freed slots", "Slot too close
+ * to start"): the entry to call, the slot, and why no automated offer was made (the entry is
+ * manual contact only, the slot starts too soon, or quiet hours used up the time). The reception
+ * worklist carries the pointer (`waitlist_manual_contact`, one open item per entry); this row holds
+ * the slot, which is plain administrative data. Whether the slot is still there is read at the
+ * moment the panel is opened, from the appointments; the row is never changed or deleted.
+ */
+export const waitlistCall = tenantTable(
+  'waitlist_call',
+  {
+    entryId: uuid('entry_id').notNull(),
+    professionalId: uuid('professional_id').notNull(),
+    locationId: uuid('location_id').notNull(),
+    appointmentTypeId: uuid('appointment_type_id').notNull(),
+    startsAt: timestamp('starts_at', { withTimezone: true }).notNull(),
+    endsAt: timestamp('ends_at', { withTimezone: true }).notNull(),
+    reason: text('reason').notNull(),
+  },
+  (table) => [
+    foreignKey({
+      name: 'waitlist_call_tenant_id_fkey',
+      columns: [table.tenantId],
+      foreignColumns: [tenant.id],
+    }),
+    foreignKey({
+      name: 'waitlist_call_entry_fkey',
+      columns: [table.tenantId, table.entryId],
+      foreignColumns: [waitlistEntry.tenantId, waitlistEntry.id],
+    }),
+    foreignKey({
+      name: 'waitlist_call_professional_fkey',
+      columns: [table.tenantId, table.professionalId],
+      foreignColumns: [professional.tenantId, professional.id],
+    }),
+    foreignKey({
+      name: 'waitlist_call_location_fkey',
+      columns: [table.tenantId, table.locationId],
+      foreignColumns: [location.tenantId, location.id],
+    }),
+    foreignKey({
+      name: 'waitlist_call_type_fkey',
+      columns: [table.tenantId, table.appointmentTypeId],
+      foreignColumns: [appointmentType.tenantId, appointmentType.id],
+    }),
+    check('waitlist_call_reason_check', sql.raw(`"reason" in (${list(WAITLIST_CALL_REASONS)})`)),
+    check('waitlist_call_range_check', sql`${table.endsAt} > ${table.startsAt}`),
+    // The same entry is shown the same slot once.
+    uniqueIndex('waitlist_call_slot_key').on(
+      table.tenantId,
+      table.entryId,
+      table.professionalId,
+      table.startsAt,
+    ),
+    index('waitlist_call_upcoming_idx').on(table.tenantId, table.startsAt),
+  ],
+);
+
+export type WaitlistCallRow = typeof waitlistCall.$inferSelect;

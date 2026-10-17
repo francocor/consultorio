@@ -1,5 +1,5 @@
 {
-  "id": "357e7753-b660-4fda-8205-7e726abefcc1",
+  "id": "bb05eeea-c261-4aa6-b636-483af4dc5901",
   "prevId": "299c7de7-2049-4766-aed8-78b5123a27dd",
   "version": "7",
   "dialect": "postgresql",
@@ -10458,6 +10458,235 @@
         "video_session_manual_link_check": {
           "name": "video_session_manual_link_check",
           "value": "\"video_session\".\"manual_link\" is null or length(\"video_session\".\"manual_link\") <= 2048"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.waitlist_call": {
+      "name": "waitlist_call",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "app.uuid_v7()"
+        },
+        "tenant_id": {
+          "name": "tenant_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "entry_id": {
+          "name": "entry_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "professional_id": {
+          "name": "professional_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "location_id": {
+          "name": "location_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "appointment_type_id": {
+          "name": "appointment_type_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "starts_at": {
+          "name": "starts_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "ends_at": {
+          "name": "ends_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "reason": {
+          "name": "reason",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        }
+      },
+      "indexes": {
+        "waitlist_call_slot_key": {
+          "name": "waitlist_call_slot_key",
+          "columns": [
+            {
+              "expression": "tenant_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "entry_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "professional_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "starts_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "waitlist_call_upcoming_idx": {
+          "name": "waitlist_call_upcoming_idx",
+          "columns": [
+            {
+              "expression": "tenant_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "starts_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "waitlist_call_tenant_id_fkey": {
+          "name": "waitlist_call_tenant_id_fkey",
+          "tableFrom": "waitlist_call",
+          "tableTo": "tenant",
+          "columnsFrom": [
+            "tenant_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "waitlist_call_entry_fkey": {
+          "name": "waitlist_call_entry_fkey",
+          "tableFrom": "waitlist_call",
+          "tableTo": "waitlist_entry",
+          "columnsFrom": [
+            "tenant_id",
+            "entry_id"
+          ],
+          "columnsTo": [
+            "tenant_id",
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "waitlist_call_professional_fkey": {
+          "name": "waitlist_call_professional_fkey",
+          "tableFrom": "waitlist_call",
+          "tableTo": "professional",
+          "columnsFrom": [
+            "tenant_id",
+            "professional_id"
+          ],
+          "columnsTo": [
+            "tenant_id",
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "waitlist_call_location_fkey": {
+          "name": "waitlist_call_location_fkey",
+          "tableFrom": "waitlist_call",
+          "tableTo": "location",
+          "columnsFrom": [
+            "tenant_id",
+            "location_id"
+          ],
+          "columnsTo": [
+            "tenant_id",
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "waitlist_call_type_fkey": {
+          "name": "waitlist_call_type_fkey",
+          "tableFrom": "waitlist_call",
+          "tableTo": "appointment_type",
+          "columnsFrom": [
+            "tenant_id",
+            "appointment_type_id"
+          ],
+          "columnsTo": [
+            "tenant_id",
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "waitlist_call_tenant_id_id_key": {
+          "name": "waitlist_call_tenant_id_id_key",
+          "nullsNotDistinct": false,
+          "columns": [
+            "tenant_id",
+            "id"
+          ]
+        }
+      },
+      "policies": {},
+      "checkConstraints": {
+        "waitlist_call_reason_check": {
+          "name": "waitlist_call_reason_check",
+          "value": "\"reason\" in ('manual_contact_only', 'slot_too_close', 'quiet_hours', 'undeliverable')"
+        },
+        "waitlist_call_range_check": {
+          "name": "waitlist_call_range_check",
+          "value": "\"waitlist_call\".\"ends_at\" > \"waitlist_call\".\"starts_at\""
         }
       },
       "isRLSEnabled": false

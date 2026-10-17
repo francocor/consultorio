@@ -1,3 +1,24 @@
+CREATE TABLE "waitlist_call" (
+	"id" uuid PRIMARY KEY DEFAULT app.uuid_v7() NOT NULL,
+	"tenant_id" uuid NOT NULL,
+	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
+	"updated_at" timestamp with time zone DEFAULT now() NOT NULL,
+	"entry_id" uuid NOT NULL,
+	"professional_id" uuid NOT NULL,
+	"location_id" uuid NOT NULL,
+	"appointment_type_id" uuid NOT NULL,
+	"starts_at" timestamp with time zone NOT NULL,
+	"ends_at" timestamp with time zone NOT NULL,
+	"reason" text NOT NULL,
+	CONSTRAINT "waitlist_call_tenant_id_id_key" UNIQUE("tenant_id","id"),
+	CONSTRAINT "waitlist_call_reason_check" CHECK ("reason" in ('manual_contact_only', 'slot_too_close', 'quiet_hours', 'undeliverable')),
+	CONSTRAINT "waitlist_call_range_check" CHECK ("waitlist_call"."ends_at" > "waitlist_call"."starts_at"),
+	CONSTRAINT "waitlist_call_tenant_id_fkey" FOREIGN KEY ("tenant_id") REFERENCES "public"."tenant"("id"),
+	CONSTRAINT "waitlist_call_professional_fkey" FOREIGN KEY ("tenant_id","professional_id") REFERENCES "public"."professional"("tenant_id","id"),
+	CONSTRAINT "waitlist_call_location_fkey" FOREIGN KEY ("tenant_id","location_id") REFERENCES "public"."location"("tenant_id","id"),
+	CONSTRAINT "waitlist_call_type_fkey" FOREIGN KEY ("tenant_id","appointment_type_id") REFERENCES "public"."appointment_type"("tenant_id","id")
+);
+--> statement-breakpoint
 CREATE TABLE "waitlist_entry" (
 	"id" uuid PRIMARY KEY DEFAULT app.uuid_v7() NOT NULL,
 	"tenant_id" uuid NOT NULL,
@@ -85,7 +106,10 @@ CREATE TABLE "waitlist_offer" (
 	CONSTRAINT "waitlist_offer_appointment_fkey" FOREIGN KEY ("tenant_id","appointment_id") REFERENCES "public"."appointment"("tenant_id","id")
 );
 --> statement-breakpoint
+ALTER TABLE "waitlist_call" ADD CONSTRAINT "waitlist_call_entry_fkey" FOREIGN KEY ("tenant_id","entry_id") REFERENCES "public"."waitlist_entry"("tenant_id","id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "waitlist_offer" ADD CONSTRAINT "waitlist_offer_entry_fkey" FOREIGN KEY ("tenant_id","entry_id") REFERENCES "public"."waitlist_entry"("tenant_id","id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
+CREATE UNIQUE INDEX "waitlist_call_slot_key" ON "waitlist_call" USING btree ("tenant_id","entry_id","professional_id","starts_at");--> statement-breakpoint
+CREATE INDEX "waitlist_call_upcoming_idx" ON "waitlist_call" USING btree ("tenant_id","starts_at");--> statement-breakpoint
 CREATE UNIQUE INDEX "waitlist_entry_in_play_key" ON "waitlist_entry" USING btree ("tenant_id","patient_id","appointment_type_id",coalesce("professional_id", '00000000-0000-0000-0000-000000000000'::uuid),coalesce("location_id", '00000000-0000-0000-0000-000000000000'::uuid)) WHERE "waitlist_entry"."status" <> 'closed';--> statement-breakpoint
 CREATE INDEX "waitlist_entry_matching_idx" ON "waitlist_entry" USING btree ("tenant_id","appointment_type_id","expires_at") WHERE "waitlist_entry"."status" = 'active';--> statement-breakpoint
 CREATE INDEX "waitlist_entry_patient_idx" ON "waitlist_entry" USING btree ("tenant_id","patient_id","status");--> statement-breakpoint
@@ -107,7 +131,15 @@ ALTER TABLE "waitlist_offer" FORCE ROW LEVEL SECURITY;
 --> statement-breakpoint
 CREATE POLICY "tenant_isolation" ON "waitlist_offer" USING ("tenant_id" = current_setting('app.tenant_id')::uuid) WITH CHECK ("tenant_id" = current_setting('app.tenant_id')::uuid);
 --> statement-breakpoint
--- Entries and offers are closed with a reason, never deleted: they feed the reports of recovered slots (waitlist, "Managing and closing entries").
+ALTER TABLE "waitlist_call" ENABLE ROW LEVEL SECURITY;
+--> statement-breakpoint
+ALTER TABLE "waitlist_call" FORCE ROW LEVEL SECURITY;
+--> statement-breakpoint
+CREATE POLICY "tenant_isolation" ON "waitlist_call" USING ("tenant_id" = current_setting('app.tenant_id')::uuid) WITH CHECK ("tenant_id" = current_setting('app.tenant_id')::uuid);
+--> statement-breakpoint
+-- Entries, offers and the slots shown for calling are closed or left as they are, never deleted: they feed the reports of recovered slots (waitlist, "Managing and closing entries").
 REVOKE DELETE, TRUNCATE ON "waitlist_entry" FROM app_rw;
 --> statement-breakpoint
 REVOKE DELETE, TRUNCATE ON "waitlist_offer" FROM app_rw;
+--> statement-breakpoint
+REVOKE UPDATE, DELETE, TRUNCATE ON "waitlist_call" FROM app_rw;

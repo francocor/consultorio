@@ -340,3 +340,58 @@ describe('waitlist_offer', () => {
     expect(code).toBe('42501');
   });
 });
+
+describe('waitlist_call', () => {
+  async function call(
+    tx: Tx,
+    values: { reason?: string; startsAt?: string; endsAt?: string } = {},
+  ) {
+    const patientId = await insertPatient(tx, a.id);
+    const typeId = await type(tx, a.id);
+    const professionalId = await insertProfessional(tx, a.id);
+    const entryId = await entry(tx, a.id, { patientId, typeId });
+    const locationId = await insertLocation(tx, a.id);
+    const insert = (inner: Tx, overrides: { reason?: string } = {}) =>
+      inner.execute(sql`INSERT INTO waitlist_call
+          (tenant_id, entry_id, professional_id, location_id, appointment_type_id, starts_at, ends_at, reason)
+          VALUES (${a.id}, ${entryId}, ${professionalId}, ${locationId}, ${typeId},
+                  ${values.startsAt ?? '2031-05-12T13:00:00Z'}, ${values.endsAt ?? '2031-05-12T13:30:00Z'},
+                  ${overrides.reason ?? values.reason ?? 'slot_too_close'})`);
+    return { insert };
+  }
+
+  it('keeps one row per entry and slot, and only the reasons the spec names', async () => {
+    const { duplicate, unknown, backwards } = await asTenant(runtime, a.id, async (tx) => {
+      const first = await call(tx);
+      await first.insert(tx);
+      return {
+        duplicate: await refusal(tx, (inner) => first.insert(inner)),
+        unknown: await refusal(tx, async (inner) =>
+          (await call(inner, { reason: 'because' })).insert(inner),
+        ),
+        backwards: await refusal(tx, async (inner) =>
+          (await call(inner, { startsAt: '2031-05-12T14:00:00Z' })).insert(inner),
+        ),
+      };
+    });
+
+    expect(duplicate).toBe('23505');
+    expect(unknown).toBe('23514');
+    expect(backwards).toBe('23514');
+  });
+
+  it('can be neither changed nor deleted by the application role', async () => {
+    const { update, remove } = await asTenant(runtime, a.id, async (tx) => {
+      await (await call(tx)).insert(tx);
+      return {
+        update: await refusal(tx, (inner) =>
+          inner.execute(sql`UPDATE waitlist_call SET reason = 'quiet_hours'`),
+        ),
+        remove: await refusal(tx, (inner) => inner.execute(sql`DELETE FROM waitlist_call`)),
+      };
+    });
+
+    expect(update).toBe('42501');
+    expect(remove).toBe('42501');
+  });
+});

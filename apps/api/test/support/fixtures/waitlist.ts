@@ -70,4 +70,20 @@ export const fixtures: Record<string, TenantTableFixture> = {
       );
     },
   },
+  waitlist_call: {
+    insert: async (tx, tenantId, overrides) =>
+      returningId(
+        tx,
+        sql`INSERT INTO waitlist_call
+              (tenant_id, entry_id, professional_id, location_id, appointment_type_id,
+               starts_at, ends_at, reason)
+              VALUES (${tenantId},
+                      ${overrides?.['entry_id'] ?? (await insertEntry(tx, tenantId))},
+                      ${overrides?.['professional_id'] ?? (await insertProfessional(tx, tenantId))},
+                      ${overrides?.['location_id'] ?? (await insertLocation(tx, tenantId))},
+                      ${overrides?.['appointment_type_id'] ?? (await insertType(tx, tenantId))},
+                      '2031-01-01T10:00:00Z', '2031-01-01T10:30:00Z', 'slot_too_close')
+              RETURNING id`,
+      ),
+  },
 };
