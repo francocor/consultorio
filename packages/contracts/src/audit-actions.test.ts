@@ -138,3 +138,54 @@ describe('Stage 3 audit actions', () => {
     expect(AuditMetadata.safeParse({ channel: 'whatsapp', status: 'sent' }).success).toBe(true);
   });
 });
+
+describe('Stage 4 audit actions (revenue)', () => {
+  const stage4 = [
+    'billing.price.changed',
+    'billing.price.override',
+    'charge.captured',
+    'charge.voided',
+    'charge.flagged',
+    'payment.recorded',
+    'payment.override',
+    'payment.refunded',
+    'cash.opened',
+    'cash.closed',
+    'cash.adjusted',
+    'export.requested',
+    'invoice.requested',
+    'invoice.issued',
+    'invoice.rejected',
+    'invoice.retried',
+    'invoice.manual',
+    'invoice.credit_note',
+    'invoicing.config.changed',
+    'invoicing.credential.changed',
+    'report.accessed',
+  ];
+
+  it('are all catalogued, once each', () => {
+    for (const action of stage4) {
+      expect(isAuditAction(action), action).toBe(true);
+      expect(
+        AUDIT_ACTIONS.filter((known) => known === action),
+        action,
+      ).toHaveLength(1);
+    }
+  });
+
+  it('accept the amounts and states a money entry carries', () => {
+    expect(
+      AuditMetadata.safeParse({ amountCents: 350000, method: 'cash', status: 'paid' }).success,
+    ).toBe(true);
+  });
+
+  it('refuse the card data, certificates and keys that money and fiscal entries could tempt someone to log', () => {
+    for (const key of ['cardNumber', 'cvv', 'pan', 'certificate', 'privateKey', 'pem', 'apiKey']) {
+      expect(AuditMetadata.safeParse({ amountCents: 1, [key]: 'x' }).success, key).toBe(false);
+    }
+    // Case and underscores do not hide a key.
+    expect(AuditMetadata.safeParse({ card_number: 'x' }).success).toBe(false);
+    expect(AuditMetadata.safeParse({ PRIVATE_KEY: 'x' }).success).toBe(false);
+  });
+});

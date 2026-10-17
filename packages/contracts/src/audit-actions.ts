@@ -1,7 +1,10 @@
 import { z } from 'zod';
 
+import { BILLING_AUDIT_ACTIONS } from './billing-catalog.js';
+import { INVOICING_AUDIT_ACTIONS } from './invoicing-catalog.js';
 import { NOTIFICATION_AUDIT_ACTIONS } from './notifications-catalog.js';
 import { ONLINE_BOOKING_AUDIT_ACTIONS } from './online-booking-catalog.js';
+import { REPORTS_AUDIT_ACTIONS } from './reports-catalog.js';
 import { TELECONSULTATION_AUDIT_ACTIONS } from './teleconsultation-catalog.js';
 import { WAITLIST_AUDIT_ACTIONS } from './waitlist-catalog.js';
 
@@ -140,6 +143,10 @@ export const AUDIT_ACTIONS = [
   ...ONLINE_BOOKING_AUDIT_ACTIONS,
   ...WAITLIST_AUDIT_ACTIONS,
   ...TELECONSULTATION_AUDIT_ACTIONS,
+  // Revenue (Stage 4). Each module declares its own actions next to its contracts.
+  ...BILLING_AUDIT_ACTIONS,
+  ...REPORTS_AUDIT_ACTIONS,
+  ...INVOICING_AUDIT_ACTIONS,
   // Denials.
   'access.denied',
   'cross_tenant.denied',
@@ -179,6 +186,13 @@ export const FORBIDDEN_METADATA_KEYS = [
   'cookie',
   'authorization',
   'apiKey',
+  // Money and fiscal entries: card data, certificates and keys are never logged (Stage 4).
+  'cardNumber',
+  'cvv',
+  'pan',
+  'certificate',
+  'privateKey',
+  'pem',
 ] as const;
 
 const FORBIDDEN = new Set(

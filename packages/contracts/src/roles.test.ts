@@ -216,3 +216,63 @@ describe('Stage 3 permissions (patient engagement)', () => {
     expect(GRANTABLE.length).toBe(7);
   });
 });
+
+describe('Stage 4 permissions (revenue)', () => {
+  const holders = (permission: Permission) =>
+    ROLES.filter((role) => ROLE_PERMISSIONS[role].includes(permission));
+
+  it.each([
+    'pricing.manage',
+    'charges.void',
+    'payments.refund',
+    'invoicing.configure',
+    'invoicing.credit_note',
+    'invoicing.manual',
+  ] as const)('keeps %s with the owner and the admin', (permission) => {
+    expect(holders(permission)).toEqual(['owner', 'admin']);
+  });
+
+  it('lets reception issue an invoice, as the owner and the admin do', () => {
+    expect(holders('invoicing.issue')).toEqual(['owner', 'admin', 'reception']);
+  });
+
+  it('keeps every sensitive money action away from reception and the professionals', () => {
+    for (const role of ['reception', 'professional'] as const) {
+      for (const permission of [
+        'charges.void',
+        'payments.refund',
+        'pricing.manage',
+        'invoicing.credit_note',
+        'invoicing.manual',
+        'invoicing.configure',
+      ] as const) {
+        expect(ROLE_PERMISSIONS[role], `${role} -> ${permission}`).not.toContain(permission);
+      }
+    }
+  });
+
+  it('keeps the owner-only platform subscription permission out of the money bundle', () => {
+    expect(holders('billing.manage')).toEqual(['owner']);
+  });
+
+  it('adds none of them to the grantable list or to the clinical group', () => {
+    for (const permission of [
+      'pricing.manage',
+      'charges.void',
+      'payments.refund',
+      'invoicing.issue',
+      'invoicing.configure',
+      'invoicing.credit_note',
+      'invoicing.manual',
+    ] as const) {
+      expect(GRANTABLE).not.toContain(permission);
+      expect(isClinicalPermission(permission)).toBe(false);
+    }
+    expect(GRANTABLE.length).toBe(7);
+  });
+
+  it('gives reports to the roles the spec scopes on the server: professional (own) and reception', () => {
+    expect(holders('reports.read')).toEqual(['owner', 'admin', 'professional', 'reception']);
+    expect(ROLE_PERMISSIONS.patient).not.toContain('reports.read');
+  });
+});

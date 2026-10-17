@@ -142,6 +142,14 @@ export const PERMISSIONS = [
   'payments.read',
   'payments.write',
   'cash.operate',
+  // Revenue (Stage 4): the price list, voiding a charge, refunds, and the fiscal invoices.
+  'pricing.manage',
+  'charges.void',
+  'payments.refund',
+  'invoicing.issue',
+  'invoicing.configure',
+  'invoicing.credit_note',
+  'invoicing.manual',
   // Clinical content: professionals only, and never grantable.
   'clinical.note.read',
   'clinical.note.write',
@@ -199,6 +207,13 @@ const ADMINISTRATION = [
   'payments.read',
   'payments.write',
   'cash.operate',
+  'pricing.manage',
+  'charges.void',
+  'payments.refund',
+  'invoicing.issue',
+  'invoicing.configure',
+  'invoicing.credit_note',
+  'invoicing.manual',
 ] as const satisfies readonly Permission[];
 
 export const ROLE_PERMISSIONS: Record<Role, readonly Permission[]> = {
@@ -216,6 +231,8 @@ export const ROLE_PERMISSIONS: Record<Role, readonly Permission[]> = {
     'waitlist.manage',
     'teleconsultation.join',
     'payments.read',
+    // Reports are scoped on the server: a professional reads the figures of their own appointments.
+    'reports.read',
     ...CLINICAL,
   ],
   // Reception holds patient administration and the cash register by default.
@@ -234,6 +251,9 @@ export const ROLE_PERMISSIONS: Record<Role, readonly Permission[]> = {
     'payments.read',
     'payments.write',
     'cash.operate',
+    'invoicing.issue',
+    // Operational reports and the cash report of their own locations, never revenue by professional.
+    'reports.read',
   ],
   patient: ['portal.self.read', 'portal.appointment.cancel'],
 };

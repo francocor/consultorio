@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
+import { BILLING_ERRORS } from './billing.js';
 import {
   ERROR_CATALOG,
   ERROR_CODES,
@@ -7,8 +8,10 @@ import {
   errorCodeForStatus,
   findDuplicateErrorCodes,
 } from './errors.js';
+import { INVOICING_ERRORS } from './invoicing.js';
 import { NOTIFICATION_ERRORS } from './notifications.js';
 import { ONLINE_BOOKING_ERRORS } from './online-booking.js';
+import { REPORTS_ERRORS } from './reports.js';
 import { TELECONSULTATION_ERRORS } from './teleconsultation.js';
 import { WAITLIST_ERRORS } from './waitlist-catalog.js';
 
@@ -114,6 +117,9 @@ describe('the error catalogs of the modules', () => {
     'online-booking': ONLINE_BOOKING_ERRORS,
     waitlist: WAITLIST_ERRORS,
     teleconsultation: TELECONSULTATION_ERRORS,
+    billing: BILLING_ERRORS,
+    reports: REPORTS_ERRORS,
+    invoicing: INVOICING_ERRORS,
   };
 
   it.each(Object.entries(modules))(
