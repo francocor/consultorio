@@ -1628,3 +1628,117 @@ Node v24.22.0, pnpm 10.34.7, Docker running and shared with other agents.
 
 CI was not run or polled. Three containers of earlier end-to-end stacks, with no process left to own them, held port 9600 after a run was interrupted; they were removed before the full run.
 
+## Stage 3 integration 3: track C merged and connected, the video link follow-up, and track E
+
+Branch `feat/stage-3-patient-engagement`, from `6dffe72`. Automatic mode, strict TDD, `size:exception` (work-unit commits). Track C (the waitlist, `feat/stage-3-track-3c`, tip `9666e0e`, migration `0360`) is merged; track E (S3.16 to S3.18) is written on top of it.
+
+### Commits
+
+| Item | Commit | What |
+| ---- | ------ | ---- |
+| Merge of track C | `e5943ea` | `git merge --no-ff origin/feat/stage-3-track-3c`; five conflicts (see below); `db:restamp` re-chained the `0390` snapshot, `db:check` clean |
+| Offers through notifications | `6ece457` | `main/wiring/waitlist.ts` delivers with `deliverWaitlistOffer` and defers with `offerQuietHoursEnd`; the email stand-in is gone; `waitlist-delivery-wiring.test.ts` |
+| Video link follow-up | `632281b` | `video_link` message kind, `message.video_pending` (migration `0391`), `queueVideoLinkFollowUp`, registry hook, es-AR templates |
+| Stage 3 demo seed | `ef94927` | `db/seed/demo/stage3/` (notifications, online booking, waitlist, teleconsultation, snapshot); exemption files of the seeded tables deleted |
+| Public surface security | `5505dbb` | policy test, four files under `test/security/`, `docs/security/public-surface-stage3.md`, `docs/external-dependencies.md`; the statement-count balance of the confirmations |
+| Stage 3 e2e | `e0e4b53` | `e2e/stage3-demo.spec.ts` (two tests); the seed leaves out closed days; the waitlist spec follows the offer email and D21 |
+| Demo walkthrough | `4c4b290` | `docs/demo.md` |
+| Guard | `7e2e065` | the waitlist wiring refuses to deliver in a process without the notifications module |
+| Contributors test | `36e6ebd` | the contributors list registers the Stage 3 seed |
+| Follow-up fix | `8036b81` | the reminder that promised the link is found by time and patient, not by version (a confirmation bumps the version) |
+| e2e isolation | `51dca1c` | the BAJA acknowledgment is looked up by the patient's own number: the WhatsApp simulator is shared by every organization |
+
+### Part A: the merge and the connection
+
+- **Conflicts** (kept both sides): `kinds.ts` (took the 15-day `video_join` of integration 2 and the enabled `waitlist_offer` of track C), `audit-actions.ts` and `errors.ts` (the catalogs of notifications, online booking and teleconsultation moved to `*-catalog.ts` in integration 2, the waitlist's to `waitlist-catalog.ts` in track C), `_journal.json` (entries `0360` then `0390`) and `tasks.md` (3.49 ticked by track C). The files the brief expected to conflict (`kinds.test.ts`, `wiring.test.ts`, `shell.test.tsx`, `index.ts`, `token-page.ts`, `token-router.ts`) merged cleanly. One fixture of the waitlist web tests needed `mode` on `CalendarEntryDto` (a field integration 2 made required).
+- **CONNECT AT MERGE**: both lines replaced. `deliver` is `deliverThroughNotifications`, a thin wrapper of `deliverWaitlistOffer` that fails the job when the process never bound the notifications module (otherwise every patient would be flagged unreachable); `quietHoursEnd` is `offerQuietHoursEnd`. Both processes that can reach the code build notifications: the API (`createNotifications` binds) and the worker (the notifications part binds in `jobs()`); the waitlist only delivers from the worker. `createEmailOfferDelivery`, its test and its use in `waitlist-fairness.test.ts` are removed (the channel rules are covered by `notifications-offers.test.ts` and the new test).
+- **Integration test** (`test/integration/waitlist-delivery-wiring.test.ts`, 4 tests) drives the wired worker jobs of both modules over a real database: WhatsApp for an opted-in patient, email otherwise, put off in quiet hours and sent at the end of them, and quiet hours that begin after the match do not flag the entry as unreachable (a mutation check, removing the `quietHoursEnd` line, makes that last test fail).
+- `waitlist_offer` is enabled in `kinds.ts`; task 3.49 (`waitlistPath` on `SlotPicker`) works end to end: `stage3-waitlist.spec.ts` follows the link from the page that has nothing free through the join and the accepted offer.
+
+### Part B: the link that the reminder promised
+
+A reminder or confirmation of a virtual appointment sent while the link was `pending` says "the link will be sent separately", and nothing sent it. Now:
+
+- `message.video_pending` (migration `0391_video_link_followup`, track 3e) is set when a message is sent with the "link follows" note; the migration also adds `video_link` to the kind and WhatsApp-kind checks and `video_link_unavailable` to the cancel reasons.
+- `VideoJoinRegistry` gained `linkReady(tx, appointmentId)` and `onLinkReady(listener)`. Teleconsultation announces from the `video.link.create` job (worker) and from `PUT .../video/manual-link` (API); notifications listens in both processes (`createNotifications` and the worker part) and calls `queueVideoLinkFollowUp`.
+- `queueVideoLinkFollowUp` (`modules/notifications/application/video-follow-up.ts`): only for a live, virtual, future appointment that has a sent message with `video_pending` for its present time and patient; the channel is the first the patient allows (WhatsApp with opt-in, otherwise email, never both); `applyQuietHours` puts it off to the end of quiet hours, and when they would swallow the appointment reception gets a `reminder_not_sent` item; idempotent by the group `video_link:<appointment>:<version>` (any channel); not for read-only or demonstration organizations.
+- At send time the message resolves the join address again; if there is no link by then (the room was replaced, the call is over) it is cancelled with `video_link_unavailable`. A move or cancellation of the appointment cancels it like any queued message.
+- Templates: `video_link` email (subject "El enlace de su videoconsulta en ...", the address as a button) and WhatsApp (`video_link`, with `mode` and `joinUrl`); es-AR labels in `messaging.json`. The Meta template list in `docs/external-dependencies.md` includes it.
+- Tests: `notifications-video-followup.test.ts` (14 tests: remembered/not remembered, sent after the room, once, not when the link was carried, not when no reminder went out, not when cancelled, WhatsApp, opt-out in between, quiet hours, manual link, link gone at send time), render/template/contract/registry unit tests, and the step in `stage3-demo.spec.ts`.
+
+### Part C: track E
+
+- **S3.16 seed** (`db/seed/demo/stage3/`): see tasks 3.71 to 3.73. Booking-link slugs are derived from the organization's slug through the product's own slug function (`createLinkService` with fixed bytes), so the demo address survives a reset: `aillu` is `/book/wfg3xazkdesq`, `norte` is `/book/mh4p4sxuiq7j`. The online bookings are written through the scheduling ports wrapped the way the public flow wraps them (one lane, source `online`, nobody as the booker). The waitlist is built through `createEntry` and `matchFreedSlot`, then the open offer is extended to two hours before its time so the demo keeps showing it. `ONLINE_PATIENTS` (2) is exported for the tests that count patients. The seed found one real bug of its own: it chose days that the calendar marks closed (Monday 2026-12-07 is a bridge holiday), which silently built nothing in the waitlist; closed days are skipped now, with a regression test that seeds on a Saturday evening.
+- **S3.17 public surface** (`test/policy/public-routes.test.ts`, `test/security/*`, `docs/security/public-surface-stage3.md`): see tasks 3.74 to 3.76. Findings: (1) the confirmations of a booking and of a waitlist join differed by 6 and 7 statements between a new person and an existing patient (and by 3 more when WhatsApp was ticked); `platform/db/even-work.ts` evens them out and the spy test pins the constants; (2) the public forms ignore unknown fields rather than refusing them, which is safe (probed: tenant, status, source, role, patient and appointment ids never take effect) and is documented; (3) the response schemas of the 21 public routes hold no personal field. `auth-guard.ts` now records `routeDeclarations` (rate limit and response schemas per route) for the policy test.
+- **S3.18**: `e2e/stage3-demo.spec.ts`; `docs/external-dependencies.md` (tasks 3.80 to 3.83 and what each needs); `docs/demo.md`. 3.78 (the fresh-context review) and the `sdd-init` re-run of 3.79 are left to the orchestrator: an executor cannot launch reviewers.
+
+### Deviations and decisions
+
+- No message previews in the seed (3.71): the log keeps metadata only by design.
+- The security tests are four files, not one `public-probes.test.ts`.
+- The statement balance uses constants (6 and 3 for booking, 7 and 3 for the waitlist) pinned by a test, not a counter inside the transaction: Drizzle has no hook to count, and a wrapper of the driver in production code would be worse than a constant that fails a test when it drifts. It evens the shape, not the duration (documented as an accepted residual).
+- `appointment_reschedule` has no page of the token router (its page is the SPA at `/book/manage/:token`, backed by `/public/t/:token/...`), so the router answers it like an unknown link; probed.
+
+### TDD evidence (RED first)
+
+| Item | Tests | RED |
+| ---- | ----- | --- |
+| Offers through notifications | `waitlist-delivery-wiring.test.ts` (4) | 3 failed with the stand-in (email only, no log); the quiet-hours test fails without the `quietHoursEnd` line |
+| Guard | `wiring/waitlist.test.ts` (+1) | `deliverThroughNotifications` missing |
+| Video link follow-up | `notifications-video-followup.test.ts` (14), `render.test.ts` (+4), `whatsapp.test.ts` (+2), `video-join.test.ts` (+3), `notifications.test.ts` (contracts) | 11 of 13 failed before the module; the unit tests failed on the missing kind and template; the version bug (a confirmation made the follow-up disappear) was found by reading and pinned RED first |
+| Seed | `demo-stage3.test.ts` (15) | whole file failed before the seed existed; the evening test failed with no offer and no call |
+| Non-disclosure | `public-nondisclosure.test.ts` (11) | the statement counts differed by 6 and 9 (booking) and 7 (waitlist) |
+| Surface | `public-surface.test.ts` (16), `public-tokens.test.ts` (16), `public-abuse.test.ts` (21), policy (+7) | the abuse and surface tests were written against assumptions the first run corrected (fields are ignored, not refused; the boot document is cacheable; the token router sets `same-origin` on all its pages) |
+| e2e | `stage3-demo.spec.ts` (2) | failed at each wrong label until it passed; also caught `stage3-waitlist.spec.ts` broken by D21 and by the new offer email |
+
+### Risks and follow-ups
+
+- 3.78 (judgment-day on public routes, tokens and webhooks) is open. `docs/security/public-surface-stage3.md` is written to be the map for the reviewers.
+- The rate-limit counters live in the process; with several API processes the bound multiplies (documented under "Known limits").
+- The `video_link` WhatsApp template needs Meta approval like the others (deferred task 3.81).
+- The follow-up is not sent for a demonstration organization (nothing is), and the quiet-hours case that swallows the appointment opens a worklist item instead of sending.
+- `e2e` leaves testcontainers behind when the runner is killed; Ryuk removed them within seconds on this machine.
+
+### Verification
+
+Node v24.22.0, pnpm 10.34.7, Docker running and shared with other projects. Tip of the verified code: `51dca1c` (the commits after it change documents only).
+
+| Command | Result |
+|---|---|
+| `corepack pnpm install --frozen-lockfile` | exit 0 |
+| `corepack pnpm typecheck` / `lint` / `format:check` | exit 0 |
+| `corepack pnpm test` | **320 files, 4,058 tests passed** |
+| `corepack pnpm test:integration` | **177 files passed, 1 skipped (ClamAV); 2,740 tests passed, 4 skipped** (`backup-restore.test.ts` passed; one run at a time) |
+| `corepack pnpm build` | exit 0 |
+| `corepack pnpm db:check` | No migration drift (journal now ends with `0391`) |
+| `test:e2e` (ports 4640/3640/9640, `--workers=3`, fresh stack) | **185 passed** (3.4 min). The first full run at `8036b81` had 183 passed and 2 failed: `stage3-booking` hit "No pudimos conectarnos" on the confirmation (an infrastructure blip; it passed alone and in the three-spec re-run) and `stage3-messaging` counted two BAJA acknowledgments, one of them from `stage3-demo` on the shared simulator (fixed by looking up the patient's own number, `51dca1c`) |
+| Docker image smoke test, as `.github/workflows/ci.yml` runs it | built `infra/Dockerfile`, ran with the CI environment on port 3040: `/health` answered `{"status":"ok"}`; container and image removed |
+| `pnpm demo:stack` | started (Postgres, MinIO, Mailpit, API, worker, two demo organizations, one operator); owner sign-in answered 200; the booking page `/book/wfg3xazkdesq` of `aillu` loaded (200) and its API listed the three professionals with the virtual type; stack and dev server stopped by process id, containers reaped by Ryuk |
+
+CI was not run or polled. A first e2e run, before the new spec existed, found `stage3-waitlist.spec.ts` broken by D21 (the fast path now needs a matricula) and, once that was fixed, by the offer email now being the notifications one (`Lugar:` instead of `Dónde:`, and the organization's name contains "Consulta").
+
+## Stage 3 gate
+
+The gate of S3.18: "the Stage 3 demo runs locally end to end. Verify: the e2e spec plus a fresh review."
+
+| Gate item | Result |
+| --------- | ------ |
+| `e2e/stage3-demo.spec.ts` passes on a fresh stack | **Yes**, in the full run (185 passed) and alone; the journey takes about 30 s |
+| Full verification (install, typecheck, lint, format, unit, integration, build, `db:check`, e2e, image smoke test, `demo:stack`) | **Yes**, see "Stage 3 integration 3", "Verification" |
+| Fresh-context review of public routes, tokens and webhooks (3.78) | **Open.** The orchestrator runs `judgment-day` on PR #16; `docs/security/public-surface-stage3.md` maps the surface |
+| `docs/external-dependencies.md` updated (3.79) | **Done**; the `sdd-init` re-run is the orchestrator's |
+| Deferred adapters 3.80 to 3.83 | Untouched, as designed (nothing waits for them) |
+
+Success criteria of `proposal.md` that Stage 3 can show, and the evidence:
+
+| Criterion | Evidence |
+| --------- | -------- |
+| The stage goal: a patient books online, receives a reminder by email and WhatsApp and confirms; a waiting patient is offered a freed slot; a virtual appointment gets a join link | `stage3-demo.spec.ts`, steps 1 to 5 (booking, approval, reminder in Mailpit and the simulator, confirmation by link, BAJA then email, the link of a video visit that followed its confirmation, the professional joining, a cancellation offered to the waitlist and accepted) |
+| **0** unauthenticated endpoints outside the explicit public allowlist | `test/policy/public-routes.test.ts`: `findUnlistedPublicRoutes` is empty for the whole application, and the 21 routes under `/public/` and `/webhooks/` each declare a protection and a probing test; `test/security/*` probes them |
+| Core flows usable at a 360 px width | axe and horizontal-overflow checks at 360 px on every public screen of the journey (booking steps, the pages of the links, the offer, the waitlist join) and at 1280 px on the staff screens |
+| Reminders go out for 95% or more of the appointments that have contact data | The planner queues them at booking (`reminder-plan.test.ts`, `reminder-idempotency.test.ts`) and the hourly sweep plans any appointment that has none (`reminder-sweep.test.ts`); the journey shows them arriving on both channels. A rate over a population is not measurable until there is a real one |
+| The demo tenant resets in under a minute with data in every module | `demo-coverage.test.ts`: the reset took 4.7 s with the Stage 3 data, and no tenant table is empty without a reason |
+| Cross-tenant tests cover every data path | The generated isolation suite covers the new tables (`message.video_pending` is a column of an existing one); `test/tenancy` passes in the integration run |
+| A single-tenant deployment runs from the same build | Unchanged; the image smoke test uses the multi-tenant configuration and `/health` answers |
+
+Not claimed here: the Stage 1 and 2 criteria (10-minute first booking, 30-second reception booking, PWA and 4G load, clinical audit, legacy removal) were verified at their own gates, and the e2e suite that guards them passed.
