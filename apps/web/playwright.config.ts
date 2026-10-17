@@ -6,6 +6,11 @@ import { defineConfig, devices } from '@playwright/test';
  */
 const WEB_PORT = Number(process.env['E2E_WEB_PORT'] ?? '4173');
 const API_PORT = Number(process.env['E2E_API_PORT'] ?? '3100');
+/**
+ * The object storage of the stack (MinIO). A browser uploads documents straight to it, so the preview
+ * server allows that origin in its Content Security Policy: the port is fixed here, not random.
+ */
+const STORAGE_PORT = Number(process.env['E2E_MINIO_PORT'] ?? '9190');
 
 /**
  * End-to-end tests run against the REAL stack: the built web app served by `vite preview` (with
@@ -64,7 +69,7 @@ export default defineConfig({
   webServer: [
     {
       // The port is repeated after the script's own default; the last one wins.
-      command: `pnpm --filter @consultorio/api e2e:stack --port ${String(API_PORT)}`,
+      command: `pnpm --filter @consultorio/api e2e:stack --port ${String(API_PORT)} --minio-port ${String(STORAGE_PORT)}`,
       url: `http://127.0.0.1:${String(API_PORT)}/health`,
       reuseExistingServer: !process.env['CI'],
       timeout: 240_000,
@@ -74,7 +79,10 @@ export default defineConfig({
       command: `vite preview --port ${String(WEB_PORT)} --strictPort`,
       url: `http://localhost:${String(WEB_PORT)}`,
       reuseExistingServer: !process.env['CI'],
-      env: { API_PROXY_TARGET: `http://127.0.0.1:${String(API_PORT)}` },
+      env: {
+        API_PROXY_TARGET: `http://127.0.0.1:${String(API_PORT)}`,
+        CSP_CONNECT_SOURCES: `http://localhost:${String(STORAGE_PORT)}`,
+      },
     },
   ],
 });

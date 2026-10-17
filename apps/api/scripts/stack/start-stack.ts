@@ -2,13 +2,15 @@ import { randomBytes } from 'node:crypto';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
 
+import { CreateBucketCommand, S3Client } from '@aws-sdk/client-s3';
 import { PostgreSqlContainer } from '@testcontainers/postgresql';
 import { eq } from 'drizzle-orm';
 import pino from 'pino';
 import { GenericContainer, Wait } from 'testcontainers';
 
+import { createFakeScanner } from '../../src/adapters/fake-scanner/index.js';
 import { createLocalKeyManagement } from '../../src/adapters/local-kek/index.js';
-import { createMemoryObjectStorage } from '../../src/adapters/memory-storage/index.js';
+import { createS3ObjectStorage } from '../../src/adapters/s3/index.js';
 import { runMigrations } from '../../src/db/migrate.js';
 import { tenant } from '../../src/db/schema/tenant.js';
 import {
@@ -20,17 +22,26 @@ import {
 } from '../../src/db/seed/demo/index.js';
 import { seedPlatformCatalogs } from '../../src/db/seed/platform.js';
 import { createApplication } from '../../src/main/application.js';
+import { documentWorker } from '../../src/main/document-jobs.js';
 import { createConfiguredEmail } from '../../src/main/email.js';
 import { loadPasswordValidator } from '../../src/main/password-validator.js';
 import { createPasswordHasher } from '../../src/modules/identity/index.js';
 import { createOperatorAdminFor, createOperatorSecrets } from '../../src/modules/operator/index.js';
+import { holdExpireJob } from '../../src/modules/scheduling/index.js';
 import { createTenantKeys } from '../../src/platform/crypto/tenant-keys.js';
 import { createOperatorDb, createOwnerDb, createRuntimeDb } from '../../src/platform/db/pool.js';
 import { SYSTEM_USER_ID, createWithTenant } from '../../src/platform/db/tenant-context.js';
+import { createBoss, createJobClient } from '../../src/platform/jobs/boss.js';
 import { startWorker } from '../../src/platform/jobs/worker.js';
 
 const DATABASE = 'consultorio_stack';
 const ROLES_SQL = new URL('../../../../infra/postgres/init/01-roles.sql', import.meta.url);
+
+/** The object storage of the stack: the same MinIO image the local environment runs. */
+const MINIO_IMAGE = 'bitnamilegacy/minio:2025.7.23-debian-12-r5';
+const MINIO_USER = 'minio_stack';
+const MINIO_PASSWORD = 'minio_stack_only_secret';
+const BUCKET = 'consultorio-files';
 
 /** The operator of the throwaway stack. Public development values, like the demo passwords. */
 const OPERATOR = {
@@ -48,14 +59,22 @@ export interface StackOptions {
   platformHost?: string;
   /** The port of the web app in emailed links (`pnpm demo:stack` serves it on 5173). */
   publicPort?: number;
-  /** Run the worker (audit sealing, nightly verification) in the same process. */
+  /** Run the worker (audit sealing, scans, hold expiry) in the same process. */
   withWorker?: boolean;
+  /**
+   * Host port of the object storage. A browser uploads documents straight to it, so the web app must
+   * allow that origin (`CSP_CONNECT_SOURCES=http://localhost:<port>` when it is built or served).
+   * Random when absent.
+   */
+  minioPort?: number;
   log?: (line: string) => void;
 }
 
 export interface StackInfo {
   apiUrl: string;
   mailpitUrl: string;
+  /** Where browsers upload documents (the S3 API of MinIO). */
+  storageUrl: string;
   baseDomain: string;
   platformHost: string;
   demoPassword: string;
@@ -88,15 +107,27 @@ export async function startStack(options: StackOptions): Promise<Stack> {
   const baseDomain = options.baseDomain ?? 'localhost';
   const platformHost = options.platformHost ?? `platform.${baseDomain}`;
 
-  log('Starting Postgres and Mailpit containers');
-  const [postgres, mailpit] = await Promise.all([
+  log('Starting Postgres, MinIO and Mailpit containers');
+  const [postgres, mailpit, minio] = await Promise.all([
     new PostgreSqlContainer('postgres:17').withDatabase(DATABASE).start(),
     new GenericContainer('axllent/mailpit:v1.31.6')
       .withExposedPorts(1025, 8025)
       .withWaitStrategy(Wait.forHttp('/livez', 8025))
       .start(),
+    new GenericContainer(MINIO_IMAGE)
+      .withEnvironment({ MINIO_ROOT_USER: MINIO_USER, MINIO_ROOT_PASSWORD: MINIO_PASSWORD })
+      .withExposedPorts(
+        options.minioPort === undefined ? 9000 : { container: 9000, host: options.minioPort },
+      )
+      .withWaitStrategy(Wait.forHttp('/minio/health/ready', 9000).forStatusCode(200))
+      .withStartupTimeout(120_000)
+      .start(),
   ]);
-  const closers: (() => Promise<unknown>)[] = [() => postgres.stop(), () => mailpit.stop()];
+  const closers: (() => Promise<unknown>)[] = [
+    () => postgres.stop(),
+    () => mailpit.stop(),
+    () => minio.stop(),
+  ];
 
   try {
     const { Client } = await import('pg');
@@ -127,6 +158,31 @@ export async function startStack(options: StackOptions): Promise<Stack> {
       () => operatorDb.close(),
     );
 
+    // The browser sends files to this address, so it is the one it can reach: `localhost`.
+    const storageUrl = `http://localhost:${String(minio.getMappedPort(9000))}`;
+    const credentials = { accessKeyId: MINIO_USER, secretAccessKey: MINIO_PASSWORD };
+    const s3 = new S3Client({
+      region: 'us-east-1',
+      endpoint: storageUrl,
+      forcePathStyle: true,
+      credentials,
+    });
+    await s3.send(new CreateBucketCommand({ Bucket: BUCKET }));
+    s3.destroy();
+    const storage = createS3ObjectStorage({
+      bucket: BUCKET,
+      region: 'us-east-1',
+      endpoint: storageUrl,
+      forcePathStyle: true,
+      credentials,
+    });
+    closers.push(() => {
+      storage.close();
+      return Promise.resolve();
+    });
+    // The files of the demo are checked by the fake scanner, like in any development environment.
+    const scanner = createFakeScanner();
+
     const kms = createLocalKeyManagement(randomBytes(32).toString('base64'));
     const keys = createTenantKeys({ kms });
     const email = createConfiguredEmail({
@@ -150,6 +206,7 @@ export async function startStack(options: StackOptions): Promise<Stack> {
       keys,
       consentText: consentTextFor(runtime.db),
       clock: () => new Date(),
+      documents: { storage, scanner },
     };
     const aillu = await ensureDemoTenant(runtime.db, withTenant, 'aillu');
     await seedDemoTenant(deps, aillu.id);
@@ -175,6 +232,10 @@ export async function startStack(options: StackOptions): Promise<Stack> {
       password: OPERATOR.password,
     });
 
+    const jobsBoss = createBoss(runtimeUrl, 'api');
+    await jobsBoss.start();
+    closers.unshift(() => jobsBoss.stop({ graceful: false }));
+
     const passwordValidator = await loadPasswordValidator({ breachCheck: false });
     const app = createApplication({
       database: runtime,
@@ -187,7 +248,9 @@ export async function startStack(options: StackOptions): Promise<Stack> {
       keys,
       email: email.sender,
       passwordValidator,
-      storage: createMemoryObjectStorage(),
+      storage,
+      // Confirming an upload queues its scan; the worker below runs it.
+      jobs: createJobClient(jobsBoss),
       // A browser suite signs in all day from one address: the limits have their own tests.
       limits: {
         perClient: { max: 100_000, windowMs: 60_000 },
@@ -225,6 +288,8 @@ export async function startStack(options: StackOptions): Promise<Stack> {
         log: pino({ level: 'warn' }),
         sealGraceMs: 500,
         sealIntervalMs: 1500,
+        tenantJobs: [{ definition: holdExpireJob, everyMs: 60_000 }],
+        ...documentWorker({ storage, scanner, email: email.sender }),
       });
       closers.unshift(() => worker?.stop() ?? Promise.resolve());
     }
@@ -232,6 +297,7 @@ export async function startStack(options: StackOptions): Promise<Stack> {
     const info: StackInfo = {
       apiUrl: `http://127.0.0.1:${String(options.apiPort)}`,
       mailpitUrl: `http://${mailpit.getHost()}:${String(mailpit.getMappedPort(8025))}`,
+      storageUrl,
       baseDomain,
       platformHost,
       demoPassword: DEMO_PASSWORD,

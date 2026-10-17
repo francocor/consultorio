@@ -17,6 +17,7 @@ async function main(): Promise<void> {
       info: { type: 'string' },
       banner: { type: 'boolean', default: false },
       'web-port': { type: 'string', default: '5173' },
+      'minio-port': { type: 'string' },
     },
   });
   const port = Number(values.port);
@@ -25,6 +26,7 @@ async function main(): Promise<void> {
     // The demo's emailed links open the web app, which the dev server serves on its own port.
     ...(values.banner ? { publicPort: Number(values['web-port']) } : {}),
     ...(values.info ? { infoFile: values.info } : {}),
+    ...(values['minio-port'] ? { minioPort: Number(values['minio-port']) } : {}),
     log: (line) => {
       process.stdout.write(`[stack] ${line}\n`);
     },
@@ -38,12 +40,15 @@ async function main(): Promise<void> {
         '',
         'The stack is running. In another terminal start the web app:',
         '',
-        `  API_PROXY_TARGET=http://127.0.0.1:${String(port)} pnpm --filter @consultorio/web dev`,
+        `  CSP_CONNECT_SOURCES=${info.storageUrl} API_PROXY_TARGET=http://127.0.0.1:${String(port)} pnpm --filter @consultorio/web dev`,
+        '',
+        '(CSP_CONNECT_SOURCES lets the browser upload documents straight to the MinIO of the stack.)',
         '',
         `Organization "Centro Médico Aillu":  http://aillu.${info.baseDomain}:${web}`,
         `Organization "Clínica Norte":        http://norte.${info.baseDomain}:${web}   (sign in as <account>+norte@demo.invalid)`,
         `Platform console:                    http://${info.platformHost}:${web}`,
         `Mailpit (emails):                    ${info.mailpitUrl}`,
+        `Document storage (MinIO, S3 API):    ${info.storageUrl}`,
         '',
         `Password of every demo account (public, development only): ${info.demoPassword}`,
         `Accounts: propietaria@, administracion@, recepcion@, recepcion.norte@, cardiologia@, pediatria@, psicologia@ (all @demo.invalid)`,
