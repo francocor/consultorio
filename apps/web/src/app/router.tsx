@@ -280,6 +280,15 @@ function buildRouteTree() {
     ),
   });
 
+  const settingsSchedulingRoute = createRoute({
+    getParentRoute: () => settingsRoute,
+    path: '/scheduling',
+    component: lazyRouteComponent(
+      () => import('../features/settings/scheduling/SchedulingSettingsPage.js'),
+      'SchedulingSettingsPage',
+    ),
+  });
+
   const settingsBrandingRoute = createRoute({
     getParentRoute: () => settingsRoute,
     path: '/branding',
@@ -348,6 +357,7 @@ function buildRouteTree() {
       settingsRoute.addChildren([
         settingsIndexRoute,
         settingsLocationsRoute,
+        settingsSchedulingRoute,
         settingsBrandingRoute,
         settingsSecurityRoute,
       ]),

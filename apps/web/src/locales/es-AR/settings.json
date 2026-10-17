@@ -106,5 +106,6 @@
   "security.quiet.description": "Los recordatorios y avisos a pacientes no se envían entre estas horas (en la zona horaria de cada sede).",
   "security.quiet.start": "Desde",
   "security.quiet.end": "Hasta",
-  "security.quiet.save": "Guardar horario"
+  "security.quiet.save": "Guardar horario",
+  "tab.scheduling": "Turnos"
 }
