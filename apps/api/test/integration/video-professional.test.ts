@@ -1,9 +1,11 @@
 import type { AppointmentDto, VideoSessionSummary } from '@consultorio/contracts';
+import { eq } from 'drizzle-orm';
 import { afterAll, beforeAll, beforeEach, describe, expect, inject, it } from 'vitest';
 
+import { tenant } from '../../src/db/schema/tenant.js';
 import { createRuntimeDb, type DbHandle } from '../../src/platform/db/pool.js';
 import { clientFor, signInAs, TEST_PASSWORD } from '../support/session.js';
-import { createTestTenant } from '../support/tenants.js';
+import { asTenant, createTestTenant } from '../support/tenants.js';
 import { createTestUser } from '../support/users.js';
 import { createVideoWorld, type VideoWorld } from '../support/video-world.js';
 
@@ -154,6 +156,40 @@ describe('the assigned professional joins', () => {
     expect(summary.statusCode).toBe(404);
     expect(join.statusCode).toBe(404);
     expect(manual.statusCode).toBe(404);
+  });
+});
+
+describe('a read-only organization', () => {
+  it('still shows the video side but refuses to join or to attach a link', async () => {
+    const appointment = await ready(0);
+    const setStatus = (status: 'active' | 'read_only') =>
+      asTenant(runtime, world.tenant.id, (tx) =>
+        tx
+          .update(tenant)
+          .set({ status, readOnlySince: status === 'read_only' ? new Date() : null })
+          .where(eq(tenant.id, world.tenant.id)),
+      );
+    await setStatus('read_only');
+    try {
+      const summary = await world.api.get(`/appointments/${appointment.id}/video`, world.doctor);
+      const join = await world.api.post(
+        `/appointments/${appointment.id}/video/join`,
+        world.doctor,
+        {},
+      );
+      const manual = await world.api.put(
+        `/appointments/${appointment.id}/video/manual-link`,
+        world.reception,
+        { url: 'https://zoom.us/j/1' },
+      );
+
+      expect(summary.statusCode).toBe(200);
+      expect(join.statusCode).toBe(402);
+      expect(manual.statusCode).toBe(402);
+      expect(await world.auditsOf('video.link.joined', appointment.id)).toHaveLength(0);
+    } finally {
+      await setStatus('active');
+    }
   });
 });
 

@@ -64,10 +64,18 @@ async function readyAppointment(): Promise<{
   return { appointment, room, token: issued.token, startsAt, weekIndex };
 }
 
-const open = (token: string, host = hostOf(world.slug)) =>
+/** Every visit comes from another address, so the limit per client never decides a test. */
+let visitor = 0;
+const nextAddress = () => {
+  visitor += 1;
+  return `10.20.${String(Math.floor(visitor / 250))}.${String((visitor % 250) + 1)}`;
+};
+
+const open = (token: string, host = hostOf(world.slug), remoteAddress = nextAddress()) =>
   world.app.inject({
     method: 'GET',
     url: `/public/v/${token}`,
+    remoteAddress,
     headers: { host, 'user-agent': 'vitest-patient' },
   });
 
@@ -212,6 +220,23 @@ describe('the platform join address', () => {
 
     expect(response.statusCode).toBe(302);
     expect(response.headers['location']).toBe('https://meet.google.com/abc-defg-hij');
+  });
+});
+
+describe('abuse of the platform join address', () => {
+  it('limits the visits of one client in a minute, whatever the token', async () => {
+    const guessed = randomBytes(32).toString('base64url');
+    const address = '10.99.99.99';
+
+    const answers: number[] = [];
+    for (let attempt = 0; attempt < 32; attempt += 1) {
+      answers.push((await open(guessed, hostOf(world.slug), address)).statusCode);
+    }
+
+    expect(answers.slice(0, 30)).toEqual(Array<number>(30).fill(404));
+    expect(answers.slice(30)).toEqual([429, 429]);
+    // Another client is not affected by it.
+    expect((await open(guessed)).statusCode).toBe(404);
   });
 });
 
