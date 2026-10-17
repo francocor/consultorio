@@ -178,7 +178,7 @@ export function publicRoutes(deps: PublicRoutesDeps) {
       },
       async (request, reply) => {
         void reply.header('cache-control', 'no-store');
-        return challengeOf(tenantOf(request)).issue();
+        return challengeOf(tenantOf(request)).issue(request.ip);
       },
     );
 

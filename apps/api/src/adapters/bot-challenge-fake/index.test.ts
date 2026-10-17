@@ -6,7 +6,7 @@ describe('fake bot challenge', () => {
   it('issues a challenge that needs no solver', async () => {
     const challenge = createFakeBotChallenge();
 
-    expect(await challenge.issue()).toEqual({ kind: 'fake', payload: {} });
+    expect(await challenge.issue('203.0.113.7')).toEqual({ kind: 'fake', payload: {} });
   });
 
   it('always passes, whatever the proof and the address', async () => {
