@@ -46,7 +46,8 @@ export function unique(prefix: string): string {
 /**
  * A new account, inserted the way the application does it: acting AS that user. The account
  * policy only accepts the row of `app.user_id`, so the fixture points it at the new id for the
- * insert and puts the caller's value back afterwards.
+ * insert and puts the caller's value back afterwards. The address carries part of the id: the
+ * counter restarts in every test file, and files that commit their fixtures share one database.
  */
 export async function insertUser(tx: Tx): Promise<string> {
   const id = randomUUID();
@@ -56,7 +57,7 @@ export async function insertUser(tx: Tx): Promise<string> {
   await tx.execute(sql`select set_config('app.user_id', ${id}, true)`);
   await tx.execute(
     sql`INSERT INTO user_account (id, email, password_hash)
-          VALUES (${id}, ${unique('fixture') + '@example.test'}, 'hash')`,
+          VALUES (${id}, ${unique('fixture') + '-' + id.slice(0, 8) + '@example.test'}, 'hash')`,
   );
   await tx.execute(sql`select set_config('app.user_id', ${previous.rows[0]?.value ?? ''}, true)`);
   return id;
