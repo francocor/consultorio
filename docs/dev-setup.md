@@ -128,6 +128,7 @@ Start the virus scanner only when working on uploads: `docker compose --env-file
 | `BOT_CHALLENGE`           | `local`, `turnstile` (`local`; production `turnstile`) | The bot challenge of the public booking forms                                                                                                             |
 | `WHATSAPP_APP_SECRET`     | at least 16 characters, secret                         | Signs the WhatsApp webhook (`X-Hub-Signature-256`). Never logged                                                                                          |
 | `VIDEO_ALLOWED_DOMAINS`   | comma-separated host names (empty)                     | The hosts a professional's manual video link may point at                                                                                                 |
+| `VIDEO_LOCAL_BASE_URL`    | an `https` address (`https://meet.jit.si`)             | The Jitsi server whose rooms the local video provider links to. A self-hosted one needs no code change                                                    |
 | `ALLOW_LOCAL_PROVIDERS`   | `true`, `false` (`false`)                              | Lets a production process run the simulators. For a demo or staging deployment only                                                                       |
 | `LOCAL_PROVIDERS_CONSOLE` | `true`, `false` (`false`)                              | Serves the simulator console (`/operator/dev/*`, behind the operator session). Without it those paths do not exist. In production it needs the flag above |
 

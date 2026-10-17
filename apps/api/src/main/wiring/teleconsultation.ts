@@ -37,7 +37,14 @@ function videoSlot(providers: ProviderConfig | undefined): AdapterRegistry['vide
   return {
     real: simulated
       ? // Neither the address builder nor the room reservation has any effect outside the process.
-        fake(createLocalVideoLinkProvider({ allowedDomains: simulatorDomains }))
+        fake(
+          createLocalVideoLinkProvider({
+            allowedDomains: simulatorDomains,
+            ...(providers?.videoLocalBaseUrl === undefined
+              ? {}
+              : { baseUrl: providers.videoLocalBaseUrl }),
+          }),
+        )
       : real(createUnavailableVideoLinkProvider({ allowedDomains: listed })),
     // Demo organizations never reach a real service, but they attach manual links like anyone.
     demo: fake(createFakeVideoLinkProvider({ manualLinkDomains: simulatorDomains })),

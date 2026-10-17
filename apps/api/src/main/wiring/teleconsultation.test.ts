@@ -40,6 +40,14 @@ describe('the video slot of the adapter registry', () => {
     ).toBe('meet.jit.si');
   });
 
+  it('builds the addresses on the video server VIDEO_LOCAL_BASE_URL names', () => {
+    const slot = slotFor({ VIDEO_LOCAL_BASE_URL: 'https://jitsi.clinic.example' });
+    const url = new URL(slot.real?.adapter.joinUrl('0f8a3c2e9b1d4a7f8c6e5d4b3a291807') ?? '');
+
+    expect(url.hostname).toBe('jitsi.clinic.example');
+    expect(url.pathname).toBe('/0f8a3c2e9b1d4a7f8c6e5d4b3a291807');
+  });
+
   it('hands a demo organization the fake, whatever the customers get', () => {
     const slot = slotFor();
 

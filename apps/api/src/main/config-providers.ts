@@ -17,6 +17,7 @@ export const PROVIDER_ENV_VARIABLES = [
   'BOT_CHALLENGE',
   'WHATSAPP_APP_SECRET',
   'VIDEO_ALLOWED_DOMAINS',
+  'VIDEO_LOCAL_BASE_URL',
   'ALLOW_LOCAL_PROVIDERS',
   'LOCAL_PROVIDERS_CONSOLE',
 ] as const;
@@ -26,6 +27,22 @@ const HOSTNAME =
   /^(?=.{1,253}$)[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)*$/;
 
 const MIN_APP_SECRET_LENGTH = 16;
+
+/** The Jitsi server of the local video provider: https, no credentials, no query or fragment. */
+function isServerAddress(value: string): boolean {
+  try {
+    const url = new URL(value);
+    return (
+      url.protocol === 'https:' &&
+      url.username === '' &&
+      url.password === '' &&
+      url.search === '' &&
+      url.hash === ''
+    );
+  } catch {
+    return false;
+  }
+}
 
 const booleanFlag = z.enum(['true', 'false']).transform((value) => value === 'true');
 
@@ -48,6 +65,11 @@ const providerEnv = z.object({
     .refine((hosts) => hosts.every((host) => HOSTNAME.test(host)), {
       message: 'must be a comma-separated list of host names without scheme, port or path',
     }),
+  /** Where the Jitsi server of `VIDEO_PROVIDER=local` is. Unset: the public server. */
+  VIDEO_LOCAL_BASE_URL: z
+    .string()
+    .refine(isServerAddress, { message: 'must be an https address with no credentials or query' })
+    .optional(),
   ALLOW_LOCAL_PROVIDERS: booleanFlag.default(false),
   LOCAL_PROVIDERS_CONSOLE: booleanFlag.default(false),
 });
@@ -56,6 +78,8 @@ export interface ProviderConfig extends ProviderSelection {
   /** Set when `WHATSAPP_APP_SECRET` is. Required for the real provider. */
   readonly whatsappAppSecret?: string;
   readonly videoAllowedDomains: readonly string[];
+  /** The Jitsi server the local video provider builds addresses on; unset means the public one. */
+  readonly videoLocalBaseUrl?: string;
   /** Production may run the simulators (a demo or staging deployment). */
   readonly allowLocalProviders: boolean;
   /** `/operator/dev/*` exists only when this is true. */
@@ -112,6 +136,9 @@ export function readProviderConfig(
         ? {}
         : { whatsappAppSecret: value.WHATSAPP_APP_SECRET }),
       videoAllowedDomains: value.VIDEO_ALLOWED_DOMAINS,
+      ...(value.VIDEO_LOCAL_BASE_URL === undefined
+        ? {}
+        : { videoLocalBaseUrl: value.VIDEO_LOCAL_BASE_URL }),
       allowLocalProviders: value.ALLOW_LOCAL_PROVIDERS,
       localProvidersConsole: value.LOCAL_PROVIDERS_CONSOLE,
     },

@@ -90,6 +90,25 @@ describe('provider configuration', () => {
     ]);
   });
 
+  it('reads the address of the video server of the local provider, and leaves it unset otherwise', () => {
+    expect(loadConfig(base).providers.videoLocalBaseUrl).toBeUndefined();
+    expect(
+      loadConfig({ ...base, VIDEO_LOCAL_BASE_URL: 'https://jitsi.clinic.example/' }).providers
+        .videoLocalBaseUrl,
+    ).toBe('https://jitsi.clinic.example/');
+  });
+
+  it.each([
+    ['http://jitsi.clinic.example', 'not https'],
+    ['jitsi.clinic.example', 'not an address'],
+    ['https://user:secret@jitsi.clinic.example', 'carries credentials'],
+    ['https://jitsi.clinic.example/?room=1', 'carries a query'],
+  ])('rejects the video server address %s (%s)', (value) => {
+    expect(() => loadConfig({ ...base, VIDEO_LOCAL_BASE_URL: value })).toThrow(
+      /VIDEO_LOCAL_BASE_URL/,
+    );
+  });
+
   it('rejects values that are not one of the providers, a malformed host and a short secret', () => {
     expect(() => loadConfig({ ...base, WHATSAPP_PROVIDER: 'twilio' })).toThrow(/WHATSAPP_PROVIDER/);
     expect(() => loadConfig({ ...base, VIDEO_PROVIDER: 'zoom' })).toThrow(/VIDEO_PROVIDER/);
