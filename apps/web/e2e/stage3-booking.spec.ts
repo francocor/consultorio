@@ -148,7 +148,11 @@ async function bookAsPatient(page: Page, url: string, email: string): Promise<nu
   return (Date.now() - started) / 1000;
 }
 
-/** The first professional of the demo organization that has free times. */
+/**
+ * The psychologist of the demo organization. The other specs book the cardiologist and the
+ * pediatrician; a professional of its own keeps this spec from taking the times they look for when
+ * they run in parallel.
+ */
 async function demoProfessional(request: APIRequestContext) {
   const origin = originOf('aillu');
   const api = apiOf(request, origin);
@@ -156,15 +160,15 @@ async function demoProfessional(request: APIRequestContext) {
     staff: { professional: { id: string; specialties: string[] } | null }[];
   }>('GET', '/staff');
   const professional = staff.body.staff.find((entry) =>
-    entry.professional?.specialties.includes('Cardiología'),
+    entry.professional?.specialties.includes('Psicología'),
   )?.professional;
-  if (!professional) throw new Error('No cardiologist in the demo');
+  if (!professional) throw new Error('No psychologist in the demo');
   const types = await api.call<{ types: { id: string; name: string }[] }>(
     'GET',
     '/appointment-types',
   );
-  const type = types.body.types.find((entry) => entry.name === 'Primera consulta');
-  if (!type) throw new Error('No "Primera consulta" type in the demo');
+  const type = types.body.types.find((entry) => entry.name === 'Sesión de terapia');
+  if (!type) throw new Error('No "Sesión de terapia" type in the demo');
   return { api, origin, professionalId: professional.id, typeId: type.id };
 }
 
