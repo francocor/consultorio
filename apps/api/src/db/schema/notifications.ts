@@ -1,3 +1,169 @@
-// Tables of messaging (message, message_attempt, the local WhatsApp simulator), track A. This file is exported from index.ts already: the track that owns it fills it in
-// and adds nothing to any shared file.
-export {};
+import {
+  APPOINTMENT_MESSAGE_KINDS,
+  MESSAGE_CANCEL_REASONS,
+  MESSAGE_CHANNELS,
+  MESSAGE_FAILURE_REASONS,
+  MESSAGE_KINDS,
+  MESSAGE_STATUSES,
+} from '@consultorio/contracts';
+import { sql } from 'drizzle-orm';
+import {
+  check,
+  foreignKey,
+  index,
+  integer,
+  smallint,
+  text,
+  timestamp,
+  unique,
+  uniqueIndex,
+  uuid,
+} from 'drizzle-orm/pg-core';
+
+import { tenantTable } from './_helpers.js';
+import { patient } from './patients.js';
+import { appointment } from './scheduling.js';
+import { professional } from './staff.js';
+import { tenant } from './tenant.js';
+
+const list = (values: readonly string[]) => values.map((value) => `'${value}'`).join(', ');
+
+/** How an attempt to hand a message to its provider ended. */
+export const ATTEMPT_OUTCOMES = ['accepted', 'retryable', 'rejected', 'error'] as const;
+
+/** Who started a message: the planner (`automatic`) or a person pressing "resend" (`manual`). */
+export const MESSAGE_TRIGGERS = ['automatic', 'manual'] as const;
+
+/**
+ * One message to one patient on one channel: a reminder, a confirmation, a waitlist offer or an
+ * email-only notice. The row is the log that reception reads per appointment, so it holds METADATA
+ * only (kind, channel, status, times, reason codes): never the text, never an address, never a
+ * clinical fact. The address is kept as a hash, enough to know that "this number failed" without
+ * keeping the number, and to match an inbound WhatsApp reply to the organization that wrote first.
+ *
+ * - `dedupe_key` is unique per organization: planning and retrying the same reminder twice yields
+ *   one row, and one message on the wire.
+ * - `status` follows the design (queued, sent, delivered, read, failed, cancelled). A cancelled
+ *   message says why (`cancel_reason`), a failed one says why (`failure_reason`).
+ * - `professional_id` attributes a WhatsApp message to a professional for the usage quota.
+ * - A message is cancelled, never deleted.
+ */
+export const message = tenantTable(
+  'message',
+  {
+    /** Null for a message that is not about an appointment (a waitlist offer, a notice). */
+    appointmentId: uuid('appointment_id'),
+    patientId: uuid('patient_id').notNull(),
+    professionalId: uuid('professional_id'),
+    kind: text('kind').notNull(),
+    channel: text('channel').notNull(),
+    status: text('status').notNull().default('queued'),
+    cancelReason: text('cancel_reason'),
+    failureReason: text('failure_reason'),
+    providerMessageId: text('provider_message_id'),
+    dedupeKey: text('dedupe_key').notNull(),
+    /** SHA-256 of the address the message went to (lower-case email, E.164 number). */
+    addressHash: text('address_hash'),
+    /** The version of the appointment the message was planned for; a newer one replaces it. */
+    appointmentVersion: integer('appointment_version'),
+    /** When the message is due. */
+    sendAt: timestamp('send_at', { withTimezone: true }).notNull(),
+    sentAt: timestamp('sent_at', { withTimezone: true }),
+    deliveredAt: timestamp('delivered_at', { withTimezone: true }),
+    readAt: timestamp('read_at', { withTimezone: true }),
+    attempts: smallint('attempts').notNull().default(0),
+    trigger: text('trigger').notNull().default('automatic'),
+  },
+  (table) => [
+    foreignKey({
+      name: 'message_tenant_id_fkey',
+      columns: [table.tenantId],
+      foreignColumns: [tenant.id],
+    }),
+    foreignKey({
+      name: 'message_patient_fkey',
+      columns: [table.tenantId, table.patientId],
+      foreignColumns: [patient.tenantId, patient.id],
+    }),
+    foreignKey({
+      name: 'message_appointment_fkey',
+      columns: [table.tenantId, table.appointmentId],
+      foreignColumns: [appointment.tenantId, appointment.id],
+    }),
+    foreignKey({
+      name: 'message_professional_fkey',
+      columns: [table.tenantId, table.professionalId],
+      foreignColumns: [professional.tenantId, professional.id],
+    }),
+    check('message_kind_check', sql.raw(`"kind" in (${list(MESSAGE_KINDS)})`)),
+    check('message_channel_check', sql.raw(`"channel" in (${list(MESSAGE_CHANNELS)})`)),
+    check('message_status_check', sql.raw(`"status" in (${list(MESSAGE_STATUSES)})`)),
+    // WhatsApp carries only the messages of an appointment or a waitlist entry (D5).
+    check(
+      'message_whatsapp_kind_check',
+      sql.raw(`"channel" = 'email' or "kind" in (${list(APPOINTMENT_MESSAGE_KINDS)})`),
+    ),
+    check(
+      'message_cancel_reason_check',
+      sql.raw(
+        `("status" = 'cancelled') = ("cancel_reason" is not null) and ("cancel_reason" is null or "cancel_reason" in (${list(MESSAGE_CANCEL_REASONS)}))`,
+      ),
+    ),
+    check(
+      'message_failure_reason_check',
+      sql.raw(
+        `("status" = 'failed') = ("failure_reason" is not null) and ("failure_reason" is null or "failure_reason" in (${list(MESSAGE_FAILURE_REASONS)}))`,
+      ),
+    ),
+    check('message_trigger_check', sql.raw(`"trigger" in (${list(MESSAGE_TRIGGERS)})`)),
+    check('message_attempts_check', sql`${table.attempts} >= 0`),
+    unique('message_tenant_id_dedupe_key_key').on(table.tenantId, table.dedupeKey),
+    // A provider id names one message of one organization (the webhook finds the tenant by it).
+    uniqueIndex('message_provider_message_id_key')
+      .on(table.providerMessageId)
+      .where(sql`${table.providerMessageId} is not null`),
+    index('message_appointment_idx').on(table.tenantId, table.appointmentId, table.createdAt),
+    index('message_patient_idx').on(table.tenantId, table.patientId, table.channel),
+    index('message_queue_idx')
+      .on(table.tenantId, table.sendAt)
+      .where(sql`${table.status} = 'queued'`),
+    // "Has this address failed for good?" and "who wrote to this number?".
+    index('message_address_idx')
+      .on(table.tenantId, table.channel, table.addressHash)
+      .where(sql`${table.addressHash} is not null`),
+  ],
+);
+
+export type MessageRow = typeof message.$inferSelect;
+
+/** One try at handing a message to its provider. The reason is a code, never provider text. */
+export const messageAttempt = tenantTable(
+  'message_attempt',
+  {
+    messageId: uuid('message_id').notNull(),
+    attemptNo: smallint('attempt_no').notNull(),
+    outcome: text('outcome').notNull(),
+    reason: text('reason'),
+  },
+  (table) => [
+    foreignKey({
+      name: 'message_attempt_tenant_id_fkey',
+      columns: [table.tenantId],
+      foreignColumns: [tenant.id],
+    }),
+    foreignKey({
+      name: 'message_attempt_message_fkey',
+      columns: [table.tenantId, table.messageId],
+      foreignColumns: [message.tenantId, message.id],
+    }),
+    check('message_attempt_outcome_check', sql.raw(`"outcome" in (${list(ATTEMPT_OUTCOMES)})`)),
+    check('message_attempt_no_check', sql`${table.attemptNo} >= 1`),
+    unique('message_attempt_tenant_id_message_id_attempt_no_key').on(
+      table.tenantId,
+      table.messageId,
+      table.attemptNo,
+    ),
+  ],
+);
+
+export type MessageAttemptRow = typeof messageAttempt.$inferSelect;

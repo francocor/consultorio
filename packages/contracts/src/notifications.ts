@@ -10,6 +10,53 @@ import { z } from 'zod';
 export const MESSAGE_CHANNELS = ['email', 'whatsapp'] as const;
 export type MessageChannel = (typeof MESSAGE_CHANNELS)[number];
 
+/**
+ * What a message is about. Reminders, confirmations and waitlist offers are tied to an appointment
+ * or a waitlist entry and are the only ones that may use WhatsApp (with a recorded opt-in).
+ */
+export const APPOINTMENT_MESSAGE_KINDS = ['reminder', 'confirmation', 'waitlist_offer'] as const;
+export type AppointmentMessageKind = (typeof APPOINTMENT_MESSAGE_KINDS)[number];
+
+/** Everything else is sent by email only: codes, account flows, notices, invoices. */
+export const EMAIL_ONLY_MESSAGE_KINDS = [
+  'otp_code',
+  'invitation',
+  'password_reset',
+  'portal_notice',
+  'consent_request',
+  'invoice',
+  'subscription_notice',
+] as const;
+export type EmailOnlyMessageKind = (typeof EMAIL_ONLY_MESSAGE_KINDS)[number];
+
+export const MESSAGE_KINDS = [...APPOINTMENT_MESSAGE_KINDS, ...EMAIL_ONLY_MESSAGE_KINDS] as const;
+export type MessageKind = (typeof MESSAGE_KINDS)[number];
+
+/** Why a message ended `cancelled`. A cancelled message always carries one of these. */
+export const MESSAGE_CANCEL_REASONS = [
+  'tenant_read_only',
+  'demo_tenant',
+  'opted_out',
+  /** The appointment moved: the reminder of the earlier time is replaced. */
+  'appointment_changed',
+  'appointment_cancelled',
+  /** The appointment was attended, missed or has already started. */
+  'appointment_over',
+  'integration_off',
+  'no_channel',
+] as const;
+export type MessageCancelReason = (typeof MESSAGE_CANCEL_REASONS)[number];
+
+/** Why a message ended `failed`. Only codes: no provider text, no address. */
+export const MESSAGE_FAILURE_REASONS = [
+  'not_on_whatsapp',
+  'template_rejected',
+  'invalid_number',
+  'mailbox_unavailable',
+  'retries_exhausted',
+] as const;
+export type MessageFailureReason = (typeof MESSAGE_FAILURE_REASONS)[number];
+
 /** The life of a message, in the order it moves through them (design, section 5.2). */
 export const MESSAGE_STATUSES = [
   'queued',

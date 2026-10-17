@@ -2,8 +2,13 @@ import { describe, expect, it } from 'vitest';
 
 import { AUDIT_ACTIONS } from './audit-actions.js';
 import {
+  APPOINTMENT_MESSAGE_KINDS,
   DEFAULT_NOTIFICATION_SETTINGS,
+  EMAIL_ONLY_MESSAGE_KINDS,
+  MESSAGE_CANCEL_REASONS,
   MESSAGE_CHANNELS,
+  MESSAGE_FAILURE_REASONS,
+  MESSAGE_KINDS,
   MESSAGE_STATUSES,
   NOTIFICATION_AUDIT_ACTIONS,
   NotificationSettings,
@@ -33,6 +38,33 @@ describe('notification catalogues', () => {
       'notification.integration.changed',
     ]);
     for (const action of NOTIFICATION_AUDIT_ACTIONS) expect(AUDIT_ACTIONS).toContain(action);
+  });
+});
+
+describe('message kinds', () => {
+  it('splits every kind into appointment messages and email-only messages, with no overlap', () => {
+    expect([...APPOINTMENT_MESSAGE_KINDS]).toEqual(['reminder', 'confirmation', 'waitlist_offer']);
+    expect([...EMAIL_ONLY_MESSAGE_KINDS]).toEqual([
+      'otp_code',
+      'invitation',
+      'password_reset',
+      'portal_notice',
+      'consent_request',
+      'invoice',
+      'subscription_notice',
+    ]);
+    expect([...MESSAGE_KINDS].sort()).toEqual(
+      [...APPOINTMENT_MESSAGE_KINDS, ...EMAIL_ONLY_MESSAGE_KINDS].sort(),
+    );
+  });
+
+  it('names why a message is cancelled and why it failed, with the reasons the spec asks for', () => {
+    expect(MESSAGE_CANCEL_REASONS).toEqual(
+      expect.arrayContaining(['tenant_read_only', 'demo_tenant', 'opted_out']),
+    );
+    expect(MESSAGE_FAILURE_REASONS).toEqual(
+      expect.arrayContaining(['not_on_whatsapp', 'template_rejected', 'invalid_number']),
+    );
   });
 });
 
