@@ -498,16 +498,16 @@ Depends: Stage 1.
 
 Depends: S2.01.
 
-- [ ] 2.4 `db/schema/scheduling.ts` + migration: `appointment` (all design 3.3 columns incl. `version`, `identity_confirmed`), `appointment_event`, `slot_hold`, `slot_occupancy` with the `btree_gist` exclusion constraint (`tenant_id`, `professional_id`, `lane`, `during`) and a constraint trigger `lane <= max_simultaneous`. [SCH-03, SCH-04, SCH-05] Test: constraint rejects an overlap in one lane.
-- [ ] 2.5 Triggers keeping `slot_occupancy` in sync (active for pending_approval, scheduled, confirmed, checked_in, in_progress, attended and active holds; no_show and cancelled free it). [SCH-04, SCH-11] Test: transition table toggles `active` correctly.
-- [ ] 2.6 Concurrency test: N parallel connections book the same professional and slot, exactly one wins and the rest get `23P01`; back-to-back is allowed; buffer counts inside the range. [SCH-04] Test: that file.
+- [x] 2.4 `db/schema/scheduling.ts` + migration: `appointment` (all design 3.3 columns incl. `version`, `identity_confirmed`), `appointment_event`, `slot_hold`, `slot_occupancy` with the `btree_gist` exclusion constraint (`tenant_id`, `professional_id`, `lane`, `during`) and a constraint trigger `lane <= max_simultaneous`. [SCH-03, SCH-04, SCH-05] Test: constraint rejects an overlap in one lane.
+- [x] 2.5 Triggers keeping `slot_occupancy` in sync (active for pending_approval, scheduled, confirmed, checked_in, in_progress, attended and active holds; no_show and cancelled free it). [SCH-04, SCH-11] Test: transition table toggles `active` correctly.
+- [x] 2.6 Concurrency test: N parallel connections book the same professional and slot, exactly one wins and the rest get `23P01`; back-to-back is allowed; buffer counts inside the range. [SCH-04] Test: that file.
 
 ## S2.03 Lane assignment domain and time zones (~350 lines)
 
 Depends: S2.02.
 
-- [ ] 2.7 `modules/scheduling/domain/lanes.ts`: `assignLane` and greedy `relane` (pure). [SCH-04] Test: unit tables.
-- [ ] 2.8 Property tests (fast-check): random interval sets never exceed capacity, no overlap per lane, `relane` fits whenever feasible. [SCH-04] Test: that file.
+- [x] 2.7 `modules/scheduling/domain/lanes.ts`: `assignLane` and greedy `relane` (pure). [SCH-04] Test: unit tables.
+- [x] 2.8 Property tests (fast-check): random interval sets never exceed capacity, no overlap per lane, `relane` fits whenever feasible. [SCH-04] Test: that file.
 - [x] 2.9 `domain/time.ts`: location time zone conversions with DST gap and overlap handling (use a maintained library such as luxon). [SCH-08] Test: spring-forward and fall-back cases in a DST zone.
 
 ## S2.04 Booking service (~400 lines)
