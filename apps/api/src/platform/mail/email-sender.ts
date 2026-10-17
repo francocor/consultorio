@@ -3,7 +3,8 @@
  * delivers it is an adapter: SMTP (Mailpit locally, SES SMTP in production) or an in-memory fake
  * in tests. The native SES API adapter arrives with `notifications` in Stage 3.
  *
- * Only account flows go through here: a person's own password reset and staff invitation. Nothing
+ * Only account and security flows go through here: a person's own password reset, staff invitation
+ * and the notice to the owners when an admin adds a professional (decision D19). Nothing
  * clinical is ever put in an email.
  */
 export interface EmailMessage {
