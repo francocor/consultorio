@@ -88,6 +88,7 @@ Good paths to show:
 2. **Dra. Paz** opens the patient, records an allergy; the alert appears for reception as "consult the professional", never the allergy.
 3. **The owner** opens the audit trail, filters by that patient, exports it, and changes the branding: the new color is there after a reload, with no flash.
 4. In the **operator console**, create an organization and read the owner's invitation in Mailpit.
+5. **The first run.** The demo organizations are already set up (their wizard is finished and their checklist is dismissed, so it opens on the agenda). To show what a new customer sees, create an organization in the operator console, accept the owner's invitation from Mailpit and sign in: the setup wizard opens by itself, with the quick setup for a solo professional (a consultorio ready to book in one screen) and the step by step for a center. The checklist "Primeros pasos" then sits on the start page and in the account menu.
 
 ## Resetting the demo
 

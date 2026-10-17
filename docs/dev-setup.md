@@ -136,6 +136,14 @@ To try the production image locally: `docker compose --env-file .env -f infra/do
 
 Migrations are forward-only. Never edit a migration that has been merged; add a new one.
 
+`pnpm test:e2e` expects the preview server on port 4173 and the API on 3100. When another run holds those ports (several worktrees on one machine), start the stack and the preview by hand on free ports and tell Playwright:
+
+```bash
+pnpm --filter @consultorio/api exec tsx scripts/e2e-stack.ts --port 3310 --info ../web/e2e/.stack/info.json
+API_PROXY_TARGET=http://127.0.0.1:3310 pnpm --filter @consultorio/web exec vite preview --port 4310 --strictPort
+E2E_WEB_PORT=4310 E2E_API_PORT=3310 pnpm --filter @consultorio/web exec playwright test --workers=3
+```
+
 ## Troubleshooting
 
 - **Install fails with an engine error**: your Node is older than 24. Use `nvm use` (reads `.nvmrc`) or install Node 24.
