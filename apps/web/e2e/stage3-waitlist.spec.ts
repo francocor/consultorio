@@ -153,6 +153,8 @@ async function createOrganization(
       await owner.call('POST', '/onboarding/fast-path', {
         fullName: 'Dra. Ana Espera',
         specialties: ['Nutrición'],
+        // The owner who attends needs a complete profile (decision D21).
+        matricula: { jurisdiction: 'AR-B', number: '45678' },
       })
     ).status,
   ).toBe(200);
@@ -376,8 +378,9 @@ test('a visitor joins the waitlist, reception looks after it, and a cancellation
   const taken = await bookSomeone(org, firstSlot, suffix);
   await cancel(org, taken);
   const offer = await emailTo(email, /Hay un turno disponible/i);
-  expect(offer).toContain('Dónde:');
-  expect(offer).not.toMatch(/Consulta|motivo/i);
+  expect(offer).toContain('Lugar:');
+  // Nothing about the type of visit or a reason (the organization's own name may say "Consultorio").
+  expect(offer).not.toMatch(/Consulta\b|motivo/i);
   const offerLink = localLink(linkIn(offer, '/public/t/'));
 
   await guest.page.goto(offerLink);

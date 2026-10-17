@@ -7,6 +7,7 @@ import {
   SlotTakenError,
 } from '../../../../modules/scheduling/application/book-appointment.js';
 import { createSchedulingPorts } from '../../../../modules/scheduling/application/drizzle-ports.js';
+import { createHolidayService } from '../../../../modules/scheduling/application/holidays.js';
 import type { BookActor } from '../../../../modules/scheduling/application/placement.js';
 import type { SchedulingPorts } from '../../../../modules/scheduling/application/ports.js';
 import { instantAtLocalMinute, localParts } from '../../../../modules/scheduling/domain/time.js';
@@ -84,8 +85,10 @@ export interface FreeSlot {
 /**
  * The times at which a professional works, from the third week ahead on: the agenda of the demo
  * only fills the weeks around today, so these are free. One candidate per working block and week,
- * in order, so two seeds of the same day pick the same times. `taken` keeps the callers from
- * choosing one time twice.
+ * in order, so two seeds of the same day pick the same times. Days the calendar marks as closed (a
+ * national holiday, a day off of the organization) are left out: nothing can be booked on them, so
+ * a seed that chose one would silently build nothing. `taken` keeps the callers from choosing one
+ * time twice.
  */
 export async function candidateSlots(
   tx: Tx,
@@ -116,6 +119,12 @@ export async function candidateSlots(
       asc(professionalHours.locationId),
     );
   const monday = mondayOf(input.now);
+  const closed = await createHolidayService().holidaysBetween(tx, monday, addDays(monday, 14 * 7));
+  const isClosed = (date: string, locationId: string) =>
+    closed.some(
+      (holiday) =>
+        holiday.day === date && (!holiday.locationId || holiday.locationId === locationId),
+    );
   const found: FreeSlot[] = [];
   for (let week = input.firstWeek ?? 3; week < 14 && found.length < input.count; week += 1) {
     for (const block of blocks) {
@@ -123,6 +132,7 @@ export async function candidateSlots(
       const startMinute = block.startMinute + 60;
       if (startMinute + 60 > block.endMinute) continue;
       const date = addDays(monday, week * 7 + block.weekday - 1);
+      if (isClosed(date, block.locationId)) continue;
       const startsAt = instantAtLocalMinute(block.timeZone, date, startMinute);
       const key = `${input.professionalId}|${String(startsAt.getTime())}`;
       if (input.taken.has(key)) continue;

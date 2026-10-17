@@ -308,3 +308,34 @@ describe('the seed is repeatable', () => {
     expect(a.waitlist.length).toBeGreaterThan(0);
   });
 });
+
+describe('whatever day the demonstration organization is seeded', () => {
+  it('leaves out the closed days: a bridge holiday three months out costs the demo nothing', async () => {
+    // Seeded on a Saturday evening, the eighth week ahead starts on Monday 2026-12-07, a bridge
+    // holiday in the Argentine calendar: nothing can be booked or offered on it.
+    const evening = { ...deps, clock: () => new Date('2026-10-17T21:48:00Z') };
+    const id = (
+      await createTestTenant(runtime, { slug: 'stage3-evening', isDemo: true, billingExempt: true })
+    ).id;
+
+    await seedDemoTenant(evening, id);
+
+    const [state] = await rows<{
+      online: number;
+      virtual: number;
+      offered: number;
+      calls: number;
+      onHoliday: number;
+    }>(
+      id,
+      sql`SELECT (SELECT count(*)::int FROM appointment WHERE source = 'online') AS online,
+                 (SELECT count(*)::int FROM video_session) AS virtual,
+                 (SELECT count(*)::int FROM waitlist_entry WHERE status = 'offered') AS offered,
+                 (SELECT count(*)::int FROM waitlist_call) AS calls,
+                 (SELECT count(*)::int FROM appointment a
+                    JOIN holiday_catalog h ON h.date = (a.starts_at AT TIME ZONE 'America/Argentina/Buenos_Aires')::date
+                   WHERE h.removed_at IS NULL AND a.status <> 'cancelled') AS "onHoliday"`,
+    );
+    expect(state).toEqual({ online: 3, virtual: 4, offered: 1, calls: 2, onHoliday: 0 });
+  }, 120_000);
+});
