@@ -56,6 +56,8 @@ export const BookAppointmentRequest = z
     overrideHours: OverrideHours.optional(),
     /** Book over an active slot hold, invalidating it. */
     overrideHold: z.boolean().optional(),
+    /** Finishes a slot hold: the booking takes the held range and the hold ends as converted. */
+    holdId: z.uuid().optional(),
   })
   .superRefine((value, ctx) => {
     if ((value.startsAt === undefined) === (value.local === undefined)) {
@@ -325,3 +327,41 @@ export const DetachPatientRequest = z.discriminatedUnion('resolution', [
   }),
 ]);
 export type DetachPatientRequest = z.infer<typeof DetachPatientRequest>;
+
+// Slot holds ----------------------------------------------------------------------------------
+
+export const HOLD_STATUSES = ['active', 'converted', 'expired', 'released', 'invalidated'] as const;
+export type HoldStatus = (typeof HOLD_STATUSES)[number];
+
+/** Starts a short reservation of a range while a booking is completed. */
+export const CreateHoldRequest = z
+  .object({
+    professionalId: z.uuid(),
+    locationId: z.uuid(),
+    appointmentTypeId: z.uuid(),
+    startsAt: Instant.optional(),
+    local: LocalStart.optional(),
+  })
+  .superRefine((value, ctx) => {
+    if ((value.startsAt === undefined) === (value.local === undefined)) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['startsAt'],
+        message: 'give either an instant or a local time',
+      });
+    }
+  });
+export type CreateHoldRequest = z.infer<typeof CreateHoldRequest>;
+
+/** A hold has no patient and no appointment status: it is only a reserved range. */
+export const HoldDto = z.strictObject({
+  id: z.uuid(),
+  professionalId: z.uuid(),
+  locationId: z.uuid(),
+  startsAt: Instant,
+  endsAt: Instant,
+  expiresAt: Instant,
+  status: z.enum(HOLD_STATUSES),
+  origin: z.enum(['public', 'staff']),
+});
+export type HoldDto = z.infer<typeof HoldDto>;

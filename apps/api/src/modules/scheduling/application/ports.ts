@@ -144,6 +144,35 @@ export interface AppointmentPatch {
   patientId?: string;
 }
 
+/** A short reservation of a range (a slot hold) as the use cases read it. */
+export interface HoldRecord {
+  id: string;
+  professionalId: string;
+  locationId: string;
+  startsAt: Date;
+  endsAt: Date;
+  bufferMinutes: number;
+  lane: number;
+  status: 'active' | 'converted' | 'expired' | 'released' | 'invalidated';
+  expiresAt: Date;
+  origin: 'public' | 'staff';
+  sourceKey: string;
+  appointmentId: string | null;
+}
+
+export interface NewHold {
+  professionalId: string;
+  locationId: string;
+  startsAt: Date;
+  endsAt: Date;
+  bufferMinutes: number;
+  lane: number;
+  expiresAt: Date;
+  origin: 'public' | 'staff';
+  sourceKey: string;
+  createdBy: string | null;
+}
+
 export interface SchedulingPorts {
   /** Takes the row lock that serializes every write of one professional (design 4.6). */
   lockProfessional(id: string): Promise<ProfessionalRecord | null>;
@@ -177,6 +206,17 @@ export interface SchedulingPorts {
   updateAppointment(id: string, patch: AppointmentPatch): Promise<AppointmentDto>;
   /** The organization's late-cancellation window, in hours (default 24). */
   lateCancellationHours(): Promise<number>;
+  findHold(id: string, options?: { lock?: boolean }): Promise<HoldRecord | null>;
+  insertHold(values: NewHold): Promise<HoldRecord>;
+  updateHold(
+    id: string,
+    patch: { status?: HoldRecord['status']; appointmentId?: string },
+  ): Promise<void>;
+  /**
+   * Releases the active holds of a source beyond the newest `keep` (a new hold from the same source
+   * replaces the previous one; the bound is per source).
+   */
+  releaseOldestHolds(sourceKey: string, keep: number): Promise<void>;
   /** D18: exactly one active professional and no other active member who could confirm. */
   soloPractice(): Promise<boolean>;
   /**

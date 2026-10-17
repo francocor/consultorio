@@ -20,4 +20,6 @@ export const QUEUES: readonly QueueDefinition[] = [
   { name: 'audit.seal', options: { retryLimit: 2, retryDelay: 5, expireInSeconds: 120 } },
   // Nightly re-walk of every tenant's chain.
   { name: 'audit.verify', options: { retryLimit: 1, retryDelay: 60, expireInSeconds: 1800 } },
+  // Ends the slot holds that ran out, one job per tenant every minute (scheduling).
+  { name: 'hold.expire', options: { retryLimit: 1, retryDelay: 30, expireInSeconds: 120 } },
 ];

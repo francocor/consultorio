@@ -20,7 +20,6 @@ import {
 } from '../domain/appointment-state-machine.js';
 import { canConfirmIdentity, type IdentityConfirmation } from '../domain/identity-confirmation.js';
 
-import { typeOffered } from './book-appointment.js';
 import { recordIdentityConfirmed } from './identity-records.js';
 import {
   applyPlan,
@@ -28,6 +27,7 @@ import {
   invalid,
   planSlot,
   resolveStart,
+  typeOffered,
   type BookActor,
   type PlanInput,
 } from './placement.js';

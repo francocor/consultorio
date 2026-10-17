@@ -5,7 +5,9 @@ import {
   CancelAppointmentRequest,
   CheckInRequest,
   CorrectStatusRequest,
+  CreateHoldRequest,
   DetachPatientRequest,
+  HoldDto,
   RescheduleRequest,
   TransitionRequest,
   effectivePermissions,
@@ -26,6 +28,7 @@ import { AccessRefused, visibleLocationIds } from '../../access/index.js';
 import { bookAppointment, SlotTakenError } from '../application/book-appointment.js';
 import { createSchedulingPorts, isExclusionViolation } from '../application/drizzle-ports.js';
 import { appointmentHistory } from '../application/history.js';
+import { createHold, releaseHold } from '../application/holds.js';
 import { detachPatient } from '../application/identity.js';
 import {
   correctStatus,
@@ -33,7 +36,7 @@ import {
   transitionAppointment,
   type TransitionAction,
 } from '../application/lifecycle.js';
-import type { BookActor } from '../application/placement.js';
+import { SlotNoLongerAvailableError, type BookActor } from '../application/placement.js';
 import type { LocationRecord } from '../application/ports.js';
 import type { TimeRange } from '../domain/working-hours.js';
 
@@ -78,6 +81,14 @@ export function replySlotTaken(
     ? { conflict: slotRange(error.conflict), nextSlots: error.nextSlots.map(slotRange) }
     : {};
   return conflictCode(request, reply, 'slot_taken', extra);
+}
+
+/** The 409 for a hold that ended before its holder finished (scheduling, "Slot holds"). */
+export function replySlotNoLongerAvailable(
+  request: FastifyRequest,
+  reply: FastifyReply,
+): FastifyReply {
+  return conflictCode(request, reply, 'slot_no_longer_available');
 }
 
 /**
@@ -135,6 +146,9 @@ export function appointmentRoutes(deps: AppointmentRoutesDeps) {
       } catch (error) {
         // Fastify takes the reply itself as the result of an async handler once it is sent.
         if (error instanceof SlotTakenError) return replySlotTaken(request, reply, error) as never;
+        if (error instanceof SlotNoLongerAvailableError) {
+          return replySlotNoLongerAvailable(request, reply) as never;
+        }
         if (isExclusionViolation(error)) return replySlotTaken(request, reply) as never;
         if (error instanceof AccessRefused) {
           return await refuseRequest(deps.auditDeny, request, {
@@ -172,6 +186,9 @@ export function appointmentRoutes(deps: AppointmentRoutesDeps) {
           return await reply.code(201).send(created);
         } catch (error) {
           if (error instanceof SlotTakenError) return replySlotTaken(request, reply, error);
+          if (error instanceof SlotNoLongerAvailableError) {
+            return replySlotNoLongerAvailable(request, reply);
+          }
           if (isExclusionViolation(error)) return replySlotTaken(request, reply);
           if (error instanceof AccessRefused) {
             return await refuseRequest(deps.auditDeny, request, {
@@ -182,6 +199,60 @@ export function appointmentRoutes(deps: AppointmentRoutesDeps) {
           }
           throw error;
         }
+      },
+    );
+
+    // A slot hold is not an appointment: no patient, no status, no history. It only keeps a range
+    // for a short time while a booking is completed, and it ends by itself.
+    typed.post(
+      '/slot-holds',
+      {
+        config: { readOnly: 'write', permission: 'scheduling.book', audits: 'none' },
+        schema: { body: CreateHoldRequest, response: { 201: HoldDto } },
+      },
+      async (request, reply) => {
+        const { actor, book, context } = requestActor(request);
+        try {
+          const created = await deps.withTenant(context, (tx) =>
+            createHold(createSchedulingPorts(tx, { keys: deps.keys }), {
+              request: request.body,
+              actor: book,
+              now: deps.clock(),
+              origin: 'staff',
+              sourceKey: actor.userId,
+              authorizeLocation: locationAuthorizer(tx, actor),
+            }),
+          );
+          return await reply.code(201).send(created);
+        } catch (error) {
+          if (error instanceof SlotTakenError) return replySlotTaken(request, reply, error);
+          if (isExclusionViolation(error)) return replySlotTaken(request, reply);
+          if (error instanceof AccessRefused) {
+            return await refuseRequest(deps.auditDeny, request, {
+              reason: error.reason,
+              resourceType: 'slot_hold',
+            });
+          }
+          throw error;
+        }
+      },
+    );
+
+    typed.delete(
+      '/slot-holds/:id',
+      {
+        config: { readOnly: 'write', permission: 'scheduling.book', audits: 'none' },
+        schema: { params: IdParams, response: { 200: HoldDto } },
+      },
+      (request) => {
+        const { actor, context } = requestActor(request);
+        return deps.withTenant(context, (tx) =>
+          releaseHold(createSchedulingPorts(tx, { keys: deps.keys }), {
+            holdId: request.params.id,
+            sourceKey: actor.userId,
+            now: deps.clock(),
+          }),
+        );
       },
     );
 

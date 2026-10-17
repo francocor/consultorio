@@ -1,5 +1,5 @@
 import type { AppointmentDto } from '@consultorio/contracts';
-import { and, asc, eq, gt, inArray, isNull, lt, lte, gte, or, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, gt, gte, inArray, isNull, lt, lte, or, sql } from 'drizzle-orm';
 
 import { patient } from '../../../db/schema/patients.js';
 import {
@@ -17,7 +17,7 @@ import { isSoloPractice } from '../domain/identity-confirmation.js';
 import type { HoursPeriod, HoursRow } from '../domain/working-hours.js';
 
 import { createHolidayService } from './holidays.js';
-import type { ActiveOccupancy, AppointmentRecord, SchedulingPorts } from './ports.js';
+import type { ActiveOccupancy, AppointmentRecord, HoldRecord, SchedulingPorts } from './ports.js';
 import { createWorklistService } from './worklist.js';
 
 const EXCLUSION_VIOLATION = '23P01';
@@ -86,6 +86,23 @@ export function toAppointmentDto(row: {
     endsAt: row.endsAt.toISOString(),
     status: row.status as AppointmentDto['status'],
     source: row.source as AppointmentDto['source'],
+  };
+}
+
+function toHoldRecord(row: typeof slotHold.$inferSelect): HoldRecord {
+  return {
+    id: row.id,
+    professionalId: row.professionalId,
+    locationId: row.locationId,
+    startsAt: row.startsAt,
+    endsAt: row.endsAt,
+    bufferMinutes: row.bufferMinutes,
+    lane: row.lane,
+    status: row.status as HoldRecord['status'],
+    expiresAt: row.expiresAt,
+    origin: row.origin === 'public' ? 'public' : 'staff',
+    sourceKey: row.sourceKey,
+    appointmentId: row.appointmentId,
   };
 }
 
@@ -343,6 +360,44 @@ export function createSchedulingPorts(tx: Tx, deps: { keys: TenantKeys }): Sched
       const [row] = await tx.select({ settings: tenant.settings }).from(tenant);
       const value = row?.settings['late_cancellation_hours'];
       return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : 24;
+    },
+
+    async findHold(id, options) {
+      const query = tx.select().from(slotHold).where(eq(slotHold.id, id));
+      const [row] = await (options?.lock ? query.for('update') : query);
+      return row ? toHoldRecord(row) : null;
+    },
+
+    async insertHold(values) {
+      const [row] = await tx
+        .insert(slotHold)
+        .values({ tenantId: sql`current_setting('app.tenant_id')::uuid`, ...values })
+        .returning();
+      if (!row) throw new Error('hold insert returned no row');
+      return toHoldRecord(row);
+    },
+
+    async updateHold(id, patch) {
+      await tx.update(slotHold).set(patch).where(eq(slotHold.id, id));
+    },
+
+    async releaseOldestHolds(sourceKey, keep) {
+      const mine = await tx
+        .select({ id: slotHold.id })
+        .from(slotHold)
+        .where(and(eq(slotHold.sourceKey, sourceKey), eq(slotHold.status, 'active')))
+        .orderBy(desc(slotHold.createdAt), desc(slotHold.id))
+        .offset(keep);
+      if (mine.length === 0) return;
+      await tx
+        .update(slotHold)
+        .set({ status: 'released' })
+        .where(
+          inArray(
+            slotHold.id,
+            mine.map((row) => row.id),
+          ),
+        );
     },
 
     async soloPractice() {

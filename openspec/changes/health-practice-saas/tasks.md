@@ -555,8 +555,8 @@ Depends: S2.02, S1.17.
 
 Depends: S2.04.
 
-- [ ] 2.26 `application/holds.ts`: create (staff origin now, public in Stage 3), per-source bound (release oldest), expiry, staff override marks the hold `invalidated`, conversion to appointment; job `hold.expire` (marks `expired`, no waitlist trigger). [SCH-05] Test: unit and integration.
-- [ ] 2.27 Capacity-1 helper for public flows (`requireNoActiveOverlap`) and the `409 slot_no_longer_available` path after an override. [SCH-05, SCH-04] Test: integration of override then confirm.
+- [x] 2.26 `application/holds.ts`: create (staff origin now, public in Stage 3), per-source bound (release oldest), expiry, staff override marks the hold `invalidated`, conversion to appointment; job `hold.expire` (marks `expired`, no waitlist trigger). [SCH-05] Test: unit and integration.
+- [x] 2.27 Capacity-1 helper for public flows (`requireNoActiveOverlap`) and the `409 slot_no_longer_available` path after an override. [SCH-05, SCH-04] Test: integration of override then confirm.
 
 ## S2.10 Availability and recurring series (~350 lines)
 

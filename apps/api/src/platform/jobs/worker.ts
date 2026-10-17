@@ -7,7 +7,7 @@ import { SYSTEM_USER_ID, createWithTenant } from '../db/tenant-context.js';
 import { createMetrics, type Metrics } from '../metrics.js';
 
 import { createBoss, createJobClient, type JobClient } from './boss.js';
-import { registerJobs, type WorkerLog } from './define-job.js';
+import { registerJobs, type JobDefinition, type WorkerLog } from './define-job.js';
 import { listTenantIds } from './tenant-scan.js';
 import { createDailyTicker, createTicker, type Ticker } from './ticker.js';
 
@@ -28,6 +28,12 @@ export interface WorkerOptions {
   pollingIntervalSeconds?: number;
   /** UTC hour of the nightly verification and partition upkeep. Defaults to 3. */
   nightlyHourUtc?: number;
+  /**
+   * Per-organization jobs of the capability modules, with how often to queue one for every
+   * organization (for example `hold.expire` every minute). The composition root passes them; the
+   * platform does not import the modules.
+   */
+  tenantJobs?: readonly { definition: JobDefinition; everyMs: number }[];
 }
 
 export interface Worker {
@@ -79,7 +85,7 @@ export async function startWorker(options: WorkerOptions): Promise<Worker> {
   await registerJobs(
     boss,
     { db: handle.db, log: options.log },
-    [audit.seal, audit.verify],
+    [audit.seal, audit.verify, ...(options.tenantJobs ?? []).map((job) => job.definition)],
     options.pollingIntervalSeconds === undefined
       ? {}
       : { pollingIntervalSeconds: options.pollingIntervalSeconds },
@@ -114,6 +120,17 @@ export async function startWorker(options: WorkerOptions): Promise<Worker> {
       },
       onError: report('platform audit seal tick'),
     }),
+    ...(options.tenantJobs ?? []).map((job) =>
+      createTicker({
+        intervalMs: job.everyMs,
+        tick: async () => {
+          await fanOut(handle.db, client, job.definition.name, {
+            singletonSeconds: Math.max(1, Math.floor(job.everyMs / 2000)),
+          });
+        },
+        onError: report(`${job.definition.name} tick`),
+      }),
+    ),
     createDailyTicker({
       hourUtc: options.nightlyHourUtc ?? 3,
       tick: async () => {

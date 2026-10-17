@@ -9,6 +9,7 @@ import { createS3ObjectStorage } from '../adapters/s3/index.js';
 import { consentTextFor, createDemoResetPort } from '../db/seed/demo/index.js';
 import { createPasswordHasher } from '../modules/identity/index.js';
 import { createOperatorSecrets } from '../modules/operator/index.js';
+import { holdExpireJob } from '../modules/scheduling/index.js';
 import { createTenantKeys } from '../platform/crypto/tenant-keys.js';
 import { createOperatorDb, createRuntimeDb } from '../platform/db/pool.js';
 import { createDbProbe } from '../platform/db/probe.js';
@@ -151,6 +152,8 @@ async function runWorker(config: Config): Promise<void> {
     databaseUrl: config.databaseUrl,
     sealerDatabaseUrl: config.auditSealerDatabaseUrl,
     log,
+    // Scheduling: the holds that ran out are ended every minute (they are also ended lazily).
+    tenantJobs: [{ definition: holdExpireJob, everyMs: 60_000 }],
   });
   log.info('worker started');
   await waitForShutdownSignal();

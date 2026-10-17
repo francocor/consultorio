@@ -10,12 +10,14 @@ import {
   invalid,
   planSlot,
   resolveStart,
+  SlotNoLongerAvailableError,
+  typeOffered,
   type BookActor,
   type PlanInput,
 } from './placement.js';
-import type { LocationRecord, ProfessionalRecord, SchedulingPorts, TypeRecord } from './ports.js';
+import type { HoldRecord, LocationRecord, SchedulingPorts } from './ports.js';
 
-export { SlotTakenError, invalid } from './placement.js';
+export { SlotNoLongerAvailableError, SlotTakenError, invalid, typeOffered } from './placement.js';
 export type { BookActor } from './placement.js';
 
 export interface BookInput {
@@ -28,17 +30,6 @@ export interface BookInput {
    * as a denial, and one that does not exist (or belongs to another organization) as not found.
    */
   authorizeLocation?: (location: LocationRecord) => Promise<void>;
-}
-
-/** The professional offers this type (restricted by professional or specialty, or open to all). */
-export function typeOffered(type: TypeRecord, professional: ProfessionalRecord): boolean {
-  if (type.professionalIds.length > 0 && !type.professionalIds.includes(professional.id)) {
-    return false;
-  }
-  return (
-    type.specialties.length === 0 ||
-    type.specialties.some((specialty) => professional.specialties.includes(specialty))
-  );
 }
 
 /**
@@ -79,21 +70,44 @@ export async function bookAppointment(
     throw invalid('appointmentTypeId', 'scheduling.booking.type_not_offered');
   }
 
+  const startsAt = resolveStart(request, location);
+
+  // Finishing a hold: it must still be active (a staff override or the clock may have ended it) and
+  // be the range being booked. Its own occupancy does not count against the booking.
+  let hold: HoldRecord | null = null;
+  if (request.holdId !== undefined) {
+    await ports.expireHolds(professional.id, now);
+    hold = await ports.findHold(request.holdId, { lock: true });
+    // A hold belongs to whoever made it: anyone else's looks like it does not exist.
+    if (hold?.sourceKey !== actor.userId) throw new AppError('not_found');
+    if (hold.status !== 'active') throw new SlotNoLongerAvailableError();
+    if (
+      hold.professionalId !== professional.id ||
+      hold.locationId !== location.id ||
+      hold.startsAt.getTime() !== startsAt.getTime()
+    ) {
+      throw invalid('holdId', 'scheduling.hold.mismatch');
+    }
+  }
+
   const planInput: PlanInput = {
     professional,
     location,
     durationMinutes: type.durationMinutes,
     bufferMinutes: type.bufferMinutes,
-    startsAt: resolveStart(request, location),
+    startsAt,
     actor,
     now,
     overrideHours: request.overrideHours,
     overrideHold: request.overrideHold,
     checkPast: true,
     checkHours: true,
+    ...(hold ? { ignoreHoldId: hold.id } : {}),
   };
   const plan = await planSlot(ports, planInput);
   await applyPlan(ports, plan);
+  // The hold stops occupying the range before the appointment takes it (one lane, one occupant).
+  if (hold) await ports.updateHold(hold.id, { status: 'converted' });
 
   // D14: attaching an appointment to an EXISTING patient without anybody checking who the patient
   // is (the professional booking themselves) leaves the identity unconfirmed. A patient the actor
@@ -123,6 +137,7 @@ export async function bookAppointment(
   });
   if (!inserted.ok) throw await conflictAfterRace(ports, planInput, plan);
   const { appointment } = inserted;
+  if (hold) await ports.updateHold(hold.id, { appointmentId: appointment.id });
 
   if (!identityConfirmed) {
     await ports.openWorklistItem({

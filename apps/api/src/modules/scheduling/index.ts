@@ -20,6 +20,7 @@ import { configRoutes } from './http/config-routes.js';
 import { worklistRoutes } from './http/worklist-routes.js';
 
 export type { OpenItemInput, WorklistService } from './application/worklist.js';
+export { HOLD_EXPIRE_JOB, holdExpireJob } from './application/hold-expiry.js';
 
 export interface SchedulingOptions {
   withTenant: WithTenant;

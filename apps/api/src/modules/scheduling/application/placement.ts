@@ -2,7 +2,7 @@ import type { LocalStart, OverrideHours } from '@consultorio/contracts';
 
 import { AppError } from '../../../platform/http/problem.js';
 import { AccessRefused } from '../../access/index.js';
-import { assignLane, relane, type LaneMove } from '../domain/lanes.js';
+import { assignLane, overlaps, relane, type LaneMove } from '../domain/lanes.js';
 import { chooseOccurrence, resolveLocal } from '../domain/time.js';
 import type { TimeRange } from '../domain/working-hours.js';
 
@@ -12,6 +12,7 @@ import type {
   LocationRecord,
   ProfessionalRecord,
   SchedulingPorts,
+  TypeRecord,
 } from './ports.js';
 import { freeSlots, scheduleFacts } from './schedule-facts.js';
 
@@ -37,6 +38,29 @@ export class SlotTakenError extends Error {
     super('slot_taken');
     this.name = 'SlotTakenError';
   }
+}
+
+/**
+ * The hold a booking tried to finish is gone: it ran out, its holder released it, it was already
+ * converted, or staff booked over it with an override. The holder is told the slot is no longer
+ * available (a 409 `slot_no_longer_available`).
+ */
+export class SlotNoLongerAvailableError extends Error {
+  constructor() {
+    super('slot_no_longer_available');
+    this.name = 'SlotNoLongerAvailableError';
+  }
+}
+
+/** The professional offers this type (restricted by professional or specialty, or open to all). */
+export function typeOffered(type: TypeRecord, professional: ProfessionalRecord): boolean {
+  if (type.professionalIds.length > 0 && !type.professionalIds.includes(professional.id)) {
+    return false;
+  }
+  return (
+    type.specialties.length === 0 ||
+    type.specialties.some((specialty) => professional.specialties.includes(specialty))
+  );
 }
 
 export function invalid(path: string, i18nKey: string): AppError {
@@ -72,14 +96,22 @@ interface Placement {
   moves: LaneMove[];
 }
 
-/** The lowest free lane, re-laning when capacity allows it. Never two locations at once. */
+/**
+ * The lowest free lane, re-laning when capacity allows it. Never two locations at once. With
+ * `capacityOne` (public flows) the professional's capacity does not matter: ANY overlapping
+ * occupancy refuses the range and the lane is always 1.
+ */
 export function place(
   occupancies: readonly ActiveOccupancy[],
   range: TimeRange,
   locationId: string,
   capacity: number,
+  capacityOne = false,
 ): Placement | null {
   if (occupancies.some((other) => other.locationId !== locationId)) return null;
+  if (capacityOne) {
+    return occupancies.some((other) => overlaps(other, range)) ? null : { lane: 1, moves: [] };
+  }
   const lane = assignLane(occupancies, range, capacity);
   if (lane !== null) return { lane, moves: [] };
   const rearranged = relane(occupancies, range, capacity);
@@ -98,6 +130,13 @@ export interface PlanInput {
   overrideHold?: boolean | undefined;
   /** An appointment whose own occupancy must not count (it is the one being moved or corrected). */
   ignoreAppointmentId?: string;
+  /** A hold whose own occupancy must not count (it is the one being converted). */
+  ignoreHoldId?: string;
+  /**
+   * Public flows (online booking, waitlist offers) use capacity 1 and never an overbooked lane:
+   * any active occupancy that overlaps the range refuses it, whatever the professional allows.
+   */
+  capacityOne?: boolean;
   /** Check a start in the past (a booking), or leave it alone (a correction of the past). */
   checkPast: boolean;
   /** Check hours, blocks and holidays (a booking or a move), or only capacity (a correction). */
@@ -122,7 +161,7 @@ async function conflictOf(
   occupied: TimeRange,
 ): Promise<SlotTakenError> {
   const taken = (await ports.occupancies(input.professional.id, occupied)).find(
-    (other) => other.id !== input.ignoreAppointmentId,
+    (other) => other.id !== input.ignoreAppointmentId && other.id !== input.ignoreHoldId,
   );
   const nextSlots = await freeSlots(ports, {
     professionalId: input.professional.id,
@@ -192,14 +231,11 @@ export async function planSlot(ports: SchedulingPorts, input: PlanInput): Promis
   // Holds that ran out stop counting; then look at what is really occupied.
   await ports.expireHolds(input.professional.id, input.now);
   const occupancies = (await ports.occupancies(input.professional.id, occupied)).filter(
-    (other) => other.id !== input.ignoreAppointmentId,
+    (other) => other.id !== input.ignoreAppointmentId && other.id !== input.ignoreHoldId,
   );
-  let placement = place(
-    occupancies,
-    occupied,
-    input.location.id,
-    input.professional.maxSimultaneous,
-  );
+  const capacity = input.professional.maxSimultaneous;
+  const capacityOne = input.capacityOne === true;
+  let placement = place(occupancies, occupied, input.location.id, capacity, capacityOne);
   let invalidatedHolds: string[] = [];
   let basis = occupancies;
   if (placement === null && input.overrideHold === true) {
@@ -207,7 +243,7 @@ export async function planSlot(ports: SchedulingPorts, input: PlanInput): Promis
     const withoutHolds = occupancies.filter((other) => other.kind !== 'hold');
     placement =
       holds.length > 0
-        ? place(withoutHolds, occupied, input.location.id, input.professional.maxSimultaneous)
+        ? place(withoutHolds, occupied, input.location.id, capacity, capacityOne)
         : null;
     if (placement !== null) {
       invalidatedHolds = holds.map((hold) => hold.id);
@@ -247,4 +283,16 @@ export function conflictAfterRace(
   plan: Plan,
 ): Promise<SlotTakenError> {
   return conflictOf(ports, input, plan.range, plan.occupied);
+}
+
+/**
+ * For public flows (online booking, reschedule links, waitlist offers): refuses the range when ANY
+ * active occupancy overlaps it, whatever the professional's capacity, and takes lane 1. The lanes
+ * above 1 stay reachable only to staff (design 4.6).
+ */
+export function requireNoActiveOverlap(
+  ports: SchedulingPorts,
+  input: Omit<PlanInput, 'capacityOne'>,
+): Promise<Plan> {
+  return planSlot(ports, { ...input, capacityOne: true });
 }
