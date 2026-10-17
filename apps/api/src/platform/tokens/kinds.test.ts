@@ -26,18 +26,30 @@ describe('action token kinds (design 4.5)', () => {
     );
   });
 
-  it('enables the account flows and the document download for now', () => {
+  it('enables the account flows and the document download, and only the kinds a capability has turned on', () => {
     const enabled = TOKEN_KINDS.filter((kind) => isEnabledKind(kind)).sort();
+    const fromStageOne = [
+      'document_download',
+      'password_reset',
+      'portal_activation',
+      'signup_verification',
+      'staff_invitation',
+    ];
+    // Each Stage 3 track turns on its own kinds and nothing else.
+    const fromStageThree = [
+      'appointment_cancel',
+      'appointment_confirm',
+      'appointment_reschedule',
+      'notification_opt_out',
+      'video_join',
+      'waitlist_offer',
+      'whatsapp_opt_in',
+    ];
 
-    expect(enabled).toEqual(
-      [
-        'document_download',
-        'password_reset',
-        'portal_activation',
-        'signup_verification',
-        'staff_invitation',
-      ].sort(),
-    );
+    expect(enabled).toEqual(expect.arrayContaining(fromStageOne));
+    expect(
+      enabled.filter((kind) => !fromStageOne.includes(kind) && !fromStageThree.includes(kind)),
+    ).toEqual([]);
   });
 
   it('gives a password reset 30 minutes and a single use', () => {

@@ -33,6 +33,9 @@ export function registerPatientsExportContributors(registry: ExportRegistry): vo
 export { hasDataProcessingConsent } from './application/consent.js';
 export { isTreating } from './application/write-access.js';
 export type { DocumentRules } from './application/patients.js';
+// Track A (messaging): how to reach a patient, without the rest of the demographics.
+export { readPatientContact, readPatientContacts } from './application/contact.js';
+export type { PatientContact } from './application/contact.js';
 
 export interface PatientsOptions {
   withTenant: WithTenant;

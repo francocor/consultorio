@@ -10,10 +10,14 @@ export const NOTIFICATION_SCENARIOS: Record<
   (typeof NOTIFICATION_AUDIT_ACTIONS)[number],
   AuditScenario
 > = {
-  'notification.optout.recorded': { pending: 'S3.05 (task 3.26): opt-out of a channel' },
-  'notification.optin.recorded': { pending: 'S3.05 (task 3.26): opt-in recorded by staff' },
-  'notification.resend': { pending: 'S3.06 (task 3.31): manual resend of a message' },
+  'notification.optout.recorded': {
+    test: 'apps/api/test/integration/notifications-preferences.test.ts',
+  },
+  'notification.optin.recorded': {
+    test: 'apps/api/test/integration/notifications-preferences.test.ts',
+  },
+  'notification.resend': { test: 'apps/api/test/integration/notifications-message-log.test.ts' },
   'notification.integration.changed': {
-    pending: 'S3.05 (task 3.29): the WhatsApp integration switch',
+    test: 'apps/api/test/integration/notifications-integration.test.ts',
   },
 };
