@@ -23,7 +23,7 @@ export function Segment({
       aria-pressed={pressed}
       onClick={onClick}
       className={cn(
-        'touch-target-md inline-flex cursor-pointer items-center justify-center px-3 text-sm font-medium transition-colors',
+        'touch-target-md inline-flex cursor-pointer items-center justify-center px-3 text-sm font-medium',
         pressed ? 'bg-primary text-primary-foreground' : 'bg-card hover:bg-accent',
       )}
     >
