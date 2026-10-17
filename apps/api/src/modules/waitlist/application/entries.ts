@@ -53,7 +53,7 @@ function notAvailable(): AppError {
 }
 
 /** The type is offered by the professional (an empty list means everyone), as scheduling decides. */
-function typeOffered(
+export function typeOffered(
   type: { professionalIds: string[]; specialties: string[] },
   who: { id: string; specialties: string[] },
 ): boolean {

@@ -6,6 +6,7 @@ import {
   fitsPreferences,
   offerTiming,
   orderEntries,
+  tileStarts,
   type FreedSlot,
   type WaitingEntry,
 } from './matching.js';
@@ -434,5 +435,34 @@ describe('offerTiming', () => {
       sendAt: at('2031-03-30T06:00:00Z'),
       expiresAt: at('2031-03-30T06:30:00Z'),
     });
+  });
+});
+
+describe('tileStarts', () => {
+  const range = (from: string, to: string) => ({ startsAt: new Date(from), endsAt: new Date(to) });
+  const iso = (dates: Date[]) => dates.map((date) => date.toISOString());
+
+  it('gives the one start of a slot that is exactly as long as the visit', () => {
+    expect(iso(tileStarts(range('2031-05-15T13:00:00Z', '2031-05-15T13:30:00Z'), 30))).toEqual([
+      '2031-05-15T13:00:00.000Z',
+    ]);
+  });
+
+  it('lays a longer range out as visits one after another, and drops what does not fit', () => {
+    expect(iso(tileStarts(range('2031-05-15T13:00:00Z', '2031-05-15T14:10:00Z'), 30))).toEqual([
+      '2031-05-15T13:00:00.000Z',
+      '2031-05-15T13:30:00.000Z',
+    ]);
+  });
+
+  it('gives nothing when the visit is longer than the range', () => {
+    expect(tileStarts(range('2031-05-15T13:00:00Z', '2031-05-15T13:20:00Z'), 30)).toEqual([]);
+  });
+
+  it('stops at the most it is asked for', () => {
+    const day = tileStarts(range('2031-05-15T00:00:00Z', '2031-05-16T00:00:00Z'), 15, 10);
+
+    expect(day).toHaveLength(10);
+    expect(day[9]?.toISOString()).toBe('2031-05-15T02:15:00.000Z');
   });
 });

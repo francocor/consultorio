@@ -14,11 +14,15 @@ export const waitlistWiring: ModuleWiring = {
     { key: 'waitlist', schema: WaitlistSettings, defaults: DEFAULT_WAITLIST_SETTINGS },
   ],
   name: 'waitlist',
+  // A freed slot is matched by a job that the cancellation enqueues in its own transaction.
+  needsJobs: true,
   create: (context) =>
     createWaitlist({
       withTenant: context.withTenant,
       auditDeny: context.auditDeny,
       keys: context.keys,
+      events: context.appointmentEvents,
+      jobs: context.jobs,
       ...(context.clock ? { clock: context.clock } : {}),
     }),
 };

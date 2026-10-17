@@ -112,6 +112,28 @@ export function entriesForSlot(input: {
   return result;
 }
 
+/**
+ * The starts at which visits of this length fit, one after another, in a range that came free. A
+ * cancelled visit frees exactly one; a removed block frees an hour or a day, and the waitlist looks
+ * at each start in turn.
+ */
+export function tileStarts(
+  range: { startsAt: Date; endsAt: Date },
+  durationMinutes: number,
+  max = 48,
+): Date[] {
+  const step = durationMinutes * 60_000;
+  const starts: Date[] = [];
+  for (
+    let start = range.startsAt.getTime();
+    start + step <= range.endsAt.getTime() && starts.length < max;
+    start += step
+  ) {
+    starts.push(new Date(start));
+  }
+  return starts;
+}
+
 // Timing ---------------------------------------------------------------------------------------
 
 /** An offer that would last less than this cannot be answered, so it is not sent. */
