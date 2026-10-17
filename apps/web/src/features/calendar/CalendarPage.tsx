@@ -1,12 +1,15 @@
 import { useNavigate, useSearch } from '@tanstack/react-router';
-import { UserRoundPlus } from 'lucide-react';
+import { CalendarPlus, UserRoundPlus } from 'lucide-react';
+import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 
+import { useAppStatus } from '../../app/providers.js';
 import { useMe } from '../../app/session.js';
 import { usePageTitle } from '../../app/use-page-title.js';
 import { useIsWideScreen } from '../../shared/lib/use-media-query.js';
 import { useNow } from '../../shared/lib/use-now.js';
 import { Alert, AlertDescription } from '../../shared/ui/alert.js';
+import { Button } from '../../shared/ui/button.js';
 import { CalendarView } from '../../shared/ui/calendar/CalendarView.js';
 import { localDateOf } from '../../shared/ui/calendar/zoned-time.js';
 import { Switch } from '../../shared/ui/checkbox.js';
@@ -17,10 +20,12 @@ import { EmptyState } from '../../shared/ui/states/empty-state.js';
 import { ErrorState } from '../../shared/ui/states/error-state.js';
 import { ListSkeleton } from '../../shared/ui/states/loading-skeleton.js';
 
+import { BookingDialog, type BookingInitial } from './components/BookingDialog.js';
 import { CalendarToolbar } from './components/CalendarToolbar.js';
 import { ProfessionalFilter } from './components/ProfessionalFilter.js';
 import { StatusLegend } from './components/StatusLegend.js';
 import { useCalendar } from './containers/use-calendar.js';
+import { useMoveAppointment } from './containers/use-move-appointment.js';
 import {
   useSchedulingLocations,
   useSchedulingProfessionals,
@@ -71,6 +76,9 @@ export function CalendarPage() {
   const navigate = useNavigate();
   const rawSearch: unknown = useSearch({ strict: false });
   const search = validateCalendarSearch(isRecord(rawSearch) ? rawSearch : {});
+
+  const appStatus = useAppStatus();
+  const [booking, setBooking] = useState<{ initial: BookingInitial } | null>(null);
 
   const { locations } = useSchedulingLocations();
   const { professionals, ownProfessionalId, query: peopleQuery } = useSchedulingProfessionals();
@@ -123,7 +131,10 @@ export function CalendarPage() {
   }
 
   const nameOf = new Map(professionals.map((person) => [person.id, person.name]));
-  const canMove = me.permissions.includes('scheduling.book');
+  const canBook = me.permissions.includes('scheduling.book');
+  const readOnly = appStatus.readOnly || me.tenantStatus === 'read_only';
+  const canMove = canBook && !readOnly;
+  const mover = useMoveAppointment({ timeZone });
   const feedData = feed.data;
   const events = (feedData?.appointments ?? [])
     .filter((entry) => search.cancelled === true || entry.status !== 'cancelled')
@@ -152,6 +163,35 @@ export function CalendarPage() {
         title={t('scheduling:title')}
         description={t('scheduling:description')}
         className="mb-0"
+        actions={
+          canBook ? (
+            <>
+              <Button
+                aria-disabled={readOnly}
+                aria-describedby={readOnly ? 'booking-read-only' : undefined}
+                onClick={() => {
+                  if (readOnly) return;
+                  const only = columns.length === 1 ? columns[0] : undefined;
+                  setBooking({
+                    initial: {
+                      date,
+                      ...(only ? { professionalId: only.id } : {}),
+                      ...(search.location ? { locationId: search.location } : {}),
+                    },
+                  });
+                }}
+              >
+                <CalendarPlus aria-hidden="true" />
+                {t('scheduling:booking.open')}
+              </Button>
+              {readOnly ? (
+                <span id="booking-read-only" className="sr-only">
+                  {t('common:state.readOnly.disabledReason')}
+                </span>
+              ) : null}
+            </>
+          ) : null
+        }
       />
 
       <CalendarToolbar
@@ -263,8 +303,42 @@ export function CalendarPage() {
           onSelectDay={(day) => {
             update({ view: 'day', date: day });
           }}
+          {...(canMove
+            ? {
+                onSelectSlot: ({ resourceId, start }) => {
+                  setBooking({
+                    initial: {
+                      start,
+                      ...(resourceId === null
+                        ? chosen.length === 1
+                          ? { professionalId: chosen[0] }
+                          : {}
+                        : { professionalId: resourceId }),
+                      ...(search.location ? { locationId: search.location } : {}),
+                    },
+                  });
+                },
+                onMoveEvent: ({ id, resourceId, start }) => {
+                  const entry = feedData?.appointments.find((item) => item.id === id);
+                  if (entry) mover.move(entry, { start, professionalId: resourceId });
+                },
+              }
+            : {})}
         />
       )}
+
+      {canBook ? (
+        <BookingDialog
+          open={booking !== null}
+          onOpenChange={(open) => {
+            if (!open) setBooking(null);
+          }}
+          professionals={people}
+          locations={locations}
+          initial={booking?.initial}
+          canOverrideHours={me.permissions.includes('scheduling.override_hours')}
+        />
+      ) : null}
     </div>
   );
 }

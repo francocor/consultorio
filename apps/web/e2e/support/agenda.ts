@@ -49,3 +49,77 @@ export async function busyDay(
   if (!best) throw new Error('The demo agenda has no appointments around today');
   return best[0];
 }
+
+export interface FreeSlot {
+  startsAt: string;
+  endsAt: string;
+  locationId: string;
+  date: string;
+}
+
+export interface Bookable {
+  professionalId: string;
+  professionalName: string;
+  typeId: string;
+  typeName: string;
+  slots: FreeSlot[];
+}
+
+const plusDays = (iso: string, days: number) =>
+  localDate(new Date(new Date(iso).getTime() + days * DAY_MS).toISOString());
+
+/**
+ * A professional of the demo with free times in the next two weeks, found through the API the
+ * screens use, so a spec never depends on the weekday it runs on or on what other specs booked.
+ */
+export async function bookableProfessional(
+  page: Page,
+  specialty = 'Cardiología',
+  typeName = 'Primera consulta',
+  organization: Organization = 'aillu',
+): Promise<Bookable> {
+  const staff = (await (await page.request.get(urlOf(organization, '/api/staff'))).json()) as {
+    staff: {
+      displayName: string | null;
+      professional: { id: string; specialties: string[] } | null;
+    }[];
+  };
+  const member = staff.staff.find((entry) => entry.professional?.specialties.includes(specialty));
+  if (!member?.professional) throw new Error(`No ${specialty} professional in the demo`);
+  const types = (await (
+    await page.request.get(urlOf(organization, '/api/appointment-types'))
+  ).json()) as {
+    types: { id: string; name: string }[];
+  };
+  const type = types.types.find((entry) => entry.name === typeName);
+  if (!type) throw new Error(`No "${typeName}" appointment type in the demo`);
+
+  const nowIso = new Date().toISOString();
+  const query = new URLSearchParams({
+    professionalId: member.professional.id,
+    typeId: type.id,
+    from: localDate(nowIso),
+    to: plusDays(nowIso, 13),
+  });
+  const availability = (await (
+    await page.request.get(urlOf(organization, `/api/availability?${query.toString()}`))
+  ).json()) as { slots: FreeSlot[] };
+  return {
+    professionalId: member.professional.id,
+    professionalName: member.displayName ?? specialty,
+    typeId: type.id,
+    typeName: type.name,
+    slots: availability.slots.filter(
+      (slot) => new Date(slot.startsAt).getTime() > Date.now() + 3_600_000,
+    ),
+  };
+}
+
+/** The wall-clock time of an instant in the demo's zone, as the screens write it. */
+export const clockTime = (iso: string) =>
+  new Intl.DateTimeFormat('es-AR', {
+    timeZone: ZONE,
+    hour: '2-digit',
+    minute: '2-digit',
+    hourCycle: 'h23',
+  }).format(new Date(iso));
