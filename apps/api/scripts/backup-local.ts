@@ -19,7 +19,8 @@ import {
  *   pnpm backup:local restore <folder> --into consultorio_restore --bucket consultorio-restore
  *
  * The defaults are the public development values of `infra/docker-compose.yml`. A restore always
- * goes into a NEW database and bucket, so it can never overwrite what is running.
+ * goes into a NEW database and an empty bucket that you name with `--bucket` (there is no default,
+ * and it cannot be the live one), so it can never overwrite what is running.
  */
 const { values, positionals } = parseArgs({
   allowPositionals: true,
@@ -31,7 +32,7 @@ const { values, positionals } = parseArgs({
     database: { type: 'string', default: process.env['POSTGRES_DB'] ?? 'consultorio' },
     user: { type: 'string', default: process.env['POSTGRES_SUPERUSER'] ?? 'postgres' },
     endpoint: { type: 'string', default: process.env['S3_ENDPOINT'] ?? 'http://127.0.0.1:9000' },
-    bucket: { type: 'string', default: process.env['S3_BUCKET'] ?? 'consultorio-files' },
+    bucket: { type: 'string' },
     out: { type: 'string', default: process.env['BACKUP_DIR'] ?? 'backups' },
     into: { type: 'string' },
   },
@@ -41,13 +42,16 @@ const { values, positionals } = parseArgs({
 const base = process.env['INIT_CWD'] ?? process.cwd();
 const [command = 'backup', folder] = positionals;
 
+const liveBucket = process.env['S3_BUCKET'] ?? 'consultorio-files';
+
 const postgres: PostgresTarget = {
   container: values.container,
   database: values.database,
   user: values.user,
 };
 const bucket: BucketTarget = {
-  bucket: values.bucket,
+  // Backing up reads the live bucket; a restore writes into the one named on the command line.
+  bucket: command === 'restore' ? (values.bucket ?? '') : (values.bucket ?? liveBucket),
   region: 'us-east-1',
   endpoint: values.endpoint,
   forcePathStyle: true,
@@ -84,6 +88,11 @@ async function main(): Promise<void> {
   }
   if (command === 'restore') {
     if (!values.into) throw new Error('restore needs --into <new database name>');
+    if (!values.bucket)
+      throw new Error('restore needs --bucket <new bucket name>: there is no default');
+    if (values.bucket === liveBucket) {
+      throw new Error(`--bucket ${values.bucket} is the live bucket: restore into a new one`);
+    }
     const report = await restoreBackup({
       dir: resolve(base, folder),
       postgres,

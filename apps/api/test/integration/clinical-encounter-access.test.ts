@@ -267,3 +267,56 @@ describe('the database says the same (a backstop under the service)', () => {
     ).resolves.toBeDefined();
   });
 });
+
+describe('the first encounter of a patient is serialized (JD-S2 C8)', () => {
+  it('makes the second professional wait for the first, and then refuses them: only one first encounter exists', async () => {
+    const patientId = await world.patient();
+    let firstOpened!: () => void;
+    const opened = new Promise<void>((resolve) => {
+      firstOpened = resolve;
+    });
+    let commitFirst!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      commitFirst = resolve;
+    });
+
+    // The first one writes the encounter and its note, and keeps its transaction open.
+    const first = asProfessional(runtime, world.tenant.id, author.professionalId, async (tx) => {
+      await openDraft(tx, {
+        tenantId: world.tenant.id,
+        patientId,
+        authorId: author.professionalId,
+      });
+      firstOpened();
+      await gate;
+    });
+    await opened;
+
+    let secondSettled = false;
+    const second = asProfessional(runtime, world.tenant.id, intruder.professionalId, (tx) =>
+      openDraft(tx, { tenantId: world.tenant.id, patientId, authorId: intruder.professionalId }),
+    ).finally(() => {
+      secondSettled = true;
+    });
+    second.catch(() => undefined);
+    await new Promise((resolve) => setTimeout(resolve, 750));
+    // Without the lock the second one would already have passed the footprint check and committed.
+    expect(secondSettled).toBe(false);
+
+    commitFirst();
+    await first;
+    await expect(second).rejects.toMatchObject({ cause: { code: '42501' } });
+    expect(await encountersOf(intruder, patientId)).toEqual([]);
+  });
+
+  it('lets exactly one of two simultaneous requests open the first encounter of a patient', async () => {
+    const patientId = await world.patient();
+
+    const [one, two] = await Promise.all([
+      open(author, { patientId, templateKind: 'general' }),
+      open(intruder, { patientId, templateKind: 'general' }),
+    ]);
+
+    expect([one.statusCode, two.statusCode].sort()).toEqual([201, 403]);
+  });
+});

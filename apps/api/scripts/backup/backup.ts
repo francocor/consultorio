@@ -264,6 +264,22 @@ export async function createBackup(
   }
 }
 
+/** A restore fills a bucket that is new or empty; it never mixes its objects with existing ones. */
+async function assertBucketEmpty(target: BucketTarget): Promise<void> {
+  const client = s3Client(target);
+  try {
+    const page = await client.send(new ListObjectsV2Command({ Bucket: target.bucket, MaxKeys: 1 }));
+    if ((page.KeyCount ?? 0) > 0) {
+      throw new Error(`the target bucket ${target.bucket} is not empty: restore into a new bucket`);
+    }
+  } catch (error) {
+    // A bucket that does not exist yet is created by the restore.
+    if ((error as { name?: string }).name !== 'NoSuchBucket') throw error;
+  } finally {
+    client.destroy();
+  }
+}
+
 export interface RestoreOptions {
   dir: string;
   postgres: PostgresTarget;
@@ -297,6 +313,12 @@ export async function restoreBackup(options: RestoreOptions): Promise<RestoreRep
   log('verifying the backup');
   const manifest = await verifyBackup(options.dir);
   const { index } = await readBackup(options.dir);
+  // The bucket the backup was taken from is the live one: a restore writes into a different one.
+  if (options.bucket.bucket === manifest.objects.bucket) {
+    throw new Error(
+      `the target bucket ${options.bucket.bucket} is the one the backup was taken from (the live bucket): restore into a new bucket`,
+    );
+  }
 
   const exists = await psql(
     options.postgres,
@@ -308,6 +330,7 @@ export async function restoreBackup(options: RestoreOptions): Promise<RestoreRep
       `the database ${options.intoDatabase} already exists: restore into a new name, never over a live database`,
     );
   }
+  await assertBucketEmpty(options.bucket);
   log(`creating ${options.intoDatabase}`);
   await psql(options.postgres, 'postgres', `CREATE DATABASE ${options.intoDatabase}`);
   try {

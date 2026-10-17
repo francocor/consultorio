@@ -51,7 +51,9 @@ function toDto(row: {
 
 /**
  * The start and end of each occurrence of a weekly block. A block repeats at the same LOCAL time,
- * so it keeps its hour across a daylight saving change (the instants then differ by an hour).
+ * so it keeps its hour across a daylight saving change (the instants then differ by an hour). The
+ * end is the shifted start plus the length of the block: moving each end by itself could land a
+ * start that fell in a skipped hour on or after its own end.
  */
 export function weeklyOccurrences(
   zone: string,
@@ -60,11 +62,12 @@ export function weeklyOccurrences(
   recurrence: { count?: number | undefined; until?: string | undefined },
 ): { startsAt: Date; endsAt: Date }[] {
   const occurrences: { startsAt: Date; endsAt: Date }[] = [];
+  const lengthMs = end.getTime() - start.getTime();
   for (let week = 0; week < MAX_OCCURRENCES; week += 1) {
     const startsAt = addLocalDays(zone, start, 7 * week);
     if (recurrence.count !== undefined && week >= recurrence.count) break;
     if (recurrence.until !== undefined && localParts(zone, startsAt).date > recurrence.until) break;
-    occurrences.push({ startsAt, endsAt: addLocalDays(zone, end, 7 * week) });
+    occurrences.push({ startsAt, endsAt: new Date(startsAt.getTime() + lengthMs) });
   }
   return occurrences;
 }

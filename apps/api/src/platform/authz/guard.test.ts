@@ -188,6 +188,37 @@ describe('permission guard', () => {
     await app.close();
   });
 
+  it('keeps the own profile of a professional who does not pass the gate (D14 does not depend on it)', async () => {
+    const loader = createActorLoader({
+      professionals: {
+        findByMembership: () =>
+          Promise.resolve({
+            id: '0190a000-0000-7000-8000-0000000000f1',
+            status: 'active',
+            matricula: null,
+            matriculaJurisdiction: null,
+          }),
+      },
+      grants: noGrants,
+      validateMatricula: matricula,
+    });
+
+    const actor = await loader(session(['owner', 'professional']));
+
+    expect(actor.professionalId).toBeNull();
+    expect(actor.ownProfessionalId).toBe('0190a000-0000-7000-8000-0000000000f1');
+  });
+
+  it('rejects the actor when the profile lookup fails, so the identity rules never guess', async () => {
+    const loader = createActorLoader({
+      professionals: { findByMembership: () => Promise.reject(new Error('database down')) },
+      grants: noGrants,
+      validateMatricula: matricula,
+    });
+
+    await expect(loader(session(['professional']))).rejects.toThrow('database down');
+  });
+
   it('adds the grants of the user to what the role allows', async () => {
     const granted = server(['reception'], {
       grants: { grantsFor: () => Promise.resolve(['scheduling.override_hours']) },

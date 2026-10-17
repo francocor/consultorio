@@ -149,11 +149,13 @@ export function createNoteService(deps: {
       // Decision D20: opening an encounter does not create the care relationship, it needs one
       // that comes from elsewhere (an appointment, an assignment or a signed encounter). The one
       // exception is a patient nobody has written about yet.
-      if (
-        !(await isTreating(tx, caller.professionalId, request.patientId)) &&
-        (await hasFootprint(tx, request.patientId))
-      ) {
-        throw new AccessRefused('encounter_requires_relationship');
+      if (!(await isTreating(tx, caller.professionalId, request.patientId))) {
+        // Two first encounters must not both pass: the check waits for the other one to commit
+        // its footprint (the database takes the same lock in the encounter guard).
+        await tx.execute(sql`SELECT app.lock_first_encounter(${request.patientId}::uuid)`);
+        if (await hasFootprint(tx, request.patientId)) {
+          throw new AccessRefused('encounter_requires_relationship');
+        }
       }
 
       const visibility = request.visibility ?? 'default';

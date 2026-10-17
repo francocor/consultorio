@@ -11,13 +11,15 @@ import { afterAll, beforeAll, describe, expect, inject, it } from 'vitest';
 
 import { auditEvent } from '../../src/db/schema/audit.js';
 import { document } from '../../src/db/schema/documents.js';
+import { tenant as tenantTable } from '../../src/db/schema/tenant.js';
 import { createDocumentCleanup } from '../../src/modules/documents/index.js';
 import { createRuntimeDb, type DbHandle } from '../../src/platform/db/pool.js';
-import type { Tx } from '../../src/platform/db/tenant-context.js';
+import { createWithTenant, type Tx } from '../../src/platform/db/tenant-context.js';
 import { EICAR, minimalPdf } from '../../src/platform/files/test-files.js';
 import { withScanning, type ScanningHarness } from '../support/document-scans.js';
 import { asSystem, createDocumentsHarness } from '../support/documents.js';
 import { runPending } from '../support/jobs.js';
+import { asTenant } from '../support/tenants.js';
 
 let runtime: DbHandle;
 let h: ScanningHarness;
@@ -337,5 +339,93 @@ describe('cleaning up uploads nobody finished', () => {
     expect(queued.at(-1)?.payload).toMatchObject({ documentId: lost.id });
     await h.runScans();
     expect((await rowOf(lost.id)).status).toBe('available');
+  });
+});
+
+describe('a colleague who reads a clinical document only through sharing (JD-S2 C2)', () => {
+  const setSharing = (on: boolean) =>
+    asTenant(runtime, h.tenant.id, (tx) =>
+      tx
+        .update(tenantTable)
+        .set({ settings: on ? { clinicalSharing: true, sharedTemplates: ['general'] } : {} })
+        .where(eq(tenantTable.id, h.tenant.id)),
+    );
+
+  it('can read the document but can neither hide it nor reclassify it', async () => {
+    const { id, patientId } = await available();
+    await setSharing(true);
+    try {
+      // The colleague really reads it: the premise of the attack.
+      const seen = entries(
+        await h.api.get(`/patients/${patientId}/documents`, h.sessions.colleague),
+      );
+      expect(seen.map((entry) => entry.id)).toContain(id);
+
+      const hide = await h.api.post(`/documents/${id}/hide`, h.sessions.colleague, { reason: 'x' });
+      const toAdministrative = await h.api.post(
+        `/documents/${id}/reclassify`,
+        h.sessions.colleague,
+        { category: 'id_copy' },
+      );
+      const withinClinical = await h.api.post(`/documents/${id}/reclassify`, h.sessions.colleague, {
+        category: 'referral',
+      });
+
+      expect(hide.statusCode).toBe(403);
+      expect(toAdministrative.statusCode).toBe(403);
+      expect(withinClinical.statusCode).toBe(403);
+      expect(await rowOf(id)).toMatchObject({
+        status: 'available',
+        classification: 'clinical',
+        category: 'lab_result',
+      });
+    } finally {
+      await setSharing(false);
+    }
+  });
+
+  it('still lets the author, who is also treating, hide and reclassify', async () => {
+    const hidden = await available();
+    const moved = await available();
+
+    expect(
+      (await h.api.post(`/documents/${hidden.id}/hide`, h.sessions.professional, { reason: 'x' }))
+        .statusCode,
+    ).toBe(200);
+    expect(
+      (
+        await h.api.post(`/documents/${moved.id}/reclassify`, h.sessions.professional, {
+          category: 'referral',
+        })
+      ).statusCode,
+    ).toBe(200);
+  });
+
+  it('is refused by the database too: a reclassification away from clinical needs the author or a treating professional', async () => {
+    const { id } = await available();
+    const asProfessional = (professionalId: string) =>
+      createWithTenant(runtime.db)(
+        {
+          tenantId: h.tenant.id,
+          userId: randomUUID(),
+          actingProfessionalId: professionalId,
+        },
+        (tx) =>
+          tx
+            .update(document)
+            .set({ classification: 'administrative', category: 'id_copy' })
+            .where(eq(document.id, id))
+            .returning({ id: document.id }),
+      );
+    await setSharing(true);
+    try {
+      await expect(asProfessional(h.colleagueId)).rejects.toThrow();
+      expect((await rowOf(id)).classification).toBe('clinical');
+
+      expect(await asProfessional(h.professionalId)).toHaveLength(1);
+      expect((await rowOf(id)).classification).toBe('administrative');
+    } finally {
+      await setSharing(false);
+    }
   });
 });

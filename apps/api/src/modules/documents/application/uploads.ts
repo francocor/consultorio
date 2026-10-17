@@ -7,6 +7,7 @@ import {
 } from '@consultorio/contracts';
 import { and, asc, eq, ne, sql } from 'drizzle-orm';
 
+import { encounter } from '../../../db/schema/clinical.js';
 import { document } from '../../../db/schema/documents.js';
 import { patient } from '../../../db/schema/patients.js';
 import { appointment } from '../../../db/schema/scheduling.js';
@@ -139,6 +140,31 @@ export function createUploadService(deps: UploadDeps): UploadService {
             ),
           );
         if (!linked) throw new AppError('not_found');
+      }
+
+      // The encounter a document belongs to is this patient's own and the uploader's to work in:
+      // they wrote it or treat the patient. Row level security hides the encounters of others, so
+      // one that is not visible, not of this patient or not theirs looks like one that does not
+      // exist.
+      if (request.encounterId !== undefined) {
+        const [owned] = await tx
+          .select({
+            patientId: encounter.patientId,
+            authorProfessionalId: encounter.authorProfessionalId,
+          })
+          .from(encounter)
+          .where(eq(encounter.id, request.encounterId));
+        if (
+          !owned ||
+          owned.patientId !== request.patientId ||
+          actor.professionalId === null ||
+          !(
+            owned.authorProfessionalId === actor.professionalId ||
+            (await isTreating(tx, actor.professionalId, request.patientId))
+          )
+        ) {
+          throw new AppError('not_found');
+        }
       }
 
       if (

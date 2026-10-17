@@ -33,11 +33,11 @@ describe('migration ranges', () => {
     expect(prefixOf('35_short')).toBeNull();
   });
 
-  it('keeps Stages 0 to 2 as one frozen linear sequence and gives each later stage a hundred', () => {
+  it('keeps Stages 0 to 2 as one linear sequence below 0300 and gives each later stage a hundred', () => {
     expect(stageRangeOf(0)).toBe('stage 0 to 2');
     expect(stageRangeOf(35)).toBe('stage 0 to 2');
-    expect(stageRangeOf(36)).toBeNull();
-    expect(stageRangeOf(299)).toBeNull();
+    expect(stageRangeOf(41)).toBe('stage 0 to 2');
+    expect(stageRangeOf(299)).toBe('stage 0 to 2');
     expect(stageRangeOf(300)).toBe('stage 3');
     expect(stageRangeOf(399)).toBe('stage 3');
     expect(stageRangeOf(410)).toBe('stage 4');
@@ -122,20 +122,17 @@ describe('checkJournalFolder', () => {
     expect(found).toContain('duplicate_prefix');
   });
 
-  it('fails on a prefix outside every range: between the frozen sequence and Stage 3, or past Stage 6', async () => {
+  it('fails on a prefix outside every range: past Stage 6', async () => {
     const dir = await folderOf([
       { tag: '0035_onboarding_state', when: 2000 },
-      { tag: '0036_added_by_db_generate', when: 3000 },
-      { tag: '0700_too_far', when: 4000 },
+      { tag: '0700_too_far', when: 3000 },
+      { tag: '1000_way_too_far', when: 4000 },
     ]);
 
     const problems = await checkJournalFolder(dir);
 
     expect(codes(problems)).toEqual(['out_of_range_prefix', 'out_of_range_prefix']);
-    expect(problems.map((problem) => problem.tag)).toEqual([
-      '0036_added_by_db_generate',
-      '0700_too_far',
-    ]);
+    expect(problems.map((problem) => problem.tag)).toEqual(['0700_too_far', '1000_way_too_far']);
   });
 
   it('fails on a tag without the four digit number', async () => {

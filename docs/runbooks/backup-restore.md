@@ -48,8 +48,10 @@ What the commands guarantee:
 - `verify` and `restore` first prove the dump and every object against their recorded SHA-256. A
   folder that was changed after it was taken is refused before anything is created.
 - **A restore never overwrites.** It creates a NEW database (`--into`) and puts the objects in the
-  named bucket (created if missing); an existing database name is refused. To switch the application
-  over, change `DATABASE_URL` and `S3_BUCKET` and restart; the old database stays as it was.
+  bucket named with `--bucket` (created if missing); an existing database name is refused. `--bucket`
+  is required (there is no default), cannot be the live bucket (`S3_BUCKET`, or the one the backup
+  was taken from), and the bucket must be new or empty. To switch the application over, change
+  `DATABASE_URL` and `S3_BUCKET` and restart; the old database stays as it was.
 - The roles of the cluster (`app_owner`, `app_rw`, ...) must already exist in the target server
   (`infra/postgres/init/01-roles.sql`); the dump keeps ownership, grants, row level security (with
   FORCE) and policies, and the test compares them with the source.

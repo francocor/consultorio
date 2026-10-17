@@ -576,6 +576,84 @@ describe('correcting a terminal status', () => {
     expect(toNoShow.status).toBe('no_show');
   });
 
+  describe('reviving a cancelled appointment (D2, D15: the professional cannot restore their own care relationship)', () => {
+    const COUNTING = ['scheduled', 'confirmed', 'checked_in', 'no_show'] as const;
+    const cancelled = () => appointment({ status: 'cancelled' });
+
+    it.each(COUNTING)(
+      'refuses the appointment own professional when it goes back to %s, and changes nothing',
+      async (toStatus) => {
+        const { ports, state } = world(cancelled());
+
+        const error = await thrown(
+          correct(ports, toStatus, {
+            who: actor({ professionalId: DOCTOR }),
+            reasonCode: 'entered_by_mistake',
+          }),
+        );
+
+        expect(error).toBeInstanceOf(AccessRefused);
+        expect(state.updates).toEqual([]);
+        expect(state.audits).toEqual([]);
+      },
+    );
+
+    it('refuses the own professional when their clinical id is not open yet either', async () => {
+      const { ports } = world(cancelled());
+
+      const error = await thrown(
+        correct(ports, 'scheduled', {
+          who: { ...actor(), ownProfessionalId: DOCTOR },
+          reasonCode: 'entered_by_mistake',
+        }),
+      );
+
+      expect(error).toBeInstanceOf(AccessRefused);
+    });
+
+    it('lets another member who may check in revive it, and flags it in the history and the audit trail', async () => {
+      const { ports, state } = world(cancelled());
+
+      const revived = await correct(ports, 'scheduled', {
+        who: actor({ professionalId: COLLEAGUE }),
+        reasonCode: 'entered_by_mistake',
+      });
+
+      expect(revived.status).toBe('scheduled');
+      expect(state.events[0]).toMatchObject({
+        kind: 'status_corrected',
+        details: { revivedFromCancelled: true },
+      });
+      expect(state.audits[0]).toMatchObject({
+        action: 'appointment.status_corrected',
+        metadata: { from: 'cancelled', to: 'scheduled', revivedFromCancelled: true },
+      });
+    });
+
+    it('does not flag a correction that is not a revival', async () => {
+      const { ports, state } = world(
+        appointment({
+          status: 'no_show',
+          startsAt: new Date('2026-07-13T11:00:00.000Z'),
+          endsAt: new Date('2026-07-13T11:30:00.000Z'),
+        }),
+      );
+
+      await correct(ports, 'attended');
+
+      expect(JSON.stringify(state.audits[0]?.metadata)).not.toContain('revivedFromCancelled');
+    });
+
+    it('leaves a cancelled appointment cancelled for the own professional, in the clinical statuses too', async () => {
+      const { ports } = world(cancelled());
+
+      for (const toStatus of ['in_progress', 'attended'] as const) {
+        const error = await thrown(correct(ports, toStatus));
+        expect(error).toBeInstanceOf(AccessRefused);
+      }
+    });
+  });
+
   it('is rejected when the slot was rebooked for someone else, showing the conflicting range', async () => {
     const record = appointment({
       status: 'no_show',
@@ -630,7 +708,11 @@ describe('correcting a terminal status', () => {
   it('gives the lane back and clears the cancellation when a cancelled appointment is restored', async () => {
     const { ports, state } = world(appointment({ status: 'cancelled' }));
 
-    await correct(ports, 'scheduled', { reasonCode: 'entered_by_mistake' });
+    // Another member restores it: the own professional cannot revive their own cancelled appointment.
+    await correct(ports, 'scheduled', {
+      who: actor({ professionalId: COLLEAGUE }),
+      reasonCode: 'entered_by_mistake',
+    });
 
     expect(state.updates[0]?.patch).toMatchObject({
       status: 'scheduled',
@@ -792,6 +874,102 @@ describe('rescheduling', () => {
       details: { fromProfessionalId: DOCTOR },
     });
     expect(state.audits[0]?.action).toBe('appointment.reassigned');
+  });
+
+  describe('reassigning a confirmed appointment (D14: nobody becomes treating by moving it to themselves)', () => {
+    const asColleague = (extra: Partial<BookActor> = {}): BookActor => ({
+      ...actor({ professionalId: COLLEAGUE }),
+      ...extra,
+    });
+    const toColleague = (who: BookActor, record = appointment()) => {
+      const fake = world(record);
+      return {
+        ...fake,
+        moved: reschedule(fake.ports, {
+          local: undefined,
+          professionalId: COLLEAGUE,
+          actor: who,
+        }),
+      };
+    };
+
+    it('resets the identity, opens a review and audits it when the actor moves it into their own calendar', async () => {
+      const { moved, state } = toColleague(asColleague());
+
+      const result = await moved;
+
+      expect(result).toMatchObject({ professionalId: COLLEAGUE, identityConfirmed: false });
+      expect(state.updates[0]?.patch).toMatchObject({
+        identityConfirmed: false,
+        identityConfirmedBy: null,
+        identityConfirmation: null,
+      });
+      expect(state.openedItems).toEqual([
+        {
+          kind: 'identity_review',
+          subjectType: 'appointment',
+          subjectId: 'appt-1',
+          locationId: CENTRO,
+        },
+      ]);
+      expect(state.events[0]).toMatchObject({
+        kind: 'reassigned',
+        details: { identityReset: true },
+      });
+      expect(state.audits[0]).toMatchObject({
+        action: 'appointment.reassigned',
+        metadata: { identityReset: true },
+      });
+    });
+
+    it('does the same for a reception user who is also a professional, and for a delegated calendar', async () => {
+      const multiRole = toColleague(
+        asColleague({ permissions: new Set(['scheduling.book', 'scheduling.checkin']) }),
+      );
+      const delegated = toColleague(
+        asColleague({ mayUseCalendar: (id) => id === DOCTOR || id === COLLEAGUE }),
+      );
+
+      expect((await multiRole.moved).identityConfirmed).toBe(false);
+      expect((await delegated.moved).identityConfirmed).toBe(false);
+    });
+
+    it('also resets it when the profile is the actor own but the clinical gate has not opened yet', async () => {
+      const { moved } = toColleague(
+        asColleague({ professionalId: null, ownProfessionalId: COLLEAGUE }),
+      );
+
+      expect((await moved).identityConfirmed).toBe(false);
+    });
+
+    it('keeps it confirmed when somebody else moves it (reception, or a professional to a third calendar)', async () => {
+      const byReception = toColleague(actor());
+      const third = toColleague(actor({ professionalId: 'doctor-3' }));
+
+      const received = await byReception.moved;
+      expect(received.identityConfirmed).toBe(true);
+      expect(byReception.state.openedItems).toEqual([]);
+      expect((await third.moved).identityConfirmed).toBe(true);
+    });
+
+    it('leaves an unconfirmed appointment as it is, with no second review', async () => {
+      const { moved, state } = toColleague(
+        asColleague(),
+        appointment({ identityConfirmed: false }),
+      );
+
+      expect((await moved).identityConfirmed).toBe(false);
+      expect(state.openedItems).toEqual([]);
+    });
+
+    it('does not reset anything when the same professional only changes the time', async () => {
+      const fake = world();
+
+      const moved = await reschedule(fake.ports, { actor: actor({ professionalId: DOCTOR }) });
+
+      expect(moved.identityConfirmed).toBe(true);
+      expect(fake.state.openedItems).toEqual([]);
+    });
   });
 
   it('does not reassign to a professional who is busy then', async () => {

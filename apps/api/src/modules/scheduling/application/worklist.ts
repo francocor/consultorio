@@ -35,7 +35,10 @@ export interface CloseItemInput {
   status: 'resolved' | 'dismissed';
   /** How it ended, as a code. */
   resolution: string;
-  /** The identity actions close an identity review; a plain resolve or dismiss must not. */
+  /**
+   * The decision actions close an identity review and a pending approval (they end with a decision
+   * on the appointment); a plain resolve or dismiss must not.
+   */
   viaIdentityAction?: boolean;
 }
 
@@ -74,7 +77,8 @@ function actionsOf(kind: WorklistKind, subjectType: WorklistSubjectType): Workli
   const open: WorklistAction[] = subjectType === 'appointment' ? ['open_appointment'] : [];
   switch (kind) {
     case 'pending_approval':
-      return [...open, 'approve', 'resolve', 'dismiss'];
+      // Approving (or cancelling) the appointment closes it; a plain close would skip the decision.
+      return [...open, 'approve'];
     case 'identity_review':
       // Only the identity actions close it (the appointment's own professional cannot confirm).
       return [...open, 'confirm_identity', 'detach_patient'];
@@ -244,7 +248,10 @@ export function createWorklistService(deps: { keys: TenantKeys }): WorklistServi
       // An item of another location looks like one that does not exist.
       if (!row) throw new AppError('not_found');
       if (row.status !== 'open') throw new AppError('conflict');
-      if (row.kind === 'identity_review' && input.viaIdentityAction !== true) {
+      if (
+        (row.kind === 'identity_review' || row.kind === 'pending_approval') &&
+        input.viaIdentityAction !== true
+      ) {
         throw new AppError('conflict');
       }
 

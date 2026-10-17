@@ -26,8 +26,11 @@ export interface Journal {
   entries: JournalEntry[];
 }
 
-/** Stages 0 to 2 are one linear sequence, 0000 to 0035, frozen: nothing is added or renamed there. */
-export const FROZEN_LAST_PREFIX = 35;
+/**
+ * Stages 0 to 2 are one linear sequence below 0300, numbered by `drizzle-kit generate` itself (the
+ * Stage 2 branch keeps adding to it while Stage 3 is built). `db:restamp` never touches it.
+ */
+export const FROZEN_LAST_PREFIX = 299;
 
 interface Range {
   start: number;
@@ -261,7 +264,7 @@ export async function writeJournal(migrationsDir: string, journal: Journal): Pro
 
 /**
  * The journal with `idx` renumbered 0, 1, 2 ... and `when` raised where it does not rise. Entries
- * of the frozen sequence (0000 to 0035) are never touched: databases already ran them with these
+ * of the linear sequence of Stages 0 to 2 (below 0300) are never touched: databases already ran them with these
  * stamps. Every other entry keeps its stamp when it is already later than the one before it, so
  * only the entries that a merge put out of order change.
  */

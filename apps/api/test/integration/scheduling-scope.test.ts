@@ -1,3 +1,5 @@
+import { randomUUID } from 'node:crypto';
+
 import type {
   AppointmentDto,
   AuditAction,
@@ -103,7 +105,7 @@ describe('a professional works in their own calendar', () => {
     expect(rows.slice(0, 4).every((row) => row.reason === 'not_own_calendar')).toBe(true);
   });
 
-  it('is refused for every change to an appointment of a colleague, and for reading its history', async () => {
+  it('is refused for every change to an appointment of a colleague', async () => {
     const theirs = await world.book(3, '10:00', { professionalId: world.colleague.professionalId });
 
     const attempts = await Promise.all([
@@ -121,15 +123,34 @@ describe('a professional works in their own calendar', () => {
         toStatus: 'attended',
         reasonCode: 'other',
       }),
-      world.api.get(`/appointments/${theirs.id}/history`, world.doctor),
-      world.api.get(`/appointments/${theirs.id}`, world.doctor),
     ]);
 
-    expect(attempts.map((response) => response.statusCode)).toEqual([
-      403, 403, 403, 403, 403, 403, 403,
-    ]);
+    expect(attempts.map((response) => response.statusCode)).toEqual([403, 403, 403, 403, 403]);
     const unchanged = await world.api.get(`/appointments/${theirs.id}`, world.colleague);
     expect(unchanged.json<AppointmentDto>()).toMatchObject({ status: 'scheduled', version: 1 });
+  });
+
+  it('does not reveal that an appointment of a colleague exists: reading it or its history answers not found (JD-S2 S6)', async () => {
+    const theirs = await world.book(3, '11:00', { professionalId: world.colleague.professionalId });
+    const unknown = randomUUID();
+
+    const [appointment, history] = await Promise.all([
+      world.api.get(`/appointments/${theirs.id}`, world.doctor),
+      world.api.get(`/appointments/${theirs.id}/history`, world.doctor),
+    ]);
+    const [missing, missingHistory] = await Promise.all([
+      world.api.get(`/appointments/${unknown}`, world.doctor),
+      world.api.get(`/appointments/${unknown}/history`, world.doctor),
+    ]);
+
+    expect([appointment.statusCode, history.statusCode]).toEqual([404, 404]);
+    expect([missing.statusCode, missingHistory.statusCode]).toEqual([404, 404]);
+    expect(appointment.json<Problem>().code).toBe(missing.json<Problem>().code);
+    expect(history.json<Problem>().code).toBe(missingHistory.json<Problem>().code);
+    // The owner of that calendar still reads both.
+    expect((await world.api.get(`/appointments/${theirs.id}`, world.colleague)).statusCode).toBe(
+      200,
+    );
   });
 
   it('cannot move their own appointment into a colleague’s calendar', async () => {
@@ -291,7 +312,8 @@ describe('a reception user who is also a professional', () => {
       }),
     ]);
 
-    expect(attempts.map((r) => r.statusCode)).toEqual([403, 403, 403, 403, 403]);
+    // Reading looks like a missing appointment (JD-S2 S6); changing and booking are refused.
+    expect(attempts.map((r) => r.statusCode)).toEqual([404, 404, 403, 403, 403]);
     const booking = await world.api.post('/appointments', both, {
       ...(await world.bookingBody(14, '11:00')),
       professionalId: world.colleague.professionalId,

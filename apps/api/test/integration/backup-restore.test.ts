@@ -6,6 +6,7 @@ import { join } from 'node:path';
 import {
   CreateBucketCommand,
   GetObjectCommand,
+  ListObjectsV2Command,
   PutObjectCommand,
   S3Client,
 } from '@aws-sdk/client-s3';
@@ -216,6 +217,63 @@ describe('the restore drill', () => {
     ).rejects.toThrow(/already exists/);
     // The live database is untouched.
     expect(await visibleRows(runtime, tenantA, 'patient')).toBe(2);
+  }, 120_000);
+
+  it('never restores into the bucket the backup was taken from, or into one that already holds objects (JD-S2 S4)', async () => {
+    const { dir } = await createBackup({
+      postgres: postgresTarget(),
+      bucket: source,
+      outDir: workDir,
+      clock: () => new Date('2026-10-17T15:31:30Z'),
+    });
+    const databaseExists = async (name: string) => {
+      const admin = new pg.Client({ connectionString: superuserUrl(DATABASE) });
+      await admin.connect();
+      try {
+        const found = await admin.query('SELECT 1 FROM pg_database WHERE datname = $1', [name]);
+        return found.rowCount === 1;
+      } finally {
+        await admin.end();
+      }
+    };
+    const liveObjects = async () => {
+      const s3 = new S3Client({
+        region: 'us-east-1',
+        endpoint: source.endpoint,
+        forcePathStyle: true,
+        credentials: source.credentials,
+      });
+      try {
+        return (await s3.send(new ListObjectsV2Command({ Bucket: SOURCE_BUCKET }))).KeyCount;
+      } finally {
+        s3.destroy();
+      }
+    };
+    const before = await liveObjects();
+
+    // The live bucket, under any name that is the same bucket.
+    await expect(
+      restoreBackup({
+        dir,
+        postgres: postgresTarget(),
+        intoDatabase: 'consultorio_into_live',
+        bucket: source,
+      }),
+    ).rejects.toThrow(/live bucket|taken from/);
+    // A bucket that already has objects (the one the first drill filled).
+    await expect(
+      restoreBackup({
+        dir,
+        postgres: postgresTarget(),
+        intoDatabase: 'consultorio_into_full',
+        bucket: target,
+      }),
+    ).rejects.toThrow(/not empty/);
+
+    // Nothing was created or written.
+    expect(await databaseExists('consultorio_into_live')).toBe(false);
+    expect(await databaseExists('consultorio_into_full')).toBe(false);
+    expect(await liveObjects()).toBe(before);
   }, 120_000);
 
   it('refuses to restore a backup that was changed after it was taken, before creating anything', async () => {

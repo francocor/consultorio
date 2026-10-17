@@ -52,7 +52,7 @@ describe('restampJournal', () => {
     expect(restampJournal(fine)).toEqual(fine);
   });
 
-  it('never touches the frozen sequence 0000 to 0035: databases ran those entries with these stamps', () => {
+  it('never touches the linear sequence of Stages 0 to 2 (below 0300): databases ran those entries with these stamps', () => {
     const merged = journalOf([
       { tag: '0034_encounter_links', when: 5000 },
       { tag: '0035_onboarding_state', when: 4000 },

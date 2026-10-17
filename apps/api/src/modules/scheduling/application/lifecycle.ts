@@ -29,6 +29,7 @@ import {
   assertLocation,
   guardRace,
   invalid,
+  ownProfessionalOf,
   planSlot,
   resolveStart,
   typeOffered,
@@ -61,6 +62,19 @@ const HOUR_MS = 3_600_000;
 
 /** The statuses only the appointment's own professional puts an appointment in. */
 const CLINICAL_STATUSES: ReadonlySet<AppointmentStatus> = new Set(['in_progress', 'attended']);
+
+/**
+ * The statuses that count towards a care relationship (D2, D15). Putting a cancelled appointment
+ * back into one of them restores what the cancellation took away.
+ */
+const CARE_COUNTING_STATUSES: ReadonlySet<AppointmentStatus> = new Set([
+  'scheduled',
+  'confirmed',
+  'checked_in',
+  'in_progress',
+  'attended',
+  'no_show',
+]);
 
 /**
  * Locks what a change to one appointment must serialize with: the professional(s) first, in a fixed
@@ -140,9 +154,9 @@ export async function transitionAppointment(
   const patch: AppointmentPatch = { status: target };
   let confirmation: IdentityConfirmation | null = null;
   if (input.action === 'check_in' && input.confirmIdentity === true && !record.identityConfirmed) {
-    const own = input.actor.professionalId === record.professionalId;
+    const own = ownProfessionalOf(input.actor) === record.professionalId;
     confirmation = canConfirmIdentity({
-      actorProfessionalId: input.actor.professionalId,
+      actorProfessionalId: ownProfessionalOf(input.actor),
       appointmentProfessionalId: record.professionalId,
       channel: 'check_in',
       // The solo condition is evaluated here, in this transaction, only when it can matter.
@@ -226,6 +240,17 @@ export async function transitionAppointment(
     });
   }
   if (input.action === 'cancel') await dismissWorklistItems(ports, record.id, input.auditActor);
+  // Approving is the decision the pending approval was waiting for.
+  if (input.action === 'approve') {
+    await ports.closeWorklistItem({
+      kind: 'pending_approval',
+      subjectType: 'appointment',
+      subjectId: record.id,
+      status: 'resolved',
+      resolution: 'approved',
+      actor: input.auditActor,
+    });
+  }
   await publishStatusChange(ports, {
     before: record,
     after: updated,
@@ -288,6 +313,13 @@ export async function correctStatus(
   ) {
     throw new AccessRefused('not_the_appointment_professional');
   }
+  // Reviving a cancelled appointment restores a care relationship the cancellation took away, so
+  // the professional it belongs to cannot do it for themselves: somebody else with the right to
+  // check in must. The revival is flagged in the history and in the audit trail.
+  const revived = record.status === 'cancelled' && CARE_COUNTING_STATUSES.has(input.toStatus);
+  if (revived && ownProfessionalOf(input.actor) === record.professionalId) {
+    throw new AccessRefused('own_cancelled_appointment');
+  }
 
   const patch: AppointmentPatch = { status: input.toStatus };
   let updatePlan: { planInput: PlanInput; plan: Plan } | null = null;
@@ -334,7 +366,11 @@ export async function correctStatus(
     toStatus: input.toStatus,
     actorUserId: input.actor.userId,
     actorKind: 'staff',
-    details: { reasonCode: input.reasonCode, ...(input.note ? { note: input.note } : {}) },
+    details: {
+      reasonCode: input.reasonCode,
+      ...(input.note ? { note: input.note } : {}),
+      ...(revived ? { revivedFromCancelled: true } : {}),
+    },
   });
   await ports.audit({
     action: 'appointment.status_corrected',
@@ -343,7 +379,12 @@ export async function correctStatus(
     resourceType: 'appointment',
     resourceId: record.id,
     patientId: record.patientId,
-    metadata: { from: record.status, to: input.toStatus, reasonCode: input.reasonCode },
+    metadata: {
+      from: record.status,
+      to: input.toStatus,
+      reasonCode: input.reasonCode,
+      ...(revived ? { revivedFromCancelled: true } : {}),
+    },
   });
   await publishStatusChange(ports, { before: record, after: updated, correction: true });
   return updated;
@@ -430,8 +471,19 @@ export async function rescheduleAppointment(
   const plan = await planSlot(ports, planInput);
   await applyPlan(ports, planInput, plan);
 
+  // D14: moving a confirmed appointment into the actor's OWN calendar would make them the
+  // treating professional of a patient nobody else vouched for. The identity goes back to
+  // unconfirmed and a person other than them has to confirm it again.
+  const identityReset =
+    professionalChanged &&
+    record.identityConfirmed &&
+    ownProfessionalOf(input.actor) === professional.id;
+
   const updated = await guardRace(ports, planInput, plan, () =>
     ports.updateAppointment(record.id, {
+      ...(identityReset
+        ? { identityConfirmed: false, identityConfirmedBy: null, identityConfirmation: null }
+        : {}),
       startsAt: new Date(plan.range.start),
       endsAt: new Date(plan.range.end),
       professionalId: professional.id,
@@ -443,6 +495,14 @@ export async function rescheduleAppointment(
     }),
   );
 
+  if (identityReset) {
+    await ports.openWorklistItem({
+      kind: 'identity_review',
+      subjectType: 'appointment',
+      subjectId: record.id,
+      locationId: location.id,
+    });
+  }
   await ports.insertEvent({
     appointmentId: record.id,
     kind: professionalChanged ? 'reassigned' : 'rescheduled',
@@ -455,6 +515,7 @@ export async function rescheduleAppointment(
       fromEndsAt: record.endsAt.toISOString(),
       fromProfessionalId: record.professionalId,
       fromLocationId: record.locationId,
+      ...(identityReset ? { identityReset: true } : {}),
       ...(plan.overrides.length > 0 ? { overrides: plan.overrides } : {}),
     },
   });
@@ -470,6 +531,7 @@ export async function rescheduleAppointment(
       toStartsAt: updated.startsAt,
       fromProfessionalId: record.professionalId,
       toProfessionalId: professional.id,
+      ...(identityReset ? { identityReset: true } : {}),
     },
   });
   if (plan.overrides.length > 0) {

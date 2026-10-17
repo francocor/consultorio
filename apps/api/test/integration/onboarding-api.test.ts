@@ -469,6 +469,38 @@ describe('"are you a professional?" (task 2.87)', () => {
     expect((await w.api.get('/auth/me', second)).json<MeResponse>().roles).toEqual(['owner']);
   });
 
+  it('closes the self-added role 30 days after the organization was created, finished wizard or not (JD-S2 C9)', async () => {
+    const day = 24 * 60 * 60 * 1000;
+    const selfAdd = async (slug: string, ageInDays: number) => {
+      const tenant = await createTestTenant(runtime, {
+        slug,
+        createdAt: new Date(Date.now() - ageInDays * day),
+      });
+      const owner = await signInAs(
+        app,
+        slug,
+        await createTestUser(runtime, tenant.id, { roles: ['owner'], password: TEST_PASSWORD }),
+      );
+      const response = await clientFor(app, slug).post('/onboarding/professional', owner, {
+        isProfessional: true,
+        fullName: 'Dr. Juan Gomez',
+        specialties: ['Cardiologia'],
+        matricula: null,
+      });
+      return {
+        response,
+        roles: (await clientFor(app, slug).get('/auth/me', owner)).json<MeResponse>().roles,
+      };
+    };
+
+    const recent = await selfAdd('onb-prof-29d', 29);
+    const old = await selfAdd('onb-prof-31d', 31);
+
+    expect(recent.response.statusCode, recent.response.body).toBe(200);
+    expect(old.response.statusCode).toBe(403);
+    expect(old.roles).toEqual(['owner']);
+  });
+
   it('starts every organization in Argentina, with the Buenos Aires time zone for its places', async () => {
     const w = await world('onb-defaults');
 

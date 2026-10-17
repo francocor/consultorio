@@ -173,7 +173,7 @@ CREATE POLICY "addendum_treating_only" ON "addendum" AS RESTRICTIVE FOR INSERT W
 --> statement-breakpoint
 -- Nothing clinical is ever deleted or emptied by the application. Versions and addenda are
 -- insert-only; an encounter may only change its visibility, and only while its note is a draft
--- (the triggers of migration 0061 enforce the details, also against the owner).
+-- (the triggers of migration 0032 enforce the details, also against the owner).
 REVOKE DELETE, TRUNCATE ON "encounter", "clinical_note", "note_version", "addendum" FROM app_rw;
 --> statement-breakpoint
 REVOKE UPDATE ON "note_version", "addendum" FROM app_rw;

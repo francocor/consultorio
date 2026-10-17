@@ -33,7 +33,7 @@ import {
 import { buildWizard, canSkip, missingPrerequisites, stepsFor } from '../domain/wizard.js';
 
 import { readFacts } from './facts.js';
-import { isWizardCompleted, loadStored, saveStored, type StatePatch } from './store.js';
+import { isSelfRoleOpen, loadStored, saveStored, type StatePatch } from './store.js';
 
 /** What inviting someone would change in the plan. A port: subscriptions plug in at Stage 6. */
 export interface PlanImpact {
@@ -113,15 +113,16 @@ export function createOnboardingService(deps: OnboardingDeps): OnboardingService
 
   /**
    * Makes the owner a professional (role and profile), saving the profile as given. Open only
-   * while the wizard is not finished: after that, roles are not self-assigned (authorization,
-   * "No self-assignment or silent escalation of roles"), another owner adds them.
+   * while the wizard is not finished and the organization is less than 30 days old: after that,
+   * roles are not self-assigned (authorization, "No self-assignment or silent escalation of
+   * roles"), another owner adds them.
    */
   async function makeOwnerProfessional(
     tx: Tx,
     actor: OnboardingActor,
     request: Extract<ProfessionalStepRequest, { isProfessional: true }>,
   ): Promise<void> {
-    if (!actor.roles.includes('professional') && (await isWizardCompleted(tx))) {
+    if (!actor.roles.includes('professional') && !(await isSelfRoleOpen(tx, deps.clock()))) {
       throw new AccessRefused('onboarding_role_closed');
     }
     await addProfessionalRoleToOwner(tx, {

@@ -22,6 +22,17 @@ export class StorageKeyError extends Error {
   }
 }
 
+/**
+ * A conditional move found another object than the one the caller inspected: it was replaced in
+ * between. Nothing was moved or deleted.
+ */
+export class ObjectChangedError extends Error {
+  constructor() {
+    super('the object changed after it was inspected');
+    this.name = 'ObjectChangedError';
+  }
+}
+
 function safeSegments(segments: readonly string[]): boolean {
   return (
     segments.length > 0 &&
@@ -73,6 +84,20 @@ export interface ObjectHead {
 
 export interface StoredObject extends ObjectHead {
   stream: Readable;
+  /**
+   * Identifies this exact content (the S3 ETag). Pass it to `move` as `ifMatch` to release only
+   * what was read.
+   */
+  etag: string;
+}
+
+export interface MoveOptions {
+  /**
+   * Move only if the source still has this etag (see `StoredObject.etag`); otherwise the move is
+   * refused with `ObjectChangedError` and nothing changes. This closes the gap between inspecting
+   * an object and releasing it, in which its uploader could swap it.
+   */
+  ifMatch?: string;
 }
 
 export interface PresignedPostInput {
@@ -97,8 +122,11 @@ export interface ObjectStorage {
   head(tenantId: string, key: string): Promise<ObjectHead | null>;
   /** A POST that lets a browser upload one object of one content type, with a size cap. */
   presignedPost(tenantId: string, key: string, input: PresignedPostInput): Promise<PresignedPost>;
-  /** Moves an object inside the tenant's prefix. False when the source does not exist. */
-  move(tenantId: string, fromKey: string, toKey: string): Promise<boolean>;
+  /**
+   * Moves an object inside the tenant's prefix. False when the source does not exist; throws
+   * `ObjectChangedError` when `ifMatch` is given and the source is no longer that object.
+   */
+  move(tenantId: string, fromKey: string, toKey: string, options?: MoveOptions): Promise<boolean>;
   /** Removes an object. Removing one that does not exist is not an error. */
   remove(tenantId: string, key: string): Promise<void>;
 }

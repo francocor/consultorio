@@ -8,7 +8,7 @@ import { canConfirmIdentity } from '../domain/identity-confirmation.js';
 import { publishPatientChange } from './events.js';
 import { recordIdentityConfirmed } from './identity-records.js';
 import { checkVersion, lockForChange, transitionAppointment } from './lifecycle.js';
-import { invalid, type BookActor } from './placement.js';
+import { invalid, ownProfessionalOf, type BookActor } from './placement.js';
 import type { SchedulingPorts } from './ports.js';
 
 type Actor = AuditActor & { userId: string };
@@ -35,7 +35,7 @@ export async function confirmIdentity(
   if (record.identityConfirmed || record.status === 'cancelled') throw new AppError('conflict');
 
   const how = canConfirmIdentity({
-    actorProfessionalId: input.actor.professionalId,
+    actorProfessionalId: ownProfessionalOf(input.actor),
     appointmentProfessionalId: record.professionalId,
     channel: 'worklist',
     soloPractice: false,
@@ -85,7 +85,7 @@ export async function detachPatient(
   const record = await lockForChange(ports, input.appointmentId, [], input.actor);
   checkVersion(record, input.expectedVersion);
   if (record.identityConfirmed || record.status === 'cancelled') throw new AppError('conflict');
-  if (input.actor.professionalId === record.professionalId) {
+  if (ownProfessionalOf(input.actor) === record.professionalId) {
     throw new AccessRefused('identity_reject_own_appointment');
   }
 
@@ -101,6 +101,8 @@ export async function detachPatient(
   });
 
   let result: AppointmentDto;
+  // Which record the appointment left and which it joined, for the history and the trail.
+  let moved: { fromPatientId: string; toPatientId: string } | null = null;
   if (input.resolution.kind === 'move_to_patient') {
     if (input.resolution.patientId === record.patientId) {
       throw invalid('patientId', 'scheduling.identity.same_patient');
@@ -115,6 +117,7 @@ export async function detachPatient(
       identityConfirmedBy: input.actor.userId,
       identityConfirmation: 'staff',
     });
+    moved = { fromPatientId: record.patientId, toPatientId: target.id };
     await publishPatientChange(ports, { before: record, after: result });
   } else {
     result = await transitionAppointment(ports, {
@@ -133,7 +136,7 @@ export async function detachPatient(
     kind: 'identity_rejected',
     actorUserId: input.actor.userId,
     actorKind: 'staff',
-    details: { resolution: input.resolution.kind === 'move_to_patient' ? 'moved' : 'cancelled' },
+    details: { resolution: moved ? 'moved' : 'cancelled', ...moved },
   });
   await ports.audit({
     action: 'appointment.identity.rejected',
@@ -142,7 +145,20 @@ export async function detachPatient(
     resourceType: 'appointment',
     resourceId: record.id,
     patientId: record.patientId,
-    metadata: { resolution: input.resolution.kind === 'move_to_patient' ? 'moved' : 'cancelled' },
+    metadata: { resolution: moved ? 'moved' : 'cancelled', ...moved },
   });
+  if (moved) {
+    // The appointment now carries a confirmation on its new record: staff looked at who the
+    // patient is, and that is on the trail like any other confirmation.
+    await ports.audit({
+      action: 'appointment.identity.confirmed',
+      outcome: 'allow',
+      actor: input.auditActor,
+      resourceType: 'appointment',
+      resourceId: record.id,
+      patientId: moved.toPatientId,
+      metadata: { how: 'staff', channel: 'worklist', viaDetach: true },
+    });
+  }
   return result;
 }

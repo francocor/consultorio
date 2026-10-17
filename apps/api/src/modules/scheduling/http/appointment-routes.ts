@@ -77,6 +77,7 @@ export function requestActor(request: FastifyRequest): {
       userId: actor.userId,
       permissions: new Set(effectivePermissions(actor.roles, actor.grants)),
       professionalId: actor.professionalId,
+      ownProfessionalId: actor.ownProfessionalId ?? actor.professionalId,
     },
     context: { tenantId: actor.tenantId, userId: actor.userId },
   };
@@ -408,7 +409,11 @@ export function appointmentRoutes(deps: AppointmentRoutesDeps) {
         config: {
           readOnly: 'write',
           permission: 'worklist.manage',
-          audits: ['appointment.identity.rejected', 'appointment.cancelled'],
+          audits: [
+            'appointment.identity.rejected',
+            'appointment.identity.confirmed',
+            'appointment.cancelled',
+          ],
         },
         schema: { params: IdParams, body: DetachPatientRequest, response: { 200: AppointmentDto } },
       },

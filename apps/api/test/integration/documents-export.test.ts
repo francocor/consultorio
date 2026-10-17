@@ -1,14 +1,16 @@
 import { afterAll, beforeAll, describe, expect, inject, it } from 'vitest';
 
+import { document as documentTable } from '../../src/db/schema/documents.js';
 import {
   exportAdministrativeDocuments,
   exportClinicalDocuments,
 } from '../../src/modules/documents/application/export-contributor.js';
 import { createRuntimeDb, type DbHandle } from '../../src/platform/db/pool.js';
 import { createWithTenant } from '../../src/platform/db/tenant-context.js';
+import { uuidv7 } from '../../src/platform/db/uuid.js';
 import { minimalPdf } from '../../src/platform/files/test-files.js';
 import { withScanning, type ScanningHarness } from '../support/document-scans.js';
-import { createDocumentsHarness } from '../support/documents.js';
+import { asSystem, createDocumentsHarness } from '../support/documents.js';
 
 /**
  * The documents part of the cancellation export (documents, "Retention, export and tenant
@@ -106,6 +108,49 @@ describe('the clinical part, one package per professional', () => {
     expect(part.documents.map((entry) => entry.id)).toContain(kept);
     expect(part.documents.every((entry) => !entry.name.includes('administrativo'))).toBe(true);
     expect(part.documents.every((entry) => !entry.name.includes('de-otro'))).toBe(true);
+  });
+
+  it('also holds the clinical documents the professional wrote for a patient they no longer treat (JD-S2 C4)', async () => {
+    // The author's own work is theirs to take with them, whether or not a relationship is active.
+    const untreated = await h.patient({ treatedBy: 'nobody' });
+    const id = uuidv7();
+    await asSystem(runtime, h.tenant.id, (tx) =>
+      tx.insert(documentTable).values({
+        id,
+        tenantId: h.tenant.id,
+        patientId: untreated,
+        category: 'lab_result',
+        classification: 'clinical',
+        originalName: 'propio-sin-relacion.pdf',
+        declaredContentType: 'application/pdf',
+        sizeBytes: 100,
+        objectKey: `t/${h.tenant.id}/quarantine/${id}`,
+        uploadedBy: h.sessions.professional.user.id,
+        authorProfessionalId: h.professionalId,
+        uploadCompletedAt: new Date(),
+      }),
+    );
+
+    const part = (await createWithTenant(runtime.db)(
+      {
+        tenantId: h.tenant.id,
+        userId: h.sessions.professional.user.id,
+        actingProfessionalId: h.professionalId,
+      },
+      (tx) =>
+        exportClinicalDocuments({ tx, tenantId: h.tenant.id, professionalId: h.professionalId }),
+    )) as Exported;
+    const colleaguePart = (await createWithTenant(runtime.db)(
+      {
+        tenantId: h.tenant.id,
+        userId: h.sessions.colleague.user.id,
+        actingProfessionalId: h.colleagueId,
+      },
+      (tx) => exportClinicalDocuments({ tx, tenantId: h.tenant.id, professionalId: h.colleagueId }),
+    )) as Exported;
+
+    expect(part.documents.map((entry) => entry.id)).toContain(id);
+    expect(colleaguePart.documents.map((entry) => entry.id)).not.toContain(id);
   });
 
   it('is empty for a package that names no professional', async () => {

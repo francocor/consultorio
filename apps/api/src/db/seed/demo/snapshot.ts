@@ -120,11 +120,19 @@ export async function snapshotDemoTenant(
       });
     }
   }
-  notes.sort((a, b) =>
-    `${a.author}|${a.patient}|${a.template}|${a.status}`.localeCompare(
-      `${b.author}|${b.patient}|${b.template}|${b.status}`,
-    ),
-  );
+  // Every field is part of the key: two notes can share author, patient,
+  // template and status, and the comparison must not depend on row order.
+  const noteKey = (note: (typeof notes)[number]) =>
+    [
+      note.author,
+      note.patient,
+      note.template,
+      note.status,
+      note.visibility,
+      note.addenda,
+      note.fromAppointment,
+    ].join('|');
+  notes.sort((a, b) => noteKey(a).localeCompare(noteKey(b)));
 
   return withTenant({ tenantId, userId: SYSTEM_USER_ID }, async (tx) => {
     const [org] = await tx

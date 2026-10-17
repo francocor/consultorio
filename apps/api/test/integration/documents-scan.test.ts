@@ -7,6 +7,7 @@ import { afterAll, beforeAll, describe, expect, inject, it } from 'vitest';
 
 import { auditEvent } from '../../src/db/schema/audit.js';
 import { document } from '../../src/db/schema/documents.js';
+import { createDocumentJobs } from '../../src/modules/documents/index.js';
 import { createRuntimeDb, type DbHandle } from '../../src/platform/db/pool.js';
 import type { Tx } from '../../src/platform/db/tenant-context.js';
 import {
@@ -18,8 +19,10 @@ import {
   minimalPng,
   minimalWebp,
 } from '../../src/platform/files/test-files.js';
+import type { MalwareScanner } from '../../src/platform/scanning/malware-scanner.js';
 import { withScanning, type ScanningHarness } from '../support/document-scans.js';
 import { asSystem, createDocumentsHarness } from '../support/documents.js';
+import { runPending } from '../support/jobs.js';
 
 let runtime: DbHandle;
 let h: ScanningHarness;
@@ -367,5 +370,52 @@ describe('a scan that runs twice, or after a crash', () => {
     await h.runScans();
 
     expect(h.scanner.scans()).toBe(scans);
+  });
+});
+
+describe('a file replaced between the scan and the release (JD-S2 C5)', () => {
+  it('is never released as the clean file it replaced: the move waits for the same object, and the new content is scanned again', async () => {
+    const patientId = await h.patient();
+    const uploaded = await h.upload(h.sessions.professional, {
+      patientId,
+      category: 'lab_result',
+      bytes: minimalPdf('limpio al escanear'),
+    });
+    const quarantineKey = `t/${h.tenant.id}/quarantine/${uploaded.id}`;
+    const infected = Buffer.from(`%PDF-1.4\n% ${EICAR}\n%%EOF\n`);
+    // The presigned link is valid for 15 minutes: the uploader overwrites the quarantined object
+    // while the scanner is answering "clean" about the old bytes.
+    const racing: MalwareScanner = {
+      async scan() {
+        await h.storage.put(h.tenant.id, quarantineKey, {
+          body: infected,
+          contentType: 'application/pdf',
+        });
+        return { status: 'clean' };
+      },
+    };
+    const racingJobs = createDocumentJobs({
+      storage: h.storage,
+      scanner: racing,
+      jobs: h.jobs,
+      clock: () => new Date(),
+    });
+
+    await runPending(h.runtime.db, h.jobs, [racingJobs.scan]);
+
+    // Not released: still quarantined, nothing under the docs key, and another scan is queued.
+    expect(await rowOf(uploaded.id)).toMatchObject({ status: 'quarantined', sha256: null });
+    expect(h.storage.keys()).not.toContain(`t/${h.tenant.id}/docs/${uploaded.id}`);
+    expect(h.storage.keys()).toContain(quarantineKey);
+    expect(h.jobs.pending('document.scan').length).toBeGreaterThan(0);
+
+    // The next attempt scans what is really there.
+    await h.runScans();
+
+    expect(await rowOf(uploaded.id)).toMatchObject({
+      status: 'rejected',
+      rejectionReason: 'infected',
+    });
+    expect(h.storage.keys().filter((key) => key.includes(uploaded.id))).toEqual([]);
   });
 });
