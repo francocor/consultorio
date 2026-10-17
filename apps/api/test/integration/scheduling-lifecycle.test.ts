@@ -352,6 +352,27 @@ describe('correcting a status', () => {
     expect(restored.statusCode, restored.body).toBe(200);
   });
 
+  it('does not let the own professional revive their cancelled appointment, and flags the revival by somebody else (JD-S2 C7)', async () => {
+    backToStart();
+    const created = await world.book(40, '10:00');
+    await world.act(created, 'cancel', world.reception, {
+      cancelledBy: 'patient',
+      reasonCode: 'schedule_conflict',
+    });
+    const body = { toStatus: 'scheduled', reasonCode: 'entered_by_mistake' };
+
+    const byOwner = await world.act(created, 'correct', world.doctor, body);
+
+    expect(byOwner.statusCode).toBe(403);
+    expect((await stored(created))?.status).toBe('cancelled');
+    const byReception = await world.act(created, 'correct', world.reception, body);
+    expect(byReception.statusCode, byReception.body).toBe(200);
+    const rows = await audits('appointment.status_corrected');
+    expect(rows.find((row) => row.resourceId === created.id)).toMatchObject({
+      metadata: { from: 'cancelled', to: 'scheduled', revivedFromCancelled: true },
+    });
+  });
+
   it('is rejected, showing the conflicting range, when the slot was rebooked for someone else', async () => {
     backToStart();
     const created = await world.book(13, '10:00');

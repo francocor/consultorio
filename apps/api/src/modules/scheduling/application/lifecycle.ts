@@ -63,6 +63,19 @@ const HOUR_MS = 3_600_000;
 const CLINICAL_STATUSES: ReadonlySet<AppointmentStatus> = new Set(['in_progress', 'attended']);
 
 /**
+ * The statuses that count towards a care relationship (D2, D15). Putting a cancelled appointment
+ * back into one of them restores what the cancellation took away.
+ */
+const CARE_COUNTING_STATUSES: ReadonlySet<AppointmentStatus> = new Set([
+  'scheduled',
+  'confirmed',
+  'checked_in',
+  'in_progress',
+  'attended',
+  'no_show',
+]);
+
+/**
  * Locks what a change to one appointment must serialize with: the professional(s) first, in a fixed
  * order so two moves cannot deadlock, then the appointment itself. Returns the locked row.
  */
@@ -283,6 +296,13 @@ export async function correctStatus(
   ) {
     throw new AccessRefused('not_the_appointment_professional');
   }
+  // Reviving a cancelled appointment restores a care relationship the cancellation took away, so
+  // the professional it belongs to cannot do it for themselves: somebody else with the right to
+  // check in must. The revival is flagged in the history and in the audit trail.
+  const revived = record.status === 'cancelled' && CARE_COUNTING_STATUSES.has(input.toStatus);
+  if (revived && ownProfessionalOf(input.actor) === record.professionalId) {
+    throw new AccessRefused('own_cancelled_appointment');
+  }
 
   const patch: AppointmentPatch = { status: input.toStatus };
   let updatePlan: { planInput: PlanInput; plan: Plan } | null = null;
@@ -329,7 +349,11 @@ export async function correctStatus(
     toStatus: input.toStatus,
     actorUserId: input.actor.userId,
     actorKind: 'staff',
-    details: { reasonCode: input.reasonCode, ...(input.note ? { note: input.note } : {}) },
+    details: {
+      reasonCode: input.reasonCode,
+      ...(input.note ? { note: input.note } : {}),
+      ...(revived ? { revivedFromCancelled: true } : {}),
+    },
   });
   await ports.audit({
     action: 'appointment.status_corrected',
@@ -338,7 +362,12 @@ export async function correctStatus(
     resourceType: 'appointment',
     resourceId: record.id,
     patientId: record.patientId,
-    metadata: { from: record.status, to: input.toStatus, reasonCode: input.reasonCode },
+    metadata: {
+      from: record.status,
+      to: input.toStatus,
+      reasonCode: input.reasonCode,
+      ...(revived ? { revivedFromCancelled: true } : {}),
+    },
   });
   return updated;
 }

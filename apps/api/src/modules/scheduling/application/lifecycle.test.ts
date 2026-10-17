@@ -576,6 +576,84 @@ describe('correcting a terminal status', () => {
     expect(toNoShow.status).toBe('no_show');
   });
 
+  describe('reviving a cancelled appointment (D2, D15: the professional cannot restore their own care relationship)', () => {
+    const COUNTING = ['scheduled', 'confirmed', 'checked_in', 'no_show'] as const;
+    const cancelled = () => appointment({ status: 'cancelled' });
+
+    it.each(COUNTING)(
+      'refuses the appointment own professional when it goes back to %s, and changes nothing',
+      async (toStatus) => {
+        const { ports, state } = world(cancelled());
+
+        const error = await thrown(
+          correct(ports, toStatus, {
+            who: actor({ professionalId: DOCTOR }),
+            reasonCode: 'entered_by_mistake',
+          }),
+        );
+
+        expect(error).toBeInstanceOf(AccessRefused);
+        expect(state.updates).toEqual([]);
+        expect(state.audits).toEqual([]);
+      },
+    );
+
+    it('refuses the own professional when their clinical id is not open yet either', async () => {
+      const { ports } = world(cancelled());
+
+      const error = await thrown(
+        correct(ports, 'scheduled', {
+          who: { ...actor(), ownProfessionalId: DOCTOR },
+          reasonCode: 'entered_by_mistake',
+        }),
+      );
+
+      expect(error).toBeInstanceOf(AccessRefused);
+    });
+
+    it('lets another member who may check in revive it, and flags it in the history and the audit trail', async () => {
+      const { ports, state } = world(cancelled());
+
+      const revived = await correct(ports, 'scheduled', {
+        who: actor({ professionalId: COLLEAGUE }),
+        reasonCode: 'entered_by_mistake',
+      });
+
+      expect(revived.status).toBe('scheduled');
+      expect(state.events[0]).toMatchObject({
+        kind: 'status_corrected',
+        details: { revivedFromCancelled: true },
+      });
+      expect(state.audits[0]).toMatchObject({
+        action: 'appointment.status_corrected',
+        metadata: { from: 'cancelled', to: 'scheduled', revivedFromCancelled: true },
+      });
+    });
+
+    it('does not flag a correction that is not a revival', async () => {
+      const { ports, state } = world(
+        appointment({
+          status: 'no_show',
+          startsAt: new Date('2026-07-13T11:00:00.000Z'),
+          endsAt: new Date('2026-07-13T11:30:00.000Z'),
+        }),
+      );
+
+      await correct(ports, 'attended');
+
+      expect(JSON.stringify(state.audits[0]?.metadata)).not.toContain('revivedFromCancelled');
+    });
+
+    it('leaves a cancelled appointment cancelled for the own professional, in the clinical statuses too', async () => {
+      const { ports } = world(cancelled());
+
+      for (const toStatus of ['in_progress', 'attended'] as const) {
+        const error = await thrown(correct(ports, toStatus));
+        expect(error).toBeInstanceOf(AccessRefused);
+      }
+    });
+  });
+
   it('is rejected when the slot was rebooked for someone else, showing the conflicting range', async () => {
     const record = appointment({
       status: 'no_show',
@@ -630,7 +708,11 @@ describe('correcting a terminal status', () => {
   it('gives the lane back and clears the cancellation when a cancelled appointment is restored', async () => {
     const { ports, state } = world(appointment({ status: 'cancelled' }));
 
-    await correct(ports, 'scheduled', { reasonCode: 'entered_by_mistake' });
+    // Another member restores it: the own professional cannot revive their own cancelled appointment.
+    await correct(ports, 'scheduled', {
+      who: actor({ professionalId: COLLEAGUE }),
+      reasonCode: 'entered_by_mistake',
+    });
 
     expect(state.updates[0]?.patch).toMatchObject({
       status: 'scheduled',
