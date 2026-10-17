@@ -74,36 +74,6 @@ export const WAITLIST_PRIORITIES = [0, 1, 2] as const;
 /** Offers that expire in a row before an entry is flagged for reception. */
 export const WAITLIST_FLAG_AFTER_EXPIRED = 3;
 
-/**
- * Error codes of the waitlist module, with their status and the key of the es-AR message. They join
- * the API catalog (errors.ts); the messages go in `locales/es-AR/errors.waitlist.json`, keyed by the
- * code.
- */
-export const WAITLIST_ERRORS = {
-  // The patient already holds the most active entries the organization allows.
-  waitlist_entry_limit: { status: 409, i18nKey: 'errors.waitlist_entry_limit' },
-  // The entry is closed or expired: nothing can be changed on it.
-  waitlist_entry_closed: { status: 409, i18nKey: 'errors.waitlist_entry_closed' },
-  // The patient is inactive, or the type, professional or place cannot be waited for.
-  waitlist_not_available: { status: 409, i18nKey: 'errors.waitlist_not_available' },
-  // The joining visitor did not tick the agreement to receive offers.
-  waitlist_opt_in_required: { status: 400, i18nKey: 'errors.waitlist_opt_in_required' },
-  // The one-time code of a join is wrong, expired or spent. One answer for all of them.
-  waitlist_code_invalid: { status: 400, i18nKey: 'errors.waitlist_code_invalid' },
-} as const satisfies Record<string, { status: number; i18nKey: string }>;
-
-/** Audit actions of the waitlist. They are registered in the shared catalogue. */
-export const WAITLIST_AUDIT_ACTIONS = [
-  'waitlist.entry.created',
-  'waitlist.entry.updated',
-  'waitlist.entry.closed',
-  'waitlist.offer.created',
-  'waitlist.offer.accepted',
-  'waitlist.offer.declined',
-  'waitlist.offer.expired',
-  'waitlist.priority.overridden',
-] as const;
-
 /** The `waitlist` section of the organization settings (spec defaults). */
 export const WaitlistSettings = z.strictObject({
   /** An entry becomes inactive after this many days. */

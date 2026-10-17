@@ -2,16 +2,15 @@ import { describe, expect, it } from 'vitest';
 
 import { AUDIT_ACTIONS } from './audit-actions.js';
 import { ERROR_CATALOG } from './errors.js';
+import { WAITLIST_AUDIT_ACTIONS, WAITLIST_ERRORS } from './waitlist-catalog.js';
 import {
   CreateWaitlistEntryRequest,
   DEFAULT_WAITLIST_SETTINGS,
   PublicWaitlistJoinRequest,
   SetWaitlistPriorityRequest,
   UpdateWaitlistEntryRequest,
-  WAITLIST_AUDIT_ACTIONS,
   WAITLIST_CLOSE_REASONS,
   WAITLIST_ENTRY_STATUSES,
-  WAITLIST_ERRORS,
   WAITLIST_OFFER_STATUSES,
   WaitlistSettings,
 } from './waitlist.js';
