@@ -108,18 +108,18 @@ describe('error catalog', () => {
 });
 
 describe('the error catalogs of the modules', () => {
-  const modules = {
+  // Typed as plain catalogs: once the tracks fill them in, each one has its own literal shape.
+  const modules: Record<string, Readonly<Record<string, { status: number; i18nKey: string }>>> = {
     notifications: NOTIFICATION_ERRORS,
     'online-booking': ONLINE_BOOKING_ERRORS,
     waitlist: WAITLIST_ERRORS,
     teleconsultation: TELECONSULTATION_ERRORS,
-  } as const;
+  };
 
   it.each(Object.entries(modules))(
     '%s has a catalog that is part of the API catalog',
     (_name, catalog) => {
-      const entries: [string, { status: number; i18nKey: string }][] = Object.entries(catalog);
-      for (const [code, entry] of entries) {
+      for (const [code, entry] of Object.entries(catalog)) {
         expect(ERROR_CATALOG, code).toHaveProperty(code);
         expect(entry.i18nKey, code).toBe(`errors.${code}`);
       }
