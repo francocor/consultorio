@@ -26,7 +26,7 @@ describe('action token kinds (design 4.5)', () => {
     );
   });
 
-  it('enables the account flows and the document download for now', () => {
+  it('enables the account flows, the document download and the video join link for now', () => {
     const enabled = TOKEN_KINDS.filter((kind) => isEnabledKind(kind)).sort();
 
     expect(enabled).toEqual(
@@ -36,6 +36,7 @@ describe('action token kinds (design 4.5)', () => {
         'portal_activation',
         'signup_verification',
         'staff_invitation',
+        'video_join',
       ].sort(),
     );
   });

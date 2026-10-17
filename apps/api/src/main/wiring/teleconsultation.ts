@@ -8,7 +8,10 @@ import {
   createLocalVideoLinkProvider,
   createUnavailableVideoLinkProvider,
 } from '../../adapters/video-local/index.js';
-import { createTeleconsultation } from '../../modules/teleconsultation/index.js';
+import {
+  createTeleconsultation,
+  createVideoLinkCreateJob,
+} from '../../modules/teleconsultation/index.js';
 import { adapterOfSetting } from '../../platform/local-providers/dev-routes.js';
 import { fake, real, type AdapterRegistry } from '../adapter-resolver.js';
 import type { ProviderConfig } from '../config-providers.js';
@@ -60,10 +63,16 @@ export const teleconsultationWiring: ModuleWiring = {
         Promise.resolve({ adapter: adapterOfSetting(config.providers.video), mode: null }),
     },
   ],
+  // A virtual appointment gets its room from a job, queued in the transaction that books it.
+  needsJobs: true,
   create: (context) =>
     createTeleconsultation({
       withTenant: context.withTenant,
       auditDeny: context.auditDeny,
+      events: context.appointmentEvents,
+      ...(context.jobs ? { jobs: context.jobs } : {}),
+      ...(context.adapters ? { adapters: context.adapters } : {}),
       ...(context.clock ? { clock: context.clock } : {}),
     }),
+  worker: ({ adapters }) => ({ jobs: () => [createVideoLinkCreateJob({ adapters })] }),
 };

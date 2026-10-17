@@ -46,7 +46,7 @@ export const TOKEN_KIND_REGISTRY: Record<TokenKind, KindSpec> = {
   appointment_cancel: { ttlMs: 60 * DAY, maxUses: 1, sessionBound: false, enabled: false },
   appointment_reschedule: { ttlMs: 60 * DAY, maxUses: 1, sessionBound: false, enabled: false },
   waitlist_offer: { ttlMs: 2 * DAY, maxUses: 1, sessionBound: false, enabled: false },
-  video_join: { ttlMs: 3 * HOUR, maxUses: 20, sessionBound: false, enabled: false },
+  video_join: { ttlMs: 3 * HOUR, maxUses: 20, sessionBound: false, enabled: true },
   notification_opt_out: { ttlMs: 3650 * DAY, maxUses: 1, sessionBound: false, enabled: false },
   whatsapp_opt_in: { ttlMs: 7 * DAY, maxUses: 1, sessionBound: false, enabled: false },
   document_download: { ttlMs: 5 * MINUTE, maxUses: 1, sessionBound: true, enabled: true },
