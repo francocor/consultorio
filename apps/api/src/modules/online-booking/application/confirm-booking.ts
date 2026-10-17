@@ -4,6 +4,7 @@ import { eq } from 'drizzle-orm';
 import { bookingSubmission } from '../../../db/schema/booking-submission.js';
 import { audit } from '../../../platform/audit/writer.js';
 import type { TenantKeys } from '../../../platform/crypto/tenant-keys.js';
+import { evenOut } from '../../../platform/db/even-work.js';
 import type { Tx } from '../../../platform/db/tenant-context.js';
 import type { AppointmentFacts } from '../../../platform/events/appointment-events.js';
 import type { ActionTokens } from '../../../platform/tokens/index.js';
@@ -26,6 +27,14 @@ import {
   type SubmissionPayload,
   type SubmitInput,
 } from './submissions.js';
+
+/**
+ * What registering a new person costs over reviewing an existing patient, in statements sent to
+ * Postgres, and what ticking WhatsApp adds. The existing-patient branch sends this many reads so the
+ * two cannot be told apart by the work behind the answer (pinned by `public-nondisclosure.test.ts`).
+ */
+export const NEW_PERSON_EXTRA_STATEMENTS = 6;
+export const WHATSAPP_OPT_IN_EXTRA_STATEMENTS = 3;
 
 export interface ConfirmDeps {
   keys: TenantKeys;
@@ -270,9 +279,15 @@ export async function confirmBooking(
   });
   await ports.publishEvent({ kind: 'created', appointment: factsOf(appointment) });
 
-  if (createdPatient && payload.whatsappOptIn && deps.notifier.recordWhatsAppOptIn) {
-    await deps.notifier.recordWhatsAppOptIn(tx, { patientId, at: input.now });
+  if (payload.whatsappOptIn && deps.notifier.recordWhatsAppOptIn) {
+    if (createdPatient) {
+      await deps.notifier.recordWhatsAppOptIn(tx, { patientId, at: input.now });
+    } else {
+      // The choice of somebody else's record is not written, but the work looks the same.
+      await evenOut(tx, WHATSAPP_OPT_IN_EXTRA_STATEMENTS);
+    }
   }
+  if (!createdPatient) await evenOut(tx, NEW_PERSON_EXTRA_STATEMENTS);
 
   // What stays of the form: the consent it was made under. The rest was only needed to book.
   const evidence = await deps.keys.encryptField(

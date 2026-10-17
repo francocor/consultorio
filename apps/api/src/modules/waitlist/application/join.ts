@@ -8,6 +8,7 @@ import { and, desc, eq, gt, sql } from 'drizzle-orm';
 import { bookingSubmission, otpChallenge } from '../../../db/schema/booking-submission.js';
 import { audit, type AuditActor } from '../../../platform/audit/writer.js';
 import type { TenantKeys } from '../../../platform/crypto/tenant-keys.js';
+import { evenOut } from '../../../platform/db/even-work.js';
 import type { Tx } from '../../../platform/db/tenant-context.js';
 import { uuidv7 } from '../../../platform/db/uuid.js';
 import { AppError } from '../../../platform/http/problem.js';
@@ -353,6 +354,15 @@ async function verifyCode(
   return false;
 }
 
+/**
+ * What registering a new person costs over attaching the entry to an existing patient, in statements
+ * sent to Postgres, and what ticking WhatsApp adds: the existing-patient branch sends this many
+ * reads so the work behind the answer does not tell the two apart (see `evenOut`; pinned by
+ * `test/security/public-nondisclosure.test.ts`).
+ */
+export const JOIN_NEW_PERSON_EXTRA_STATEMENTS = 7;
+export const JOIN_WHATSAPP_OPT_IN_EXTRA_STATEMENTS = 3;
+
 export type ConfirmOutcome =
   { ok: true; expiresAt: Date } | { ok: false; refusal: 'not_found' | 'invalid_code' };
 
@@ -438,9 +448,15 @@ export async function confirmJoin(
             identityUnconfirmed: match !== null,
           },
         });
-        if (created && payload.channels.includes('whatsapp') && deps.recordWhatsAppOptIn) {
-          await deps.recordWhatsAppOptIn(inner, { patientId: created.id, at: input.now });
+        if (payload.channels.includes('whatsapp') && deps.recordWhatsAppOptIn) {
+          if (created) {
+            await deps.recordWhatsAppOptIn(inner, { patientId: created.id, at: input.now });
+          } else {
+            // The choice of somebody else's record is not written, but the work looks the same.
+            await evenOut(inner, JOIN_WHATSAPP_OPT_IN_EXTRA_STATEMENTS);
+          }
         }
+        if (!created) await evenOut(inner, JOIN_NEW_PERSON_EXTRA_STATEMENTS);
       });
     } catch (error) {
       const refused =
