@@ -21,6 +21,11 @@ export const ONLINE_BOOKING_ERRORS = {
   booking_code_invalid: { status: 400, i18nKey: 'errors.booking_code_invalid' },
   // The contact already holds the most future online appointments, or the day's bookings are used.
   booking_limit_reached: { status: 409, i18nKey: 'errors.booking_limit_reached' },
+  // The link to change or cancel an appointment came after the organization's deadline.
+  booking_change_deadline_passed: {
+    status: 409,
+    i18nKey: 'errors.booking_change_deadline_passed',
+  },
 } as const satisfies Record<string, { status: number; i18nKey: string }>;
 
 /** Audit actions of online booking. They are registered in the shared catalogue. */
@@ -265,3 +270,66 @@ export const PublicConfirmRequest = z.object({
   code: z.string().regex(/^\d{6}$/),
 });
 export type PublicConfirmRequest = z.infer<typeof PublicConfirmRequest>;
+
+// Public: the confirmation and the link to change it ------------------------------------------
+
+/** What the page says about an appointment: when, where and with whom. Never anything of the patient. */
+const PublicAppointmentFields = {
+  status: z.enum(['scheduled', 'pending_approval', 'confirmed', 'cancelled']),
+  startsAt: Instant,
+  endsAt: Instant,
+  timeZone: z.string(),
+  professionalName: z.string(),
+  locationName: z.string(),
+  typeName: z.string(),
+  mode: z.enum(APPOINTMENT_MODES),
+};
+
+/**
+ * The same answer for every visitor who confirms a booking, whether or not the person already
+ * existed as a patient (online-booking, "Booking completion"). `managePath` is the link to change or
+ * cancel, also sent by email.
+ */
+export const PublicConfirmationDto = z.strictObject({
+  status: z.enum(['scheduled', 'pending_approval']),
+  startsAt: Instant,
+  endsAt: Instant,
+  timeZone: z.string(),
+  organizationName: z.string(),
+  professionalName: z.string(),
+  locationName: z.string(),
+  typeName: z.string(),
+  mode: z.enum(APPOINTMENT_MODES),
+  /** An iCalendar file with the date, the place and the professional; nothing clinical. */
+  calendarFile: z.string(),
+  /** Null when the appointment is about to start and there is nothing left to change. */
+  managePath: z.string().nullable(),
+});
+export type PublicConfirmationDto = z.infer<typeof PublicConfirmationDto>;
+
+/** The appointment behind a link, and whether the patient can still change it. */
+export const PublicManageDto = z.strictObject({
+  appointment: z.strictObject(PublicAppointmentFields),
+  organizationName: z.string(),
+  /** False after the deadline of the organization: the page then says to contact it. */
+  canChange: z.boolean(),
+  /** The last instant the patient can change or cancel by link. */
+  changeDeadline: Instant,
+});
+export type PublicManageDto = z.infer<typeof PublicManageDto>;
+
+export const PublicManageSlotsQuery = z
+  .object({ from: z.iso.date(), to: z.iso.date() })
+  .superRefine((value, ctx) => {
+    const days =
+      (Date.parse(`${value.to}T00:00:00Z`) - Date.parse(`${value.from}T00:00:00Z`)) / 86_400_000;
+    if (days < 0) {
+      ctx.addIssue({ code: 'custom', path: ['to'], message: 'must not be before the start' });
+    } else if (days + 1 > MAX_PUBLIC_AVAILABILITY_DAYS) {
+      ctx.addIssue({ code: 'custom', path: ['to'], message: 'at most 31 days at a time' });
+    }
+  });
+export type PublicManageSlotsQuery = z.infer<typeof PublicManageSlotsQuery>;
+
+export const PublicRescheduleRequest = z.object({ startsAt: Instant });
+export type PublicRescheduleRequest = z.infer<typeof PublicRescheduleRequest>;

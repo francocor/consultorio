@@ -2,6 +2,7 @@ import type { PublicSubmissionRequest } from '@consultorio/contracts';
 import { eq, sql } from 'drizzle-orm';
 
 import { bookingSubmission } from '../../../db/schema/booking-submission.js';
+import { publicHold } from '../../../db/schema/online-booking.js';
 import { slotHold } from '../../../db/schema/scheduling.js';
 import type { AuditActor } from '../../../platform/audit/writer.js';
 import type { TenantKeys } from '../../../platform/crypto/tenant-keys.js';
@@ -54,7 +55,7 @@ export type SubmitOutcome =
   | { ok: false; refusal: 'limit_reached' };
 
 export interface SubmitInput {
-  tenant: { id: string; country: string };
+  tenant: { id: string; country: string; slug: string; isDemo: boolean };
   organizationSlug: string;
   holdId: string;
   /** Hash of the anonymous booking session that made the hold. */
@@ -66,9 +67,11 @@ export interface SubmitInput {
   offerContext: OfferContext;
 }
 
-interface LoadedHold {
+export interface LoadedHold {
   offer: ProfessionalOffer;
   hold: typeof slotHold.$inferSelect;
+  /** The type of visit the visitor chose when they held the time. */
+  typeId: string;
 }
 
 /**
@@ -76,7 +79,7 @@ interface LoadedHold {
  * that was already booked and a hold of a professional whose link is closed look like a hold that
  * never existed.
  */
-async function loadHold(
+export async function loadHold(
   tx: Tx,
   input: SubmitInput,
 ): Promise<LoadedHold | { refusal: 'not_found' | 'expired' }> {
@@ -88,12 +91,14 @@ async function loadHold(
   if (hold.status !== 'active' || hold.expiresAt.getTime() <= input.now.getTime()) {
     return { refusal: 'expired' };
   }
+  const [made] = await tx.select().from(publicHold).where(eq(publicHold.holdId, hold.id));
+  if (!made) return { refusal: 'not_found' };
   const offer = await findOfferByProfessional(
     tx,
     { organizationSlug: input.organizationSlug, professionalId: hold.professionalId },
     input.offerContext,
   );
-  return offer ? { offer, hold } : { refusal: 'not_found' };
+  return offer ? { offer, hold, typeId: made.appointmentTypeId } : { refusal: 'not_found' };
 }
 
 function fieldError(path: string, i18nKey: string) {

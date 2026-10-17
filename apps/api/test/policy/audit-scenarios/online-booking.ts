@@ -15,6 +15,6 @@ export const ONLINE_BOOKING_SCENARIOS: Record<
   'booking.link.enabled': t('booking-links.test.ts'),
   'booking.link.disabled': t('booking-links.test.ts'),
   'booking.link.regenerated': t('booking-links.test.ts'),
-  'booking.online.created': { pending: 'S3.09 (task 3.46): audit of an online booking' },
+  'booking.online.created': t('confirm-booking.test.ts'),
   'booking.suspicious': t('booking-submission.test.ts'),
 };

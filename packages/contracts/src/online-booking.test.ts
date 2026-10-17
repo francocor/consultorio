@@ -8,8 +8,12 @@ import {
   ONLINE_BOOKING_ERRORS,
   OnlineBookingSettings,
   PublicAvailabilityQuery,
+  PublicConfirmationDto,
   PublicConfirmRequest,
   PublicHoldRequest,
+  PublicManageDto,
+  PublicManageSlotsQuery,
+  PublicRescheduleRequest,
   PublicSubmissionRequest,
   UpdateBookingLinkRequest,
 } from './online-booking.js';
@@ -182,5 +186,42 @@ describe('public submission contracts', () => {
     for (const code of ['12345', '1234567', 'abcdef', '12 345', '']) {
       expect(PublicConfirmRequest.safeParse({ code }).success, code).toBe(false);
     }
+  });
+});
+
+describe('confirmation and self-service contracts', () => {
+  it('has a closed set of statuses for what the visitor is told', () => {
+    expect(PublicConfirmationDto.shape.status.options).toEqual(['scheduled', 'pending_approval']);
+  });
+
+  it('shows the appointment of a link without any patient field', () => {
+    const keys = Object.keys(PublicManageDto.shape.appointment.shape);
+
+    for (const forbidden of ['patientId', 'patient', 'email', 'phone', 'document', 'reason']) {
+      expect(keys).not.toContain(forbidden);
+    }
+  });
+
+  it('moves an appointment to an instant, and nothing else', () => {
+    expect(
+      PublicRescheduleRequest.safeParse({ startsAt: '2031-05-12T13:00:00.000Z' }).success,
+    ).toBe(true);
+    expect(PublicRescheduleRequest.safeParse({ startsAt: 'soon' }).success).toBe(false);
+    expect(
+      PublicRescheduleRequest.parse({ startsAt: '2031-05-12T13:00:00.000Z', patientId: 'x' }),
+    ).toEqual({ startsAt: '2031-05-12T13:00:00.000Z' });
+  });
+
+  it('asks for the slots of a link by a range of dates of at most 31 days', () => {
+    expect(PublicManageSlotsQuery.safeParse({ from: '2031-05-12', to: '2031-05-18' }).success).toBe(
+      true,
+    );
+    expect(PublicManageSlotsQuery.safeParse({ from: '2031-05-12', to: '2031-08-18' }).success).toBe(
+      false,
+    );
+  });
+
+  it('adds the code for a change that came too late', () => {
+    expect(ONLINE_BOOKING_ERRORS).toHaveProperty('booking_change_deadline_passed');
   });
 });

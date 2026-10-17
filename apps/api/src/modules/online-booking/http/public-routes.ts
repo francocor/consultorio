@@ -3,8 +3,13 @@ import {
   PublicAvailabilityResponse,
   PublicBookingPageDto,
   PublicChallengeResponse,
+  PublicConfirmationDto,
+  PublicConfirmRequest,
   PublicHoldDto,
   PublicHoldRequest,
+  PublicManageDto,
+  PublicManageSlotsQuery,
+  PublicRescheduleRequest,
   PublicResendRequest,
   PublicSubmissionRequest,
   PublicSubmissionResponse,
@@ -24,12 +29,23 @@ import { AppError, conflictCode, denied } from '../../../platform/http/problem.j
 import type { PublicOrigins } from '../../../platform/http/public-origin.js';
 import type { ResolvedTenant } from '../../../platform/http/tenant-host.js';
 import type { JobClient } from '../../../platform/jobs/boss.js';
+import type { ActionTokens } from '../../../platform/tokens/index.js';
 import { SlotNoLongerAvailableError, SlotTakenError } from '../../scheduling/index.js';
-import type { SchedulingPorts } from '../../scheduling/index.js';
+import type { SchedulingPorts, WorklistService } from '../../scheduling/index.js';
 import { readOrganizationName } from '../../tenancy/index.js';
 import type { Abuse } from '../application/abuse.js';
 import type { AvailabilityCache } from '../application/availability-cache.js';
+import type { BookingNotifier } from '../application/booking-notifier.js';
 import { readBookingSettings, type BookingSettings } from '../application/booking-settings.js';
+import { confirmBooking, type ConfirmDeps } from '../application/confirm-booking.js';
+import {
+  cancelManaged,
+  managedSlots,
+  rescheduleManaged,
+  viewManaged,
+  type ManageContext,
+  type ManageDeps,
+} from '../application/manage.js';
 import { publicAvailability } from '../application/public-availability.js';
 import { createPublicHold, sourceKeyOf } from '../application/public-holds.js';
 import {
@@ -63,6 +79,9 @@ export interface PublicRoutesDeps {
   /** Queues the email with the code. Absent: the form cannot be submitted (503). */
   jobs: JobClient | undefined;
   abuse: Abuse;
+  worklist: WorklistService;
+  tokens: ActionTokens;
+  notifier: BookingNotifier;
 }
 
 /** How long the anonymous booking session cookie lives: the length of a booking attempt, with room. */
@@ -446,7 +465,12 @@ export function publicRoutes(deps: PublicRoutesDeps) {
         const outcome = await run(tenant, async (tx) => {
           const settings = await readBookingSettings(tx);
           return submitBooking(tx, submissionDeps, {
-            tenant: { id: tenant.id, country: tenant.country },
+            tenant: {
+              id: tenant.id,
+              country: tenant.country,
+              slug: tenant.slug,
+              isDemo: tenant.isDemo,
+            },
             organizationSlug: request.params.slug,
             holdId: request.params.id,
             sourceKey: sourceKeyOf(sessionId),
@@ -486,7 +510,12 @@ export function publicRoutes(deps: PublicRoutesDeps) {
         const outcome = await run(tenant, async (tx) => {
           const settings = await readBookingSettings(tx);
           return resendCode(tx, submissionDeps, {
-            tenant: { id: tenant.id, country: tenant.country },
+            tenant: {
+              id: tenant.id,
+              country: tenant.country,
+              slug: tenant.slug,
+              isDemo: tenant.isDemo,
+            },
             organizationSlug: request.params.slug,
             holdId: request.params.id,
             sourceKey: sourceKeyOf(sessionId),
@@ -497,6 +526,219 @@ export function publicRoutes(deps: PublicRoutesDeps) {
           });
         });
         return answerFor(outcome, request, reply);
+      },
+    );
+
+    const confirmDeps: ConfirmDeps = {
+      keys: deps.keys,
+      worklist: deps.worklist,
+      tokens: deps.tokens,
+      notifier: deps.notifier,
+      abuse: deps.abuse,
+      portsOf: deps.portsOf,
+    };
+
+    typed.post(
+      '/public/:slug/booking/holds/:id/confirm',
+      {
+        config: {
+          readOnly: 'write',
+          auth: 'public',
+          // The booking is audited by the use case (it needs the appointment id it just made).
+          audits: ['appointment.created', 'booking.online.created', 'booking.suspicious'],
+          rateLimit: { max: 20, timeWindow: 60_000 },
+        },
+        schema: {
+          params: IdParams,
+          body: PublicConfirmRequest,
+          response: { 200: PublicConfirmationDto },
+        },
+      },
+      async (request, reply) => {
+        const tenant = tenantOf(request);
+        void reply.header('cache-control', 'no-store');
+        const sessionId = readBookingSession(request.headers.cookie, {
+          secure: secureCookies(tenant),
+        });
+        if (sessionId === null) return denied(request, reply);
+        try {
+          const outcome = await run(tenant, async (tx) => {
+            const settings = await readBookingSettings(tx);
+            return confirmBooking(tx, confirmDeps, {
+              tenant: {
+                id: tenant.id,
+                country: tenant.country,
+                slug: tenant.slug,
+                isDemo: tenant.isDemo,
+              },
+              organizationSlug: request.params.slug,
+              holdId: request.params.id,
+              sourceKey: sourceKeyOf(sessionId),
+              ip: request.ip,
+              actor: request.auditActor,
+              now: deps.clock(),
+              offerContext: offerContext(tenant, settings),
+              code: request.body.code,
+            });
+          });
+          if (outcome.ok) {
+            deps.availabilityCache.invalidate(tenant.id);
+            // After the answer: the patient is told by the notifier, and a failure to send is
+            // logged, never shown to the visitor, whose booking is done.
+            request.server.background.run(() => deps.notifier.confirmBooking(outcome.notice));
+            return outcome.confirmation;
+          }
+          switch (outcome.refusal) {
+            case 'not_found':
+              return await denied(request, reply);
+            case 'expired':
+              return await conflictCode(request, reply, 'slot_no_longer_available');
+            case 'invalid_code':
+              throw new AppError('booking_code_invalid');
+            case 'limit_reached':
+              throw new AppError('booking_limit_reached');
+          }
+        } catch (error) {
+          if (error instanceof SlotNoLongerAvailableError) {
+            return conflictCode(request, reply, 'slot_no_longer_available');
+          }
+          throw error;
+        }
+      },
+    );
+
+    // The link in the confirmation: look at the appointment, move it or cancel it. These sit under
+    // /public/t/ with the other single-purpose links; the token is the only credential.
+    const TokenParams = z.strictObject({ token: z.string().min(1).max(64) });
+    const manageDeps: ManageDeps = { tokens: deps.tokens, portsOf: deps.portsOf };
+
+    function manageContext(
+      request: FastifyRequest,
+      tenant: ResolvedTenant,
+      settings: BookingSettings,
+    ): ManageContext {
+      return {
+        tenant: { id: tenant.id, slug: tenant.slug, isDemo: tenant.isDemo },
+        now: deps.clock(),
+        actor: request.auditActor,
+        offerContext: offerContext(tenant, settings),
+      };
+    }
+
+    typed.get(
+      '/public/t/:token/appointment',
+      {
+        config: { readOnly: 'read', auth: 'public', rateLimit: { max: 60, timeWindow: 60_000 } },
+        schema: { params: TokenParams, response: { 200: PublicManageDto } },
+      },
+      async (request, reply) => {
+        const tenant = tenantOf(request);
+        void reply.header('cache-control', 'no-store');
+        const page = await run(tenant, async (tx) =>
+          viewManaged(tx, manageDeps, {
+            token: request.params.token,
+            context: manageContext(request, tenant, await readBookingSettings(tx)),
+          }),
+        );
+        return page ?? denied(request, reply);
+      },
+    );
+
+    typed.get(
+      '/public/t/:token/slots',
+      {
+        config: { readOnly: 'read', auth: 'public', rateLimit: { max: 60, timeWindow: 60_000 } },
+        schema: {
+          params: TokenParams,
+          querystring: PublicManageSlotsQuery,
+          response: { 200: PublicAvailabilityResponse },
+        },
+      },
+      async (request, reply) => {
+        const tenant = tenantOf(request);
+        void reply.header('cache-control', 'no-store');
+        const slots = await run(tenant, async (tx) =>
+          managedSlots(tx, manageDeps, {
+            token: request.params.token,
+            query: request.query,
+            context: manageContext(request, tenant, await readBookingSettings(tx)),
+          }),
+        );
+        return slots ?? denied(request, reply);
+      },
+    );
+
+    typed.post(
+      '/public/t/:token/reschedule',
+      {
+        config: {
+          readOnly: 'write',
+          auth: 'public',
+          audits: ['appointment.rescheduled'],
+          rateLimit: { max: 20, timeWindow: 60_000 },
+        },
+        schema: {
+          params: TokenParams,
+          body: PublicRescheduleRequest,
+          response: { 200: PublicConfirmationDto },
+        },
+      },
+      async (request, reply) => {
+        const tenant = tenantOf(request);
+        void reply.header('cache-control', 'no-store');
+        try {
+          const outcome = await run(tenant, async (tx) =>
+            rescheduleManaged(tx, manageDeps, {
+              token: request.params.token,
+              startsAt: request.body.startsAt,
+              context: manageContext(request, tenant, await readBookingSettings(tx)),
+            }),
+          );
+          if (!outcome.ok) return await denied(request, reply);
+          deps.availabilityCache.invalidate(tenant.id);
+          const { notice } = outcome;
+          if (notice) request.server.background.run(() => deps.notifier.confirmBooking(notice));
+          return outcome.confirmation;
+        } catch (error) {
+          if (error instanceof SlotTakenError) {
+            return conflictCode(request, reply, 'slot_taken', { nextSlots: [] });
+          }
+          if (error instanceof SlotNoLongerAvailableError) {
+            return conflictCode(request, reply, 'slot_no_longer_available', { nextSlots: [] });
+          }
+          throw error;
+        }
+      },
+    );
+
+    typed.post(
+      '/public/t/:token/cancel',
+      {
+        config: {
+          // A patient-protective write: it keeps working when the organization is read-only.
+          readOnly: 'patient_protective',
+          auth: 'public',
+          audits: ['appointment.cancelled'],
+          rateLimit: { max: 20, timeWindow: 60_000 },
+        },
+        schema: {
+          params: TokenParams,
+          body: z.object({}).optional(),
+          response: { 200: PublicManageDto },
+        },
+      },
+      async (request, reply) => {
+        const tenant = tenantOf(request);
+        void reply.header('cache-control', 'no-store');
+        const page = await run(tenant, async (tx) =>
+          cancelManaged(tx, manageDeps, {
+            token: request.params.token,
+            context: manageContext(request, tenant, await readBookingSettings(tx)),
+          }),
+        );
+        if (!page) return denied(request, reply);
+        deps.availabilityCache.invalidate(tenant.id);
+        return page;
       },
     );
 

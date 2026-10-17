@@ -72,6 +72,8 @@ export const onlineBookingWiring: ModuleWiring = {
       keys: context.keys,
       origins: context.origins,
       rateLimitStore: context.rateLimitStore,
+      email: context.email,
+      worklist: context.worklist,
       metrics: onlineBookingMetrics,
       ...(context.jobs ? { jobs: context.jobs } : {}),
       appointmentEvents: context.appointmentEvents,

@@ -176,13 +176,14 @@ export async function listOrganizationOffers(
 }
 
 /**
- * The offer of a professional named by their internal id, as long as their link is enabled and sits
- * under the organization address in the URL. Used once a visitor already holds a slot of theirs (the
- * hold names the professional); the id is never read from a request.
+ * The offer of a professional named by their internal id, as long as their link is enabled. Used
+ * once a visitor already holds a slot of theirs, or an appointment with them (the hold or the
+ * appointment names the professional); the id is never read from a request. With an organization
+ * address the link must also sit under it.
  */
 export async function findOfferByProfessional(
   tx: Tx,
-  input: { organizationSlug: string; professionalId: string },
+  input: { organizationSlug?: string; professionalId: string },
   context: OfferContext,
 ): Promise<ProfessionalOffer | null> {
   const [link] = await tx
@@ -192,10 +193,12 @@ export async function findOfferByProfessional(
       and(eq(bookingLink.professionalId, input.professionalId), eq(bookingLink.enabled, true)),
     );
   if (!link) return null;
-  const [organization] = await tx
-    .select({ id: bookingLink.id })
-    .from(bookingLink)
-    .where(and(eq(bookingLink.slug, input.organizationSlug), isNull(bookingLink.professionalId)));
-  if (!organization) return null;
+  if (input.organizationSlug !== undefined) {
+    const [organization] = await tx
+      .select({ id: bookingLink.id })
+      .from(bookingLink)
+      .where(and(eq(bookingLink.slug, input.organizationSlug), isNull(bookingLink.professionalId)));
+    if (!organization) return null;
+  }
   return offerOf(tx, link, context);
 }

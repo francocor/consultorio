@@ -1,8 +1,9 @@
 import { createHash } from 'node:crypto';
 
 import type { OnlineBookingSettings, PublicHoldDto } from '@consultorio/contracts';
-import { and, eq, gte, lt, ne } from 'drizzle-orm';
+import { and, eq, gte, lt, ne, sql } from 'drizzle-orm';
 
+import { publicHold } from '../../../db/schema/online-booking.js';
 import { appointment } from '../../../db/schema/scheduling.js';
 import { location } from '../../../db/schema/tenant.js';
 import { SYSTEM_USER_ID, type Tx } from '../../../platform/db/tenant-context.js';
@@ -102,6 +103,13 @@ export async function createPublicHold(tx: Tx, input: PublicHoldInput): Promise<
       now,
       origin: 'public',
       sourceKey: input.sourceKey,
+    });
+    // What the hold was made for: the booking that finishes it needs the type and remembers the link.
+    await tx.insert(publicHold).values({
+      tenantId: sql`current_setting('app.tenant_id')::uuid`,
+      holdId: hold.id,
+      appointmentTypeId: type.id,
+      bookingLinkId: offer.link.id,
     });
     return {
       id: hold.id,

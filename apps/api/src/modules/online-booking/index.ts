@@ -16,12 +16,18 @@ import type { AppointmentEvents } from '../../platform/events/appointment-events
 import type { PublicOrigins } from '../../platform/http/public-origin.js';
 import type { RateLimitStore } from '../../platform/http/rate-limit.js';
 import type { JobClient } from '../../platform/jobs/boss.js';
+import type { EmailSender } from '../../platform/mail/email-sender.js';
 import { createMetrics, type Metrics } from '../../platform/metrics.js';
-import { createSchedulingPorts } from '../scheduling/index.js';
+import { createActionTokens } from '../../platform/tokens/index.js';
+import { createSchedulingPorts, type WorklistService } from '../scheduling/index.js';
 import type { ExportRegistry } from '../tenancy/index.js';
 
 import { createAbuse } from './application/abuse.js';
 import { createAvailabilityCache } from './application/availability-cache.js';
+import {
+  createEmailBookingNotifier,
+  type BookingNotifier,
+} from './application/booking-notifier.js';
 import { exportOnlineBooking } from './application/export-contributor.js';
 import { createLinkService } from './application/links.js';
 import { linkRoutes } from './http/link-routes.js';
@@ -49,6 +55,12 @@ export interface OnlineBookingOptions {
   adapters?: AdapterResolver;
   /** What scheduling publishes; holds publish nothing, bookings publish through scheduling's ports. */
   appointmentEvents?: AppointmentEvents;
+  /** Sends the confirmation of a booking (the stand-in for the notifications module). */
+  email: EmailSender;
+  /** The reception worklist: identity reviews and pending approvals. */
+  worklist: WorklistService;
+  /** Tells the patient their booking; replaced by the notifications module when it exists. */
+  notifier?: BookingNotifier;
   /** Counts the requests of the public form per address and per link. */
   rateLimitStore: RateLimitStore;
   /** Queues the email with the code from a request. Absent: the form cannot be submitted. */
@@ -94,6 +106,11 @@ export function createOnlineBooking(options: OnlineBookingOptions): OnlineBookin
     keys: options.keys,
     jobs: options.jobs,
     abuse: createAbuse({ store: options.rateLimitStore, metrics }),
+    worklist: options.worklist,
+    tokens: createActionTokens({ clock }),
+    notifier:
+      options.notifier ??
+      createEmailBookingNotifier({ email: options.email, origins: options.origins }),
   });
 
   return {

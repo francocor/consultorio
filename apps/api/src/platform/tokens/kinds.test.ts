@@ -26,11 +26,12 @@ describe('action token kinds (design 4.5)', () => {
     );
   });
 
-  it('enables the account flows and the document download for now', () => {
+  it('enables the account flows, the document download and the booking self-service link for now', () => {
     const enabled = TOKEN_KINDS.filter((kind) => isEnabledKind(kind)).sort();
 
     expect(enabled).toEqual(
       [
+        'appointment_reschedule',
         'document_download',
         'password_reset',
         'portal_activation',
@@ -68,5 +69,13 @@ describe('action token kinds (design 4.5)', () => {
       expect(TOKEN_KIND_REGISTRY[kind].ttlMs, kind).toBeGreaterThan(0);
       expect(TOKEN_KIND_REGISTRY[kind].maxUses, kind).toBeGreaterThanOrEqual(1);
     }
+  });
+
+  it('keeps the booking link alive for as long as a booking can be made ahead (a year)', () => {
+    expect(TOKEN_KIND_REGISTRY.appointment_reschedule).toMatchObject({
+      ttlMs: 366 * 24 * HOUR,
+      maxUses: 1,
+      sessionBound: false,
+    });
   });
 });
