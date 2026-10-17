@@ -115,7 +115,7 @@ export async function bookAppointment(
     ...(hold ? { ignoreHoldId: hold.id } : {}),
   };
   const plan = await planSlot(ports, planInput);
-  await applyPlan(ports, plan);
+  await applyPlan(ports, planInput, plan);
   // The hold stops occupying the range before the appointment takes it (one lane, one occupant).
   if (hold) await ports.updateHold(hold.id, { status: 'converted' });
 

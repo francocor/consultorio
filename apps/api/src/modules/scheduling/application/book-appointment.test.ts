@@ -584,6 +584,87 @@ describe('conflicts', () => {
     expect(state.inserted[0]?.lane).toBe(2);
   });
 
+  describe('re-laning along a chain of occupancies', () => {
+    // Capacity 2. Lane 1 holds B 10:00-10:40 and E 11:15-12:00, lane 2 holds C 10:40-11:30. The new
+    // 10:30-11:00 booking touches B and C only; E is connected to it through C (depth 2).
+    const chain = () => [
+      { ...taken('2026-07-13T13:00:00Z', '2026-07-13T13:40:00Z'), id: 'B', lane: 1 },
+      { ...taken('2026-07-13T13:40:00Z', '2026-07-13T14:30:00Z'), id: 'C', lane: 2 },
+      { ...taken('2026-07-13T14:15:00Z', '2026-07-13T15:00:00Z'), id: 'E', lane: 1 },
+    ];
+
+    it('moves every occupancy of the chain, not only the ones that touch the new range', async () => {
+      const { ports, state } = world({ occupancies: chain() }, { capacity: 2 });
+
+      const appointment = await run(ports, book('10:30'));
+
+      expect(appointment.startsAt).toBe('2026-07-13T13:30:00.000Z');
+      expect(state.laneMoves).toEqual([
+        { kind: 'appointment', id: 'C', lane: 1 },
+        { kind: 'appointment', id: 'E', lane: 2 },
+      ]);
+      expect(state.inserted[0]?.lane).toBe(2);
+    });
+
+    it('follows a chain of depth 3 and leaves no two overlapping occupancies in one lane', async () => {
+      const { ports, state } = world(
+        {
+          occupancies: [
+            ...chain(),
+            // G is connected through E only: it overlaps E, not C and not the new booking.
+            { ...taken('2026-07-13T14:50:00Z', '2026-07-13T15:40:00Z'), id: 'G', lane: 2 },
+          ],
+        },
+        { capacity: 2 },
+      );
+
+      await run(ports, book('10:30'));
+
+      expect(state.laneMoves).toEqual([
+        { kind: 'appointment', id: 'C', lane: 1 },
+        { kind: 'appointment', id: 'E', lane: 2 },
+        { kind: 'appointment', id: 'G', lane: 1 },
+      ]);
+      expect(state.occupancies).toHaveLength(5);
+      for (const a of state.occupancies) {
+        for (const b of state.occupancies) {
+          if (a.id < b.id && a.start < b.end && b.start < a.end) {
+            expect(a.lane).not.toBe(b.lane);
+          }
+        }
+      }
+    });
+
+    it('still refuses with the conflict when both lanes are taken inside the new range', async () => {
+      const { ports, state } = world(
+        {
+          occupancies: [
+            { ...taken('2026-07-13T13:00:00Z', '2026-07-13T13:40:00Z'), id: 'B', lane: 1 },
+            { ...taken('2026-07-13T13:30:00Z', '2026-07-13T14:30:00Z'), id: 'C', lane: 2 },
+            { ...taken('2026-07-13T14:30:00Z', '2026-07-13T15:00:00Z'), id: 'E', lane: 2 },
+          ],
+        },
+        { capacity: 2 },
+      );
+
+      const error = await message(run(ports, book('10:30')));
+
+      expect(error).toBeInstanceOf(SlotTakenError);
+      expect(state.laneMoves).toEqual([]);
+    });
+
+    it('moves nothing when a lane is free for the new range', async () => {
+      const { ports, state } = world({ occupancies: chain() }, { capacity: 2 });
+
+      // 10:00 local touches B only: lane 2 is free there.
+      const appointment = await run(ports, book('10:00'));
+
+      expect(appointment.startsAt).toBe('2026-07-13T13:00:00.000Z');
+      expect(state.laneMoves).toEqual([]);
+      expect(state.inserted[0]?.lane).toBe(2);
+    });
+  });
+
   it('turns an overlap the database caught (a race that slipped through) into the same conflict', async () => {
     const { ports, state } = world();
     state.failNextInsert = true;
@@ -592,6 +673,41 @@ describe('conflicts', () => {
 
     expect(error).toBeInstanceOf(SlotTakenError);
     expect((error as SlotTakenError).nextSlots.length).toBeGreaterThan(0);
+  });
+});
+
+describe('an overlap the database refuses after the checks (a race that slipped through)', () => {
+  it('answers a lane move that collides with the same conflict, with the next free slots', async () => {
+    const { ports, state } = world(
+      {
+        occupancies: [
+          {
+            id: 'x',
+            kind: 'appointment' as const,
+            locationId: CENTRO,
+            lane: 1,
+            start: utc('2026-07-13T13:00:00Z'),
+            end: utc('2026-07-13T13:30:00Z'),
+          },
+          {
+            id: 'y',
+            kind: 'appointment' as const,
+            locationId: CENTRO,
+            lane: 2,
+            start: utc('2026-07-13T13:30:00Z'),
+            end: utc('2026-07-13T14:00:00Z'),
+          },
+        ],
+      },
+      { capacity: 2 },
+    );
+    state.refuseOverlapOn.add('applyLaneMoves');
+
+    const error = await message(run(ports, book('10:15')));
+
+    expect(error).toBeInstanceOf(SlotTakenError);
+    expect((error as SlotTakenError).nextSlots.length).toBeGreaterThan(0);
+    expect(state.inserted).toEqual([]);
   });
 });
 

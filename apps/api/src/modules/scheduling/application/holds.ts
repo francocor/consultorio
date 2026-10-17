@@ -5,6 +5,7 @@ import { AppError } from '../../../platform/http/problem.js';
 import {
   applyPlan,
   assertCalendar,
+  guardRace,
   invalid,
   planSlot,
   resolveStart,
@@ -84,20 +85,22 @@ export async function createHold(ports: SchedulingPorts, input: CreateHoldInput)
     capacityOne: input.origin === 'public',
   };
   const plan = await planSlot(ports, planInput);
-  await applyPlan(ports, plan);
+  await applyPlan(ports, planInput, plan);
 
-  const created = await ports.insertHold({
-    professionalId: professional.id,
-    locationId: location.id,
-    startsAt: new Date(plan.range.start),
-    endsAt: new Date(plan.range.end),
-    bufferMinutes: type.bufferMinutes,
-    lane: plan.lane,
-    expiresAt: new Date(now.getTime() + HOLD_MINUTES * 60_000),
-    origin: input.origin,
-    sourceKey: input.sourceKey,
-    createdBy: input.origin === 'staff' ? actor.userId : null,
-  });
+  const created = await guardRace(ports, planInput, plan, () =>
+    ports.insertHold({
+      professionalId: professional.id,
+      locationId: location.id,
+      startsAt: new Date(plan.range.start),
+      endsAt: new Date(plan.range.end),
+      bufferMinutes: type.bufferMinutes,
+      lane: plan.lane,
+      expiresAt: new Date(now.getTime() + HOLD_MINUTES * 60_000),
+      origin: input.origin,
+      sourceKey: input.sourceKey,
+      createdBy: input.origin === 'staff' ? actor.userId : null,
+    }),
+  );
   return toDto(created);
 }
 

@@ -119,6 +119,16 @@ const thrown = (promise: Promise<unknown>) =>
   );
 
 describe('creating a hold', () => {
+  it('answers an overlap the database refuses with the conflict and the next free slots', async () => {
+    const { ports, state } = world();
+    state.refuseOverlapOn.add('insertHold');
+
+    const error = await thrown(make(ports));
+
+    expect(error).toBeInstanceOf(SlotTakenError);
+    expect((error as SlotTakenError).nextSlots.length).toBeGreaterThan(0);
+  });
+
   it('reserves the range for ten minutes without a patient or an appointment status', async () => {
     const { ports, state } = world();
 

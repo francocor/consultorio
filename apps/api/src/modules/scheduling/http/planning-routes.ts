@@ -16,7 +16,7 @@ import type { WithTenant } from '../../../platform/db/tenant-context.js';
 import { conflictWith } from '../../../platform/http/problem.js';
 import { AccessRefused } from '../../access/index.js';
 import { availability } from '../application/availability.js';
-import { createSchedulingPorts, isExclusionViolation } from '../application/drizzle-ports.js';
+import { createSchedulingPorts } from '../application/drizzle-ports.js';
 import { SlotTakenError } from '../application/placement.js';
 import { bookSeries, SeriesConflictError } from '../application/series.js';
 
@@ -98,7 +98,6 @@ export function planningRoutes(deps: PlanningRoutesDeps) {
             return conflictWith(request, reply, { occurrences: error.occurrences });
           }
           if (error instanceof SlotTakenError) return replySlotTaken(request, reply, error);
-          if (isExclusionViolation(error)) return replySlotTaken(request, reply);
           if (error instanceof AccessRefused) {
             return await refuseRequest(deps.auditDeny, request, {
               reason: error.reason,

@@ -206,7 +206,7 @@ export async function bookSeries(
   for (const occurrence of occurrences) {
     const entry = planned.get(occurrence.index);
     if (occurrence.status !== 'ok' || !entry) continue;
-    await applyPlan(ports, entry.plan);
+    await applyPlan(ports, entry.planInput, entry.plan);
     appointments.push(
       await persistAppointment(ports, {
         professional,

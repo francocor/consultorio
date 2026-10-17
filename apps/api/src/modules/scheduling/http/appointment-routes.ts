@@ -31,7 +31,7 @@ import { AppError, conflictCode } from '../../../platform/http/problem.js';
 import { AccessRefused, visibleLocationIds } from '../../access/index.js';
 import { bookAppointment, SlotTakenError } from '../application/book-appointment.js';
 import type { createCalendar } from '../application/calendar.js';
-import { createSchedulingPorts, isExclusionViolation } from '../application/drizzle-ports.js';
+import { createSchedulingPorts } from '../application/drizzle-ports.js';
 import { appointmentHistory } from '../application/history.js';
 import { createHold, releaseHold } from '../application/holds.js';
 import { detachPatient } from '../application/identity.js';
@@ -102,15 +102,20 @@ export async function scopedActor(tx: Tx, actor: Actor, book: BookActor): Promis
 const iso = (ms: number) => new Date(ms).toISOString();
 const slotRange = (range: TimeRange) => ({ startsAt: iso(range.start), endsAt: iso(range.end) });
 
-/** The 409 for a time that is taken, with the taken range and the next free times. */
+/**
+ * The 409 for a time that is taken, with the taken range and the next free times. Every refusal of
+ * an overlap reaches here as a `SlotTakenError`, the ones the database caught after the checks too
+ * (the use cases convert them), so the answer always carries the same members.
+ */
 export function replySlotTaken(
   request: FastifyRequest,
   reply: FastifyReply,
-  error?: SlotTakenError,
+  error: SlotTakenError,
 ): FastifyReply {
-  const extra: SlotConflictExtension | Record<string, never> = error
-    ? { conflict: slotRange(error.conflict), nextSlots: error.nextSlots.map(slotRange) }
-    : {};
+  const extra: SlotConflictExtension = {
+    conflict: slotRange(error.conflict),
+    nextSlots: error.nextSlots.map(slotRange),
+  };
   return conflictCode(request, reply, 'slot_taken', extra);
 }
 
@@ -190,7 +195,6 @@ export function appointmentRoutes(deps: AppointmentRoutesDeps) {
       if (error instanceof SlotNoLongerAvailableError) {
         return replySlotNoLongerAvailable(request, reply);
       }
-      if (isExclusionViolation(error)) return replySlotTaken(request, reply);
       if (error instanceof AccessRefused) {
         return await refuseRequest(deps.auditDeny, request, {
           reason: error.reason,

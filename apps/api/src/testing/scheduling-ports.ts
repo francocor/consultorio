@@ -41,6 +41,8 @@ export interface FakeSchedulingState {
   occupancies: ActiveOccupancy[];
   /** When true the next insert fails like the database does on an overlap (23P01). */
   failNextInsert: boolean;
+  /** Writes whose next call is refused by the database with an overlap (23P01), once. */
+  refuseOverlapOn: Set<'applyLaneMoves' | 'updateAppointment' | 'insertHold'>;
   /** D18: the organization has one professional and nobody else active. */
   solo: boolean;
   /** Patients the booking actor just registered. */
@@ -82,6 +84,7 @@ export function createFakeSchedulingPorts(overrides: Partial<FakeSchedulingState
     holidays: [],
     occupancies: [],
     failNextInsert: false,
+    refuseOverlapOn: new Set(),
     solo: false,
     freshPatients: new Set(),
     openedItems: [],
@@ -94,6 +97,14 @@ export function createFakeSchedulingPorts(overrides: Partial<FakeSchedulingState
     expired: [],
     locked: [],
     ...overrides,
+  };
+
+  /** The error the database raises when an exclusion constraint refuses an overlap. */
+  const overlapRefusal = (write: 'applyLaneMoves' | 'updateAppointment' | 'insertHold') => {
+    if (!state.refuseOverlapOn.delete(write)) return null;
+    return Object.assign(new Error('conflicting key value violates exclusion constraint'), {
+      cause: { code: '23P01' },
+    });
   };
 
   const ports: SchedulingPorts = {
@@ -138,6 +149,8 @@ export function createFakeSchedulingPorts(overrides: Partial<FakeSchedulingState
       return Promise.resolve();
     },
     applyLaneMoves: (moves) => {
+      const refused = overlapRefusal('applyLaneMoves');
+      if (refused) return Promise.reject(refused);
       state.laneMoves.push(...moves);
       for (const move of moves) {
         const found = state.occupancies.find((o) => o.id === move.id);
@@ -187,6 +200,8 @@ export function createFakeSchedulingPorts(overrides: Partial<FakeSchedulingState
     },
     findAppointment: (id) => Promise.resolve(state.appointments.get(id) ?? null),
     updateAppointment: (id, patch) => {
+      const refused = overlapRefusal('updateAppointment');
+      if (refused) return Promise.reject(refused);
       const current = state.appointments.get(id);
       if (!current) return Promise.reject(new Error('no such appointment'));
       state.updates.push({ id, patch });
@@ -219,6 +234,8 @@ export function createFakeSchedulingPorts(overrides: Partial<FakeSchedulingState
     lateCancellationHours: () => Promise.resolve(state.lateWindowHours),
     findHold: (id) => Promise.resolve(state.holds.get(id) ?? null),
     insertHold: (values) => {
+      const refused = overlapRefusal('insertHold');
+      if (refused) return Promise.reject(refused);
       const hold: HoldRecord = {
         id: randomUUID(),
         ...values,

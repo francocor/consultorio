@@ -498,6 +498,22 @@ describe('correcting a terminal status', () => {
     });
   });
 
+  it('answers an overlap the database refuses with the conflict and the next free slots', async () => {
+    const { ports, state } = world(
+      appointment({
+        status: 'no_show',
+        startsAt: new Date('2026-07-13T11:00:00.000Z'),
+        endsAt: new Date('2026-07-13T11:30:00.000Z'),
+      }),
+    );
+    state.refuseOverlapOn.add('updateAppointment');
+
+    const error = await thrown(correct(ports, 'attended'));
+
+    expect(error).toBeInstanceOf(SlotTakenError);
+    expect((error as SlotTakenError).nextSlots.length).toBeGreaterThan(0);
+  });
+
   it('refuses to correct a status that is not terminal', async () => {
     const { ports } = world(appointment({ status: 'scheduled' }));
 
@@ -557,6 +573,16 @@ describe('rescheduling', () => {
     expect(error).toBeInstanceOf(SlotTakenError);
     expect(state.updates).toEqual([]);
     expect(state.events).toEqual([]);
+  });
+
+  it('answers an overlap the database refuses with the conflict and the next free slots', async () => {
+    const { ports, state } = world();
+    state.refuseOverlapOn.add('updateAppointment');
+
+    const error = await thrown(reschedule(ports));
+
+    expect(error).toBeInstanceOf(SlotTakenError);
+    expect((error as SlotTakenError).nextSlots.length).toBeGreaterThan(0);
   });
 
   it('does not count its own old slot against the move (shifting by ten minutes)', async () => {

@@ -25,12 +25,13 @@ import {
   applyPlan,
   assertCalendar,
   assertLocation,
-  conflictAfterRace,
+  guardRace,
   invalid,
   planSlot,
   resolveStart,
   typeOffered,
   type BookActor,
+  type Plan,
   type PlanInput,
 } from './placement.js';
 import type {
@@ -244,6 +245,7 @@ export async function correctStatus(
   if (!canCorrect(record.status, input.toStatus)) throw new AppError('conflict');
 
   const patch: AppointmentPatch = { status: input.toStatus };
+  let updatePlan: { planInput: PlanInput; plan: Plan } | null = null;
   if (!occupiesTime(record.status) && occupiesTime(input.toStatus)) {
     const professional = await ports.lockProfessional(record.professionalId);
     const location = await ports.findLocation(record.locationId);
@@ -262,8 +264,9 @@ export async function correctStatus(
       checkHours: false,
     };
     const plan = await planSlot(ports, planInput);
-    await applyPlan(ports, plan);
+    await applyPlan(ports, planInput, plan);
     patch.lane = plan.lane;
+    updatePlan = { planInput, plan };
   }
   if (record.status === 'cancelled') {
     Object.assign(patch, {
@@ -275,7 +278,10 @@ export async function correctStatus(
     } satisfies AppointmentPatch);
   }
 
-  const updated = await ports.updateAppointment(record.id, patch);
+  const write = () => ports.updateAppointment(record.id, patch);
+  const updated = updatePlan
+    ? await guardRace(ports, updatePlan.planInput, updatePlan.plan, write)
+    : await write();
   await ports.insertEvent({
     appointmentId: record.id,
     kind: 'status_corrected',
@@ -374,11 +380,10 @@ export async function rescheduleAppointment(
     checkHours: true,
   };
   const plan = await planSlot(ports, planInput);
-  await applyPlan(ports, plan);
+  await applyPlan(ports, planInput, plan);
 
-  let updated: AppointmentDto;
-  try {
-    updated = await ports.updateAppointment(record.id, {
+  const updated = await guardRace(ports, planInput, plan, () =>
+    ports.updateAppointment(record.id, {
       startsAt: new Date(plan.range.start),
       endsAt: new Date(plan.range.end),
       professionalId: professional.id,
@@ -387,14 +392,8 @@ export async function rescheduleAppointment(
       outOfHours: plan.outOfHours,
       overrideReason: plan.overrideReason,
       videoRoom: record.videoRoom ? randomUUID() : null,
-    });
-  } catch (error) {
-    // The database refused an overlap that slipped through the checks (a race).
-    if ((error as { cause?: { code?: string } }).cause?.code === '23P01') {
-      throw await conflictAfterRace(ports, planInput, plan);
-    }
-    throw error;
-  }
+    }),
+  );
 
   await ports.insertEvent({
     appointmentId: record.id,
