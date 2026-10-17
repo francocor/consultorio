@@ -83,6 +83,10 @@ export interface SchedulingHttpWorld {
   delegateCalendar(member: Member, professionalIds: string[]): Promise<void>;
   /** The owner takes the delegation back. */
   revokeDelegation(member: Member): Promise<void>;
+  /** The owner gives `member` a grantable permission without a scope. */
+  grantPermission(member: Member, permission: string): Promise<void>;
+  /** The owner takes that permission back. */
+  revokePermission(member: Member, permission: string): Promise<void>;
   addProfessional(options?: { maxSimultaneous?: number }): Promise<Doctor>;
   close(): Promise<void>;
 }
@@ -240,6 +244,19 @@ export async function createSchedulingHttpWorld(
     revokeDelegation: async (member) => {
       const response = await api.delete(
         `/members/${member.membershipId}/grants/scheduling.delegated_calendar`,
+        owner,
+      );
+      expect(response.statusCode, response.body).toBe(204);
+    },
+    grantPermission: async (member, permission) => {
+      const response = await api.post(`/members/${member.membershipId}/grants`, owner, {
+        permission,
+      });
+      expect(response.statusCode, response.body).toBe(201);
+    },
+    revokePermission: async (member, permission) => {
+      const response = await api.delete(
+        `/members/${member.membershipId}/grants/${permission}`,
         owner,
       );
       expect(response.statusCode, response.body).toBe(204);

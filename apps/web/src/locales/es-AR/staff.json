@@ -86,6 +86,8 @@
   "permissions.delegatedNone": "No hay profesionales con perfil activo para elegir.",
   "permission.scheduling.override_hours.title": "Agendar fuera del horario",
   "permission.scheduling.override_hours.description": "Puede dar turnos fuera de los horarios de atención.",
+  "permission.scheduling.override_hold.title": "Agendar sobre una reserva",
+  "permission.scheduling.override_hold.description": "Puede dar un turno en un horario que otra persona tiene reservado mientras completa su turno.",
   "permission.scheduling.register_past.title": "Registrar turnos pasados",
   "permission.scheduling.register_past.description": "Puede cargar atenciones que ya ocurrieron.",
   "permission.scheduling.delegated_calendar.title": "Manejar la agenda de profesionales",

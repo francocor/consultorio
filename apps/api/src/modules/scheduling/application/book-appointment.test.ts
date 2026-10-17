@@ -731,7 +731,11 @@ describe('holds', () => {
   it('books over a hold with the explicit override and invalidates it', async () => {
     const { ports, state } = world({ occupancies: [hold] });
 
-    const appointment = await run(ports, book('10:00', { overrideHold: true }));
+    const appointment = await run(
+      ports,
+      book('10:00', { overrideHold: true }),
+      actor(['scheduling.override_hold']),
+    );
 
     expect(appointment.status).toBe('scheduled');
     expect(state.invalidatedHolds).toEqual(['hold-1']);
@@ -742,6 +746,17 @@ describe('holds', () => {
     expect(state.audits[1]?.metadata).toMatchObject({ kinds: ['hold'] });
   });
 
+  it('refuses the override to a user without the permission, and leaves the hold alone', async () => {
+    const { ports, state } = world({ occupancies: [hold] });
+
+    const error = await message(run(ports, book('10:00', { overrideHold: true })));
+
+    expect(error).toBeInstanceOf(AccessRefused);
+    expect((error as AccessRefused).reason).toBe('override_hold_not_permitted');
+    expect(state.invalidatedHolds).toEqual([]);
+    expect(state.inserted).toEqual([]);
+  });
+
   it('does not invalidate a hold that is not in the way', async () => {
     const { ports, state } = world({
       occupancies: [
@@ -749,6 +764,7 @@ describe('holds', () => {
       ],
     });
 
+    // Nothing is overridden, so the permission is not asked for.
     await run(ports, book('10:00', { overrideHold: true }));
 
     expect(state.invalidatedHolds).toEqual([]);
@@ -759,8 +775,10 @@ describe('holds', () => {
     const appointmentInTheWay = { ...hold, id: 'appt-1', kind: 'appointment' as const };
     const { ports } = world({ occupancies: [appointmentInTheWay] });
 
-    expect(await message(run(ports, book('10:00', { overrideHold: true })))).toBeInstanceOf(
-      SlotTakenError,
-    );
+    expect(
+      await message(
+        run(ports, book('10:00', { overrideHold: true }), actor(['scheduling.override_hold'])),
+      ),
+    ).toBeInstanceOf(SlotTakenError);
   });
 });

@@ -49,7 +49,7 @@ describe('clinical permissions are locked to the professional role (hard rule)',
   });
 
   it('the grantable list contains no clinical.* permission', () => {
-    expect(GRANTABLE.length).toBe(5);
+    expect(GRANTABLE.length).toBe(6);
     expect(GRANTABLE.filter(isClinicalPermission)).toEqual([]);
   });
 
@@ -103,6 +103,17 @@ describe('effective permissions = role permissions + (grants inside GRANTABLE)',
     const result = effectivePermissions(['reception'], ['cash.operate']);
 
     expect(result.filter((permission) => permission === 'cash.operate')).toHaveLength(1);
+  });
+
+  it('keeps booking over a slot hold behind an explicit grant, held by owner and admin by default', () => {
+    expect(GRANTABLE).toContain('scheduling.override_hold');
+    expect(effectivePermissions(['owner'], [])).toContain('scheduling.override_hold');
+    expect(effectivePermissions(['admin'], [])).toContain('scheduling.override_hold');
+    expect(effectivePermissions(['reception'], [])).not.toContain('scheduling.override_hold');
+    expect(effectivePermissions(['professional'], [])).not.toContain('scheduling.override_hold');
+    expect(effectivePermissions(['reception'], ['scheduling.override_hold'])).toContain(
+      'scheduling.override_hold',
+    );
   });
 
   it('gives reception patient administration and the cash register by default', () => {

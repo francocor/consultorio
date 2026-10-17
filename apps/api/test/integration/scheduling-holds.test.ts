@@ -285,6 +285,32 @@ describe('a staff override of a hold', () => {
     );
     expect(audits.some((row) => JSON.stringify(row.metadata).includes('hold'))).toBe(true);
   });
+
+  it('refuses the override to reception until it is granted, and takes effect when it is', async () => {
+    world.setNow(START);
+    const held = await newHold(18);
+    const request = { ...(await world.bookingBody(18, '10:00')), overrideHold: true };
+
+    const denied = await world.api.post('/appointments', world.reception, request);
+    const stillHeld = (await holdRow(held.id))?.status;
+    await world.grantPermission(world.reception, 'scheduling.override_hold');
+    try {
+      const allowed = await world.api.post('/appointments', world.reception, {
+        ...request,
+        patientId: await world.freshPatient(),
+      });
+
+      expect(allowed.statusCode, allowed.body).toBe(201);
+    } finally {
+      await world.revokePermission(world.reception, 'scheduling.override_hold');
+    }
+
+    expect(denied.statusCode).toBe(403);
+    expect(denied.json<Problem>().code).toBe('forbidden');
+    // The refusal left the hold exactly as it was.
+    expect(stillHeld).toBe('active');
+    expect((await holdRow(held.id))?.status).toBe('invalidated');
+  });
 });
 
 describe('public holds (capacity 1)', () => {

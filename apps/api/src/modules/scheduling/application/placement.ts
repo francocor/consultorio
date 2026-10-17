@@ -312,6 +312,10 @@ export async function planSlot(ports: SchedulingPorts, input: PlanInput): Promis
   let basis = connected;
   if (placement === null && input.overrideHold === true) {
     const holds = occupancies.filter((other) => other.kind === 'hold');
+    // Taking a slot from somebody who is completing a booking is for those who were given the right.
+    if (holds.length > 0 && !input.actor.permissions.has('scheduling.override_hold')) {
+      throw new AccessRefused('override_hold_not_permitted');
+    }
     const gone = new Set(holds.map((hold) => hold.id));
     basis = connected.filter((other) => !gone.has(other.id));
     placement =
