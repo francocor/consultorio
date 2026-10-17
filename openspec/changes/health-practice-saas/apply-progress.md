@@ -10,6 +10,8 @@ Stage 1: slices S1.00 to S1.37 done (tasks 1.1 to 1.130, all 130 tasks of Stage 
 
 Stage 2: slices S2.01 to S2.16 done (tasks 2.1 to 2.46, the scheduling backend and web), plus the scheduling review fixes and the documents track (S2.25 to S2.28, tasks 2.75 to 2.85) merged in "Stage 2 integration 1" at the end of this file; branch `feat/stage-2-practice-core` stacked on `feat/stage-1-secure-core`. Still open: clinical (S2.17 to S2.24), onboarding, the Stage 2 gate. The per-track reports stay beside this file: `apply-progress-stage2-schedfix.md` and `apply-progress-stage2-documents.md`.
 
+Stage 3: the seam slices S3.00 and S3.00b are done (tasks 3.1 to 3.10) on branch `feat/stage-3-patient-engagement`, stacked on the Stage 2 branch; see "Stage 3 seam" at the end of this file. Next: the parallel tracks A to D, then the integration track E (`docs/stage3-tracks.md`).
+
 ## Batch 1: Stage 0, slices S0.01 to S0.05
 
 | Slice | Branch (stacked on previous) | Commits | Tasks | State |
@@ -1291,3 +1293,105 @@ CI was not run or polled.
 - B-W3: a sole owner past 30 days has no self-role path inside the product. The recovery path is in `docs/runbooks/sole-owner-professional-role.md` (invite a second owner, or an operator action with a second reviewer); a reviewed operator script does not exist yet.
 - B-W4: the restore guard compares only the bucket name, not the endpoint or the account behind it.
 - B-S3: a not-found read in another professional's calendar writes no audit entry, and the write routes of an appointment still answer 403 (see decision 2 of round 1).
+
+## Stage 3 seam: S3.00 and S3.00b (tasks 3.1 to 3.10)
+
+Branch `feat/stage-3-patient-engagement`, stacked on `feat/stage-2-practice-core`. Mode: automatic, strict TDD, `size:exception` (work-unit commits, no merge to main, CI not polled). The seam registers every shared piece once so that the five tracks (A messaging, B public booking, C waitlist, D teleconsultation, E integration) only add files. The per-track boundaries are in `docs/stage3-tracks.md`; the migration convention is in `docs/migration-ranges.md`.
+
+### Commits (seam, in order; the Stage 2 Judgment Day fixes arrive through two merges)
+
+| Slice  | Task  | Commit                | What                                                                                                                                                                              |
+| ------ | ----- | --------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| S3.00  | 3.1   | `4a2c1b3`             | Provider settings (`WHATSAPP_PROVIDER`, `VIDEO_PROVIDER`, `BOT_CHALLENGE`, `WHATSAPP_APP_SECRET`, `VIDEO_ALLOWED_DOMAINS`, `ALLOW_LOCAL_PROVIDERS`, `LOCAL_PROVIDERS_CONSOLE`) and the production guard |
+| S3.00  | 3.3   | `753bf05`             | Five permissions, 22 audit actions, one contracts file per module, per-module audit scenario files                                                                                |
+| S3.00  | 3.2   | `265b6d4`             | `WhatsAppSender`, `VideoLinkProvider`, `BotChallenge` ports, three fakes, resolver slots                                                                                          |
+| S3.00  | 3.4   | `355d31b`             | Nine queues and their read-only classification table                                                                                                                              |
+| S3.00  | 3.5   | `3738e83`             | Appointment event bus and the scheduling publishers                                                                                                                               |
+| S3.00  | 3.6   | `fc18519`             | Four module skeletons, `main/wiring/*`, adapter registry assembly, export contributors, fixture glob                                                                              |
+| S3.00b | 3.8   | `d472816`             | Settings section registry, sections merged into `GET\|PATCH /settings`                                                                                                            |
+| S3.00b | 3.7   | `7e1d57c`             | Migration ranges, `db:new`, `db:restamp`, journal check, `docs/migration-ranges.md`                                                                                               |
+| S3.00b | 3.10  | `c9978af`             | Provider console shell (API and web)                                                                                                                                              |
+| S3.00b | 3.9   | `9e99aff`             | Web registries: routes, nav, slots, translations, feature boundary lint, dev proxy                                                                                                |
+| both   | extra | `ddbd82a`, `4fafe39`  | The remaining shared files pre-registered (see "Extra seam work"), `docs/stage3-tracks.md`, scheduling exports                                                                    |
+| merge  |       | two `merge:` commits  | `origin/feat/stage-2-practice-core` at `e3b5016`, then at `e1124f9`                                                                                                               |
+
+### Migration convention (the decision asked for)
+
+Ranges are compatible with Drizzle's journal approach, so they are kept (Stage 3 is 0300-0399 split by track, as the plan says), with tools that handle the parts of drizzle-kit that are not.
+
+- **Why compatible.** Drizzle's migrator ignores the number in a tag. It applies, in the order of `_journal.json`, the entries whose `when` is later than the newest one the database ran. `test/integration/migration-lanes.test.ts` proves it on a real Postgres: a jump from 0035 to 0320 migrates fine, and an entry merged later but stamped earlier is SKIPPED SILENTLY.
+- **What is not compatible.** `drizzle-kit generate` names the next file by the last `idx`, takes the snapshot whose file NAME sorts last as the database state, and refuses two snapshots that continue the same parent. Two tracks that branch from one snapshot always produce that. So the tools run drizzle-kit in a scratch copy where the snapshots are ordered by the journal, and keep the chain in order.
+- **Why not linear numbering.** Two branches that each take the next number produce two `00NN_snapshot.json` files: an add/add conflict git cannot merge. Ranges never do.
+- **Tools.** `pnpm db:new <track> <name> [--number NNNN] [--custom]` (track names `3seam`, `3a` to `3e`, `4seam`, ... in `scripts/migration-journal.ts`) writes the next migration of the track from the schema changes, or an empty file, with the snapshot that continues the last one and a stamp later than every entry. `pnpm db:restamp` after every merge or rebase: raises stamps that do not rise (never entries below 0300), numbers `idx`, re-chains the snapshots in journal order, rebuilds the last snapshot from the schema. `pnpm db:check` also fails on `non_monotonic_when`, `duplicate_tag`, `duplicate_prefix`, `out_of_range_prefix`, `bad_tag`, `bad_idx`, `missing_sql`, `orphan_sql`, `missing_snapshot`, `broken_snapshot_chain`. `db:generate` now refuses and points to `db:new`.
+- **Stages 0 to 2.** The sequence below 0300 stays linear and is numbered by drizzle-kit on the Stage 2 branch (now 0000 to 0043 after the Judgment Day fixes). It is never restamped. The seam has no tables, so Stage 3 added no migration yet: the first one is track A's 0320.
+- Verified end to end by `check-migration-drift.test.ts`: two tracks create migrations from the same base, are merged out of order, `db:check` reports `broken_snapshot_chain` and `non_monotonic_when`, `restampFolder` repairs both and the check passes.
+
+### Extra seam work (tasks listed under other slices, or not listed, that the seam needed to be complete)
+
+1. **Settings sections are static in the contracts.** `SettingsDto` carries `notifications`, `onlineBooking`, `waitlist`, `teleconsultation`, `integrations` (defaults from the spec); the registry decides which are served and a missing one fails loudly. `integrations` has a wiring of its own (`main/wiring/integrations.ts`) because it belongs to the platform; changing the WhatsApp switch also audits `notification.integration.changed`.
+2. **Module error catalogs.** Each module's contracts file exports `<MODULE>_ERRORS`, joined into `ERROR_CATALOG` (a duplicate code refuses to load); messages go in `errors.<module>.json`, merged by the locale loader into the `errors` namespace.
+3. **Schema files pre-exported** (`notifications`, `channel-preference`, `usage-event`, `online-booking`, `booking-submission`, `waitlist`, `teleconsultation`) with a policy test that every schema file is in the index.
+4. **No-delete allowlist and demo-coverage exemptions** accept one file per track (`test/policy/no-delete/*.json`, `test/integration/demo-coverage-exemptions/*.ts`).
+5. **`db/seed/demo/contributors.ts`** (S3.16's registration point) exists and the seed runs it.
+6. **The e2e stack** (`scripts/stack/start-stack.ts`) is composed with the same wiring, adapter registry, provider console and worker jobs as `main`.
+7. **Scheduling `index.ts`** exports the use cases the capability modules call.
+8. **Vite dev proxy** forwards `/public/t/*` and `/public/v/*` to the API (the pages the reminder and video links open); `docs/dev-setup.md` documents it.
+9. **`patient_changed` event** in the event bus (moving an unconfirmed appointment to another patient record), in addition to the six listed.
+10. Fixture helpers moved to `test/support/fixture-helpers.ts`; `import.meta.glob` is declared in `test/support/import-meta-glob.d.ts` (the API does not depend on `vite/client`).
+
+### TDD cycle evidence
+
+| Task | Tests                                                                                                                                                                  | RED                                                                                                                                                       | GREEN  | Notes                                                                                                                                                                            |
+| ---- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- | ------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 3.1  | `guard.test.ts` (12), `config-providers.test.ts` (9)                                                                                                                   | guard: module missing; config: tests failed until the schema and the docs existed                                                                        | passed | triangulated over environment x provider x flag                                                                                                                                  |
+| 3.3  | `roles`, `audit-actions`, `access` additions, four module contract tests                                                                                               | 7 files failed                                                                                                                                            | passed |                                                                                                                                                                                  |
+| 3.2  | three fake tests, resolver test                                                                                                                                        | modules missing                                                                                                                                           | passed |                                                                                                                                                                                  |
+| 3.4  | `jobs.test.ts` classification (3 new), `job-queues.test.ts` (10, integration)                                                                                          | 3 failed                                                                                                                                                  | passed | the integration test was written with the queues present (installer characterization)                                                                                            |
+| 3.5  | `appointment-events.test.ts` unit (9), integration (9), bus (6)                                                                                                        | unit: 8 of 9 failed with the publishers stashed; the bus tests were written together with the bus (the shell rejected the first file write): no separate RED | passed | a failing subscriber rolls the booking back (integration)                                                                                                                        |
+| 3.6  | `wiring.test.ts` (9), `export-registry` (4 modules), `fixture-registry.test.ts` (4)                                                                                    | export registry: 4 failed; fixture registry: 4 failed; the wiring test was written together with the wiring: no separate RED                              | passed | the isolation suite still discovers the fixtures                                                                                                                                 |
+| 3.7  | `migration-journal.test.ts` (13), `restamp.test.ts` (8), `new-migration.test.ts` (9), drift tests (6), `migration-lanes.test.ts` (2)                                    | restamp and new-migration: modules missing; the journal test was written with the journal module: no separate RED                                         | passed | bug found by running `db:restamp` on the committed folder (the key order of a snapshot counted as a change): fixed with a deep comparison and a test                              |
+| 3.8  | registry (4), domain (18), contracts, integration `access-settings` (18)                                                                                               | registry and domain tests failed until implemented; the integration additions were written after the code                                                  | passed |                                                                                                                                                                                  |
+| 3.9  | `registry.test.ts` (11), `registry-router.test.tsx` (6), `slots.test.tsx` (5), `locale-files.test.ts`, nav (5 new), three host tests, `feature-boundaries.test.ts` (3)   | boundary: the first attempt on virtual files failed (the project service does not know them), redone with fixture files                                    | passed |                                                                                                                                                                                  |
+| 3.10 | policy enumeration (3), integration (5), web `providers.test.tsx` (8), wiring entries                                                                                  | enumeration: the console-on case failed first                                                                                                              | passed |                                                                                                                                                                                  |
+
+### Deviations and decisions
+
+1. **`.env.example` untouched** (`.env` files are off limits in this run). The provider variables are documented in `docs/dev-setup.md` and a test checks it, like the scanner variables. Task 3.1 says `.env.example` documents each: the owner can add them.
+2. **Wiring is passed as `ApplicationOptions.wiring`, not `modules`.** `modules` stays the plain-route hook the Stage 1 tests use; `wiring` modules also bring adapters, sections, jobs and dev providers.
+3. **The event bus is an instance per application**, not the module-level `publishAppointmentEvent` and `subscribeAppointmentEvents` functions of the task text, because tests build many applications in one process. Same semantics (synchronous, same transaction, a failing subscriber rolls the write back).
+4. **Quiet hours** stay the Stage 1 top-level `quietHours` setting; the `notifications` section does not repeat them.
+5. **`booking.purge` is classified `write`** as the task says: in a read-only tenant it is cancelled, so unverified submissions wait until the tenant recovers (the purge is by age, so nothing is lost).
+6. **Production defaults of the providers** are `off` for WhatsApp and video and `turnstile` for the bot challenge, so an existing production configuration still starts; a simulator in production (or the console) needs `ALLOW_LOCAL_PROVIDERS=true`.
+7. **The local adapters and the `local_whatsapp_*` tables** are track work (3.22, 3.38, 3.67); the seam registers only the demo fakes.
+8. **The web feature boundary** applies to features added after Stage 2. The 67 existing cross-feature imports of Stages 1 and 2 are exempt through a named list in `packages/config/eslint/base.js`.
+9. **The linear sequence is below 0300** (not 0000-0035 as first written), because the Stage 2 branch keeps receiving migrations.
+10. **Contributed navigation entries have no stage**: they exist when their feature does. `ENABLED_STAGE` stays 2.
+
+### Merges of the Stage 2 branch
+
+- `e3b5016` (Judgment Day round 1; migrations 0036 to 0041): textual conflicts in `scheduling/application/identity.ts` and `lifecycle.ts`, where the event publishes sit next to the new worklist closing (`approve`) and the moved-patient audit details; both sides kept. The journal merged without conflict (the seam added no migration). Check: idx 0 to 41, stamps rising, snapshot chain intact, `db:check` clean.
+- `e1124f9` (round 2; migrations 0042 and 0043, `resolveProfessionalIds` resolving `ownProfessionalId` for every member, the DST logic of `blocks.ts`): merged without conflict, including `blocks.ts`, where the `slot_freed` publish stays. Check: idx 0 to 43, `db:check` clean.
+- After each merge the ranges documentation and tests were updated (`docs/migration-ranges.md`, the `stageRangeOf` expectations).
+
+### Risks and follow-ups
+
+- The patients module has no public API for matching and creating patients online (track B, task 3.43) nor for reading a patient's contact (track A): `modules/patients/index.ts` is the one declared exception to "tracks only add files" (new export lines).
+- `tasks.md` puts `platform/public/token-router.ts` in track A, and B and C register handlers in it: B and C wait for A, as the plan says.
+- Lighthouse and CI were not run here.
+- `db:restamp` rewrites the stamps of unmerged migrations: a development database that ran the old stamp needs `pnpm infra:reset`.
+- Drizzle-kit's interactive rename prompt (a table dropped and another added in one diff) can stall `db:new` in a non-interactive shell, as it already could for `db:check`.
+
+### Verification (tip of the branch after both merges, Node v24.22.0, pnpm 10.34.7, Docker running and shared with other projects)
+
+| Command | Result |
+|---|---|
+| `corepack pnpm install --frozen-lockfile` | exit 0 |
+| `corepack pnpm typecheck` | exit 0 (contracts, api, web) |
+| `corepack pnpm lint` / `format:check` | exit 0 |
+| `corepack pnpm test` | **259 files, 3,303 tests passed** |
+| `corepack pnpm test:integration` | **126 files passed, 1 skipped (the slow ClamAV suite); 1,933 tests passed, 4 skipped** |
+| `corepack pnpm build` | exit 0 |
+| `corepack pnpm db:check` | No migration drift (journal sound: idx 0 to 43, stamps rising, snapshot chain intact) |
+| `test:e2e` (`vite build`, private ports 3470/4470/9470, `--workers=3`) | **170 passed** |
+
+CI was not run or polled. Lighthouse was not run.
