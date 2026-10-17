@@ -126,6 +126,15 @@ export const PERMISSIONS = [
   'scheduling.delegated_calendar',
   // The reception queue of items that need a person.
   'worklist.manage',
+  // Messaging (Stage 3): reminder and channel settings, and the message log of an appointment.
+  'notifications.manage',
+  'notifications.log.read',
+  // Public booking links and the rules of online booking.
+  'booking.manage',
+  // Waiting list entries and offers.
+  'waitlist.manage',
+  // Joins the video consultation of one's own appointment as a participant.
+  'teleconsultation.join',
   // Money.
   'payments.read',
   'payments.write',
@@ -180,6 +189,10 @@ const ADMINISTRATION = [
   'scheduling.register_past',
   'scheduling.delegated_calendar',
   'worklist.manage',
+  'notifications.manage',
+  'notifications.log.read',
+  'booking.manage',
+  'waitlist.manage',
   'payments.read',
   'payments.write',
   'cash.operate',
@@ -197,6 +210,8 @@ export const ROLE_PERMISSIONS: Record<Role, readonly Permission[]> = {
     'scheduling.read',
     'scheduling.book',
     'scheduling.checkin',
+    'waitlist.manage',
+    'teleconsultation.join',
     'payments.read',
     ...CLINICAL,
   ],
@@ -211,6 +226,8 @@ export const ROLE_PERMISSIONS: Record<Role, readonly Permission[]> = {
     'scheduling.book',
     'scheduling.checkin',
     'worklist.manage',
+    'notifications.log.read',
+    'waitlist.manage',
     'payments.read',
     'payments.write',
     'cash.operate',

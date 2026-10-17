@@ -1,4 +1,15 @@
-import type { AuditAction } from '@consultorio/contracts';
+import type {
+  AuditAction,
+  NOTIFICATION_AUDIT_ACTIONS,
+  ONLINE_BOOKING_AUDIT_ACTIONS,
+  TELECONSULTATION_AUDIT_ACTIONS,
+  WAITLIST_AUDIT_ACTIONS,
+} from '@consultorio/contracts';
+
+import { NOTIFICATION_SCENARIOS } from './audit-scenarios/notifications.js';
+import { ONLINE_BOOKING_SCENARIOS } from './audit-scenarios/online-booking.js';
+import { TELECONSULTATION_SCENARIOS } from './audit-scenarios/teleconsultation.js';
+import { WAITLIST_SCENARIOS } from './audit-scenarios/waitlist.js';
 
 /**
  * Where each audit action is proven. Every action of the catalogue has an entry here (the type
@@ -12,7 +23,17 @@ export type AuditScenario = { test: string } | { pending: string };
 
 const t = (file: string): AuditScenario => ({ test: `apps/api/test/integration/${file}` });
 
-export const AUDIT_SCENARIOS: Record<AuditAction, AuditScenario> = {
+/**
+ * The actions each capability module declares next to its contracts. Their scenarios live in
+ * `audit-scenarios/<module>.ts`, so a track proves its actions without editing this file.
+ */
+type ModuleAuditAction =
+  | (typeof NOTIFICATION_AUDIT_ACTIONS)[number]
+  | (typeof ONLINE_BOOKING_AUDIT_ACTIONS)[number]
+  | (typeof WAITLIST_AUDIT_ACTIONS)[number]
+  | (typeof TELECONSULTATION_AUDIT_ACTIONS)[number];
+
+const PLATFORM_SCENARIOS: Record<Exclude<AuditAction, ModuleAuditAction>, AuditScenario> = {
   // Authentication.
   'auth.login.success': t('auth-routes.test.ts'),
   'auth.login.failed': t('auth-routes.test.ts'),
@@ -147,4 +168,12 @@ export const AUDIT_SCENARIOS: Record<AuditAction, AuditScenario> = {
     pending:
       'S1.37 (gate): a cookie replayed on another tenant finds no session and is answered 401, so there is nothing to attribute yet',
   },
+};
+
+export const AUDIT_SCENARIOS: Record<AuditAction, AuditScenario> = {
+  ...PLATFORM_SCENARIOS,
+  ...NOTIFICATION_SCENARIOS,
+  ...ONLINE_BOOKING_SCENARIOS,
+  ...WAITLIST_SCENARIOS,
+  ...TELECONSULTATION_SCENARIOS,
 };

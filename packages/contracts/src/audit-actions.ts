@@ -1,5 +1,10 @@
 import { z } from 'zod';
 
+import { NOTIFICATION_AUDIT_ACTIONS } from './notifications.js';
+import { ONLINE_BOOKING_AUDIT_ACTIONS } from './online-booking.js';
+import { TELECONSULTATION_AUDIT_ACTIONS } from './teleconsultation.js';
+import { WAITLIST_AUDIT_ACTIONS } from './waitlist.js';
+
 /**
  * Typed catalogue of audit actions. The writer accepts only these strings, so a typo cannot create
  * a new, unqueryable action. Families follow the mandatory events of the audit-log spec.
@@ -127,6 +132,11 @@ export const AUDIT_ACTIONS = [
   'support.access',
   'tenant.created',
   'tenant.demo_reset',
+  // Patient engagement (Stage 3). Each module declares its own actions next to its contracts.
+  ...NOTIFICATION_AUDIT_ACTIONS,
+  ...ONLINE_BOOKING_AUDIT_ACTIONS,
+  ...WAITLIST_AUDIT_ACTIONS,
+  ...TELECONSULTATION_AUDIT_ACTIONS,
   // Denials.
   'access.denied',
   'cross_tenant.denied',
