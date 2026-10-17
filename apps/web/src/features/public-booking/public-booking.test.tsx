@@ -493,6 +493,11 @@ describe('when the slot cannot be had', () => {
       await screen.findByText('No hay horarios disponibles en estas fechas.'),
     ).toBeInTheDocument();
     expect(screen.getByText(/comuníquese con el consultorio/)).toBeInTheDocument();
+    // The way out is the waitlist of the same professional, type and place.
+    const link = screen.getByRole('link', { name: 'Anotarme en la lista de espera' });
+    expect(link.getAttribute('href')).toMatch(
+      /^\/book\/aillu\/p\/[^/]+\/waitlist\?type=[^&]+&location=[^&]+$/,
+    );
     const next = screen.getByRole('button', { name: /Ver el próximo horario libre/ });
     await user.click(next);
 
