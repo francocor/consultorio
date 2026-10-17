@@ -424,8 +424,19 @@ export async function rescheduleAppointment(
   const plan = await planSlot(ports, planInput);
   await applyPlan(ports, planInput, plan);
 
+  // D14: moving a confirmed appointment into the actor's OWN calendar would make them the
+  // treating professional of a patient nobody else vouched for. The identity goes back to
+  // unconfirmed and a person other than them has to confirm it again.
+  const identityReset =
+    professionalChanged &&
+    record.identityConfirmed &&
+    ownProfessionalOf(input.actor) === professional.id;
+
   const updated = await guardRace(ports, planInput, plan, () =>
     ports.updateAppointment(record.id, {
+      ...(identityReset
+        ? { identityConfirmed: false, identityConfirmedBy: null, identityConfirmation: null }
+        : {}),
       startsAt: new Date(plan.range.start),
       endsAt: new Date(plan.range.end),
       professionalId: professional.id,
@@ -437,6 +448,14 @@ export async function rescheduleAppointment(
     }),
   );
 
+  if (identityReset) {
+    await ports.openWorklistItem({
+      kind: 'identity_review',
+      subjectType: 'appointment',
+      subjectId: record.id,
+      locationId: location.id,
+    });
+  }
   await ports.insertEvent({
     appointmentId: record.id,
     kind: professionalChanged ? 'reassigned' : 'rescheduled',
@@ -449,6 +468,7 @@ export async function rescheduleAppointment(
       fromEndsAt: record.endsAt.toISOString(),
       fromProfessionalId: record.professionalId,
       fromLocationId: record.locationId,
+      ...(identityReset ? { identityReset: true } : {}),
       ...(plan.overrides.length > 0 ? { overrides: plan.overrides } : {}),
     },
   });
@@ -464,6 +484,7 @@ export async function rescheduleAppointment(
       toStartsAt: updated.startsAt,
       fromProfessionalId: record.professionalId,
       toProfessionalId: professional.id,
+      ...(identityReset ? { identityReset: true } : {}),
     },
   });
   if (plan.overrides.length > 0) {

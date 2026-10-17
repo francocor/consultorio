@@ -10,6 +10,7 @@ import { and, desc, eq } from 'drizzle-orm';
 import { afterAll, beforeAll, describe, expect, inject, it } from 'vitest';
 
 import { auditEvent } from '../../src/db/schema/audit.js';
+import { careRelationship } from '../../src/db/schema/care.js';
 import { patient, patientVersion } from '../../src/db/schema/patients.js';
 import { appointment } from '../../src/db/schema/scheduling.js';
 import { createRuntimeDb, type DbHandle } from '../../src/platform/db/pool.js';
@@ -493,5 +494,43 @@ describe('a solo practice (D18)', () => {
     } finally {
       await solo.app.close();
     }
+  });
+});
+
+describe('moving a confirmed appointment into the actor own calendar (D14)', () => {
+  it('goes back to unconfirmed, opens a review and gives the actor no care relationship', async () => {
+    // Reception booked it for the doctor: confirmed. The colleague works the doctor's calendar by
+    // delegation and moves it into their own.
+    const created = await world.book(30, '10:00');
+    expect(created.identityConfirmed).toBe(true);
+
+    const response = await world.act(created, 'reschedule', world.colleague, {
+      expectedVersion: 1,
+      professionalId: world.colleague.professionalId,
+    });
+
+    expect(response.statusCode, response.body).toBe(200);
+    expect(response.json<AppointmentDto>()).toMatchObject({
+      professionalId: world.colleague.professionalId,
+      identityConfirmed: false,
+    });
+    expect(await stored(created)).toMatchObject({
+      identityConfirmed: false,
+      identityConfirmedBy: null,
+      identityConfirmation: null,
+    });
+    expect((await openReviews(world.reception)).some((item) => item.subjectId === created.id)).toBe(
+      true,
+    );
+    const relationships = await world.inTenant((tx) =>
+      tx.select().from(careRelationship).where(eq(careRelationship.patientId, created.patientId)),
+    );
+    expect(
+      relationships.filter(
+        (row) => row.professionalId === world.colleague.professionalId && row.active,
+      ),
+    ).toEqual([]);
+    const [audit] = await auditRows('appointment.reassigned');
+    expect(audit).toMatchObject({ resourceId: created.id, metadata: { identityReset: true } });
   });
 });
