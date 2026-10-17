@@ -223,8 +223,19 @@ async function middayTimes(org: Organization, count: number): Promise<Slot[]> {
       localHour(entry.startsAt) >= 11 &&
       localHour(entry.startsAt) <= 15,
   );
-  if (slots.length < count) throw new Error('The new consultorio has too few midday free times');
-  return slots.slice(0, count);
+  // The grid steps by a few minutes: keep times that cannot overlap each other.
+  const apart: Slot[] = [];
+  for (const entry of slots) {
+    const last = apart[apart.length - 1];
+    if (
+      !last ||
+      new Date(entry.startsAt).getTime() - new Date(last.startsAt).getTime() >= 2 * HOUR_MS
+    ) {
+      apart.push(entry);
+    }
+  }
+  if (apart.length < count) throw new Error('The new consultorio has too few midday free times');
+  return apart.slice(0, count);
 }
 
 interface Booked {
