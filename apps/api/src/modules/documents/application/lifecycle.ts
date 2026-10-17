@@ -7,7 +7,7 @@ import {
 } from '@consultorio/contracts';
 import { eq } from 'drizzle-orm';
 
-import { document } from '../../../db/schema/documents.js';
+import { document, type DocumentRow } from '../../../db/schema/documents.js';
 import { audit, type AuditActor } from '../../../platform/audit/writer.js';
 import type { Actor } from '../../../platform/authz/actor.js';
 import type { Tx } from '../../../platform/db/tenant-context.js';
@@ -42,6 +42,19 @@ export interface LifecycleService {
   ): Promise<DocumentDto>;
 }
 
+/**
+ * A clinical document is the clinical record's: its author and the professionals who treat the
+ * patient decide what happens to it. A colleague who reads it only through sharing does not, even
+ * though the policies show it to them.
+ */
+async function ownsClinicalDocument(tx: Tx, actor: Actor, row: DocumentRow): Promise<boolean> {
+  if (actor.professionalId === null) return false;
+  return (
+    row.authorProfessionalId === actor.professionalId ||
+    (await isTreating(tx, actor.professionalId, row.patientId))
+  );
+}
+
 export function createLifecycleService(deps: { clock: () => Date }): LifecycleService {
   return {
     async hide(tx, { actor, auditActor, documentId, request }) {
@@ -54,6 +67,12 @@ export function createLifecycleService(deps: { clock: () => Date }): LifecycleSe
       );
       if (!decision.allowed) {
         throw new DocumentRefused(`document_hide_${decision.reason}`, {
+          resourceId: row.id,
+          patientId: row.patientId,
+        });
+      }
+      if (row.classification === 'clinical' && !(await ownsClinicalDocument(tx, actor, row))) {
+        throw new DocumentRefused('document_hide_not_treating', {
           resourceId: row.id,
           patientId: row.patientId,
         });
@@ -98,7 +117,13 @@ export function createLifecycleService(deps: { clock: () => Date }): LifecycleSe
       if (row.status === 'rejected') throw new AppError('conflict');
 
       const to = classificationOf(request.category);
-      if (to === 'clinical' && !(await isTreating(tx, actor.professionalId, row.patientId))) {
+      // Any change to a clinical document, in either direction, is for its author or a treating
+      // professional. Making an administrative document clinical needs a care relationship.
+      const allowed =
+        row.classification === 'clinical'
+          ? await ownsClinicalDocument(tx, actor, row)
+          : to !== 'clinical' || (await isTreating(tx, actor.professionalId, row.patientId));
+      if (!allowed) {
         throw new DocumentRefused('document_not_treating', {
           resourceId: row.id,
           patientId: row.patientId,

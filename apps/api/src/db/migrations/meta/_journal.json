@@ -253,6 +253,13 @@
       "when": 1792227671766,
       "tag": "0035_onboarding_state",
       "breakpoints": true
+    },
+    {
+      "idx": 36,
+      "version": "7",
+      "when": 1792235525825,
+      "tag": "0036_document_classification_guard",
+      "breakpoints": true
     }
   ]
 }
