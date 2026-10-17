@@ -6,6 +6,7 @@ import type { FastifyInstance } from 'fastify';
 
 import type { AuthzOptions } from '../../platform/authz/guard.js';
 import type { WithTenant } from '../../platform/db/tenant-context.js';
+import type { FileResourceRegistry } from '../../platform/files/file-resources.js';
 import type { JobClient } from '../../platform/jobs/boss.js';
 import type { ObjectStorage } from '../../platform/storage/object-storage.js';
 import { createActionTokens } from '../../platform/tokens/index.js';
@@ -16,6 +17,7 @@ import {
   exportAdministrativeDocuments,
   exportClinicalDocuments,
 } from './application/export-contributor.js';
+import { createDocumentFileResource } from './application/file-resource.js';
 import { createLifecycleService } from './application/lifecycle.js';
 import { createListingService } from './application/listing.js';
 import { createUploadService } from './application/uploads.js';
@@ -44,6 +46,8 @@ export interface DocumentsOptions {
   storage: ObjectStorage | undefined;
   /** Enqueues the scan of a confirmed upload. */
   jobs: JobClient | undefined;
+  /** Where the links of `/files/:token` are served: the module registers its own kind here. */
+  fileResources: FileResourceRegistry;
   clock?: () => Date;
 }
 
@@ -58,12 +62,13 @@ export function createDocuments(options: DocumentsOptions): Documents {
     ...common,
     uploads: createUploadService({ storage: options.storage, jobs: options.jobs, clock }),
   });
+  // The five minutes of a link are counted on the same clock as the rest of the module.
+  const downloads = createDownloadService({ tokens: createActionTokens({ clock }) });
+  options.fileResources.register(createDocumentFileResource(downloads));
   const access = accessRoutes({
     ...common,
-    storage: options.storage,
     listing: createListingService(),
-    // The five minutes of a link are counted on the same clock as the rest of the module.
-    downloads: createDownloadService({ tokens: createActionTokens({ clock }) }),
+    downloads,
     lifecycle: createLifecycleService({ clock }),
   });
 

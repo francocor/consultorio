@@ -14,6 +14,8 @@ describe('action token kinds (design 4.5)', () => {
         'appointment_reschedule',
         'archive_release',
         'document_download',
+        'export_download',
+        'invoice_pdf',
         'notification_opt_out',
         'password_reset',
         'portal_activation',
@@ -85,6 +87,18 @@ describe('action token kinds (design 4.5)', () => {
       maxUses: 1,
       sessionBound: true,
     });
+  });
+
+  it('binds an export download and an invoice PDF to a session like a document, but starts them off', () => {
+    for (const kind of ['export_download', 'invoice_pdf'] as const) {
+      expect(TOKEN_KIND_REGISTRY[kind], kind).toMatchObject({
+        ttlMs: 5 * MINUTE,
+        maxUses: 1,
+        sessionBound: true,
+        // The track that builds the file turns its own kind on.
+        enabled: false,
+      });
+    }
   });
 
   it('gives every kind a positive lifetime and use count', () => {

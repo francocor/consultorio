@@ -5,6 +5,7 @@ import type { TenantKeys } from '../../platform/crypto/tenant-keys.js';
 import type { Db } from '../../platform/db/pool.js';
 import type { WithTenant } from '../../platform/db/tenant-context.js';
 import type { AppointmentEvents } from '../../platform/events/appointment-events.js';
+import type { FileResourceRegistry } from '../../platform/files/file-resources.js';
 import type { PublicOrigins } from '../../platform/http/public-origin.js';
 import type { RateLimitStore } from '../../platform/http/rate-limit.js';
 import type { JobClient } from '../../platform/jobs/boss.js';
@@ -49,6 +50,11 @@ export interface WiringContext {
    * a virtual appointment carry. One per application.
    */
   videoJoin: VideoJoinRegistry;
+  /**
+   * What `GET /files/:token` serves. A module that hands out files (billing exports, invoice PDFs)
+   * registers the resource of its token kind here, in `create`; the route is not its own.
+   */
+  fileResources: FileResourceRegistry;
 }
 
 /** What the module needs to fill its slots of the adapter registry. */

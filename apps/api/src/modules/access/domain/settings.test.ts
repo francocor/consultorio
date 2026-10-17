@@ -11,6 +11,7 @@ import {
   DEFAULT_WAITLIST_SETTINGS,
   IntegrationSettings,
   InvoicingSettings,
+  money,
   NotificationSettings,
   OnlineBookingSettings,
   TeleconsultationSettings,
@@ -335,7 +336,7 @@ describe('settings sections', () => {
       stored: { invoicing: { outageThresholdHours: 48 } },
     });
     expect(
-      planFor(defaults, { billing: { lateFeeEnabled: true, lateFeeAmount: 500_000 } }),
+      planFor(defaults, { billing: { lateFeeEnabled: true, lateFeeAmount: money(500_000) } }),
     ).toMatchObject({
       ok: true,
       stored: { billing: { lateFeeEnabled: true, lateFeeAmount: 500_000 } },

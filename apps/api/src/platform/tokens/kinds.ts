@@ -16,6 +16,8 @@ export const TOKEN_KINDS = [
   'signup_verification',
   'portal_activation',
   'document_download',
+  'export_download',
+  'invoice_pdf',
   'archive_release',
 ] as const;
 export type TokenKind = (typeof TOKEN_KINDS)[number];
@@ -54,6 +56,10 @@ export const TOKEN_KIND_REGISTRY: Record<TokenKind, KindSpec> = {
   notification_opt_out: { ttlMs: 3650 * DAY, maxUses: 1, sessionBound: false, enabled: true },
   whatsapp_opt_in: { ttlMs: 7 * DAY, maxUses: 1, sessionBound: false, enabled: true },
   document_download: { ttlMs: 5 * MINUTE, maxUses: 1, sessionBound: true, enabled: true },
+  // The files of Stage 4 open through the same door as a document (`/files/:token`): the billing
+  // track turns on the export link, the invoicing track the invoice PDF link.
+  export_download: { ttlMs: 5 * MINUTE, maxUses: 1, sessionBound: true, enabled: false },
+  invoice_pdf: { ttlMs: 5 * MINUTE, maxUses: 1, sessionBound: true, enabled: false },
   archive_release: { ttlMs: 72 * HOUR, maxUses: 1, sessionBound: false, enabled: false },
 };
 

@@ -60,6 +60,8 @@ import {
   createAppointmentEvents,
   type AppointmentEvents,
 } from '../platform/events/appointment-events.js';
+import { createFileResourceRegistry } from '../platform/files/file-resources.js';
+import { fileRoutes } from '../platform/files/file-routes.js';
 import type { HealthDeps } from '../platform/http/health.js';
 import { createPublicOrigins } from '../platform/http/public-origin.js';
 import { createMemoryRateLimitStore, type RateLimit } from '../platform/http/rate-limit.js';
@@ -313,11 +315,15 @@ export function createApplication(options: ApplicationOptions): FastifyInstance 
     ...(schedulingClock ? { clock: schedulingClock } : {}),
   });
 
+  // What `/files/:token` serves: documents register their kind here, and so does any module that
+  // hands out a file (billing exports, invoice PDFs). One registry per application.
+  const fileResources = createFileResourceRegistry();
   const documents = createDocuments({
     withTenant,
     auditDeny,
     storage: options.storage,
     jobs: options.jobs,
+    fileResources,
     ...(options.clock ? { clock: options.clock } : {}),
   });
 
@@ -363,6 +369,7 @@ export function createApplication(options: ApplicationOptions): FastifyInstance 
       appointmentEvents,
       worklist: scheduling.worklist,
       videoJoin,
+      fileResources,
       ...(options.clock ? { clock: options.clock } : {}),
       ...(options.storage ? { storage: options.storage } : {}),
       ...(options.jobs ? { jobs: options.jobs } : {}),
@@ -444,6 +451,13 @@ export function createApplication(options: ApplicationOptions): FastifyInstance 
       ...(operatorConsole ? [operatorConsole.routes] : []),
       ...wired.flatMap((module) => (module.routes ? [module.routes] : [])),
       ...(options.modules ?? []),
+      // Last: the door declares the audit actions of every resource the modules registered.
+      fileRoutes({
+        registry: fileResources,
+        withTenant,
+        auditDeny,
+        storage: options.storage,
+      }),
     ],
   });
   built.server = server;
