@@ -16,6 +16,7 @@ Change: `health-practice-saas`. Branch `feat/stage-3-track-3c`, from `04048ea` (
 | 3.58 | done  | Opt-out (offers are opt-in, D10), fairness, read-only tenant, audit and the outcomes kept for the reports.                                                                              |
 | 3.59 | done  | `features/waitlist`: list with status and unresponsive filters, add, edit, pause, resume, close; close prompt in the appointment drawer slot.                                          |
 | 3.60 | done  | Reception panel for the slots to fill by phone (`waitlist_call`) and the unresponsive list: API and UI.                                                                                 |
+| 3.49 | done  | Completed here: `BookingFlow` passes `waitlistPath` to `SlotPicker` (the track B half was the manage page). |
 | 3.61 | done  | Public join page `/book/$slug/p/$professionalSlug/waitlist` reached from `SlotPicker`'s `waitlistPath`; `apps/web/e2e/stage3-waitlist.spec.ts`.                                         |
 
 ## Commits (oldest first)
@@ -33,6 +34,9 @@ Change: `health-practice-saas`. Branch `feat/stage-3-track-3c`, from `04048ea` (
 11. `70f6608` staff waitlist screen (3.59, 3.60)
 12. `7b743cb` public join page and e2e spec (3.61)
 13. `e007e5c` e2e: second time two hours after the first (3.61)
+14. `5ff2d0e` waitlist errors and audit actions moved to `contracts/waitlist-catalog.ts`
+15. `d56d5d4` quiet hours through the `OfferQuietHoursEnd` port (3.55)
+16. `d72ce97` demo-coverage exemptions for the waitlist tables; waitlist link asserted on the booking page (3.49, 3.61)
 
 ## Migration
 
@@ -60,7 +64,14 @@ type DeliverWaitlistOffer = (
 
 (`modules/waitlist/application/ports.ts`). `createWaitlistJobs({ deliver })` takes it; tests use a fake (`test/support/waitlist-world.ts`). In the composition root (`apps/api/src/main/wiring/waitlist.ts`, worker slot) the stand-in `createEmailOfferDelivery({ email })` sends a plain email with the token link, so the e2e works without the notifications module. The line is marked `CONNECT AT MERGE`: replace it with the notifications module's `deliverWaitlistOffer`.
 
+Quiet hours (notifications' `offerQuietHoursEnd(tx, { locationId, at }): Promise<Date | null>`): the waitlist models it as the optional port `OfferQuietHoursEnd` and the optional `quietHoursEnd` dep of `createWaitlistJobs` (`modules/waitlist/application/ports.ts`, `delivery.ts`). Before delivering, the job asks it; a date queues the same offer again for `startAfter` that date and sends nothing (`deferred`). A `none` that comes back while the port says "quiet hours" is also a deferral, not an unreachable patient (the entry is not made manual-contact-only). If quiet hours outlast the offer, the offer ends, reception sees the slot with reason `quiet_hours` and the next entry is matched. Connect at merge: pass `offerQuietHoursEnd` as `quietHoursEnd` in `main/wiring/waitlist.ts` (second marked line). Without it the waitlist relies on its own deferral at match time.
+
+The offer link lives in notifications' `message_offer` (migration 0390); the waitlist keeps its own `waitlist_offer` token (`kind waitlist_offer`) and passes only `offerTokenUrl`.
+
 Other merge notes:
+
+- Demo coverage: `test/integration/demo-coverage-exemptions/waitlist.ts` lists the three tables until S3.16 seeds them and deletes the file.
+- `WAITLIST_ERRORS` and `WAITLIST_AUDIT_ACTIONS` are in `packages/contracts/src/waitlist-catalog.ts` (imported by `errors.ts` and `audit-actions.ts`); `index.ts` exports both files.
 
 - `platform/tokens/kinds.ts`: only `waitlist_offer` flipped to enabled.
 - `platform/public/token-page.ts` gained `secondaryAction` and `action.value`; `token-router.ts` reads `choice` into `TokenContext.choice` (a decline button next to accept). Existing token pages are unaffected (tests extended).
@@ -91,10 +102,12 @@ Every slice began with failing tests: contracts (`waitlist.test.ts`), pure match
 | `lint`                                       | ok                                                                |
 | `format:check`                               | ok                                                                |
 | `test`                                       | 310 files, 3905 tests passed                                      |
-| `test:integration`, `build`, `db:check`      | see the final report                                              |
-| `test:e2e` (`stage3-waitlist.spec.ts`)       | passes (ports 4620, 3620, 9620)                                   |
+| `test:integration`                           | 164 files passed (1 skipped), 2553 tests passed                   |
+| `build`, `db:check`                          | ok, no migration drift                                            |
+| `test:e2e` (whole suite, `--workers=3`)      | 182 passed, including `stage3-waitlist.spec.ts` (ports 4620, 3620, 9620) |
 
 ## Risks
 
 - Until `deliverWaitlistOffer` is connected, offers go out as plain email only (no WhatsApp).
+- Running two integration processes at once made `backup-restore.test.ts` flaky (socket hang up); it passes alone and in the sequential full run.
 - The e2e stack leaves its containers behind when playwright ends on this machine; remove them by port before a rerun.
