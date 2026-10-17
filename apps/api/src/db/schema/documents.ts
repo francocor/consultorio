@@ -37,7 +37,7 @@ const list = (values: readonly string[]) => sql.raw(values.map((v) => `'${v}'`).
  *
  * Lifecycle: `quarantined` (uploaded, or about to be, and waiting for the scan) then `available`
  * (clean, downloadable) or `rejected` (infected or not an allowed type, never downloadable);
- * `available` can become `hidden`. The database enforces the transitions (migration 0040).
+ * `available` can become `hidden`. The database enforces the transitions (migration 0029, and 0036 for the classification).
  *
  * Access follows the classification. An administrative document is visible to the staff of the
  * organization; a clinical one only to a health professional who may read it (the same rule as a

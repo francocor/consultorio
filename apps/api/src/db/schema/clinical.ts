@@ -27,7 +27,7 @@ import { tenant } from './tenant.js';
  *
  * Nothing here is ever deleted (`REVOKE DELETE`, plus triggers that also stop the owner). A signed
  * entry cannot change, an addendum and a version are insert-only, and the runtime role has no
- * UPDATE on them at all. The rules are in migration 0061 (triggers).
+ * UPDATE on them at all. The rules are in migration 0032 (triggers).
  */
 
 /** Template names are lower-case identifiers; the list lives in code (the template registry). */
@@ -284,11 +284,11 @@ export const addendum = tenantTable(
 
 /**
  * "Somebody has written about this patient": one row per patient, created by the first note or the
- * first anamnesis (triggers, migration 0062). It has no clinical content and is readable by every
+ * first anamnesis (triggers, migration 0033). It has no clinical content and is readable by every
  * professional of the organization, because the question it answers ("may a first encounter be
  * opened without a care relationship?") has to be answered by a transaction that cannot read the
- * notes of others. The runtime role cannot write it. Documents classified as clinical will mark it
- * too when that module lands.
+ * notes of others. The runtime role cannot write it. Documents classified as clinical mark it too
+ * (migration 0037), and reading it is for professionals only (migration 0041).
  */
 export const clinicalFootprint = tenantTable(
   'clinical_footprint',
