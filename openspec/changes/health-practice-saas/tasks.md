@@ -477,7 +477,7 @@ Depends: S1.26, S1.19, S1.21.
 Depends: all S1 slices.
 
 - [x] 1.128 `apps/web/e2e/stage1-demo.spec.ts`: two tenants with different branding, role-specific views, audit trail visible. [TEN-01, BRD-02] Test: that spec.
-- [x] 1.129 `docs/security/asvs-l2-stage1.md` checklist with evidence links, then a fresh-context security review (`judgment-day`) of identity, authz, RLS, audit; fix findings before Stage 2. Test: review report attached to the PR. (Done as a self-review recorded in the checklist, with six findings fixed; the independent review is still to be run, see apply-progress batch 6.)
+- [x] 1.129 `docs/security/asvs-l2-stage1.md` checklist with evidence links, then a fresh-context security review (`judgment-day`) of identity, authz, RLS, audit; fix findings before Stage 2. Test: review report attached to the PR. (Done: a self-review recorded in the checklist, then the independent fresh-context review of the backend, whose ten findings are fixed or already satisfied, each with a test written first, see apply-progress batch 7 and the checklist section "Independent security review". Decision D19 is pending the owner's confirmation.)
 - [x] 1.130 Re-run `sdd-init`; decide strict TDD for Stage 2 apply. Test: none.
 
 ---

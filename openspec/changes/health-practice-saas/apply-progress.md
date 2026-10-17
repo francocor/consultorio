@@ -6,7 +6,7 @@ Mode: Standard for Stage 0; **Strict TDD from Stage 1** (`strict_tdd: true` in `
 
 Stage 0: tasks 0.2 to 0.34 done and merged. Task 0.1 (rotate secrets) is a manual owner action and is NOT done.
 
-Stage 1: slices S1.00 to S1.37 done (tasks 1.1 to 1.130, all 130 tasks of Stage 1; the independent security review of 1.129 is still to be run by the orchestrator, see batch 6). Next: the owner's review of PR #14, then Stage 2. See batches 3 to 6 at the end of this file.
+Stage 1: slices S1.00 to S1.37 done (tasks 1.1 to 1.130, all 130 tasks of Stage 1), and the independent security review of 1.129 has been run and its ten findings handled (batch 7). Next: the owner's review of PR #14 (and the confirmation of decision D19), then Stage 2. See batches 3 to 7 at the end of this file.
 
 ## Batch 1: Stage 0, slices S0.01 to S0.05
 
@@ -675,3 +675,64 @@ API_PROXY_TARGET=http://127.0.0.1:3000 pnpm --filter @consultorio/web dev      #
 ### Remaining
 
 Stage 2. Open items before the first production customer are listed at the end of `docs/security/asvs-l2-stage1.md`. The independent (fresh-context) security review that the plan asks for must be run by the orchestrator: this executor has no delegation tool, and its own pass is recorded as a self-review.
+
+## Batch 7: Stage 1 security fixes (independent review, ten findings, three ASVS items)
+
+Strict TDD. Branch `feat/stage-1-secure-core`, one work-unit commit per finding (or per ASVS item), no merge, CI not polled. The review was made against `ef72fed`; every finding was re-located at the tip before it was fixed. The review report is the orchestrator's `stage1-security-review.md`; the outcome per finding is also in `docs/security/asvs-l2-stage1.md`, section "Independent security review".
+
+| # | Finding | Commit | Tests (RED first) |
+|---|---|---|---|
+| 1 | Host-header poisoning of reset and invitation links | `234303e` | `platform/http/public-origin.test.ts` (7), `main/config-deployment.test.ts` (PUBLIC_URL, PUBLIC_PORT), `test/integration/link-origin.test.ts` (4: forged Host in single mode for reset, invitation and admin-triggered reset; a port in the Host of multi mode) |
+| 2 | `X-Forwarded-For` spoofing, non-IP value turning into a 500 | `234303e` | `main/config-deployment.test.ts` (TRUST_PROXY forms), `platform/audit/request-context.test.ts` (rotating fake hops, two proxies, CIDR list, non-IP/zone id/injection text stored as unknown), `test/integration/client-address.test.ts` (sign-in limit not bypassed by rotating values, audited IP is the proxy's hop, `not-an-ip` answers 401 not 500 and audits NULL) |
+| 3 | Admin bypass of the clinical rule (D19) | `734d180` | `packages/contracts/src/roles.test.ts` (6 RED), `access/domain/role-change.test.ts`, `identity/domain/invitation-ceiling.test.ts`, `access-grants.test.ts` (3), `staff-lifecycle.test.ts` (3), `care-assignment-api.test.ts` (5: flag for reception and admin, none at 8 days, boundary at 6 and 8 days, none for a clinical actor), web `staff.test.tsx` (4) |
+| 4 | SECURITY DEFINER functions executable by PUBLIC | `8abf39a`, `1260efa` | `test/integration/definer-functions.test.ts` (5: every definer function listed with its only roles, search path starts with `pg_catalog` and ends with `pg_temp`, not PUBLIC, new functions closed by default; 4 of 5 were RED before migration 0019, the search-path test was RED again before 0022) |
+| 5 | Audit integrity not enforced in the database | `8c76b55` | `test/integration/audit-integrity.test.ts` (12: pre-filled seal refused for `app_rw`, owner and `app_operator`, forged near-max sequence cannot stop the sealer, membership revoked, sealer reaches nothing but the trails); `audit-table`, `audit-sealer`, `audit-verify`, `audit-viewer`, `demo-reset`, `operator-auth`, `worker` moved to the sealer login |
+| 6 | DEK cache populated before commit | `921722d` | `test/integration/tenant-keys.test.ts` (4: first key rolled back, rotation rolled back, same-transaction use, committed rotation) |
+| 7 | Operator console gaps | `2d150b7` | `operator-auth.test.ts` (a locked account, an unknown address and a wrong password each run exactly one verification), `operator-privileges.test.ts` (3: key only for an unclaimed organization and only version 1, registration columns only) |
+| 8 | Unknown subdomain did a lookup before any rate limit | `ee9fde6` | `platform/http/rate-limit.test.ts` (4: lookups stop once the client is over its allowance, 429 with Retry-After, other clients and probes unaffected) |
+| 9 | Compose dev defaults | `7847c7c` | `main/compose.test.ts` (3). **Deviation:** the header edit came before the test (a documentation change); the test pins it |
+| 10 | Missing security headers | none | Already satisfied by S1.36 (`platform/http/security-headers.ts`, `security-headers.test.ts`): `nosniff`, `X-Frame-Options: DENY`, `Referrer-Policy: no-referrer`, a deny-all CSP, HSTS where cookies are secure. The review was made before that commit |
+| ASVS 3.4.4 | `__Host-` cookie prefix | `4f1375c` | `platform/http/session-cookie.test.ts`, `modules/operator/http/cookie.test.ts`, `auth-routes.test.ts`, `operator-auth.test.ts` |
+| ASVS 3.3.2 | 30-minute idle timeout | `ac476f3` | `identity/application/sessions.test.ts`, `test/integration/sessions.test.ts` (the 7-day test now uses a 29-minute step) |
+| ASVS 14.4.7 | CSP of the web bundle | `1b2ecf4`, `492c94e` | `vite/csp.test.ts` (9), `vite/csp-plugin.test.ts` (4), `vite/theme-boot-plugin.test.ts` (+3), Playwright `e2e/csp.spec.ts` (2; RED on the first run: five `eval` violations, see decision 8) |
+| docs | ASVS checklist, proxy contract, ADR-004, D19 in the proposal and two specs | `5c68976`, `734d180` | none |
+
+### Decisions and deviations
+
+1. **D19 (decided by the orchestrator in automatic mode, pending owner confirmation).** Recorded in the proposal's decisions table, in `specs/authorization` (requirement and four scenarios plus the review-flag scenario) and in `specs/staff-professionals`. Beyond the text of the decision, the implementation separates two ceilings: what a person can HAND OUT (admin: administration and reception) and whom a person can MANAGE (admin: also professionals, never owners). Without that second ceiling an admin could no longer deactivate a departing professional or change their other roles. An admin can keep or remove the professional role of a member but not add it.
+2. **TRUST_PROXY.** Fastify 5 fails closed on a bare number (it trusts nothing), so a hop count is passed as a function `(address, hop) => hop < N`. The default is 1 in production and `false` in development; `true` is refused. The residual contract (the API reachable only through its proxy, which appends the address it received) is in the proxy contract and the checklist.
+3. **Public URL.** `PUBLIC_URL` is required in single mode; `PUBLIC_PORT` is an optional development port for multi mode. The operator console takes its link origin from the same place instead of the `Host` port. `demo:stack` passes the web port.
+4. **Sealer login.** `audit_sealer` is a LOGIN used by the worker only (`AUDIT_SEALER_DATABASE_URL`, the worker refuses to start without it; the API logs a warning if it has it). Migration 0004 (already applied elsewhere, so immutable) still asserts that `app_rw` is a member of `audit_sealer`; the cluster bootstrap therefore creates the membership `GRANTED BY app_owner` (which holds ADMIN OPTION) and migration 0020 revokes it. A database whose membership was granted by a superuser needs one manual `REVOKE`, and the migration says so. The seal-continuity check in the trigger (next sequence number, previous hash) was NOT added: the nightly verification already detects a gap or a mismatch, and the insert trigger plus the login separation close the forging paths the review named.
+5. **Definer functions.** `ALTER DEFAULT PRIVILEGES FOR ROLE app_owner REVOKE EXECUTE ON FUNCTIONS FROM PUBLIC` makes a function created from now on executable by nobody until its own migration grants it; the schema-level default grant to `app_rw` was removed for `app`. Trigger functions do not need EXECUTE at firing time, so existing triggers are unaffected. Migration 0022 adds `pg_temp` as the LAST entry of the search path of every definer function (PostgreSQL searches the temporary schema first unless it is named, and any role can create temporary tables). `app.demo_reset` (S1.36) already had its search path pinned, no PUBLIC or `app_rw` grant, and an `app_operator`-only grant; the catalog test now covers it.
+6. **Operator least privilege.** The operator keeps reading the registration of every professional without a support grant, because verifying a matricula is the operator's job (D1). The rest of the profile is no longer readable.
+7. **Idle timeout** is 30 minutes for every staff role (not only clinical ones): one rule, no per-role session logic. The absolute limit stays at 7 days.
+8. **CSP.** `style-src` keeps `'unsafe-inline'` (the toast library adds `<style>` elements; a style cannot run code). The dev server's policy adds `'unsafe-inline'` for scripts (the React refresh preamble) and websockets; the preview server, which the browser suite uses, sends the production policy. The build writes `dist/content-security-policy.txt` for the deployment's proxy. The browser suite found a real violation the first time it ran: zod probes for `eval` with `new Function`, which a strict CSP reports even though zod catches it. A first fix (a module imported first in `main.tsx` calling `z.config({ jitless: true })`) did not work: the build puts the schemas of the contracts package in chunks that run before the entry chunk's own code. Zod keeps its configuration on `globalThis.__zod_globalConfig`, so the fix is a second hashed inline script in `index.html` that sets it before any module runs (`ZOD_JITLESS_SCRIPT` in `vite/theme-boot-plugin.ts`); the policy lists both hashes.
+9. **Demo seed.** The demo professionals are created 90 days in the past so that the D19 review flag does not fire on every assignment of the story.
+10. **Own mistakes, fixed.** A Windows Python script wrote a few non-ASCII characters in cp1252 (found by a failing web test and a prettier replacement character); fixed, and `python -X utf8` is used since. The web tests of the role ceiling were written in the same step as the `RolesTab` change; RED was confirmed afterwards by reverting the component (one test failed as expected).
+
+### Verification (tip of the branch, Node 24, pnpm 10.34.7, Docker running)
+
+| Command | Result |
+|---|---|
+| `corepack pnpm install --frozen-lockfile` | exit 0 |
+| `corepack pnpm typecheck` | exit 0 (contracts, api, web) |
+| `corepack pnpm lint` | exit 0 |
+| `corepack pnpm format:check` | exit 0 |
+| `corepack pnpm test` | **146 files, 1693 tests passed** (it was 141 files, 1610 tests) |
+| `corepack pnpm test:integration` | **75 files, 1105 tests passed** (it was 71 files, 1061; Postgres 17 as `app_rw`, `app_operator`, `app_owner` and `audit_sealer`, run again at the final tip, after migration 0022) |
+| `corepack pnpm build` | exit 0 (the web build writes `dist/content-security-policy.txt`) |
+| `corepack pnpm db:check` | "No migration drift." (migrations 0019 to 0022) |
+| `corepack pnpm test:e2e` | **112 passed** (110 plus the two CSP specs; about 2.5 minutes on the real stack) |
+| `docker build -f infra/Dockerfile` and a smoke run with the production configuration of the CI smoke test | `/health` 200 with the security headers including HSTS; the `worker` role refuses to start without `AUDIT_SEALER_DATABASE_URL` and names only the variable |
+| `pnpm demo:stack`, started and stopped by hand | the stack starts (Postgres, Mailpit, API, worker with the sealer login, two organizations, operator); sign-in sets `sid` (plain http); a password reset link is `http://aillu.localhost:5173/reset-password?token=...`, built from configuration. Only the processes this run started were stopped; their containers were removed by the test-container reaper |
+| Lighthouse CI | **Not re-run** (the local browser does not start under `lhci`) |
+
+The first full `pnpm test` run (while the integration suite was running) timed out in two ESLint-based unit tests; run alone they pass in about 35 seconds, and the final full run, with nothing else running, passed.
+
+### Remaining risks
+
+- D19 awaits the owner. The owner can still create a second clinical account, which the decision accepts.
+- `TRUST_PROXY` as a hop count assumes the API is not reachable except through its proxy.
+- The worker holds `app_rw` and `audit_sealer`. Production must provision the `audit_sealer` login and make the proxy send `dist/content-security-policy.txt`.
+- Nothing was verified in CI (never polled). Lighthouse was not re-run (the local browser would not start under `lhci`).
+- The two ESLint-based unit tests (`web-lint-rules`, `country-isolation`) exceed 120 seconds when the whole monorepo runs while Docker is busy; they pass alone in about 35 seconds.
