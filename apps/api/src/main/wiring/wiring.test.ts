@@ -7,6 +7,7 @@ import { buildTestApplication } from '../../../test/support/app.js';
 import { createRuntimeDb } from '../../platform/db/pool.js';
 import { JobPayload } from '../../platform/jobs/boss.js';
 import { defineJob } from '../../platform/jobs/define-job.js';
+import { registerTokenHandler } from '../../platform/public/token-router.js';
 import {
   ADAPTER_PORTS,
   assembleAdapterRegistry,
@@ -90,6 +91,32 @@ async function routesOf(app: ReturnType<typeof createApp>): Promise<string[]> {
   await app.close();
   return routes;
 }
+
+describe('the registry of public links', () => {
+  const claimsTheConfirmKind = {
+    name: 'claims-a-kind',
+    create: () => {
+      registerTokenHandler('appointment_confirm', {
+        allowedWhenReadOnly: false,
+        audits: [],
+        describe: () => Promise.resolve(null),
+        perform: () => Promise.resolve(null),
+      });
+      return {};
+    },
+  };
+
+  it('refuses a module that claims a kind another module already took', () => {
+    expect(() => createApp([...MODULE_WIRINGS, claimsTheConfirmKind])).toThrow(
+      /appointment_confirm/,
+    );
+  });
+
+  it('lets one process build the application again: each application starts with an empty registry', async () => {
+    await routesOf(createApp(MODULE_WIRINGS));
+    await expect(routesOf(createApp(MODULE_WIRINGS))).resolves.not.toHaveLength(0);
+  });
+});
 
 describe('the simulator console entries of the modules', () => {
   const env = {

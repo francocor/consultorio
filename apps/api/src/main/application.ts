@@ -64,6 +64,7 @@ import { createMemoryRateLimitStore, type RateLimit } from '../platform/http/rat
 import type { JobClient } from '../platform/jobs/boss.js';
 import { createDevRoutes, type DevProvider } from '../platform/local-providers/dev-routes.js';
 import type { EmailSender } from '../platform/mail/email-sender.js';
+import { resetTokenHandlers } from '../platform/public/token-router.js';
 import { createSettingsSectionRegistry } from '../platform/settings-sections.js';
 import type { ObjectStorage } from '../platform/storage/object-storage.js';
 
@@ -341,6 +342,9 @@ export function createApplication(options: ApplicationOptions): FastifyInstance 
     ...(options.clock ? { clock: options.clock } : {}),
   });
 
+  // The links' registry belongs to one application: it starts empty, so a capability that claims
+  // a kind another one already took fails here instead of silently replacing it.
+  resetTokenHandlers();
   const wired = (options.wiring ?? []).map((wiring) =>
     wiring.create({
       withTenant,

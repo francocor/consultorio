@@ -67,15 +67,27 @@ export interface TokenHandler {
 const handlers = new Map<TokenKind, TokenHandler>();
 
 /**
- * Registers what a kind of link does. Registering a kind again replaces the handler (an
- * application is built once per process in production; tests build many). Returns a function that
- * removes it.
+ * Registers what a kind of link does. A kind has ONE handler: registering it twice throws, because
+ * two capabilities that claim the same kind would silently replace each other and one of them would
+ * stop working without a sign. Returns a function that removes the handler.
  */
 export function registerTokenHandler(kind: TokenKind, handler: TokenHandler): () => void {
+  if (handlers.has(kind)) {
+    throw new Error(`A handler for the token kind "${kind}" is already registered`);
+  }
   handlers.set(kind, handler);
   return () => {
     if (handlers.get(kind) === handler) handlers.delete(kind);
   };
+}
+
+/**
+ * Empties the registry. An application calls it when it starts to be built (the registry belongs
+ * to one application, and tests build many in one process); a test that registers handlers by hand
+ * calls it to clean up.
+ */
+export function resetTokenHandlers(): void {
+  handlers.clear();
 }
 
 /** The kinds that have a handler, in a stable order. */
