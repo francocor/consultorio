@@ -109,9 +109,12 @@ export interface NotificationsWorld {
  * The messaging jobs wired to the scheduling world with doubles for the providers: a scripted
  * email sender, the in-memory WhatsApp fake, a recording job client and a clock of their own.
  */
-export function createNotificationsWorld(world: SchedulingHttpWorld): NotificationsWorld {
+export function createNotificationsWorld(
+  world: SchedulingHttpWorld,
+  options: { jobs?: RecordingJobClient } = {},
+): NotificationsWorld {
   let current = new Date('2031-05-06T12:00:00.000Z');
-  const jobs = createRecordingJobClient();
+  const jobs = options.jobs ?? createRecordingJobClient();
   const email = createScriptedEmail();
   const demoEmail = createFakeEmailSender();
   const whatsapp = createFakeWhatsAppSender();

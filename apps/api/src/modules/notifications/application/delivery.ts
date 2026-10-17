@@ -415,6 +415,13 @@ export async function completeDelivery(
   result: ProviderResult,
 ): Promise<void> {
   const now = deps.clock();
+  // The message row first, then its attempt: the same order as `prepareDelivery`, so two workers
+  // that meet on one message wait for each other instead of deadlocking.
+  await tx
+    .select({ id: message.id })
+    .from(message)
+    .where(eq(message.id, send.messageId))
+    .for('update');
   const outcome = result.status === 'accepted' ? 'accepted' : result.status;
   await tx
     .update(messageAttempt)

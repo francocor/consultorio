@@ -3,6 +3,7 @@ import { defineJob } from '../../../platform/jobs/define-job.js';
 import { callProvider, completeDelivery, prepareDelivery } from './delivery.js';
 import type { MessagingDeps } from './deps.js';
 import { REMINDER_SEND_JOB, SendPayload } from './queue.js';
+import { createReminderSweepJob, REMINDER_SWEEP_JOB } from './sweep.js';
 
 /**
  * `reminder.send`: delivers one queued message (a reminder, a confirmation, a fallback or a
@@ -27,7 +28,10 @@ export function createReminderSendJob(deps: MessagingDeps) {
 /** The background jobs of the notifications module. Only the worker registers them. */
 export function createNotificationJobs(deps: MessagingDeps) {
   const reminderSend = createReminderSendJob(deps);
-  return { reminderSend, all: [reminderSend] as const };
+  const reminderSweep = createReminderSweepJob(deps);
+  return { reminderSend, reminderSweep, all: [reminderSend, reminderSweep] as const };
 }
+
+export { REMINDER_SWEEP_JOB };
 
 export type NotificationJobs = ReturnType<typeof createNotificationJobs>;

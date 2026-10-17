@@ -2,6 +2,7 @@ import { DEFAULT_NOTIFICATION_SETTINGS, NotificationSettings } from '@consultori
 
 import { createFakeWhatsAppSender } from '../../adapters/whatsapp-fake/index.js';
 import {
+  REMINDER_SWEEP_JOB,
   createNotificationJobs,
   createNotifications,
   createWorklist,
@@ -9,6 +10,8 @@ import {
 import { createTenantKeys } from '../../platform/crypto/tenant-keys.js';
 import { createWithTenant } from '../../platform/db/tenant-context.js';
 import { createPublicOrigins } from '../../platform/http/public-origin.js';
+import { fanOut } from '../../platform/jobs/worker.js';
+import type { WorkerJobContext } from '../../platform/jobs/worker.js';
 import { adapterOfSetting } from '../../platform/local-providers/dev-routes.js';
 import { createActionTokens } from '../../platform/tokens/index.js';
 import { fake } from '../adapter-resolver.js';
@@ -16,6 +19,9 @@ import { deploymentFromConfig } from '../deployment.js';
 import { createKeyManagement } from '../key-management.js';
 
 import type { ModuleWiring } from './types.js';
+
+/** How often every organization's reminders are swept (hourly). */
+const SWEEP_EVERY_MS = 3_600_000;
 
 /**
  * Everything the notifications module registers with the composition root (track A). The track
@@ -49,6 +55,12 @@ export const notificationsWiring: ModuleWiring = {
     createNotifications({
       withTenant: context.withTenant,
       auditDeny: context.auditDeny,
+      events: context.appointmentEvents,
+      keys: context.keys,
+      jobs: context.jobs,
+      // Without a resolver (some tests) WhatsApp is assumed to exist; the send job checks again.
+      whatsappAvailable: (tenant) =>
+        context.adapters ? context.adapters.forTenant(tenant, 'whatsapp') !== undefined : true,
       ...(context.clock ? { clock: context.clock } : {}),
     }),
   worker: ({ config, adapters, clock }) => {
@@ -59,22 +71,33 @@ export const notificationsWiring: ModuleWiring = {
       ...(config.publicPort === undefined ? {} : { port: config.publicPort }),
     });
     const keys = createTenantKeys({ kms: createKeyManagement(config.kms) });
+    const jobsOf = ({ client, db }: Pick<WorkerJobContext, 'client' | 'db'>) =>
+      createNotificationJobs({
+        withTenant: createWithTenant(db),
+        // Each organization gets the provider the resolver picks for it: a demo organization only
+        // ever the fakes. A channel nobody configured is `undefined` and counts as unavailable.
+        channels: {
+          email: (tenant) => adapters.forTenant(tenant, 'email'),
+          whatsapp: (tenant) => adapters.forTenant(tenant, 'whatsapp'),
+        },
+        jobs: client,
+        clock: now,
+        origins,
+        tokens: createActionTokens({ clock: now }),
+        worklist: createWorklist({ keys }),
+      });
     return {
-      jobs: ({ client, db }) =>
-        createNotificationJobs({
-          withTenant: createWithTenant(db),
-          // Each organization gets the provider the resolver picks for it: a demo organization only
-          // ever the fakes. A channel nobody configured is `undefined` and counts as unavailable.
-          channels: {
-            email: (tenant) => adapters.forTenant(tenant, 'email'),
-            whatsapp: (tenant) => adapters.forTenant(tenant, 'whatsapp'),
+      jobs: (context) => jobsOf(context).all,
+      schedules: ({ client, db }) => [
+        {
+          name: 'reminder.sweep tick',
+          intervalMs: SWEEP_EVERY_MS,
+          // One sweep per organization and per hour at most, even with several workers.
+          run: async () => {
+            await fanOut(db, client, REMINDER_SWEEP_JOB, { singletonSeconds: 1800 });
           },
-          jobs: client,
-          clock: now,
-          origins,
-          tokens: createActionTokens({ clock: now }),
-          worklist: createWorklist({ keys }),
-        }).all,
+        },
+      ],
     };
   },
 };
