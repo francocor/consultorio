@@ -1395,3 +1395,55 @@ Ranges are compatible with Drizzle's journal approach, so they are kept (Stage 3
 | `test:e2e` (`vite build`, private ports 3470/4470/9470, `--workers=3`) | **170 passed** |
 
 CI was not run or polled. Lighthouse was not run.
+
+## Stage 3 integration 1: tracks 3A, 3B and 3D merged into the seam branch
+
+The per-track detail (tasks, commits, TDD evidence, deviations) stays in each track's own file:
+
+- Track A (notifications, reminders, WhatsApp): `apply-progress-stage3-track-a.md` (migrations 0320 to 0323)
+- Track B (online booking): `apply-progress-stage3-track-b.md` (migrations 0340 to 0342)
+- Track D (teleconsultation): `apply-progress-stage3-track-d.md` (migration 0370)
+
+Track C (waitlist) is not merged yet.
+
+### Merges (`git merge --no-ff`, in this order)
+
+| Track | Tip merged | Merge commit | Conflicts |
+|---|---|---|---|
+| 3A | `7ad75a7` | `64cab12` | none |
+| 3B | `3041909` | `7502975` | `_journal.json`, `check-migration-drift.test.ts`, `wiring.test.ts`, `kinds.ts`, `kinds.test.ts` |
+| 3D | `f08d4d8` | `343558a` | `_journal.json`, `wiring.test.ts`, `kinds.ts`, `kinds.test.ts` |
+
+### Resolutions
+
+- **Journal**: kept every entry of both sides in merge order, then `db:restamp` (stamps raised for 0340 to 0342 and 0370, snapshots re-chained, last snapshot rebuilt). Final order: `0000` to `0043`, `0320`, `0321`, `0322`, `0323`, `0340`, `0341`, `0342`, `0370` (idx 0 to 51). `db:check` clean after each merge.
+- **`wiring.test.ts`, `kinds.test.ts`, `check-migration-drift.test.ts`**: the seam's generic versions (the wiring test only requires that routes are added; the enabled-kinds test names the Stage 1 set plus the Stage 3 set; the drift test uses Stage 4 tracks as the example tracks). Track B's `config.providers.botChallenge` in the wiring context was kept.
+- **`platform/tokens/kinds.ts`**: the union of the tracks. `appointment_confirm`, `appointment_cancel`, `notification_opt_out`, `whatsapp_opt_in` (A), `appointment_reschedule` with 366 days (B) and `video_join` (D) are enabled. `video_join` now lives **3 days** (was 3 hours): reminders issue the link 24 hours or more ahead and `issue` caps the lifetime at the kind. The pinning test in `video-join-address.test.ts` now expects window close plus 12 hours. `waitlist_offer` and `archive_release` stay disabled (track C and later).
+- `patients/index.ts` (A and B export lines), `fixture-helpers.ts` (A's id suffix on emails), `security-headers.ts` (A's `referrer-policy` override), `shell.test.tsx`: merged without conflict, both sides kept.
+
+### Fixes found by the verification (cross-track breakage)
+
+1. `packages/contracts/src/errors.test.ts`: lint refused `Object.entries` over the union of module catalogs once they stopped being empty. The map is typed as plain catalogs now.
+2. `notifications/application/revoke-links.ts`: track A revokes every appointment link when an appointment is cancelled, which made track B's manage page (that shows the appointment as cancelled) answer the blank 404. The manage link (`appointment_reschedule`) now survives a cancellation; a reschedule, reassignment or patient change still revokes it. Found by `booking-self-service.test.ts` ("shows an appointment that staff cancelled as cancelled").
+
+### Referrer policy audit
+
+Any public HTML page with a form must send `Referrer-Policy: same-origin`. The pages the API renders are the token pages (`/public/t/:token`, already `same-origin`, pinned by `notifications-tokens.test.ts`) and the video join page (`/public/v/:token`), which has **no form** (its CSP says `form-action 'none'`), so it keeps `no-referrer`; `video-join-public.test.ts` now asserts there is no `<form`. The public booking pages are the web app (`apps/web/index.html` carries `<meta name="referrer" content="same-origin">`), and `stage3-booking.spec.ts` passes on the real stack. No header change was needed.
+
+### Verification (tip after the three merges and the fixes, Node v24, pnpm 10.34.7)
+
+| Command | Result |
+|---|---|
+| `corepack pnpm install --frozen-lockfile` | exit 0 |
+| `corepack pnpm typecheck` / `lint` / `format:check` | exit 0 |
+| `corepack pnpm test` | **298 files, 3,780 tests passed** |
+| `corepack pnpm test:integration` | **156 files passed, 1 skipped (ClamAV); 2,382 tests passed, 4 skipped** |
+| `corepack pnpm build` | exit 0 |
+| `corepack pnpm db:check` | No migration drift |
+| `test:e2e` (ports 4580/3580/9580, `--workers=3`) | **181 passed** (`stage2-center.spec.ts:59` did not crash this time) |
+
+### Risks and follow-ups
+
+- A reminder lead time can be set up to 14 days (`lead-times.ts`), but `video_join` lives 3 days, so a link issued more than 3 days ahead of the window dies early. Either raise the kind to 15 days or issue the link at send time; decide before the Stage 3 gate.
+- Track C (waitlist) still has to merge: `waitlist_offer` stays disabled in `kinds.ts` until then, and the C merge will touch the same shared test files.
+- CI was not run here; Lighthouse was not run.
