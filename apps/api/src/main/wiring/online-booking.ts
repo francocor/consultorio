@@ -1,17 +1,32 @@
 import { DEFAULT_ONLINE_BOOKING_SETTINGS, OnlineBookingSettings } from '@consultorio/contracts';
 
 import { createFakeBotChallenge } from '../../adapters/bot-challenge-fake/index.js';
-import { createOnlineBooking } from '../../modules/online-booking/index.js';
+import { createLocalBotChallenge } from '../../adapters/bot-challenge-local/index.js';
+import {
+  createBookingPurgeJob,
+  createOnlineBooking,
+  createOtpSendJob,
+} from '../../modules/online-booking/index.js';
 import { adapterOfSetting } from '../../platform/local-providers/dev-routes.js';
-import { fake } from '../adapter-resolver.js';
+import { createMetrics } from '../../platform/metrics.js';
+import { createTenantRoutedEmail, fake, real } from '../adapter-resolver.js';
 
 import type { ModuleWiring } from './types.js';
 
 /**
  * Everything the online-booking module registers with the composition root (track B). The track
  * edits this file, `modules/online-booking/` and nothing shared: it fills the customer slot of the
- * `botChallenge` port when its local puzzle exists, and adds its jobs to the worker.
+ * `botChallenge` port with the local proof of work, and adds its jobs to the worker.
  */
+/**
+ * What online booking counts in this process (suspicious activity of the public form). The internal
+ * metrics endpoint reads it; one registry per process is what the API needs.
+ */
+export const onlineBookingMetrics = createMetrics();
+
+/** The purge of abandoned submissions runs for every organization once an hour. */
+const PURGE_EVERY_MS = 3_600_000;
+
 export const onlineBookingWiring: ModuleWiring = {
   settingsSections: [
     {
@@ -21,8 +36,15 @@ export const onlineBookingWiring: ModuleWiring = {
     },
   ],
   name: 'online-booking',
-  // No customer adapter yet: the public forms stay closed; demo organizations get the fake.
-  adapters: () => ({ botChallenge: { real: undefined, demo: fake(createFakeBotChallenge()) } }),
+  adapters: ({ config }) => ({
+    botChallenge: {
+      // `BOT_CHALLENGE=local` runs the proof-of-work puzzle for customer organizations. The
+      // Cloudflare Turnstile adapter (a deferred task) takes the slot for `turnstile`; until it
+      // exists the public forms stay closed in an environment that selects it.
+      real: config.providers.botChallenge === 'local' ? real(createLocalBotChallenge()) : undefined,
+      demo: fake(createFakeBotChallenge()),
+    },
+  }),
   devProviders: ({ config }) => [
     {
       id: 'bot-challenge',
@@ -32,10 +54,30 @@ export const onlineBookingWiring: ModuleWiring = {
         Promise.resolve({ adapter: adapterOfSetting(config.providers.botChallenge), mode: null }),
     },
   ],
+  // The code goes out by a job, so the API process holds a queue client.
+  needsJobs: true,
+  worker: (context) => {
+    // The tenant-routed sender: a demo organization's codes never reach the real provider.
+    const email = createTenantRoutedEmail(context.adapters);
+    const clock = context.clock ? { clock: context.clock } : {};
+    return {
+      jobs: () => [createOtpSendJob({ email, ...clock })],
+      tenantJobs: [{ definition: createBookingPurgeJob(clock), everyMs: PURGE_EVERY_MS }],
+    };
+  },
   create: (context) =>
     createOnlineBooking({
       withTenant: context.withTenant,
       auditDeny: context.auditDeny,
+      keys: context.keys,
+      origins: context.origins,
+      rateLimitStore: context.rateLimitStore,
+      email: context.email,
+      worklist: context.worklist,
+      metrics: onlineBookingMetrics,
+      ...(context.jobs ? { jobs: context.jobs } : {}),
+      appointmentEvents: context.appointmentEvents,
+      ...(context.adapters ? { adapters: context.adapters } : {}),
       ...(context.clock ? { clock: context.clock } : {}),
     }),
 };

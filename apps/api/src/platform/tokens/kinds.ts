@@ -44,7 +44,8 @@ export const TOKEN_KIND_REGISTRY: Record<TokenKind, KindSpec> = {
 
   appointment_confirm: { ttlMs: 60 * DAY, maxUses: 1, sessionBound: false, enabled: true },
   appointment_cancel: { ttlMs: 60 * DAY, maxUses: 1, sessionBound: false, enabled: true },
-  appointment_reschedule: { ttlMs: 60 * DAY, maxUses: 1, sessionBound: false, enabled: false },
+  // A booking can be made up to a year ahead (the horizon setting), and its link lives until the start.
+  appointment_reschedule: { ttlMs: 366 * DAY, maxUses: 1, sessionBound: false, enabled: true },
   waitlist_offer: { ttlMs: 2 * DAY, maxUses: 1, sessionBound: false, enabled: false },
   video_join: { ttlMs: 3 * HOUR, maxUses: 20, sessionBound: false, enabled: false },
   notification_opt_out: { ttlMs: 3650 * DAY, maxUses: 1, sessionBound: false, enabled: true },

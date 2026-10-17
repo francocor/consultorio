@@ -337,6 +337,27 @@
       "when": 1792249322563,
       "tag": "0323_whatsapp_usage",
       "breakpoints": true
+    },
+    {
+      "idx": 48,
+      "version": "7",
+      "when": 1792249322564,
+      "tag": "0340_online_booking_links",
+      "breakpoints": true
+    },
+    {
+      "idx": 49,
+      "version": "7",
+      "when": 1792249322565,
+      "tag": "0341_booking_submission",
+      "breakpoints": true
+    },
+    {
+      "idx": 50,
+      "version": "7",
+      "when": 1792249322566,
+      "tag": "0342_public_hold",
+      "breakpoints": true
     }
   ]
 }

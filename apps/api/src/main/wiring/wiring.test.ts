@@ -21,7 +21,8 @@ import { MODULE_WIRINGS } from './index.js';
 const MODULES_DIR = fileURLToPath(new URL('../../modules/', import.meta.url));
 
 const context = {
-  config: {} as never,
+  // Only what the adapter slots read: the customer slot of the bot challenge depends on it.
+  config: { providers: { botChallenge: 'local' } } as never,
   db: {} as never,
 };
 
