@@ -339,6 +339,57 @@ export const TENANT_FIXTURES: Record<string, TenantTableFixture> = {
       );
     },
   },
+  appointment_type: {
+    insert: (tx, tenantId) =>
+      returningId(
+        tx,
+        sql`INSERT INTO appointment_type (tenant_id, name, duration_minutes)
+              VALUES (${tenantId}, ${unique('Consulta')}, 30)
+              RETURNING id`,
+      ),
+  },
+  schedule_block: {
+    insert: async (tx, tenantId, overrides) =>
+      returningId(
+        tx,
+        sql`INSERT INTO schedule_block (tenant_id, professional_id, location_id, starts_at, ends_at, reason, created_by)
+              VALUES (${tenantId},
+                      ${overrides?.['professional_id'] ?? (await insertProfessional(tx, tenantId))},
+                      ${overrides?.['location_id'] ?? null},
+                      '2026-12-20T00:00:00Z', '2026-12-31T00:00:00Z', 'Vacation', ${randomUUID()})
+              RETURNING id`,
+      ),
+  },
+  tenant_day_off: {
+    insert: (tx, tenantId, overrides) =>
+      returningId(
+        tx,
+        sql`INSERT INTO tenant_day_off (tenant_id, day, name, location_id, created_by)
+              VALUES (${tenantId}, (date '2030-01-01' + ${nextVersion()}::int), ${unique('Day off')}, ${overrides?.['location_id'] ?? null}, ${randomUUID()})
+              RETURNING id`,
+      ),
+  },
+  professional_hours_exception: {
+    insert: async (tx, tenantId, overrides) => {
+      const locationId =
+        overrides?.['location_id'] ??
+        (await returningId(
+          tx,
+          sql`INSERT INTO location (tenant_id, name, time_zone)
+                VALUES (${tenantId}, ${unique('Location')}, 'America/Argentina/Buenos_Aires')
+                RETURNING id`,
+        ));
+      return returningId(
+        tx,
+        sql`INSERT INTO professional_hours_exception
+              (tenant_id, professional_id, period_id, date_from, date_to, location_id, weekday, start_minute, end_minute, created_by)
+              VALUES (${tenantId},
+                      ${overrides?.['professional_id'] ?? (await insertProfessional(tx, tenantId))},
+                      ${randomUUID()}, '2026-12-01', '2026-12-15', ${locationId}, 1, 540, 780, ${randomUUID()})
+              RETURNING id`,
+      );
+    },
+  },
   tenant_feature: {
     insert: (tx, tenantId) =>
       returningId(
