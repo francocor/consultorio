@@ -17,12 +17,14 @@ import type { HolidayService } from './holidays.js';
 import { locationAccessOf } from './location-access.js';
 
 /** The most appointments one answer carries; a month of a busy center is far below it. */
-const MAX_ENTRIES = 2000;
+const DEFAULT_MAX_ENTRIES = 2000;
 const DAY_MS = 86_400_000;
 
 export interface CalendarDeps {
   blocks: BlockService;
   holidays: HolidayService;
+  /** The cap of one answer; the feed says `truncated` when the window holds more. */
+  maxEntries?: number;
 }
 
 export interface CalendarInput {
@@ -132,6 +134,7 @@ function locationFilter(input: {
  * looks at another professional's calendar the view is audited.
  */
 export function createCalendar(deps: CalendarDeps) {
+  const maxEntries = deps.maxEntries ?? DEFAULT_MAX_ENTRIES;
   return {
     /** One appointment as the calendar shows it, if the viewer may work in its calendar and location. */
     async get(tx: Tx, input: { id: string; actor: Actor }): Promise<CalendarEntryDto> {
@@ -175,7 +178,8 @@ export function createCalendar(deps: CalendarDeps) {
       const to = new Date(query.to);
       const empty =
         (professionals !== 'everyone' && professionals.length === 0) || locationWhere === 'none';
-      const appointments = empty
+      // One more than the cap is read, only to know whether something is missing.
+      const found = empty
         ? []
         : await selectEntries(
             tx,
@@ -187,8 +191,10 @@ export function createCalendar(deps: CalendarDeps) {
                 : [inArray(appointment.professionalId, professionals)]),
               ...(locationWhere === 'any' ? [] : [locationWhere]),
             ),
-            MAX_ENTRIES,
+            maxEntries + 1,
           );
+      const truncated = found.length > maxEntries;
+      const appointments = truncated ? found.slice(0, maxEntries) : found;
 
       const blocks = (await deps.blocks.list(tx, { from: query.from, to: query.to })).filter(
         (block) =>
@@ -228,7 +234,7 @@ export function createCalendar(deps: CalendarDeps) {
           },
         });
       }
-      return { appointments, blocks, holidays };
+      return { appointments, blocks, holidays, truncated };
     },
   };
 }

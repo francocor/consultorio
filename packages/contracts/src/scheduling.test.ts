@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
   APPOINTMENT_STATUSES,
   BookAppointmentRequest,
+  CalendarResponse,
   CancelAppointmentRequest,
   CheckInRequest,
   ConfirmIdentityRequest,
@@ -229,5 +230,16 @@ describe('lifecycle requests', () => {
         local: { date: '2026-12-01', time: '10:00' },
       }).success,
     ).toBe(false);
+  });
+});
+
+describe('CalendarResponse', () => {
+  const empty = { appointments: [], blocks: [], holidays: [] };
+
+  it('says whether the answer was cut short, so the screen can ask to narrow the filter', () => {
+    expect(CalendarResponse.safeParse({ ...empty, truncated: false }).success).toBe(true);
+    expect(CalendarResponse.safeParse({ ...empty, truncated: true }).success).toBe(true);
+    expect(CalendarResponse.safeParse(empty).success).toBe(false);
+    expect(CalendarResponse.safeParse({ ...empty, truncated: 'yes' }).success).toBe(false);
   });
 });

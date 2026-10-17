@@ -9,6 +9,9 @@ import { afterAll, beforeAll, describe, expect, inject, it } from 'vitest';
 
 import { auditEvent } from '../../src/db/schema/audit.js';
 import { slotHold } from '../../src/db/schema/scheduling.js';
+import { createBlockService } from '../../src/modules/scheduling/application/blocks.js';
+import { createCalendar } from '../../src/modules/scheduling/application/calendar.js';
+import { createHolidayService } from '../../src/modules/scheduling/application/holidays.js';
 import { createRuntimeDb, type DbHandle } from '../../src/platform/db/pool.js';
 import {
   createSchedulingHttpWorld,
@@ -169,6 +172,52 @@ describe('the day view of a location', () => {
     expect(response.holidays).toEqual([
       expect.objectContaining({ day: world.monday(5), name: 'Closure' }),
     ]);
+  });
+
+  it('says the answer is complete when it is, and cut short when the cap is reached', async () => {
+    for (const time of ['09:00', '09:30', '10:00']) await world.book(12, time);
+    const query = {
+      from: `${world.monday(12)}T00:00:00-03:00`,
+      to: new Date(Date.parse(`${world.monday(12)}T00:00:00-03:00`) + 86_400_000).toISOString(),
+    };
+    const actor = {
+      kind: 'staff' as const,
+      userId: world.admin.user.id,
+      tenantId: world.tenant.id,
+      membershipId: world.admin.membershipId,
+      roles: ['admin' as const],
+      grants: [],
+      professionalId: null,
+    };
+    const auditActor = {
+      userId: world.admin.user.id,
+      actingRole: 'admin' as const,
+      ip: null,
+      userAgent: null,
+      requestId: null,
+    };
+    const calendarWith = (maxEntries: number) =>
+      createCalendar({
+        blocks: createBlockService(),
+        holidays: createHolidayService(),
+        maxEntries,
+      });
+    const read = (maxEntries: number) =>
+      world.inTenant((tx) => calendarWith(maxEntries).feed(tx, { query, actor, auditActor }));
+
+    const roomy = await read(10);
+    const exact = await read(3);
+    const tight = await read(2);
+
+    expect(roomy.appointments).toHaveLength(3);
+    expect(roomy.truncated).toBe(false);
+    // Exactly at the cap nothing is missing.
+    expect(exact.appointments).toHaveLength(3);
+    expect(exact.truncated).toBe(false);
+    // One over the cap: the earliest ones are kept and the answer says it is not all of it.
+    expect(tight.appointments).toHaveLength(2);
+    expect(tight.truncated).toBe(true);
+    expect((await feed(window(12))).truncated).toBe(false);
   });
 
   it('validates the window', async () => {

@@ -567,5 +567,11 @@ export const CalendarResponse = z.strictObject({
   blocks: z.array(BlockDto),
   /** Holidays and days off in the window. */
   holidays: z.array(HolidayDto),
+  /**
+   * True when the window holds more appointments than one answer carries: the earliest ones are
+   * here and the rest is missing, so the screen asks to narrow the filter (fewer days, one
+   * professional or one location). False means nothing is missing.
+   */
+  truncated: z.boolean(),
 });
 export type CalendarResponse = z.infer<typeof CalendarResponse>;
