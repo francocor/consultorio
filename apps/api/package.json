@@ -32,6 +32,7 @@
     "@node-rs/argon2": "^2.2.2",
     "@oslojs/encoding": "^1.1.0",
     "@oslojs/otp": "^1.1.0",
+    "@react-pdf/renderer": "^4.9.0",
     "drizzle-orm": "^0.45.4",
     "fastify": "^5.12.7",
     "fastify-type-provider-zod": "^7.0.0",
@@ -40,6 +41,7 @@
     "pg": "^8.23.1",
     "pg-boss": "^12.38.0",
     "pino": "^10.4.0",
+    "react": "^19.3.1",
     "sharp": "^0.35.5",
     "zod": "^4.6.7"
   },
@@ -51,6 +53,7 @@
     "@types/node": "^24",
     "@types/nodemailer": "^8.0.2",
     "@types/pg": "^8.23.1",
+    "@types/react": "^19.3.0",
     "drizzle-kit": "^0.31.11",
     "esbuild": "^0.28.2",
     "fast-check": "^4.10.2",
