@@ -18,6 +18,23 @@ describe('stripQuery', () => {
   });
 });
 
+describe('tokens that travel in the path', () => {
+  it.each([
+    ['/files/abcDEF123_-abcDEF123_-abcDEF123_-abcDEF123_-', '/files/:token'],
+    ['/files/abc?x=1', '/files/:token'],
+    ['/public/t/secret-link-token', '/public/t/:token'],
+    ['/public/v/video-token', '/public/v/:token'],
+    [
+      '/patients/0190a000-0000-7000-8000-000000000001/documents',
+      '/patients/0190a000-0000-7000-8000-000000000001/documents',
+    ],
+    ['/documents/uploads', '/documents/uploads'],
+    ['/files', '/files'],
+  ])('%s is logged as %s', (url, expected) => {
+    expect(serializeRequest({ url }).url).toBe(expected);
+  });
+});
+
 describe('serializeRequest', () => {
   it('drops the query string', () => {
     expect(

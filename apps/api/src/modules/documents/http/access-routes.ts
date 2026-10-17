@@ -132,6 +132,8 @@ export function accessRoutes(deps: AccessRoutesDeps) {
     typed.get(
       '/files/:token',
       {
+        // A link is spent by its first request. HEAD would spend it without delivering anything.
+        exposeHeadRoute: false,
         // Session cookie AND token (design 5.6): the guard asks for the session, the token is bound to it.
         config: { readOnly: 'read', permission: 'patients.read', audits: ['document.downloaded'] },
         schema: { params: FileParams },

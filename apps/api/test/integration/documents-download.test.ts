@@ -10,6 +10,7 @@ import { careAssignment } from '../../src/db/schema/care.js';
 import { tenant as tenantTable } from '../../src/db/schema/tenant.js';
 import { createRuntimeDb, type DbHandle } from '../../src/platform/db/pool.js';
 import { minimalPdf } from '../../src/platform/files/test-files.js';
+import { browserHeaders } from '../support/app.js';
 import { withScanning, type ScanningHarness } from '../support/document-scans.js';
 import { asSystem, createDocumentsHarness } from '../support/documents.js';
 import { signInAs, TEST_PASSWORD, type TestSession } from '../support/session.js';
@@ -176,14 +177,17 @@ describe('an authorized download', () => {
 describe('a link is not a bearer URL', () => {
   it('stops working after five minutes', async () => {
     const { id } = await availableDocument();
+    // The clock of the application is this one: start from a fresh instant, then move it.
+    const start = new Date();
+    now = start;
     const { url } = (await issue(id, h.sessions.professional)).json<DownloadLinkResponse>();
 
-    now = new Date(Date.now() + 4 * 60_000);
+    now = new Date(start.getTime() + 4 * 60_000);
     const early = await h.api.get(url, h.sessions.professional);
     expect(early.statusCode).toBe(200);
 
     const second = (await issue(id, h.sessions.professional)).json<DownloadLinkResponse>();
-    now = new Date(Date.now() + 10 * 60_000);
+    now = new Date(start.getTime() + 10 * 60_000);
     const late = await h.api.get(second.url, h.sessions.professional);
     now = new Date();
 
@@ -214,6 +218,20 @@ describe('a link is not a bearer URL', () => {
     // And neither of those attempts spent the link: its owner can still use it.
     expect((await h.api.get(url, h.sessions.professional)).statusCode).toBe(200);
     expect(await denialsBecause('document_link_invalid')).toBe(deniedBefore + 2);
+  });
+
+  it('is not answered to HEAD, so a link checker cannot spend the one use of a link', async () => {
+    const { id } = await availableDocument();
+    const { url } = (await issue(id, h.sessions.professional)).json<DownloadLinkResponse>();
+
+    const head = await h.app.inject({
+      method: 'HEAD',
+      url,
+      headers: browserHeaders(h.tenant.slug, h.sessions.professional.cookie),
+    });
+
+    expect(head.statusCode).toBe(404);
+    expect((await h.api.get(url, h.sessions.professional)).statusCode).toBe(200);
   });
 
   it('needs a session: pasted into a browser with none, it is refused', async () => {
