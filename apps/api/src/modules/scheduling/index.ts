@@ -24,6 +24,8 @@ import { planningRoutes } from './http/planning-routes.js';
 import { worklistRoutes } from './http/worklist-routes.js';
 
 export type { OpenItemInput, WorklistService } from './application/worklist.js';
+export { createAppointmentTypeService } from './application/appointment-types.js';
+export type { AppointmentTypeService } from './application/appointment-types.js';
 export { HOLD_EXPIRE_JOB, holdExpireJob } from './application/hold-expiry.js';
 
 /** Registers what scheduling takes with an organization that leaves (the cancellation export). */

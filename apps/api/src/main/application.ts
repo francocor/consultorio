@@ -3,19 +3,34 @@ import type { Writable } from 'node:stream';
 import { fail } from '@consultorio/contracts';
 import type { FastifyInstance } from 'fastify';
 
-import { createAccess, createGrants, createGrantsRepo } from '../modules/access/index.js';
+import {
+  createAccess,
+  createGrants,
+  createGrantsRepo,
+  createLocationService,
+} from '../modules/access/index.js';
 import { createAudit } from '../modules/audit/index.js';
 import type { LockoutPolicy } from '../modules/identity/application/lockout.js';
 import type { PasswordValidator } from '../modules/identity/domain/password-policy.js';
 import { createIdentity, type PasswordHasher } from '../modules/identity/index.js';
+import {
+  createOnboarding,
+  createWizardGate,
+  type Capabilities,
+} from '../modules/onboarding/index.js';
 import {
   createOperatorConsole,
   type DemoResetPort,
   type OperatorSecrets,
 } from '../modules/operator/index.js';
 import { createPatients } from '../modules/patients/index.js';
-import { createScheduling } from '../modules/scheduling/index.js';
-import { createStaff } from '../modules/staff/index.js';
+import { createAppointmentTypeService, createScheduling } from '../modules/scheduling/index.js';
+import {
+  createHoursService,
+  createProfileService,
+  createStaff,
+  type MatriculaRules,
+} from '../modules/staff/index.js';
 import {
   createBranding,
   createSupportAccess,
@@ -92,6 +107,11 @@ export interface ApplicationOptions {
     /** The privileged reset of a demo organization; the demo module provides it. */
     demoReset?: DemoResetPort;
   };
+  /**
+   * The parts of the product this deployment has. The guided first run shows only the wizard steps
+   * and checklist items of those. Defaults to patients, scheduling and branding (Stage 2).
+   */
+  onboardingCapabilities?: Capabilities;
   /** Routes of the capability modules, registered after identity. */
   modules?: readonly FeatureRoutes[];
 }
@@ -135,9 +155,11 @@ export function createApplication(options: ApplicationOptions): FastifyInstance 
     ...(options.publicPort === undefined ? {} : { port: options.publicPort }),
   });
 
+  const wizardGate = createWizardGate();
   const identity = createIdentity({
     withTenant,
     grants: grantsRepo,
+    needsWizard: wizardGate.needsWizard,
     keys: options.keys,
     email: options.email,
     passwordValidator: options.passwordValidator,
@@ -165,19 +187,27 @@ export function createApplication(options: ApplicationOptions): FastifyInstance 
     },
   });
 
+  const matriculaRules: MatriculaRules = (country, jurisdiction, value) => {
+    const found = getCountryPack(country, createCatalogReader(db));
+    return found.ok
+      ? found.value.validateMatricula(jurisdiction, value)
+      : fail('errors.unsupported_country');
+  };
+  const countryTimeZone = (country: string) => {
+    const found = getCountryPack(country, createCatalogReader(db));
+    return found.ok
+      ? found.value.defaults.timeZone
+      : pack.ok
+        ? pack.value.defaults.timeZone
+        : 'UTC';
+  };
+
   const access = createAccess({
     withTenant,
     auditDeny,
     sessions: identity.sessions,
     grants,
-    defaultTimeZone: (country) => {
-      const found = getCountryPack(country, createCatalogReader(db));
-      return found.ok
-        ? found.value.defaults.timeZone
-        : pack.ok
-          ? pack.value.defaults.timeZone
-          : 'UTC';
-    },
+    defaultTimeZone: countryTimeZone,
   });
 
   const staff = createStaff({
@@ -187,12 +217,7 @@ export function createApplication(options: ApplicationOptions): FastifyInstance 
     sessions: identity.sessions,
     email: options.email,
     origins,
-    matriculaRules: (country, jurisdiction, value) => {
-      const found = getCountryPack(country, createCatalogReader(db));
-      return found.ok
-        ? found.value.validateMatricula(jurisdiction, value)
-        : fail('errors.unsupported_country');
-    },
+    matriculaRules,
   });
 
   const patients = createPatients({
@@ -226,6 +251,18 @@ export function createApplication(options: ApplicationOptions): FastifyInstance 
     auditDeny,
     keys: options.keys,
     ...(schedulingClock ? { clock: schedulingClock } : {}),
+  });
+
+  const onboarding = createOnboarding({
+    withTenant,
+    auditDeny,
+    ...(options.onboardingCapabilities ? { capabilities: options.onboardingCapabilities } : {}),
+    locations: createLocationService(),
+    hours: createHoursService(options.clock ? { clock: options.clock } : {}),
+    profiles: createProfileService({ rules: matriculaRules }),
+    types: createAppointmentTypeService(),
+    defaultTimeZone: countryTimeZone,
+    ...(options.clock ? { clock: options.clock } : {}),
   });
 
   const auditViewer = createAudit({ withTenant });
@@ -288,6 +325,7 @@ export function createApplication(options: ApplicationOptions): FastifyInstance 
       staff.routes,
       patients.routes,
       scheduling.routes,
+      onboarding.routes,
       auditViewer.routes,
       branding.routes,
       supportAccess.routes,
