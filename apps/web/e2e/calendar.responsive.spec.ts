@@ -62,3 +62,33 @@ test('the week and the month fit the screen and are accessible', async ({ page }
   expect(await horizontalOverflow(page)).toBeLessThanOrEqual(0);
   expect(await axeViolations(page)).toEqual([]);
 });
+
+test('the booking dialog and the appointment drawer fit the screen and are accessible', async ({
+  page,
+}) => {
+  await openAs(page, 'reception', '/');
+  const day = await busyDay(page);
+  await page.goto(urlOf('aillu', `/calendar?date=${day}`));
+  await expect(page.getByRole('heading', { level: 1, name: 'Agenda' })).toBeVisible();
+
+  await page.getByRole('button', { name: 'Nuevo turno' }).click();
+  const booking = page.getByRole('dialog', { name: 'Nuevo turno' });
+  await expect(booking).toBeVisible();
+  expect(await horizontalOverflow(page)).toBeLessThanOrEqual(0);
+  expect(await axeViolations(page)).toEqual([]);
+  await page.keyboard.press('Escape');
+  await expect(booking).toBeHidden();
+
+  // The first appointment of the day opens in the drawer (a side panel on a desktop, a sheet on a phone).
+  await page
+    .getByRole('button', {
+      name: /(Programado|Confirmado|En sala|En consulta|Atendido|Ausente|Pendiente de aprobación)/,
+    })
+    .first()
+    .click();
+  const drawer = page.getByRole('dialog');
+  await expect(drawer.getByRole('link', { name: 'Ver ficha del paciente' })).toBeVisible();
+  await expect(drawer.getByRole('list', { name: 'Historial del turno' })).toBeVisible();
+  expect(await horizontalOverflow(page)).toBeLessThanOrEqual(0);
+  expect(await axeViolations(page)).toEqual([]);
+});

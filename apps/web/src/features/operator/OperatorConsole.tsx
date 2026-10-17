@@ -114,7 +114,7 @@ function Console({ operator, onSignedOut }: { operator: OperatorDto; onSignedOut
         </div>
       </header>
       <main id="main" className="mx-auto w-full max-w-6xl flex-1 px-4 py-8 md:px-8">
-        <Tabs defaultValue="tenants" className="grid gap-6">
+        <Tabs defaultValue="tenants" className="grid grid-cols-1 gap-6">
           <TabsList aria-label={t('nav.label')} className="justify-start">
             <TabsTrigger value="tenants">{t('nav.tenants')}</TabsTrigger>
             <TabsTrigger value="holidays">{t('nav.holidays')}</TabsTrigger>

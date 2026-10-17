@@ -22,7 +22,7 @@ test('book, confirm, check in, start and attend', async ({ page, browser }) => {
   await openAs(page, 'reception', '/');
   const target = await bookableProfessional(page);
   const slot = target.slots[0];
-  if (!slot) throw new Error('The demo professional has no free time in the next two weeks');
+  if (!slot) throw new Error('The demo professional has no free time in the next four weeks');
   const when = clockTime(slot.startsAt);
   const agenda = `/calendar?date=${slot.date}&pros=${target.professionalId}`;
 

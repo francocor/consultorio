@@ -25,7 +25,7 @@ function SchedulingSettings() {
   usePageTitle(t('settings:tab.scheduling'));
 
   return (
-    <Tabs defaultValue="types" className="grid gap-4">
+    <Tabs defaultValue="types" className="grid grid-cols-1 gap-4">
       <TabsList
         aria-label={t('scheduling:config.sections')}
         className="h-auto flex-wrap justify-start"

@@ -14,7 +14,7 @@ test('reception books an existing patient in a few actions', async ({ page }) =>
   await openAs(page, 'reception', '/');
   const target = await bookableProfessional(page);
   const slot = target.slots[0];
-  if (!slot) throw new Error('The demo professional has no free time in the next two weeks');
+  if (!slot) throw new Error('The demo professional has no free time in the next four weeks');
   const when = clockTime(slot.startsAt);
 
   // The agenda is already open on the day and the professional: this is where the clock starts.

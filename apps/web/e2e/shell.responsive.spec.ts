@@ -15,23 +15,23 @@ import {
 const ROLES: { account: AccountKey; sees: string[]; hidden: string[] }[] = [
   {
     account: 'owner',
-    sees: ['Inicio', 'Pacientes', 'Equipo', 'Auditoría', 'Configuración'],
-    hidden: ['Recetas', 'Borradores', 'Caja'],
+    sees: ['Inicio', 'Agenda', 'Pendientes', 'Pacientes', 'Equipo', 'Auditoría', 'Configuración'],
+    hidden: ['Recetas', 'Borradores', 'Caja', 'Hoy', 'Llegadas'],
   },
   {
     account: 'admin',
-    sees: ['Inicio', 'Pacientes', 'Equipo', 'Auditoría', 'Configuración'],
-    hidden: ['Recetas', 'Borradores'],
+    sees: ['Inicio', 'Agenda', 'Pendientes', 'Pacientes', 'Equipo', 'Auditoría', 'Configuración'],
+    hidden: ['Recetas', 'Borradores', 'Hoy', 'Llegadas'],
   },
   {
     account: 'reception',
-    sees: ['Inicio', 'Pacientes'],
-    hidden: ['Equipo', 'Auditoría', 'Configuración', 'Recetas'],
+    sees: ['Inicio', 'Agenda', 'Llegadas', 'Pendientes', 'Pacientes'],
+    hidden: ['Equipo', 'Auditoría', 'Configuración', 'Recetas', 'Hoy'],
   },
   {
     account: 'cardiology',
-    sees: ['Inicio', 'Pacientes'],
-    hidden: ['Equipo', 'Auditoría', 'Configuración'],
+    sees: ['Inicio', 'Hoy', 'Agenda', 'Pacientes'],
+    hidden: ['Equipo', 'Auditoría', 'Configuración', 'Llegadas', 'Pendientes'],
   },
 ];
 
@@ -48,11 +48,27 @@ for (const role of ROLES) {
     await expect(page.getByRole('heading', { level: 1 })).toContainText(
       'Bienvenido a Centro Médico Aillu',
     );
+    // A phone shows four entries and keeps the rest under "Más": look there before giving up.
+    const more = navigation.getByRole('button', { name: 'Más' });
+    const inBar = (label: string) => navigation.getByRole('link', { name: label });
+    const present = new Set<string>();
     for (const label of role.sees) {
-      await expect(navigation.getByRole('link', { name: label })).toBeVisible();
+      if ((await inBar(label).count()) > 0) present.add(label);
     }
+    if (phone && (await more.count()) > 0) {
+      await more.click();
+      const sheet = page.getByRole('dialog', { name: 'Más secciones' });
+      for (const label of role.sees) {
+        if ((await sheet.getByRole('link', { name: label }).count()) > 0) present.add(label);
+      }
+      for (const label of role.hidden) {
+        await expect(sheet.getByRole('link', { name: label })).toHaveCount(0);
+      }
+      await page.keyboard.press('Escape');
+    }
+    expect([...present].sort()).toEqual([...role.sees].sort());
     for (const label of role.hidden) {
-      await expect(navigation.getByRole('link', { name: label })).toHaveCount(0);
+      await expect(inBar(label)).toHaveCount(0);
     }
     expect(await horizontalOverflow(page)).toBeLessThanOrEqual(0);
     expect(await axeViolations(page)).toEqual([]);

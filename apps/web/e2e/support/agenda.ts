@@ -69,8 +69,10 @@ const plusDays = (iso: string, days: number) =>
   localDate(new Date(new Date(iso).getTime() + days * DAY_MS).toISOString());
 
 /**
- * A professional of the demo with free times in the next two weeks, found through the API the
+ * A professional of the demo with free times in the next four weeks, found through the API the
  * screens use, so a spec never depends on the weekday it runs on or on what other specs booked.
+ * The demo seeds about three weeks of agenda; further out the days are free, so a long-lived stack
+ * that earlier runs have filled still has room.
  */
 export async function bookableProfessional(
   page: Page,
@@ -99,7 +101,7 @@ export async function bookableProfessional(
     professionalId: member.professional.id,
     typeId: type.id,
     from: localDate(nowIso),
-    to: plusDays(nowIso, 13),
+    to: plusDays(nowIso, 27),
   });
   const availability = (await (
     await page.request.get(urlOf(organization, `/api/availability?${query.toString()}`))
