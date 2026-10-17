@@ -148,6 +148,12 @@ export interface PersistInput {
   hold?: HoldRecord | null;
   /** The series the appointment belongs to, and which session it is. */
   series?: { seriesId: string; index: number };
+  /**
+   * Whether the patient was registered by the actor a moment ago, when the caller already judged
+   * it. A series judges it once before its first session exists: afterwards the patient has an
+   * appointment and would no longer look new.
+   */
+  freshPatient?: boolean;
 }
 
 /**
@@ -164,7 +170,10 @@ export async function persistAppointment(
   // registered a moment ago is not a match.
   const identityConfirmed = initialIdentityConfirmed({
     source: 'staff',
-    patient: (await ports.isFreshPatient(patient.id, actor.userId, now)) ? 'created' : 'existing',
+    patient:
+      (input.freshPatient ?? (await ports.isFreshPatient(patient.id, actor.userId, now)))
+        ? 'created'
+        : 'existing',
     bookingActorProfessionalId: actor.professionalId,
     appointmentProfessionalId: professional.id,
   });

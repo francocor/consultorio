@@ -201,6 +201,9 @@ export async function bookSeries(
   if (conflicts) throw new SeriesConflictError(occurrences);
   if (planned.size === 0) throw invalid('skip', 'scheduling.series.nothing_to_create');
 
+  // Judged once, before the first session exists: from then on the patient has an appointment and
+  // would no longer look like one the actor just registered.
+  const freshPatient = await ports.isFreshPatient(patient.id, actor.userId, now);
   const seriesId = randomUUID();
   const appointments: AppointmentDto[] = [];
   for (const occurrence of occurrences) {
@@ -219,6 +222,7 @@ export async function bookSeries(
         plan: entry.plan,
         planInput: entry.planInput,
         series: { seriesId, index: occurrence.index },
+        freshPatient,
       }),
     );
   }

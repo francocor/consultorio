@@ -303,6 +303,41 @@ describe('committing a series', () => {
   });
 });
 
+describe('a series for a patient registered a moment ago (D14)', () => {
+  const self: BookActor = {
+    userId: 'user-b',
+    permissions: new Set(['scheduling.book']),
+    professionalId: DOCTOR,
+  };
+
+  it('confirms every session and opens no identity review: freshness is judged once per series', async () => {
+    const { ports, state } = world({ freshPatients: new Set(['patient-1']) });
+
+    await series(
+      ports,
+      { mode: 'commit', recurrence: { frequency: 'weekly', everyWeeks: 1, count: 3 } },
+      self,
+    );
+
+    expect(state.inserted).toHaveLength(3);
+    expect(state.inserted.every((a) => a.identityConfirmed)).toBe(true);
+    expect(state.openedItems).toEqual([]);
+  });
+
+  it('keeps every session unconfirmed for an existing patient, as before', async () => {
+    const { ports, state } = world();
+
+    await series(
+      ports,
+      { mode: 'commit', recurrence: { frequency: 'weekly', everyWeeks: 1, count: 3 } },
+      self,
+    );
+
+    expect(state.inserted.every((a) => !a.identityConfirmed)).toBe(true);
+    expect(state.openedItems).toHaveLength(3);
+  });
+});
+
 describe('sessions and daylight saving time', () => {
   it('keeps the local time of every session across a clock change', async () => {
     const { ports } = world({}, MADRID);

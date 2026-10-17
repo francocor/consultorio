@@ -277,7 +277,12 @@ export function createFakeSchedulingPorts(overrides: Partial<FakeSchedulingState
       return Promise.resolve();
     },
     soloPractice: () => Promise.resolve(state.solo),
-    isFreshPatient: (patientId) => Promise.resolve(state.freshPatients.has(patientId)),
+    // Like the database: fresh only while the patient has no appointment yet.
+    isFreshPatient: (patientId) =>
+      Promise.resolve(
+        state.freshPatients.has(patientId) &&
+          !state.inserted.some((inserted) => inserted.patientId === patientId),
+      ),
     openWorklistItem: (item) => {
       state.openedItems.push(item);
       return Promise.resolve();
