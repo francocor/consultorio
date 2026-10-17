@@ -9,6 +9,7 @@ import { eq } from 'drizzle-orm';
 import { afterAll, beforeAll, describe, expect, inject, it } from 'vitest';
 
 import { auditEvent } from '../../src/db/schema/audit.js';
+import { message } from '../../src/db/schema/notifications.js';
 import { appointment, slotHold } from '../../src/db/schema/scheduling.js';
 import { tenant } from '../../src/db/schema/tenant.js';
 import { createRuntimeDb, type DbHandle } from '../../src/platform/db/pool.js';
@@ -233,6 +234,52 @@ describe('cancelling by the link', () => {
       canChange: false,
     });
     expect(again.statusCode).toBe(404);
+  });
+});
+
+describe('the links of a booking and what staff do to the appointment', () => {
+  it('stops the manage link when staff move the appointment, because it was written for another time', async () => {
+    const mine = await booked();
+    const moved = await world.act({ id: mine.appointmentId }, 'reschedule', world.reception, {
+      local: { date: world.monday(week + 30), time: '11:00' },
+    });
+    expect(moved.statusCode, moved.body).toBe(200);
+
+    const view = await world.visitor().get(viewUrl(mine.token));
+    const cancelled = await cancel(world.visitor(), mine.token);
+
+    expect(view.statusCode).toBe(404);
+    expect(cancelled.statusCode).toBe(404);
+    expect((await stored(mine.appointmentId))?.status).toBe('scheduled');
+  });
+
+  it('keeps the manage link of a cancelled appointment, to say it was cancelled', async () => {
+    const mine = await booked();
+    await world.act({ id: mine.appointmentId }, 'cancel', world.owner, {
+      cancelledBy: 'organization',
+      reasonCode: 'organization_closed',
+    });
+
+    const view = await world.visitor().get(viewUrl(mine.token));
+
+    expect(view.statusCode).toBe(200);
+    expect(view.json<PublicManageDto>().appointment.status).toBe('cancelled');
+  });
+
+  it('logs the confirmation of the booking on the appointment, as sent', async () => {
+    const mine = await booked();
+
+    const rows = await world.inTenant((tx) =>
+      tx
+        .select({ kind: message.kind, channel: message.channel, status: message.status })
+        .from(message)
+        .where(eq(message.appointmentId, mine.appointmentId)),
+    );
+
+    expect(rows.filter((row) => row.kind === 'confirmation')).toEqual([
+      { kind: 'confirmation', channel: 'email', status: 'sent' },
+    ]);
+    expect(rows.filter((row) => row.kind === 'confirmation')).toHaveLength(1);
   });
 });
 

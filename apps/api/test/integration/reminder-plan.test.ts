@@ -263,6 +263,15 @@ describe('the reminder planner', () => {
     ]);
   });
 
+  it('does not confirm a booking the patient made online: the booking confirmation already answered it', async () => {
+    const dto = await booked({ email: 'online@example.test' });
+    notes.setNow(new Date(new Date(dto.startsAt).getTime() - 3 * 3_600_000));
+
+    await handle(created(factsOf(dto, { source: 'online' })));
+
+    expect(await plannedFor(dto.id)).toEqual([]);
+  });
+
   it('keeps the reminder that is still ahead and confirms at once for the one that is overdue', async () => {
     await setLeadHours([24, 2]);
     const dto = await booked();

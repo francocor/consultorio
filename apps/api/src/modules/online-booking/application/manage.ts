@@ -322,6 +322,8 @@ export async function rescheduleManaged(
             timeZone: place.timeZone,
             pendingApproval: pending,
             manageToken: issued.token,
+            patientId: peek.patientId,
+            appointmentId: peek.appointmentId,
           },
   };
 }

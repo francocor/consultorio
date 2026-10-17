@@ -108,9 +108,11 @@ export function createReminderPlanner(deps: PlannerDeps): ReminderPlanner {
     const keyOf = (name: string) =>
       `${name}:${appointment.appointmentId}:v${String(appointment.version)}`;
 
+    // A booking the patient made online was already confirmed by the booking confirmation, which
+    // goes to the address they verified: a second confirmation would be a duplicate.
+    const confirmWanted = options.confirm !== false && appointment.source !== 'online';
     const reminderChannel = channelFor('reminder');
-    const anyReminderWanted =
-      result.reminders.length > 0 || (options.confirm !== false && result.confirmNow);
+    const anyReminderWanted = result.reminders.length > 0 || (confirmWanted && result.confirmNow);
     for (const reminder of result.reminders) {
       if (reminderChannel === undefined) break;
       await queueMessage(deps, tx, {
@@ -126,7 +128,7 @@ export function createReminderPlanner(deps: PlannerDeps): ReminderPlanner {
     }
 
     const confirmationChannel = channelFor('confirmation');
-    if (options.confirm !== false && result.confirmNow && confirmationChannel !== undefined) {
+    if (confirmWanted && result.confirmNow && confirmationChannel !== undefined) {
       await queueMessage(deps, tx, {
         ...common,
         kind: 'confirmation',

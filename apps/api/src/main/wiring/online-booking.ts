@@ -2,7 +2,9 @@ import { DEFAULT_ONLINE_BOOKING_SETTINGS, OnlineBookingSettings } from '@consult
 
 import { createFakeBotChallenge } from '../../adapters/bot-challenge-fake/index.js';
 import { createLocalBotChallenge } from '../../adapters/bot-challenge-local/index.js';
+import { createBookingNotifier } from '../../modules/notifications/index.js';
 import {
+  composeBookingConfirmation,
   createBookingPurgeJob,
   createOnlineBooking,
   createOtpSendJob,
@@ -73,6 +75,13 @@ export const onlineBookingWiring: ModuleWiring = {
       origins: context.origins,
       rateLimitStore: context.rateLimitStore,
       email: context.email,
+      // The confirmation goes out through notifications: logged, once, at any hour.
+      notifier: createBookingNotifier({
+        withTenant: context.withTenant,
+        email: context.email,
+        clock: context.clock ?? (() => new Date()),
+        compose: (notice) => composeBookingConfirmation(context.origins, notice),
+      }),
       worklist: context.worklist,
       metrics: onlineBookingMetrics,
       ...(context.jobs ? { jobs: context.jobs } : {}),

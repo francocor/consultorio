@@ -338,6 +338,8 @@ export async function confirmBooking(
       timeZone: place.timeZone,
       pendingApproval: needsApproval,
       manageToken: issued?.token ?? null,
+      patientId,
+      appointmentId: appointment.id,
     },
   };
 }

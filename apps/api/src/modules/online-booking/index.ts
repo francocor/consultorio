@@ -25,13 +25,18 @@ import type { ExportRegistry } from '../tenancy/index.js';
 import { createAbuse } from './application/abuse.js';
 import { createAvailabilityCache } from './application/availability-cache.js';
 import {
+  composeBookingConfirmation,
   createEmailBookingNotifier,
+  type BookingNotice,
   type BookingNotifier,
 } from './application/booking-notifier.js';
 import { exportOnlineBooking } from './application/export-contributor.js';
 import { createLinkService } from './application/links.js';
 import { linkRoutes } from './http/link-routes.js';
 import { publicRoutes } from './http/public-routes.js';
+
+export { composeBookingConfirmation };
+export type { BookingNotice, BookingNotifier };
 
 /** Registers what online-booking takes with an organization that leaves (the cancellation export). */
 export function registerOnlineBookingExportContributors(registry: ExportRegistry): void {
