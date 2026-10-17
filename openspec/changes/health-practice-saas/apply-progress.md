@@ -1513,3 +1513,118 @@ The fast path (and the wizard's "yes, I am a professional" step) **requires the 
 | `test:e2e` (fresh stack, ports 4590/3590/9590, `--workers=3`) | **170 passed** on the second full run; the first had 169 passed and one timeout in `stage2-center.spec.ts` that passed when run alone |
 
 CI was not run or polled.
+
+## Stage 3 integration 2: cross-track wiring, product gaps and the CI fixes
+
+Branch `feat/stage-3-patient-engagement`, from `04048ea`. Automatic mode, strict TDD, `size:exception` (work-unit commits). Track C (the waitlist) is not merged yet; it runs in its own worktree and codes against `deliverWaitlistOffer`.
+
+### Commits
+
+| Item                          | Commit    | What                                                                                                                                                         |
+| ----------------------------- | --------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| 7 token guard                 | `0928085` | Registering a token kind twice throws; an application resets the registry when it starts to be built                                                         |
+| 8 `VIDEO_LOCAL_BASE_URL`      | `be61ec6` | Setting validated (https, no credentials, query or fragment), passed to the local video provider, documented                                                 |
+| CI 1: Docker smoke            | `acb2bd4` | The job queue connects on its first enqueue, so the API boots and answers `/health` without a database; test boots the real entry point                      |
+| CI 2: Lighthouse              | `07ec60e`, `53b6e28`, `680fab6` | Lazy slot pieces, error codes split from the schemas in contracts, lazy signed-in shell (see below)                                           |
+| Merge of the Stage 2 base     | `aeb36eb`, `ea768af` | `f8db04c` merged (D19 revised, D20, D21 revised); three conflicts resolved by keeping both sides; `db:restamp` and `db:check` clean                  |
+| 1 notifications to video      | `7a4db53` | Reminders and confirmations of a virtual appointment carry the join address; `video_join` lives 15 days                                                       |
+| CI 3: e2e after D21           | `71696cb` | The Stage 3 specs give their professional a matricula                                                                                                         |
+| CI 4: backup guard            | `4df3c68` | The empty-bucket check asks again on a network failure (bounded), still fails closed on anything else                                                         |
+| 2 waitlist delivery           | `f8f8f41` | `deliverWaitlistOffer`, `offerQuietHoursEnd`, `message_offer` (migration `0390`), template and renderer changes                                              |
+| 3 booking notifier            | `85650b2` | `createBookingNotifier`: booking confirmation through notifications, WhatsApp opt-in recorded; planner skips its own confirmation for online bookings        |
+| 6 email after WhatsApp opt-out | `0388603` | `optOutChannel` queues an email reminder for each reminder an opt-out cancelled                                                                              |
+| 5 scheduling                  | `22d2d3b` | `mode` in `CalendarEntryDto`, virtual marker, `today-appointment` slot with the join button, `actor_kind` patient for link actions                            |
+| 4 staff UI                    | `0cca477` | Settings > Turnos online and its end-to-end test                                                                                                              |
+
+### The exported delivery entry point (for track C)
+
+```ts
+// apps/api/src/modules/notifications/index.ts
+export function deliverWaitlistOffer(
+  tx: Tx,
+  input: {
+    offerId: string;
+    patientId: string;
+    professionalId: string;
+    locationId: string;
+    startsAt: Date;
+    endsAt: Date;
+    expiresAt: Date;
+    offerTokenUrl: string;
+  },
+): Promise<{ channel: 'whatsapp' | 'email' | 'none'; messageId: string | null }>;
+
+// also exported
+export function offerQuietHoursEnd(tx: Tx, input: { locationId: string; at: Date }): Promise<Date | null>;
+export function bindOfferDelivery(deps: OfferDeliveryDeps | undefined): void; // the process binds it; tests call it
+```
+
+- It queues the `waitlist_offer` message in the caller's transaction and the worker sends it (WhatsApp with an opt-in, otherwise email). It renders the existing `waitlist_offer` templates, which now carry the single-use link and the time the offer closes.
+- `none` (nothing queued, `messageId: null`) means: inside quiet hours (offers are NOT exempt: waitlist spec "Opt-out and consent in offers"), read-only organization, demonstration organization, offer already expired, no queue bound in this process, or no channel the patient allows. The waitlist decides what to do next: with quiet hours, `offerQuietHoursEnd` says when they end (null outside them), so it can create the offer again then with an expiry that keeps the minimum lead time, or leave the slot to reception.
+- The call is idempotent per offer and channel (dedupe key `waitlist_offer:<offerId>:<channel>`): asking twice returns the same message.
+- A permanent WhatsApp failure falls back to email with the same link. The link lives in `message_offer`, apart from the message log (which stays metadata only), and the hourly `reminder.sweep` clears it an hour after the offer expired. A message whose offer expired before the job ran is cancelled with the new reason `offer_expired`.
+- `waitlist_offer` stays disabled in `platform/tokens/kinds.ts` (track C enables it). The process-global binding means the API and the worker both call `bindOfferDelivery` (done in `createNotifications` and in the notifications worker wiring).
+
+### Per item
+
+1. **Notifications to teleconsultation.** `VideoJoinRegistry` (notifications) is created per application and per worker process, passed in the wiring contexts (`WiringContext.videoJoin`, `WorkerWiringContext.videoJoin`); teleconsultation registers its resolver in `create` and in its worker part. Reminders and confirmations of a virtual appointment name the mode and carry the platform address (email: text and link; WhatsApp: variables `mode` and `joinUrl`); `pending` says the link follows; `in_person` and `closed` say nothing. `video_join` is 15 days (reminders go out up to 14 days ahead); the pinning tests state it and a test sends a reminder 14 days ahead and opens its link. The console stand-in route stays behind `LOCAL_PROVIDERS_CONSOLE` (it already only existed there).
+2. **Waitlist delivery.** See above.
+3. **Track B.** `recordWhatsAppOptIn` records `channel_preference` with source `online_booking`. The booking confirmation goes through `createBookingNotifier` (wired in `main/wiring/online-booking.ts`): logged as a `confirmation` message of the appointment, to the address the visitor verified, once per appointment and time, at any hour, not to a patient who opted out of email, retried after a temporary failure (three attempts). `appointment_reschedule` was NOT added to the token router: the manage page is the web app (`/book/manage/:token`) and the email already points there. Staff reschedule revokes the manage link, staff cancel keeps it (integration 1 decision); both are pinned by tests now. Tasks 3.43 and 3.45 are done; 3.49 stays open until the C merge passes `waitlistPath` to `SlotPicker`.
+4. **Staff UI.** Settings > Turnos online (`features/settings/online-booking`, permission `booking.manage`): see the commit. Found by the end-to-end test: the API refuses types and places on the link of the organization, so that link has none (the component tests had assumed otherwise).
+5. **Scheduling.** `mode` in `CalendarEntryDto` (feed and detail); icon and word on the grid and a badge in the list; `today-appointment` slot, the teleconsultation join button beside virtual appointments; `actor_kind = patient` for confirm and cancel by link or WhatsApp reply, and for move and cancel from the manage page.
+6. **Email after a WhatsApp opt-out.** It did NOT replace them: the cancelled reminders were simply gone. Fixed in `optOutChannel` (opt-out link, WhatsApp keyword and reception all use it). A patient with no other channel gets nothing and the sweep tells reception.
+7. **Token registry guard.** Throws on a duplicate kind; `resetTokenHandlers()` is the explicit reset (called by `createApplication` and by tests).
+8. **`VIDEO_LOCAL_BASE_URL`.** Done.
+
+### CI fixes of PR #16
+
+- **Docker smoke.** Notifications made the API hold a queue client and `main` started it at boot, so the image exited with `ECONNREFUSED 127.0.0.1:1`. `createLazyJobs` starts the queue on the first enqueue (a failed start is retried by the next one). Reproduced locally with `docker build -f infra/Dockerfile` and the CI environment: `/health` answers 200. `src/main/boot.test.ts` boots the real entry point with that environment.
+- **Lighthouse.** Mobile profile, 3 runs per build on this machine: Stage 2 tip median LCP 2591 ms, Stage 3 tip 2777 ms (the CI failure reproduced), now 2439 ms. Files and bytes the login page loads: 26 files / 292 KB gzip at Stage 2, 40 / 317 KB at the Stage 3 tip, 28 / 258 KB now. Causes: slot pieces imported by `slots.tsx` (video panel, message log, channels panel and the Radix checkbox, switch and alert dialog they use); `errors.ts` and `audit-actions.ts` importing whole module contract files for a list of codes (`<module>-catalog.ts` now); and the signed-in shell and settings frame in the first bundle (lazy now, which also takes the menus and floating UI out of the login page). The budget is unchanged. Waitlist contracts (`waitlist.ts`, still imported by `errors.ts`) were left for track C to avoid a conflict: split `WAITLIST_ERRORS` and `WAITLIST_AUDIT_ACTIONS` into `waitlist-catalog.ts` after the C merge.
+- **E2E after D21.** The Stage 3 specs create their professional with a matricula.
+- **Backup guard.** `withTransientRetry` (reset, timeout, broken pipe, 5xx; four attempts) around the emptiness check of `restoreBackup`; a refusal, a missing bucket other than the one the restore creates, or a network that keeps failing still stops the restore.
+
+### Merge of the Stage 2 base (`f8db04c`)
+
+Conflicts: `main/application.ts` (the access module now also takes `email` and `origins`; the settings sections stay), `modules/access/index.ts` (both options), and this file (both sections kept). No migration came from Stage 2; `db:restamp` found nothing to change, `db:check` clean. The owner email of D19 was left as the base sends it (not routed through notifications).
+
+### TDD evidence (RED first unless noted)
+
+| Item | Tests | RED | Notes |
+| ---- | ----- | --- | ----- |
+| 7 | `token-registry.test.ts` (5), two wiring tests | module function missing | |
+| 8 | `config-providers.test.ts` (+5), `wiring/teleconsultation.test.ts` | 6 failed | |
+| CI 1 | `boot.test.ts`, `lazy-jobs.test.ts` (5) | boot: exited with ECONNREFUSED | |
+| CI 4 | `retry.test.ts`, `bucket-guard.test.ts` (6) | modules missing | |
+| 1 | `render.test.ts` (+7), `whatsapp.test.ts` (4), `video-join.test.ts` (8), `kinds.test.ts`, `video-join-address.test.ts` | render and kinds: failed first; the integration test `notifications-video.test.ts` (7) was written after the wiring existed | |
+| 2 | `render.test.ts` (+5), `quiet-hours.test.ts` (+4), `notifications-offers.test.ts` (19), schema and isolation suites | render: 4 failed; the offers suite was written before `deliverWaitlistOffer` existed (compile failure) | |
+| 3 | `notifications-booking-confirmation.test.ts` (9), `reminder-plan.test.ts`, `booking-self-service.test.ts` (+3) | planner test failed first | the staff reschedule and cancel tests pin existing behavior |
+| 6 | `notifications-channel-fallback.test.ts` (8) | module missing | |
+| 5 | `scheduling.test.ts` (contracts), `scheduling-calendar.test.ts`, `booking-self-service.test.ts` and `notifications-tokens.test.ts` (actor kind), `calendar-events.test.ts`, `CalendarView.test.tsx`, `join-button.test.tsx` (7), `today-page.test.tsx` | actor kind: 3 failed; mode: contracts failed | |
+| 4 | `online-booking-settings.test.tsx` (22), `rules-form.test.ts`, `link-address.test.ts`, `stage3-booking-links.spec.ts` | a missing locale cache hid the new feature in the first run | the e2e found the organization link rule |
+
+### Risks and follow-ups
+
+- The WhatsApp `waitlist_offer` and reminder templates gained variables (`offerUrl`, `offerExpires`, `mode`, `joinUrl`); the Meta template approvals (deferred task) must include them.
+- A virtual appointment whose link does not exist when the reminder goes out says "the link will be sent separately", and nothing sends it later. Reception can attach a manual link and resend (up to three times). A follow-up message when the room becomes ready is not built.
+- `bindOfferDelivery` and the token registry are process-global state; every process that calls `deliverWaitlistOffer` or `optOutChannel` must build `createNotifications` (API) or the notifications worker part first.
+- `Referrer-Policy`: the booking links screen opens no public HTML page; nothing changed.
+- CI and Lighthouse on CI were not run or polled; Lighthouse was run locally (above).
+
+### Verification
+
+Node v24.22.0, pnpm 10.34.7, Docker running and shared with other agents.
+
+| Command | Result |
+|---|---|
+| `corepack pnpm install --frozen-lockfile` | exit 0 |
+| `corepack pnpm typecheck` / `lint` / `format:check` | exit 0 |
+| `corepack pnpm test` | **309 files, 3,921 tests passed** |
+| `corepack pnpm test:integration` | **162 files passed, 1 skipped (ClamAV); 2,469 tests passed, 4 skipped** (`backup-restore.test.ts` passed) |
+| `corepack pnpm build` | exit 0 |
+| `corepack pnpm db:check` | No migration drift (journal now ends with `0390`) |
+| `test:e2e` (ports 4600/3600/9600, `--workers=3`) | **182 passed** (181 at integration 1, plus `stage3-booking-links.spec.ts`) |
+| Docker image smoke test, as `.github/workflows/ci.yml` runs it | built `infra/Dockerfile`, ran with the CI environment: `/health` answered `{"status":"ok"}` |
+| Lighthouse (`lhci collect`, local Chrome, 3 runs) | median LCP 2439 ms against the 2500 ms budget (Stage 2 tip on the same machine: 2591 ms) |
+
+CI was not run or polled. Three containers of earlier end-to-end stacks, with no process left to own them, held port 9600 after a run was interrupted; they were removed before the full run.
+
