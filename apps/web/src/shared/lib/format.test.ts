@@ -1,3 +1,4 @@
+import { formatArs, money } from '@consultorio/contracts';
 import { describe, expect, it } from 'vitest';
 
 import {
@@ -11,6 +12,7 @@ import {
   formatMoney,
   formatTime,
   formatWeekdayShort,
+  parseMoney,
 } from './format.js';
 
 /** Intl uses no-break and narrow spaces; compare with plain ones. */
@@ -43,15 +45,24 @@ describe('formatDate and formatTime (es-AR, location time zone)', () => {
   });
 });
 
-describe('formatMoney', () => {
+describe('formatMoney (integer cents, through the shared Money type)', () => {
   it('uses Argentine separators and the peso sign', () => {
-    expect(plain(formatMoney(1234.5))).toBe('$ 1.234,50');
-    expect(plain(formatMoney(0))).toBe('$ 0,00');
+    expect(formatMoney(money(123_450))).toBe('$ 1.234,50');
+    expect(formatMoney(money(0))).toBe('$ 0,00');
   });
 
-  it('formats negative amounts and another currency', () => {
-    expect(plain(formatMoney(-90))).toBe('-$ 90,00');
-    expect(plain(formatMoney(10, 'USD'))).toContain('10,00');
+  it('writes the same text as the server does, for any amount', () => {
+    expect(formatMoney(money(5))).toBe(formatArs(money(5)));
+    expect(formatMoney(money(100_000_000))).toBe('$ 1.000.000,00');
+  });
+
+  it('formats negative amounts', () => {
+    expect(formatMoney(money(-9_000))).toBe('-$ 90,00');
+  });
+
+  it('reads a typed amount back into cents', () => {
+    expect(parseMoney('1.234,5')).toBe(123_450);
+    expect(parseMoney('1234.5')).toBeNull();
   });
 });
 
