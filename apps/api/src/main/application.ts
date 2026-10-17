@@ -33,6 +33,7 @@ import {
 } from '../modules/scheduling/index.js';
 import {
   createHoursService,
+  createOwnerProfessionalService,
   createProfileService,
   createStaff,
   type MatriculaRules,
@@ -302,7 +303,9 @@ export function createApplication(options: ApplicationOptions): FastifyInstance 
     ...(options.onboardingCapabilities ? { capabilities: options.onboardingCapabilities } : {}),
     locations: createLocationService(),
     hours: createHoursService(options.clock ? { clock: options.clock } : {}),
-    profiles: createProfileService({ rules: matriculaRules }),
+    ownerProfessional: createOwnerProfessionalService({
+      profiles: createProfileService({ rules: matriculaRules }),
+    }),
     types: createAppointmentTypeService(),
     defaultTimeZone: countryTimeZone,
     ...(options.clock ? { clock: options.clock } : {}),

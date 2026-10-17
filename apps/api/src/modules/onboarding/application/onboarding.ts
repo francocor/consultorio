@@ -3,6 +3,7 @@ import type {
   FastPathRequest,
   FastPathResponse,
   InvitationImpactDto,
+  MatriculaInput,
   OnboardingStateDto,
   ProfessionalStepRequest,
   Role,
@@ -16,13 +17,9 @@ import { professional } from '../../../db/schema/staff.js';
 import { audit, type AuditActor } from '../../../platform/audit/writer.js';
 import type { Tx } from '../../../platform/db/tenant-context.js';
 import { AppError } from '../../../platform/http/problem.js';
-import {
-  AccessRefused,
-  addProfessionalRoleToOwner,
-  type LocationService,
-} from '../../access/index.js';
+import type { LocationService } from '../../access/index.js';
 import type { AppointmentTypeService } from '../../scheduling/index.js';
-import type { HoursService, ProfileService } from '../../staff/index.js';
+import type { HoursService, OwnerProfessionalService } from '../../staff/index.js';
 import type { Capabilities } from '../domain/capabilities.js';
 import { buildChecklist } from '../domain/checklist.js';
 import {
@@ -33,7 +30,7 @@ import {
 import { buildWizard, canSkip, missingPrerequisites, stepsFor } from '../domain/wizard.js';
 
 import { readFacts } from './facts.js';
-import { isSelfRoleOpen, loadStored, saveStored, type StatePatch } from './store.js';
+import { loadStored, saveStored, type StatePatch } from './store.js';
 
 /** What inviting someone would change in the plan. A port: subscriptions plug in at Stage 6. */
 export interface PlanImpact {
@@ -49,7 +46,8 @@ export interface OnboardingDeps {
   capabilities: Capabilities;
   locations: LocationService;
   hours: HoursService;
-  profiles: ProfileService;
+  /** Makes the owner a professional: the role and the profile, in one transaction (D21). */
+  ownerProfessional: OwnerProfessionalService;
   types: AppointmentTypeService;
   /** Time zone of a new location, from the country pack of the organization. */
   defaultTimeZone: (country: string) => string;
@@ -112,34 +110,22 @@ export function createOnboardingService(deps: OnboardingDeps): OnboardingService
   }
 
   /**
-   * Makes the owner a professional (role and profile), saving the profile as given. Open only
-   * while the wizard is not finished and the organization is less than 30 days old: after that,
-   * roles are not self-assigned (authorization, "No self-assignment or silent escalation of
-   * roles"), another owner adds them.
+   * Makes the owner a professional: the role and the complete profile, in one transaction
+   * (decision D21, revised 2026-10-17). An owner may do it at any time, so nothing here depends on
+   * the wizard being open or on the age of the organization. The matricula is required: the role
+   * is only active with the profile data (name, specialty, matricula and jurisdiction).
    */
   async function makeOwnerProfessional(
     tx: Tx,
     actor: OnboardingActor,
-    request: Extract<ProfessionalStepRequest, { isProfessional: true }>,
+    request: { fullName: string; specialties: string[]; matricula: MatriculaInput },
   ): Promise<void> {
-    if (!actor.roles.includes('professional') && !(await isSelfRoleOpen(tx, deps.clock()))) {
-      throw new AccessRefused('onboarding_role_closed');
-    }
-    await addProfessionalRoleToOwner(tx, {
+    await deps.ownerProfessional.activate(tx, {
       actor: actor.audit,
       membershipId: actor.membershipId,
-    });
-    await deps.profiles.save(tx, {
-      actor: actor.audit,
-      actorMembershipId: actor.membershipId,
-      actorRoles: [...new Set<Role>([...actor.roles, 'professional'])],
-      targetMembershipId: actor.membershipId,
+      roles: actor.roles,
       country: actor.country,
-      request: {
-        fullName: request.fullName,
-        specialties: request.specialties,
-        matricula: request.matricula,
-      },
+      request,
     });
   }
 
@@ -237,12 +223,17 @@ export function createOnboardingService(deps: OnboardingDeps): OnboardingService
 
       let own = await ownProfessional(tx, actor.membershipId);
       if (!own) {
+        // Decision D21 (revised): the owner attends only with a complete professional profile, so
+        // the fast path asks for the matricula too, and creates nothing without it.
+        if (!request.matricula) {
+          throw new AppError('validation_failed', [
+            { path: 'matricula', i18nKey: 'onboarding.matricula_required' },
+          ]);
+        }
         await makeOwnerProfessional(tx, actor, {
-          isProfessional: true,
           fullName: request.fullName,
           specialties: request.specialties,
-          // The fast path never asks for the matricula: it stays a checklist item.
-          matricula: null,
+          matricula: request.matricula,
         });
         own = await ownProfessional(tx, actor.membershipId);
         created.professional = true;

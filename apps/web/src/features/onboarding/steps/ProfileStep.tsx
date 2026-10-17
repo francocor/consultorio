@@ -1,4 +1,4 @@
-import { AR_JURISDICTIONS, type ProfessionalStepRequest } from '@consultorio/contracts';
+import type { ProfessionalStepRequest } from '@consultorio/contracts';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useForm, useWatch } from 'react-hook-form';
@@ -19,16 +19,15 @@ import {
   FormLabel,
   FormMessage,
 } from '../../../shared/ui/form.js';
-import { Input, Select } from '../../../shared/ui/input.js';
+import { Input } from '../../../shared/ui/input.js';
 import { RadioCard, RadioGroup } from '../../../shared/ui/radio-card.js';
 import { staffApi, staffKeys } from '../../staff/api/staff-api.js';
+import { MatriculaFields, requireMatricula } from '../../staff/components/MatriculaFields.js';
 import { onboardingApi, onboardingKeys } from '../api/onboarding-api.js';
 import { StepFooter } from '../components/StepFooter.js';
 import { splitSpecialties } from '../specialties.js';
 
 import type { StepProps } from './types.js';
-
-const NATIONAL = AR_JURISDICTIONS.national;
 
 const Schema = z
   .object({
@@ -40,19 +39,22 @@ const Schema = z
   })
   .superRefine((values, ctx) => {
     if (values.isProfessional !== 'yes') return;
-    const required = (path: 'fullName' | 'specialty' | 'matriculaNumber', empty: boolean) => {
-      if (empty) ctx.addIssue({ code: 'custom', path: [path], message: 'validation.required' });
-    };
-    required('fullName', values.fullName === '');
-    required('specialty', splitSpecialties(values.specialty).length === 0);
-    required('matriculaNumber', values.jurisdiction !== '' && values.matriculaNumber === '');
+    if (values.fullName === '') {
+      ctx.addIssue({ code: 'custom', path: ['fullName'], message: 'validation.required' });
+    }
+    if (splitSpecialties(values.specialty).length === 0) {
+      ctx.addIssue({ code: 'custom', path: ['specialty'], message: 'validation.required' });
+    }
+    // Decision D21 (revised): the owner is a professional only with a complete profile.
+    requireMatricula(values, ctx);
   });
 type Values = z.infer<typeof Schema>;
 
 /**
  * "Are you a health professional?" (tenant-onboarding, "Tenant defaults and initial roles"). Yes
- * gives the owner a professional profile next to the owner role (the matricula is optional here);
- * no keeps them without clinical access and sends them to invite a professional.
+ * gives the owner a professional profile next to the owner role, which needs the name, a specialty
+ * and the matricula with its jurisdiction (decision D21); no keeps them without clinical access
+ * and sends them to invite a professional.
  */
 export function ProfileStep({ state, next, back }: StepProps) {
   const { t } = useTranslation(['onboarding', 'common']);
@@ -80,7 +82,6 @@ export function ProfileStep({ state, next, back }: StepProps) {
     },
   });
   const choice = useWatch({ control: form.control, name: 'isProfessional' });
-  const jurisdiction = useWatch({ control: form.control, name: 'jurisdiction' });
 
   const save = useMutation({
     mutationFn: (values: Values) => {
@@ -90,10 +91,7 @@ export function ProfileStep({ state, next, back }: StepProps) {
               isProfessional: true,
               fullName: values.fullName,
               specialties: splitSpecialties(values.specialty),
-              matricula:
-                values.jurisdiction === ''
-                  ? null
-                  : { jurisdiction: values.jurisdiction, number: values.matriculaNumber },
+              matricula: { jurisdiction: values.jurisdiction, number: values.matriculaNumber },
             }
           : { isProfessional: false };
       return onboardingApi(api).professional(body);
@@ -193,47 +191,7 @@ export function ProfileStep({ state, next, back }: StepProps) {
                 </FormItem>
               )}
             />
-            <div className="grid gap-4 sm:grid-cols-2">
-              <FormField
-                control={form.control}
-                name="jurisdiction"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>{t('onboarding:profile.jurisdiction')}</FormLabel>
-                    <FormControl>
-                      <Select {...field}>
-                        <option value="">{t('onboarding:profile.jurisdiction.none')}</option>
-                        <option value={NATIONAL}>
-                          {t('onboarding:profile.jurisdiction.national')}
-                        </option>
-                        {AR_JURISDICTIONS.provincial.map((place) => (
-                          <option key={place.code} value={place.code}>
-                            {place.name}
-                          </option>
-                        ))}
-                      </Select>
-                    </FormControl>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
-              <FormField
-                control={form.control}
-                name="matriculaNumber"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>{t('onboarding:profile.matricula')}</FormLabel>
-                    <FormControl>
-                      <Input inputMode="numeric" disabled={jurisdiction === ''} {...field} />
-                    </FormControl>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
-            </div>
-            <p className="text-sm text-muted-foreground">
-              {t('onboarding:profile.matricula.hint')}
-            </p>
+            <MatriculaFields />
           </div>
         ) : null}
 

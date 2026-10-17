@@ -93,6 +93,8 @@ test('a solo professional goes from the invitation to a first appointment, on a 
   await page.getByRole('button', { name: 'Usar la configuración rápida' }).click();
   await page.getByLabel('Nombre y apellido').fill('Dra. Ana Solera');
   await page.getByLabel('Profesión o especialidad').fill('Nutrición');
+  await page.getByLabel('Jurisdicción de la matrícula').selectOption('AR-B');
+  await page.getByLabel('Número de matrícula').fill('34567');
   await expectFitsAndAccessible(page);
   await page.getByRole('button', { name: 'Dejar todo listo' }).click();
   await expect(

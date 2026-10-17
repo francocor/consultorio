@@ -17,6 +17,7 @@ import { createDirectoryService } from './application/directory.js';
 import { exportProfessionals } from './application/export-contributor.js';
 import { createHoursService } from './application/hours.js';
 import { createLifecycleService } from './application/lifecycle.js';
+import { createOwnerProfessionalService } from './application/owner-professional.js';
 import { createProfessionalRepo } from './application/professional-repo.js';
 import { createProfileService, type MatriculaRules } from './application/profile.js';
 import { hoursRoutes } from './http/hours-routes.js';
@@ -32,6 +33,8 @@ export type { MatriculaRules } from './application/profile.js';
 export { managesStaff } from './application/profile.js';
 export { createProfileService } from './application/profile.js';
 export type { ProfileService } from './application/profile.js';
+export { createOwnerProfessionalService } from './application/owner-professional.js';
+export type { OwnerProfessionalService } from './application/owner-professional.js';
 export { createHoursService } from './application/hours.js';
 export type { HoursService } from './application/hours.js';
 export { findHoursProblems, formatClock, parseClock, zoneOffsetMinutes } from './domain/hours.js';
@@ -65,6 +68,7 @@ export function createStaff(options: StaffOptions): Staff {
     withTenant: options.withTenant,
     auditDeny: options.auditDeny,
     profiles,
+    ownerProfessional: createOwnerProfessionalService({ profiles }),
   });
 
   const lifecycle = lifecycleRoutes({

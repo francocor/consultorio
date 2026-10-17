@@ -1,6 +1,6 @@
 import { z } from 'zod';
 
-import { ProfessionalProfileRequest } from './staff.js';
+import { MatriculaInput, ProfessionalProfileRequest } from './staff.js';
 
 /**
  * Contracts of the guided first run (tenant-onboarding, Part A): the setup wizard, the solo fast
@@ -139,7 +139,9 @@ export const ProfessionalStepRequest = z.discriminatedUnion('isProfessional', [
     isProfessional: z.literal(true),
     fullName: ProfessionalProfileRequest.shape.fullName,
     specialties: ProfessionalProfileRequest.shape.specialties,
-    matricula: ProfessionalProfileRequest.shape.matricula,
+    // Decision D21 (revised): the owner is a professional only with a complete profile, so the
+    // registration with its jurisdiction is required here.
+    matricula: MatriculaInput,
   }),
   z.strictObject({ isProfessional: z.literal(false) }),
 ]);
@@ -149,11 +151,16 @@ export type ProfessionalStepRequest = z.infer<typeof ProfessionalStepRequest>;
 
 /**
  * Who the professional is; everything else gets a sensible default that can be edited afterwards.
- * No matricula, no branding and no payment are asked: they stay as checklist items.
+ * The owner who attends needs a complete professional profile (decision D21, revised): name,
+ * specialty and the registration with its jurisdiction. The registration is optional in the shape
+ * only because an owner who already has a profile has nothing to add; the service requires it
+ * whenever the fast path has to create the profile. Branding and payment are not asked: they stay
+ * as checklist items.
  */
 export const FastPathRequest = z.strictObject({
   fullName: ProfessionalProfileRequest.shape.fullName,
   specialties: ProfessionalProfileRequest.shape.specialties,
+  matricula: MatriculaInput.optional(),
   /** Name of the first location. Defaults to "Consultorio". */
   locationName: z.string().trim().min(1).max(120).optional(),
 });

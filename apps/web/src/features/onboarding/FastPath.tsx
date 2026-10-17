@@ -22,6 +22,7 @@ import {
 } from '../../shared/ui/form.js';
 import { Input } from '../../shared/ui/input.js';
 import { staffKeys } from '../staff/api/staff-api.js';
+import { MatriculaFields, requireMatricula } from '../staff/components/MatriculaFields.js';
 
 import { onboardingApi, onboardingKeys } from './api/onboarding-api.js';
 import { splitSpecialties } from './specialties.js';
@@ -30,6 +31,8 @@ const Schema = z
   .object({
     fullName: z.string().trim().max(120),
     specialty: z.string().trim().max(400),
+    jurisdiction: z.string(),
+    matriculaNumber: z.string().trim().max(32),
     locationName: z.string().trim().max(120),
   })
   .superRefine((values, ctx) => {
@@ -39,17 +42,28 @@ const Schema = z
     if (splitSpecialties(values.specialty).length === 0) {
       ctx.addIssue({ code: 'custom', path: ['specialty'], message: 'validation.required' });
     }
+    // Decision D21 (revised): attending needs a complete professional profile, matricula included.
+    requireMatricula(values, ctx);
   });
 type Values = z.infer<typeof Schema>;
 
-/** The solo fast path: who attends, and everything else is set up with sensible defaults. */
+/**
+ * The solo fast path: who attends (name, specialty and matricula, the complete professional
+ * profile of decision D21), and everything else is set up with sensible defaults.
+ */
 export function FastPathForm({ onBack, onDone }: { onBack: () => void; onDone: () => void }) {
   const { t } = useTranslation(['onboarding', 'common']);
   const api = useApi();
   const queryClient = useQueryClient();
   const form = useForm<Values>({
     resolver: zodResolver(Schema),
-    defaultValues: { fullName: '', specialty: '', locationName: '' },
+    defaultValues: {
+      fullName: '',
+      specialty: '',
+      jurisdiction: '',
+      matriculaNumber: '',
+      locationName: '',
+    },
   });
 
   const run = useMutation({
@@ -57,6 +71,7 @@ export function FastPathForm({ onBack, onDone }: { onBack: () => void; onDone: (
       onboardingApi(api).fastPath({
         fullName: values.fullName,
         specialties: splitSpecialties(values.specialty),
+        matricula: { jurisdiction: values.jurisdiction, number: values.matriculaNumber },
         ...(values.locationName === '' ? {} : { locationName: values.locationName }),
       }),
     onSuccess: async (result) => {
@@ -65,7 +80,7 @@ export function FastPathForm({ onBack, onDone }: { onBack: () => void; onDone: (
       onDone();
     },
     onError: (error) => {
-      applyApiFieldErrors(form, error, { specialties: 'specialty' });
+      applyApiFieldErrors(form, error, { specialties: 'specialty', matricula: 'matriculaNumber' });
     },
   });
   const generalFailure = run.isError && fieldErrorCount(run.error) === 0;
@@ -117,6 +132,7 @@ export function FastPathForm({ onBack, onDone }: { onBack: () => void; onDone: (
             </FormItem>
           )}
         />
+        <MatriculaFields />
         <FormField
           control={form.control}
           name="locationName"

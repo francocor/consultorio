@@ -1,6 +1,7 @@
 import {
   AR_JURISDICTIONS,
   type ProfessionalDto,
+  type Role,
   type StaffMemberDto,
 } from '@consultorio/contracts';
 import { zodResolver } from '@hookform/resolvers/zod';
@@ -33,6 +34,8 @@ import { StatusBadge } from '../../../shared/ui/states/status-badge.js';
 import { toast } from '../../../shared/ui/toaster.js';
 import { staffApi, staffKeys } from '../api/staff-api.js';
 
+import { OwnerProfessionalForm } from './OwnerProfessionalForm.js';
+
 const NATIONAL = AR_JURISDICTIONS.national;
 
 const Schema = z
@@ -51,7 +54,15 @@ const Schema = z
 type Values = z.infer<typeof Schema>;
 
 /** The profile of a health professional: name, disciplines, registration and simultaneous visits. */
-export function ProfileTab({ member }: { member: StaffMemberDto }) {
+export function ProfileTab({
+  member,
+  viewerRoles,
+  isSelf,
+}: {
+  member: StaffMemberDto;
+  viewerRoles: readonly Role[];
+  isSelf: boolean;
+}) {
   const { t } = useTranslation(['staff', 'common']);
   const api = useApi();
   const isProfessional = member.roles.includes('professional');
@@ -70,6 +81,10 @@ export function ProfileTab({ member }: { member: StaffMemberDto }) {
     enabled: isProfessional,
   });
 
+  // An owner may act as a health professional at any time by completing the profile (D21).
+  if (!isProfessional && isSelf && viewerRoles.includes('owner')) {
+    return <OwnerProfessionalForm defaultName={member.displayName ?? ''} />;
+  }
   if (!isProfessional) {
     return (
       <Alert tone="info">

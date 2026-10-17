@@ -454,6 +454,74 @@ describe('professional profile', () => {
 
     expect(await within(sheet).findByText(/no tiene el rol de profesional/)).toBeInTheDocument();
   });
+
+  it('lets an owner who is not a professional attend by completing the profile (D21)', async () => {
+    const user = userEvent.setup();
+    let body: unknown;
+    const app = open({
+      'POST /api/staff/me/professional': (_url, init) => {
+        body = jsonBody(init);
+        return jsonResponse({
+          id: IDS.professionalProfile,
+          membershipId: IDS.owner,
+          fullName: 'Marcela Quiroga',
+          status: 'active',
+          specialties: ['Clínica médica'],
+          matricula: { jurisdiction: 'AR-B', number: '123456', status: 'unverified' },
+          maxSimultaneous: 1,
+          clinicalAccess: true,
+        });
+      },
+    });
+    const sheet = await manage(user, 'Marcela Quiroga');
+    await user.click(within(sheet).getByRole('tab', { name: 'Perfil profesional' }));
+
+    expect(
+      await within(sheet).findByRole('heading', { name: 'Atender como profesional' }),
+    ).toBeInTheDocument();
+    expect(within(sheet).getByLabelText('Nombre completo')).toHaveValue('Marcela Quiroga');
+    expect(await a11yViolations(sheet)).toEqual([]);
+    await user.type(within(sheet).getByLabelText('Profesión o especialidad'), 'Clínica médica');
+    await user.selectOptions(within(sheet).getByLabelText('Jurisdicción de la matrícula'), 'AR-B');
+    await user.type(within(sheet).getByLabelText('Número de matrícula'), '123456');
+    await user.click(within(sheet).getByRole('button', { name: 'Activar mi perfil profesional' }));
+
+    await waitFor(() => {
+      expect(body).toEqual({
+        fullName: 'Marcela Quiroga',
+        specialties: ['Clínica médica'],
+        matricula: { jurisdiction: 'AR-B', number: '123456' },
+      });
+    });
+    expect(await screen.findByText('Ya puede atender como profesional.')).toBeInTheDocument();
+    expect(app.missingKeys).toEqual([]);
+  });
+
+  it('asks for the complete profile before activating it, and sends nothing without it', async () => {
+    const user = userEvent.setup();
+    const app = open();
+    const sheet = await manage(user, 'Marcela Quiroga');
+    await user.click(within(sheet).getByRole('tab', { name: 'Perfil profesional' }));
+    await within(sheet).findByRole('heading', { name: 'Atender como profesional' });
+
+    await user.click(within(sheet).getByRole('button', { name: 'Activar mi perfil profesional' }));
+
+    // The name is prefilled; the specialty, the jurisdiction and the number are missing.
+    expect(await within(sheet).findAllByText('Este dato es obligatorio.')).toHaveLength(3);
+    expect(app.requests).not.toContain('POST /api/staff/me/professional');
+  });
+
+  it('offers the form to the owner only on their own profile, never to an administrator', async () => {
+    const user = userEvent.setup();
+    open({}, meFor(['admin'], { user: { id: IDS.owner, email: 'administracion@demo.invalid' } }));
+    const sheet = await manage(user, 'Camila Duarte');
+    await user.click(within(sheet).getByRole('tab', { name: 'Perfil profesional' }));
+
+    expect(await within(sheet).findByText(/no tiene el rol de profesional/)).toBeInTheDocument();
+    expect(
+      within(sheet).queryByRole('button', { name: 'Activar mi perfil profesional' }),
+    ).not.toBeInTheDocument();
+  });
 });
 
 describe('extra permissions', () => {

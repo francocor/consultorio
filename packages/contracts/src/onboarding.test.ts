@@ -76,13 +76,15 @@ describe('UpdateOnboardingStateRequest', () => {
 });
 
 describe('ProfessionalStepRequest', () => {
-  it('needs the name and a specialty when the owner is a professional', () => {
+  const MATRICULA = { jurisdiction: 'AR-B', number: 'MP 12345' };
+
+  it('needs the name, a specialty and the matricula when the owner is a professional (D21)', () => {
     expect(
       ProfessionalStepRequest.safeParse({
         isProfessional: true,
         fullName: 'Dra. Ana Perez',
         specialties: ['Clinica medica'],
-        matricula: null,
+        matricula: MATRICULA,
       }).success,
     ).toBe(true);
     expect(
@@ -90,8 +92,17 @@ describe('ProfessionalStepRequest', () => {
         isProfessional: true,
         fullName: 'Dra. Ana Perez',
         specialties: [],
-        matricula: null,
+        matricula: MATRICULA,
       }).success,
+    ).toBe(false);
+  });
+
+  it('does not take a missing matricula: the role is only active with the profile (D21)', () => {
+    const base = { isProfessional: true, fullName: 'Dra. Ana Perez', specialties: ['Clinica'] };
+    expect(ProfessionalStepRequest.safeParse({ ...base, matricula: null }).success).toBe(false);
+    expect(ProfessionalStepRequest.safeParse(base).success).toBe(false);
+    expect(
+      ProfessionalStepRequest.safeParse({ ...base, matricula: { jurisdiction: 'AR-B' } }).success,
     ).toBe(false);
   });
 
@@ -104,13 +115,28 @@ describe('ProfessionalStepRequest', () => {
 });
 
 describe('FastPathRequest', () => {
-  it('needs no matricula and no hours: only who the professional is', () => {
+  it('asks who the professional is, with the matricula (D21), and nothing about hours or payment', () => {
     const parsed = FastPathRequest.safeParse({
       fullName: 'Lic. Mario Gomez',
       specialties: ['Psicologia'],
+      matricula: { jurisdiction: 'AR-B', number: 'MP 12345' },
     });
     expect(parsed.success).toBe(true);
     expect(parsed.data?.locationName).toBeUndefined();
+  });
+
+  it('accepts no matricula in the shape (an owner who already has a profile needs none) but never a malformed one', () => {
+    expect(
+      FastPathRequest.safeParse({ fullName: 'Lic. Mario Gomez', specialties: ['Psicologia'] })
+        .success,
+    ).toBe(true);
+    expect(
+      FastPathRequest.safeParse({
+        fullName: 'Lic. Mario Gomez',
+        specialties: ['Psicologia'],
+        matricula: null,
+      }).success,
+    ).toBe(false);
   });
 });
 

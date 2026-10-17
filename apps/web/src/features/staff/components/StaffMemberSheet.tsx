@@ -55,7 +55,7 @@ export function StaffMemberSheet({
                 <RolesTab member={member} viewerRoles={viewerRoles} isSelf={isSelf} />
               </TabsContent>
               <TabsContent value="profile">
-                <ProfileTab member={member} />
+                <ProfileTab member={member} viewerRoles={viewerRoles} isSelf={isSelf} />
               </TabsContent>
               <TabsContent value="permissions">
                 <PermissionsTab member={member} professionals={professionals} />

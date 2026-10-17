@@ -53,6 +53,20 @@ export const ProfessionalProfileRequest = z.strictObject({
 });
 export type ProfessionalProfileRequest = z.infer<typeof ProfessionalProfileRequest>;
 
+/**
+ * An owner who acts as a health professional (decision D21, revised 2026-10-17). The owner may do
+ * it at any time, provided the professional profile is complete: name, specialty, and the
+ * registration with its jurisdiction. Completing it grants the professional role in one
+ * transaction. The registration stays unverified (D1: enough for clinical work); only the platform
+ * operator verifies it.
+ */
+export const OwnerProfessionalRequest = z.strictObject({
+  fullName: ProfessionalProfileRequest.shape.fullName,
+  specialties: ProfessionalProfileRequest.shape.specialties,
+  matricula: MatriculaInput,
+});
+export type OwnerProfessionalRequest = z.infer<typeof OwnerProfessionalRequest>;
+
 export const MATRICULA_STATUSES = ['unverified', 'verified'] as const;
 
 export const MatriculaDto = z.strictObject({
