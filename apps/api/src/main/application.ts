@@ -5,6 +5,7 @@ import type { FastifyInstance } from 'fastify';
 
 import { createAccess, createGrants, createGrantsRepo } from '../modules/access/index.js';
 import { createAudit } from '../modules/audit/index.js';
+import { createClinical } from '../modules/clinical/index.js';
 import type { LockoutPolicy } from '../modules/identity/application/lockout.js';
 import type { PasswordValidator } from '../modules/identity/domain/password-policy.js';
 import { createIdentity, type PasswordHasher } from '../modules/identity/index.js';
@@ -214,6 +215,8 @@ export function createApplication(options: ApplicationOptions): FastifyInstance 
     },
   });
 
+  const clinical = createClinical({ withTenant, auditDeny, keys: options.keys });
+
   const auditViewer = createAudit({ withTenant });
   const supportAccess = createSupportAccess({ withTenant });
   const operatorConsole =
@@ -273,6 +276,7 @@ export function createApplication(options: ApplicationOptions): FastifyInstance 
       access.routes,
       staff.routes,
       patients.routes,
+      clinical.routes,
       auditViewer.routes,
       branding.routes,
       supportAccess.routes,

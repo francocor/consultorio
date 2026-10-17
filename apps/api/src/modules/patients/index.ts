@@ -31,6 +31,7 @@ export function registerPatientsExportContributors(registry: ExportRegistry): vo
 }
 
 export { hasDataProcessingConsent } from './application/consent.js';
+export { isTreating } from './application/write-access.js';
 export type { DocumentRules } from './application/patients.js';
 
 export interface PatientsOptions {
