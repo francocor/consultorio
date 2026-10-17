@@ -13,9 +13,17 @@ import {
   SlotNoLongerAvailableError,
   typeOffered,
   type BookActor,
+  type Plan,
   type PlanInput,
 } from './placement.js';
-import type { HoldRecord, LocationRecord, SchedulingPorts } from './ports.js';
+import type {
+  HoldRecord,
+  LocationRecord,
+  PatientRecord,
+  ProfessionalRecord,
+  SchedulingPorts,
+  TypeRecord,
+} from './ports.js';
 
 export { SlotNoLongerAvailableError, SlotTakenError, invalid, typeOffered } from './placement.js';
 export type { BookActor } from './placement.js';
@@ -109,6 +117,46 @@ export async function bookAppointment(
   // The hold stops occupying the range before the appointment takes it (one lane, one occupant).
   if (hold) await ports.updateHold(hold.id, { status: 'converted' });
 
+  const appointment = await persistAppointment(ports, {
+    professional,
+    location,
+    type,
+    patient,
+    actor,
+    auditActor: input.auditActor,
+    now,
+    plan,
+    planInput,
+    hold,
+  });
+  return appointment;
+}
+
+export interface PersistInput {
+  professional: ProfessionalRecord;
+  location: LocationRecord;
+  type: TypeRecord;
+  patient: PatientRecord;
+  actor: BookActor;
+  auditActor: AuditActor;
+  now: Date;
+  plan: Plan;
+  planInput: PlanInput;
+  /** The hold this booking finishes, already marked converted. */
+  hold?: HoldRecord | null;
+  /** The series the appointment belongs to, and which session it is. */
+  series?: { seriesId: string; index: number };
+}
+
+/**
+ * Writes a planned appointment: the row, the identity review when it starts unconfirmed (D14), the
+ * history event and the audit trail. Shared by a single booking and by every session of a series.
+ */
+export async function persistAppointment(
+  ports: SchedulingPorts,
+  input: PersistInput,
+): Promise<AppointmentDto> {
+  const { professional, location, type, patient, actor, now, plan, planInput, hold } = input;
   // D14: attaching an appointment to an EXISTING patient without anybody checking who the patient
   // is (the professional booking themselves) leaves the identity unconfirmed. A patient the actor
   // registered a moment ago is not a match.
@@ -134,6 +182,8 @@ export async function bookAppointment(
     identityConfirmed,
     outOfHours: plan.outOfHours,
     overrideReason: plan.overrideReason,
+    seriesId: input.series?.seriesId ?? null,
+    seriesIndex: input.series?.index ?? null,
   });
   if (!inserted.ok) throw await conflictAfterRace(ports, planInput, plan);
   const { appointment } = inserted;
@@ -167,6 +217,7 @@ export async function bookAppointment(
       locationId: location.id,
       startsAt: appointment.startsAt,
       identityConfirmed,
+      ...(input.series ? { seriesIndex: input.series.index } : {}),
     },
   });
   if (plan.overrides.length > 0) {

@@ -562,8 +562,8 @@ Depends: S2.04.
 
 Depends: S2.04.
 
-- [ ] 2.28 `GET /api/v1/availability?professionalId&from&to&typeId` computing hours minus blocks minus holidays minus occupancy in the location time zone. [SCH-01, SCH-06] Test: per-scenario cases including buffer.
-- [ ] 2.29 `POST /appointments/series` as dry run plus commit with a skip list; each occurrence validated independently and individually reschedulable and cancellable. [SCH-12] Test: the two spec scenarios (one conflict, cancel one occurrence).
+- [x] 2.28 `GET /api/v1/availability?professionalId&from&to&typeId` computing hours minus blocks minus holidays minus occupancy in the location time zone. [SCH-01, SCH-06] Test: per-scenario cases including buffer.
+- [x] 2.29 `POST /appointments/series` as dry run plus commit with a skip list; each occurrence validated independently and individually reschedulable and cancellable. [SCH-12] Test: the two spec scenarios (one conflict, cancel one occurrence).
 
 ## S2.11 Scheduling authorization, audit, read-only (~300 lines)
 

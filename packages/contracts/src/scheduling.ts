@@ -365,3 +365,152 @@ export const HoldDto = z.strictObject({
   origin: z.enum(['public', 'staff']),
 });
 export type HoldDto = z.infer<typeof HoldDto>;
+
+// Availability --------------------------------------------------------------------------------
+
+/** The longest window of days one availability request may cover. */
+export const MAX_AVAILABILITY_DAYS = 31;
+
+export const AvailabilityQuery = z
+  .strictObject({
+    professionalId: z.uuid(),
+    typeId: z.uuid(),
+    /** First local date (`YYYY-MM-DD`, in each location's zone), included. */
+    from: z.iso.date(),
+    /** Last local date, included. */
+    to: z.iso.date(),
+    /** Only this location; omit for every location where the professional works. */
+    locationId: z.uuid().optional(),
+  })
+  .superRefine((value, ctx) => {
+    const days =
+      (Date.parse(`${value.to}T00:00:00Z`) - Date.parse(`${value.from}T00:00:00Z`)) / 86_400_000;
+    if (days < 0) {
+      ctx.addIssue({ code: 'custom', path: ['to'], message: 'must not be before the start' });
+    } else if (days + 1 > MAX_AVAILABILITY_DAYS) {
+      ctx.addIssue({ code: 'custom', path: ['to'], message: 'at most 31 days at a time' });
+    }
+  });
+export type AvailabilityQuery = z.infer<typeof AvailabilityQuery>;
+
+export const AvailableSlotDto = z.strictObject({
+  startsAt: Instant,
+  endsAt: Instant,
+  locationId: z.uuid(),
+  /** The local date of the start, in the location's zone. */
+  date: z.iso.date(),
+});
+export type AvailableSlotDto = z.infer<typeof AvailableSlotDto>;
+
+/** A date on which nothing is offered because the calendar is closed (a holiday or a day off). */
+export const ClosedDayDto = z.strictObject({
+  date: z.iso.date(),
+  locationId: z.uuid(),
+  name: z.string(),
+  source: z.enum(['national', 'bridge', 'organization']),
+});
+export type ClosedDayDto = z.infer<typeof ClosedDayDto>;
+
+export const AvailabilityResponse = z.strictObject({
+  professionalId: z.uuid(),
+  typeId: z.uuid(),
+  slots: z.array(AvailableSlotDto),
+  closedDays: z.array(ClosedDayDto),
+});
+export type AvailabilityResponse = z.infer<typeof AvailabilityResponse>;
+
+// Recurring series ----------------------------------------------------------------------------
+
+export const SERIES_MAX_OCCURRENCES = 52;
+
+export const SeriesRecurrence = z
+  .strictObject({
+    frequency: z.literal('weekly'),
+    /** Every how many weeks (1 is weekly, 2 every other week). */
+    everyWeeks: z.number().int().min(1).max(8).default(1),
+    /** Total sessions, the first included. */
+    count: z.number().int().min(2).max(SERIES_MAX_OCCURRENCES).optional(),
+    /** The last date (in the location's zone) a session may start on. */
+    until: z.iso.date().optional(),
+  })
+  .refine((value) => (value.count === undefined) !== (value.until === undefined), {
+    message: 'give either a count or an end date',
+  });
+export type SeriesRecurrence = z.infer<typeof SeriesRecurrence>;
+
+/**
+ * A weekly (or every-N-weeks) series. `dry_run` reports every session without creating anything;
+ * `commit` creates the sessions in one go, leaving out the `skip` ones, and creates NOTHING if any
+ * session that is not skipped conflicts.
+ */
+export const BookSeriesRequest = z
+  .object({
+    patientId: z.uuid(),
+    professionalId: z.uuid(),
+    locationId: z.uuid(),
+    appointmentTypeId: z.uuid(),
+    /** The first session. Exactly one of `startsAt` and `local`. */
+    startsAt: Instant.optional(),
+    local: LocalStart.optional(),
+    recurrence: SeriesRecurrence,
+    mode: z.enum(['dry_run', 'commit']),
+    /** Sessions to leave out, by their number (1 is the first). Only meaningful when committing. */
+    skip: z
+      .array(z.number().int().min(1).max(SERIES_MAX_OCCURRENCES))
+      .max(SERIES_MAX_OCCURRENCES)
+      .default([]),
+    overrideHours: OverrideHours.optional(),
+  })
+  .superRefine((value, ctx) => {
+    if ((value.startsAt === undefined) === (value.local === undefined)) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['startsAt'],
+        message: 'give either an instant or a local time',
+      });
+    }
+  });
+export type BookSeriesRequest = z.infer<typeof BookSeriesRequest>;
+
+export const SERIES_CONFLICT_REASONS = [
+  'slot_taken',
+  'outside_working_hours',
+  'blocked',
+  'holiday',
+  'in_past',
+  'local_time_nonexistent',
+  'local_time_ambiguous',
+] as const;
+export type SeriesConflictReason = (typeof SERIES_CONFLICT_REASONS)[number];
+
+export const SeriesOccurrenceDto = z.strictObject({
+  /** 1 is the first session. */
+  index: z.number().int().min(1),
+  startsAt: Instant.nullable(),
+  endsAt: Instant.nullable(),
+  status: z.enum(['ok', 'conflict', 'skipped']),
+  reason: z.enum(SERIES_CONFLICT_REASONS).nullable(),
+});
+export type SeriesOccurrenceDto = z.infer<typeof SeriesOccurrenceDto>;
+
+export const SeriesPreviewResponse = z.strictObject({
+  mode: z.literal('dry_run'),
+  occurrences: z.array(SeriesOccurrenceDto),
+  /** True when every session that is not skipped can be created. */
+  canCommit: z.boolean(),
+});
+export type SeriesPreviewResponse = z.infer<typeof SeriesPreviewResponse>;
+
+export const SeriesCommitResponse = z.strictObject({
+  mode: z.literal('commit'),
+  seriesId: z.uuid(),
+  appointments: z.array(AppointmentDto),
+  skipped: z.array(z.number().int()),
+});
+export type SeriesCommitResponse = z.infer<typeof SeriesCommitResponse>;
+
+/** The extra members of the 409 that refuses a commit: which sessions conflict. */
+export const SeriesConflictExtension = z.strictObject({
+  occurrences: z.array(SeriesOccurrenceDto),
+});
+export type SeriesConflictExtension = z.infer<typeof SeriesConflictExtension>;

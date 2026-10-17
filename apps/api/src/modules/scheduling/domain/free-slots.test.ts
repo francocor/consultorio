@@ -107,6 +107,18 @@ describe('findFreeSlots', () => {
     expect(starts(slots)).toEqual([65, 95, 200, 230]);
   });
 
+  it('refuses a start whose occupied range touches a forbidden range (the professional is elsewhere)', () => {
+    const elsewhere = [window(90, 120)];
+
+    expect(starts(findFreeSlots({ ...base, forbidden: elsewhere, capacity: 3 }))).toEqual([
+      60, 120, 150,
+    ]);
+    // Its own buffer counts too: 09:00-09:30 plus ten minutes would reach 09:40.
+    expect(
+      starts(findFreeSlots({ ...base, forbidden: elsewhere, bufferMs: m(10), capacity: 3 })),
+    ).toEqual([120, 150]);
+  });
+
   it('skips the past and respects the limit', () => {
     expect(starts(findFreeSlots({ ...base, notBefore: at(80) }))).toEqual([90, 120, 150]);
     expect(starts(findFreeSlots({ ...base, limit: 2 }))).toEqual([60, 90]);

@@ -176,6 +176,8 @@ export interface NewHold {
 export interface SchedulingPorts {
   /** Takes the row lock that serializes every write of one professional (design 4.6). */
   lockProfessional(id: string): Promise<ProfessionalRecord | null>;
+  /** Reads a professional without taking the lock (availability only reads). */
+  findProfessional(id: string): Promise<ProfessionalRecord | null>;
   findLocation(id: string): Promise<LocationRecord | null>;
   findType(id: string): Promise<TypeRecord | null>;
   findPatient(id: string): Promise<PatientRecord | null>;

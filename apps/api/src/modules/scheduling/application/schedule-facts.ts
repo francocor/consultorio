@@ -103,7 +103,12 @@ export async function freeSlots(
   const hours = await ports.hours(request.professionalId, request.location.id, firstDate, lastDate);
   const blocks = await ports.blocks(request.professionalId, request.location.id, horizon);
   const holidays = await ports.holidays(firstDate, lastDate);
-  const occupancies = await ports.occupancies(request.professionalId, horizon);
+  const everywhere = await ports.occupancies(request.professionalId, horizon);
+  // Time taken at another location rules the range out, whatever the capacity.
+  const occupancies = everywhere.filter((other) => other.locationId === request.location.id);
+  const elsewhere = everywhere
+    .filter((other) => other.locationId !== request.location.id)
+    .map((other) => ({ start: other.start, end: other.end }));
 
   const closedDates = new Set(
     datesBetween(firstDate, lastDate).filter(
@@ -130,6 +135,7 @@ export async function freeSlots(
     stepMs: (request.stepMinutes ?? 15) * 60_000,
     notBefore: request.from,
     limit: request.limit,
+    forbidden: elsewhere,
     ...(request.capacityOne === undefined ? {} : { capacityOne: request.capacityOne }),
   });
 }

@@ -17,6 +17,7 @@ import { createHoursPeriodService } from './application/hours-periods.js';
 import { createWorklistService, type WorklistService } from './application/worklist.js';
 import { appointmentRoutes } from './http/appointment-routes.js';
 import { configRoutes } from './http/config-routes.js';
+import { planningRoutes } from './http/planning-routes.js';
 import { worklistRoutes } from './http/worklist-routes.js';
 
 export type { OpenItemInput, WorklistService } from './application/worklist.js';
@@ -57,6 +58,12 @@ export function createScheduling(options: SchedulingOptions): Scheduling {
     keys: options.keys,
     worklist,
   });
+  const planning = planningRoutes({
+    withTenant: options.withTenant,
+    auditDeny: options.auditDeny,
+    keys: options.keys,
+    clock: options.clock ?? (() => new Date()),
+  });
   const appointments = appointmentRoutes({
     withTenant: options.withTenant,
     keys: options.keys,
@@ -68,6 +75,8 @@ export function createScheduling(options: SchedulingOptions): Scheduling {
     worklist,
     routes: (app) => {
       config(app);
+      // Registered before the appointment routes: `/appointments/series` is not an appointment id.
+      planning(app);
       appointments(app);
       worklistApi(app);
     },

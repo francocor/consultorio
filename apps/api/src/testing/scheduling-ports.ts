@@ -101,6 +101,7 @@ export function createFakeSchedulingPorts(overrides: Partial<FakeSchedulingState
       state.locked.push(id);
       return Promise.resolve(state.professionals.get(id) ?? null);
     },
+    findProfessional: (id) => Promise.resolve(state.professionals.get(id) ?? null),
     findLocation: (id) => Promise.resolve(state.locations.get(id) ?? null),
     findType: (id) => Promise.resolve(state.types.get(id) ?? null),
     findPatient: (id) => Promise.resolve(state.patients.get(id) ?? null),

@@ -137,6 +137,20 @@ export function createSchedulingPorts(tx: Tx, deps: { keys: TenantKeys }): Sched
       return row ? { ...row, status: row.status === 'active' ? 'active' : 'inactive' } : null;
     },
 
+    async findProfessional(id) {
+      const [row] = await tx
+        .select({
+          id: professional.id,
+          membershipId: professional.membershipId,
+          status: professional.status,
+          maxSimultaneous: professional.maxSimultaneous,
+          specialties: professional.specialties,
+        })
+        .from(professional)
+        .where(eq(professional.id, id));
+      return row ? { ...row, status: row.status === 'active' ? 'active' : 'inactive' } : null;
+    },
+
     async findLocation(id) {
       const [row] = await tx
         .select({ id: location.id, timeZone: location.timeZone, active: location.active })

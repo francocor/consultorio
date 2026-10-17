@@ -1,5 +1,5 @@
 import { assignLane, overlaps, relane, type Occupancy } from './lanes.js';
-import type { TimeRange } from './working-hours.js';
+import { overlapsAny, type TimeRange } from './working-hours.js';
 
 export interface FreeSlotsInput {
   /** When the professional works and nothing blocks the calendar (hours minus blocks minus holidays). */
@@ -20,6 +20,11 @@ export interface FreeSlotsInput {
    * a slot is free only when NOTHING occupies any part of the range.
    */
   capacityOne?: boolean;
+  /**
+   * Ranges in which the professional cannot be booked whatever the capacity, such as time taken at
+   * another location (a professional is never in two places at once).
+   */
+  forbidden?: readonly TimeRange[];
 }
 
 /**
@@ -36,6 +41,7 @@ export function findFreeSlots(input: FreeSlotsInput): TimeRange[] {
 
   const fits = (start: number): boolean => {
     const occupied = { start, end: start + durationMs + input.bufferMs };
+    if (input.forbidden && overlapsAny(input.forbidden, occupied)) return false;
     if (input.capacityOne) {
       return !input.occupancies.some((other) => overlaps(other, occupied));
     }
