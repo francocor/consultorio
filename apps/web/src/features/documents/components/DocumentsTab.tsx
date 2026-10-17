@@ -1,7 +1,7 @@
 import type { DocumentDto } from '@consultorio/contracts';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { FileText, Upload } from 'lucide-react';
-import { useState } from 'react';
+import { useState, type ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
 
 import { useApi } from '../../../app/providers.js';
@@ -95,6 +95,9 @@ export function DocumentsTab({
     </Button>
   ) : null;
 
+  // The dialogs always come after the body, as the second child of one fragment: whichever body is
+  // shown (empty state or list), React keeps them mounted, so an upload in progress, and the summary
+  // of the one that just finished, survive the list changing under them.
   const dialogs = (
     <>
       <UploadDialog
@@ -121,49 +124,35 @@ export function DocumentsTab({
     </>
   );
 
-  if (documents.isPending) return <ListSkeleton rows={3} />;
-  if (documents.isError) {
-    return (
-      <ErrorState
-        error={documents.error}
-        onRetry={() => {
-          void documents.refetch();
-        }}
-      />
-    );
-  }
-
-  const entries = documents.data.documents;
-  const hiddenToggle = (
-    <div className="flex items-center gap-2">
-      <Checkbox
-        id="documents-show-hidden"
-        checked={showHidden}
-        onCheckedChange={(checked) => {
-          setShowHidden(checked === true);
-        }}
-      />
-      <Label htmlFor="documents-show-hidden">{t('documents:showHidden')}</Label>
-    </div>
-  );
-
-  if (entries.length === 0 && !showHidden) {
-    return (
-      <>
-        <EmptyState
-          icon={FileText}
-          title={t('documents:empty.title')}
-          description={t('documents:empty.description')}
-          action={uploadButton}
+  function listOf(entries: readonly DocumentDto[]): ReactNode {
+    const hiddenToggle = (
+      <div className="flex items-center gap-2">
+        <Checkbox
+          id="documents-show-hidden"
+          checked={showHidden}
+          onCheckedChange={(checked) => {
+            setShowHidden(checked === true);
+          }}
         />
-        <div className="mt-4">{hiddenToggle}</div>
-        {dialogs}
-      </>
+        <Label htmlFor="documents-show-hidden">{t('documents:showHidden')}</Label>
+      </div>
     );
-  }
 
-  return (
-    <>
+    if (entries.length === 0 && !showHidden) {
+      return (
+        <>
+          <EmptyState
+            icon={FileText}
+            title={t('documents:empty.title')}
+            description={t('documents:empty.description')}
+            action={uploadButton}
+          />
+          <div className="mt-4">{hiddenToggle}</div>
+        </>
+      );
+    }
+
+    return (
       <Section
         title={t('documents:title')}
         description={t('documents:description')}
@@ -196,6 +185,27 @@ export function DocumentsTab({
           </ul>
         </div>
       </Section>
+    );
+  }
+
+  let body: ReactNode;
+  if (documents.isPending) {
+    body = <ListSkeleton rows={3} />;
+  } else if (documents.isError) {
+    body = (
+      <ErrorState
+        error={documents.error}
+        onRetry={() => {
+          void documents.refetch();
+        }}
+      />
+    );
+  } else {
+    body = listOf(documents.data.documents);
+  }
+  return (
+    <>
+      {body}
       {dialogs}
     </>
   );

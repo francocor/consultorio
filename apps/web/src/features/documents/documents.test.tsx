@@ -440,6 +440,37 @@ describe('uploading', () => {
     expect(app.requests.filter((r) => r.endsWith('/uploaded'))).toHaveLength(2);
   });
 
+  it('keeps the dialog and its summary when the first file makes the empty list a real one', async () => {
+    // The list refreshes as soon as the upload is confirmed; with the list going from empty to
+    // non-empty, the dialog must not be rebuilt under the person, losing the summary.
+    const user = anyFile();
+    let uploaded = false;
+    open(
+      () => jsonResponse({ documents: uploaded ? [doc({ id: U1, status: 'quarantined' })] : [] }),
+      {
+        'POST /api/documents/uploads': () => jsonResponse(created([U1])),
+        [`POST /api/documents/${U1}/uploaded`]: () => {
+          uploaded = true;
+          return jsonResponse(doc({ id: U1, status: 'quarantined' }));
+        },
+      },
+    );
+    const dialog = await openDialog(user);
+
+    await user.upload(within(dialog).getByLabelText('Elegir archivos'), [pdf('a.pdf', 5000)]);
+    await user.click(within(dialog).getByRole('button', { name: 'Subir' }));
+    await waitFor(() => {
+      expect(FakeXhr.all).toHaveLength(1);
+    });
+    FakeXhr.all[0]?.finish(204);
+
+    expect(await within(dialog).findByText(/Se subió 1 archivo/)).toBeInTheDocument();
+    // The list behind it did refresh, and the summary is still there afterwards.
+    expect(await screen.findAllByText('laboratorio.pdf')).not.toHaveLength(0);
+    expect(screen.getByRole('dialog', { name: 'Subir archivos' })).toBeInTheDocument();
+    expect(within(screen.getByRole('dialog')).getByText(/Se subió 1 archivo/)).toBeInTheDocument();
+  });
+
   it('refuses files that cannot be uploaded before sending anything, with the reason of each', async () => {
     const user = anyFile();
     const app = open([]);
