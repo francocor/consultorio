@@ -2,11 +2,14 @@ import { randomBytes } from 'node:crypto';
 
 import pino from 'pino';
 
+import { createFakeBotChallenge } from '../adapters/bot-challenge-fake/index.js';
 import { createFakeEmailSender } from '../adapters/fake-email/index.js';
 import { createFakeScanner } from '../adapters/fake-scanner/index.js';
 import { createLocalKeyManagement } from '../adapters/local-kek/index.js';
 import { createMemoryObjectStorage } from '../adapters/memory-storage/index.js';
 import { createS3ObjectStorage } from '../adapters/s3/index.js';
+import { createFakeVideoLinkProvider } from '../adapters/video-fake/index.js';
+import { createFakeWhatsAppSender } from '../adapters/whatsapp-fake/index.js';
 import { consentTextFor, createDemoResetPort } from '../db/seed/demo/index.js';
 import { createPasswordHasher } from '../modules/identity/index.js';
 import { createOperatorSecrets } from '../modules/operator/index.js';
@@ -79,6 +82,10 @@ async function runApi(config: Config): Promise<void> {
       real: real(kms),
       demo: fake(createLocalKeyManagement(randomBytes(32).toString('base64'))),
     },
+    // Stage 3: no real adapter is wired yet (the local simulators arrive with their tracks).
+    whatsapp: { real: undefined, demo: fake(createFakeWhatsAppSender()) },
+    videoLink: { real: undefined, demo: fake(createFakeVideoLinkProvider()) },
+    botChallenge: { real: undefined, demo: fake(createFakeBotChallenge()) },
   });
   const passwordValidator = await loadPasswordValidator({
     breachCheck: config.passwordBreachCheck,

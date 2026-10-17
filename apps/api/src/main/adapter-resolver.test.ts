@@ -2,9 +2,12 @@ import { randomBytes } from 'node:crypto';
 
 import { describe, expect, it } from 'vitest';
 
+import { createFakeBotChallenge } from '../adapters/bot-challenge-fake/index.js';
 import { createFakeEmailSender } from '../adapters/fake-email/index.js';
 import { createLocalKeyManagement } from '../adapters/local-kek/index.js';
 import { createMemoryObjectStorage } from '../adapters/memory-storage/index.js';
+import { createFakeVideoLinkProvider } from '../adapters/video-fake/index.js';
+import { createFakeWhatsAppSender } from '../adapters/whatsapp-fake/index.js';
 
 import {
   ADAPTER_PORTS,
@@ -28,13 +31,25 @@ function registry(overrides: Partial<AdapterRegistry> = {}): AdapterRegistry {
       demo: fake(createMemoryObjectStorage()),
     },
     keyManagement: { real: real(kek()), demo: fake(kek()) },
+    // The Stage 3 ports have no real adapter yet: customers run on the local simulators, which
+    // the tracks register as fakes (a simulator has no effect outside the process).
+    whatsapp: { real: undefined, demo: fake(createFakeWhatsAppSender()) },
+    videoLink: { real: undefined, demo: fake(createFakeVideoLinkProvider()) },
+    botChallenge: { real: undefined, demo: fake(createFakeBotChallenge()) },
     ...overrides,
   };
 }
 
 describe('adapter resolver', () => {
   it('registers every port the application depends on', () => {
-    expect([...ADAPTER_PORTS].sort()).toEqual(['email', 'keyManagement', 'objectStorage']);
+    expect([...ADAPTER_PORTS].sort()).toEqual([
+      'botChallenge',
+      'email',
+      'keyManagement',
+      'objectStorage',
+      'videoLink',
+      'whatsapp',
+    ]);
   });
 
   it.each(ADAPTER_PORTS.map((port) => [port] as const))(

@@ -1,3 +1,6 @@
+import type { WhatsAppSender } from '../modules/notifications/application/ports.js';
+import type { VideoLinkProvider } from '../modules/teleconsultation/application/ports.js';
+import type { BotChallenge } from '../platform/bot-challenge/bot-challenge.js';
 import type { KeyManagement } from '../platform/crypto/key-management.js';
 import type { EmailMessage, EmailSender } from '../platform/mail/email-sender.js';
 import type { ObjectStorage } from '../platform/storage/object-storage.js';
@@ -16,6 +19,12 @@ export interface AdapterPorts {
   email: EmailSender;
   objectStorage: ObjectStorage;
   keyManagement: KeyManagement;
+  /** WhatsApp messages (Stage 3): the Meta Cloud API, a local simulator, an in-memory fake. */
+  whatsapp: WhatsAppSender;
+  /** Video rooms of teleconsultations (Stage 3). */
+  videoLink: VideoLinkProvider;
+  /** The bot challenge of the public forms (Stage 3). */
+  botChallenge: BotChallenge;
 }
 export type AdapterPort = keyof AdapterPorts;
 
@@ -24,6 +33,9 @@ export const ADAPTER_PORTS = [
   'email',
   'objectStorage',
   'keyManagement',
+  'whatsapp',
+  'videoLink',
+  'botChallenge',
 ] as const satisfies readonly AdapterPort[];
 
 export interface Marked<A> {
