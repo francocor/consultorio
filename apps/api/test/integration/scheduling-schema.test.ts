@@ -222,6 +222,33 @@ describe('the occupancy of a professional (one conflict surface)', () => {
     expect(await failure(second)).toBe('23514');
   });
 
+  it('keeps working on a lane-2 appointment after the capacity was lowered (JD-S2 S2)', async () => {
+    const doctor = await freshProfessional(2);
+    await run((tx) => insertAppointment(tx, world, { professionalId: doctor, start: at(0) }));
+    const overbooked = await run((tx) =>
+      insertAppointment(tx, world, { professionalId: doctor, start: at(0), lane: 2 }),
+    );
+    await run((tx) =>
+      tx.execute(sql`UPDATE professional SET max_simultaneous = 1 WHERE id = ${doctor}`),
+    );
+    const change = (set: Record<string, unknown>) => () =>
+      run((tx) => tx.update(appointment).set(set).where(eq(appointment.id, overbooked.id)));
+
+    // Existing appointments keep their lane: a status change is not a new lane.
+    expect(await failure(change({ status: 'confirmed' }))).toBeUndefined();
+    expect(await failure(change({ status: 'checked_in' }))).toBeUndefined();
+    expect(await failure(change({ status: 'cancelled' }))).toBeUndefined();
+    // Moving into a lane above the capacity, or booking a new one there, is still refused.
+    expect(await failure(change({ status: 'scheduled', lane: 3 }))).toBe('23514');
+    expect(
+      await failure(() =>
+        run((tx) =>
+          insertAppointment(tx, world, { professionalId: doctor, start: at(120), lane: 2 }),
+        ),
+      ),
+    ).toBe('23514');
+  });
+
   it('does not let the application role write the occupancy directly', async () => {
     const doctor = await freshProfessional();
     const forged = () =>

@@ -281,6 +281,13 @@
       "when": 1792236264538,
       "tag": "0039_onboarding_backfill",
       "breakpoints": true
+    },
+    {
+      "idx": 40,
+      "version": "7",
+      "when": 1792236666494,
+      "tag": "0040_lane_capacity_on_change",
+      "breakpoints": true
     }
   ]
 }
