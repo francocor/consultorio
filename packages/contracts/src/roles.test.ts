@@ -49,7 +49,7 @@ describe('clinical permissions are locked to the professional role (hard rule)',
   });
 
   it('the grantable list contains no clinical.* permission', () => {
-    expect(GRANTABLE.length).toBe(5);
+    expect(GRANTABLE.length).toBe(6);
     expect(GRANTABLE.filter(isClinicalPermission)).toEqual([]);
   });
 

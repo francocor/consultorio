@@ -104,6 +104,12 @@ export const AUDIT_ACTIONS = [
   'day_off.removed',
   'professional.hours_period_set',
   'professional.hours_period_removed',
+  // The guided first run: progress of the setup wizard, the solo fast path and the checklist.
+  'onboarding.step_updated',
+  'onboarding.completed',
+  'onboarding.fast_path',
+  'onboarding.checklist_dismissed',
+  'onboarding.checklist_restored',
   // Support access that the organization opens for the platform.
   'support.grant.created',
   'support.grant.revoked',

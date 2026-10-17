@@ -53,6 +53,11 @@ export const MeResponse = z.strictObject({
   twoFactor: TwoFactorSummary,
   /** The state of the organization, so the shell can explain read-only mode on sign-in. */
   tenantStatus: TenantStatus,
+  /**
+   * True when this user runs the setup wizard and the organization has not finished it, so the app
+   * takes them there after signing in (tenant-onboarding, "Setup wizard"). False for everyone else.
+   */
+  needsWizard: z.boolean(),
 });
 export type MeResponse = z.infer<typeof MeResponse>;
 
