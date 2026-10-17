@@ -4,6 +4,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, inject, it } from 'v
 import { message } from '../../src/db/schema/notifications.js';
 import { worklistItem } from '../../src/db/schema/worklist.js';
 import { createReminderSweepJob } from '../../src/modules/notifications/application/sweep.js';
+import { hashAddress, legacyAddressHash } from '../../src/modules/notifications/domain/address.js';
 import { createRuntimeDb, type DbHandle } from '../../src/platform/db/pool.js';
 import { runJob } from '../../src/platform/jobs/define-job.js';
 import {
@@ -34,11 +35,12 @@ afterAll(async () => {
 beforeEach(async () => {
   notes.setNow(new Date('2031-05-06T12:00:00.000Z'));
   notes.jobs.jobs.length = 0;
+  // Active first: an earlier test may have left the organization read-only, which refuses the PATCH.
+  await notes.setTenant({ status: 'active' });
   const response = await scheduling.api.patch('/settings', scheduling.owner, {
     notifications: { reminderLeadHours: [24] },
   });
   expect(response.statusCode, response.body).toBe(200);
-  await notes.setTenant({ status: 'active' });
 });
 
 /** Runs the sweep of the organization once, the way the worker's hourly tick would. */
@@ -213,5 +215,44 @@ describe('reminder.sweep: messages left behind', () => {
     await notes.setTenant({ status: 'read_only' });
 
     expect(await sweep()).toEqual({ status: 'cancelled', reason: 'tenant_read_only' });
+  });
+});
+
+describe('reminder.sweep: addresses hashed before the pepper', () => {
+  it('rewrites the unsalted hash of a message to the keyed one when the patient still has that address, and forgets one that no longer matches', async () => {
+    const { patientId, appointment } = await bookedFor({ email: 'viejo@example.test' });
+    const kept = await notes.queue({
+      kind: 'reminder',
+      patientId,
+      appointmentId: appointment.id,
+      plannedStartsAt: new Date(appointment.startsAt),
+      appointmentVersion: appointment.version,
+      dedupeKey: `legacy:${appointment.id}:kept`,
+    });
+    const gone = await notes.queue({
+      kind: 'reminder',
+      patientId,
+      appointmentId: appointment.id,
+      plannedStartsAt: new Date(appointment.startsAt),
+      appointmentVersion: appointment.version,
+      dedupeKey: `legacy:${appointment.id}:gone`,
+    });
+    await scheduling.inTenant(async (tx) => {
+      await tx
+        .update(message)
+        .set({ addressHash: legacyAddressHash('email', 'viejo@example.test') })
+        .where(eq(message.id, kept));
+      await tx
+        .update(message)
+        .set({ addressHash: legacyAddressHash('email', 'otro-correo@example.test') })
+        .where(eq(message.id, gone));
+    });
+
+    await sweep();
+
+    expect((await notes.message(kept)).addressHash).toBe(
+      hashAddress('email', 'viejo@example.test'),
+    );
+    expect((await notes.message(gone)).addressHash).toBeNull();
   });
 });

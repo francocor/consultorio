@@ -4,7 +4,7 @@ import { createFakeScanner } from '../adapters/fake-scanner/index.js';
 import { createS3ObjectStorage } from '../adapters/s3/index.js';
 import { consentTextFor, createDemoResetPort } from '../db/seed/demo/index.js';
 import { createPasswordHasher } from '../modules/identity/index.js';
-import { createVideoJoinRegistry } from '../modules/notifications/index.js';
+import { configureAddressHash, createVideoJoinRegistry } from '../modules/notifications/index.js';
 import { createOperatorSecrets } from '../modules/operator/index.js';
 import { holdExpireJob } from '../modules/scheduling/index.js';
 import { createTenantKeys } from '../platform/crypto/tenant-keys.js';
@@ -212,6 +212,7 @@ async function main(): Promise<void> {
   }
 
   const config = loadConfig();
+  configureAddressHash(config.providers.addressHashPepper ?? null);
   if (role === 'api') {
     await runApi(config);
   } else {

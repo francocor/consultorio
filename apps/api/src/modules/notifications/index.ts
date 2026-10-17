@@ -230,6 +230,7 @@ export function createNotifications(options: NotificationsOptions): Notification
   };
 }
 
+export { configureAddressHash } from './domain/address.js';
 export { createBookingNotifier } from './application/booking-confirmation.js';
 export type { BookingNotifierDeps } from './application/booking-confirmation.js';
 export {

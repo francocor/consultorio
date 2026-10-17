@@ -9,6 +9,7 @@ import { JobPayload } from '../../../platform/jobs/boss.js';
 import { defineJob } from '../../../platform/jobs/define-job.js';
 import { selectChannels } from '../domain/channel-policy.js';
 
+import { rehashLegacyAddresses } from './address-rehash.js';
 import { loadTenantState } from './context.js';
 import type { MessagingDeps, TenantRef } from './deps.js';
 import { createReminderPlanner } from './plan-reminders.js';
@@ -41,6 +42,7 @@ const LIVE_MESSAGE = ['queued', 'sent', 'delivered', 'read'] as const;
  * - An upcoming appointment whose patient has no automated channel gets the reception worklist
  *   item "reminder not sent" (once). When the contact is fixed the next sweep plans the reminders
  *   that were never planned and closes the item.
+ * - The address hashes the log held before the platform pepper are replaced a batch at a time.
  * - A queued message long past its time is closed as cancelled, `tenant_read_only`: the platform
  *   cancels the sending job of a read-only organization before it runs, so only here does the
  *   message learn why it never went, and it is never sent after recovery.
@@ -172,6 +174,7 @@ export function createReminderSweepJob(deps: MessagingDeps) {
     category: 'write',
     payload: JobPayload,
     handler: async ({ tx, tenantId }) => {
+      await rehashLegacyAddresses(tx);
       await closeStale(tx, deps.clock());
       await clearExpiredOfferLinks(tx, deps.clock());
       await sweepAppointments(tx, tenantId, deps.clock());

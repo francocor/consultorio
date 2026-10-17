@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import { EmailDeliveryError } from '../../../platform/mail/email-sender.js';
 
-import { hashAddress } from './address.js';
+import { configureAddressHash, hashAddress, legacyAddressHash } from './address.js';
 import { classifyEmailFailure, MAX_ATTEMPTS, nextRetryAt } from './delivery-rules.js';
 
 const failure = (cause: unknown) => new EmailDeliveryError({ cause });
@@ -77,7 +77,35 @@ describe('hashAddress', () => {
   });
 
   it('does not contain the address', () => {
-    expect(hashAddress('email', 'ana@example.test')).toMatch(/^[0-9a-f]{64}$/);
+    expect(hashAddress('email', 'ana@example.test')).toMatch(/^h2:[0-9a-f]{64}$/);
     expect(hashAddress('email', 'ana@example.test')).not.toContain('ana');
+  });
+
+  it('is keyed with the pepper of the platform, so a dictionary of numbers proves nothing', () => {
+    const unsalted = legacyAddressHash('whatsapp', '+5491144445555');
+    const peppered = hashAddress('whatsapp', '+5491144445555');
+
+    expect(peppered).not.toContain(unsalted);
+    configureAddressHash('another-pepper-with-enough-characters-0123');
+    try {
+      expect(hashAddress('whatsapp', '+5491144445555')).not.toBe(peppered);
+    } finally {
+      configureAddressHash(null);
+    }
+    expect(hashAddress('whatsapp', '+5491144445555')).toBe(peppered);
+  });
+
+  it('refuses to hash in production when no pepper was configured', () => {
+    const before = process.env['NODE_ENV'];
+    process.env['NODE_ENV'] = 'production';
+    try {
+      expect(() => hashAddress('email', 'ana@example.test')).toThrow(/ADDRESS_HASH_PEPPER/);
+    } finally {
+      process.env['NODE_ENV'] = before;
+    }
+  });
+
+  it('keeps the unsalted hash of the old log only to recognize it', () => {
+    expect(legacyAddressHash('email', ' Ana@Example.Test ')).toMatch(/^[0-9a-f]{64}$/);
   });
 });
