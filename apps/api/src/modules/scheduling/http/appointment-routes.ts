@@ -244,8 +244,13 @@ export function appointmentRoutes(deps: AppointmentRoutesDeps) {
       },
       async (request, reply) => {
         try {
-          return await runScoped(request, ({ tx, actor }) =>
-            deps.calendar.get(tx, { id: request.params.id, actor }),
+          return await runScoped(request, ({ tx, actor, audit }) =>
+            deps.calendar.get(tx, {
+              id: request.params.id,
+              actor,
+              auditActor: audit,
+              view: 'appointment',
+            }),
           );
         } catch (error) {
           return await refusal(error, request, reply, {
@@ -264,9 +269,14 @@ export function appointmentRoutes(deps: AppointmentRoutesDeps) {
       },
       async (request, reply) => {
         try {
-          return await runScoped(request, async ({ tx, actor }) => {
+          return await runScoped(request, async ({ tx, actor, audit }) => {
             // The history is as private as the appointment: same calendar, same location.
-            await deps.calendar.get(tx, { id: request.params.id, actor });
+            await deps.calendar.get(tx, {
+              id: request.params.id,
+              actor,
+              auditActor: audit,
+              view: 'history',
+            });
             return appointmentHistory(tx, request.params.id);
           });
         } catch (error) {

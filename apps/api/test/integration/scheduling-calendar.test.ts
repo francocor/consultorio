@@ -354,3 +354,62 @@ describe('a professional sees their own calendar by default', () => {
     expect(await auditCount('appointment.calendar_viewed')).toBe(before);
   });
 });
+
+describe('looking at one appointment, its history or free time in a delegated calendar', () => {
+  const availability = (professionalId: string, who: typeof world.doctor | typeof world.admin) =>
+    world.api.get(
+      `/availability?professionalId=${professionalId}&typeId=${world.consulta}&from=${world.monday(13)}&to=${world.monday(13)}`,
+      who,
+    );
+
+  it('is audited as a calendar view, once for each look', async () => {
+    await world.delegateCalendar(world.doctor, [world.colleague.professionalId]);
+    try {
+      const theirs = await world.book(13, '09:00', {
+        professionalId: world.colleague.professionalId,
+      });
+      const before = await auditCount('appointment.calendar_viewed');
+
+      const one = await world.api.get(`/appointments/${theirs.id}`, world.doctor);
+      const afterOne = await auditCount('appointment.calendar_viewed');
+      const history = await world.api.get(`/appointments/${theirs.id}/history`, world.doctor);
+      const afterHistory = await auditCount('appointment.calendar_viewed');
+      const free = await availability(world.colleague.professionalId, world.doctor);
+      const afterFree = await auditCount('appointment.calendar_viewed');
+
+      expect([one.statusCode, history.statusCode, free.statusCode]).toEqual([200, 200, 200]);
+      expect([afterOne, afterHistory, afterFree]).toEqual([before + 1, before + 2, before + 3]);
+    } finally {
+      await world.revokeDelegation(world.doctor);
+    }
+  });
+
+  it('is not audited in their own calendar, nor for reception and admin', async () => {
+    const mine = await world.book(13, '10:00');
+    const theirs = await world.book(13, '10:30', {
+      professionalId: world.colleague.professionalId,
+    });
+    const before = await auditCount('appointment.calendar_viewed');
+
+    await world.api.get(`/appointments/${mine.id}`, world.doctor);
+    await world.api.get(`/appointments/${mine.id}/history`, world.doctor);
+    await availability(world.doctor.professionalId, world.doctor);
+    await world.api.get(`/appointments/${theirs.id}`, world.reception);
+    await world.api.get(`/appointments/${theirs.id}/history`, world.admin);
+    await availability(world.colleague.professionalId, world.admin);
+
+    expect(await auditCount('appointment.calendar_viewed')).toBe(before);
+  });
+
+  it('is not audited when it is refused, which is a denial of its own', async () => {
+    const theirs = await world.book(13, '11:00', {
+      professionalId: world.colleague.professionalId,
+    });
+    const before = await auditCount('appointment.calendar_viewed');
+
+    const refused = await world.api.get(`/appointments/${theirs.id}`, world.doctor);
+
+    expect(refused.statusCode).toBe(403);
+    expect(await auditCount('appointment.calendar_viewed')).toBe(before);
+  });
+});

@@ -12,6 +12,7 @@ import { AppError } from '../../../platform/http/problem.js';
 import { AccessRefused } from '../../access/index.js';
 
 import type { BlockService } from './blocks.js';
+import { auditDelegatedView, isAdministrative } from './delegated-view.js';
 import { toAppointmentDto } from './drizzle-ports.js';
 import type { HolidayService } from './holidays.js';
 import { locationAccessOf } from './location-access.js';
@@ -32,9 +33,6 @@ export interface CalendarInput {
   actor: Actor;
   auditActor: AuditActor & { userId: string };
 }
-
-const isAdministrative = (actor: Actor) =>
-  actor.roles.some((role) => role === 'owner' || role === 'admin' || role === 'reception');
 
 /** Whose appointments a viewer asks for when they name nobody: everyone, or their own calendars. */
 function defaultProfessionals(actor: Actor): string[] | 'everyone' {
@@ -137,7 +135,17 @@ export function createCalendar(deps: CalendarDeps) {
   const maxEntries = deps.maxEntries ?? DEFAULT_MAX_ENTRIES;
   return {
     /** One appointment as the calendar shows it, if the viewer may work in its calendar and location. */
-    async get(tx: Tx, input: { id: string; actor: Actor }): Promise<CalendarEntryDto> {
+    async get(
+      tx: Tx,
+      input: {
+        id: string;
+        actor: Actor;
+        /** Who is looking, so a look at a colleague's calendar is audited. */
+        auditActor: AuditActor & { userId: string };
+        /** Whether the look is at the appointment itself or at its history. */
+        view: 'appointment' | 'history';
+      },
+    ): Promise<CalendarEntryDto> {
       const [entry] = await selectEntries(tx, eq(appointment.id, input.id), 1);
       if (!entry) throw new AppError('not_found');
       if (!calendarAccess(input.actor, entry.professionalId)) {
@@ -147,6 +155,13 @@ export function createCalendar(deps: CalendarDeps) {
       if (!access.may({ locationId: entry.locationId, professionalId: entry.professionalId })) {
         throw new AccessRefused('location_not_assigned');
       }
+      await auditDelegatedView(tx, {
+        actor: input.actor,
+        auditActor: input.auditActor,
+        professionalId: entry.professionalId,
+        view: input.view,
+        appointmentId: entry.id,
+      });
       return entry;
     },
 
