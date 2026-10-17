@@ -229,7 +229,8 @@ export async function createBookingWorld(
     },
     codeSentTo: (address) => {
       const message = email.lastTo(address);
-      const code = message?.text.match(/\b(\d{6})\b/)?.[1];
+      // The code is alone on its line; the organization's name may contain six digits.
+      const code = message?.text.match(/^\s*(\d{6})\s*$/m)?.[1];
       if (!code) throw new Error(`no code was sent to ${address}`);
       return code;
     },
