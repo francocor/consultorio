@@ -3,7 +3,7 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { Plugin } from 'vite';
 
 import { contentSecurityPolicy, scriptHash, type CspOptions } from './csp.js';
-import { buildThemeBootScript } from './theme-boot-plugin.js';
+import { buildInlineScripts } from './theme-boot-plugin.js';
 
 /** Where the build leaves the production policy, for the reverse proxy of the deployment. */
 export const POLICY_FILE = 'content-security-policy.txt';
@@ -16,7 +16,7 @@ type Middleware = (req: IncomingMessage, res: ServerResponse, next: () => void) 
  * build, so the browser suite checks the real thing). The production proxy sends the same policy:
  * see "Reverse proxy contract" in docs/dev-setup.md.
  *
- * The hash is computed from the theme boot script exactly as the HTML plugin injects it, so the
+ * The hashes are computed from the inline scripts exactly as the HTML plugin injects them, so the
  * header can never disagree with the page. The build also writes the production policy to
  * `content-security-policy.txt` next to `index.html`, for the proxy of the deployment to send.
  */
@@ -24,11 +24,11 @@ export function cspPlugin(themeBootSource: string): Plugin {
   const middleware =
     (mode: CspOptions['mode']): Middleware =>
     (_req, res, next) => {
-      buildThemeBootScript(themeBootSource).then(
-        (script) => {
+      buildInlineScripts(themeBootSource).then(
+        (scripts) => {
           res.setHeader(
             'content-security-policy',
-            contentSecurityPolicy({ scriptHashes: [scriptHash(script)], mode }),
+            contentSecurityPolicy({ scriptHashes: scripts.map(scriptHash), mode }),
           );
           next();
         },
@@ -47,11 +47,11 @@ export function cspPlugin(themeBootSource: string): Plugin {
       server.middlewares.use(middleware('production'));
     },
     async generateBundle() {
-      const script = await buildThemeBootScript(themeBootSource);
+      const scripts = await buildInlineScripts(themeBootSource);
       this.emitFile({
         type: 'asset',
         fileName: POLICY_FILE,
-        source: `${contentSecurityPolicy({ scriptHashes: [scriptHash(script)], mode: 'production' })}
+        source: `${contentSecurityPolicy({ scriptHashes: scripts.map(scriptHash), mode: 'production' })}
 `,
       });
     },

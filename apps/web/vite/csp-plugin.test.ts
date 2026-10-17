@@ -5,7 +5,7 @@ import { describe, expect, it } from 'vitest';
 
 import { POLICY_FILE, cspPlugin } from './csp-plugin.js';
 import { scriptHash } from './csp.js';
-import { buildThemeBootScript, themeBootPlugin } from './theme-boot-plugin.js';
+import { buildInlineScripts, themeBootPlugin } from './theme-boot-plugin.js';
 
 const SOURCE = resolve(import.meta.dirname, '../src/shared/lib/theme-boot.ts');
 
@@ -49,17 +49,21 @@ describe('the CSP header of the Vite servers', () => {
     expect(header).not.toContain('upgrade-insecure-requests');
   });
 
-  it('names the hash of the very script the HTML plugin injects into index.html', async () => {
+  it('names the hash of every inline script the HTML plugin injects into index.html', async () => {
     const transform = themeBootPlugin(SOURCE).transformIndexHtml;
     const handler =
       typeof transform === 'object' && 'handler' in transform ? transform.handler : null;
     const html = await (handler as unknown as (html: string) => Promise<string>)(
       '<head><!--theme-boot--></head>',
     );
-    const injected = /<script>([\s\S]*)<\/script>/.exec(html)?.[1] ?? '';
+    const injected = [...html.matchAll(/<script>([\s\S]*?)<\/script>/g)].map(
+      (match) => match[1] ?? '',
+    );
+    const header = await headerOf('configurePreviewServer');
 
-    expect(injected).toBe(await buildThemeBootScript(SOURCE));
-    expect(await headerOf('configurePreviewServer')).toContain(scriptHash(injected));
+    expect(injected).toEqual(await buildInlineScripts(SOURCE));
+    expect(injected.length).toBeGreaterThan(1);
+    for (const script of injected) expect(header).toContain(scriptHash(script));
   });
 
   it('leaves the production policy in the build output for the proxy of the deployment', async () => {

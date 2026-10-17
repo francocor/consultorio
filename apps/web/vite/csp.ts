@@ -6,7 +6,7 @@ export function scriptHash(code: string): string {
 }
 
 export interface CspOptions {
-  /** Hashes of the inline scripts the page is allowed to run (the theme boot script). */
+  /** Hashes of the inline scripts the page is allowed to run (see `buildInlineScripts`). */
   scriptHashes: readonly string[];
   /**
    * `production`: the policy the reverse proxy must send (docs/dev-setup.md, "Reverse proxy
@@ -18,8 +18,9 @@ export interface CspOptions {
 /**
  * The Content Security Policy of the web bundle (ASVS 14.4.7).
  *
- * - Scripts: this origin and the hash of the one inline script (the theme boot, which paints the
- *   organization's colors before the first frame). No `unsafe-inline`, no `unsafe-eval`.
+ * - Scripts: this origin and the hashes of the two inline scripts of `index.html` (zod without code
+ *   generation, and the theme boot, which paints the organization's colors before the first
+ *   frame). No `unsafe-inline`, no `unsafe-eval`.
  * - Styles: this origin and inline styles. Libraries (the toast queue) add `<style>` elements and
  *   React sets style properties; a style cannot run code, so this is the one relaxation.
  * - Everything else (API calls, fonts, the manifest, the service worker) is the same origin,

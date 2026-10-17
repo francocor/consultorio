@@ -1,3 +1,5 @@
+import { createHash } from 'node:crypto';
+
 import { expect, test } from '@playwright/test';
 
 import { openAs, urlOf } from './support/stack.js';
@@ -47,7 +49,7 @@ test('the shell loads under the Content Security Policy and nothing is blocked',
   expect(consoleErrors).toEqual([]);
 });
 
-test('the page is served with the policy, and its inline script is the hashed one', async ({
+test('the page is served with the policy, and its inline scripts are the hashed ones', async ({
   page,
 }) => {
   const response = await page.goto(urlOf('aillu', '/login'));
@@ -59,12 +61,12 @@ test('the page is served with the policy, and its inline script is the hashed on
   expect(policy).toContain("default-src 'self'");
   expect(policy).toMatch(/script-src 'self' 'sha256-[A-Za-z0-9+/=]+'/);
   expect(policy).not.toMatch(/script-src[^;]*'unsafe-inline'/);
+  expect(policy).not.toMatch(/script-src[^;]*'unsafe-eval'/);
   expect(policy).toContain("frame-ancestors 'none'");
-  // The one inline script is the theme boot: the browser ran it, so its hash is in the policy.
-  expect(inline.filter((code) => code.includes('startThemeBoot'))).toHaveLength(1);
-  const canPaint = await page.evaluate(
-    () =>
-      (window as unknown as { __CONSULTORIO_BOOT__?: unknown }).__CONSULTORIO_BOOT__ !== undefined,
-  );
-  expect(canPaint).toBe(true);
+  // Two inline scripts (zod without code generation, then the theme boot), each named by hash.
+  expect(inline).toHaveLength(2);
+  for (const code of inline) {
+    const hash = createHash('sha256').update(code).digest('base64');
+    expect(policy).toContain(`'sha256-${hash}'`);
+  }
 });

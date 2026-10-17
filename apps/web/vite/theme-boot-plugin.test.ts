@@ -3,8 +3,14 @@ import { resolve } from 'node:path';
 import { runInThisContext } from 'node:vm';
 
 import { describe, expect, it } from 'vitest';
+import { z } from 'zod';
 
-import { buildThemeBootScript, themeBootPlugin } from './theme-boot-plugin.js';
+import {
+  ZOD_JITLESS_SCRIPT,
+  buildInlineScripts,
+  buildThemeBootScript,
+  themeBootPlugin,
+} from './theme-boot-plugin.js';
 
 const SOURCE = resolve(import.meta.dirname, '../src/shared/lib/theme-boot.ts');
 
@@ -53,5 +59,35 @@ describe('theme boot inline script', () => {
     expect(html).toContain('<script>');
     expect(html).toContain('startThemeBoot');
     expect(html).not.toContain('<!--theme-boot-->');
+  });
+});
+
+describe('inline scripts of index.html (Content Security Policy)', () => {
+  it('runs zod without code generation, which a strict policy would report as a violation', () => {
+    runInThisContext(ZOD_JITLESS_SCRIPT);
+
+    // Zod keeps its configuration on globalThis, so this is the very object its probe reads.
+    expect(z.config().jitless).toBe(true);
+  });
+
+  it('puts the zod script BEFORE the theme boot, and both before any module', async () => {
+    const scripts = await buildInlineScripts(SOURCE);
+
+    expect(scripts).toHaveLength(2);
+    expect(scripts[0]).toBe(ZOD_JITLESS_SCRIPT);
+    expect(scripts[1]).toContain('startThemeBoot');
+  });
+
+  it('injects every inline script as its own tag, in order', async () => {
+    const transform = themeBootPlugin(SOURCE).transformIndexHtml;
+    const handler =
+      typeof transform === 'object' && 'handler' in transform ? transform.handler : null;
+
+    const html = await (handler as unknown as (html: string) => Promise<string>)(
+      '<head><!--theme-boot--></head>',
+    );
+
+    const tags = [...html.matchAll(/<script>([\s\S]*?)<\/script>/g)].map((match) => match[1]);
+    expect(tags).toEqual(await buildInlineScripts(SOURCE));
   });
 });
