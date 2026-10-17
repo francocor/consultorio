@@ -15,13 +15,11 @@ import { LoginPage } from '../features/auth/LoginPage.js';
 import { validateCalendarSearch } from '../features/calendar/search.js';
 import { isWizardScreen } from '../features/onboarding/wizard-model.js';
 import { settingsTabsFor } from '../features/settings/settings-tabs.js';
-import { SettingsPage } from '../features/settings/SettingsPage.js';
 import { isApiError } from '../shared/lib/api-client.js';
 import { OfflineBanner } from '../shared/ui/states/banners.js';
 import { ErrorState } from '../shared/ui/states/error-state.js';
 import { ListSkeleton } from '../shared/ui/states/loading-skeleton.js';
 
-import { AppShell } from './AppShell.js';
 import { guardedScreen as guarded } from './guards.js';
 import { MinimalShell } from './MinimalShell.js';
 import { NotFoundPage } from './NotFoundPage.js';
@@ -147,7 +145,8 @@ function buildRouteTree(registry: AppRegistry) {
       }
       return { me };
     },
-    component: AppShell,
+    // The signed-in frame (menus, navigation) is not needed to sign in: it loads with the first screen.
+    component: lazyRouteComponent(() => import('./AppShell.js'), 'AppShell'),
   });
 
   const homeRoute = createRoute({
@@ -310,7 +309,10 @@ function buildRouteTree(registry: AppRegistry) {
   const settingsRoute = createRoute({
     getParentRoute: () => authedRoute,
     path: '/settings',
-    component: SettingsPage,
+    component: lazyRouteComponent(
+      () => import('../features/settings/SettingsPage.js'),
+      'SettingsPage',
+    ),
   });
 
   const settingsIndexRoute = createRoute({
