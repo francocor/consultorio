@@ -106,6 +106,31 @@ describe('the assigned professional joins', () => {
     expect(await world.auditsOf('access.denied', appointment.id)).toHaveLength(1);
   });
 
+  it('moves the right to join with the appointment when it is reassigned', async () => {
+    const appointment = await ready(0);
+    const moved = await world.act(appointment, 'reschedule', world.reception, {
+      professionalId: world.colleague.professionalId,
+    });
+    expect(moved.statusCode, moved.body).toBe(200);
+    await world.runVideoJobs();
+    const newRoom = (await world.roomOf(appointment.id)) ?? '';
+
+    const previous = await world.api.post(
+      `/appointments/${appointment.id}/video/join`,
+      world.doctor,
+      {},
+    );
+    const current = await world.api.post(
+      `/appointments/${appointment.id}/video/join`,
+      world.colleague,
+      {},
+    );
+
+    expect(previous.statusCode).toBe(403);
+    expect(current.statusCode, current.body).toBe(200);
+    expect(new URL(current.json<{ url: string }>().url).pathname).toBe(`/${newRoom}`);
+  });
+
   it('is not an action of reception, an administrator or the owner, who are not participants', async () => {
     const appointment = await ready(0);
 

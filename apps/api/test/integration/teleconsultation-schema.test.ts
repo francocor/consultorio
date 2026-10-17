@@ -3,17 +3,26 @@ import { afterAll, beforeAll, describe, expect, inject, it } from 'vitest';
 
 import { videoSession } from '../../src/db/schema/teleconsultation.js';
 import { createRuntimeDb, type DbHandle } from '../../src/platform/db/pool.js';
-import { insertAppointmentRow } from '../support/fixture-helpers.js';
+import {
+  at,
+  createSchedulingWorld,
+  insertAppointment,
+  type SchedulingWorld,
+} from '../support/scheduling.js';
 import { asTenant, createTestTenant, type TestTenant } from '../support/tenants.js';
 
 let runtime: DbHandle;
 let a: TestTenant;
 let b: TestTenant;
+let worldA: SchedulingWorld;
+let worldB: SchedulingWorld;
 
 beforeAll(async () => {
   runtime = createRuntimeDb(inject('runtimeUrl'));
   a = await createTestTenant(runtime, { slug: 'video-schema-a' });
   b = await createTestTenant(runtime, { slug: 'video-schema-b' });
+  worldA = await createSchedulingWorld(runtime, a.id);
+  worldB = await createSchedulingWorld(runtime, b.id);
 });
 
 afterAll(async () => {
@@ -26,8 +35,16 @@ const dbError = (promise: Promise<unknown>) =>
     (error: unknown) => (error as { cause?: { code?: string } }).cause?.code,
   );
 
-const appointmentOf = (tenant: TestTenant) =>
-  asTenant(runtime, tenant.id, (tx) => insertAppointmentRow(tx, tenant.id));
+/** An appointment of the organization, each at a time of its own (one professional per world). */
+let hour = 0;
+const appointmentOf = (tenant: TestTenant) => {
+  hour += 1;
+  const world = tenant.id === a.id ? worldA : worldB;
+  return asTenant(runtime, tenant.id, async (tx) => {
+    const row = await insertAppointment(tx, world, { start: at(hour * 60) });
+    return row.id;
+  });
+};
 
 describe('video_session', () => {
   it('starts a session of an appointment without a link, waiting for the provider', async () => {
