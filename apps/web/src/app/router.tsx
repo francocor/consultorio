@@ -190,11 +190,42 @@ function buildRouteTree() {
   const patientRoute = createRoute({
     getParentRoute: () => authedRoute,
     path: '/patients/$patientId',
+    // `?tab=chart` opens the clinical chart (links from a note come back to it).
+    validateSearch: (search: Record<string, unknown>) => ({
+      tab: search['tab'] === 'chart' ? ('chart' as const) : undefined,
+    }),
     component: guarded(
       ['patients.read'],
       lazyRouteComponent(
         () => import('../features/patients/PatientDetailPage.js'),
         'PatientDetailPage',
+      ),
+    ),
+  });
+
+  // Clinical records: professionals only (reception, owner and admin see the "no access" screen).
+  const noteRoute = createRoute({
+    getParentRoute: () => authedRoute,
+    path: '/notes/$noteId',
+    component: guarded(
+      ['clinical.note.read'],
+      lazyRouteComponent(() => import('../features/clinical/NotePage.js'), 'NotePage'),
+    ),
+  });
+
+  const newEncounterRoute = createRoute({
+    getParentRoute: () => authedRoute,
+    path: '/encounters/new',
+    validateSearch: (search: Record<string, unknown>) => ({
+      patientId: typeof search['patientId'] === 'string' ? search['patientId'] : undefined,
+      appointmentId:
+        typeof search['appointmentId'] === 'string' ? search['appointmentId'] : undefined,
+    }),
+    component: guarded(
+      ['clinical.note.write'],
+      lazyRouteComponent(
+        () => import('../features/clinical/NewEncounterPage.js'),
+        'NewEncounterPage',
       ),
     ),
   });
@@ -301,6 +332,8 @@ function buildRouteTree() {
       patientsRoute,
       newPatientRoute,
       patientRoute,
+      noteRoute,
+      newEncounterRoute,
       staffRoute,
       auditRoute,
       settingsRoute.addChildren([
