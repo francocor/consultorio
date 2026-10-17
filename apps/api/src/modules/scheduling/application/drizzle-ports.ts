@@ -411,9 +411,14 @@ export function createSchedulingPorts(tx: Tx, deps: { keys: TenantKeys }): Sched
         .update(slotHold)
         .set({ status: 'released' })
         .where(
-          inArray(
-            slotHold.id,
-            mine.map((row) => row.id),
+          and(
+            inArray(
+              slotHold.id,
+              mine.map((row) => row.id),
+            ),
+            // Only a hold that is still active: another transaction may have converted, released or
+            // expired it since it was read, and that outcome must not be overwritten.
+            eq(slotHold.status, 'active'),
           ),
         );
     },
