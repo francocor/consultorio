@@ -165,6 +165,29 @@ describe('catalog reader (what the country pack reads)', () => {
     await owner.db.execute(sql`DELETE FROM holiday_catalog WHERE name = 'Extra bridge day'`);
   });
 
+  it('does not return a holiday the operator removed, and returns it again once restored (JD-S2 S5)', async () => {
+    const reader = createCatalogReader(runtime.db);
+    await owner.db.execute(
+      sql`INSERT INTO holiday_catalog (country, date, name, kind, removed_at)
+            VALUES ('AR', '2026-09-16', 'Removed by mistake', 'bridge', now())`,
+    );
+    try {
+      expect((await reader.holidays('AR', 2026)).map((holiday) => holiday.name)).not.toContain(
+        'Removed by mistake',
+      );
+
+      await owner.db.execute(
+        sql`UPDATE holiday_catalog SET removed_at = NULL WHERE name = 'Removed by mistake'`,
+      );
+
+      expect((await reader.holidays('AR', 2026)).map((holiday) => holiday.name)).toContain(
+        'Removed by mistake',
+      );
+    } finally {
+      await owner.db.execute(sql`DELETE FROM holiday_catalog WHERE name = 'Removed by mistake'`);
+    }
+  });
+
   it('returns no holidays for a country without a catalog', async () => {
     const holidays = await createCatalogReader(runtime.db).holidays('XX', 2026);
 

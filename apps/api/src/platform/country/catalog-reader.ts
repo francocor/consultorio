@@ -1,5 +1,5 @@
 import type { Holiday, PayerSeed } from '@consultorio/contracts';
-import { and, asc, eq, gte, lt } from 'drizzle-orm';
+import { and, asc, eq, gte, isNull, lt } from 'drizzle-orm';
 
 import { holidayCatalog, payer } from '../../db/schema/platform-catalogs.js';
 import type { Db } from '../db/pool.js';
@@ -20,6 +20,8 @@ export function createCatalogReader(db: Db): CatalogReader {
         .where(
           and(
             eq(holidayCatalog.country, country),
+            // A holiday the operator ended (added by mistake) is gone until it is restored.
+            isNull(holidayCatalog.removedAt),
             gte(holidayCatalog.date, `${String(year)}-01-01`),
             lt(holidayCatalog.date, `${String(year + 1)}-01-01`),
           ),
