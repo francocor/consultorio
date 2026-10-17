@@ -26,7 +26,8 @@ import { createReminderPlanner } from './application/plan-reminders.js';
 import type { WhatsAppSender } from './application/ports.js';
 import { createLinkRevoker } from './application/revoke-links.js';
 import { UNLIMITED_QUOTA, type QuotaPolicy } from './application/usage.js';
-import type { VideoJoinResolver } from './application/video-join.js';
+import { queueVideoLinkFollowUp } from './application/video-follow-up.js';
+import type { VideoJoinResolver, VideoLinkReadyListener } from './application/video-join.js';
 import { createWorklist, createWorklistFromService } from './application/worklist.js';
 import { channelRoutes } from './http/channel-routes.js';
 import { messageRoutes } from './http/message-routes.js';
@@ -98,6 +99,11 @@ export interface NotificationsOptions {
   quota?: QuotaPolicy | undefined;
   /** The join address of virtual appointments (teleconsultation registers it). */
   videoJoin?: VideoJoinResolver | undefined;
+  /**
+   * Where teleconsultation announces that the link of an appointment now exists: the follow-up
+   * with the link is queued from it. Absent: no follow-up in this process.
+   */
+  onVideoLinkReady?: ((listener: VideoLinkReadyListener) => () => void) | undefined;
 }
 
 const NO_CHANNELS: Channels = { email: () => undefined, whatsapp: () => undefined };
@@ -164,6 +170,20 @@ export function createNotifications(options: NotificationsOptions): Notification
         }
       : undefined;
 
+  // A reminder that promised the video link is followed by a message that carries it.
+  if (options.jobs && options.onVideoLinkReady) {
+    const followUp = {
+      jobs: options.jobs,
+      clock,
+      whatsappAvailable: options.whatsappAvailable ?? (() => true),
+      quota: options.quota,
+      worklist,
+    };
+    options.onVideoLinkReady(async (tx, appointmentId) => {
+      await queueVideoLinkFollowUp(followUp, tx, appointmentId);
+    });
+  }
+
   const tokenRoutes = createTokenRoutes({
     withTenant: options.withTenant,
     tokens,
@@ -223,7 +243,14 @@ export type {
   WaitlistOfferInput,
 } from './application/offer-delivery.js';
 export { createVideoJoinRegistry } from './application/video-join.js';
-export type { VideoJoin, VideoJoinRegistry, VideoJoinResolver } from './application/video-join.js';
+export type {
+  VideoJoin,
+  VideoJoinRegistry,
+  VideoJoinResolver,
+  VideoLinkReadyListener,
+} from './application/video-join.js';
+export { queueVideoLinkFollowUp } from './application/video-follow-up.js';
+export type { VideoFollowUp, VideoFollowUpDeps } from './application/video-follow-up.js';
 export { UNLIMITED_QUOTA } from './application/usage.js';
 export type { QuotaPolicy } from './application/usage.js';
 export { createReminderPlanner } from './application/plan-reminders.js';

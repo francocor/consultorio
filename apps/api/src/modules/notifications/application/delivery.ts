@@ -93,6 +93,8 @@ export interface PendingSend {
   locationId: string;
   startsAt: Date;
   appointmentVersion: number | null;
+  /** The message says the video link will follow: it is remembered once it is sent. */
+  videoPending: boolean;
 }
 
 export type ProviderResult =
@@ -377,6 +379,7 @@ async function prepareOfferDelivery(
       // A failed send is retried only while the offer is still open.
       startsAt: offer.expiresAt,
       appointmentVersion: null,
+      videoPending: false,
     },
   };
 }
@@ -448,6 +451,19 @@ export function prepareDelivery(
       return { kind: 'settled' };
     }
 
+    // A virtual appointment says how to get into the call, or that the link follows.
+    const video = appointment.virtual
+      ? videoNoteOf(
+          (await deps.videoJoin?.resolve(tx, appointment.id)) ?? { kind: 'pending' as const },
+        )
+      : undefined;
+    // The follow-up exists to carry the link: without one (the room was replaced, the call is over)
+    // there is nothing to send, and a newer follow-up will be queued if a new link appears.
+    if (kind === 'video_link' && video?.kind !== 'link') {
+      await cancelRow(tx, row, 'video_link_unavailable');
+      return { kind: 'settled' };
+    }
+
     const attempt = await startAttempt(tx, row, channel, to, now);
     if (attempt.settled) return { kind: 'settled' };
 
@@ -462,12 +478,6 @@ export function prepareDelivery(
             startsAt: appointment.startsAt,
           })
         : undefined;
-    // A virtual appointment says how to get into the call, or that the link follows.
-    const video = appointment.virtual
-      ? videoNoteOf(
-          (await deps.videoJoin?.resolve(tx, appointment.id)) ?? { kind: 'pending' as const },
-        )
-      : undefined;
     const rendered = renderMessage({
       kind,
       channel,
@@ -507,6 +517,7 @@ export function prepareDelivery(
         locationId: appointment.locationId,
         startsAt: appointment.startsAt,
         appointmentVersion: row.appointmentVersion,
+        videoPending: video?.kind === 'pending',
       },
     };
   });
@@ -648,6 +659,7 @@ export async function completeDelivery(
         .set({
           status: 'sent',
           sentAt: now,
+          ...(send.videoPending ? { videoPending: true } : {}),
           ...(result.providerMessageId === null
             ? {}
             : { providerMessageId: result.providerMessageId }),

@@ -34,11 +34,32 @@ export interface VideoJoinRegistry {
   readonly resolver: VideoJoinResolver;
   /** Registers the resolver. A second registration throws: two providers of one link is a bug. */
   register(resolver: VideoJoinResolver): () => void;
+  /**
+   * Teleconsultation says that a link now exists for the appointment (the room was created, or a
+   * person attached one). It runs in the transaction that made it so, and does nothing when no
+   * module listens (a process without notifications).
+   */
+  linkReady(tx: Tx, appointmentId: string): Promise<void>;
+  /** Notifications listens for it, to send the link to a patient whose reminder promised it. */
+  onLinkReady(listener: VideoLinkReadyListener): () => void;
 }
+
+export type VideoLinkReadyListener = (tx: Tx, appointmentId: string) => Promise<void>;
 
 export function createVideoJoinRegistry(): VideoJoinRegistry {
   let registered: VideoJoinResolver | undefined;
+  const listeners: VideoLinkReadyListener[] = [];
   return {
+    async linkReady(tx, appointmentId) {
+      for (const listener of listeners) await listener(tx, appointmentId);
+    },
+    onLinkReady(listener) {
+      listeners.push(listener);
+      return () => {
+        const index = listeners.indexOf(listener);
+        if (index >= 0) listeners.splice(index, 1);
+      };
+    },
     resolver: {
       resolve: (tx, appointmentId) =>
         registered ? registered.resolve(tx, appointmentId) : Promise.resolve({ kind: 'pending' }),

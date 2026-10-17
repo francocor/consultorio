@@ -13,10 +13,17 @@ export const MESSAGE_CHANNELS = ['email', 'whatsapp'] as const;
 export type MessageChannel = (typeof MESSAGE_CHANNELS)[number];
 
 /**
- * What a message is about. Reminders, confirmations and waitlist offers are tied to an appointment
- * or a waitlist entry and are the only ones that may use WhatsApp (with a recorded opt-in).
+ * What a message is about. Reminders, confirmations, waitlist offers and the follow-up with the
+ * video link are tied to an appointment or a waitlist entry and are the only ones that may use
+ * WhatsApp (with a recorded opt-in).
  */
-export const APPOINTMENT_MESSAGE_KINDS = ['reminder', 'confirmation', 'waitlist_offer'] as const;
+export const APPOINTMENT_MESSAGE_KINDS = [
+  'reminder',
+  'confirmation',
+  'waitlist_offer',
+  /** Sent when the video link of a virtual appointment exists after a reminder said it would follow. */
+  'video_link',
+] as const;
 export type AppointmentMessageKind = (typeof APPOINTMENT_MESSAGE_KINDS)[number];
 
 /** Everything else is sent by email only: codes, account flows, notices, invoices. */
@@ -50,6 +57,8 @@ export const MESSAGE_CANCEL_REASONS = [
   'no_channel',
   /** A waitlist offer that was no longer open when its turn to be sent came. */
   'offer_expired',
+  /** The video link that was to be sent no longer exists when its turn came (moved, closed). */
+  'video_link_unavailable',
 ] as const;
 export type MessageCancelReason = (typeof MESSAGE_CANCEL_REASONS)[number];
 

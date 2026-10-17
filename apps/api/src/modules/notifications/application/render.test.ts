@@ -398,3 +398,57 @@ describe('the render input has no clinical fields', () => {
     expect(html).not.toContain('hipertensión');
   });
 });
+
+describe('renderMessage for the follow-up with the video link', () => {
+  const join = 'https://aillu.example.test/public/v/JOIN';
+  const video = { kind: 'link', url: join } as const;
+
+  it('writes an email that is about the link: subject, address and the opt-out, nothing to confirm', () => {
+    const rendered = email({
+      kind: 'video_link',
+      video,
+      links: { optOutUrl: links.optOutUrl },
+    });
+
+    expect(rendered.subject).toBe('El enlace de su videoconsulta en Centro Médico Aillu');
+    expect(rendered.text).toContain('Este es el enlace para conectarse a su videoconsulta');
+    expect(rendered.text).toContain('Modalidad: Videollamada');
+    expect(rendered.text).toContain(join);
+    expect(rendered.text).toContain(links.optOutUrl);
+    expect(rendered.text).not.toContain('confirmar');
+    expect(rendered.html).toContain(`href="${join}"`);
+  });
+
+  it('needs the join address to write it', () => {
+    expect(() => email({ kind: 'video_link' })).toThrow('video link');
+    expect(() => email({ kind: 'video_link', video: { kind: 'pending' } })).toThrow('video link');
+  });
+
+  it('uses its own WhatsApp template and hands it the mode and the address', () => {
+    const rendered = renderMessage({
+      kind: 'video_link',
+      channel: 'whatsapp',
+      facts,
+      wording: showAll,
+      video,
+    });
+
+    expect(rendered.channel === 'whatsapp' && rendered.templateKey).toBe('video_link');
+    expect(rendered.channel === 'whatsapp' && rendered.vars).toMatchObject({
+      mode: 'Videollamada',
+      joinUrl: join,
+    });
+  });
+
+  it('refuses a join address that is not a web link', () => {
+    expect(() =>
+      renderMessage({
+        kind: 'video_link',
+        channel: 'whatsapp',
+        facts,
+        wording: showAll,
+        video: { kind: 'link', url: 'javascript:alert(1)' },
+      }),
+    ).toThrow('http(s)');
+  });
+});

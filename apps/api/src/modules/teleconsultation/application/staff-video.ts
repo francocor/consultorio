@@ -15,7 +15,7 @@ import { joinWindowOf, noShowAllowedFrom, windowStateAt } from '../domain/join-w
 import { validateManualLink } from '../domain/manual-link.js';
 
 import { auditLinkEvent } from './video-audit.js';
-import { providerFor, type SessionDeps } from './video-sessions.js';
+import { providerFor, type LinkReadyNotifier, type SessionDeps } from './video-sessions.js';
 import {
   loadAppointmentFacts,
   loadSession,
@@ -24,7 +24,10 @@ import {
 } from './video-state.js';
 import { mayWorkOn, VideoAccessRefused } from './visibility.js';
 
-type StaffDeps = Pick<SessionDeps, 'adapters' | 'clock'>;
+type StaffDeps = Pick<SessionDeps, 'adapters' | 'clock'> & {
+  /** Announces that the appointment now has a link (a manual one was attached). */
+  onLinkReady?: LinkReadyNotifier | undefined;
+};
 
 /** The members of a closed list that a stored text is, or null. The columns are checked by the database. */
 function oneOf<T extends string>(list: readonly T[], value: string | null | undefined): T | null {
@@ -189,4 +192,5 @@ export async function attachManualLink(
     actor: input.auditActor,
     metadata: { host: new URL(checked.url).hostname },
   });
+  await deps.onLinkReady?.(tx, facts.id);
 }

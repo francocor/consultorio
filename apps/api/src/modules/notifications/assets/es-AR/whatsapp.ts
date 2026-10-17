@@ -9,6 +9,8 @@ export const WHATSAPP_TEMPLATE_KEYS = [
   'appointment_reminder',
   'appointment_confirmation',
   'waitlist_offer',
+  /** The follow-up with the video link, after a reminder that said it would be sent separately. */
+  'video_link',
   /** The single reply to an opt-out keyword. */
   'optout_ack',
 ] as const;
@@ -72,6 +74,13 @@ const BODIES: Record<WhatsAppTemplateKey, (vars: Vars) => string> = {
       `Hola ${vars['name'] ?? ''}, hay un turno disponible en ${vars['organization'] ?? ''}.`,
       appointmentLines(vars),
       ...offerLines(vars),
+      'Responda BAJA para dejar de recibir estos mensajes.',
+    ].join('\n\n'),
+  video_link: (vars) =>
+    [
+      `Hola ${vars['name'] ?? ''}, este es el enlace de su videoconsulta en ${vars['organization'] ?? ''}.`,
+      appointmentLines(vars),
+      ...videoLine(vars),
       'Responda BAJA para dejar de recibir estos mensajes.',
     ].join('\n\n'),
   optout_ack: () =>

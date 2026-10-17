@@ -51,6 +51,7 @@ export function emailParts(
   links: EmailLinks,
   video?: VideoNote,
 ): EmailParts {
+  if (kind === 'video_link') return videoLinkParts(vars, video);
   const parts = appointmentEmailParts(kind, vars, links);
   if (kind === 'waitlist_offer') return parts;
   const { action, note } = videoParts(video);
@@ -58,6 +59,26 @@ export function emailParts(
     ...parts,
     intro: note === undefined ? parts.intro : `${parts.intro} ${note}`,
     actions: action === undefined ? parts.actions : [action, ...parts.actions],
+  };
+}
+
+/**
+ * The follow-up that carries the link of a video visit, sent after a reminder that said it would
+ * follow. It is only about the link: nothing to confirm or cancel, and it cannot be written without
+ * the address.
+ */
+function videoLinkParts(vars: MessageVars, video: VideoNote | undefined): EmailParts {
+  if (video?.kind !== 'link') throw new Error('A video link message needs the video link');
+  return {
+    subject: `El enlace de su videoconsulta en ${vars.organization}`,
+    intro: `Este es el enlace para conectarse a su videoconsulta en ${vars.organization}.`,
+    actions: [
+      {
+        sentence: 'Para conectarse, abra este enlace unos minutos antes del turno:',
+        label: 'Unirse a la videollamada',
+        url: video.url,
+      },
+    ],
   };
 }
 
@@ -105,6 +126,9 @@ function appointmentEmailParts(
         actions,
       };
     }
+    case 'video_link':
+      // Written by `videoLinkParts`, which `emailParts` calls first.
+      throw new Error('A video link message is written from its video link');
     case 'waitlist_offer': {
       if (links.offerUrl === undefined) throw new Error('A waitlist offer needs the offer link');
       return {

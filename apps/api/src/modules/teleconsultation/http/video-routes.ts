@@ -13,7 +13,7 @@ import { refuseRequest } from '../../../platform/authz/refuse.js';
 import type { Tx, WithTenant } from '../../../platform/db/tenant-context.js';
 import { AppError } from '../../../platform/http/problem.js';
 import { attachManualLink, joinAsProfessional, videoSummary } from '../application/staff-video.js';
-import type { SessionDeps } from '../application/video-sessions.js';
+import type { LinkReadyNotifier, SessionDeps } from '../application/video-sessions.js';
 import { VideoAccessRefused } from '../application/visibility.js';
 
 export interface VideoRoutesDeps {
@@ -21,6 +21,8 @@ export interface VideoRoutesDeps {
   auditDeny: AuthzOptions['auditDeny'];
   adapters: SessionDeps['adapters'];
   clock: () => Date;
+  /** Announces that a manual link was attached to an appointment. */
+  onLinkReady?: LinkReadyNotifier | undefined;
 }
 
 const IdParams = z.strictObject({ id: z.uuid() });

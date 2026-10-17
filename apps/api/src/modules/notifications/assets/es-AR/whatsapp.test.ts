@@ -62,3 +62,23 @@ describe('the WhatsApp reminder text of a video consultation', () => {
     expect(body).toContain('https://aillu.example.test/public/v/JOIN');
   });
 });
+
+describe('the WhatsApp text of the follow-up with the video link', () => {
+  const joinUrl = 'https://aillu.example.test/public/v/JOIN';
+
+  it('gives the address, says it is the video visit and lets the patient opt out', () => {
+    const body = whatsappBody('video_link', { ...vars, mode: 'Videollamada', joinUrl });
+
+    expect(body).toContain('enlace de su videoconsulta');
+    expect(body).toContain('Modalidad: Videollamada');
+    expect(body).toContain(joinUrl);
+    expect(body).toContain('BAJA');
+  });
+
+  it('does not ask to confirm or cancel the appointment again', () => {
+    const body = whatsappBody('video_link', { ...vars, mode: 'Videollamada', joinUrl });
+
+    expect(body).not.toContain('Responda 1');
+    expect(body).not.toContain('Responda 2');
+  });
+});

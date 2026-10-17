@@ -27,7 +27,7 @@ describe('selectChannels, the channel policy', () => {
     expect(channelsOf('reminder')).toEqual(['whatsapp', 'email']);
   });
 
-  it('uses WhatsApp for the three appointment kinds and for nothing else', () => {
+  it('uses WhatsApp for the appointment kinds and for nothing else', () => {
     for (const kind of APPOINTMENT_MESSAGE_KINDS) {
       expect(channelsOf(kind)).toEqual(['whatsapp', 'email']);
     }

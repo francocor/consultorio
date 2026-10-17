@@ -66,6 +66,36 @@ describe('the video join registry', () => {
   });
 });
 
+describe('the announcement that a link now exists', () => {
+  it('does nothing when nobody listens', async () => {
+    const registry = createVideoJoinRegistry();
+
+    await expect(registry.linkReady(tx, 'a')).resolves.toBeUndefined();
+  });
+
+  it('tells every listener which appointment, in order, and stops telling a listener that left', async () => {
+    const registry = createVideoJoinRegistry();
+    const heard: string[] = [];
+    registry.onLinkReady((_tx, id) => Promise.resolve(void heard.push(`first:${id}`)));
+    const leave = registry.onLinkReady((_tx, id) =>
+      Promise.resolve(void heard.push(`second:${id}`)),
+    );
+
+    await registry.linkReady(tx, 'a');
+    leave();
+    await registry.linkReady(tx, 'b');
+
+    expect(heard).toEqual(['first:a', 'second:a', 'first:b']);
+  });
+
+  it('lets a failing listener fail the announcement, so the work that made the link rolls back', async () => {
+    const registry = createVideoJoinRegistry();
+    registry.onLinkReady(() => Promise.reject(new Error('queue down')));
+
+    await expect(registry.linkReady(tx, 'a')).rejects.toThrow('queue down');
+  });
+});
+
 describe('what a message says about the call', () => {
   it('carries the address', () => {
     const note = videoNoteOf({

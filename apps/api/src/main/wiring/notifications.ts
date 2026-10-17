@@ -14,6 +14,8 @@ import {
   createNotificationJobs,
   createNotifications,
   createWorklist,
+  queueVideoLinkFollowUp,
+  type TenantRef,
 } from '../../modules/notifications/index.js';
 import { createTenantKeys } from '../../platform/crypto/tenant-keys.js';
 import { createRuntimeDb } from '../../platform/db/pool.js';
@@ -129,6 +131,8 @@ export const notificationsWiring: ModuleWiring = {
       whatsappAvailable: (tenant) =>
         context.adapters ? context.adapters.forTenant(tenant, 'whatsapp') !== undefined : true,
       videoJoin: context.videoJoin.resolver,
+      // The manual link a person attaches in the API process is followed up from here.
+      onVideoLinkReady: (listener) => context.videoJoin.onLinkReady(listener),
       ...(context.clock ? { clock: context.clock } : {}),
     }),
   worker: ({ config, adapters, clock, videoJoin }) => {
@@ -138,10 +142,17 @@ export const notificationsWiring: ModuleWiring = {
     const jobsOf = ({ client, db }: Pick<WorkerJobContext, 'client' | 'db'>) => {
       // The waitlist also delivers its offers from the worker (an offer that expired passes to the
       // next patient), through the same entry point.
-      bindOfferDelivery({
-        jobs: client,
-        clock: now,
-        whatsappAvailable: (tenant) => adapters.forTenant(tenant, 'whatsapp') !== undefined,
+      const whatsappAvailable = (tenant: TenantRef) =>
+        adapters.forTenant(tenant, 'whatsapp') !== undefined;
+      bindOfferDelivery({ jobs: client, clock: now, whatsappAvailable });
+      const worklist = createWorklist({ keys });
+      // The room is created by a job of this process: its link is followed up from here too.
+      videoJoin.onLinkReady(async (tx, appointmentId) => {
+        await queueVideoLinkFollowUp(
+          { jobs: client, clock: now, whatsappAvailable, worklist },
+          tx,
+          appointmentId,
+        );
       });
       return createNotificationJobs({
         withTenant: createWithTenant(db),
@@ -155,7 +166,7 @@ export const notificationsWiring: ModuleWiring = {
         clock: now,
         origins,
         tokens: createActionTokens({ clock: now }),
-        worklist: createWorklist({ keys }),
+        worklist,
         // Reminders of a virtual appointment carry the join address teleconsultation registered.
         videoJoin: videoJoin.resolver,
       });

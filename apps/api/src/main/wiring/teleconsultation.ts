@@ -112,6 +112,8 @@ export const teleconsultationWiring: ModuleWiring = {
       ...(context.jobs ? { jobs: context.jobs } : {}),
       ...(context.adapters ? { adapters: context.adapters } : {}),
       ...(context.clock ? { clock: context.clock } : {}),
+      // A manual link attached by staff is followed up by notifications (it listens on the same registry).
+      onLinkReady: (tx, appointmentId) => context.videoJoin.linkReady(tx, appointmentId),
     });
     consoleControls.bind(module.devControls);
     // Reminders of a virtual appointment carry this address (notifications asks for it).
@@ -128,6 +130,14 @@ export const teleconsultationWiring: ModuleWiring = {
         clock: now,
       }),
     );
-    return { jobs: () => [createVideoLinkCreateJob({ adapters })] };
+    return {
+      jobs: () => [
+        createVideoLinkCreateJob({
+          adapters,
+          // The room exists: whoever promised the link in a reminder can now send it.
+          onLinkReady: (tx, appointmentId) => videoJoin.linkReady(tx, appointmentId),
+        }),
+      ],
+    };
   },
 };

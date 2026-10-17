@@ -21,7 +21,7 @@ import type { ExportRegistry } from '../tenancy/index.js';
 import { createVideoLinkCreateJob } from './application/create-room-job.js';
 import { exportTeleconsultation } from './application/export-contributor.js';
 import { createJoinUrlResolver, type VideoJoinUrlResolver } from './application/join-address.js';
-import { createSessionSubscriber } from './application/video-sessions.js';
+import { createSessionSubscriber, type LinkReadyNotifier } from './application/video-sessions.js';
 import { type DevVideoControls } from './http/dev-routes.js';
 import { publicJoinRoutes } from './http/public-join.js';
 import { videoRoutes } from './http/video-routes.js';
@@ -32,6 +32,7 @@ export { createJoinUrlResolver } from './application/join-address.js';
 export { devVideoRoutes, type DevVideoControls } from './http/dev-routes.js';
 export { createVideoLinkCreateJob };
 export { VIDEO_LINK_CREATE_JOB } from './application/video-sessions.js';
+export type { LinkReadyNotifier } from './application/video-sessions.js';
 
 /** Registers what teleconsultation takes with an organization that leaves (the cancellation export). */
 export function registerTeleconsultationExportContributors(registry: ExportRegistry): void {
@@ -50,6 +51,8 @@ export interface TeleconsultationOptions {
   /** Which provider serves which organization. */
   adapters?: AdapterResolver;
   clock?: () => Date;
+  /** Announces that a link now exists for an appointment (a manual one was attached). */
+  onLinkReady?: LinkReadyNotifier;
 }
 
 export interface Teleconsultation {
@@ -85,6 +88,7 @@ export function createTeleconsultation(options: TeleconsultationOptions): Teleco
     auditDeny: options.auditDeny,
     adapters: options.adapters,
     clock,
+    onLinkReady: options.onLinkReady,
   });
 
   const joinUrlResolver = createJoinUrlResolver({ tokens, origins: options.origins, clock });

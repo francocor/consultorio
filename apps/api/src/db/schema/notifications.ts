@@ -8,6 +8,7 @@ import {
 } from '@consultorio/contracts';
 import { sql } from 'drizzle-orm';
 import {
+  boolean,
   check,
   foreignKey,
   index,
@@ -80,6 +81,11 @@ export const message = tenantTable(
     readAt: timestamp('read_at', { withTimezone: true }),
     attempts: smallint('attempts').notNull().default(0),
     trigger: text('trigger').notNull().default('automatic'),
+    /**
+     * True when this message went out saying that the video link of the appointment would follow
+     * (the link did not exist yet). It is what the follow-up with the link is queued for.
+     */
+    videoPending: boolean('video_pending').notNull().default(false),
   },
   (table) => [
     foreignKey({

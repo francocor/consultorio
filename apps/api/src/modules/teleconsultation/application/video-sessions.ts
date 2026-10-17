@@ -40,6 +40,13 @@ export const VideoLinkJobPayload = JobPayload.extend({
 });
 export type VideoLinkJobPayload = z.infer<typeof VideoLinkJobPayload>;
 
+/**
+ * Says that a link now exists for an appointment, in the transaction that made it so. The
+ * composition root connects it to notifications, which sends the link to a patient whose reminder
+ * said it would follow. Absent where nothing listens.
+ */
+export type LinkReadyNotifier = (tx: Tx, appointmentId: string) => Promise<void>;
+
 export interface SessionDeps {
   /** Absent when no queue is configured: a room then cannot be created, and the session says so. */
   jobs?: JobClient | undefined;
@@ -252,7 +259,7 @@ export function createSessionSubscriber(deps: SessionDeps) {
  */
 export async function completeRoomCreation(
   tx: Tx,
-  deps: Pick<SessionDeps, 'adapters'>,
+  deps: Pick<SessionDeps, 'adapters'> & { onLinkReady?: LinkReadyNotifier | undefined },
   payload: VideoLinkJobPayload,
   retryCount: number,
 ): Promise<void> {
@@ -297,4 +304,5 @@ export async function completeRoomCreation(
     appointmentId: payload.appointmentId,
     metadata: { provider: provider.name },
   });
+  await deps.onLinkReady?.(tx, payload.appointmentId);
 }

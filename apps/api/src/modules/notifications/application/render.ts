@@ -52,6 +52,7 @@ const TEMPLATE_OF_KIND: Record<AppointmentMessageKind, WhatsAppTemplateKey> = {
   reminder: 'appointment_reminder',
   confirmation: 'appointment_confirmation',
   waitlist_offer: 'waitlist_offer',
+  video_link: 'video_link',
 };
 
 /** The word for the mode of a video consultation, in the details of every message. */
