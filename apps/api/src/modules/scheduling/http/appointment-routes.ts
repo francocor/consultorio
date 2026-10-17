@@ -2,6 +2,9 @@ import {
   AppointmentDto,
   AppointmentHistoryResponse,
   BookAppointmentRequest,
+  CalendarEntryDto,
+  CalendarQuery,
+  CalendarResponse,
   CancelAppointmentRequest,
   CheckInRequest,
   CorrectStatusRequest,
@@ -19,6 +22,7 @@ import { z } from 'zod';
 
 import type { AuditActor } from '../../../platform/audit/writer.js';
 import type { Actor } from '../../../platform/authz/actor.js';
+import { calendarAccess } from '../../../platform/authz/calendar-scope.js';
 import type { AuthzOptions } from '../../../platform/authz/guard.js';
 import { refuseRequest } from '../../../platform/authz/refuse.js';
 import type { TenantKeys } from '../../../platform/crypto/tenant-keys.js';
@@ -26,6 +30,7 @@ import type { Tx, WithTenant } from '../../../platform/db/tenant-context.js';
 import { AppError, conflictCode } from '../../../platform/http/problem.js';
 import { AccessRefused, visibleLocationIds } from '../../access/index.js';
 import { bookAppointment, SlotTakenError } from '../application/book-appointment.js';
+import type { createCalendar } from '../application/calendar.js';
 import { createSchedulingPorts, isExclusionViolation } from '../application/drizzle-ports.js';
 import { appointmentHistory } from '../application/history.js';
 import { createHold, releaseHold } from '../application/holds.js';
@@ -45,6 +50,7 @@ export interface AppointmentRoutesDeps {
   keys: TenantKeys;
   auditDeny: AuthzOptions['auditDeny'];
   clock: () => Date;
+  calendar: ReturnType<typeof createCalendar>;
 }
 
 /** What a request knows about who acts, from the session and never from the body. */
@@ -65,6 +71,31 @@ export function requestActor(request: FastifyRequest): {
       professionalId: actor.professionalId,
     },
     context: { tenantId: actor.tenantId, userId: actor.userId },
+  };
+}
+
+/**
+ * The locations a viewer may operate: owners and admins every one; a professional is held to their
+ * own calendar instead of to locations; everyone else works at the locations they are assigned to.
+ */
+export async function operableLocations(tx: Tx, actor: Actor): Promise<'all' | string[]> {
+  if (actor.roles.some((role) => role === 'owner' || role === 'admin' || role === 'professional')) {
+    return 'all';
+  }
+  return visibleLocationIds(tx, { roles: actor.roles, membershipId: actor.membershipId });
+}
+
+/**
+ * What a use case needs to know about the limits of the actor: the calendars they may work in (a
+ * professional's own and the delegated ones) and the locations they may operate. Computed once per
+ * request, in its transaction, so the services never read the session.
+ */
+export async function scopedActor(tx: Tx, actor: Actor, book: BookActor): Promise<BookActor> {
+  const locations = await operableLocations(tx, actor);
+  return {
+    ...book,
+    mayUseCalendar: (professionalId) => calendarAccess(actor, professionalId),
+    mayUseLocation: (locationId) => locations === 'all' || locations.includes(locationId),
   };
 }
 
@@ -100,16 +131,8 @@ export function locationAuthorizer(
   actor: Actor,
 ): (location: LocationRecord) => Promise<void> {
   return async (location) => {
-    if (
-      actor.roles.some((role) => role === 'owner' || role === 'admin' || role === 'professional')
-    ) {
-      return;
-    }
-    const visible = await visibleLocationIds(tx, {
-      roles: actor.roles,
-      membershipId: actor.membershipId,
-    });
-    if (visible !== 'all' && !visible.includes(location.id)) {
+    const operable = await operableLocations(tx, actor);
+    if (operable !== 'all' && !operable.includes(location.id)) {
       throw new AccessRefused('location_not_assigned');
     }
   };
@@ -134,7 +157,54 @@ export function appointmentRoutes(deps: AppointmentRoutesDeps) {
   return (app: FastifyInstance): void => {
     const typed = app.withTypeProvider<ZodTypeProvider>();
 
-    /** Runs a use case and turns its refusals into the answers the API gives. */
+    /** The ports of a transaction. */
+    const portsOf = (tx: Tx) => createSchedulingPorts(tx, { keys: deps.keys });
+
+    /**
+     * Runs work for the request's actor in one tenant transaction, with the actor's calendars and
+     * locations resolved inside it.
+     */
+    function runScoped<T>(
+      request: FastifyRequest,
+      work: (scope: {
+        tx: Tx;
+        actor: Actor;
+        who: BookActor;
+        audit: AuditActor & { userId: string };
+      }) => Promise<T>,
+    ): Promise<T> {
+      const { actor, audit, book, context } = requestActor(request);
+      return deps.withTenant(context, async (tx) =>
+        work({ tx, actor, audit, who: await scopedActor(tx, actor, book) }),
+      );
+    }
+
+    /** Turns the refusals of a use case into the answers the API gives. */
+    async function refusal(
+      error: unknown,
+      request: FastifyRequest,
+      reply: FastifyReply,
+      subject: { resourceType: string; resourceId?: string; professionalId?: string },
+    ): Promise<FastifyReply> {
+      if (error instanceof SlotTakenError) return replySlotTaken(request, reply, error);
+      if (error instanceof SlotNoLongerAvailableError) {
+        return replySlotNoLongerAvailable(request, reply);
+      }
+      if (isExclusionViolation(error)) return replySlotTaken(request, reply);
+      if (error instanceof AccessRefused) {
+        return await refuseRequest(deps.auditDeny, request, {
+          reason: error.reason,
+          resourceType: subject.resourceType,
+          ...(subject.resourceId === undefined ? {} : { resourceId: subject.resourceId }),
+          ...(subject.professionalId === undefined
+            ? {}
+            : { metadata: { professionalId: subject.professionalId } }),
+        });
+      }
+      throw error;
+    }
+
+    /** Runs a use case that answers 200 with an appointment. */
     async function respond(
       request: FastifyRequest,
       reply: FastifyReply,
@@ -145,22 +215,74 @@ export function appointmentRoutes(deps: AppointmentRoutesDeps) {
         return await work();
       } catch (error) {
         // Fastify takes the reply itself as the result of an async handler once it is sent.
-        if (error instanceof SlotTakenError) return replySlotTaken(request, reply, error) as never;
-        if (error instanceof SlotNoLongerAvailableError) {
-          return replySlotNoLongerAvailable(request, reply) as never;
-        }
-        if (isExclusionViolation(error)) return replySlotTaken(request, reply) as never;
-        if (error instanceof AccessRefused) {
-          return await refuseRequest(deps.auditDeny, request, {
-            reason: error.reason,
-            resourceType: 'appointment',
-            resourceId: appointmentId,
-          });
-        }
-        throw error;
+        return await refusal(error, request, reply, {
+          resourceType: 'appointment',
+          resourceId: appointmentId,
+        });
       }
     }
 
+    // Reading ----------------------------------------------------------------------------------
+    typed.get(
+      '/appointments',
+      {
+        config: { readOnly: 'read', permission: 'scheduling.read' },
+        schema: { querystring: CalendarQuery, response: { 200: CalendarResponse } },
+      },
+      async (request, reply) => {
+        try {
+          return await runScoped(request, ({ tx, actor, audit }) =>
+            deps.calendar.feed(tx, { query: request.query, actor, auditActor: audit }),
+          );
+        } catch (error) {
+          return await refusal(error, request, reply, { resourceType: 'calendar' });
+        }
+      },
+    );
+
+    typed.get(
+      '/appointments/:id',
+      {
+        config: { readOnly: 'read', permission: 'scheduling.read' },
+        schema: { params: IdParams, response: { 200: CalendarEntryDto } },
+      },
+      async (request, reply) => {
+        try {
+          return await runScoped(request, ({ tx, actor }) =>
+            deps.calendar.get(tx, { id: request.params.id, actor }),
+          );
+        } catch (error) {
+          return await refusal(error, request, reply, {
+            resourceType: 'appointment',
+            resourceId: request.params.id,
+          });
+        }
+      },
+    );
+
+    typed.get(
+      '/appointments/:id/history',
+      {
+        config: { readOnly: 'read', permission: 'scheduling.read' },
+        schema: { params: IdParams, response: { 200: AppointmentHistoryResponse } },
+      },
+      async (request, reply) => {
+        try {
+          return await runScoped(request, async ({ tx, actor }) => {
+            // The history is as private as the appointment: same calendar, same location.
+            await deps.calendar.get(tx, { id: request.params.id, actor });
+            return appointmentHistory(tx, request.params.id);
+          });
+        } catch (error) {
+          return await refusal(error, request, reply, {
+            resourceType: 'appointment',
+            resourceId: request.params.id,
+          });
+        }
+      },
+    );
+
+    // Booking -----------------------------------------------------------------------------------
     typed.post(
       '/appointments',
       {
@@ -172,12 +294,11 @@ export function appointmentRoutes(deps: AppointmentRoutesDeps) {
         schema: { body: BookAppointmentRequest, response: { 201: AppointmentDto } },
       },
       async (request, reply) => {
-        const { actor, audit, book, context } = requestActor(request);
         try {
-          const created = await deps.withTenant(context, (tx) =>
-            bookAppointment(createSchedulingPorts(tx, { keys: deps.keys }), {
+          const created = await runScoped(request, ({ tx, actor, who, audit }) =>
+            bookAppointment(portsOf(tx), {
               request: request.body,
-              actor: book,
+              actor: who,
               auditActor: audit,
               now: deps.clock(),
               authorizeLocation: locationAuthorizer(tx, actor),
@@ -185,19 +306,10 @@ export function appointmentRoutes(deps: AppointmentRoutesDeps) {
           );
           return await reply.code(201).send(created);
         } catch (error) {
-          if (error instanceof SlotTakenError) return replySlotTaken(request, reply, error);
-          if (error instanceof SlotNoLongerAvailableError) {
-            return replySlotNoLongerAvailable(request, reply);
-          }
-          if (isExclusionViolation(error)) return replySlotTaken(request, reply);
-          if (error instanceof AccessRefused) {
-            return await refuseRequest(deps.auditDeny, request, {
-              reason: error.reason,
-              resourceType: 'appointment',
-              metadata: { professionalId: request.body.professionalId },
-            });
-          }
-          throw error;
+          return await refusal(error, request, reply, {
+            resourceType: 'appointment',
+            professionalId: request.body.professionalId,
+          });
         }
       },
     );
@@ -211,12 +323,11 @@ export function appointmentRoutes(deps: AppointmentRoutesDeps) {
         schema: { body: CreateHoldRequest, response: { 201: HoldDto } },
       },
       async (request, reply) => {
-        const { actor, book, context } = requestActor(request);
         try {
-          const created = await deps.withTenant(context, (tx) =>
-            createHold(createSchedulingPorts(tx, { keys: deps.keys }), {
+          const created = await runScoped(request, ({ tx, actor, who }) =>
+            createHold(portsOf(tx), {
               request: request.body,
-              actor: book,
+              actor: who,
               now: deps.clock(),
               origin: 'staff',
               sourceKey: actor.userId,
@@ -225,15 +336,10 @@ export function appointmentRoutes(deps: AppointmentRoutesDeps) {
           );
           return await reply.code(201).send(created);
         } catch (error) {
-          if (error instanceof SlotTakenError) return replySlotTaken(request, reply, error);
-          if (isExclusionViolation(error)) return replySlotTaken(request, reply);
-          if (error instanceof AccessRefused) {
-            return await refuseRequest(deps.auditDeny, request, {
-              reason: error.reason,
-              resourceType: 'slot_hold',
-            });
-          }
-          throw error;
+          return await refusal(error, request, reply, {
+            resourceType: 'slot_hold',
+            professionalId: request.body.professionalId,
+          });
         }
       },
     );
@@ -244,18 +350,17 @@ export function appointmentRoutes(deps: AppointmentRoutesDeps) {
         config: { readOnly: 'write', permission: 'scheduling.book', audits: 'none' },
         schema: { params: IdParams, response: { 200: HoldDto } },
       },
-      (request) => {
-        const { actor, context } = requestActor(request);
-        return deps.withTenant(context, (tx) =>
-          releaseHold(createSchedulingPorts(tx, { keys: deps.keys }), {
+      (request) =>
+        runScoped(request, ({ tx, actor }) =>
+          releaseHold(portsOf(tx), {
             holdId: request.params.id,
             sourceKey: actor.userId,
             now: deps.clock(),
           }),
-        );
-      },
+        ),
     );
 
+    // The lifecycle -----------------------------------------------------------------------------
     typed.post(
       '/appointments/:id/check-in',
       {
@@ -268,28 +373,22 @@ export function appointmentRoutes(deps: AppointmentRoutesDeps) {
             'appointment.identity.self_confirmed',
           ],
         },
-        schema: {
-          params: IdParams,
-          body: CheckInRequest,
-          response: { 200: AppointmentDto },
-        },
+        schema: { params: IdParams, body: CheckInRequest, response: { 200: AppointmentDto } },
       },
-      (request, reply) => {
-        const { audit, book, context } = requestActor(request);
-        return respond(request, reply, request.params.id, () =>
-          deps.withTenant(context, (tx) =>
-            transitionAppointment(createSchedulingPorts(tx, { keys: deps.keys }), {
+      (request, reply) =>
+        respond(request, reply, request.params.id, () =>
+          runScoped(request, ({ tx, who, audit }) =>
+            transitionAppointment(portsOf(tx), {
               appointmentId: request.params.id,
               action: 'check_in',
-              actor: book,
+              actor: who,
               auditActor: audit,
               now: deps.clock(),
               expectedVersion: request.body.expectedVersion,
               confirmIdentity: request.body.confirmIdentity,
             }),
           ),
-        );
-      },
+        ),
     );
 
     // The match was wrong: move the appointment to another patient record, or cancel it.
@@ -301,20 +400,15 @@ export function appointmentRoutes(deps: AppointmentRoutesDeps) {
           permission: 'worklist.manage',
           audits: ['appointment.identity.rejected', 'appointment.cancelled'],
         },
-        schema: {
-          params: IdParams,
-          body: DetachPatientRequest,
-          response: { 200: AppointmentDto },
-        },
+        schema: { params: IdParams, body: DetachPatientRequest, response: { 200: AppointmentDto } },
       },
       (request, reply) => {
-        const { audit, book, context } = requestActor(request);
         const body = request.body;
         return respond(request, reply, request.params.id, () =>
-          deps.withTenant(context, (tx) =>
-            detachPatient(createSchedulingPorts(tx, { keys: deps.keys }), {
+          runScoped(request, ({ tx, who, audit }) =>
+            detachPatient(portsOf(tx), {
               appointmentId: request.params.id,
-              actor: book,
+              actor: who,
               auditActor: audit,
               now: deps.clock(),
               expectedVersion: body.expectedVersion,
@@ -344,27 +438,21 @@ export function appointmentRoutes(deps: AppointmentRoutesDeps) {
             permission: route.permission,
             audits: ['appointment.status_changed'],
           },
-          schema: {
-            params: IdParams,
-            body: TransitionRequest,
-            response: { 200: AppointmentDto },
-          },
+          schema: { params: IdParams, body: TransitionRequest, response: { 200: AppointmentDto } },
         },
-        (request, reply) => {
-          const { audit, book, context } = requestActor(request);
-          return respond(request, reply, request.params.id, () =>
-            deps.withTenant(context, (tx) =>
-              transitionAppointment(createSchedulingPorts(tx, { keys: deps.keys }), {
+        (request, reply) =>
+          respond(request, reply, request.params.id, () =>
+            runScoped(request, ({ tx, who, audit }) =>
+              transitionAppointment(portsOf(tx), {
                 appointmentId: request.params.id,
                 action: route.action,
-                actor: book,
+                actor: who,
                 auditActor: audit,
                 now: deps.clock(),
                 expectedVersion: request.body.expectedVersion,
               }),
             ),
-          );
-        },
+          ),
       );
     }
 
@@ -385,14 +473,13 @@ export function appointmentRoutes(deps: AppointmentRoutesDeps) {
         },
       },
       (request, reply) => {
-        const { audit, book, context } = requestActor(request);
         const { expectedVersion, ...cancellation } = request.body;
         return respond(request, reply, request.params.id, () =>
-          deps.withTenant(context, (tx) =>
-            transitionAppointment(createSchedulingPorts(tx, { keys: deps.keys }), {
+          runScoped(request, ({ tx, who, audit }) =>
+            transitionAppointment(portsOf(tx), {
               appointmentId: request.params.id,
               action: 'cancel',
-              actor: book,
+              actor: who,
               auditActor: audit,
               now: deps.clock(),
               expectedVersion,
@@ -415,28 +502,22 @@ export function appointmentRoutes(deps: AppointmentRoutesDeps) {
           permission: 'scheduling.checkin',
           audits: ['appointment.status_corrected'],
         },
-        schema: {
-          params: IdParams,
-          body: CorrectStatusRequest,
-          response: { 200: AppointmentDto },
-        },
+        schema: { params: IdParams, body: CorrectStatusRequest, response: { 200: AppointmentDto } },
       },
-      (request, reply) => {
-        const { audit, book, context } = requestActor(request);
-        return respond(request, reply, request.params.id, () =>
-          deps.withTenant(context, (tx) =>
-            correctStatus(createSchedulingPorts(tx, { keys: deps.keys }), {
+      (request, reply) =>
+        respond(request, reply, request.params.id, () =>
+          runScoped(request, ({ tx, who, audit }) =>
+            correctStatus(portsOf(tx), {
               appointmentId: request.params.id,
               toStatus: request.body.toStatus,
               reason: request.body.reason,
-              actor: book,
+              actor: who,
               auditActor: audit,
               now: deps.clock(),
               expectedVersion: request.body.expectedVersion,
             }),
           ),
-        );
-      },
+        ),
     );
 
     typed.post(
@@ -447,39 +528,21 @@ export function appointmentRoutes(deps: AppointmentRoutesDeps) {
           permission: 'scheduling.book',
           audits: ['appointment.rescheduled', 'appointment.reassigned', 'appointment.overridden'],
         },
-        schema: {
-          params: IdParams,
-          body: RescheduleRequest,
-          response: { 200: AppointmentDto },
-        },
+        schema: { params: IdParams, body: RescheduleRequest, response: { 200: AppointmentDto } },
       },
-      (request, reply) => {
-        const { actor, audit, book, context } = requestActor(request);
-        return respond(request, reply, request.params.id, () =>
-          deps.withTenant(context, (tx) =>
-            rescheduleAppointment(createSchedulingPorts(tx, { keys: deps.keys }), {
+      (request, reply) =>
+        respond(request, reply, request.params.id, () =>
+          runScoped(request, ({ tx, actor, who, audit }) =>
+            rescheduleAppointment(portsOf(tx), {
               appointmentId: request.params.id,
               ...request.body,
-              actor: book,
+              actor: who,
               auditActor: audit,
               now: deps.clock(),
               authorizeLocation: locationAuthorizer(tx, actor),
             }),
           ),
-        );
-      },
-    );
-
-    typed.get(
-      '/appointments/:id/history',
-      {
-        config: { readOnly: 'read', permission: 'scheduling.read' },
-        schema: { params: IdParams, response: { 200: AppointmentHistoryResponse } },
-      },
-      (request) => {
-        const { context } = requestActor(request);
-        return deps.withTenant(context, (tx) => appointmentHistory(tx, request.params.id));
-      },
+        ),
     );
   };
 }

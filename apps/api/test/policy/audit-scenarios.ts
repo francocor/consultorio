@@ -98,6 +98,7 @@ export const AUDIT_SCENARIOS: Record<AuditAction, AuditScenario> = {
   'appointment.status_changed': t('scheduling-lifecycle.test.ts'),
   'appointment.cancelled': t('scheduling-lifecycle.test.ts'),
   'appointment.status_corrected': t('scheduling-lifecycle.test.ts'),
+  'appointment.calendar_viewed': t('scheduling-calendar.test.ts'),
   'appointment.identity.confirmed': t('scheduling-identity.test.ts'),
   'appointment.identity.self_confirmed': t('scheduling-identity.test.ts'),
   'appointment.identity.rejected': t('scheduling-identity.test.ts'),

@@ -28,7 +28,7 @@ export async function confirmIdentity(
   ports: SchedulingPorts,
   input: ConfirmIdentityInput,
 ): Promise<AppointmentDto> {
-  const record = await lockForChange(ports, input.appointmentId);
+  const record = await lockForChange(ports, input.appointmentId, [], input.actor);
   checkVersion(record, input.expectedVersion);
   if (record.identityConfirmed) throw new AppError('conflict');
 
@@ -80,7 +80,7 @@ export async function detachPatient(
   ports: SchedulingPorts,
   input: DetachInput,
 ): Promise<AppointmentDto> {
-  const record = await lockForChange(ports, input.appointmentId);
+  const record = await lockForChange(ports, input.appointmentId, [], input.actor);
   checkVersion(record, input.expectedVersion);
   if (record.identityConfirmed) throw new AppError('conflict');
   if (input.actor.professionalId === record.professionalId) {

@@ -29,6 +29,8 @@ let world: SchedulingHttpWorld;
 beforeAll(async () => {
   runtime = createRuntimeDb(inject('runtimeUrl'));
   world = await createSchedulingHttpWorld(runtime, { slug: 'sched-identity' });
+  // The colleague confirms patients of the doctor, so the doctor's calendar is delegated to them.
+  await world.delegateCalendar(world.colleague, [world.doctor.professionalId]);
 });
 
 afterAll(async () => {

@@ -569,10 +569,10 @@ Depends: S2.04.
 
 Depends: S2.05.
 
-- [ ] 2.30 Register scheduling permissions (`book`, `view`, `configure`, `override_hours`, `register_past`, `delegated_calendar`) and enforce delegated-calendar scope in `can`. [SCH-14, AUZ-12] Test: professional edits only their own calendar unless delegated.
-- [ ] 2.31 Read-only categories on every scheduling route; booking in a read-only tenant returns 402, cancellation succeeds. [SCH-15] Test: `route-categories` stays green; inject matrix.
-- [ ] 2.32 Audit action catalogue `appointment.*` and registration in the audit-coverage test. [SCH-14] Test: coverage test green.
-- [ ] 2.33 `GET /appointments?from&to&professionalIds&locationId` calendar feed with administrative data only; reception filtered by membership locations. [SCH-01, SCH-14] Test: response contains no clinical fields.
+- [x] 2.30 Register scheduling permissions (`book`, `view`, `configure`, `override_hours`, `register_past`, `delegated_calendar`) and enforce delegated-calendar scope in `can`. [SCH-14, AUZ-12] Test: professional edits only their own calendar unless delegated.
+- [x] 2.31 Read-only categories on every scheduling route; booking in a read-only tenant returns 402, cancellation succeeds. [SCH-15] Test: `route-categories` stays green; inject matrix.
+- [x] 2.32 Audit action catalogue `appointment.*` and registration in the audit-coverage test. [SCH-14] Test: coverage test green.
+- [x] 2.33 `GET /appointments?from&to&professionalIds&locationId` calendar feed with administrative data only; reception filtered by membership locations. [SCH-01, SCH-14] Test: response contains no clinical fields.
 
 ## S2.12 Calendar view (~400 lines)
 

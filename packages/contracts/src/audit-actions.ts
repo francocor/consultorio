@@ -84,6 +84,8 @@ export const AUDIT_ACTIONS = [
   'appointment.status_changed',
   'appointment.cancelled',
   'appointment.status_corrected',
+  // A professional looked at the calendar of another professional (a delegated calendar).
+  'appointment.calendar_viewed',
   // Identity of the patient of an appointment (decisions D14 and D18).
   'appointment.identity.confirmed',
   'appointment.identity.self_confirmed',

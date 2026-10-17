@@ -8,36 +8,31 @@ import {
 import type { FastifyInstance } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 
-import type { Actor } from '../../../platform/authz/actor.js';
+import { calendarAccess } from '../../../platform/authz/calendar-scope.js';
 import type { AuthzOptions } from '../../../platform/authz/guard.js';
 import { refuseRequest } from '../../../platform/authz/refuse.js';
 import type { TenantKeys } from '../../../platform/crypto/tenant-keys.js';
-import type { Tx, WithTenant } from '../../../platform/db/tenant-context.js';
+import type { WithTenant } from '../../../platform/db/tenant-context.js';
 import { conflictWith } from '../../../platform/http/problem.js';
-import { AccessRefused, visibleLocationIds } from '../../access/index.js';
+import { AccessRefused } from '../../access/index.js';
 import { availability } from '../application/availability.js';
 import { createSchedulingPorts, isExclusionViolation } from '../application/drizzle-ports.js';
 import { SlotTakenError } from '../application/placement.js';
 import { bookSeries, SeriesConflictError } from '../application/series.js';
 
-import { locationAuthorizer, replySlotTaken, requestActor } from './appointment-routes.js';
+import {
+  locationAuthorizer,
+  operableLocations,
+  replySlotTaken,
+  requestActor,
+  scopedActor,
+} from './appointment-routes.js';
 
 export interface PlanningRoutesDeps {
   withTenant: WithTenant;
   auditDeny: AuthzOptions['auditDeny'];
   keys: TenantKeys;
   clock: () => Date;
-}
-
-/**
- * The locations a viewer may look at: owners and admins all of them; a professional is held to
- * their own calendar, not to locations; everyone else to the locations they are assigned to.
- */
-async function viewerLocations(tx: Tx, actor: Actor): Promise<'all' | string[]> {
-  if (actor.roles.some((role) => role === 'owner' || role === 'admin' || role === 'professional')) {
-    return 'all';
-  }
-  return visibleLocationIds(tx, { roles: actor.roles, membershipId: actor.membershipId });
 }
 
 /** Free slots and recurring series: the two ways to find and take several times at once. */
@@ -51,13 +46,21 @@ export function planningRoutes(deps: PlanningRoutesDeps) {
         config: { readOnly: 'read', permission: 'scheduling.read' },
         schema: { querystring: AvailabilityQuery, response: { 200: AvailabilityResponse } },
       },
-      (request) => {
+      async (request) => {
         const { actor, context } = requestActor(request);
+        // Another professional's free time is part of their calendar: yours or one delegated to you.
+        if (!calendarAccess(actor, request.query.professionalId)) {
+          return refuseRequest(deps.auditDeny, request, {
+            reason: 'not_own_calendar',
+            resourceType: 'calendar',
+            resourceId: request.query.professionalId,
+          });
+        }
         return deps.withTenant(context, async (tx) =>
           availability(createSchedulingPorts(tx, { keys: deps.keys }), {
             query: request.query,
             now: deps.clock(),
-            visibleLocations: await viewerLocations(tx, actor),
+            visibleLocations: await operableLocations(tx, actor),
           }),
         );
       },
@@ -79,10 +82,10 @@ export function planningRoutes(deps: PlanningRoutesDeps) {
       async (request, reply) => {
         const { actor, audit, book, context } = requestActor(request);
         try {
-          const result = await deps.withTenant(context, (tx) =>
+          const result = await deps.withTenant(context, async (tx) =>
             bookSeries(createSchedulingPorts(tx, { keys: deps.keys }), {
               request: request.body,
-              actor: book,
+              actor: await scopedActor(tx, actor, book),
               auditActor: audit,
               now: deps.clock(),
               authorizeLocation: locationAuthorizer(tx, actor),

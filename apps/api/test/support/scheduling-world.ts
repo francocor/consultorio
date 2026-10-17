@@ -65,6 +65,10 @@ export interface SchedulingHttpWorld {
     by?: TestSession,
   ): Promise<AppointmentDto>;
   signIn(user: TestUser): Promise<Member>;
+  /** The owner gives `member` the calendars of these professionals (delegated calendar). */
+  delegateCalendar(member: Member, professionalIds: string[]): Promise<void>;
+  /** The owner takes the delegation back. */
+  revokeDelegation(member: Member): Promise<void>;
   addProfessional(options?: { maxSimultaneous?: number }): Promise<Doctor>;
   close(): Promise<void>;
 }
@@ -189,6 +193,20 @@ export async function createSchedulingHttpWorld(
     bookingBody,
     book,
     signIn,
+    delegateCalendar: async (member, professionalIds) => {
+      const response = await api.post(`/members/${member.membershipId}/grants`, owner, {
+        permission: 'scheduling.delegated_calendar',
+        scope: { professionalIds },
+      });
+      expect(response.statusCode, response.body).toBe(201);
+    },
+    revokeDelegation: async (member) => {
+      const response = await api.delete(
+        `/members/${member.membershipId}/grants/scheduling.delegated_calendar`,
+        owner,
+      );
+      expect(response.statusCode, response.body).toBe(204);
+    },
     addProfessional,
     close: () => app.close(),
   };

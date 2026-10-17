@@ -6,6 +6,7 @@ import { initialIdentityConfirmed } from '../domain/identity-confirmation.js';
 
 import {
   applyPlan,
+  assertCalendar,
   conflictAfterRace,
   invalid,
   planSlot,
@@ -73,6 +74,7 @@ export async function bookAppointment(
   ) {
     throw new AppError('conflict');
   }
+  assertCalendar(actor, professional.id);
   if (input.authorizeLocation) await input.authorizeLocation(location);
   if (!typeOffered(type, professional)) {
     throw invalid('appointmentTypeId', 'scheduling.booking.type_not_offered');

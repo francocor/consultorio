@@ -23,6 +23,8 @@ import { canConfirmIdentity, type IdentityConfirmation } from '../domain/identit
 import { recordIdentityConfirmed } from './identity-records.js';
 import {
   applyPlan,
+  assertCalendar,
+  assertLocation,
   conflictAfterRace,
   invalid,
   planSlot,
@@ -62,9 +64,16 @@ export async function lockForChange(
   ports: SchedulingPorts,
   appointmentId: string,
   alsoProfessionalIds: readonly string[] = [],
+  actor?: BookActor,
 ): Promise<AppointmentRecord> {
   const peek = await ports.findAppointment(appointmentId);
   if (!peek) throw new AppError('not_found');
+  // The calendar and the location of the appointment are the actor's to work in, or it is refused
+  // before anything is locked or changed.
+  if (actor) {
+    assertCalendar(actor, peek.professionalId);
+    assertLocation(actor, peek.locationId);
+  }
   const ids = [...new Set([peek.professionalId, ...alsoProfessionalIds])].sort();
   for (const id of ids) await ports.lockProfessional(id);
   const record = await ports.findAppointment(appointmentId, { lock: true });
@@ -103,7 +112,7 @@ export async function transitionAppointment(
   ports: SchedulingPorts,
   input: TransitionInput,
 ): Promise<AppointmentDto> {
-  const record = await lockForChange(ports, input.appointmentId);
+  const record = await lockForChange(ports, input.appointmentId, [], input.actor);
   checkVersion(record, input.expectedVersion);
 
   // Only the professional of the appointment starts or finishes it: that is clinical work.
@@ -230,7 +239,7 @@ export async function correctStatus(
   ports: SchedulingPorts,
   input: CorrectInput,
 ): Promise<AppointmentDto> {
-  const record = await lockForChange(ports, input.appointmentId);
+  const record = await lockForChange(ports, input.appointmentId, [], input.actor);
   checkVersion(record, input.expectedVersion);
   if (!canCorrect(record.status, input.toStatus)) throw new AppError('conflict');
 
@@ -316,7 +325,11 @@ export async function rescheduleAppointment(
     ports,
     input.appointmentId,
     input.professionalId ? [input.professionalId] : [],
+    input.actor,
   );
+  // Moving it into another calendar or location needs the right to work there too.
+  assertCalendar(input.actor, input.professionalId ?? record.professionalId);
+  if (input.locationId) assertLocation(input.actor, input.locationId);
   checkVersion(record, input.expectedVersion);
   if (!canReschedule(record.status)) throw new AppError('conflict');
 

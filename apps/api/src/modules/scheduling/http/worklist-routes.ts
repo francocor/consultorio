@@ -19,7 +19,7 @@ import { createSchedulingPorts } from '../application/drizzle-ports.js';
 import { confirmIdentity } from '../application/identity.js';
 import type { WorklistService } from '../application/worklist.js';
 
-import { requestActor } from './appointment-routes.js';
+import { requestActor, scopedActor } from './appointment-routes.js';
 
 export interface WorklistRoutesDeps {
   withTenant: WithTenant;
@@ -87,7 +87,7 @@ export function worklistRoutes(deps: WorklistRoutesDeps) {
             }
             return confirmIdentity(createSchedulingPorts(tx, { keys: deps.keys }), {
               appointmentId: item.subjectId,
-              actor: book,
+              actor: await scopedActor(tx, actor, book),
               auditActor: audit,
               expectedVersion: request.body.expectedVersion,
             });

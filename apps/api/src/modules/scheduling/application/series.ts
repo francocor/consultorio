@@ -15,6 +15,7 @@ import { chooseOccurrence, localParts, resolveLocal } from '../domain/time.js';
 import { persistAppointment } from './book-appointment.js';
 import {
   applyPlan,
+  assertCalendar,
   invalid,
   planSlot,
   resolveStart,
@@ -126,6 +127,7 @@ export async function bookSeries(
   ) {
     throw new AppError('conflict');
   }
+  assertCalendar(actor, professional.id);
   if (input.authorizeLocation) await input.authorizeLocation(location);
   if (!typeOffered(type, professional)) {
     throw invalid('appointmentTypeId', 'scheduling.booking.type_not_offered');

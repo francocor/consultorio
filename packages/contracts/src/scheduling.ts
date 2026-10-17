@@ -1,5 +1,7 @@
 import { z } from 'zod';
 
+import { BlockDto, HolidayDto } from './scheduling-config.js';
+
 /**
  * Contracts of scheduling: appointments, booking, the attendance lifecycle, the reception
  * worklist, availability and series. The tenant and the person who acts are never fields: both
@@ -514,3 +516,50 @@ export const SeriesConflictExtension = z.strictObject({
   occurrences: z.array(SeriesOccurrenceDto),
 });
 export type SeriesConflictExtension = z.infer<typeof SeriesConflictExtension>;
+
+// Calendar feed --------------------------------------------------------------------------------
+
+/** The longest window one calendar request covers (a month view plus its edges). */
+export const MAX_CALENDAR_DAYS = 62;
+
+export const CalendarQuery = z
+  .strictObject({
+    from: Instant,
+    to: Instant,
+    /** Comma separated professional ids. Omit for everyone the viewer may see. */
+    professionalIds: z
+      .string()
+      .transform((value) => value.split(',').filter((part) => part !== ''))
+      .pipe(z.array(z.uuid()).max(50))
+      .optional(),
+    locationId: z.uuid().optional(),
+  })
+  .superRefine((value, ctx) => {
+    const span = Date.parse(value.to) - Date.parse(value.from);
+    if (!(span > 0)) {
+      ctx.addIssue({ code: 'custom', path: ['to'], message: 'must be after the start' });
+    } else if (span > MAX_CALENDAR_DAYS * 86_400_000) {
+      ctx.addIssue({ code: 'custom', path: ['to'], message: 'at most 62 days at a time' });
+    }
+  });
+export type CalendarQuery = z.infer<typeof CalendarQuery>;
+
+/**
+ * An entry of the calendar: administrative data only (the patient's name, the type, the status and
+ * the time), never anything clinical.
+ */
+export const CalendarEntryDto = AppointmentDto.extend({
+  patientName: z.string(),
+  typeName: z.string(),
+  typeColor: z.string().nullable(),
+});
+export type CalendarEntryDto = z.infer<typeof CalendarEntryDto>;
+
+export const CalendarResponse = z.strictObject({
+  appointments: z.array(CalendarEntryDto),
+  /** Blocks that touch the window, so the grid can show them. */
+  blocks: z.array(BlockDto),
+  /** Holidays and days off in the window. */
+  holidays: z.array(HolidayDto),
+});
+export type CalendarResponse = z.infer<typeof CalendarResponse>;

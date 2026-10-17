@@ -12,6 +12,7 @@ import type { WithTenant } from '../../platform/db/tenant-context.js';
 
 import { createAppointmentTypeService } from './application/appointment-types.js';
 import { createBlockService } from './application/blocks.js';
+import { createCalendar } from './application/calendar.js';
 import { createHolidayService } from './application/holidays.js';
 import { createHoursPeriodService } from './application/hours-periods.js';
 import { createWorklistService, type WorklistService } from './application/worklist.js';
@@ -42,12 +43,14 @@ export interface Scheduling {
 }
 
 export function createScheduling(options: SchedulingOptions): Scheduling {
+  const blocks = createBlockService();
+  const holidays = createHolidayService();
   const config = configRoutes({
     withTenant: options.withTenant,
     auditDeny: options.auditDeny,
     types: createAppointmentTypeService(),
-    blocks: createBlockService(),
-    holidays: createHolidayService(),
+    blocks,
+    holidays,
     hoursPeriods: createHoursPeriodService(options.clock ? { clock: options.clock } : {}),
   });
 
@@ -69,6 +72,7 @@ export function createScheduling(options: SchedulingOptions): Scheduling {
     keys: options.keys,
     auditDeny: options.auditDeny,
     clock: options.clock ?? (() => new Date()),
+    calendar: createCalendar({ blocks, holidays }),
   });
 
   return {

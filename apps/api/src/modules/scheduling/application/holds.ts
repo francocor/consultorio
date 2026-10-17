@@ -4,6 +4,7 @@ import { AppError } from '../../../platform/http/problem.js';
 
 import {
   applyPlan,
+  assertCalendar,
   invalid,
   planSlot,
   resolveStart,
@@ -60,6 +61,7 @@ export async function createHold(ports: SchedulingPorts, input: CreateHoldInput)
   if (professional.status !== 'active' || !location.active || !type.active) {
     throw new AppError('conflict');
   }
+  assertCalendar(actor, professional.id);
   if (input.authorizeLocation) await input.authorizeLocation(location);
   if (!typeOffered(type, professional)) {
     throw invalid('appointmentTypeId', 'scheduling.booking.type_not_offered');

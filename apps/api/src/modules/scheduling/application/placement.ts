@@ -23,6 +23,27 @@ export interface BookActor {
   permissions: ReadonlySet<string>;
   /** The actor's own professional profile, when the gate lets them have one. */
   professionalId: string | null;
+  /**
+   * Whether the actor may work in this professional's calendar (a professional works in their own,
+   * or in one that was delegated). Absent means every calendar, as for tests.
+   */
+  mayUseCalendar?: (professionalId: string) => boolean;
+  /** Whether the actor may operate this location (reception works at its own). Absent means any. */
+  mayUseLocation?: (locationId: string) => boolean;
+}
+
+/** Refuses a calendar the actor was not given. The reason goes to the audit trail only. */
+export function assertCalendar(actor: BookActor, professionalId: string): void {
+  if (actor.mayUseCalendar && !actor.mayUseCalendar(professionalId)) {
+    throw new AccessRefused('not_own_calendar');
+  }
+}
+
+/** Refuses a location the actor does not work at. */
+export function assertLocation(actor: BookActor, locationId: string): void {
+  if (actor.mayUseLocation && !actor.mayUseLocation(locationId)) {
+    throw new AccessRefused('location_not_assigned');
+  }
 }
 
 /**
