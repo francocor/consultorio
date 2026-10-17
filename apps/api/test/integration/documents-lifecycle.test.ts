@@ -14,7 +14,7 @@ import { document } from '../../src/db/schema/documents.js';
 import { tenant as tenantTable } from '../../src/db/schema/tenant.js';
 import { createDocumentCleanup } from '../../src/modules/documents/index.js';
 import { createRuntimeDb, type DbHandle } from '../../src/platform/db/pool.js';
-import { createWithTenant, type Tx } from '../../src/platform/db/tenant-context.js';
+import { createWithTenant, SYSTEM_USER_ID, type Tx } from '../../src/platform/db/tenant-context.js';
 import { EICAR, minimalPdf } from '../../src/platform/files/test-files.js';
 import { withScanning, type ScanningHarness } from '../support/document-scans.js';
 import { asSystem, createDocumentsHarness } from '../support/documents.js';
@@ -424,6 +424,39 @@ describe('a colleague who reads a clinical document only through sharing (JD-S2 
 
       expect(await asProfessional(h.professionalId)).toHaveLength(1);
       expect((await rowOf(id)).classification).toBe('administrative');
+    } finally {
+      await setSharing(false);
+    }
+  });
+
+  it('is refused by the database too: hiding a clinical document needs the author or a treating professional (JD-S2 R2-C2)', async () => {
+    const { id } = await available();
+    const hideAs = (professionalId: string | null) =>
+      createWithTenant(runtime.db)(
+        professionalId === null
+          ? { tenantId: h.tenant.id, userId: SYSTEM_USER_ID }
+          : { tenantId: h.tenant.id, userId: randomUUID(), actingProfessionalId: professionalId },
+        (tx) =>
+          tx
+            .update(document)
+            .set({
+              status: 'hidden',
+              hiddenAt: new Date(),
+              hiddenBy: randomUUID(),
+              hiddenReason: 'x',
+            })
+            .where(eq(document.id, id))
+            .returning({ id: document.id }),
+      );
+    await setSharing(true);
+    try {
+      // A colleague who only reads it through sharing, and the system user (null), are both refused.
+      await expect(hideAs(h.colleagueId)).rejects.toThrow();
+      await expect(hideAs(null)).rejects.toThrow();
+      expect((await rowOf(id)).status).toBe('available');
+
+      expect(await hideAs(h.professionalId)).toHaveLength(1);
+      expect((await rowOf(id)).status).toBe('hidden');
     } finally {
       await setSharing(false);
     }

@@ -12,7 +12,7 @@ import { AppError } from '../../../platform/http/problem.js';
 import { AccessRefused } from '../../access/index.js';
 
 import type { BlockService } from './blocks.js';
-import { auditDelegatedView, isAdministrative } from './delegated-view.js';
+import { auditDelegatedView, isAdministrative, viewsOthersCalendar } from './delegated-view.js';
 import { toAppointmentDto } from './drizzle-ports.js';
 import type { HolidayService } from './holidays.js';
 import { locationAccessOf } from './location-access.js';
@@ -232,10 +232,7 @@ export function createCalendar(deps: CalendarDeps) {
       // A professional looking at a colleague's calendar (delegated to them) is audited; reception,
       // admin and owner work in every calendar of their locations as part of their job.
       const viewsOthers =
-        !isAdministrative(actor) &&
-        actor.professionalId !== null &&
-        professionals !== 'everyone' &&
-        professionals.some((id) => id !== actor.professionalId);
+        professionals !== 'everyone' && professionals.some((id) => viewsOthersCalendar(actor, id));
       if (viewsOthers) {
         await audit(tx, {
           action: 'appointment.calendar_viewed',

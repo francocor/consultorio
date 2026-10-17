@@ -1247,3 +1247,47 @@ The one integration failure looks like a clock skew, not a defect of this round:
 - No database guard on identity transitions or on clinical document insert (B12).
 - Overlap race of hours periods (B15).
 - New from this round: the write routes of an appointment still tell "exists in a colleague's calendar" (403) from "does not exist" (404) (decision 2).
+
+## Judgment Day Stage 2, round 2
+
+Second round of the adversarial review of Stage 2, applied on top of `e3b5016`. Each fix is its own `fix(...)` commit tagged "JD-S2 R2-<id>"; every one started with a failing test.
+
+### What was fixed
+
+| Id    | Fix                                                                                                                                                                                                                                                                                                                                                       | Test                                                                                                                                                                                                                      |
+| ----- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| R2-C1 | `weeklyOccurrences` (S9 regression): the end of each occurrence keeps its own local time (`addLocalDays(zone, end, 7 * week)`), so an all-day, an overnight and a Friday-to-Monday block end where they should across a daylight saving change. The length of the first occurrence is used only when the shifted end is not after the shifted start (the skipped hour). | `blocks.test.ts`: all-day across the spring and the fall change, overnight 22:00-06:00 across both, Friday 18:00 to Monday 08:00 (America/New_York; 5 RED). The S9 and "keeps the local hour" tests still pass                |
+| R2-C2 | Migration 0042 replaces `app.guard_document()`: moving a clinical document to `hidden` needs `app.professional_id` to be the author or to treat the patient. No exception for the system user. Every earlier check is kept.                                                                                                                                | `documents-lifecycle.test.ts` "is refused by the database too: hiding a clinical document ..." (RED: a colleague who reads it through sharing hid it); covers the colleague, the system user and the author                |
+| R2-C3 | `document.rescan_attempts` (migration 0043) counts the rounds in which the quarantined object changed after it was scanned. After `MAX_RESCANS` (5) the next change rejects the upload as `corrupt`, removes the object and raises the existing `document_scan_overdue` alert. `scan_attempts` is untouched (it counts scanner outages, which may be many).    | `documents-scan.test.ts` "gives up after a few scans of a file that keeps changing ..." (RED: stayed quarantined)                                                                                                          |
+| R2-S1 | Reproduced. `viewsOthersCalendar` required a gated `professionalId`, so a delegated look by a member without a recorded matricula was never audited. It now compares with `ownProfessionalId ?? professionalId` and audits every non-administrative look at a calendar that is not the member's own. The feed uses the same function.                         | New `delegated-view.test.ts` (2 RED: gate closed with a profile; no profile at all)                                                                                                                                        |
+| R2-S2 | Reproduced. `resolveProfessionalIds` looks the profile up for every member. `ownProfessionalId` is the profile whatever the roles; `professionalId` (the gate) still needs the professional role, an active profile and a valid matricula.                                                                                                                 | `professional-gate.test.ts` (2 RED); the "does not even look" test now expects one lookup and a null gate                                                                                                                  |
+| R2-S3 | `isSelfRoleOpen` filters the `tenant` row by `current_setting('app.tenant_id')`. Not reproducible as a leak (the `tenant_isolation` policy already limits the table); defense in depth.                                                                                                                                                                   | The onboarding integration suites (no new test: nothing can fail)                                                                                                                                                          |
+
+The flaky `documents-scan.test.ts` "raises an alert ..." now sets `upload_completed_at` from the process clock (the clock the job reads) instead of `now()` in the database container, and the file has an `afterEach` that switches the fake scanner back on, so a failure no longer leaves it off for the tests after it.
+
+### Decisions and deviations
+
+1. R2-C3 adds a column instead of reusing `scan_attempts`: that counter also drives the backoff of scanner outages and can legitimately be high, so a document that waited out an outage would be refused on its first swap.
+2. R2-S2 costs one profile lookup per request for members who do not hold the professional role (owners, admin, reception). A failed lookup rejects those requests too, as it already did for professionals.
+3. R2-C2 uses `OLD.status IS DISTINCT FROM 'hidden'` with `NEW.status = 'hidden'`; the existing transition rule already limits it to `available` to `hidden`.
+4. New runbook: `docs/runbooks/sole-owner-professional-role.md` (see B-W3 below).
+
+### Verification
+
+| Command                                                               | Result                                                                      |
+| --------------------------------------------------------------------- | --------------------------------------------------------------------------- |
+| `typecheck` / `lint` / `format:check`                                 | exit 0                                                                      |
+| `corepack pnpm test`                                                  | **231 files, 3,032 tests passed**                                           |
+| `corepack pnpm test:integration`                                      | 118 files passed, 1 skipped (the slow ClamAV suite); 1,839 tests, 4 skipped |
+| `corepack pnpm build`                                                 | exit 0                                                                      |
+| `corepack pnpm db:check`                                              | No migration drift (journal 0042 and 0043, `when` increasing)               |
+| `test:e2e` (fresh stack, private ports 4481/3481/9481, `--workers=3`) | **170 passed**, 0 flaky                                                      |
+
+CI was not run or polled.
+
+### Follow-ups (INFO items of the review, not fixed in this round)
+
+- A-W3 / B-S4: the semantics of the 0039 backfill (which organizations count as "wizard finished") deserve a second look before the first real organization is migrated.
+- B-W3: a sole owner past 30 days has no self-role path inside the product. The recovery path is in `docs/runbooks/sole-owner-professional-role.md` (invite a second owner, or an operator action with a second reviewer); a reviewed operator script does not exist yet.
+- B-W4: the restore guard compares only the bucket name, not the endpoint or the account behind it.
+- B-S3: a not-found read in another professional's calendar writes no audit entry, and the write routes of an appointment still answer 403 (see decision 2 of round 1).

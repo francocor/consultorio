@@ -69,6 +69,8 @@ export const document = tenantTable(
     scanResult: text('scan_result'),
     rejectionReason: text('rejection_reason'),
     scanAttempts: integer('scan_attempts').notNull().default(0),
+    /** How many times the scan found the object changed after it was scanned and started over. */
+    rescanAttempts: integer('rescan_attempts').notNull().default(0),
     lastScanErrorAt: timestamp('last_scan_error_at', { withTimezone: true }),
     scannedAt: timestamp('scanned_at', { withTimezone: true }),
     /** Set when the uploader confirms the file reached storage. Until then the row is invisible. */
@@ -175,6 +177,7 @@ export const document = tenantTable(
       sql`${table.rejectionReason} is null or ${table.rejectionReason} in (${list(DOCUMENT_REJECTION_REASONS)})`,
     ),
     check('document_scan_attempts_check', sql`${table.scanAttempts} >= 0`),
+    check('document_rescan_attempts_check', sql`${table.rescanAttempts} >= 0`),
     index('document_patient_idx').on(table.tenantId, table.patientId, table.createdAt),
     index('document_scan_backlog_idx')
       .on(table.tenantId, table.uploadCompletedAt)
