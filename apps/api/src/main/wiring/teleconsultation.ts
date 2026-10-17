@@ -4,11 +4,36 @@ import {
 } from '@consultorio/contracts';
 
 import { createFakeVideoLinkProvider } from '../../adapters/video-fake/index.js';
+import {
+  createLocalVideoLinkProvider,
+  createUnavailableVideoLinkProvider,
+} from '../../adapters/video-local/index.js';
 import { createTeleconsultation } from '../../modules/teleconsultation/index.js';
 import { adapterOfSetting } from '../../platform/local-providers/dev-routes.js';
-import { fake } from '../adapter-resolver.js';
+import { fake, real, type AdapterRegistry } from '../adapter-resolver.js';
+import type { ProviderConfig } from '../config-providers.js';
 
 import type { ModuleWiring } from './types.js';
+
+/**
+ * Who serves customers (design section 6). The local provider builds addresses on a Jitsi server;
+ * a platform with video off, or one that selected Jitsi as a Service before its adapter exists
+ * (deferred task 3.82), gets a provider that cannot make a room: every virtual appointment waits
+ * for a manual link, and the hosts a manual link may use still come from the platform setting.
+ * `providers` is read through a parameter that may be absent: the registry tests build the slots
+ * from an empty configuration.
+ */
+function videoSlot(providers: ProviderConfig | undefined): AdapterRegistry['videoLink'] {
+  const allowedDomains = providers?.videoAllowedDomains ?? [];
+  return {
+    real:
+      providers?.video === 'local'
+        ? // Neither the address builder nor the room reservation has any effect outside the process.
+          fake(createLocalVideoLinkProvider({ allowedDomains }))
+        : real(createUnavailableVideoLinkProvider({ allowedDomains })),
+    demo: fake(createFakeVideoLinkProvider()),
+  };
+}
 
 /**
  * Everything the teleconsultation module registers with the composition root (track D). The track
@@ -25,8 +50,7 @@ export const teleconsultationWiring: ModuleWiring = {
     },
   ],
   name: 'teleconsultation',
-  // No customer adapter yet: no link is created for customers; demo organizations get the fake.
-  adapters: () => ({ videoLink: { real: undefined, demo: fake(createFakeVideoLinkProvider()) } }),
+  adapters: ({ config }) => ({ videoLink: videoSlot(config.providers) }),
   devProviders: ({ config }) => [
     {
       id: 'video',
