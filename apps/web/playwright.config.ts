@@ -63,7 +63,8 @@ export default defineConfig({
   ],
   webServer: [
     {
-      command: 'pnpm --filter @consultorio/api e2e:stack',
+      // The port is repeated after the script's own default; the last one wins.
+      command: `pnpm --filter @consultorio/api e2e:stack --port ${String(API_PORT)}`,
       url: `http://127.0.0.1:${String(API_PORT)}/health`,
       reuseExistingServer: !process.env['CI'],
       timeout: 240_000,

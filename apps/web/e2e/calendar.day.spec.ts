@@ -64,13 +64,22 @@ test('book, confirm, check in, start and attend', async ({ page, browser }) => {
   );
   await expect(theirs.getByRole('button', { name: 'Reprogramar' })).toHaveCount(0);
   await theirs.getByRole('button', { name: 'Iniciar consulta' }).click();
-  await expect(theirs.getByText('En consulta', { exact: true })).toBeVisible();
-  await theirs.getByRole('button', { name: 'Finalizar consulta' }).click();
-  await expect(theirs.getByText('Atendido', { exact: true })).toBeVisible();
+  // Calling the patient in leads to a new encounter tied to this appointment (D20); the visit is
+  // now in progress and the agenda offers the same way in as a link.
+  await expect(professional).toHaveURL(/\/encounters\/new\?.*appointmentId=/);
+  await expect(professional.getByText(/^Turno: /)).toBeVisible();
+  await professional.goto(urlOf('aillu', agenda));
+  const running = await openAppointment(
+    professional,
+    new RegExp(`${when}.*Gómez, Valentina.*En consulta`),
+  );
+  await expect(running.getByRole('link', { name: 'Iniciar consulta' })).toBeVisible();
+  await running.getByRole('button', { name: 'Finalizar consulta' }).click();
+  await expect(running.getByText('Atendido', { exact: true })).toBeVisible();
   expect(await axeViolations(professional)).toEqual([]);
   // A finished visit offers only the correction.
-  await expect(theirs.getByRole('button', { name: 'Corregir estado' })).toBeVisible();
-  await expect(theirs.getByRole('button', { name: 'Cancelar turno' })).toHaveCount(0);
+  await expect(running.getByRole('button', { name: 'Corregir estado' })).toBeVisible();
+  await expect(running.getByRole('button', { name: 'Cancelar turno' })).toHaveCount(0);
 
   // Reception sees the result on a fresh load of the same agenda.
   await page.goto(urlOf('aillu', agenda));
@@ -78,8 +87,8 @@ test('book, confirm, check in, start and attend', async ({ page, browser }) => {
   await expect(drawer.getByText('Atendido', { exact: true })).toBeVisible();
 
   // The professional marked it by mistake: a correction takes a reason code and the version.
-  await theirs.getByRole('button', { name: 'Corregir estado' }).click();
-  const correction = theirs.getByRole('group', { name: 'Corregir el estado' });
+  await running.getByRole('button', { name: 'Corregir estado' }).click();
+  const correction = running.getByRole('group', { name: 'Corregir el estado' });
   await correction.getByLabel('Nuevo estado').selectOption({ label: 'Ausente' });
   await expect(correction.getByRole('button', { name: 'Corregir el estado' })).toBeDisabled();
   await correction
@@ -87,6 +96,6 @@ test('book, confirm, check in, start and attend', async ({ page, browser }) => {
     .selectOption({ label: 'Se marcó por error' });
   await correction.getByLabel('Detalle (opcional)').fill('Se abrió el turno equivocado');
   await correction.getByRole('button', { name: 'Corregir el estado' }).click();
-  await expect(theirs.getByText('Ausente', { exact: true })).toBeVisible();
+  await expect(running.getByText('Ausente', { exact: true })).toBeVisible();
   expect(await axeViolations(professional)).toEqual([]);
 });
