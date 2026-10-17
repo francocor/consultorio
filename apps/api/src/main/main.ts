@@ -10,7 +10,7 @@ import { createTenantKeys } from '../platform/crypto/tenant-keys.js';
 import { createOperatorDb, createRuntimeDb } from '../platform/db/pool.js';
 import { createDbProbe } from '../platform/db/probe.js';
 import { createWithTenant } from '../platform/db/tenant-context.js';
-import { createBoss, createJobClient } from '../platform/jobs/boss.js';
+import { createBoss, createLazyJobs } from '../platform/jobs/boss.js';
 import { startWorker } from '../platform/jobs/worker.js';
 
 import { createAdapterResolver, createTenantRoutedEmail } from './adapter-resolver.js';
@@ -58,8 +58,8 @@ async function runApi(config: Config): Promise<void> {
   // holds a queue client (it only enqueues; the worker is the one that runs the jobs). So does a
   // module that enqueues from a request (reminders, codes).
   const needsQueue = storage !== undefined || MODULE_WIRINGS.some((module) => module.needsJobs);
-  const jobsBoss = needsQueue ? createBoss(config.databaseUrl, 'api') : undefined;
-  await jobsBoss?.start();
+  // The queue connects on the first enqueue: the process starts, and answers /health, without it.
+  const jobs = needsQueue ? createLazyJobs(createBoss(config.databaseUrl, 'api')) : undefined;
   // Which adapter serves which organization: a demo organization only ever gets the fakes. Email is
   // routed by organization today; the other ports are registered so the registry is complete, and
   // join the routing when their call sites carry the organization.
@@ -96,7 +96,7 @@ async function runApi(config: Config): Promise<void> {
     passwordValidator,
     lockout: config.lockout,
     ...(storage ? { storage } : {}),
-    ...(jobsBoss ? { jobs: createJobClient(jobsBoss) } : {}),
+    ...(jobs ? { jobs: jobs.client } : {}),
     ...(operatorDatabase
       ? {
           operator: {
@@ -141,7 +141,7 @@ async function runApi(config: Config): Promise<void> {
 
   app.log.info('shutting down');
   await app.close();
-  await jobsBoss?.stop({ graceful: true, timeout: 10_000 });
+  await jobs?.stop({ graceful: true, timeout: 10_000 });
   email.close();
   storage?.close();
   await database.close();
