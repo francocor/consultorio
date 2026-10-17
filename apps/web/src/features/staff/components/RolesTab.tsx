@@ -43,8 +43,8 @@ export function RolesTab({
   const { t } = useTranslation(['staff', 'common']);
   const api = useApi();
   const queryClient = useQueryClient();
-  // What the viewer can hand out, plus what this person already holds: an administrator sees (and
-  // may keep or remove) the professional role of a professional, but cannot add it to anyone.
+  // What the viewer can hand out, plus what this person already holds: nobody below an owner
+  // hands out the owner role, but an administrator may add the professional role (decision D19).
   const grantable = rolesInviterMayGrant(viewerRoles);
   const offered: StaffRole[] = STAFF_ROLES.filter(
     (role) => grantable.includes(role) || member.roles.includes(role),
@@ -82,6 +82,11 @@ export function RolesTab({
   });
 
   const forbidden = isApiError(save.error) && save.error.status === 403;
+  // Decision D19: when an admin adds the professional role, the owners get an email.
+  const owesOwnersNotice =
+    roles.includes('professional') &&
+    !member.roles.includes('professional') &&
+    !viewerRoles.includes('owner');
   const changed =
     roles.length !== member.roles.length || roles.some((role) => !member.roles.includes(role));
 
@@ -120,6 +125,11 @@ export function RolesTab({
             />
           ))}
         </div>
+        {owesOwnersNotice ? (
+          <Alert tone="info">
+            <AlertDescription>{t('staff:roles.professionalNotice')}</AlertDescription>
+          </Alert>
+        ) : null}
         <Button
           className="justify-self-start"
           loading={save.isPending}

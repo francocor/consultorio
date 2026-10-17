@@ -153,7 +153,7 @@ describe('inviting staff', () => {
     expect(row).toMatchObject({ outcome: 'deny', reason: 'invite_above_ceiling' });
   });
 
-  it('keeps the professional role out of an admin hands: only the owner invites professionals (D19)', async () => {
+  it('lets an admin invite a professional (D19, revised): the invitation goes out and the owners are told', async () => {
     const admin = await person(['admin']);
     const to = address();
 
@@ -162,10 +162,10 @@ describe('inviting staff', () => {
       roles: ['professional'],
     });
 
-    expect(response.statusCode).toBe(403);
-    expect(mail.lastTo(to)).toBeUndefined();
-    const [row] = await auditRows('access.denied');
-    expect(row).toMatchObject({ outcome: 'deny', reason: 'invite_above_ceiling' });
+    expect(response.statusCode).toBe(201);
+    expect(mail.lastTo(to)).toBeDefined();
+    const [row] = await auditRows('professional.added_by_admin');
+    expect(row).toMatchObject({ outcome: 'allow', actorUserId: admin.user.id });
   });
 
   it('lets an admin invite administration and reception, and an owner invite a professional', async () => {

@@ -8,7 +8,7 @@ Users, professional profiles, matricula, specialties, locations and working hour
 
 ### Requirement: Staff invitation and lifecycle
 
-An owner/admin MUST be able to invite staff by email, assign roles, and deactivate or reactivate staff. Only the owner MAY invite a user with the professional role (D19); an admin invites reception and admin only. Invitations MUST be delivered by email only, be single-use and expiring. Reception and other non-professional staff MUST be assigned to one or more locations (membership, see `authorization`). Staff MUST NOT be hard-deleted; deactivated staff MUST keep their historical records and authorship. Seats for reception and admin are unlimited.
+An owner/admin MUST be able to invite staff by email, assign roles, and deactivate or reactivate staff. Both the owner and the admin MAY invite a user with the professional role (D19, revised and confirmed by the owner of the product on 2026-10-17); an admin never invites an owner. When an admin who is not an owner invites a professional, the system MUST write the audit event `professional.added_by_admin` and email every active owner. Invitations MUST be delivered by email only, be single-use and expiring. Reception and other non-professional staff MUST be assigned to one or more locations (membership, see `authorization`). Staff MUST NOT be hard-deleted; deactivated staff MUST keep their historical records and authorship. Seats for reception and admin are unlimited.
 
 #### Scenario: Invite and accept
 - GIVEN an owner invites a reception user
@@ -26,12 +26,14 @@ An owner/admin MUST be able to invite staff by email, assign roles, and deactiva
 - THEN past entries still show that professional as author
 - AND the professional can no longer sign in
 
-#### Scenario: Only the owner invites a professional (D19)
+#### Scenario: An admin invites a professional and the owners are told (D19, revised)
 - GIVEN an admin and an owner
 - WHEN the admin invites a user with the professional role
-- THEN the system refuses and audits the denial
-- AND the same invitation made by the owner is accepted
-- AND an admin can still invite reception and admin users
+- THEN the invitation is sent and the invitee can accept it with exactly that role
+- AND the audit event `professional.added_by_admin` is written
+- AND every active owner receives an email, and the email names no clinical data
+- AND the same invitation made by the owner is accepted without the event or the email
+- AND an admin still cannot invite an owner
 
 #### Scenario: Admin deactivates a departing professional
 - GIVEN a professional who is leaving the organization
@@ -45,7 +47,7 @@ An owner/admin MUST be able to invite staff by email, assign roles, and deactiva
 
 ### Requirement: Only authorized users manage staff
 
-Only owner/admin MAY create, edit, deactivate staff or assign roles, except that only the owner MAY invite or create a user with the professional role or add the professional role to a member (D19). A user MAY edit their own non-privileged profile fields (name, contact, password), but MUST NOT change their own roles, organization, granted permissions, matricula verification status or active state.
+Only owner/admin MAY create, edit, deactivate staff or assign roles, and both MAY invite or create a user with the professional role or add the professional role to a member, with the audit event and the email to the owners described above (D19, revised). Nobody below an owner MAY create an owner. A user MAY edit their own non-privileged profile fields (name, contact, password), but MUST NOT change their own roles, organization, granted permissions, matricula verification status or active state. The one exception is an owner who acts as a health professional by completing the professional profile (name, specialty, matricula and jurisdiction), which adds the professional role to their own membership (D21, revised and confirmed on 2026-10-17; see `authorization`).
 
 #### Scenario: Professional edits own role
 - GIVEN a professional
@@ -77,6 +79,13 @@ A user with the professional role MUST have a professional profile with: full na
 - GIVEN an owner/admin without a professional profile
 - WHEN access is evaluated
 - THEN the owner has no clinical privileges (see `authorization`)
+
+#### Scenario: An owner acts as a professional by completing the profile (D21, revised)
+- GIVEN an active owner without a professional profile, at any time after the organization was created
+- WHEN the owner saves name, specialty, matricula and jurisdiction as their professional profile
+- THEN the owner holds both the owner and the professional roles and the matricula is recorded unverified
+- AND the owner reads clinical data only through the professional role
+- AND saving the profile without the matricula or its jurisdiction leaves the owner without the professional role
 
 ### Requirement: Matricula uniqueness and validation state
 

@@ -134,3 +134,62 @@ export function renderInvitationEmail(input: InvitationEmailInput): RenderedEmai
   );
   return { subject, text, html };
 }
+
+export interface ProfessionalAddedEmailInput {
+  organizationName: string;
+  /** The admin who added the professional, when they have a name. */
+  adminName?: string;
+  /** The professional, when they have a name. No address and nothing clinical goes in. */
+  subjectName?: string;
+  via: 'invitation' | 'role_grant';
+  /** The staff screen of the organization. */
+  link: string;
+}
+
+/**
+ * Tells an owner that an admin (not an owner) brought a professional into the organization
+ * (decision D19). The owner is the one who can review it: the email carries no clinical data.
+ */
+export function renderProfessionalAddedEmail(input: ProfessionalAddedEmailInput): RenderedEmail {
+  assertWebLink(input.link);
+  const organization = input.organizationName;
+  const subject = `Un administrador incorporó a un profesional en ${organization}`;
+
+  const who = (name: string | undefined, fallback: string, escape: (value: string) => string) =>
+    name === undefined ? fallback : escape(name);
+  const sentence = (escape: (value: string) => string) => {
+    const admin = who(input.adminName, 'Un administrador', escape);
+    const person = who(input.subjectName, 'una persona', escape);
+    return input.via === 'invitation'
+      ? `${admin} invitó a ${person} con el rol de profesional.`
+      : `${admin} le dio a ${person} el rol de profesional.`;
+  };
+  const advice =
+    'Si no esperaba este cambio, revise el equipo y, de ser necesario, quite el rol o desactive a la persona.';
+
+  const text = [
+    `En ${organization} hubo un cambio en el equipo.`,
+    '',
+    sentence((value) => value),
+    '',
+    'Los profesionales pueden ver historias clínicas, por eso le avisamos a los titulares.',
+    advice,
+    '',
+    'Equipo de la organización:',
+    input.link,
+  ].join('\n');
+
+  const html = page(
+    'Se incorporó un profesional',
+    [
+      `En <strong>${escapeHtml(organization)}</strong> hubo un cambio en el equipo.`,
+      sentence(escapeHtml),
+      'Los profesionales pueden ver historias clínicas, por eso le avisamos a los titulares.',
+      advice,
+    ],
+    'Ver el equipo',
+    escapeHtml(input.link),
+    'Este aviso se envía a todos los titulares de la organización cada vez que un administrador incorpora a un profesional.',
+  );
+  return { subject, text, html };
+}

@@ -95,6 +95,8 @@ test('a new owner is guided from the first sign-in to a ready consultorio, on a 
   await page.getByRole('radio', { name: /Sí, soy profesional de la salud/ }).click();
   await page.getByLabel('Nombre y apellido').fill('Dra. Laura Medina');
   await page.getByLabel('Profesión o especialidad').fill('Kinesiología');
+  await page.getByLabel('Jurisdicción de la matrícula').selectOption('AR-B');
+  await page.getByLabel('Número de matrícula').fill('12345');
   await expectFitsAndAccessible(page);
   await page.getByRole('button', { name: 'Guardar y continuar' }).click();
 
@@ -256,6 +258,8 @@ test('the solo quick setup leaves a consultorio ready in one screen, on a phone'
   await expect(page.getByRole('heading', { level: 2, name: 'Configuración rápida' })).toBeVisible();
   await page.getByLabel('Nombre y apellido').fill('Lic. Mario Gómez');
   await page.getByLabel('Profesión o especialidad').fill('Psicología');
+  await page.getByLabel('Jurisdicción de la matrícula').selectOption('AR-B');
+  await page.getByLabel('Número de matrícula').fill('23456');
   await expectFitsAndAccessible(page);
   await page.getByRole('button', { name: 'Dejar todo listo' }).click();
 
@@ -284,7 +288,6 @@ test('the solo quick setup leaves a consultorio ready in one screen, on a phone'
   expect(body.checklist.items.filter((item) => !item.done).map((item) => item.id)).toEqual([
     'first_patient',
     'first_appointment',
-    'matricula',
     'invite_staff',
     'branding',
   ]);

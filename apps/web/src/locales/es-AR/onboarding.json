@@ -11,7 +11,7 @@
   "chooser.team.action": "Configurar paso a paso",
 
   "fast.title": "Configuración rápida",
-  "fast.description": "Solo necesitamos saber quién atiende. Ahora no le pedimos la matrícula ni datos de pago.",
+  "fast.description": "Necesitamos saber quién atiende: su nombre, su especialidad y su matrícula. No le pedimos datos de pago ni la marca de su centro.",
   "fast.fullName": "Nombre y apellido",
   "fast.specialty": "Profesión o especialidad",
   "fast.specialty.hint": "Por ejemplo, Psicología o Clínica médica. Si tiene más de una, sepárelas con comas.",
@@ -50,18 +50,13 @@
   "profile.description": "Los profesionales atienden pacientes y trabajan con historias clínicas. Si usted administra el centro sin atender, no tendrá acceso a datos clínicos.",
   "profile.question": "¿Atiende pacientes como profesional de la salud?",
   "profile.yes.title": "Sí, soy profesional de la salud",
-  "profile.yes.description": "Creamos su perfil profesional. Conserva también su rol de titular.",
+  "profile.yes.description": "Completa su perfil profesional con su matrícula. Conserva también su rol de titular.",
   "profile.no.title": "No, administro el centro",
   "profile.no.description": "No tendrá acceso a historias clínicas. Más adelante invita a los profesionales.",
   "profile.noProfessional": "Para dar turnos necesita al menos un profesional. Lo invita en el paso «Su equipo».",
   "profile.fullName": "Nombre y apellido",
   "profile.specialty": "Profesión o especialidad",
   "profile.specialty.hint": "Por ejemplo, Kinesiología o Pediatría. Si tiene más de una, sepárelas con comas.",
-  "profile.jurisdiction": "Jurisdicción de la matrícula",
-  "profile.jurisdiction.none": "Sin matrícula por ahora",
-  "profile.jurisdiction.national": "Nacional",
-  "profile.matricula": "Número de matrícula",
-  "profile.matricula.hint": "Puede cargarla ahora o más tarde. Es necesaria para trabajar con historias clínicas.",
   "profile.saved": "Perfil guardado.",
 
   "location.title": "Su consultorio",
@@ -116,7 +111,7 @@
   "team.impact.description": "Revise el efecto en su plan antes de enviarla.",
   "team.impact.confirm": "Confirmar y enviar",
   "team.optional": "Puede omitir este paso y invitar a su equipo cuando quiera.",
-  "team.professionalNote": "Solo la persona titular puede invitar profesionales.",
+  "team.professionalNotice": "Como administrador, al invitar a un profesional avisaremos por correo a los titulares de la organización.",
 
   "branding.title": "Identidad visual",
   "branding.description": "El nombre y el color con los que sus pacientes y su equipo ven la aplicación. Sin cambios, usa el estilo neutro de la plataforma.",
@@ -166,5 +161,6 @@
   "settings.tab": "Configuración inicial",
 
   "step_required": "Este paso es obligatorio y no se puede omitir.",
-  "step_unavailable": "Este paso no está disponible."
+  "step_unavailable": "Este paso no está disponible.",
+  "matricula_required": "Para atender como profesional necesita cargar la matrícula y su jurisdicción."
 }

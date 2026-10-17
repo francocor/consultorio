@@ -62,20 +62,30 @@ Every permission decision MUST be made on the server using the roles of the auth
 
 ### Requirement: No self-assignment or silent escalation of roles
 
-A user MUST NOT be able to grant themselves a role or permission, or change their own role, organization or permissions, including during signup or profile edit. Only an owner/admin MAY assign or revoke staff roles and grantable permissions, and every change MUST be audited. An organization MUST always retain at least one active owner. One narrow exception exists (decision D21): while the guided first run is unfinished, an active owner MAY add the professional role, and only that role, to their own membership, exactly once, audited with the onboarding path; the exception closes when the wizard is finished.
+A user MUST NOT be able to grant themselves a role or permission, or change their own role, organization or permissions, including during signup or profile edit. Only an owner/admin MAY assign or revoke staff roles and grantable permissions, and every change MUST be audited. An organization MUST always retain at least one active owner. One narrow exception exists (decision D21, revised and confirmed by the owner of the product on 2026-10-17): an active owner MAY act as a health professional at any time by completing a professional profile (name, specialty, and the matricula with its jurisdiction), and completing it adds the professional role, and only that role, to their own membership in the same transaction, audited as a role change with `via: owner_professional_profile`. There is no one-time limit, no closure when the wizard is finished and no age window. Nobody else, and no other role, can use the exception.
 
 #### Scenario: Self-promotion attempt
 - GIVEN a reception user
 - WHEN the user submits a profile update that sets role to owner
 - THEN the system rejects the change and audits the attempt
 
-#### Scenario: The owner adds the professional role to themselves during the first run (decision D21)
-- GIVEN an active owner of an organization whose setup wizard is not finished
-- WHEN the owner answers in the wizard that they are a health professional
-- THEN the professional role is added to their own membership, once, with a professional profile
-- AND the change is audited as a role change that names the onboarding path
-- AND the same request after the wizard is finished is refused
-- AND no other role or permission can be added through this path, and no other member can use it
+#### Scenario: The owner acts as a professional by completing the profile (decision D21)
+- GIVEN an active owner, whenever they choose to do it (the first run, the day after, a year later)
+- WHEN the owner completes the professional profile with name, specialty, matricula and jurisdiction
+- THEN the professional role is added to their own membership and the profile is saved, in one transaction
+- AND the change is audited as a role change that says `via: owner_professional_profile`
+- AND the matricula is recorded unverified and opens clinical work (D1)
+- AND repeating the request updates the profile and does not add a second role or a second audit entry
+
+#### Scenario: The owner role needs the complete profile first (decision D21)
+- GIVEN an active owner
+- WHEN the owner submits the profile without the matricula, without its jurisdiction, with a malformed matricula, or with a matricula an active professional already holds
+- THEN the request is refused and the owner has no professional role, no profile and no audit entry for it
+
+#### Scenario: Nobody else self-assigns a role (decision D21)
+- GIVEN an admin, a reception user, or a professional
+- WHEN they try to use the owner-as-professional path, or an owner tries to change their own roles through the role-change endpoint
+- THEN the system refuses, audits the denial and changes no role
 
 #### Scenario: Removing the last owner
 - GIVEN an organization with one active owner
@@ -87,31 +97,43 @@ A user MUST NOT be able to grant themselves a role or permission, or change thei
 - WHEN the change is saved
 - THEN an audit entry records actor, subject, previous and new roles
 
-### Requirement: Only the owner brings professionals in (D19)
+### Requirement: Owner and admin bring professionals in (D19, revised)
 
-Only an owner MUST be able to invite or create a user with the `professional` role, or grant the `professional` role to an existing member. An admin MUST be able to invite and assign reception and admin only. An admin MUST remain able to manage the professionals who already exist (edit their other roles, deactivate, reactivate), because the ceiling limits what a person can hand out, not whom they look after. This decision is pending confirmation by the owner of the product.
+An owner and an admin MUST each be able to invite or create a user with the `professional` role, and to grant the `professional` role to an existing member. Nobody below an owner MAY create an owner or touch one. The ceiling limits what a person can hand out, and an admin MUST remain able to manage the professionals who already exist (edit their other roles, deactivate, reactivate). Because an admin who adds a professional could hold a second, clinical account, the system MUST NOT stay silent about it: when an admin who is not an owner adds a professional, by invitation or by granting the role, the system MUST write the audit event `professional.added_by_admin` and MUST email every active owner of the organization through the transactional email. The email MUST carry no clinical data. It MUST be sent after the change is committed, and a failure of the email provider MUST NOT undo the change. An owner who adds a professional triggers neither the event nor the email. The review flag of patient assignments to a professional added in the last 7 days (below) stays. Decision D19 was revised and confirmed by the owner of the product on 2026-10-17; the accepted residual risk is that clinical separation against a malicious admin is audited and notified rather than prevented.
 
 #### Scenario: Admin invites a professional
-- GIVEN an admin
+- GIVEN an admin and two active owners (and one deactivated owner)
 - WHEN the admin invites a user with the professional role
-- THEN the system refuses and audits the denial
-- AND no email is sent
+- THEN the invitation is sent
+- AND the audit event `professional.added_by_admin` is written with `via: invitation`
+- AND each active owner receives an email, and the deactivated owner and the admin do not
 
 #### Scenario: Admin grants the professional role to a colleague
 - GIVEN an admin and a reception user
 - WHEN the admin adds the professional role to that user
-- THEN the system refuses and audits the denial
-- AND the roles of the user do not change
+- THEN the roles of the user change, the ordinary role change entry is written, and `professional.added_by_admin` is written with `via: role_grant`
+- AND each active owner receives an email
 
 #### Scenario: Owner brings a professional in
 - GIVEN an owner
 - WHEN the owner invites a user with the professional role, or adds the role to a member
 - THEN the system accepts
+- AND no `professional.added_by_admin` event is written and no email is sent
+
+#### Scenario: The email provider is down
+- GIVEN an admin who grants the professional role while the email provider rejects every message
+- WHEN the change is saved
+- THEN the change stays, and the audit event is the record
+
+#### Scenario: Admin cannot create an owner
+- GIVEN an admin
+- WHEN the admin invites an owner, or adds the owner role to a member, or changes the roles of an owner
+- THEN the system refuses and audits the denial
 
 #### Scenario: Admin manages an existing professional
 - GIVEN a professional who already works in the organization
 - WHEN an admin deactivates the professional or changes their other roles
-- THEN the system accepts, and the professional role cannot be added back by the admin once removed
+- THEN the system accepts, and no notification is sent because no professional was added
 
 ### Requirement: Clinical notes readable by health professionals only (hard rule)
 

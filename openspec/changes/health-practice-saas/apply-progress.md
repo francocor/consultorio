@@ -1447,3 +1447,69 @@ Any public HTML page with a form must send `Referrer-Policy: same-origin`. The p
 - A reminder lead time can be set up to 14 days (`lead-times.ts`), but `video_join` lives 3 days, so a link issued more than 3 days ahead of the window dies early. Either raise the kind to 15 days or issue the link at send time; decide before the Stage 3 gate.
 - Track C (waitlist) still has to merge: `waitlist_offer` stays disabled in `kinds.ts` until then, and the C merge will touch the same shared test files.
 - CI was not run here; Lighthouse was not run.
+
+## Owner decisions D19/D20/D21 (2026-10-17)
+
+The owner of the product reviewed the three decisions the orchestrator took in automatic mode and answered on 2026-10-17. Branch `feat/stage-2-practice-core` (draft PR #15), from tip `e1124f9`. Strict TDD: every behavior below has a test written first (the unit RED runs for the ceiling are in the first commit; the integration suites `professional-added-by-admin.test.ts` and `owner-professional.test.ts` were written before the services and routes they exercise).
+
+### What changed per decision
+
+**D19 (revised).** The owner and the admin bring professionals in; the 7-day review flag stays; the owners are notified; the residual risk is accepted.
+
+- `GRANT_CEILING.admin` now includes `professional` (`packages/contracts/src/roles.ts`). The owner role stays out of an admin's reach in invitations, at invitation acceptance and in role changes.
+- New audit action `professional.added_by_admin` (`via: invitation` or `via: role_grant`, `ownersNotified`). `access/application/professional-notice.ts` writes it inside the transaction of the change and reads the addresses of every active owner. The routes (`PUT /members/:id/roles` and `POST /staff/invitations`) send `renderProfessionalAddedEmail` after the commit. An actor who holds the owner role writes neither. A provider failure is logged and does not undo the change.
+- Web: the invite dialog, the roles tab and the wizard team step offer the professional role to an admin and tell them the owners get an email.
+- `proposal.md` records the accepted residual risk: clinical separation against a malicious admin is audited and notified rather than prevented.
+
+**D20.** Confirmed exactly as implemented. The status in `proposal.md` changed from "pending owner confirmation" to "confirmed by owner 2026-10-17". No code change.
+
+**D21 (revised).** An owner may act as a professional at any time, provided they complete the professional profile.
+
+- `staff/application/owner-professional.ts` adds the role and saves the profile (name, specialty, matricula and jurisdiction) in the caller's transaction, audited as `role.changed` with `via: owner_professional_profile`.
+- New `POST /staff/me/professional` (`OwnerProfessionalRequest` in contracts). The wizard profile step and the fast path use the same service.
+- Removed: `isSelfRoleOpen`, `SELF_ROLE_WINDOW_DAYS`, the `onboarding_role_closed` refusal and their tests. `isWizardCompleted` stays because the wizard gate uses it. Migration 0039 is untouched and nothing depends on the window.
+- Web: an owner "Atender como profesional" form in the Perfil profesional tab, and a shared `MatriculaFields` used by the wizard step, the fast path and that form.
+- The runbook `docs/runbooks/sole-owner-professional-role.md` is removed: it only described the 30-day window.
+- Non-owners still cannot self-assign roles, and an owner still cannot change their own roles through the role-change endpoint (both tested).
+
+### The fast-path choice
+
+The fast path (and the wizard's "yes, I am a professional" step) **requires the matricula and its jurisdiction before the role is active**, instead of granting the role and leaving the matricula as a checklist item. This matches "siempre y cuando llene el perfil de profesional con los datos" and is consistent with D1 (an unverified matricula is enough for clinical work; verification is needed only for e-prescription).
+
+- `FastPathRequest.matricula` is optional in the shape only: an owner who already completed the profile is not asked again. When the fast path has to create the profile and the matricula is missing, nothing is created and the answer is a 400 naming `matricula` (`onboarding.matricula_required`).
+- `ProfessionalStepRequest` (the yes branch) takes a required `MatriculaInput`; `matricula: null` is refused at the contract.
+- A malformed matricula, or one held by another active professional, rolls the whole transaction back: no role, no profile, no audit entry (tested).
+- The checklist item "matricula" stays for professionals added by someone else; the fast-path test no longer lists it as pending.
+- The `tenant-onboarding` "Fast path" requirement changed accordingly (it used to say the short path MUST NOT require the matricula).
+
+### Commits
+
+| Commit    | Message                                                                                                                      |
+| --------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| `35cc614` | feat(authz): admins may invite and grant the professional role, with an audit event and an email to the owners (D19 revised) |
+| `755ac51` | feat(authz): an owner may act as a professional at any time by completing the profile (D21 revised)                          |
+| `3ab0641` | docs(sdd): record owner decisions D19, D20 and D21 in the proposal, specs and design                                         |
+
+### Deviations and risks
+
+1. The notification is sent after the commit and is not retried: a provider outage loses the email, and the audit event remains. Stage 3 `notifications` could take over delivery with an outbox if the owner wants a guarantee.
+2. The owner email goes out when the admin acts (invitation sent, role granted), not when the invitee accepts; an invitation that is never accepted still notifies the owners.
+3. `professional.added_by_admin` is only written when the actor does not hold the owner role. An actor with both the owner and admin roles counts as an owner.
+4. `POST /staff/me/professional` uses the `staff.manage` permission (owner and admin) and lets the service refuse non-owners with an audited denial, because no owner-only permission fits.
+5. The 7-day review flag keys on the creation of the professional profile, so an owner who completes their profile later is flagged for 7 days when reception assigns patients to them. Accepted: it is the same signal as for any new professional.
+6. The first full e2e run had one failure (`stage2-center.spec.ts` waiting for the 10:00 slot, a timeout) that passed alone and passed in the second full run. It looks like contention under three workers and is not related to this change. Both runs are reported.
+7. `test:integration` had one suite-level failure in the first full run (`backup-restore.test.ts`, "socket hang up" while the shared Docker daemon was busy). The file passes alone (4 tests).
+
+### Verification
+
+| Command                                                       | Result                                                                                                                                |
+| ------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
+| `corepack pnpm install --frozen-lockfile`                     | up to date                                                                                                                            |
+| `typecheck` / `lint` / `format:check`                         | exit 0                                                                                                                                |
+| `corepack pnpm test`                                          | **231 files, 3,047 tests passed**                                                                                                     |
+| `corepack pnpm test:integration`                              | 119 files passed, 1 skipped (ClamAV), 1,866 tests; `backup-restore.test.ts` failed once with a Docker socket error and passed alone  |
+| `corepack pnpm build`                                         | exit 0                                                                                                                                |
+| `corepack pnpm db:check`                                      | No migration drift (no new migration)                                                                                                 |
+| `test:e2e` (fresh stack, ports 4590/3590/9590, `--workers=3`) | **170 passed** on the second full run; the first had 169 passed and one timeout in `stage2-center.spec.ts` that passed when run alone |
+
+CI was not run or polled.

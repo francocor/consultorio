@@ -122,7 +122,7 @@ describe('the quick setup of a solo professional', () => {
     return { user, app };
   }
 
-  it('asks only who attends, creates everything and says the consultorio is ready', async () => {
+  it('asks who attends, with the matricula, creates everything and says the consultorio is ready', async () => {
     let body: unknown;
     const { user, app } = await openFastPath({
       'POST /api/onboarding/fast-path': (_url, init) => {
@@ -138,10 +138,16 @@ describe('the quick setup of a solo professional', () => {
 
     await user.type(screen.getByLabelText('Nombre y apellido'), 'Lic. Mario Gómez');
     await user.type(screen.getByLabelText('Profesión o especialidad'), 'Psicología');
+    await user.selectOptions(screen.getByLabelText('Jurisdicción de la matrícula'), 'AR-B');
+    await user.type(screen.getByLabelText('Número de matrícula'), '123456');
     await user.click(screen.getByRole('button', { name: 'Dejar todo listo' }));
 
     expect(await h2('Su consultorio está listo')).toBeInTheDocument();
-    expect(body).toEqual({ fullName: 'Lic. Mario Gómez', specialties: ['Psicología'] });
+    expect(body).toEqual({
+      fullName: 'Lic. Mario Gómez',
+      specialties: ['Psicología'],
+      matricula: { jurisdiction: 'AR-B', number: '123456' },
+    });
     expect(screen.getByRole('link', { name: 'Ir a la agenda' })).toHaveAttribute(
       'href',
       '/calendar',
@@ -170,6 +176,8 @@ describe('the quick setup of a solo professional', () => {
 
     await user.type(screen.getByLabelText('Nombre y apellido'), 'Dra. Ana Pérez');
     await user.type(screen.getByLabelText('Profesión o especialidad'), 'Clínica médica');
+    await user.selectOptions(screen.getByLabelText('Jurisdicción de la matrícula'), 'AR-B');
+    await user.type(screen.getByLabelText('Número de matrícula'), '123456');
     await user.type(screen.getByLabelText('Nombre del consultorio'), 'Consultorio Palermo');
     await user.click(screen.getByRole('button', { name: 'Dejar todo listo' }));
 
@@ -177,12 +185,25 @@ describe('the quick setup of a solo professional', () => {
     expect(body).toEqual({
       fullName: 'Dra. Ana Pérez',
       specialties: ['Clínica médica'],
+      matricula: { jurisdiction: 'AR-B', number: '123456' },
       locationName: 'Consultorio Palermo',
     });
   });
 
   it('shows what is missing inline, in Spanish, and sends nothing', async () => {
     const { user, app } = await openFastPath();
+
+    await user.click(screen.getByRole('button', { name: 'Dejar todo listo' }));
+
+    // Name, specialty, jurisdiction and number of the matricula: the complete profile (D21).
+    expect(await screen.findAllByText('Este dato es obligatorio.')).toHaveLength(4);
+    expect(app.requests).not.toContain('POST /api/onboarding/fast-path');
+  });
+
+  it('does not send the form without the matricula', async () => {
+    const { user, app } = await openFastPath();
+    await user.type(screen.getByLabelText('Nombre y apellido'), 'Lic. Mario Gómez');
+    await user.type(screen.getByLabelText('Profesión o especialidad'), 'Psicología');
 
     await user.click(screen.getByRole('button', { name: 'Dejar todo listo' }));
 
@@ -196,6 +217,8 @@ describe('the quick setup of a solo professional', () => {
     });
     await user.type(screen.getByLabelText('Nombre y apellido'), 'Lic. Mario Gómez');
     await user.type(screen.getByLabelText('Profesión o especialidad'), 'Psicología');
+    await user.selectOptions(screen.getByLabelText('Jurisdicción de la matrícula'), 'AR-B');
+    await user.type(screen.getByLabelText('Número de matrícula'), '123456');
 
     await user.click(screen.getByRole('button', { name: 'Dejar todo listo' }));
 
@@ -240,7 +263,7 @@ describe('the steps', () => {
       return { user, app };
     }
 
-    it('records a professional with the optional matricula and moves on', async () => {
+    it('records a professional with the matricula and moves on', async () => {
       let professional: unknown;
       let cursor: unknown;
       const { user, app } = await openProfile({
@@ -274,23 +297,16 @@ describe('the steps', () => {
       expect(app.missingKeys).toEqual([]);
     });
 
-    it('lets the matricula wait: without a jurisdiction none is sent', async () => {
-      let professional: unknown;
-      const { user } = await openProfile({
-        'POST /api/onboarding/professional': (_url, init) => {
-          professional = jsonBody(init);
-          return jsonResponse(stateFor({ steps: { profile: 'done' } }));
-        },
-      });
+    it('does not let the matricula wait: the role is only active with the complete profile (D21)', async () => {
+      const { user, app } = await openProfile();
 
       await user.click(screen.getByRole('radio', { name: /Sí, soy profesional de la salud/ }));
       await user.type(await screen.findByLabelText('Nombre y apellido'), 'Dra. Ana Pérez');
       await user.type(screen.getByLabelText('Profesión o especialidad'), 'Pediatría');
       await user.click(screen.getByRole('button', { name: 'Guardar y continuar' }));
 
-      await waitFor(() => {
-        expect(professional).toMatchObject({ isProfessional: true, matricula: null });
-      });
+      expect(await screen.findAllByText('Este dato es obligatorio.')).toHaveLength(2);
+      expect(app.requests).not.toContain('POST /api/onboarding/professional');
     });
 
     it('says "no": no clinical access, and the team step is where professionals come in', async () => {
@@ -650,7 +666,8 @@ describe('the steps', () => {
       });
     });
 
-    it('offers only the roles the person may hand out: an admin cannot invite professionals', async () => {
+    it('offers the roles the person may hand out: an admin may invite professionals, and is told the owners get an email', async () => {
+      const user = userEvent.setup();
       open({
         state: resume,
         me: meFor(['admin'], { grants: ['onboarding.manage'] }),
@@ -660,7 +677,12 @@ describe('the steps', () => {
       const role = screen.getByLabelText('Rol');
       expect(within(role).getByRole('option', { name: 'Recepción' })).toBeInTheDocument();
       expect(within(role).getByRole('option', { name: 'Administración' })).toBeInTheDocument();
-      expect(within(role).queryByRole('option', { name: 'Profesional' })).not.toBeInTheDocument();
+      expect(within(role).getByRole('option', { name: 'Profesional' })).toBeInTheDocument();
+      expect(screen.queryByText(/avisaremos por correo a los titulares/)).not.toBeInTheDocument();
+
+      await user.selectOptions(role, 'professional');
+
+      expect(screen.getByText(/avisaremos por correo a los titulares/)).toBeInTheDocument();
     });
 
     it('can be skipped, and the cursor moves on', async () => {

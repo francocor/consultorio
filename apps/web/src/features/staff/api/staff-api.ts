@@ -9,6 +9,7 @@ import {
   WeeklyHoursResponse,
   type GrantScope,
   type InviteStaffRequest,
+  type OwnerProfessionalRequest,
   type ProfessionalProfileRequest,
   type StaffRole,
   type WeeklyInterval,
@@ -47,6 +48,9 @@ export function staffApi(api: ApiClient) {
       api.get(`/staff/${membershipId}/professional-profile`, { schema: ProfessionalDto }),
     saveProfile: (membershipId: string, body: ProfessionalProfileRequest) =>
       api.put(`/staff/${membershipId}/professional-profile`, { body, schema: ProfessionalDto }),
+    /** An owner acts as a professional: completing the profile grants the role (decision D21). */
+    becomeProfessional: (body: OwnerProfessionalRequest) =>
+      api.post('/staff/me/professional', { body, schema: ProfessionalDto }),
     grants: (membershipId: string) =>
       api.get(`/members/${membershipId}/grants`, { schema: GrantListResponse }),
     grant: (membershipId: string, permission: string, scope?: GrantScope) =>

@@ -10,7 +10,7 @@ import type { AuthzOptions } from '../../platform/authz/guard.js';
 import type { WithTenant } from '../../platform/db/tenant-context.js';
 import type { LocationService } from '../access/index.js';
 import type { AppointmentTypeService } from '../scheduling/index.js';
-import type { HoursService, ProfileService } from '../staff/index.js';
+import type { HoursService, OwnerProfessionalService } from '../staff/index.js';
 import type { ExportRegistry } from '../tenancy/index.js';
 
 import { exportOnboarding } from './application/export-contributor.js';
@@ -42,7 +42,7 @@ export interface OnboardingOptions {
   /** The services the wizard uses to create what it sets up, from the modules that own them. */
   locations: LocationService;
   hours: HoursService;
-  profiles: ProfileService;
+  ownerProfessional: OwnerProfessionalService;
   types: AppointmentTypeService;
   /** Time zone of a new location, from the country pack of the organization. */
   defaultTimeZone: (country: string) => string;
@@ -61,7 +61,7 @@ export function createOnboarding(options: OnboardingOptions): Onboarding {
     capabilities: options.capabilities ?? DEFAULT_CAPABILITIES,
     locations: options.locations,
     hours: options.hours,
-    profiles: options.profiles,
+    ownerProfessional: options.ownerProfessional,
     types: options.types,
     defaultTimeZone: options.defaultTimeZone,
     planImpact: options.planImpact ?? noPlanImpact,

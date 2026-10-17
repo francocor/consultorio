@@ -4,7 +4,6 @@ import {
   type LocationDto,
   type MeResponse,
   type OnboardingStateDto,
-  type ProfessionalDto,
   type WeeklyHoursResponse,
   type AppointmentTypeListResponse,
   type FastPathResponse,
@@ -95,6 +94,7 @@ type Team = Awaited<ReturnType<World['team']>>;
 
 const PROFILE = { fullName: 'Dra. Ana Perez', specialties: ['Clinica medica'] };
 const MATRICULA = { jurisdiction: 'AR-B', number: 'MP 12345' };
+const FAST = { ...PROFILE, matricula: MATRICULA };
 
 describe('the state of the first run (task 2.86)', () => {
   let w: World;
@@ -329,7 +329,7 @@ describe('"are you a professional?" (task 2.87)', () => {
     expect(me.permissions).toContain('clinical.note.write');
   });
 
-  it('yes without a matricula: the profile is incomplete and opens nothing clinical', async () => {
+  it('yes without a matricula is refused: the role is only active with a complete profile (D21)', async () => {
     const w = await world('onb-prof-nomat');
 
     const response = await w.api.post('/onboarding/professional', w.owner, {
@@ -338,27 +338,24 @@ describe('"are you a professional?" (task 2.87)', () => {
       matricula: null,
     });
 
-    expect(response.statusCode, response.body).toBe(200);
-    const profile = (
-      await w.api.get(`/staff/${w.ownerUser.membershipId}/professional-profile`, w.owner)
-    ).json<ProfessionalDto>();
-    expect(profile).toMatchObject({ matricula: null, clinicalAccess: false });
-    expect((await w.state()).checklist.items.find((item) => item.id === 'matricula')?.done).toBe(
-      false,
+    expect(response.statusCode, response.body).toBe(400);
+    const me = (await w.api.get('/auth/me', w.owner)).json<MeResponse>();
+    expect(me.roles).toEqual(['owner']);
+    const rows = await asTenant(runtime, w.tenant.id, (tx) =>
+      tx.select().from(professional).where(eq(professional.membershipId, w.ownerUser.membershipId)),
     );
-    // The clinical gate stays closed for a profile without a registration.
-    const note = await w.api.get('/patients', w.owner);
-    expect(note.statusCode).toBe(200);
+    expect(rows).toEqual([]);
+    expect(await w.audits('role.changed')).toEqual([]);
   });
 
   it('yes, twice: the second answer updates the profile and adds no second role or profile', async () => {
     const w = await world('onb-prof-twice');
-    const body = { isProfessional: true, ...PROFILE, matricula: null };
+    const body = { isProfessional: true, ...PROFILE, matricula: MATRICULA };
     await w.api.post('/onboarding/professional', w.owner, body);
 
     const again = await w.api.post('/onboarding/professional', w.owner, {
       ...body,
-      matricula: MATRICULA,
+      matricula: { jurisdiction: 'AR-B', number: 'MP 54321' },
     });
 
     expect(again.statusCode, again.body).toBe(200);
@@ -373,15 +370,17 @@ describe('"are you a professional?" (task 2.87)', () => {
       tx.select().from(professional).where(eq(professional.membershipId, w.ownerUser.membershipId)),
     );
     expect(profiles).toHaveLength(1);
-    expect(profiles[0]?.matricula).toBe('12345');
+    expect(profiles[0]?.matricula).toBe('54321');
+    // The role was added once.
+    expect((await w.audits('role.changed')).length).toBe(1);
   });
 
-  it('records the self-added role in the audit trail, saying it came from the first run', async () => {
+  it('records the role in the audit trail, saying it came from the owner professional profile', async () => {
     const w = await world('onb-prof-audit');
     await w.api.post('/onboarding/professional', w.owner, {
       isProfessional: true,
       ...PROFILE,
-      matricula: null,
+      matricula: MATRICULA,
     });
 
     const [change] = await w.audits('role.changed');
@@ -389,7 +388,8 @@ describe('"are you a professional?" (task 2.87)', () => {
     expect(change?.metadata).toMatchObject({
       previousRoles: ['owner'],
       newRoles: ['owner', 'professional'],
-      via: 'onboarding',
+      via: 'owner_professional_profile',
+      self: true,
     });
     expect((await w.audits('staff.profile_updated')).length).toBe(1);
   });
@@ -430,7 +430,7 @@ describe('"are you a professional?" (task 2.87)', () => {
     expect(me.roles).toEqual(['owner']);
   });
 
-  it('refuses an admin who holds the grant: only an owner can be a professional here', async () => {
+  it('refuses an admin who holds the grant: only an owner acts as a professional here', async () => {
     const w = await world('onb-prof-admin');
     const { admin, adminUser } = await w.team();
     await w.api.post(`/members/${adminUser.membershipId}/grants`, w.owner, {
@@ -440,7 +440,7 @@ describe('"are you a professional?" (task 2.87)', () => {
     const response = await w.api.post('/onboarding/professional', admin, {
       isProfessional: true,
       ...PROFILE,
-      matricula: null,
+      matricula: MATRICULA,
     });
 
     expect(response.statusCode).toBe(403);
@@ -448,9 +448,9 @@ describe('"are you a professional?" (task 2.87)', () => {
     expect(me.roles).toEqual(['admin']);
   });
 
-  it('closes the self-added role once the wizard is finished: roles are never self-assigned later', async () => {
+  it('stays open after the wizard is finished: an owner may act as a professional at any time (D21)', async () => {
     const w = await world('onb-prof-late');
-    await w.api.post('/onboarding/fast-path', w.owner, PROFILE);
+    await w.api.post('/onboarding/fast-path', w.owner, FAST);
     expect((await w.state()).wizard.completed).toBe(true);
     const second = await signInAs(
       app,
@@ -462,43 +462,39 @@ describe('"are you a professional?" (task 2.87)', () => {
       isProfessional: true,
       fullName: 'Dr. Juan Gomez',
       specialties: ['Cardiologia'],
-      matricula: null,
+      matricula: { jurisdiction: 'AR-B', number: 'MP 777' },
     });
 
-    expect(response.statusCode).toBe(403);
-    expect((await w.api.get('/auth/me', second)).json<MeResponse>().roles).toEqual(['owner']);
+    expect(response.statusCode, response.body).toBe(200);
+    expect((await w.api.get('/auth/me', second)).json<MeResponse>().roles.toSorted()).toEqual([
+      'owner',
+      'professional',
+    ]);
   });
 
-  it('closes the self-added role 30 days after the organization was created, finished wizard or not (JD-S2 C9)', async () => {
+  it('does not depend on the age of the organization any more (D21): a year old, same answer', async () => {
     const day = 24 * 60 * 60 * 1000;
-    const selfAdd = async (slug: string, ageInDays: number) => {
-      const tenant = await createTestTenant(runtime, {
-        slug,
-        createdAt: new Date(Date.now() - ageInDays * day),
-      });
-      const owner = await signInAs(
-        app,
-        slug,
-        await createTestUser(runtime, tenant.id, { roles: ['owner'], password: TEST_PASSWORD }),
-      );
-      const response = await clientFor(app, slug).post('/onboarding/professional', owner, {
-        isProfessional: true,
-        fullName: 'Dr. Juan Gomez',
-        specialties: ['Cardiologia'],
-        matricula: null,
-      });
-      return {
-        response,
-        roles: (await clientFor(app, slug).get('/auth/me', owner)).json<MeResponse>().roles,
-      };
-    };
+    const slug = 'onb-prof-old';
+    const tenant = await createTestTenant(runtime, {
+      slug,
+      createdAt: new Date(Date.now() - 365 * day),
+    });
+    const owner = await signInAs(
+      app,
+      slug,
+      await createTestUser(runtime, tenant.id, { roles: ['owner'], password: TEST_PASSWORD }),
+    );
 
-    const recent = await selfAdd('onb-prof-29d', 29);
-    const old = await selfAdd('onb-prof-31d', 31);
+    const response = await clientFor(app, slug).post('/onboarding/professional', owner, {
+      isProfessional: true,
+      fullName: 'Dr. Juan Gomez',
+      specialties: ['Cardiologia'],
+      matricula: MATRICULA,
+    });
 
-    expect(recent.response.statusCode, recent.response.body).toBe(200);
-    expect(old.response.statusCode).toBe(403);
-    expect(old.roles).toEqual(['owner']);
+    expect(response.statusCode, response.body).toBe(200);
+    const me = (await clientFor(app, slug).get('/auth/me', owner)).json<MeResponse>();
+    expect(me.roles.toSorted()).toEqual(['owner', 'professional']);
   });
 
   it('starts every organization in Argentina, with the Buenos Aires time zone for its places', async () => {
@@ -513,12 +509,13 @@ describe('"are you a professional?" (task 2.87)', () => {
 });
 
 describe('the solo fast path (task 2.88)', () => {
-  it('creates a location, Monday to Friday hours and a 30-minute type, with no matricula', async () => {
+  it('creates a location, Monday to Friday hours and a 30-minute type, and records the matricula (D21)', async () => {
     const w = await world('onb-fast');
 
     const response = await w.api.post('/onboarding/fast-path', w.owner, {
       fullName: 'Lic. Mario Gomez',
       specialties: ['Psicologia'],
+      matricula: MATRICULA,
     });
 
     expect(response.statusCode, response.body).toBe(200);
@@ -539,7 +536,11 @@ describe('the solo fast path (task 2.88)', () => {
       timeZone: 'America/Argentina/Buenos_Aires',
     });
     const [profile] = await asTenant(runtime, w.tenant.id, (tx) => tx.select().from(professional));
-    expect(profile).toMatchObject({ matricula: null, specialties: ['Psicologia'] });
+    expect(profile).toMatchObject({
+      matricula: '12345',
+      matriculaStatus: 'unverified',
+      specialties: ['Psicologia'],
+    });
     const hours = (
       await w.api.get(`/professionals/${profile?.id ?? ''}/hours`, w.owner)
     ).json<WeeklyHoursResponse>();
@@ -561,22 +562,16 @@ describe('the solo fast path (task 2.88)', () => {
       mode: 'in_person',
       active: true,
     });
-    // What the checklist still asks for: the matricula, branding, staff, a patient and a booking.
+    // What the checklist still asks for: branding, staff, a patient and a booking.
     const pending = body.state.checklist.items.filter((item) => !item.done).map((item) => item.id);
-    expect(pending).toEqual([
-      'first_patient',
-      'first_appointment',
-      'matricula',
-      'invite_staff',
-      'branding',
-    ]);
+    expect(pending).toEqual(['first_patient', 'first_appointment', 'invite_staff', 'branding']);
   });
 
   it('leaves the organization ready to book: a first appointment can be made straight away', async () => {
     const w = await world('onb-fast-book');
     const { reception } = await w.team();
     const created = (
-      await w.api.post('/onboarding/fast-path', w.owner, PROFILE)
+      await w.api.post('/onboarding/fast-path', w.owner, FAST)
     ).json<FastPathResponse>();
     expect(created.readyToBook).toBe(true);
     const place = (await w.api.get('/locations', w.owner)).json<{ locations: LocationDto[] }>()
@@ -616,9 +611,9 @@ describe('the solo fast path (task 2.88)', () => {
 
   it('is safe to repeat: nothing is created twice', async () => {
     const w = await world('onb-fast-twice');
-    await w.api.post('/onboarding/fast-path', w.owner, PROFILE);
+    await w.api.post('/onboarding/fast-path', w.owner, FAST);
 
-    const again = await w.api.post('/onboarding/fast-path', w.owner, PROFILE);
+    const again = await w.api.post('/onboarding/fast-path', w.owner, FAST);
 
     expect(again.statusCode, again.body).toBe(200);
     expect(again.json<FastPathResponse>().created).toEqual({
@@ -644,7 +639,7 @@ describe('the solo fast path (task 2.88)', () => {
     ).json<LocationDto>();
 
     const response = await w.api.post('/onboarding/fast-path', w.owner, {
-      ...PROFILE,
+      ...FAST,
       locationName: 'Otro nombre',
     });
 
@@ -662,7 +657,7 @@ describe('the solo fast path (task 2.88)', () => {
     const w = await world('onb-fast-name');
 
     await w.api.post('/onboarding/fast-path', w.owner, {
-      ...PROFILE,
+      ...FAST,
       locationName: 'Consultorio Palermo',
     });
 
@@ -672,7 +667,7 @@ describe('the solo fast path (task 2.88)', () => {
 
   it('writes the audit trail of what it did', async () => {
     const w = await world('onb-fast-audit');
-    await w.api.post('/onboarding/fast-path', w.owner, PROFILE);
+    await w.api.post('/onboarding/fast-path', w.owner, FAST);
 
     const [fast] = await w.audits('onboarding.fast_path');
 
@@ -695,11 +690,51 @@ describe('the solo fast path (task 2.88)', () => {
   ])('refuses %s and creates nothing', async (_name, pick) => {
     const w = await world(`onb-fast-deny-${String(Math.random()).slice(2, 8)}`);
 
-    const response = await w.api.post('/onboarding/fast-path', pick(await w.team()), PROFILE);
+    const response = await w.api.post('/onboarding/fast-path', pick(await w.team()), FAST);
 
     expect(response.statusCode).toBe(403);
     const places = (await w.api.get('/locations', w.owner)).json<{ locations: LocationDto[] }>();
     expect(places.locations).toEqual([]);
+  });
+
+  it('needs the matricula and its jurisdiction to make the owner a professional, and creates nothing without them (D21)', async () => {
+    const w = await world('onb-fast-nomat');
+
+    const missing = await w.api.post('/onboarding/fast-path', w.owner, PROFILE);
+    const malformed = await w.api.post('/onboarding/fast-path', w.owner, {
+      ...PROFILE,
+      matricula: { jurisdiction: 'AR-B', number: '!!' },
+    });
+
+    expect(missing.statusCode, missing.body).toBe(400);
+    expect(missing.json<{ errors: { path: string }[] }>().errors).toEqual([
+      expect.objectContaining({ path: 'matricula' }),
+    ]);
+    expect(malformed.statusCode).toBe(400);
+    const me = (await w.api.get('/auth/me', w.owner)).json<MeResponse>();
+    expect(me.roles).toEqual(['owner']);
+    const places = (await w.api.get('/locations', w.owner)).json<{ locations: LocationDto[] }>();
+    expect(places.locations).toEqual([]);
+    expect(await asTenant(runtime, w.tenant.id, (tx) => tx.select().from(professional))).toEqual(
+      [],
+    );
+    expect((await w.state()).wizard.completed).toBe(false);
+  });
+
+  it('needs no matricula again from an owner who already completed the professional profile', async () => {
+    const w = await world('onb-fast-has-profile');
+    await w.api.post('/onboarding/professional', w.owner, {
+      isProfessional: true,
+      ...PROFILE,
+      matricula: MATRICULA,
+    });
+
+    const response = await w.api.post('/onboarding/fast-path', w.owner, PROFILE);
+
+    expect(response.statusCode, response.body).toBe(200);
+    const body = response.json<FastPathResponse>();
+    expect(body.created).toMatchObject({ professional: false, location: true });
+    expect(body.readyToBook).toBe(true);
   });
 
   it('asks for the name of the professional and a specialty', async () => {
@@ -875,7 +910,7 @@ describe('the invitation from the first run (task 2.90)', () => {
     expect(rows).toHaveLength(2);
   });
 
-  it('an admin with the grant cannot invite a professional (D19) from the first run either', async () => {
+  it('an admin with the grant may invite a professional from the first run too (D19, revised)', async () => {
     const w = await world('onb-invite-d19');
     const { admin, adminUser } = await w.team();
     await w.api.post(`/members/${adminUser.membershipId}/grants`, w.owner, {
@@ -887,7 +922,8 @@ describe('the invitation from the first run (task 2.90)', () => {
       roles: ['professional'],
     });
 
-    expect(response.statusCode).toBe(403);
+    expect(response.statusCode).toBe(201);
+    expect((await w.audits('professional.added_by_admin')).length).toBe(1);
   });
 });
 
@@ -896,7 +932,7 @@ describe('the first sign-in lands in the wizard (task 2.90)', () => {
     const w = await world('onb-needs');
 
     const before = (await w.api.get('/auth/me', w.owner)).json<MeResponse>();
-    await w.api.post('/onboarding/fast-path', w.owner, PROFILE);
+    await w.api.post('/onboarding/fast-path', w.owner, FAST);
     const after = (await w.api.get('/auth/me', w.owner)).json<MeResponse>();
 
     expect(before.needsWizard).toBe(true);
