@@ -352,7 +352,7 @@ Readers who are not treating professionals MUST have read-only access. Sharing M
 
 ### Requirement: Grantable non-clinical permissions
 
-An owner/admin MUST be able to grant, per user, a fixed set of non-clinical permissions that organizations commonly delegate: register out-of-hours appointments (override), register past appointments, access another professional's calendar (delegated calendar), operate the cash register, and administer patients (including explicit patient assignment). Each grant and revocation MUST be audited. A permission MUST apply only inside the organization and MUST NOT widen clinical access. Default grants MUST be: reception holds patient administration and cash register; owner/admin holds all; professionals hold none beyond their own calendar.
+An owner/admin MUST be able to grant, per user, a fixed set of non-clinical permissions that organizations commonly delegate: register out-of-hours appointments (override), book over an active slot hold that another person is completing (override hold), register past appointments, access another professional's calendar (delegated calendar), operate the cash register, and administer patients (including explicit patient assignment). Each grant and revocation MUST be audited. A permission MUST apply only inside the organization and MUST NOT widen clinical access. Default grants MUST be: reception holds patient administration and cash register; owner/admin holds all; professionals hold none beyond their own calendar.
 
 #### Scenario: Grant the cash register to a professional
 - GIVEN a solo center where a professional also collects payments
@@ -364,6 +364,12 @@ An owner/admin MUST be able to grant, per user, a fixed set of non-clinical perm
 - GIVEN a request to grant "read clinical notes" as a permission
 - WHEN processed
 - THEN the system refuses it
+
+#### Scenario: Overriding a slot hold needs its own permission
+- GIVEN a reception user without the override-hold permission and a slot hold that another person is completing
+- WHEN the reception user books that time asking to override the hold
+- THEN the request is refused as forbidden and the hold stays active
+- AND once the owner grants the permission, the same request succeeds and the hold ends as invalidated
 
 #### Scenario: Revocation takes effect at once
 - GIVEN a reception user holding the past-booking permission

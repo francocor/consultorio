@@ -8,7 +8,7 @@ Stage 0: tasks 0.2 to 0.34 done and merged. Task 0.1 (rotate secrets) is a manua
 
 Stage 1: slices S1.00 to S1.37 done (tasks 1.1 to 1.130, all 130 tasks of Stage 1), and the independent security review of 1.129 has been run and its ten findings handled (batch 7). Next: the owner's review of PR #14 (and the confirmation of decision D19). See batches 3 to 7 below.
 
-Stage 2: slices S2.01 to S2.11 done (tasks 2.1 to 2.33, the scheduling backend), branch `feat/stage-2-practice-core` stacked on `feat/stage-1-secure-core`. Next: S2.12 onward (scheduling web, then clinical). See batch 8 at the end of this file.
+Stage 2: slices S2.01 to S2.16 done (tasks 2.1 to 2.46, the scheduling backend and web), plus the scheduling review fixes and the documents track (S2.25 to S2.28, tasks 2.75 to 2.85) merged in "Stage 2 integration 1" at the end of this file; branch `feat/stage-2-practice-core` stacked on `feat/stage-1-secure-core`. Still open: clinical (S2.17 to S2.24), onboarding, the Stage 2 gate. The per-track reports stay beside this file: `apply-progress-stage2-schedfix.md` and `apply-progress-stage2-documents.md`.
 
 ## Batch 1: Stage 0, slices S0.01 to S0.05
 
@@ -932,3 +932,89 @@ Browser checks beyond the suite: axe at 360 and 1280 px on the agenda (day, week
 - S2.17 to S2.34 (clinical schema and UI, documents, onboarding, gate, legacy removal).
 - The booking dialog has no hold step yet (holds exist in the API; the public flow in Stage 3 uses them).
 - Nothing was verified in CI (never polled).
+
+## Stage 2 integration 1: scheduling review fixes and the documents track
+
+Two finished parallel tracks were merged into `feat/stage-2-practice-core` (tip before: `835fdf3`), with `git merge --no-ff`, in this order. The per-track reports stay as they are and hold the detail of each track: `apply-progress-stage2-schedfix.md` (14 review findings, strict TDD evidence, contract changes) and `apply-progress-stage2-documents.md` (S2.25 to S2.28, strict TDD evidence, deviations 1 to 15, shared-file list).
+
+### What was merged
+
+| Order | Branch | Merge commit | Notes |
+|---|---|---|---|
+| 1 | `fix/stage-2-scheduling-review` (`2320671`, based on `28ba4cf`) | `31d2bba` | No textual conflict: the UI branch only touched `apps/web` and `packages/contracts/src/appointment-lifecycle.ts`, which the fixes did not. The contract changes broke the web at compile time, which is how the adaptations below were found |
+| 2 | `feat/stage-2-documents` (`15963fb`, based on `9bd2379`) | `35a521f` | Textual conflicts in `_journal.json`, `application.ts`, `main.ts`, `worker.ts`, `queues.ts`, `export-contributors.ts` and `translate.ts` (see resolutions). The other shared files merged cleanly and are exercised by the suites |
+
+### Conflict resolutions
+
+- `migrations/meta/_journal.json`: both tracks appended at idx 23; kept the 23 to 27 of this branch, then the schedfix entry as idx 28 and the documents entry as idx 29, with `when` strictly increasing.
+- `main/application.ts`: both `createScheduling` and `createDocuments` are built (each its own `const`), and both route sets are in `routes` (`scheduling.routes`, `documents.routes`).
+- `main/main.ts` (`runWorker`): the worker receives the scheduling `tenantJobs` (`hold.expire` every minute) and the documents hooks (`documentWorker(...)`: `jobs` and `schedules`).
+- `platform/jobs/worker.ts`: both option families coexist. `tenantJobs` (a job queued for every organization every N ms, scheduling) and `jobs` / `schedules` built from a `WorkerJobContext` (documents). `registerJobs` receives `audit.seal`, `audit.verify`, the tenant jobs and the module jobs. Converging the two mechanisms into one is a possible later cleanup, not done here.
+- `platform/jobs/queues.ts`: `hold.expire`, `document.scan` and `document.cleanup` are all registered.
+- `main/export-contributors.ts`: scheduling and documents contributors both registered.
+- `web/shared/lib/translate.ts`: git sees this file as binary (a NUL character in the `MISSING` sentinel). Resolved by taking this branch's version and adding the `documents` namespace; the NUL is preserved.
+- Merged without conflict but worth knowing: `contracts/index.ts`, `roles.ts`, `audit-actions.ts`, `tokens/kinds.ts`, `config.ts`, `test/support/fixtures.ts`, `definer-functions.test.ts`, `demo-coverage.test.ts`, `audit-scenarios.ts`, `i18n.ts`, the locale files, `PatientDetailPage.tsx`, `router.tsx` and `tasks.md`.
+
+### Migrations: one linear sequence
+
+| File | Journal idx | `when` | Origin |
+|---|---|---|---|
+| `0023_scheduling_config` to `0027_care_from_appointments` | 23 to 27 | unchanged | this branch |
+| `0028_care_lock_order` | 28 | 1792206823184 | schedfix `0080_care_lock_order` (renumbered, SQL and snapshot content unchanged) |
+| `0029_documents` | 29 | 1792208525251 | documents `0040_documents` (renumbered, SQL unchanged) |
+| `0030_document_appointment_fk` | 30 | 1792224778157 | new, see below |
+
+Snapshots: `0028_snapshot.json` already chained to `0027`. `0029_snapshot.json` was rebuilt as the `0028` snapshot plus the `public.document` table of the documents snapshot (its `prevId` is the id of `0028`); the old `0040_snapshot.json` is gone. `0030_snapshot.json` was generated by drizzle-kit. `pnpm db:check` reports no drift. Migrations 0000 to 0022 were not touched.
+
+### Documents get a foreign key to the appointment (migration 0030, new behaviour, strict TDD)
+
+`document.appointment_id` now references `appointment (tenant_id, id)` by the composite key (`document_appointment_fkey`); `encounter_id` stays without a foreign key until the clinical merge.
+
+- RED: `documents-schema.test.ts` "links a document to an appointment of its own organization, and to no other" (an appointment of another tenant and a random id were accepted) and `documents-uploads.test.ts` "keeps the appointment the document came with, and refuses one of another patient" (a 200 for an appointment of another patient).
+- GREEN: the migration, the schema declaration, and a check in `uploads.ts` that the appointment exists and belongs to the patient of the upload (404 `not_found` otherwise, so a bad id is never a 500 from the database).
+- Gotcha found while writing the migration: `ALTER TABLE ... ADD CONSTRAINT FOREIGN KEY` validates the existing rows with a query that runs as the table owner, and `FORCE ROW LEVEL SECURITY` binds the owner on both `document` and `appointment`: their tenant policy casts an `app.tenant_id` nobody set to uuid and the migration failed with 22P02. The migration lifts FORCE on the two tables for that statement only, inside the migration transaction, and puts it back. Any future migration that adds a foreign key between two forced-RLS tables needs the same.
+- The generated isolation suite caught the new key (`composite foreign key document_appointment_fkey`): the `document` fixture now takes an `appointment_id` override.
+- Not enforced by the database: that the appointment's patient is the document's patient. The use case checks it; a composite key including the patient would need a new unique constraint on `appointment`.
+
+### State machine: one lifecycle table
+
+`apps/api/src/modules/scheduling/domain/appointment-state-machine.ts` no longer keeps its own transition table: `canTransition`, `isTerminal` and `canReschedule` are the shared functions of `packages/contracts/src/appointment-lifecycle.ts` (the screens read the same table). Its exhaustive hand-written test (every from/to pair, 13 allowed transitions, terminal statuses) is unchanged and passes.
+
+### UI adaptations to the schedfix contracts
+
+| Contract change | Adaptation | Proof |
+|---|---|---|
+| `CorrectStatusRequest` is `{ toStatus, reasonCode, note?, expectedVersion }` | The correct panel has a "Motivo de la corrección" select (the four codes, labels in `scheduling.json`) and an optional "Detalle (opcional)" textarea; the button stays off until a code is chosen; an empty note is left out of the request | `appointment-drawer.test.tsx` (3 correct tests, RED first), `e2e/calendar.day.spec.ts` now ends with a real correction by the professional |
+| `WorklistAppointmentDto.version` | The worklist actions (confirm identity, detach patient, approve) send the version the card was listed with instead of reading the appointment first; a 409 `stale_revision` reloads the list and shows "Este turno cambió mientras lo miraba" | `worklist-page.test.tsx`: the `GET /appointments/:id` stubs are gone, so a stray read fails; new stale test |
+| Cancel with `cancelledBy` other than `patient` is a 402 on a read-only tenant | In a read-only organization the cancel panel offers only "El paciente" in "Quién cancela" and says why (`aria-describedby`); with an active organization the three options remain | `appointment-drawer.test.tsx` (two new tests, RED first) |
+| `scheduling.override_hold` (403 without it) | The UI never sends `overrideHold` (there is no hold step in the booking dialog yet, see batch 9 "Remaining"), so nothing can hit that 403 today. A 403 on a booking is shown by the generic message and the dialog stays open (characterization test, passes without a code change). The staff screen already lists the permission (schedfix). A UI that overrides a hold will need to hide the option from users without the permission | `booking-dialog.test.tsx` |
+| `expectedVersion` required everywhere, `CalendarResponse.truncated`, `slot_taken` always with `nextSlots` | Already followed by the UI track (it sent the version everywhere, showed the truncation notice and handled a conflict without next slots) | existing tests |
+
+### Other documents changed
+
+- `design.md` (grantable toggles table) and `specs/authorization/spec.md` (grantable permissions requirement, plus a scenario) now list `scheduling.override_hold`; owner and admin hold it by default, reception and professional need a grant.
+
+### Verification (tip of the branch, Node v24.22.0, pnpm 10.34.7, Docker running and shared with other worktrees)
+
+| Command | Result |
+|---|---|
+| `corepack pnpm install --frozen-lockfile` | exit 0 (no dependency changed) |
+| `corepack pnpm typecheck` | exit 0 (contracts, api, web) |
+| `corepack pnpm lint` | exit 0 |
+| `corepack pnpm format:check` | exit 0 |
+| `corepack pnpm test` | **209 files, 2680 tests passed** |
+| `corepack pnpm test:integration` | **102 files, 1540 tests**: 1535 passed and 4 skipped (the slow ClamAV suite) in the full run; 1 failed (the generated isolation test for the new `document_appointment_fkey`, a fixture gap described above). After the fixture fix the file passes alone (152 tests). No test needed a re-run for an infrastructure reason in this run |
+| `corepack pnpm build` | exit 0 |
+| `corepack pnpm db:check` | No migration drift (0000 to 0030) |
+| `corepack pnpm test:e2e` | **140 passed** on a fresh stack on private ports (API 3790, web 4790; the ports were changed only in the working tree and reverted), `--workers=3`, desktop and mobile-360, axe on every screen |
+| `docker build -f infra/Dockerfile` and a smoke run with the production configuration of the CI smoke test (private port 3187) | image built; `/health` answered `{"status":"ok"}` |
+
+CI was not run or polled from here. Lighthouse was not run.
+
+### Risks and follow-ups
+
+- The `tenantJobs` and `jobs` / `schedules` worker hooks do the same kind of thing in two ways; they coexist now.
+- `.env.example` still lacks `CLAMAV_HOST` and the scanner variables stay in `main/config-scanner.ts` (documents deviation 7); `.env` files were off limits for this run.
+- `encounter_id` still has no foreign key: it arrives with the clinical merge (the next migration number is 0031 or later; the clinical and onboarding branches renumber at their merges).
+- The e2e stack still has an in-memory storage whose upload URL a browser cannot reach and does not run the document jobs, so there is no Playwright spec for documents (documents deviation 13).
+- Migration 0030 takes a short exclusive lock on `appointment` and `document` (it lifts and restores FORCE ROW LEVEL SECURITY). Harmless before the first deployment; plan it for a quiet moment afterwards.

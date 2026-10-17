@@ -461,7 +461,7 @@ create policy clinical_scope on clinical_note as restrictive
 | Kind | Examples | Storage | Rule |
 |---|---|---|---|
 | Role permissions | `scheduling.book`, `clinical.note.write` | Code (`ROLE_PERMISSIONS`) | Fixed per role |
-| **Grantable toggles** (non-clinical) | `scheduling.override_hours`, `scheduling.register_past`, `scheduling.delegated_calendar` (scope: professional ids), `cash.operate`, `patients.administer` | `permission_grant` rows, granted by owner/admin, audited | Effective = role ∪ (grants ∩ `GRANTABLE`). DB `CHECK (permission NOT LIKE 'clinical.%')` plus a catalog test. |
+| **Grantable toggles** (non-clinical) | `scheduling.override_hours`, `scheduling.override_hold` (book over a slot hold somebody else is completing; owner/admin by default), `scheduling.register_past`, `scheduling.delegated_calendar` (scope: professional ids), `cash.operate`, `patients.administer` | `permission_grant` rows, granted by owner/admin, audited | Effective = role ∪ (grants ∩ `GRANTABLE`). DB `CHECK (permission NOT LIKE 'clinical.%')` plus a catalog test. |
 | Org attribute | `reception_sees_clinical_metadata` (default off) | `tenant.settings` | One setting used by documents, e-prescription and consent (S29). When on, reception sees existence, name or title, category and date, never content. When off, reception sees only consent status under the generic label. Never reaches a non-clinical admin. |
 
 ### 4.2 Sharing-scope model (W12, W14, W15)
