@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 
 import type { CreatePatientResponse, NoteDto } from '@consultorio/contracts';
 import type { FastifyInstance } from 'fastify';
+import { vi } from 'vitest';
 
 import { careAssignment } from '../../src/db/schema/care.js';
 import type { DbHandle } from '../../src/platform/db/pool.js';
@@ -38,6 +39,10 @@ export interface ClinicalWorld {
   open(by: Professional, patientId: string, body?: Record<string, unknown>): Promise<NoteDto>;
   close(): Promise<void>;
 }
+
+// A world signs several people in (Argon2id) and the journeys make many calls: on a busy machine
+// (a CI runner shared with other jobs) the default limits are too tight.
+vi.setConfig({ testTimeout: 90_000, hookTimeout: 120_000 });
 
 let worlds = 0;
 
