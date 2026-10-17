@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { NOTIFICATION_ERRORS } from './notifications-catalog.js';
 import { ONLINE_BOOKING_ERRORS } from './online-booking-catalog.js';
 import { TELECONSULTATION_ERRORS } from './teleconsultation-catalog.js';
-import { WAITLIST_ERRORS } from './waitlist.js';
+import { WAITLIST_ERRORS } from './waitlist-catalog.js';
 
 /**
  * Error codes of the API, with the HTTP status each one is sent with and the i18n key the web app

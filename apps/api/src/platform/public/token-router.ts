@@ -44,6 +44,11 @@ export interface TokenContext {
   subjectId: string;
   /** The small facts the issuer stored with the token. */
   payload: Record<string, unknown>;
+  /**
+   * Which button of the page was pressed (`choice` of the form), for a page with more than one.
+   * Only a short lowercase word gets here; anything else is null, as is a plain POST.
+   */
+  choice: string | null;
   /** Who is acting for the audit trail: the visitor, by address and browser, with no account. */
   actor: AuditActor;
   /**
@@ -118,22 +123,34 @@ const READ_ONLY: TokenPage = {
 
 const Params = z.strictObject({ token: z.string().min(1).max(512) });
 
-/** A form posts `application/x-www-form-urlencoded`; the button carries no fields we read. */
-function ignoreForms(app: FastifyInstance): void {
+/** What a button may call itself: a short lowercase word. */
+const CHOICE = /^[a-z_]{1,24}$/;
+
+/**
+ * A form posts `application/x-www-form-urlencoded`. The only field we read is `choice`, and only
+ * when it is a short lowercase word: nothing else of the body reaches a handler.
+ */
+function readForms(app: FastifyInstance): void {
   app.addContentTypeParser(
     'application/x-www-form-urlencoded',
     { parseAs: 'string' },
-    (_request, _body, done) => {
-      done(null, {});
+    (_request, body, done) => {
+      const value = new URLSearchParams(typeof body === 'string' ? body : '').get('choice');
+      done(null, { choice: value !== null && CHOICE.test(value) ? value : null });
     },
   );
+}
+
+function choiceOf(body: unknown): string | null {
+  const value = (body as { choice?: unknown } | null | undefined)?.choice;
+  return typeof value === 'string' && CHOICE.test(value) ? value : null;
 }
 
 export function createTokenRoutes(options: TokenRouterOptions) {
   const now = options.clock ?? (() => new Date());
 
   return (app: FastifyInstance): void => {
-    ignoreForms(app);
+    readForms(app);
     const typed = app.withTypeProvider<ZodTypeProvider>();
     const audits = [...new Set([...handlers.values()].flatMap((handler) => handler.audits))];
     const config = {
@@ -175,6 +192,7 @@ export function createTokenRoutes(options: TokenRouterOptions) {
           kind: found.kind,
           subjectId: found.subjectId,
           payload: found.payload,
+          choice: act ? choiceOf(request.body) : null,
           actor: request.auditActor,
           redeem: async () => (await options.tokens.redeem(tx, found.kind, token)) !== null,
         };

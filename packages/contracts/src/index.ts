@@ -29,4 +29,5 @@ export * from './scheduling-config.js';
 export * from './scheduling.js';
 export * from './staff.js';
 export * from './teleconsultation.js';
+export * from './waitlist-catalog.js';
 export * from './waitlist.js';

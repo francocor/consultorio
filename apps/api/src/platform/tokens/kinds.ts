@@ -46,7 +46,7 @@ export const TOKEN_KIND_REGISTRY: Record<TokenKind, KindSpec> = {
   appointment_cancel: { ttlMs: 60 * DAY, maxUses: 1, sessionBound: false, enabled: true },
   // A booking can be made up to a year ahead (the horizon setting), and its link lives until the start.
   appointment_reschedule: { ttlMs: 366 * DAY, maxUses: 1, sessionBound: false, enabled: true },
-  waitlist_offer: { ttlMs: 2 * DAY, maxUses: 1, sessionBound: false, enabled: false },
+  waitlist_offer: { ttlMs: 2 * DAY, maxUses: 1, sessionBound: false, enabled: true },
   // A reminder issues the link when it is sent, up to 14 days ahead (the longest lead time an
   // organization can set), so the kind allows 15 days; the issuer asks for the join window it
   // needs (until the window closes plus the hours the address stays known).

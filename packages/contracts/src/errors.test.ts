@@ -10,7 +10,7 @@ import {
 import { NOTIFICATION_ERRORS } from './notifications.js';
 import { ONLINE_BOOKING_ERRORS } from './online-booking.js';
 import { TELECONSULTATION_ERRORS } from './teleconsultation.js';
-import { WAITLIST_ERRORS } from './waitlist.js';
+import { WAITLIST_ERRORS } from './waitlist-catalog.js';
 
 const REQUEST_ID = '0190a000-0000-7000-8000-000000000001';
 
