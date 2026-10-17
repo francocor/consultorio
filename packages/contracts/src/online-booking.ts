@@ -1,5 +1,6 @@
 import { z } from 'zod';
 
+import { DocumentInput } from './patients.js';
 import { APPOINTMENT_MODES } from './scheduling-config.js';
 
 /**
@@ -212,3 +213,55 @@ export const PublicHoldDto = z.strictObject({
   appointmentTypeId: Id,
 });
 export type PublicHoldDto = z.infer<typeof PublicHoldDto>;
+
+// Public: the form and the code ----------------------------------------------------------------
+
+const PersonName = z.string().trim().min(1).max(80);
+const Phone = z
+  .string()
+  .trim()
+  .max(30)
+  .regex(/^[0-9+()\-\s.]*$/, 'digits and phone punctuation only');
+
+/** Longest administrative reason a visitor may add. It is text for reception, never a clinical note. */
+export const MAX_BOOKING_REASON_LENGTH = 300;
+
+/**
+ * The form of a public booking (online-booking, "Booking completion and patient identification"):
+ * what is needed to book and nothing clinical. The WhatsApp choice is a separate, unticked box; the
+ * consent to process the data is required and is checked by the API, which answers a missing one with
+ * a field error the page can show.
+ */
+export const PublicSubmissionRequest = z.object({
+  givenNames: PersonName,
+  familyName: PersonName,
+  document: DocumentInput,
+  birthDate: z.iso.date(),
+  email: z.string().trim().toLowerCase().pipe(z.email().max(254)),
+  /** Needed only for WhatsApp reminders. */
+  phone: Phone.optional(),
+  whatsappOptIn: z.boolean().default(false),
+  dataProcessingConsent: z.boolean(),
+  /** Administrative text; the page warns not to write health details in it. */
+  reason: z.string().trim().max(MAX_BOOKING_REASON_LENGTH).optional(),
+  challengeProof: z.string().min(1).max(512),
+});
+export type PublicSubmissionRequest = z.infer<typeof PublicSubmissionRequest>;
+
+export const PublicSubmissionResponse = z.strictObject({
+  /** The address the code went to, hidden in part, so the visitor can see they typed it right. */
+  maskedEmail: z.string(),
+  codeExpiresAt: Instant,
+});
+export type PublicSubmissionResponse = z.infer<typeof PublicSubmissionResponse>;
+
+/** Asks for the code again: it is one more email, so it carries a proof of the bot challenge. */
+export const PublicResendRequest = z.object({ challengeProof: z.string().min(1).max(512) });
+export type PublicResendRequest = z.infer<typeof PublicResendRequest>;
+
+export const PUBLIC_CODE_LENGTH = 6;
+
+export const PublicConfirmRequest = z.object({
+  code: z.string().regex(/^\d{6}$/),
+});
+export type PublicConfirmRequest = z.infer<typeof PublicConfirmRequest>;

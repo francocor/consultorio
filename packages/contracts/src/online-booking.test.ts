@@ -8,7 +8,9 @@ import {
   ONLINE_BOOKING_ERRORS,
   OnlineBookingSettings,
   PublicAvailabilityQuery,
+  PublicConfirmRequest,
   PublicHoldRequest,
+  PublicSubmissionRequest,
   UpdateBookingLinkRequest,
 } from './online-booking.js';
 
@@ -105,5 +107,80 @@ describe('public booking contracts', () => {
       expect(definition.i18nKey, code).toBe(`errors.${code}`);
     }
     expect(ONLINE_BOOKING_ERRORS).toHaveProperty('booking_challenge_failed');
+  });
+});
+
+describe('public submission contracts', () => {
+  const base = {
+    givenNames: 'Lucía',
+    familyName: 'Fernández',
+    document: { type: 'dni' as const, number: '30.111.222' },
+    birthDate: '1990-04-02',
+    email: 'Lucia@Example.TEST ',
+    phone: '+54 11 5555-0000',
+    whatsappOptIn: false,
+    dataProcessingConsent: true,
+    challengeProof: 'proof',
+  };
+
+  it('takes the data of the form and normalizes the email', () => {
+    const parsed = PublicSubmissionRequest.parse(base);
+
+    expect(parsed.email).toBe('lucia@example.test');
+    expect(parsed.whatsappOptIn).toBe(false);
+  });
+
+  it('leaves the WhatsApp choice off unless the visitor ticks it', () => {
+    const withoutChoice: Record<string, unknown> = { ...base };
+    delete withoutChoice['whatsappOptIn'];
+
+    expect(PublicSubmissionRequest.parse(withoutChoice).whatsappOptIn).toBe(false);
+  });
+
+  it('refuses what is not a name, a date, an email or a phone number', () => {
+    for (const bad of [
+      { givenNames: ' ' },
+      { familyName: 'x'.repeat(81) },
+      { birthDate: 'tomorrow' },
+      { email: 'not-an-email' },
+      { phone: 'call me' },
+      { document: { type: 'cuit', number: '1' } },
+      { reason: 'x'.repeat(301) },
+      { challengeProof: '' },
+    ]) {
+      expect(
+        PublicSubmissionRequest.safeParse({ ...base, ...bad }).success,
+        JSON.stringify(bad),
+      ).toBe(false);
+    }
+  });
+
+  it('has no clinical question: only the optional administrative reason', () => {
+    const keys = Object.keys(PublicSubmissionRequest.shape);
+
+    expect(keys).toContain('reason');
+    for (const forbidden of ['symptoms', 'diagnosis', 'medication', 'allergies']) {
+      expect(keys).not.toContain(forbidden);
+    }
+  });
+
+  it('drops an organization, role or patient identifier instead of using it', () => {
+    const parsed = PublicSubmissionRequest.parse({
+      ...base,
+      tenantId: '0190a000-0000-7000-8000-000000000001',
+      role: 'owner',
+      patientId: '0190a000-0000-7000-8000-000000000002',
+    });
+
+    expect(Object.keys(parsed)).not.toEqual(
+      expect.arrayContaining(['tenantId', 'role', 'patientId']),
+    );
+  });
+
+  it('takes a six digit code and nothing else', () => {
+    expect(PublicConfirmRequest.safeParse({ code: '012345' }).success).toBe(true);
+    for (const code of ['12345', '1234567', 'abcdef', '12 345', '']) {
+      expect(PublicConfirmRequest.safeParse({ code }).success, code).toBe(false);
+    }
   });
 });

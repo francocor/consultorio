@@ -2,9 +2,14 @@ import { DEFAULT_ONLINE_BOOKING_SETTINGS, OnlineBookingSettings } from '@consult
 
 import { createFakeBotChallenge } from '../../adapters/bot-challenge-fake/index.js';
 import { createLocalBotChallenge } from '../../adapters/bot-challenge-local/index.js';
-import { createOnlineBooking } from '../../modules/online-booking/index.js';
+import {
+  createBookingPurgeJob,
+  createOnlineBooking,
+  createOtpSendJob,
+} from '../../modules/online-booking/index.js';
 import { adapterOfSetting } from '../../platform/local-providers/dev-routes.js';
-import { fake, real } from '../adapter-resolver.js';
+import { createMetrics } from '../../platform/metrics.js';
+import { createTenantRoutedEmail, fake, real } from '../adapter-resolver.js';
 
 import type { ModuleWiring } from './types.js';
 
@@ -13,6 +18,15 @@ import type { ModuleWiring } from './types.js';
  * edits this file, `modules/online-booking/` and nothing shared: it fills the customer slot of the
  * `botChallenge` port with the local proof of work, and adds its jobs to the worker.
  */
+/**
+ * What online booking counts in this process (suspicious activity of the public form). The internal
+ * metrics endpoint reads it; one registry per process is what the API needs.
+ */
+export const onlineBookingMetrics = createMetrics();
+
+/** The purge of abandoned submissions runs for every organization once an hour. */
+const PURGE_EVERY_MS = 3_600_000;
+
 export const onlineBookingWiring: ModuleWiring = {
   settingsSections: [
     {
@@ -40,12 +54,26 @@ export const onlineBookingWiring: ModuleWiring = {
         Promise.resolve({ adapter: adapterOfSetting(config.providers.botChallenge), mode: null }),
     },
   ],
+  // The code goes out by a job, so the API process holds a queue client.
+  needsJobs: true,
+  worker: (context) => {
+    // The tenant-routed sender: a demo organization's codes never reach the real provider.
+    const email = createTenantRoutedEmail(context.adapters);
+    const clock = context.clock ? { clock: context.clock } : {};
+    return {
+      jobs: () => [createOtpSendJob({ email, ...clock })],
+      tenantJobs: [{ definition: createBookingPurgeJob(clock), everyMs: PURGE_EVERY_MS }],
+    };
+  },
   create: (context) =>
     createOnlineBooking({
       withTenant: context.withTenant,
       auditDeny: context.auditDeny,
       keys: context.keys,
       origins: context.origins,
+      rateLimitStore: context.rateLimitStore,
+      metrics: onlineBookingMetrics,
+      ...(context.jobs ? { jobs: context.jobs } : {}),
       appointmentEvents: context.appointmentEvents,
       ...(context.adapters ? { adapters: context.adapters } : {}),
       ...(context.clock ? { clock: context.clock } : {}),

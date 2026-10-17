@@ -1,4 +1,4 @@
-import { and, asc, eq, inArray } from 'drizzle-orm';
+import { and, asc, eq, inArray, isNull } from 'drizzle-orm';
 
 import { membership } from '../../../db/schema/identity.js';
 import { bookingLink, type BookingLinkRow } from '../../../db/schema/online-booking.js';
@@ -173,4 +173,29 @@ export async function listOrganizationOffers(
     if (offer && offer.types.length > 0 && offer.locations.length > 0) offers.push(offer);
   }
   return offers;
+}
+
+/**
+ * The offer of a professional named by their internal id, as long as their link is enabled and sits
+ * under the organization address in the URL. Used once a visitor already holds a slot of theirs (the
+ * hold names the professional); the id is never read from a request.
+ */
+export async function findOfferByProfessional(
+  tx: Tx,
+  input: { organizationSlug: string; professionalId: string },
+  context: OfferContext,
+): Promise<ProfessionalOffer | null> {
+  const [link] = await tx
+    .select()
+    .from(bookingLink)
+    .where(
+      and(eq(bookingLink.professionalId, input.professionalId), eq(bookingLink.enabled, true)),
+    );
+  if (!link) return null;
+  const [organization] = await tx
+    .select({ id: bookingLink.id })
+    .from(bookingLink)
+    .where(and(eq(bookingLink.slug, input.organizationSlug), isNull(bookingLink.professionalId)));
+  if (!organization) return null;
+  return offerOf(tx, link, context);
 }

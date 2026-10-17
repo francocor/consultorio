@@ -1,6 +1,10 @@
 import { randomBytes } from 'node:crypto';
 
-import type { BookingLinkDto } from '@consultorio/contracts';
+import type {
+  BookingLinkDto,
+  PublicHoldDto,
+  PublicSubmissionRequest,
+} from '@consultorio/contracts';
 import type { FastifyInstance, LightMyRequestResponse } from 'fastify';
 import { expect } from 'vitest';
 
@@ -13,10 +17,15 @@ import {
   type FakeEmailSender,
 } from '../../src/adapters/fake-email/index.js';
 import type { AdapterPorts, AdapterResolver } from '../../src/main/adapter-resolver.js';
+import { onlineBookingMetrics } from '../../src/main/wiring/online-booking.js';
+import { createOtpSendJob } from '../../src/modules/online-booking/application/otp-send-job.js';
+import { createBookingPurgeJob } from '../../src/modules/online-booking/application/purge.js';
 import type { BotChallenge } from '../../src/platform/bot-challenge/bot-challenge.js';
+import type { JobDefinition, JobRunResult } from '../../src/platform/jobs/define-job.js';
+import type { Metrics } from '../../src/platform/metrics.js';
 
 import { hostOf } from './app.js';
-import { createRecordingJobClient, type RecordingJobClient } from './jobs.js';
+import { createRecordingJobClient, runPending, type RecordingJobClient } from './jobs.js';
 import {
   createSchedulingHttpWorld,
   type Doctor,
@@ -47,6 +56,8 @@ export interface Visitor {
 export interface BookingWorld extends SchedulingHttpWorld {
   email: FakeEmailSender;
   jobs: RecordingJobClient;
+  /** What the module counts (one registry per process: tests compare before and after). */
+  metrics: Metrics;
   /** The bot challenge the application uses (easy puzzles, so tests stay fast). */
   challenge: BotChallenge;
   /** Moves the clock of the whole application (scheduling, public flows, sessions). */
@@ -60,9 +71,26 @@ export interface BookingWorld extends SchedulingHttpWorld {
   }): Promise<{ organization: BookingLinkDto; professional: BookingLinkDto }>;
   /** The public path of a professional page, e.g. `/public/<org>/p/<pro>`. */
   pagePath(links: { organization: BookingLinkDto; professional: BookingLinkDto }): string;
+  /** The jobs the worker would run for this module, with the world's email and clock. */
+  jobDefinitions: readonly JobDefinition[];
+  /** Runs the jobs that are pending now, the way the worker would. */
+  runJobs(): Promise<{ name: string; result: JobRunResult }[]>;
+  /** A slot held by `visitor` on the Monday `weeksAfter` weeks after the first one (local time). */
+  hold(
+    visitor: Visitor,
+    links: { organization: BookingLinkDto; professional: BookingLinkDto },
+    options?: { weeksAfter?: number; time?: string },
+  ): Promise<PublicHoldDto>;
+  /** A valid form with a document and an email of its own; `overrides` change what a test needs. */
+  form(
+    overrides?: Partial<Omit<PublicSubmissionRequest, 'challengeProof'>>,
+  ): Omit<PublicSubmissionRequest, 'challengeProof'>;
+  /** The six digit code in the latest email sent to `address`. */
+  codeSentTo(address: string): string;
 }
 
 let visitors = 0;
+let forms = 0;
 
 export async function createBookingWorld(
   runtime: Parameters<typeof createSchedulingHttpWorld>[0],
@@ -158,11 +186,53 @@ export async function createBookingWorld(
     };
   };
 
+  const jobDefinitions = [
+    createOtpSendJob({ email, clock: () => current }),
+    createBookingPurgeJob({ clock: () => current }),
+  ];
+
   return {
     ...base,
     email,
     jobs,
+    metrics: onlineBookingMetrics,
     challenge,
+    jobDefinitions,
+    runJobs: () => runPending(runtime.db, jobs, jobDefinitions),
+    hold: async (who, links, holdOptions = {}) => {
+      const weeksAfter = holdOptions.weeksAfter ?? 1;
+      const time = holdOptions.time ?? '10:00';
+      const hour = String(Number(time.slice(0, 2)) + 3).padStart(2, '0');
+      const response = await who.post(`/public/${links.organization.slug}/booking/holds`, {
+        professional: links.professional.slug,
+        locationId: base.centro,
+        appointmentTypeId: base.consulta,
+        startsAt: `${base.monday(weeksAfter)}T${hour}:${time.slice(3)}:00.000Z`,
+        challengeProof: await who.solve(),
+      });
+      expect(response.statusCode, response.body).toBe(201);
+      return response.json<PublicHoldDto>();
+    },
+    form: (overrides = {}) => {
+      forms += 1;
+      return {
+        givenNames: 'Lucía',
+        familyName: `Fernández ${String(forms)}`,
+        document: { type: 'dni', number: String(30_000_000 + forms) },
+        birthDate: '1990-04-02',
+        email: `lucia${String(forms)}@example.test`,
+        phone: '+54 11 5555 0000',
+        whatsappOptIn: false,
+        dataProcessingConsent: true,
+        ...overrides,
+      };
+    },
+    codeSentTo: (address) => {
+      const message = email.lastTo(address);
+      const code = message?.text.match(/\b(\d{6})\b/)?.[1];
+      if (!code) throw new Error(`no code was sent to ${address}`);
+      return code;
+    },
     now: () => current,
     setNow: (date) => {
       current = date;

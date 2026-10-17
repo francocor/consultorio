@@ -5,6 +5,9 @@ import {
   PublicChallengeResponse,
   PublicHoldDto,
   PublicHoldRequest,
+  PublicResendRequest,
+  PublicSubmissionRequest,
+  PublicSubmissionResponse,
   type OnlineBookingSettings,
   type PublicBookingPageDto as PublicBookingPage,
   type PublicSlotDto,
@@ -15,13 +18,16 @@ import { z } from 'zod';
 
 import type { AdapterResolver } from '../../../main/adapter-resolver.js';
 import type { BotChallenge } from '../../../platform/bot-challenge/bot-challenge.js';
+import type { TenantKeys } from '../../../platform/crypto/tenant-keys.js';
 import { SYSTEM_USER_ID, type Tx, type WithTenant } from '../../../platform/db/tenant-context.js';
 import { AppError, conflictCode, denied } from '../../../platform/http/problem.js';
 import type { PublicOrigins } from '../../../platform/http/public-origin.js';
 import type { ResolvedTenant } from '../../../platform/http/tenant-host.js';
+import type { JobClient } from '../../../platform/jobs/boss.js';
 import { SlotNoLongerAvailableError, SlotTakenError } from '../../scheduling/index.js';
 import type { SchedulingPorts } from '../../scheduling/index.js';
 import { readOrganizationName } from '../../tenancy/index.js';
+import type { Abuse } from '../application/abuse.js';
 import type { AvailabilityCache } from '../application/availability-cache.js';
 import { readBookingSettings, type BookingSettings } from '../application/booking-settings.js';
 import { publicAvailability } from '../application/public-availability.js';
@@ -33,6 +39,12 @@ import {
   type OfferContext,
   type ProfessionalOffer,
 } from '../application/public-offer.js';
+import {
+  resendCode,
+  submitBooking,
+  type SubmissionDeps,
+  type SubmitOutcome,
+} from '../application/submissions.js';
 
 import {
   newBookingSessionId,
@@ -47,6 +59,10 @@ export interface PublicRoutesDeps {
   clock: () => Date;
   portsOf: (tx: Tx) => SchedulingPorts;
   availabilityCache: AvailabilityCache<PublicAvailabilityResponse>;
+  keys: TenantKeys;
+  /** Queues the email with the code. Absent: the form cannot be submitted (503). */
+  jobs: JobClient | undefined;
+  abuse: Abuse;
 }
 
 /** How long the anonymous booking session cookie lives: the length of a booking attempt, with room. */
@@ -360,6 +376,127 @@ export function publicRoutes(deps: PublicRoutesDeps) {
             startsAt: request.body.startsAt,
           });
         }
+      },
+    );
+
+    const IdParams = z.strictObject({ slug: SlugParam, id: z.uuid() });
+    const submissionDeps: SubmissionDeps = { keys: deps.keys, jobs: deps.jobs, abuse: deps.abuse };
+
+    /** Turns what the use case decided into the answer: one shape for every visitor. */
+    function answerFor(
+      outcome: SubmitOutcome,
+      request: FastifyRequest,
+      reply: FastifyReply,
+    ): FastifyReply | PublicSubmissionResponse {
+      if (outcome.ok) {
+        return {
+          maskedEmail: outcome.maskedEmail,
+          codeExpiresAt: outcome.codeExpiresAt.toISOString(),
+        };
+      }
+      switch (outcome.refusal) {
+        case 'not_found':
+          return denied(request, reply);
+        case 'expired':
+          return conflictCode(request, reply, 'slot_no_longer_available');
+        case 'rate_limited':
+          throw new AppError('rate_limited');
+        case 'limit_reached':
+          throw new AppError('booking_limit_reached');
+      }
+    }
+
+    /** What both routes of the form need before the use case runs. */
+    async function formContext(
+      request: FastifyRequest & { params: { slug: string; id: string } },
+      reply: FastifyReply,
+      proof: string,
+    ) {
+      const tenant = tenantOf(request);
+      void reply.header('cache-control', 'no-store');
+      // The bot challenge comes first: nothing else is spent on a request that fails it.
+      if (!(await challengeOf(tenant).verify(proof, request.ip))) {
+        throw new AppError('booking_challenge_failed');
+      }
+      const sessionId = readBookingSession(request.headers.cookie, {
+        secure: secureCookies(tenant),
+      });
+      return { tenant, sessionId };
+    }
+
+    typed.post(
+      '/public/:slug/booking/holds/:id/submission',
+      {
+        config: {
+          readOnly: 'write',
+          auth: 'public',
+          audits: 'none',
+          rateLimit: { max: 20, timeWindow: 60_000 },
+        },
+        schema: {
+          params: IdParams,
+          body: PublicSubmissionRequest,
+          response: { 200: PublicSubmissionResponse },
+        },
+      },
+      async (request, reply) => {
+        const { challengeProof, ...form } = request.body;
+        const { tenant, sessionId } = await formContext(request, reply, challengeProof);
+        if (sessionId === null) return denied(request, reply);
+        const outcome = await run(tenant, async (tx) => {
+          const settings = await readBookingSettings(tx);
+          return submitBooking(tx, submissionDeps, {
+            tenant: { id: tenant.id, country: tenant.country },
+            organizationSlug: request.params.slug,
+            holdId: request.params.id,
+            sourceKey: sourceKeyOf(sessionId),
+            ip: request.ip,
+            actor: request.auditActor,
+            now: deps.clock(),
+            offerContext: offerContext(tenant, settings),
+            form,
+          });
+        });
+        return answerFor(outcome, request, reply);
+      },
+    );
+
+    typed.post(
+      '/public/:slug/booking/holds/:id/code',
+      {
+        config: {
+          readOnly: 'write',
+          auth: 'public',
+          audits: 'none',
+          rateLimit: { max: 10, timeWindow: 60_000 },
+        },
+        schema: {
+          params: IdParams,
+          body: PublicResendRequest,
+          response: { 200: PublicSubmissionResponse },
+        },
+      },
+      async (request, reply) => {
+        const { tenant, sessionId } = await formContext(
+          request,
+          reply,
+          request.body.challengeProof,
+        );
+        if (sessionId === null) return denied(request, reply);
+        const outcome = await run(tenant, async (tx) => {
+          const settings = await readBookingSettings(tx);
+          return resendCode(tx, submissionDeps, {
+            tenant: { id: tenant.id, country: tenant.country },
+            organizationSlug: request.params.slug,
+            holdId: request.params.id,
+            sourceKey: sourceKeyOf(sessionId),
+            ip: request.ip,
+            actor: request.auditActor,
+            now: deps.clock(),
+            offerContext: offerContext(tenant, settings),
+          });
+        });
+        return answerFor(outcome, request, reply);
       },
     );
 
