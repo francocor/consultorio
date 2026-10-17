@@ -30,6 +30,8 @@ const RESET_BUDGET_MS = 30_000;
  */
 const NO_SEED_DATA: Record<string, string> = {
   action_token: 'One-time links are created by people inviting or resetting; none is pending.',
+  document:
+    'Files are added by staff; the Stage 2 demo extension (S2.31, fake PDFs through the fake scanner) seeds them and removes this entry.',
   job_execution: 'Idempotence markers of background jobs; created when a job runs.',
   login_challenge: 'A pending second-factor step; exists for minutes while somebody signs in.',
   patient_rights_request:

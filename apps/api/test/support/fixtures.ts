@@ -309,6 +309,26 @@ export const TENANT_FIXTURES: Record<string, TenantTableFixture> = {
       return id;
     },
   },
+  document: {
+    // An administrative document: visible to a plain transaction, so the generic suite can read it.
+    // The clinical restriction has its own tests (documents-schema.test.ts).
+    insert: async (tx, tenantId, overrides) => {
+      const id = randomUUID();
+      return returningId(
+        tx,
+        sql`INSERT INTO document (id, tenant_id, patient_id, category, classification, original_name,
+                                  declared_content_type, size_bytes, object_key, uploaded_by,
+                                  author_professional_id, replaces_document_id, duplicate_of_id)
+              VALUES (${id}, ${tenantId}, ${overrides?.['patient_id'] ?? (await insertPatient(tx, tenantId))},
+                      'id_copy', 'administrative', 'dni.pdf', 'application/pdf', 1000,
+                      ${`t/${tenantId}/quarantine/${id}`}, ${randomUUID()},
+                      ${overrides?.['author_professional_id'] ?? null},
+                      ${overrides?.['replaces_document_id'] ?? null},
+                      ${overrides?.['duplicate_of_id'] ?? null})
+              RETURNING id`,
+      );
+    },
+  },
   professional: {
     insert: async (tx, tenantId, overrides) =>
       returningId(

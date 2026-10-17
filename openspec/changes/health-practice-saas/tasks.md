@@ -684,32 +684,32 @@ Depends: S2.22.
 
 Depends: S1.24.
 
-- [ ] 2.75 `platform/scanning/malware-scanner.ts` port, `adapters/clamav/clamd-client.ts` (INSTREAM over TCP, timeouts, chunking) and a fake scanner that flags the EICAR string. [DOC-02] Test: unit against a fake clamd server; integration with the compose ClamAV (slow tag).
-- [ ] 2.76 `platform/files/sniff.ts`: magic-byte detection for PDF, JPEG, PNG, WebP, text and DOCX; reject executables, scripts and archives. [DOC-02] Test: polyglot and renamed-executable fixtures.
+- [x] 2.75 `platform/scanning/malware-scanner.ts` port, `adapters/clamav/clamd-client.ts` (INSTREAM over TCP, timeouts, chunking) and a fake scanner that flags the EICAR string. [DOC-02] Test: unit against a fake clamd server; integration with the compose ClamAV (slow tag).
+- [x] 2.76 `platform/files/sniff.ts`: magic-byte detection for PDF, JPEG, PNG, WebP, text and DOCX; reject executables, scripts and archives. [DOC-02] Test: polyglot and renamed-executable fixtures.
 
 ## S2.26 Upload pipeline (~400 lines)
 
 Depends: S2.25, S2.17.
 
-- [ ] 2.77 `db/schema/documents.ts` + migration (status `quarantined|available|rejected|hidden`, sha256, scan result, category, encounter/appointment link, replacement link) with RLS and classification. [DOC-01, DOC-04, DOC-05] Test: isolation suite.
-- [ ] 2.78 `POST /documents/uploads` returning a presigned POST (20 MB `content-length-range`, content type), at most 10 files per request, tenant and uploader from the session, key `t/{tenantId}/quarantine/{uuid}`; a patient of another tenant returns not found. [DOC-01, DOC-02, DOC-03] Test: 11 files rejected, cross-tenant 404.
-- [ ] 2.79 Job `document.scan`: sniff, hash, stream to ClamAV, fail closed with backoff and an alert after 1 hour; clean moves to `t/{tenantId}/docs/{uuid}` and becomes `available`; infected or wrong type becomes `rejected` and the uploader is notified. [DOC-02, DOC-06] Test: EICAR rejected, scanner down stays quarantined, renamed executable rejected.
+- [x] 2.77 `db/schema/documents.ts` + migration (status `quarantined|available|rejected|hidden`, sha256, scan result, category, encounter/appointment link, replacement link) with RLS and classification. [DOC-01, DOC-04, DOC-05] Test: isolation suite.
+- [x] 2.78 `POST /documents/uploads` returning a presigned POST (20 MB `content-length-range`, content type), at most 10 files per request, tenant and uploader from the session, key `t/{tenantId}/quarantine/{uuid}`; a patient of another tenant returns not found. [DOC-01, DOC-02, DOC-03] Test: 11 files rejected, cross-tenant 404.
+- [x] 2.79 Job `document.scan`: sniff, hash, stream to ClamAV, fail closed with backoff and an alert after 1 hour; clean moves to `t/{tenantId}/docs/{uuid}` and becomes `available`; infected or wrong type becomes `rejected` and the uploader is notified. [DOC-02, DOC-06] Test: EICAR rejected, scanner down stays quarantined, renamed executable rejected.
 
 ## S2.27 Download and lifecycle (~400 lines)
 
 Depends: S2.26.
 
-- [ ] 2.80 `POST /documents/:id/download-link` and `GET /files/:token` per design 5.6 (token kind `document_download`, bound to the session, 5 minutes, single use, authz re-run at redemption, `nosniff`, `no-store`, sanitized disposition). [DOC-03] Test: expiry, reuse, other session, access lost meanwhile.
-- [ ] 2.81 Classification rules: clinical documents follow clinical read rules, administrative ones are visible to reception, `reception_sees_clinical_metadata` exposes metadata only, admins never see clinical documents. [DOC-04, AUZ-07, AUZ-06] Test: role matrix.
-- [ ] 2.82 Replace and hide (original retained, never deleted), duplicate detection by sha256 per patient (warning), cleanup job `document.cleanup` for abandoned uploads (marks rows abandoned, may delete orphan objects, never table rows). [DOC-05, DOC-06] Test: replace keeps the original; duplicate warning.
-- [ ] 2.83 Lists return metadata only; `REVOKE DELETE` on `document`. [DOC-03, DOC-07] Test: list payload has no content fields.
+- [x] 2.80 `POST /documents/:id/download-link` and `GET /files/:token` per design 5.6 (token kind `document_download`, bound to the session, 5 minutes, single use, authz re-run at redemption, `nosniff`, `no-store`, sanitized disposition). [DOC-03] Test: expiry, reuse, other session, access lost meanwhile.
+- [x] 2.81 Classification rules: clinical documents follow clinical read rules, administrative ones are visible to reception, `reception_sees_clinical_metadata` exposes metadata only, admins never see clinical documents. [DOC-04, AUZ-07, AUZ-06] Test: role matrix.
+- [x] 2.82 Replace and hide (original retained, never deleted), duplicate detection by sha256 per patient (warning), cleanup job `document.cleanup` for abandoned uploads (marks rows abandoned, may delete orphan objects, never table rows). [DOC-05, DOC-06] Test: replace keeps the original; duplicate warning.
+- [x] 2.83 Lists return metadata only; `REVOKE DELETE` on `document`. [DOC-03, DOC-07] Test: list payload has no content fields.
 
 ## S2.28 Documents UI (~300 lines)
 
 Depends: S2.27.
 
-- [ ] 2.84 `features/documents/*`: multi-file upload with progress and Spanish rejection reasons, patient document list with status chips ("Scanning"), download via the link flow, hide and replace. [DOC-01, DOC-03, DOC-05] Test: component tests.
-- [ ] 2.85 Documents export contributor and retention note. [DOC-07, TEN-08] Test: registry test lists documents.
+- [x] 2.84 `features/documents/*`: multi-file upload with progress and Spanish rejection reasons, patient document list with status chips ("Scanning"), download via the link flow, hide and replace. [DOC-01, DOC-03, DOC-05] Test: component tests.
+- [x] 2.85 Documents export contributor and retention note. [DOC-07, TEN-08] Test: registry test lists documents.
 
 ## S2.29 Onboarding backend (~400 lines)
 

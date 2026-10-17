@@ -34,6 +34,29 @@ export interface WorkerOptions {
    * platform does not import the modules.
    */
   tenantJobs?: readonly { definition: JobDefinition; everyMs: number }[];
+  /**
+   * Jobs of the capability modules, built by the composition root with what the worker owns: the
+   * queue client (to enqueue follow-ups), the metrics and the log. The platform knows no module.
+   */
+  jobs?: (context: WorkerJobContext) => readonly JobDefinition[];
+  /**
+   * Scheduled work of the capability modules, built the same way. Each task runs on an interval
+   * and a failure is logged, never fatal.
+   */
+  schedules?: (context: WorkerJobContext) => readonly WorkerSchedule[];
+}
+
+export interface WorkerJobContext {
+  client: JobClient;
+  db: Db;
+  metrics: Metrics;
+  log: WorkerLog;
+}
+
+export interface WorkerSchedule {
+  name: string;
+  intervalMs: number;
+  run(): Promise<void>;
 }
 
 export interface Worker {
@@ -82,10 +105,16 @@ export async function startWorker(options: WorkerOptions): Promise<Worker> {
     log: options.log,
     ...(options.sealGraceMs === undefined ? {} : { graceMs: options.sealGraceMs }),
   });
+  const context: WorkerJobContext = { client, db: handle.db, metrics, log: options.log };
   await registerJobs(
     boss,
     { db: handle.db, log: options.log },
-    [audit.seal, audit.verify, ...(options.tenantJobs ?? []).map((job) => job.definition)],
+    [
+      audit.seal,
+      audit.verify,
+      ...(options.tenantJobs ?? []).map((job) => job.definition),
+      ...(options.jobs?.(context) ?? []),
+    ],
     options.pollingIntervalSeconds === undefined
       ? {}
       : { pollingIntervalSeconds: options.pollingIntervalSeconds },
@@ -100,6 +129,13 @@ export async function startWorker(options: WorkerOptions): Promise<Worker> {
   };
 
   const tickers: Ticker[] = [
+    ...(options.schedules?.(context) ?? []).map((schedule) =>
+      createTicker({
+        intervalMs: schedule.intervalMs,
+        tick: () => schedule.run(),
+        onError: report(schedule.name),
+      }),
+    ),
     createTicker({
       intervalMs: options.sealIntervalMs ?? 5000,
       tick: async () => {

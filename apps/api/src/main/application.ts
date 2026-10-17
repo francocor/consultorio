@@ -5,6 +5,7 @@ import type { FastifyInstance } from 'fastify';
 
 import { createAccess, createGrants, createGrantsRepo } from '../modules/access/index.js';
 import { createAudit } from '../modules/audit/index.js';
+import { createDocuments } from '../modules/documents/index.js';
 import type { LockoutPolicy } from '../modules/identity/application/lockout.js';
 import type { PasswordValidator } from '../modules/identity/domain/password-policy.js';
 import { createIdentity, type PasswordHasher } from '../modules/identity/index.js';
@@ -36,6 +37,7 @@ import { createWithTenant } from '../platform/db/tenant-context.js';
 import type { HealthDeps } from '../platform/http/health.js';
 import { createPublicOrigins } from '../platform/http/public-origin.js';
 import { createMemoryRateLimitStore, type RateLimit } from '../platform/http/rate-limit.js';
+import type { JobClient } from '../platform/jobs/boss.js';
 import type { EmailSender } from '../platform/mail/email-sender.js';
 import type { ObjectStorage } from '../platform/storage/object-storage.js';
 
@@ -81,6 +83,11 @@ export interface ApplicationOptions {
    * that need it then answer "unavailable" instead of failing at startup.
    */
   storage?: ObjectStorage;
+  /**
+   * Enqueues background jobs from a request (the scan of an uploaded document). Absent in a
+   * deployment without them: the features that need a job then answer "unavailable".
+   */
+  jobs?: JobClient;
   /**
    * The platform operator console. Absent when no operator database is configured (and always
    * absent in single-tenant mode, which has no platform host): `/operator/*` is then a 404.
@@ -228,6 +235,14 @@ export function createApplication(options: ApplicationOptions): FastifyInstance 
     ...(schedulingClock ? { clock: schedulingClock } : {}),
   });
 
+  const documents = createDocuments({
+    withTenant,
+    auditDeny,
+    storage: options.storage,
+    jobs: options.jobs,
+    ...(options.clock ? { clock: options.clock } : {}),
+  });
+
   const auditViewer = createAudit({ withTenant });
   const supportAccess = createSupportAccess({ withTenant });
   const operatorConsole =
@@ -288,6 +303,7 @@ export function createApplication(options: ApplicationOptions): FastifyInstance 
       staff.routes,
       patients.routes,
       scheduling.routes,
+      documents.routes,
       auditViewer.routes,
       branding.routes,
       supportAccess.routes,

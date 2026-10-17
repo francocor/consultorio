@@ -137,6 +137,8 @@ export const PERMISSIONS = [
   'clinical.anamnesis.read',
   'clinical.anamnesis.write',
   'clinical.document.read',
+  // Uploads a clinical document, hides it, or reclassifies one. Never grantable.
+  'clinical.document.write',
   'clinical.prescription.read',
   'clinical.search',
   // Patient portal.
