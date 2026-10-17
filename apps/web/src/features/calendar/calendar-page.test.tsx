@@ -13,7 +13,7 @@ import {
 } from '../../shared/test/render.js';
 import { resetViewportAfterEach, setViewport } from '../../shared/test/viewport.js';
 
-import { FEED_ENTRIES, IDS, LOCATIONS, PROFESSIONALS, TYPES } from './fixtures.js';
+import { entry, FEED_ENTRIES, IDS, LOCATIONS, PROFESSIONALS, TYPES } from './fixtures.js';
 
 resetViewportAfterEach();
 
@@ -70,6 +70,9 @@ function open(options: OpenOptions = {}) {
       'GET /api/staff': () => jsonResponse({ staff: PROFESSIONALS }),
       'GET /api/locations': () => jsonResponse({ locations: LOCATIONS }),
       'GET /api/appointment-types': () => jsonResponse({ types: TYPES }),
+      [`GET /api/appointments/${IDS.appointmentGomez}`]: () => jsonResponse(FEED_ENTRIES[0]),
+      [`GET /api/appointments/${IDS.appointmentGomez}/history`]: () =>
+        jsonResponse({ appointmentId: IDS.appointmentGomez, rescheduledCount: 0, events: [] }),
       'GET /api/availability': () =>
         jsonResponse({ professionalId: IDS.ana, typeId: IDS.first, slots: [], closedDays: [] }),
       ...options.routes,
@@ -408,7 +411,7 @@ describe('moving an appointment', () => {
   };
 
   function moved(version: number, startsAt: string, endsAt: string) {
-    return { ...FEED_ENTRIES[0], version, startsAt, endsAt };
+    return { ...entry(), version, startsAt, endsAt };
   }
 
   /** What the API answers with: the appointment, without the names the feed adds. */
@@ -479,7 +482,7 @@ describe('moving an appointment', () => {
     setViewport(1280);
     const user = userEvent.setup();
     const bodies: unknown[] = [];
-    let current = FEED_ENTRIES[0];
+    let current = entry();
     open({
       feed: () =>
         jsonResponse({
@@ -494,7 +497,7 @@ describe('moving an appointment', () => {
             bodies.length === 1 ? 4 : 5,
             bodies.length === 1 ? '2026-10-17T13:15:00.000Z' : '2026-10-17T13:00:00.000Z',
             bodies.length === 1 ? '2026-10-17T13:45:00.000Z' : '2026-10-17T13:30:00.000Z',
-          ) as typeof current;
+          );
           return jsonResponse(asAppointment(current));
         },
       },
@@ -523,5 +526,41 @@ describe('moving an appointment', () => {
       await screen.findByRole('heading', { name: 'No tiene acceso a esta sección' }),
     ).toBeInTheDocument();
     expect(bodies).toEqual([]);
+  });
+});
+
+describe('the appointment drawer', () => {
+  it('opens the appointment that was chosen, and the address remembers it', async () => {
+    setViewport(1280);
+    const user = userEvent.setup();
+    const app = open();
+    await screen.findByRole('group', { name: 'Agenda de Dra. Ana Pérez' });
+
+    await user.click(screen.getByRole('button', { name: /Gómez, Valentina/ }));
+
+    const dialog = await screen.findByRole('dialog', { name: 'Gómez, Valentina' });
+    expect(within(dialog).getByText('Confirmado')).toBeInTheDocument();
+    expect(app.router.state.location.search).toMatchObject({ appointment: IDS.appointmentGomez });
+  });
+
+  it('opens straight from the address, for a shared link or a reload', async () => {
+    setViewport(1280);
+    open({ path: `/calendar?date=2026-10-17&appointment=${IDS.appointmentGomez}` });
+
+    expect(await screen.findByRole('dialog', { name: 'Gómez, Valentina' })).toBeInTheDocument();
+  });
+
+  it('closes with Escape and clears the address', async () => {
+    setViewport(1280);
+    const user = userEvent.setup();
+    const app = open({ path: `/calendar?date=2026-10-17&appointment=${IDS.appointmentGomez}` });
+    await screen.findByRole('dialog', { name: 'Gómez, Valentina' });
+
+    await user.keyboard('{Escape}');
+
+    await waitFor(() => {
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    });
+    expect(app.router.state.location.search).not.toHaveProperty('appointment');
   });
 });

@@ -20,6 +20,7 @@ import { EmptyState } from '../../shared/ui/states/empty-state.js';
 import { ErrorState } from '../../shared/ui/states/error-state.js';
 import { ListSkeleton } from '../../shared/ui/states/loading-skeleton.js';
 
+import { AppointmentDrawer } from './components/AppointmentDrawer.js';
 import { BookingDialog, type BookingInitial } from './components/BookingDialog.js';
 import { CalendarToolbar } from './components/CalendarToolbar.js';
 import { ProfessionalFilter } from './components/ProfessionalFilter.js';
@@ -326,6 +327,19 @@ export function CalendarPage() {
             : {})}
         />
       )}
+
+      <AppointmentDrawer
+        appointmentId={search.appointment ?? null}
+        onClose={() => {
+          update({ appointment: undefined });
+        }}
+        locations={locations}
+        professionals={professionals}
+        ownProfessionalId={ownProfessionalId}
+        permissions={me.permissions}
+        readOnly={readOnly}
+        now={now}
+      />
 
       {canBook ? (
         <BookingDialog
