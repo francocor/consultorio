@@ -1,7 +1,13 @@
-import type { SlotContribution } from '../../../app/registry.js';
+import { lazySlot } from '../../../app/lazy-slot.js';
+import type { SlotContribution, SlotProps } from '../../../app/registry.js';
 
-import { ChannelsPanel } from './components/ChannelsPanel.js';
-import { MessageLog } from './components/MessageLog.js';
+const MessageLog = lazySlot<SlotProps['appointment-drawer']>(() =>
+  import('./components/MessageLog.js').then((module) => ({ default: module.MessageLog })),
+);
+
+const ChannelsPanel = lazySlot<SlotProps['patient-detail-tab']>(() =>
+  import('./components/ChannelsPanel.js').then((module) => ({ default: module.ChannelsPanel })),
+);
 
 /**
  * What messaging mounts inside screens that other features own: the message log in the appointment
@@ -23,7 +29,7 @@ const slots: readonly (
     order: 60,
     anyOf: ['patients.read'],
     labelKey: 'messaging:channels.tab',
-    Component: ({ patientId }) => <ChannelsPanel patientId={patientId} />,
+    Component: ChannelsPanel,
   },
 ];
 

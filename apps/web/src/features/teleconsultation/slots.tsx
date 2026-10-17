@@ -1,10 +1,20 @@
-import type { SettingsArea, SlotContribution } from '../../app/registry.js';
-
-import { VideoSessionPanel } from './components/VideoSessionPanel.js';
-import { VideoSettingsSection } from './components/VideoSettingsSection.js';
+import { lazySlot } from '../../app/lazy-slot.js';
+import type { SettingsArea, SlotContribution, SlotProps } from '../../app/registry.js';
 
 /** The areas of the settings this section belongs to. */
 const SETTINGS_AREAS: readonly SettingsArea[] = ['scheduling'];
+
+const VideoSessionPanel = lazySlot<SlotProps['appointment-drawer']>(() =>
+  import('./components/VideoSessionPanel.js').then((module) => ({
+    default: module.VideoSessionPanel,
+  })),
+);
+
+const VideoSettings = lazySlot<SlotProps['settings-section']>(() =>
+  import('./components/VideoSettingsSection.js').then((module) => ({
+    default: ({ area }) => (SETTINGS_AREAS.includes(area) ? <module.VideoSettingsSection /> : null),
+  })),
+);
 
 /**
  * What the teleconsultation feature mounts inside screens that other features own:
@@ -27,7 +37,7 @@ const slots: readonly (
     id: 'teleconsultation.settings',
     order: 40,
     anyOf: ['tenant.settings.manage'],
-    Component: ({ area }) => (SETTINGS_AREAS.includes(area) ? <VideoSettingsSection /> : null),
+    Component: VideoSettings,
   },
 ];
 
