@@ -5,12 +5,15 @@ import {
 
 import { createFakeVideoLinkProvider } from '../../adapters/video-fake/index.js';
 import {
+  DEFAULT_MANUAL_LINK_DOMAINS,
   createLocalVideoLinkProvider,
   createUnavailableVideoLinkProvider,
 } from '../../adapters/video-local/index.js';
 import {
   createTeleconsultation,
   createVideoLinkCreateJob,
+  devVideoRoutes,
+  type DevVideoControls,
 } from '../../modules/teleconsultation/index.js';
 import { adapterOfSetting } from '../../platform/local-providers/dev-routes.js';
 import { fake, real, type AdapterRegistry } from '../adapter-resolver.js';
@@ -27,16 +30,40 @@ import type { ModuleWiring } from './types.js';
  * from an empty configuration.
  */
 function videoSlot(providers: ProviderConfig | undefined): AdapterRegistry['videoLink'] {
-  const allowedDomains = providers?.videoAllowedDomains ?? [];
+  const listed = providers?.videoAllowedDomains ?? [];
+  const simulated = providers === undefined || providers.video === 'local';
+  // While the simulators run, an empty list means "the usual services"; otherwise it allows nothing.
+  const simulatorDomains = listed.length > 0 ? listed : DEFAULT_MANUAL_LINK_DOMAINS;
   return {
-    real:
-      providers?.video === 'local'
-        ? // Neither the address builder nor the room reservation has any effect outside the process.
-          fake(createLocalVideoLinkProvider({ allowedDomains }))
-        : real(createUnavailableVideoLinkProvider({ allowedDomains })),
-    demo: fake(createFakeVideoLinkProvider()),
+    real: simulated
+      ? // Neither the address builder nor the room reservation has any effect outside the process.
+        fake(createLocalVideoLinkProvider({ allowedDomains: simulatorDomains }))
+      : real(createUnavailableVideoLinkProvider({ allowedDomains: listed })),
+    // Demo organizations never reach a real service, but they attach manual links like anyone.
+    demo: fake(createFakeVideoLinkProvider({ manualLinkDomains: simulatorDomains })),
   };
 }
+
+/**
+ * The simulator controls live in routes that are registered when the console is built, before the
+ * module exists. They are given the module's controls once it is: a late binding, used only while
+ * `LOCAL_PROVIDERS_CONSOLE` is on.
+ */
+function lateBound<T>(missing: string) {
+  let value: T | undefined;
+  return {
+    bind(next: T) {
+      value = next;
+    },
+    get(): T {
+      if (value === undefined) throw new Error(missing);
+      return value;
+    },
+  };
+}
+const consoleControls = lateBound<DevVideoControls>(
+  'The video simulator controls need the application to be built first.',
+);
 
 /**
  * Everything the teleconsultation module registers with the composition root (track D). The track
@@ -61,18 +88,23 @@ export const teleconsultationWiring: ModuleWiring = {
       // The simulators add their mode (an outage, rejected templates) when they exist.
       status: () =>
         Promise.resolve({ adapter: adapterOfSetting(config.providers.video), mode: null }),
+      routes: devVideoRoutes(() => consoleControls.get()),
     },
   ],
   // A virtual appointment gets its room from a job, queued in the transaction that books it.
   needsJobs: true,
-  create: (context) =>
-    createTeleconsultation({
+  create: (context) => {
+    const module = createTeleconsultation({
       withTenant: context.withTenant,
       auditDeny: context.auditDeny,
       events: context.appointmentEvents,
+      origins: context.origins,
       ...(context.jobs ? { jobs: context.jobs } : {}),
       ...(context.adapters ? { adapters: context.adapters } : {}),
       ...(context.clock ? { clock: context.clock } : {}),
-    }),
+    });
+    consoleControls.bind(module.devControls);
+    return module;
+  },
   worker: ({ adapters }) => ({ jobs: () => [createVideoLinkCreateJob({ adapters })] }),
 };

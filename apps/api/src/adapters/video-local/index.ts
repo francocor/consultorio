@@ -24,6 +24,19 @@ const ROOM_SETTINGS = new URLSearchParams({
   'config.localRecording.disable': 'true',
 }).toString();
 
+/**
+ * The hosts a manual link may use while the simulators run and the platform lists none
+ * (`VIDEO_ALLOWED_DOMAINS` empty): the public Jitsi server and the services professionals already
+ * use. Production with a real provider, or with video off, has no default: an empty list there
+ * allows nothing until the platform names its hosts.
+ */
+export const DEFAULT_MANUAL_LINK_DOMAINS: readonly string[] = [
+  'meet.jit.si',
+  'meet.google.com',
+  'zoom.us',
+  'teams.microsoft.com',
+];
+
 export interface LocalVideoOptions {
   /** Where the Jitsi server is. Defaults to the public one. */
   baseUrl?: string;

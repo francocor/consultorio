@@ -14,7 +14,12 @@ import type {
   VideoLinkProvider,
   VideoRoom,
 } from '../../src/modules/teleconsultation/application/ports.js';
-import { createVideoLinkCreateJob } from '../../src/modules/teleconsultation/index.js';
+import {
+  createVideoLinkCreateJob,
+  type DevVideoControls,
+  type Teleconsultation,
+  type VideoJoinUrlResolver,
+} from '../../src/modules/teleconsultation/index.js';
 import type { DbHandle } from '../../src/platform/db/pool.js';
 import { runJob, type JobRunResult } from '../../src/platform/jobs/define-job.js';
 import { createActionTokens } from '../../src/platform/tokens/index.js';
@@ -55,6 +60,10 @@ export interface VideoWorld extends SchedulingHttpWorld {
   provider: SpyProvider;
   /** Swaps what the resolver returns for the organization: another provider, or none. */
   useProvider(provider: VideoLinkProvider | undefined): void;
+  /** What the notifications module asks for when it renders a reminder. */
+  joinUrlResolver(): VideoJoinUrlResolver;
+  /** What the simulator console does with the video side. */
+  devControls(): DevVideoControls;
   /** The id of a virtual appointment type. */
   virtual: string;
   /** The clock of the video module (the join window), apart from the scheduling clock. */
@@ -92,6 +101,7 @@ export async function createVideoWorld(
   let videoNow = new Date('2031-05-05T12:00:00.000Z');
   const videoClock = () => videoNow;
 
+  let module: Teleconsultation | undefined;
   const adapters: AdapterResolver = {
     // Only the video port is asked for in these tests.
     forTenant: () => current as never,
@@ -100,8 +110,11 @@ export async function createVideoWorld(
     entry.name === 'teleconsultation'
       ? {
           ...entry,
-          create: (context: Parameters<typeof entry.create>[0]) =>
-            entry.create({ ...context, clock: videoClock }),
+          create: (context: Parameters<typeof entry.create>[0]) => {
+            // The wiring builds a `Teleconsultation`; the test keeps it to reach its resolver.
+            module = entry.create({ ...context, clock: videoClock }) as Teleconsultation;
+            return module;
+          },
         }
       : entry,
   );
@@ -136,6 +149,14 @@ export async function createVideoWorld(
       current = next;
     },
     virtual,
+    devControls: () => {
+      if (!module) throw new Error('the teleconsultation module was not built');
+      return module.devControls;
+    },
+    joinUrlResolver: () => {
+      if (!module) throw new Error('the teleconsultation module was not built');
+      return module.joinUrlResolver;
+    },
     setVideoNow: (date: Date) => {
       videoNow = date;
     },

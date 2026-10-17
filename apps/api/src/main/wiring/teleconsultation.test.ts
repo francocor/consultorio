@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
+import { DEFAULT_MANUAL_LINK_DOMAINS } from '../../adapters/video-local/index.js';
 import { VideoProviderUnavailableError } from '../../modules/teleconsultation/application/ports.js';
 import { loadConfig } from '../config.js';
 
@@ -44,6 +45,21 @@ describe('the video slot of the adapter registry', () => {
 
     expect(slot.demo.kind).toBe('fake');
     expect(slot.demo.adapter.name).toBe('fake');
+  });
+
+  it('lets the simulators accept the usual video services when the platform lists no host', () => {
+    const slot = slotFor();
+
+    expect(slot.real?.adapter.manualLinkDomains).toEqual(DEFAULT_MANUAL_LINK_DOMAINS);
+    expect(slot.demo.adapter.manualLinkDomains).toEqual(DEFAULT_MANUAL_LINK_DOMAINS);
+    expect(DEFAULT_MANUAL_LINK_DOMAINS).toContain('meet.google.com');
+  });
+
+  it('gives a demo organization the hosts the platform lists, like customers', () => {
+    const slot = slotFor({ VIDEO_ALLOWED_DOMAINS: 'zoom.us' });
+
+    expect(slot.demo.adapter.manualLinkDomains).toEqual(['zoom.us']);
+    expect(slot.real?.adapter.manualLinkDomains).toEqual(['zoom.us']);
   });
 
   it('cannot make a room for customers when video is off, but keeps the manual link hosts', async () => {
