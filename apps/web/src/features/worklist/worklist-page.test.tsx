@@ -40,6 +40,7 @@ function item(overrides: Partial<WorklistItemDto>): WorklistItemDto {
       patientName: 'Gómez, Valentina',
       locationId: IDS.central,
       identityConfirmed: false,
+      version: 7,
     },
     actions: ['open_appointment', 'confirm_identity', 'detach_patient'],
     ...overrides,
@@ -65,6 +66,7 @@ const APPROVAL = item({
     patientName: 'Ríos, Tomás',
     locationId: IDS.central,
     identityConfirmed: true,
+    version: 2,
   },
   actions: ['open_appointment', 'approve', 'resolve', 'dismiss'],
 });
@@ -122,9 +124,6 @@ function open(options: OpenOptions = {}) {
       'GET /api/locations': () => jsonResponse({ locations: LOCATIONS }),
       'GET /api/staff': () => jsonResponse({ staff: PROFESSIONALS }),
       'GET /api/patients': () => jsonResponse({ patients: SUMMARIES, nextCursor: null }),
-      [`GET /api/appointments/${IDS.appointmentGomez}`]: () => jsonResponse(entry({ version: 7 })),
-      [`GET /api/appointments/${IDS.appointmentRios}`]: () =>
-        jsonResponse(entry({ id: IDS.appointmentRios, status: 'pending_approval', version: 2 })),
       ...options.routes,
     },
   });
@@ -292,7 +291,7 @@ describe('working an item', () => {
     });
   });
 
-  it('approves a booking using the version the appointment has now', async () => {
+  it('approves a booking with the version its card was listed with', async () => {
     const user = userEvent.setup();
     const bodies: unknown[] = [];
     open({
@@ -367,6 +366,29 @@ describe('working an item', () => {
     await user.click(within(dialog).getByRole('button', { name: 'Confirmar identidad' }));
 
     expect(await within(dialog).findByRole('alert')).toHaveTextContent('No tiene permiso');
+  });
+
+  it('says the appointment changed meanwhile when its version is stale (409), and reloads the list', async () => {
+    const user = userEvent.setup();
+    const app = open({
+      routes: {
+        [`POST /api/worklist/${ITEM(1)}/confirm-identity`]: () =>
+          problemResponse(409, 'stale_revision'),
+      },
+    });
+
+    await user.click(
+      (await card('Identidad por confirmar')).getByRole('button', { name: 'Confirmar identidad' }),
+    );
+    const dialog = await screen.findByRole('dialog', { name: 'Confirmar la identidad' });
+    await user.click(within(dialog).getByRole('checkbox'));
+    const listsBefore = app.lists.length;
+    await user.click(within(dialog).getByRole('button', { name: 'Confirmar identidad' }));
+
+    expect(await within(dialog).findByRole('alert')).toHaveTextContent('cambió');
+    await waitFor(() => {
+      expect(app.lists.length).toBeGreaterThan(listsBefore);
+    });
   });
 
   it('moves the appointment to another patient when the match was wrong', async () => {

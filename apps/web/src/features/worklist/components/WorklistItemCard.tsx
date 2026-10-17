@@ -5,6 +5,7 @@ import { useId, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 
 import { useApi } from '../../../app/providers.js';
+import { isApiError } from '../../../shared/lib/api-client.js';
 import { formatDateTime, formatDayLong, formatTime } from '../../../shared/lib/format.js';
 import {
   AlertDialog,
@@ -79,12 +80,14 @@ export function WorklistItemCard({
   const approve = useMutation({
     mutationFn: async () => {
       if (!appointment) throw new Error('only an appointment can be approved');
-      const current = await calendarApi(api).get(appointment.id);
-      return calendarApi(api).transition(appointment.id, 'approve', current.version);
+      return calendarApi(api).transition(appointment.id, 'approve', appointment.version);
     },
     onSuccess: async () => {
       toast.success(t('scheduling:drawer.done.approve'));
       await refresh();
+    },
+    onError: async (failure) => {
+      if (isApiError(failure) && failure.code === 'stale_revision') await refresh();
     },
   });
 

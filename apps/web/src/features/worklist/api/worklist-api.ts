@@ -46,10 +46,7 @@ export function worklistApi(api: ApiClient) {
         schema: AppointmentDto,
       }),
     /** The match was wrong: move the appointment to another record, or cancel it. */
-    detachPatient: (
-      appointmentId: string,
-      body: DetachPatientRequest & { expectedVersion: number },
-    ) =>
+    detachPatient: (appointmentId: string, body: DetachPatientRequest) =>
       api.post(`/appointments/${appointmentId}/detach-patient`, { body, schema: AppointmentDto }),
   };
 }

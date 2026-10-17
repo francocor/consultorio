@@ -4,6 +4,7 @@ import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 
 import { useApi } from '../../../app/providers.js';
+import { isApiError } from '../../../shared/lib/api-client.js';
 import { Button } from '../../../shared/ui/button.js';
 import { Checkbox } from '../../../shared/ui/checkbox.js';
 import {
@@ -16,15 +17,14 @@ import {
 } from '../../../shared/ui/dialog.js';
 import { Label } from '../../../shared/ui/label.js';
 import { toast } from '../../../shared/ui/toaster.js';
-import { calendarApi } from '../../calendar/api/calendar-api.js';
 import { ErrorNotice } from '../../calendar/components/drawer/ErrorNotice.js';
 import { worklistApi, worklistKeys } from '../api/worklist-api.js';
 
 /**
  * Confirming the identity of the patient of an appointment: the staff member says they saw the
  * patient and the ID document. The API refuses the appointment's own professional (403), and the
- * dialog says so. The version is read just before sending, so a stale screen cannot confirm over a
- * change somebody else made.
+ * dialog says so. The version sent is the one the card was listed with, so a stale screen cannot
+ * confirm over a change somebody else made: the API answers 409 and the list is read again.
  */
 export function ConfirmIdentityDialog({
   item,
@@ -40,14 +40,19 @@ export function ConfirmIdentityDialog({
 
   const confirm = useMutation({
     mutationFn: async () => {
-      const current = await calendarApi(api).get(item.subjectId);
-      return worklistApi(api).confirmIdentity(item.id, current.version);
+      if (!item.appointment) throw new Error('only an appointment has an identity to confirm');
+      return worklistApi(api).confirmIdentity(item.id, item.appointment.version);
     },
     onSuccess: async () => {
       toast.success(t('scheduling:worklist.confirmIdentity.done'));
       await queryClient.invalidateQueries({ queryKey: worklistKeys.all });
       await queryClient.invalidateQueries({ queryKey: ['calendar'] });
       onClose();
+    },
+    onError: async (error) => {
+      if (isApiError(error) && error.code === 'stale_revision') {
+        await queryClient.invalidateQueries({ queryKey: worklistKeys.all });
+      }
     },
   });
 

@@ -3,7 +3,6 @@ import {
   CANCELLED_BY,
   type CancellationReason,
   type CancelledBy,
-  type DetachPatientRequest,
   type PatientSummaryDto,
   type WorklistItemDto,
 } from '@consultorio/contracts';
@@ -12,6 +11,7 @@ import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 
 import { useApi } from '../../../app/providers.js';
+import { isApiError } from '../../../shared/lib/api-client.js';
 import { Button } from '../../../shared/ui/button.js';
 import {
   Dialog,
@@ -24,12 +24,20 @@ import {
 import { Select } from '../../../shared/ui/input.js';
 import { Label } from '../../../shared/ui/label.js';
 import { toast } from '../../../shared/ui/toaster.js';
-import { calendarApi } from '../../calendar/api/calendar-api.js';
 import { ErrorNotice } from '../../calendar/components/drawer/ErrorNotice.js';
 import { PatientPicker } from '../../patients/components/PatientPicker.js';
 import { worklistApi, worklistKeys } from '../api/worklist-api.js';
 
 type Choice = 'move' | 'cancel';
+
+/** What the dialog decides; the version comes from the card the action was opened on. */
+type DetachPatientBody =
+  | { resolution: 'move_to_patient'; patientId: string }
+  | {
+      resolution: 'cancel';
+      cancelledBy: CancelledBy;
+      reasonCode: CancellationReason;
+    };
 
 /**
  * The match with the patient was wrong. The appointment either goes to the right patient record or
@@ -51,11 +59,11 @@ export function DetachPatientDialog({
   const [reason, setReason] = useState<CancellationReason | ''>('');
 
   const detach = useMutation({
-    mutationFn: async (body: DetachPatientRequest) => {
-      const current = await calendarApi(api).get(item.subjectId);
-      return worklistApi(api).detachPatient(item.subjectId, {
+    mutationFn: async (body: DetachPatientBody) => {
+      if (!item.appointment) throw new Error('only an appointment has a patient to correct');
+      return worklistApi(api).detachPatient(item.appointment.id, {
         ...body,
-        expectedVersion: current.version,
+        expectedVersion: item.appointment.version,
       });
     },
     onSuccess: async () => {
@@ -63,6 +71,11 @@ export function DetachPatientDialog({
       await queryClient.invalidateQueries({ queryKey: worklistKeys.all });
       await queryClient.invalidateQueries({ queryKey: ['calendar'] });
       onClose();
+    },
+    onError: async (error) => {
+      if (isApiError(error) && error.code === 'stale_revision') {
+        await queryClient.invalidateQueries({ queryKey: worklistKeys.all });
+      }
     },
   });
 
