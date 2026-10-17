@@ -24,7 +24,19 @@ import {
  * Entries that belong to a later stage are defined now so the layouts are reviewed as a whole, and
  * switch on when `ENABLED_STAGE` is raised; until then they are not shown (no dead links).
  */
-export const ENABLED_STAGE = 1;
+export const ENABLED_STAGE = 2;
+
+/**
+ * Entries of the enabled stage whose screens are not built yet. They stay out of the navigation
+ * (no dead links) and leave this list as their slices land.
+ */
+const NOT_BUILT_YET: ReadonlySet<NavId> = new Set([
+  'today',
+  'check-in',
+  'worklist',
+  'drafts',
+  'prescriptions',
+]);
 
 export type NavId =
   | 'home'
@@ -168,7 +180,7 @@ type Layout = 'professional' | 'reception' | 'admin';
 const LAYOUTS: Record<Layout, readonly NavId[]> = {
   professional: ['today', 'patients', 'drafts', 'prescriptions'],
   reception: ['calendar', 'check-in', 'worklist', 'patients', 'cash'],
-  admin: ['patients', 'staff', 'reports', 'billing', 'audit', 'settings'],
+  admin: ['calendar', 'patients', 'staff', 'reports', 'billing', 'audit', 'settings'],
 };
 
 const LAYOUT_OF_ROLE: Partial<Record<Role, Layout>> = {
@@ -199,6 +211,7 @@ export function buildNav({ permissions, roles, stage = ENABLED_STAGE }: NavOptio
     seen.add(id);
     const item = NAV_ITEMS[id];
     if (item.stage > stage) continue;
+    if (stage <= ENABLED_STAGE && NOT_BUILT_YET.has(id)) continue;
     if (item.anyOf.length > 0 && !item.anyOf.some((permission) => granted.has(permission)))
       continue;
     items.push(item);

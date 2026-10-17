@@ -14,6 +14,7 @@ import { lazy, type ComponentType } from 'react';
 
 import { AuthLayout } from '../features/auth/AuthLayout.js';
 import { LoginPage } from '../features/auth/LoginPage.js';
+import { validateCalendarSearch } from '../features/calendar/search.js';
 import { settingsTabsFor } from '../features/settings/settings-tabs.js';
 import { SettingsPage } from '../features/settings/SettingsPage.js';
 import { isApiError } from '../shared/lib/api-client.js';
@@ -199,6 +200,16 @@ function buildRouteTree() {
     ),
   });
 
+  const calendarRoute = createRoute({
+    getParentRoute: () => authedRoute,
+    path: '/calendar',
+    validateSearch: validateCalendarSearch,
+    component: guarded(
+      ['scheduling.read'],
+      lazyRouteComponent(() => import('../features/calendar/CalendarPage.js'), 'CalendarPage'),
+    ),
+  });
+
   const staffRoute = createRoute({
     getParentRoute: () => authedRoute,
     path: '/staff',
@@ -301,6 +312,7 @@ function buildRouteTree() {
       patientsRoute,
       newPatientRoute,
       patientRoute,
+      calendarRoute,
       staffRoute,
       auditRoute,
       settingsRoute.addChildren([
