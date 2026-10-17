@@ -10,6 +10,8 @@ import {
 } from 'drizzle-orm/pg-core';
 
 import { tenantTable } from './_helpers.js';
+import { appointmentType } from './scheduling-config.js';
+import { slotHold } from './scheduling.js';
 import { professional } from './staff.js';
 import { tenant } from './tenant.js';
 
@@ -66,3 +68,43 @@ export const bookingLink = tenantTable(
 );
 
 export type BookingLinkRow = typeof bookingLink.$inferSelect;
+
+/**
+ * What a public slot hold was made for. A hold of scheduling is a reserved range and nothing else:
+ * it has no type of visit. The booking that finishes it needs one, and the visitor chose it when
+ * they chose the time, so it is kept here, server side, instead of being sent back by the page. The
+ * link says where the hold came from. A hold is never deleted, and neither is this row.
+ */
+export const publicHold = tenantTable(
+  'public_hold',
+  {
+    holdId: uuid('hold_id').notNull(),
+    appointmentTypeId: uuid('appointment_type_id').notNull(),
+    bookingLinkId: uuid('booking_link_id').notNull(),
+  },
+  (table) => [
+    foreignKey({
+      name: 'public_hold_tenant_id_fkey',
+      columns: [table.tenantId],
+      foreignColumns: [tenant.id],
+    }),
+    foreignKey({
+      name: 'public_hold_hold_fkey',
+      columns: [table.tenantId, table.holdId],
+      foreignColumns: [slotHold.tenantId, slotHold.id],
+    }),
+    foreignKey({
+      name: 'public_hold_type_fkey',
+      columns: [table.tenantId, table.appointmentTypeId],
+      foreignColumns: [appointmentType.tenantId, appointmentType.id],
+    }),
+    foreignKey({
+      name: 'public_hold_link_fkey',
+      columns: [table.tenantId, table.bookingLinkId],
+      foreignColumns: [bookingLink.tenantId, bookingLink.id],
+    }),
+    uniqueIndex('public_hold_hold_key').on(table.tenantId, table.holdId),
+  ],
+);
+
+export type PublicHoldRow = typeof publicHold.$inferSelect;
