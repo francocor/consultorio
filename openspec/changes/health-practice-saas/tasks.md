@@ -715,19 +715,19 @@ Depends: S2.27.
 
 Depends: S1.26, S2.01, S1.19.
 
-- [ ] 2.86 `db/schema/onboarding.ts` (step progress, wizard completed, checklist dismissed) and `modules/onboarding` API `GET|PUT /onboarding/state` limited to owner (and explicitly granted admins). [ONB-03, ONB-07] Test: professional, reception and patient denied.
-- [ ] 2.87 Tenant defaults and initial roles: country AR, time zone, es-AR, first user owner; the "are you a professional?" step creates the owner's professional profile or leaves them without clinical access. [ONB-02, AUZ-04] Test: both scenarios of the spec.
-- [ ] 2.88 `POST /onboarding/fast-path`: creates a location, Monday to Friday hours and a 30-minute default appointment type, no matricula required. [ONB-04] Test: ready to book afterwards.
-- [ ] 2.89 `application/checklist.ts` computing items from real data (location, hours, type, first patient, first appointment, matricula, invite staff, branding) and hiding items of unavailable capabilities. [ONB-05] Test: item completes from data without a click.
-- [ ] 2.90 Staff invitation from the first run (inviter's ceiling, plan-impact hook that does nothing until subscriptions) and audit of tenant creation, wizard changes and dismissal; `/auth/me` returns `needsWizard`. [ONB-06, ONB-07, ONB-01] Test: invitation grants only the invited role; first sign-in lands in the wizard.
+- [x] 2.86 `db/schema/onboarding.ts` (step progress, wizard completed, checklist dismissed) and `modules/onboarding` API `GET|PUT /onboarding/state` limited to owner (and explicitly granted admins). [ONB-03, ONB-07] Test: professional, reception and patient denied. (Done: `onboarding_state` in migration 0070, `GET|PUT /onboarding/state`, `POST /onboarding/complete`, new permission `onboarding.manage` held by the owner and grantable to an admin; a required step is never skipped or declared done by a click.)
+- [x] 2.87 Tenant defaults and initial roles: country AR, time zone, es-AR, first user owner; the "are you a professional?" step creates the owner's professional profile or leaves them without clinical access. [ONB-02, AUZ-04] Test: both scenarios of the spec. (Done: `POST /onboarding/professional` adds the professional role to the owner's own membership through one narrow, audited path, closed once the wizard is finished, and saves the profile; a malformed matricula adds nothing.)
+- [x] 2.88 `POST /onboarding/fast-path`: creates a location, Monday to Friday hours and a 30-minute default appointment type, no matricula required. [ONB-04] Test: ready to book afterwards. (Done: `POST /onboarding/fast-path` fills only the gaps, so a repeat creates nothing twice; a first booking was proven through the real API.)
+- [x] 2.89 `application/checklist.ts` computing items from real data (location, hours, type, first patient, first appointment, matricula, invite staff, branding) and hiding items of unavailable capabilities. [ONB-05] Test: item completes from data without a click. (Done: `domain/checklist.ts` over `application/facts.ts`; items of unavailable capabilities are not listed.)
+- [x] 2.90 Staff invitation from the first run (inviter's ceiling, plan-impact hook that does nothing until subscriptions) and audit of tenant creation, wizard changes and dismissal; `/auth/me` returns `needsWizard`. [ONB-06, ONB-07, ONB-01] Test: invitation grants only the invited role; first sign-in lands in the wizard. (Done: `GET /onboarding/invitation-impact` is the plan-impact hook, `/auth/me` carries `needsWizard`; the invitation itself is the existing `POST /staff/invitations` with its role ceiling.)
 
 ## S2.30 Onboarding UI (~400 lines)
 
 Depends: S2.29, S2.16.
 
-- [ ] 2.91 `features/onboarding/*` wizard: profile and branding, first location, professionals and invitations, working hours, appointment types; resumable, inline Spanish validation, required steps block completion, skippable optional steps, fast-path chooser. [ONB-03, ONB-04, ONB-08] Test: component tests.
-- [ ] 2.92 `FirstRunChecklist` in the AppShell slot (owner/admin only, dismissible, reachable from Help, items link to the screen that completes them). [ONB-05, SHL-08, ONB-08] Test: component tests.
-- [ ] 2.93 Playwright at 360 px: resume at step 3, skip branding keeps the default, reception sees no checklist, non-owner is denied the wizard. [ONB-03, ONB-05, ONB-07] Test: that spec.
+- [x] 2.91 `features/onboarding/*` wizard: profile and branding, first location, professionals and invitations, working hours, appointment types; resumable, inline Spanish validation, required steps block completion, skippable optional steps, fast-path chooser. [ONB-03, ONB-04, ONB-08] Test: component tests. (Done: wizard at `/onboarding` with the quick setup, six steps and a review; the sign-in lands there.)
+- [x] 2.92 `FirstRunChecklist` in the AppShell slot (owner/admin only, dismissible, reachable from Help, items link to the screen that completes them). [ONB-05, SHL-08, ONB-08] Test: component tests. (Done: card in the shell slot and a dialog from the account menu; the settings link is on the Settings header.)
+- [x] 2.93 Playwright at 360 px: resume at step 3, skip branding keeps the default, reception sees no checklist, non-owner is denied the wizard. [ONB-03, ONB-05, ONB-07] Test: that spec. (Done: `e2e/onboarding.spec.ts`, three journeys at 360 px with axe at every step.)
 
 ## S2.31 Stage 2 end-to-end and demo data (~400 lines)
 
