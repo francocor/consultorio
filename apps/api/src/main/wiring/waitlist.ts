@@ -18,6 +18,7 @@ export const waitlistWiring: ModuleWiring = {
     createWaitlist({
       withTenant: context.withTenant,
       auditDeny: context.auditDeny,
+      keys: context.keys,
       ...(context.clock ? { clock: context.clock } : {}),
     }),
 };
