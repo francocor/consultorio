@@ -549,8 +549,12 @@ describe('the solo fast path (task 2.88)', () => {
     expect(created.readyToBook).toBe(true);
     const place = (await w.api.get('/locations', w.owner)).json<{ locations: LocationDto[] }>()
       .locations[0];
+    // The professional the fast path made (the owner), not the one `team()` added.
     const [doctor] = await asTenant(runtime, w.tenant.id, (tx) =>
-      tx.select({ id: professional.id }).from(professional),
+      tx
+        .select({ id: professional.id })
+        .from(professional)
+        .where(eq(professional.membershipId, w.ownerUser.membershipId)),
     );
     const type = (
       await w.api.get('/appointment-types', w.owner)
@@ -571,7 +575,7 @@ describe('the solo fast path (task 2.88)', () => {
       local: { date: day.toISOString().slice(0, 10), time: '10:00' },
     });
 
-    expect(booking.statusCode, booking.body).toBe(201);
+    expect(booking.statusCode, `${booking.body} (day ${day.toISOString()})`).toBe(201);
     expect(booking.json<AppointmentDto>().status).toBe('scheduled');
     const state = await w.state();
     expect(state.checklist.items.find((item) => item.id === 'first_appointment')?.done).toBe(true);
