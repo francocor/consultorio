@@ -1,5 +1,7 @@
 import { eq, inArray, sql } from 'drizzle-orm';
 
+import { createAmendmentService } from '../../../modules/clinical/application/amendments.js';
+import { createNoteService, type Caller } from '../../../modules/clinical/application/notes.js';
 import type { PasswordHasher } from '../../../modules/identity/infrastructure/argon2.js';
 import { createAnamnesisService } from '../../../modules/patients/application/anamnesis.js';
 import { createAssignmentService } from '../../../modules/patients/application/assignments.js';
@@ -336,6 +338,53 @@ export async function seedDemoTenant(
           expectedVersion: 0,
         }),
     );
+  }
+
+  // 5. What the professionals wrote, through the same services the API uses (so the encryption, the
+  // signature hash and the audit entries are the real ones): notes signed, a draft left open, an
+  // addendum, an entry marked in error and one restricted to its author.
+  const notes = createNoteService({ keys: deps.keys });
+  const amendments = createAmendmentService({ keys: deps.keys });
+  for (const entry of data.notes) {
+    const patientId = patientIds[entry.patientIndex];
+    const professionalId = professionalIds.get(entry.professional);
+    const person = people.get(entry.professional);
+    if (!patientId || !professionalId || !person) {
+      throw new DemoSeedError('A note points at a patient or professional that is not there.');
+    }
+    const context = { tenantId, userId: person.userId, actingProfessionalId: professionalId };
+    const caller: Caller = {
+      actor: { ...actorOf(person.userId, 'professional'), userId: person.userId },
+      professionalId,
+      tenantActive: true,
+    };
+    const opened = await deps.withTenant(context, (tx) =>
+      notes.open(tx, caller, {
+        patientId,
+        templateKind: entry.templateKind,
+        ...(entry.visibility ? { visibility: entry.visibility } : {}),
+      }),
+    );
+    await deps.withTenant(context, (tx) =>
+      notes.saveDraft(tx, caller, {
+        encounterId: opened.encounterId,
+        request: { content: entry.content, baseRevision: 0 },
+      }),
+    );
+    if (entry.state === 'draft') continue;
+    await deps.withTenant(context, (tx) => notes.sign(tx, caller, { noteId: opened.id }));
+    if (entry.addendum) {
+      const addendum = entry.addendum;
+      await deps.withTenant(context, (tx) =>
+        amendments.addAddendum(tx, caller, { noteId: opened.id, request: addendum }),
+      );
+    }
+    if (entry.state === 'error' && entry.errorReason) {
+      const reason = entry.errorReason;
+      await deps.withTenant(context, (tx) =>
+        amendments.markEnteredInError(tx, caller, { noteId: opened.id, request: { reason } }),
+      );
+    }
   }
 
   return { credentials };

@@ -68,26 +68,28 @@ The secret is shown once. From the console you can list organizations, create on
 
 ## What the demo contains
 
-| Area          | Content                                                                                                                       |
-| ------------- | ----------------------------------------------------------------------------------------------------------------------------- |
-| Look          | The "Aillu" theme: green, rounded corners, Poppins headings                                                                   |
-| Locations     | Sede Central, Consultorios Norte, Sucursal Córdoba (another time zone)                                                        |
-| Team          | Seven accounts, one per row of the table above                                                                                |
-| Professionals | Cardiology, pediatrics, psychology, each with a registration number (unverified) and weekly hours at different locations      |
-| Patients      | 26: documents `99.000.001` to `99.000.025` plus a newborn without a document; phones `+54 11 0000 xxxx`                       |
-| Coverage      | Seven enabled plans (OSDE 210/310, Swiss Medical, Galeno, Medifé, PAMI, IOMA); most patients have one, a few are "Particular" |
-| Minors        | Four children with an administrative representative and the date to review it when they reach 18                              |
-| Consent       | Everyone consented at registration except one patient, who shows the "consent pending" warning                                |
-| Care          | Twelve assignments: patients are assigned to the three professionals, who recorded nine anamneses                             |
-| Safety alerts | Raised by the anamneses: allergy, anticoagulant, pregnancy, implanted device. Reception sees only "consult the professional"  |
-| Audit trail   | Every step of the seed is in the audit log, so the viewer is not empty on the first visit                                     |
+| Area          | Content                                                                                                                                                                                                                                                                     |
+| ------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Look          | The "Aillu" theme: green, rounded corners, Poppins headings                                                                                                                                                                                                                 |
+| Locations     | Sede Central, Consultorios Norte, Sucursal Córdoba (another time zone)                                                                                                                                                                                                      |
+| Team          | Seven accounts, one per row of the table above                                                                                                                                                                                                                              |
+| Professionals | Cardiology, pediatrics, psychology, each with a registration number (unverified) and weekly hours at different locations                                                                                                                                                    |
+| Patients      | 26: documents `99.000.001` to `99.000.025` plus a newborn without a document; phones `+54 11 0000 xxxx`                                                                                                                                                                     |
+| Coverage      | Seven enabled plans (OSDE 210/310, Swiss Medical, Galeno, Medifé, PAMI, IOMA); most patients have one, a few are "Particular"                                                                                                                                               |
+| Minors        | Four children with an administrative representative and the date to review it when they reach 18                                                                                                                                                                            |
+| Consent       | Everyone consented at registration except one patient, who shows the "consent pending" warning                                                                                                                                                                              |
+| Care          | Twelve assignments: patients are assigned to the three professionals, who recorded nine anamneses                                                                                                                                                                           |
+| Safety alerts | Raised by the anamneses: allergy, anticoagulant, pregnancy, implanted device. Reception sees only "consult the professional"                                                                                                                                                |
+| Clinical      | Twelve notes written through the real services: signed consultations of cardiology and pediatrics (general template) and psychology sessions (own template, one restricted to its author), an addendum, a note entered in error and a draft left open (see the drafts view) |
+| Audit trail   | Every step of the seed is in the audit log, so the viewer is not empty on the first visit                                                                                                                                                                                   |
 
 Good paths to show:
 
 1. **Reception** registers a patient (try a repeated document: the existing record is offered), adds coverage, assigns the patient to **Dra. Paz**.
 2. **Dra. Paz** opens the patient, records an allergy; the alert appears for reception as "consult the professional", never the allergy.
 3. **The owner** opens the audit trail, filters by that patient, exports it, and changes the branding: the new color is there after a reload, with no flash.
-4. In the **operator console**, create an organization and read the owner's invitation in Mailpit.
+4. **Dra. Paz** opens the clinical chart of a patient (tab "Historia clínica"): signed notes with their addenda, the search of that record (try "hipertension" without the accent), the note entered in error behind "Mostrar las entradas marcadas como error", and a new consultation that saves by itself while she types. The pediatrician, who does not treat that patient, is told she has no access; reception and the owner have no such tab.
+5. In the **operator console**, create an organization and read the owner's invitation in Mailpit.
 
 ## Resetting the demo
 

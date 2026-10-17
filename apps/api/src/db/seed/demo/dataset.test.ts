@@ -1,4 +1,9 @@
-import { validateMatricula, validateNationalId } from '@consultorio/contracts';
+import {
+  validateDraftContent,
+  validateMatricula,
+  validateNationalId,
+  validateSignContent,
+} from '@consultorio/contracts';
 import { describe, expect, it } from 'vitest';
 
 import { DEMO_ACCOUNTS, DEMO_PASSWORD } from './credentials.js';
@@ -140,5 +145,73 @@ describe('demo dataset', () => {
     const keys = data.care.map((entry) => `${entry.professional}:${String(entry.patientIndex)}`);
 
     expect(new Set(keys).size).toBe(keys.length);
+  });
+});
+
+describe('demo clinical notes', () => {
+  it('has signed notes for cardiology and pediatrics (general template) and for psychology', () => {
+    const data = buildDemoDataset();
+    const templatesOf = (professional: string) =>
+      new Set(
+        data.notes
+          .filter(
+            (note) => note.professional === professional && (note.state ?? 'signed') !== 'draft',
+          )
+          .map((note) => note.templateKind),
+      );
+
+    expect(templatesOf('cardiology')).toEqual(new Set(['general']));
+    expect(templatesOf('pediatrics')).toEqual(new Set(['general']));
+    expect(templatesOf('psychology')).toEqual(new Set(['psychology']));
+    for (const professional of ['cardiology', 'pediatrics', 'psychology']) {
+      expect(
+        data.notes.filter((note) => note.professional === professional).length,
+        professional,
+      ).toBeGreaterThanOrEqual(2);
+    }
+  });
+
+  it('is written by the professional who is assigned to that patient', () => {
+    const data = buildDemoDataset();
+
+    for (const note of data.notes) {
+      expect(
+        data.care.some(
+          (entry) =>
+            entry.professional === note.professional && entry.patientIndex === note.patientIndex,
+        ),
+        `${note.professional} / ${String(note.patientIndex)}`,
+      ).toBe(true);
+    }
+  });
+
+  it('is valid for its template: complete to sign, or at least valid as a draft', () => {
+    const data = buildDemoDataset();
+
+    for (const note of data.notes) {
+      const result =
+        note.state === 'draft'
+          ? validateDraftContent(note.templateKind, 1, note.content)
+          : validateSignContent(note.templateKind, 1, note.content);
+      expect(result.ok, JSON.stringify(note.content).slice(0, 60)).toBe(true);
+    }
+  });
+
+  it('shows every state of an entry: a signed one, a draft, an addendum, one in error and one restricted', () => {
+    const data = buildDemoDataset();
+
+    expect(data.notes.some((note) => (note.state ?? 'signed') === 'signed')).toBe(true);
+    expect(data.notes.some((note) => note.state === 'draft')).toBe(true);
+    expect(data.notes.some((note) => note.addendum !== undefined)).toBe(true);
+    expect(data.notes.some((note) => note.state === 'error' && note.errorReason)).toBe(true);
+    expect(data.notes.some((note) => note.visibility === 'author_only')).toBe(true);
+  });
+
+  it('puts no real person, contact or document in a note', () => {
+    const data = buildDemoDataset();
+    const text = JSON.stringify(data.notes);
+
+    expect(text).not.toMatch(/@(?!demo\.invalid)\w+\.\w+/);
+    expect(text).not.toMatch(/\b\d{2}\.\d{3}\.\d{3}\b/);
   });
 });
