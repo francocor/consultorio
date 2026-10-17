@@ -51,6 +51,21 @@ export interface WorklistService {
   /** One item the viewer may see, or not found. */
   get(tx: Tx, viewer: LocationViewer, id: string): Promise<WorklistItemDto>;
   close(tx: Tx, input: CloseItemInput): Promise<WorklistItemDto>;
+  /**
+   * Closes the open item of a kind about a subject, whoever can see it (an action on the subject
+   * itself settled it: an identity was confirmed, an appointment was cancelled). No-op when none.
+   */
+  closeBySubject(
+    tx: Tx,
+    input: {
+      kind: WorklistKind;
+      subjectType: WorklistSubjectType;
+      subjectId: string;
+      status: 'resolved' | 'dismissed';
+      resolution: string;
+      actor: AuditActor & { userId: string };
+    },
+  ): Promise<void>;
 }
 
 const FIELD = { table: 'worklist_item', column: 'detail_enc' } as const;
@@ -253,6 +268,35 @@ export function createWorklistService(deps: { keys: TenantKeys }): WorklistServi
       const [item] = await present(tx, [closed]);
       if (!item) throw new Error('closed worklist item could not be presented');
       return item;
+    },
+
+    async closeBySubject(tx, input) {
+      const [row] = await tx
+        .update(worklistItem)
+        .set({
+          status: input.status,
+          resolution: input.resolution,
+          resolvedAt: new Date(),
+          resolvedBy: input.actor.userId,
+        })
+        .where(
+          and(
+            eq(worklistItem.kind, input.kind),
+            eq(worklistItem.subjectType, input.subjectType),
+            eq(worklistItem.subjectId, input.subjectId),
+            eq(worklistItem.status, 'open'),
+          ),
+        )
+        .returning({ id: worklistItem.id });
+      if (!row) return;
+      await audit(tx, {
+        action: input.status === 'resolved' ? 'worklist.resolved' : 'worklist.dismissed',
+        outcome: 'allow',
+        actor: input.actor,
+        resourceType: 'worklist_item',
+        resourceId: row.id,
+        metadata: { kind: input.kind, resolution: input.resolution },
+      });
     },
   };
 }

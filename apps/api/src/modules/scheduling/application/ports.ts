@@ -1,6 +1,12 @@
-import type { AppointmentDto, AppointmentStatus, HolidayDto } from '@consultorio/contracts';
+import type {
+  AppointmentDto,
+  AppointmentStatus,
+  HolidayDto,
+  WorklistKind,
+  WorklistSubjectType,
+} from '@consultorio/contracts';
 
-import type { AuditEventInput } from '../../../platform/audit/writer.js';
+import type { AuditActor, AuditEventInput } from '../../../platform/audit/writer.js';
 import type { Occupancy } from '../domain/lanes.js';
 import type { HoursPeriod, HoursRow, TimeRange } from '../domain/working-hours.js';
 
@@ -171,6 +177,29 @@ export interface SchedulingPorts {
   updateAppointment(id: string, patch: AppointmentPatch): Promise<AppointmentDto>;
   /** The organization's late-cancellation window, in hours (default 24). */
   lateCancellationHours(): Promise<number>;
+  /** D18: exactly one active professional and no other active member who could confirm. */
+  soloPractice(): Promise<boolean>;
+  /**
+   * True when the patient was registered by this user a moment ago and has no appointment yet: the
+   * booking that follows creates the patient record, so it is not a match (D14).
+   */
+  isFreshPatient(patientId: string, userId: string, now: Date): Promise<boolean>;
+  /** Adds an item to the reception worklist (idempotent). */
+  openWorklistItem(item: {
+    kind: WorklistKind;
+    subjectType: WorklistSubjectType;
+    subjectId: string;
+    locationId: string | null;
+  }): Promise<void>;
+  /** Closes the open item of that kind about that subject, if there is one. */
+  closeWorklistItem(item: {
+    kind: WorklistKind;
+    subjectType: WorklistSubjectType;
+    subjectId: string;
+    status: 'resolved' | 'dismissed';
+    resolution: string;
+    actor: AuditActor & { userId: string };
+  }): Promise<void>;
   insertEvent(event: NewEvent): Promise<void>;
   audit(event: AuditEventInput): Promise<void>;
 }

@@ -50,9 +50,15 @@ export function createScheduling(options: SchedulingOptions): Scheduling {
   });
 
   const worklist = createWorklistService({ keys: options.keys });
-  const worklistApi = worklistRoutes({ withTenant: options.withTenant, worklist });
+  const worklistApi = worklistRoutes({
+    withTenant: options.withTenant,
+    auditDeny: options.auditDeny,
+    keys: options.keys,
+    worklist,
+  });
   const appointments = appointmentRoutes({
     withTenant: options.withTenant,
+    keys: options.keys,
     auditDeny: options.auditDeny,
     clock: options.clock ?? (() => new Date()),
   });

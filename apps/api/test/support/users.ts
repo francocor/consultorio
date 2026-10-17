@@ -105,10 +105,12 @@ export async function createTestProfessional(
     specialties?: string[];
     /** Plain password, so the test can sign the professional in. */
     password?: string;
+    /** Roles besides `professional`, for example an owner who is also the professional. */
+    alsoRoles?: readonly Role[];
   } = {},
 ): Promise<TestUser & { professionalId: string }> {
   const user = await createTestUser(handle, tenantId, {
-    roles: ['professional'],
+    roles: ['professional', ...(options.alsoRoles ?? [])],
     ...(options.password === undefined ? {} : { password: options.password }),
   });
   const professionalId = options.id ?? uuidv7();

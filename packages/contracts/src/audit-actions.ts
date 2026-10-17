@@ -84,6 +84,10 @@ export const AUDIT_ACTIONS = [
   'appointment.status_changed',
   'appointment.cancelled',
   'appointment.status_corrected',
+  // Identity of the patient of an appointment (decisions D14 and D18).
+  'appointment.identity.confirmed',
+  'appointment.identity.self_confirmed',
+  'appointment.identity.rejected',
   // The reception worklist: every item is resolved or dismissed by a person.
   'worklist.resolved',
   'worklist.dismissed',

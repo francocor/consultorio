@@ -2,6 +2,7 @@ import type { AppointmentDto, BookAppointmentRequest } from '@consultorio/contra
 
 import type { AuditActor } from '../../../platform/audit/writer.js';
 import { AppError } from '../../../platform/http/problem.js';
+import { initialIdentityConfirmed } from '../domain/identity-confirmation.js';
 
 import {
   applyPlan,
@@ -94,6 +95,16 @@ export async function bookAppointment(
   const plan = await planSlot(ports, planInput);
   await applyPlan(ports, plan);
 
+  // D14: attaching an appointment to an EXISTING patient without anybody checking who the patient
+  // is (the professional booking themselves) leaves the identity unconfirmed. A patient the actor
+  // registered a moment ago is not a match.
+  const identityConfirmed = initialIdentityConfirmed({
+    source: 'staff',
+    patient: (await ports.isFreshPatient(patient.id, actor.userId, now)) ? 'created' : 'existing',
+    bookingActorProfessionalId: actor.professionalId,
+    appointmentProfessionalId: professional.id,
+  });
+
   const inserted = await ports.insertAppointment({
     patientId: patient.id,
     professionalId: professional.id,
@@ -106,13 +117,21 @@ export async function bookAppointment(
     status: 'scheduled',
     source: 'staff',
     bookedBy: actor.userId,
-    identityConfirmed: true,
+    identityConfirmed,
     outOfHours: plan.outOfHours,
     overrideReason: plan.overrideReason,
   });
   if (!inserted.ok) throw await conflictAfterRace(ports, planInput, plan);
   const { appointment } = inserted;
 
+  if (!identityConfirmed) {
+    await ports.openWorklistItem({
+      kind: 'identity_review',
+      subjectType: 'appointment',
+      subjectId: appointment.id,
+      locationId: location.id,
+    });
+  }
   await ports.insertEvent({
     appointmentId: appointment.id,
     kind: 'created',
@@ -132,6 +151,7 @@ export async function bookAppointment(
       professionalId: professional.id,
       locationId: location.id,
       startsAt: appointment.startsAt,
+      identityConfirmed,
     },
   });
   if (plan.overrides.length > 0) {

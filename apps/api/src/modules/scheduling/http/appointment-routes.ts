@@ -3,7 +3,9 @@ import {
   AppointmentHistoryResponse,
   BookAppointmentRequest,
   CancelAppointmentRequest,
+  CheckInRequest,
   CorrectStatusRequest,
+  DetachPatientRequest,
   RescheduleRequest,
   TransitionRequest,
   effectivePermissions,
@@ -17,12 +19,14 @@ import type { AuditActor } from '../../../platform/audit/writer.js';
 import type { Actor } from '../../../platform/authz/actor.js';
 import type { AuthzOptions } from '../../../platform/authz/guard.js';
 import { refuseRequest } from '../../../platform/authz/refuse.js';
+import type { TenantKeys } from '../../../platform/crypto/tenant-keys.js';
 import type { Tx, WithTenant } from '../../../platform/db/tenant-context.js';
 import { AppError, conflictCode } from '../../../platform/http/problem.js';
 import { AccessRefused, visibleLocationIds } from '../../access/index.js';
 import { bookAppointment, SlotTakenError } from '../application/book-appointment.js';
 import { createSchedulingPorts, isExclusionViolation } from '../application/drizzle-ports.js';
 import { appointmentHistory } from '../application/history.js';
+import { detachPatient } from '../application/identity.js';
 import {
   correctStatus,
   rescheduleAppointment,
@@ -35,6 +39,7 @@ import type { TimeRange } from '../domain/working-hours.js';
 
 export interface AppointmentRoutesDeps {
   withTenant: WithTenant;
+  keys: TenantKeys;
   auditDeny: AuthzOptions['auditDeny'];
   clock: () => Date;
 }
@@ -104,7 +109,6 @@ const IdParams = z.strictObject({ id: z.uuid() });
 /** The lifecycle actions: the URL word, the action, and who may ask. */
 const TRANSITION_ROUTES = [
   { path: 'confirm', action: 'confirm', permission: 'scheduling.checkin' },
-  { path: 'check-in', action: 'check_in', permission: 'scheduling.checkin' },
   { path: 'start', action: 'start', permission: 'scheduling.checkin' },
   { path: 'attend', action: 'attend', permission: 'scheduling.checkin' },
   { path: 'no-show', action: 'no_show', permission: 'scheduling.checkin' },
@@ -157,7 +161,7 @@ export function appointmentRoutes(deps: AppointmentRoutesDeps) {
         const { actor, audit, book, context } = requestActor(request);
         try {
           const created = await deps.withTenant(context, (tx) =>
-            bookAppointment(createSchedulingPorts(tx), {
+            bookAppointment(createSchedulingPorts(tx, { keys: deps.keys }), {
               request: request.body,
               actor: book,
               auditActor: audit,
@@ -181,6 +185,85 @@ export function appointmentRoutes(deps: AppointmentRoutesDeps) {
       },
     );
 
+    typed.post(
+      '/appointments/:id/check-in',
+      {
+        config: {
+          readOnly: 'write',
+          permission: 'scheduling.checkin',
+          audits: [
+            'appointment.status_changed',
+            'appointment.identity.confirmed',
+            'appointment.identity.self_confirmed',
+          ],
+        },
+        schema: {
+          params: IdParams,
+          body: CheckInRequest,
+          response: { 200: AppointmentDto },
+        },
+      },
+      (request, reply) => {
+        const { audit, book, context } = requestActor(request);
+        return respond(request, reply, request.params.id, () =>
+          deps.withTenant(context, (tx) =>
+            transitionAppointment(createSchedulingPorts(tx, { keys: deps.keys }), {
+              appointmentId: request.params.id,
+              action: 'check_in',
+              actor: book,
+              auditActor: audit,
+              now: deps.clock(),
+              expectedVersion: request.body.expectedVersion,
+              confirmIdentity: request.body.confirmIdentity,
+            }),
+          ),
+        );
+      },
+    );
+
+    // The match was wrong: move the appointment to another patient record, or cancel it.
+    typed.post(
+      '/appointments/:id/detach-patient',
+      {
+        config: {
+          readOnly: 'write',
+          permission: 'worklist.manage',
+          audits: ['appointment.identity.rejected', 'appointment.cancelled'],
+        },
+        schema: {
+          params: IdParams,
+          body: DetachPatientRequest,
+          response: { 200: AppointmentDto },
+        },
+      },
+      (request, reply) => {
+        const { audit, book, context } = requestActor(request);
+        const body = request.body;
+        return respond(request, reply, request.params.id, () =>
+          deps.withTenant(context, (tx) =>
+            detachPatient(createSchedulingPorts(tx, { keys: deps.keys }), {
+              appointmentId: request.params.id,
+              actor: book,
+              auditActor: audit,
+              now: deps.clock(),
+              expectedVersion: body.expectedVersion,
+              resolution:
+                body.resolution === 'move_to_patient'
+                  ? { kind: 'move_to_patient', patientId: body.patientId }
+                  : {
+                      kind: 'cancel',
+                      cancellation: {
+                        cancelledBy: body.cancelledBy,
+                        reasonCode: body.reasonCode,
+                        ...(body.note === undefined ? {} : { note: body.note }),
+                      },
+                    },
+            }),
+          ),
+        );
+      },
+    );
+
     for (const route of TRANSITION_ROUTES) {
       typed.post(
         `/appointments/:id/${route.path}`,
@@ -200,7 +283,7 @@ export function appointmentRoutes(deps: AppointmentRoutesDeps) {
           const { audit, book, context } = requestActor(request);
           return respond(request, reply, request.params.id, () =>
             deps.withTenant(context, (tx) =>
-              transitionAppointment(createSchedulingPorts(tx), {
+              transitionAppointment(createSchedulingPorts(tx, { keys: deps.keys }), {
                 appointmentId: request.params.id,
                 action: route.action,
                 actor: book,
@@ -235,7 +318,7 @@ export function appointmentRoutes(deps: AppointmentRoutesDeps) {
         const { expectedVersion, ...cancellation } = request.body;
         return respond(request, reply, request.params.id, () =>
           deps.withTenant(context, (tx) =>
-            transitionAppointment(createSchedulingPorts(tx), {
+            transitionAppointment(createSchedulingPorts(tx, { keys: deps.keys }), {
               appointmentId: request.params.id,
               action: 'cancel',
               actor: book,
@@ -271,7 +354,7 @@ export function appointmentRoutes(deps: AppointmentRoutesDeps) {
         const { audit, book, context } = requestActor(request);
         return respond(request, reply, request.params.id, () =>
           deps.withTenant(context, (tx) =>
-            correctStatus(createSchedulingPorts(tx), {
+            correctStatus(createSchedulingPorts(tx, { keys: deps.keys }), {
               appointmentId: request.params.id,
               toStatus: request.body.toStatus,
               reason: request.body.reason,
@@ -303,7 +386,7 @@ export function appointmentRoutes(deps: AppointmentRoutesDeps) {
         const { actor, audit, book, context } = requestActor(request);
         return respond(request, reply, request.params.id, () =>
           deps.withTenant(context, (tx) =>
-            rescheduleAppointment(createSchedulingPorts(tx), {
+            rescheduleAppointment(createSchedulingPorts(tx, { keys: deps.keys }), {
               appointmentId: request.params.id,
               ...request.body,
               actor: book,

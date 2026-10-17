@@ -11,13 +11,19 @@ import { appointment, appointmentEvent, slotHold } from '../../../db/schema/sche
 import { professional, professionalHours } from '../../../db/schema/staff.js';
 import { location, tenant } from '../../../db/schema/tenant.js';
 import { audit } from '../../../platform/audit/writer.js';
+import type { TenantKeys } from '../../../platform/crypto/tenant-keys.js';
 import type { Tx } from '../../../platform/db/tenant-context.js';
+import { isSoloPractice } from '../domain/identity-confirmation.js';
 import type { HoursPeriod, HoursRow } from '../domain/working-hours.js';
 
 import { createHolidayService } from './holidays.js';
 import type { ActiveOccupancy, AppointmentRecord, SchedulingPorts } from './ports.js';
+import { createWorklistService } from './worklist.js';
 
 const EXCLUSION_VIOLATION = '23P01';
+
+/** A patient registered this recently by the person booking counts as created in the same action. */
+const FRESH_PATIENT_MS = 15 * 60_000;
 
 /** The SQLSTATE of a database failure, whichever layer wrapped it. */
 export function sqlStateOf(error: unknown): string | undefined {
@@ -44,6 +50,7 @@ export const appointmentColumns = {
   source: appointment.source,
   bookedBy: appointment.bookedBy,
   identityConfirmed: appointment.identityConfirmed,
+  identityConfirmation: appointment.identityConfirmation,
   outOfHours: appointment.outOfHours,
   seriesId: appointment.seriesId,
   seriesIndex: appointment.seriesIndex,
@@ -63,6 +70,7 @@ export function toAppointmentDto(row: {
   source: string;
   bookedBy: string | null;
   identityConfirmed: boolean;
+  identityConfirmation: string | null;
   outOfHours: boolean;
   seriesId: string | null;
   seriesIndex: number | null;
@@ -70,6 +78,10 @@ export function toAppointmentDto(row: {
 }): AppointmentDto {
   return {
     ...row,
+    identityConfirmation:
+      row.identityConfirmation === 'staff' || row.identityConfirmation === 'self_confirmed'
+        ? row.identityConfirmation
+        : null,
     startsAt: row.startsAt.toISOString(),
     endsAt: row.endsAt.toISOString(),
     status: row.status as AppointmentDto['status'],
@@ -88,8 +100,9 @@ interface OccupancyRow extends Record<string, unknown> {
 }
 
 /** The Drizzle implementation of the scheduling port, inside one tenant transaction. */
-export function createSchedulingPorts(tx: Tx): SchedulingPorts {
+export function createSchedulingPorts(tx: Tx, deps: { keys: TenantKeys }): SchedulingPorts {
   const holidays = createHolidayService();
+  const worklist = createWorklistService({ keys: deps.keys });
 
   return {
     async lockProfessional(id) {
@@ -330,6 +343,54 @@ export function createSchedulingPorts(tx: Tx): SchedulingPorts {
       const [row] = await tx.select({ settings: tenant.settings }).from(tenant);
       const value = row?.settings['late_cancellation_hours'];
       return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : 24;
+    },
+
+    async soloPractice() {
+      const result = await tx.execute<{ professionals: number; others: number }>(sql`
+        SELECT
+          (SELECT count(*)::int
+             FROM professional p
+             JOIN membership m ON m.tenant_id = p.tenant_id AND m.id = p.membership_id
+            WHERE p.status = 'active' AND m.status = 'active') AS professionals,
+          (SELECT count(*)::int
+             FROM membership m
+            WHERE m.status = 'active'
+              AND NOT EXISTS (
+                SELECT 1 FROM professional p
+                 WHERE p.tenant_id = m.tenant_id AND p.membership_id = m.id AND p.status = 'active'
+              )) AS others`);
+      const row = result.rows[0];
+      return isSoloPractice({
+        activeProfessionals: row?.professionals ?? 0,
+        otherActiveMembers: row?.others ?? 0,
+      });
+    },
+
+    async isFreshPatient(patientId, userId, now) {
+      const since = new Date(now.getTime() - FRESH_PATIENT_MS).toISOString();
+      const result = await tx.execute<{ fresh: boolean }>(sql`
+        SELECT (
+          EXISTS (
+            SELECT 1 FROM patient_version v
+             WHERE v.patient_id = ${patientId} AND v.version = 1 AND v.changed_by = ${userId}::uuid
+               AND v.created_at >= ${since}::timestamptz
+          )
+          AND NOT EXISTS (SELECT 1 FROM appointment a WHERE a.patient_id = ${patientId})
+        ) AS fresh`);
+      return result.rows[0]?.fresh === true;
+    },
+
+    async openWorklistItem(item) {
+      await worklist.openItem(tx, {
+        kind: item.kind,
+        subjectType: item.subjectType,
+        subjectId: item.subjectId,
+        locationId: item.locationId ?? undefined,
+      });
+    },
+
+    async closeWorklistItem(item) {
+      await worklist.closeBySubject(tx, item);
     },
 
     async insertEvent(event) {

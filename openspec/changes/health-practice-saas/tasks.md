@@ -539,10 +539,10 @@ Depends: S2.02.
 
 Depends: S2.06, S2.05.
 
-- [ ] 2.20 `domain/identity-confirmation.ts`: initial value rules (existing patient plus online match or booking actor equals the appointment's professional), eligibility to confirm, solo condition (exactly one active professional and no other active membership) behind a port. [SCH-03, SCH-11, PAT-03] Test: truth table.
-- [ ] 2.21 Booking path sets `identity_confirmed = false` when required and opens an `identity_review` item; `POST /worklist/:id/confirm-identity` refuses the appointment's own professional. [PAT-03] Test: matrix of who may confirm.
-- [ ] 2.22 Check-in confirmation: staff other than the professional sets `staff`; the sole professional may set `self_confirmed` only through the in-person check-in action, audited as `appointment.identity.self_confirmed`, evaluated in the same transaction. [SCH-11] Test: reception, other professional, own professional with and without other staff; a staff member joining later keeps earlier self-confirmations valid.
-- [ ] 2.23 `POST /appointments/:id/detach-patient` (move to a new patient or cancel; the matched record is untouched). [PAT-03] Test: matched patient unchanged.
+- [x] 2.20 `domain/identity-confirmation.ts`: initial value rules (existing patient plus online match or booking actor equals the appointment's professional), eligibility to confirm, solo condition (exactly one active professional and no other active membership) behind a port. [SCH-03, SCH-11, PAT-03] Test: truth table.
+- [x] 2.21 Booking path sets `identity_confirmed = false` when required and opens an `identity_review` item; `POST /worklist/:id/confirm-identity` refuses the appointment's own professional. [PAT-03] Test: matrix of who may confirm.
+- [x] 2.22 Check-in confirmation: staff other than the professional sets `staff`; the sole professional may set `self_confirmed` only through the in-person check-in action, audited as `appointment.identity.self_confirmed`, evaluated in the same transaction. [SCH-11] Test: reception, other professional, own professional with and without other staff; a staff member joining later keeps earlier self-confirmations valid.
+- [x] 2.23 `POST /appointments/:id/detach-patient` (move to a new patient or cancel; the matched record is untouched). [PAT-03] Test: matched patient unchanged.
 
 ## S2.08 Care relationship triggers (D2, D14, D15) (~350 lines)
 

@@ -38,6 +38,17 @@ export interface FakeSchedulingState {
   occupancies: ActiveOccupancy[];
   /** When true the next insert fails like the database does on an overlap (23P01). */
   failNextInsert: boolean;
+  /** D18: the organization has one professional and nobody else active. */
+  solo: boolean;
+  /** Patients the booking actor just registered. */
+  freshPatients: Set<string>;
+  openedItems: {
+    kind: string;
+    subjectType: string;
+    subjectId: string;
+    locationId: string | null;
+  }[];
+  closedItems: { kind: string; subjectId: string; status: string; resolution: string }[];
   // What happened.
   inserted: NewAppointment[];
   events: NewEvent[];
@@ -66,6 +77,10 @@ export function createFakeSchedulingPorts(overrides: Partial<FakeSchedulingState
     holidays: [],
     occupancies: [],
     failNextInsert: false,
+    solo: false,
+    freshPatients: new Set(),
+    openedItems: [],
+    closedItems: [],
     inserted: [],
     events: [],
     audits: [],
@@ -140,6 +155,7 @@ export function createFakeSchedulingPorts(overrides: Partial<FakeSchedulingState
           source: values.source,
           bookedBy: values.bookedBy,
           identityConfirmed: values.identityConfirmed,
+          identityConfirmation: null,
           outOfHours: values.outOfHours,
           seriesId: values.seriesId ?? null,
           seriesIndex: values.seriesIndex ?? null,
@@ -171,6 +187,7 @@ export function createFakeSchedulingPorts(overrides: Partial<FakeSchedulingState
         source: next.source,
         bookedBy: next.bookedBy,
         identityConfirmed: next.identityConfirmed,
+        identityConfirmation: next.identityConfirmation,
         outOfHours: next.outOfHours,
         seriesId: next.seriesId,
         seriesIndex: next.seriesIndex,
@@ -178,6 +195,21 @@ export function createFakeSchedulingPorts(overrides: Partial<FakeSchedulingState
       });
     },
     lateCancellationHours: () => Promise.resolve(state.lateWindowHours),
+    soloPractice: () => Promise.resolve(state.solo),
+    isFreshPatient: (patientId) => Promise.resolve(state.freshPatients.has(patientId)),
+    openWorklistItem: (item) => {
+      state.openedItems.push(item);
+      return Promise.resolve();
+    },
+    closeWorklistItem: (item) => {
+      state.closedItems.push({
+        kind: item.kind,
+        subjectId: item.subjectId,
+        status: item.status,
+        resolution: item.resolution,
+      });
+      return Promise.resolve();
+    },
     insertEvent: (event) => {
       state.events.push(event);
       return Promise.resolve();

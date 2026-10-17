@@ -18,8 +18,10 @@ import {
   canTransition,
   occupiesTime,
 } from '../domain/appointment-state-machine.js';
+import { canConfirmIdentity, type IdentityConfirmation } from '../domain/identity-confirmation.js';
 
 import { typeOffered } from './book-appointment.js';
+import { recordIdentityConfirmed } from './identity-records.js';
 import {
   applyPlan,
   conflictAfterRace,
@@ -56,7 +58,7 @@ const HOUR_MS = 3_600_000;
  * Locks what a change to one appointment must serialize with: the professional(s) first, in a fixed
  * order so two moves cannot deadlock, then the appointment itself. Returns the locked row.
  */
-async function lockForChange(
+export async function lockForChange(
   ports: SchedulingPorts,
   appointmentId: string,
   alsoProfessionalIds: readonly string[] = [],
@@ -70,7 +72,7 @@ async function lockForChange(
   return record;
 }
 
-function checkVersion(record: AppointmentRecord, expectedVersion: number | undefined): void {
+export function checkVersion(record: AppointmentRecord, expectedVersion: number | undefined): void {
   if (expectedVersion !== undefined && expectedVersion !== record.version) {
     throw new AppError('stale_revision');
   }
@@ -80,10 +82,16 @@ export interface TransitionInput {
   appointmentId: string;
   action: TransitionAction;
   actor: BookActor;
-  auditActor: AuditActor;
+  auditActor: AuditActor & { userId: string };
   now: Date;
   expectedVersion?: number | undefined;
   cancellation?: { cancelledBy: CancelledBy; reasonCode: CancellationReason; note?: string };
+  /**
+   * At check-in, the staff member saw the patient and the ID document and confirms who it is. Staff
+   * other than the appointment's professional confirm; the professional's own check-in confirms
+   * only in a solo practice (D18).
+   */
+  confirmIdentity?: boolean | undefined;
 }
 
 /**
@@ -113,6 +121,24 @@ export async function transitionAppointment(
   }
 
   const patch: AppointmentPatch = { status: target };
+  let confirmation: IdentityConfirmation | null = null;
+  if (input.action === 'check_in' && input.confirmIdentity === true && !record.identityConfirmed) {
+    const own = input.actor.professionalId === record.professionalId;
+    confirmation = canConfirmIdentity({
+      actorProfessionalId: input.actor.professionalId,
+      appointmentProfessionalId: record.professionalId,
+      channel: 'check_in',
+      // The solo condition is evaluated here, in this transaction, only when it can matter.
+      soloPractice: own ? await ports.soloPractice() : false,
+    });
+    if (confirmation) {
+      Object.assign(patch, {
+        identityConfirmed: true,
+        identityConfirmedBy: input.actor.userId,
+        identityConfirmation: confirmation,
+      } satisfies AppointmentPatch);
+    }
+  }
   let late = false;
   if (input.action === 'cancel') {
     if (!input.cancellation) throw invalid('cancelledBy', 'scheduling.cancel.details_required');
@@ -174,6 +200,14 @@ export async function transitionAppointment(
           metadata: { from: record.status, to: target },
         },
   );
+  if (confirmation) {
+    await recordIdentityConfirmed(ports, {
+      record,
+      how: confirmation,
+      channel: 'check_in',
+      actor: input.auditActor,
+    });
+  }
   return updated;
 }
 

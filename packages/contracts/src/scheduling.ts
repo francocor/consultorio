@@ -81,6 +81,8 @@ export const AppointmentDto = z.strictObject({
   source: z.enum(APPOINTMENT_SOURCES),
   bookedBy: z.uuid().nullable(),
   identityConfirmed: z.boolean(),
+  /** How a pending identity was confirmed; null when it never needed confirming. */
+  identityConfirmation: z.enum(['staff', 'self_confirmed']).nullable(),
   outOfHours: z.boolean(),
   seriesId: z.uuid().nullable(),
   seriesIndex: z.number().int().nullable(),
@@ -109,6 +111,17 @@ const ExpectedVersion = z.number().int().min(1);
 /** Optimistic concurrency: a stale `expectedVersion` gets 409 `stale_revision`. */
 export const TransitionRequest = z.strictObject({ expectedVersion: ExpectedVersion.optional() });
 export type TransitionRequest = z.infer<typeof TransitionRequest>;
+
+/**
+ * Check-in. `confirmIdentity` is the in-person confirmation: the staff member saw the patient and
+ * the ID document. Staff other than the appointment's professional confirm with it; the
+ * professional's own check-in confirms only in a solo practice (D18).
+ */
+export const CheckInRequest = z.strictObject({
+  expectedVersion: ExpectedVersion.optional(),
+  confirmIdentity: z.boolean().optional(),
+});
+export type CheckInRequest = z.infer<typeof CheckInRequest>;
 
 export const CANCELLED_BY = ['patient', 'professional', 'organization'] as const;
 export type CancelledBy = (typeof CANCELLED_BY)[number];
@@ -284,3 +297,31 @@ export const WorklistResponse = z.strictObject({
   openCount: z.number().int(),
 });
 export type WorklistResponse = z.infer<typeof WorklistResponse>;
+
+// Identity review (D14, D18) ------------------------------------------------------------------
+
+/** Confirms the identity of the appointment an identity review is about. */
+export const ConfirmIdentityRequest = z.strictObject({
+  expectedVersion: ExpectedVersion.optional(),
+});
+export type ConfirmIdentityRequest = z.infer<typeof ConfirmIdentityRequest>;
+
+/**
+ * The match was wrong: move the appointment to another patient record, or cancel it. The record
+ * that was matched is left exactly as it was.
+ */
+export const DetachPatientRequest = z.discriminatedUnion('resolution', [
+  z.strictObject({
+    resolution: z.literal('move_to_patient'),
+    patientId: z.uuid(),
+    expectedVersion: ExpectedVersion.optional(),
+  }),
+  z.strictObject({
+    resolution: z.literal('cancel'),
+    cancelledBy: z.enum(CANCELLED_BY),
+    reasonCode: z.enum(CANCELLATION_REASONS),
+    note: z.string().trim().max(200).optional(),
+    expectedVersion: ExpectedVersion.optional(),
+  }),
+]);
+export type DetachPatientRequest = z.infer<typeof DetachPatientRequest>;
