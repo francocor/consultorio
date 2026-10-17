@@ -260,6 +260,13 @@
       "when": 1792235525825,
       "tag": "0036_document_classification_guard",
       "breakpoints": true
+    },
+    {
+      "idx": 37,
+      "version": "7",
+      "when": 1792235649053,
+      "tag": "0037_document_footprint",
+      "breakpoints": true
     }
   ]
 }

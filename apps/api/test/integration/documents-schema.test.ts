@@ -433,3 +433,49 @@ describe('the table is a tenant table like any other', () => {
     expect(found).toHaveLength(1);
   });
 });
+
+describe('a clinical document leaves a clinical footprint (JD-S2 C3, D20)', () => {
+  const hasFootprint = (id: string) =>
+    run(runtime.db)(
+      { tenantId: a.id, userId: randomUUID(), actingProfessionalId: colleague.professionalId },
+      async (tx) => {
+        const result = await tx.execute<{ found: boolean }>(
+          sql`select app.has_clinical_footprint(${id}::uuid) as found`,
+        );
+        return result.rows[0]?.found;
+      },
+    );
+
+  it('marks the patient when a clinical document is written, and not for an administrative one', async () => {
+    const withClinical = await createTestPatient(runtime, a.id);
+    const withAdministrative = await createTestPatient(runtime, a.id);
+    expect(await hasFootprint(withClinical)).toBe(false);
+
+    await insert(row({ patientId: withAdministrative }));
+    await insert(clinicalRow({ patientId: withClinical }), {
+      professionalId: treating.professionalId,
+    });
+
+    expect(await hasFootprint(withAdministrative)).toBe(false);
+    expect(await hasFootprint(withClinical)).toBe(true);
+  });
+
+  it('marks the patient when an administrative document becomes clinical', async () => {
+    const reclassified = await createTestPatient(runtime, a.id);
+    const id = await insert(row({ patientId: reclassified }));
+    expect(await hasFootprint(reclassified)).toBe(false);
+
+    await run(runtime.db)({ tenantId: a.id, userId: SYSTEM_USER_ID }, (tx) =>
+      tx
+        .update(document)
+        .set({
+          category: 'lab_result',
+          classification: 'clinical',
+          authorProfessionalId: treating.professionalId,
+        })
+        .where(eq(document.id, id)),
+    );
+
+    expect(await hasFootprint(reclassified)).toBe(true);
+  });
+});
