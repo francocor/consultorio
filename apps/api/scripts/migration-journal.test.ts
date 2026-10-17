@@ -36,7 +36,7 @@ describe('migration ranges', () => {
   it('keeps Stages 0 to 2 as one linear sequence below 0300 and gives each later stage a hundred', () => {
     expect(stageRangeOf(0)).toBe('stage 0 to 2');
     expect(stageRangeOf(35)).toBe('stage 0 to 2');
-    expect(stageRangeOf(41)).toBe('stage 0 to 2');
+    expect(stageRangeOf(43)).toBe('stage 0 to 2');
     expect(stageRangeOf(299)).toBe('stage 0 to 2');
     expect(stageRangeOf(300)).toBe('stage 3');
     expect(stageRangeOf(399)).toBe('stage 3');

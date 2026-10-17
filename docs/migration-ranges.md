@@ -6,15 +6,15 @@ Stages 3 to 6 are built by parallel tracks (messaging, public booking, waitlist,
 
 Drizzle's migrator never looks at the number in a tag. It reads `meta/_journal.json` and applies, in the order of the file, the entries whose `when` is later than the newest one the database already ran. So:
 
-- A tag such as `0320_notifications_core` after `0041_footprint_professionals_only` is fine. The numbers are only a naming convention, and a range per stage and per track means two branches never create two files with the same name or two snapshots with the same number.
+- A tag such as `0320_notifications_core` after `0043_document_rescan_attempts` is fine. The numbers are only a naming convention, and a range per stage and per track means two branches never create two files with the same name or two snapshots with the same number.
 - The one thing the migrator does need is a journal whose `when` **rises**. A migration merged after another but stamped earlier is **skipped silently** on a database that already ran the later one (`apps/api/test/integration/migration-lanes.test.ts` shows it against a real Postgres). Stamps are taken from the clock when a migration is created, so parallel branches routinely produce this order. `pnpm db:restamp` repairs it and `pnpm db:check` refuses it.
 - `drizzle-kit generate` does **not** fit parallel work: it names the next file by the last `idx`, takes the snapshot whose file name sorts last as the state of the database, and refuses two snapshots that continue the same parent. The tools below run it in a scratch copy where the snapshots are ordered by the journal, and they keep the chain in order. Do not run `drizzle-kit generate` by hand (the `db:generate` script now refuses).
 
-Linear numbering (`0042`, `0043`, ...) with a renumbering tool was the other option. It was not chosen because two branches that each take the next number produce two `0042_snapshot.json` files, a conflict git cannot merge, while ranges never produce one. The numbers are final: nothing is renumbered, only stamps and snapshot links change.
+Linear numbering (`0044`, `0045`, ...) with a renumbering tool was the other option. It was not chosen because two branches that each take the next number produce two `0044_snapshot.json` files, a conflict git cannot merge, while ranges never produce one. The numbers are final: nothing is renumbered, only stamps and snapshot links change.
 
 ## The ranges
 
-Stages 0 to 2 are one linear sequence below `0300` (today `0000` to `0041`), numbered by `drizzle-kit generate` itself on the Stage 2 branch, which still receives fixes while Stage 3 is built. `pnpm db:restamp` never touches an entry of that sequence. Stage 3 work does not add to it.
+Stages 0 to 2 are one linear sequence below `0300` (today `0000` to `0043`), numbered by `drizzle-kit generate` itself on the Stage 2 branch, which still receives fixes while Stage 3 is built. `pnpm db:restamp` never touches an entry of that sequence. Stage 3 work does not add to it.
 
 | Range       | Stage                  |
 | ----------- | ---------------------- |
