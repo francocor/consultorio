@@ -171,12 +171,17 @@ export function createTokenRoutes(options: TokenRouterOptions) {
       });
 
       const { status = 200, ...model } = outcome.page;
-      return reply
-        .code(status)
-        .header('content-security-policy', PAGE_CONTENT_SECURITY_POLICY)
-        .header('x-robots-tag', 'noindex, nofollow')
-        .type('text/html; charset=utf-8')
-        .send(renderTokenPage({ ...model, organizationName: outcome.organizationName }));
+      return (
+        reply
+          .code(status)
+          .header('content-security-policy', PAGE_CONTENT_SECURITY_POLICY)
+          .header('x-robots-tag', 'noindex, nofollow')
+          // The button posts to the same address; `no-referrer` would make the browser send
+          // `Origin: null`, which the origin check refuses. The link never leaves its own origin.
+          .header('referrer-policy', 'same-origin')
+          .type('text/html; charset=utf-8')
+          .send(renderTokenPage({ ...model, organizationName: outcome.organizationName }))
+      );
     }
 
     typed.get('/public/t/:token', { config, schema: { params: Params } }, (request, reply) =>

@@ -127,6 +127,9 @@ describe('the page of a link', () => {
     expect(first.headers['content-type']).toContain('text/html');
     expect(first.headers['cache-control']).toBe('no-store');
     expect(first.headers['content-security-policy']).toContain("default-src 'none'");
+    // A browser sends `Origin: null` on the form POST under `no-referrer`: the origin check would
+    // refuse every click. The token only travels to the page's own origin.
+    expect(first.headers['referrer-policy']).toBe('same-origin');
     expect(first.body).toContain('Confirme su asistencia');
     expect(first.body).toContain('<dd>lunes');
     expect(first.body).toMatch(/<dt>Hora<\/dt>\s*<dd>\d\d:\d\d<\/dd>/);
