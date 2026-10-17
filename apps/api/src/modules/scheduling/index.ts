@@ -9,10 +9,12 @@ import type { FastifyInstance } from 'fastify';
 import type { AuthzOptions } from '../../platform/authz/guard.js';
 import type { TenantKeys } from '../../platform/crypto/tenant-keys.js';
 import type { WithTenant } from '../../platform/db/tenant-context.js';
+import type { ExportRegistry } from '../tenancy/index.js';
 
 import { createAppointmentTypeService } from './application/appointment-types.js';
 import { createBlockService } from './application/blocks.js';
 import { createCalendar } from './application/calendar.js';
+import { exportScheduling } from './application/export-contributor.js';
 import { createHolidayService } from './application/holidays.js';
 import { createHoursPeriodService } from './application/hours-periods.js';
 import { createWorklistService, type WorklistService } from './application/worklist.js';
@@ -23,6 +25,11 @@ import { worklistRoutes } from './http/worklist-routes.js';
 
 export type { OpenItemInput, WorklistService } from './application/worklist.js';
 export { HOLD_EXPIRE_JOB, holdExpireJob } from './application/hold-expiry.js';
+
+/** Registers what scheduling takes with an organization that leaves (the cancellation export). */
+export function registerSchedulingExportContributors(registry: ExportRegistry): void {
+  registry.registerExportContributor('administrative', 'scheduling', exportScheduling);
+}
 
 export interface SchedulingOptions {
   withTenant: WithTenant;

@@ -2,6 +2,7 @@ import { registerAccessExportContributors } from '../modules/access/index.js';
 import { registerAuditExportContributors } from '../modules/audit/index.js';
 import { registerIdentityExportContributors } from '../modules/identity/index.js';
 import { registerPatientsExportContributors } from '../modules/patients/index.js';
+import { registerSchedulingExportContributors } from '../modules/scheduling/index.js';
 import { registerStaffExportContributors } from '../modules/staff/index.js';
 import {
   registerTenancyExportContributors,
@@ -18,5 +19,6 @@ export function registerAllExportContributors(registry: ExportRegistry): void {
   registerAccessExportContributors(registry);
   registerStaffExportContributors(registry);
   registerPatientsExportContributors(registry);
+  registerSchedulingExportContributors(registry);
   registerAuditExportContributors(registry);
 }
