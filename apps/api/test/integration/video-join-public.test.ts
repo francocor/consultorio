@@ -96,6 +96,9 @@ describe('the platform join address', () => {
     expect(response.body).toContain('09:45');
     expect(response.body).not.toContain(room);
     expect(response.body).not.toContain('meet.jit.si');
+    // The page has no form (its CSP says form-action none), so `no-referrer` is safe here: the
+    // `Origin: null` problem only hits a page that posts back to itself, like the token pages.
+    expect(response.body).not.toContain('<form');
     expect(response.headers['referrer-policy']).toBe('no-referrer');
     expect(response.headers['cache-control']).toBe('no-store');
   });
