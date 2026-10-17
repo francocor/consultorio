@@ -267,6 +267,13 @@
       "when": 1792235649053,
       "tag": "0037_document_footprint",
       "breakpoints": true
+    },
+    {
+      "idx": 38,
+      "version": "7",
+      "when": 1792236063507,
+      "tag": "0038_first_encounter_lock",
+      "breakpoints": true
     }
   ]
 }
