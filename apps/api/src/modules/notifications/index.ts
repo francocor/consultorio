@@ -27,6 +27,7 @@ import { createLinkRevoker } from './application/revoke-links.js';
 import { UNLIMITED_QUOTA, type QuotaPolicy } from './application/usage.js';
 import { createWorklist, createWorklistFromService } from './application/worklist.js';
 import { channelRoutes } from './http/channel-routes.js';
+import { messageRoutes } from './http/message-routes.js';
 import {
   createCancelHandler,
   createConfirmHandler,
@@ -159,6 +160,13 @@ export function createNotifications(options: NotificationsOptions): Notification
     reactions,
   });
   const staffRoutes = [
+    messageRoutes({
+      withTenant: options.withTenant,
+      jobs: options.jobs,
+      clock,
+      quota: options.quota,
+      whatsappAvailable: options.whatsappAvailable ?? (() => true),
+    }),
     usageRoutes({
       withTenant: options.withTenant,
       quota: options.quota ?? UNLIMITED_QUOTA,

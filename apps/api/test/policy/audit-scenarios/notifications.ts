@@ -16,7 +16,7 @@ export const NOTIFICATION_SCENARIOS: Record<
   'notification.optin.recorded': {
     test: 'apps/api/test/integration/notifications-preferences.test.ts',
   },
-  'notification.resend': { pending: 'S3.06 (task 3.31): manual resend of a message' },
+  'notification.resend': { test: 'apps/api/test/integration/notifications-message-log.test.ts' },
   'notification.integration.changed': {
     test: 'apps/api/test/integration/notifications-integration.test.ts',
   },
