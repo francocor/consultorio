@@ -71,7 +71,7 @@ describe('professional gate (authorization, "Health professional" definition)', 
     }
   });
 
-  it('does not even look for a profile when the membership does not hold the professional role', async () => {
+  it('looks the profile up for any member, but a role other than professional never unlocks the gate', async () => {
     const repo = repoWith(PROFILE);
 
     const id = await deriveProfessionalId(
@@ -81,7 +81,7 @@ describe('professional gate (authorization, "Health professional" definition)', 
     );
 
     expect(id).toBeNull();
-    expect(repo.calls).toEqual([]);
+    expect(repo.calls).toEqual(['m1']);
   });
 
   it('asks the repository for the profile of the membership', async () => {
@@ -139,8 +139,20 @@ describe('own professional profile (D14), independent of the clinical gate', () 
     });
   });
 
-  it('has no own profile without the professional role', async () => {
+  it('keeps the own profile of a member who lost the professional role, with the gate closed (JD-S2 R2-S2)', async () => {
+    // Demoted: the old appointments are still theirs for the identity rules, but nothing clinical opens.
     expect(await resolve(['owner'], PROFILE)).toEqual({
+      professionalId: null,
+      ownProfessionalId: PROFILE.id,
+    });
+    expect(await resolve(['reception'], PROFILE)).toEqual({
+      professionalId: null,
+      ownProfessionalId: PROFILE.id,
+    });
+  });
+
+  it('has no own profile for a member who never had one', async () => {
+    expect(await resolve(['owner'], null)).toEqual({
       professionalId: null,
       ownProfessionalId: null,
     });

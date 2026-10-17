@@ -26,9 +26,10 @@ export interface ProfessionalIds {
   /** The clinical gate: set only for an active profile with a valid recorded matricula. */
   professionalId: string | null;
   /**
-   * The member's own professional profile, whatever its state. It answers "is this appointment
-   * mine?" for the identity rules (D14), which must not depend on the clinical gate: a profile
-   * without a matricula yet is still the person's own calendar.
+   * The member's own professional profile, whatever its state and whatever their roles now. It
+   * answers "is this appointment mine?" for the identity rules (D14), which must not depend on the
+   * clinical gate: a profile without a matricula yet is still the person's own calendar, and a
+   * member who lost the professional role keeps the appointments that were theirs.
    */
   ownProfessionalId: string | null;
 }
@@ -43,12 +44,12 @@ export async function resolveProfessionalIds(
   profiles: ProfessionalRepo,
   validateMatricula: MatriculaValidator,
 ): Promise<ProfessionalIds> {
-  if (!member.roles.includes('professional')) {
-    return { professionalId: null, ownProfessionalId: null };
-  }
+  // Any member is looked up: one who lost the professional role keeps their profile, and with it
+  // the appointments that were theirs (D14). Only the gate below depends on the role.
   const profile = await profiles.findByMembership(member.tenantId, member.membershipId);
   if (!profile) return { professionalId: null, ownProfessionalId: null };
   const gated =
+    member.roles.includes('professional') &&
     profile.status === 'active' &&
     !!profile.matricula &&
     !!profile.matriculaJurisdiction &&
