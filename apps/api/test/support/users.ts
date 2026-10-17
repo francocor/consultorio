@@ -98,9 +98,19 @@ export async function addTestMembership(
 export async function createTestProfessional(
   handle: DbHandle,
   tenantId: string,
-  options: { id?: string; matricula?: string; jurisdiction?: string; specialties?: string[] } = {},
+  options: {
+    id?: string;
+    matricula?: string;
+    jurisdiction?: string;
+    specialties?: string[];
+    /** Plain password, so the test can sign the professional in. */
+    password?: string;
+  } = {},
 ): Promise<TestUser & { professionalId: string }> {
-  const user = await createTestUser(handle, tenantId, { roles: ['professional'] });
+  const user = await createTestUser(handle, tenantId, {
+    roles: ['professional'],
+    ...(options.password === undefined ? {} : { password: options.password }),
+  });
   const professionalId = options.id ?? uuidv7();
   await createWithTenant(handle.db)({ tenantId, userId: user.id }, (tx) =>
     tx.insert(professional).values({

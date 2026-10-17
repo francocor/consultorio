@@ -22,6 +22,9 @@ export const PLATFORM_AUDIT_ACTIONS = [
   'support.access',
   'support.denied',
   'operator.denied',
+  // The country holiday catalog, which the operator maintains as data.
+  'holiday.added',
+  'holiday.removed',
 ] as const;
 export type PlatformAuditAction = (typeof PLATFORM_AUDIT_ACTIONS)[number];
 
@@ -121,3 +124,34 @@ export const SupportOverviewResponse = z.strictObject({
   grantExpiresAt: z.iso.datetime(),
 });
 export type SupportOverviewResponse = z.infer<typeof SupportOverviewResponse>;
+
+// Holiday catalog ---------------------------------------------------------------------------
+
+/** One entry of the country catalog, as the console shows it. */
+export const OperatorHolidayDto = z.strictObject({
+  id: z.uuid(),
+  country: z.string(),
+  date: z.iso.date(),
+  name: z.string(),
+  kind: z.enum(['national', 'bridge']),
+});
+export type OperatorHolidayDto = z.infer<typeof OperatorHolidayDto>;
+
+export const AddHolidayRequest = z.strictObject({
+  country: z.string().regex(/^[A-Z]{2}$/, 'expected a two-letter country code'),
+  date: z.iso.date(),
+  name: z.string().trim().min(1).max(120),
+  kind: z.enum(['national', 'bridge']),
+});
+export type AddHolidayRequest = z.infer<typeof AddHolidayRequest>;
+
+export const OperatorHolidayQuery = z.strictObject({
+  country: z.string().regex(/^[A-Z]{2}$/),
+  year: z.coerce.number().int().min(2000).max(2100),
+});
+export type OperatorHolidayQuery = z.infer<typeof OperatorHolidayQuery>;
+
+export const OperatorHolidayListResponse = z.strictObject({
+  holidays: z.array(OperatorHolidayDto),
+});
+export type OperatorHolidayListResponse = z.infer<typeof OperatorHolidayListResponse>;

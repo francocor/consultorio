@@ -115,9 +115,13 @@ export const PERMISSIONS = [
   'scheduling.read',
   'scheduling.book',
   'scheduling.checkin',
+  // Appointment types, blocks, days off (the setup of the calendar).
+  'scheduling.configure',
   'scheduling.override_hours',
   'scheduling.register_past',
   'scheduling.delegated_calendar',
+  // The reception queue of items that need a person.
+  'worklist.manage',
   // Money.
   'payments.read',
   'payments.write',
@@ -164,9 +168,11 @@ const ADMINISTRATION = [
   'scheduling.read',
   'scheduling.book',
   'scheduling.checkin',
+  'scheduling.configure',
   'scheduling.override_hours',
   'scheduling.register_past',
   'scheduling.delegated_calendar',
+  'worklist.manage',
   'payments.read',
   'payments.write',
   'cash.operate',
@@ -197,6 +203,7 @@ export const ROLE_PERMISSIONS: Record<Role, readonly Permission[]> = {
     'scheduling.read',
     'scheduling.book',
     'scheduling.checkin',
+    'worklist.manage',
     'payments.read',
     'payments.write',
     'cash.operate',

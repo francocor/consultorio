@@ -18,4 +18,5 @@ export * from './ports.js';
 export * from './result.js';
 export * from './roles.js';
 export * from './route-category.js';
+export * from './scheduling-config.js';
 export * from './staff.js';

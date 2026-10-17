@@ -18,6 +18,8 @@ export const holidayCatalog = pgTable(
     name: text('name').notNull(),
     kind: text('kind').notNull(),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    /** The operator removes a wrongly added holiday by ending it; the row stays as history. */
+    removedAt: timestamp('removed_at', { withTimezone: true }),
   },
   (table) => [
     unique('holiday_catalog_country_date_name_key').on(table.country, table.date, table.name),

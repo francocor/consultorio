@@ -1,8 +1,12 @@
 import {
+  AddHolidayRequest,
   CreateTenantRequest,
   CreateTenantResponse,
   DemoResetResponse,
   OperatorDto,
+  OperatorHolidayDto,
+  OperatorHolidayListResponse,
+  OperatorHolidayQuery,
   OperatorLoginRequest,
   OperatorTenantListResponse,
   ResendOwnerInvitationRequest,
@@ -25,6 +29,7 @@ import {
   type OperatorSessionInfo,
 } from '../application/auth.js';
 import type { OperatorIdentity } from '../application/context.js';
+import type { OperatorHolidays } from '../application/holidays.js';
 import type { OperatorSupport } from '../application/support.js';
 import type { OperatorTenants, OwnerInvitation } from '../application/tenants.js';
 
@@ -48,6 +53,7 @@ export interface OperatorRoutesDeps {
   auth: OperatorAuth;
   tenants: OperatorTenants;
   support: OperatorSupport;
+  holidays: OperatorHolidays;
   email: EmailSender;
   /** Where an organization's emailed links point (the console is on the platform host). */
   origins: PublicOrigins;
@@ -260,6 +266,44 @@ export function operatorRoutes(deps: OperatorRoutesDeps) {
       async (request) => {
         await deps.tenants.demoReset(request.params.tenantId, operatorOf(request), metaOf(request));
         return { status: 'done' as const };
+      },
+    );
+
+    typed.get(
+      '/operator/holidays',
+      {
+        config: { readOnly: 'read', auth: 'public', operatorAuth: 'session' },
+        schema: {
+          querystring: OperatorHolidayQuery,
+          response: { 200: OperatorHolidayListResponse },
+        },
+      },
+      async (request) => ({
+        holidays: await deps.holidays.list(request.query.country, request.query.year),
+      }),
+    );
+
+    typed.post(
+      '/operator/holidays',
+      {
+        config: { readOnly: 'write', auth: 'public', operatorAuth: 'session' },
+        schema: { body: AddHolidayRequest, response: { 201: OperatorHolidayDto } },
+      },
+      async (request, reply) => {
+        const added = await deps.holidays.add(request.body, operatorOf(request), metaOf(request));
+        return reply.code(201).send(added);
+      },
+    );
+
+    typed.delete(
+      '/operator/holidays/:id',
+      {
+        config: { readOnly: 'write', auth: 'public', operatorAuth: 'session' },
+        schema: { params: z.strictObject({ id: z.uuid() }) },
+      },
+      async (request, reply) => {
+        await deps.holidays.remove(request.params.id, operatorOf(request), metaOf(request));
+        return reply.code(204).send();
       },
     );
 

@@ -87,6 +87,18 @@ export const AUDIT_SCENARIOS: Record<AuditAction, AuditScenario> = {
   'staff.reactivated': t('staff-lifecycle.test.ts'),
   'staff.profile_updated': t('staff-profile.test.ts'),
   'professional.hours_updated': t('staff-hours.test.ts'),
+  'professional.hours_period_set': t('scheduling-config-api.test.ts'),
+  'professional.hours_period_removed': t('scheduling-config-api.test.ts'),
+
+  // Scheduling setup.
+  'appointment_type.created': t('scheduling-config-api.test.ts'),
+  'appointment_type.updated': t('scheduling-config-api.test.ts'),
+  'appointment_type.deactivated': t('scheduling-config-api.test.ts'),
+  'appointment_type.reactivated': t('scheduling-config-api.test.ts'),
+  'schedule_block.created': t('scheduling-config-api.test.ts'),
+  'schedule_block.removed': t('scheduling-config-api.test.ts'),
+  'day_off.created': t('scheduling-config-api.test.ts'),
+  'day_off.removed': t('scheduling-config-api.test.ts'),
 
   // Exports and archive.
   'export.created': { pending: 'Stage 6: cancellation export' },

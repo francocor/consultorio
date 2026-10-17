@@ -29,6 +29,9 @@ export function registerStaffExportContributors(registry: ExportRegistry): void 
 }
 
 export type { MatriculaRules } from './application/profile.js';
+export { managesStaff } from './application/profile.js';
+export { findHoursProblems, formatClock, parseClock, zoneOffsetMinutes } from './domain/hours.js';
+export type { HoursEntry } from './domain/hours.js';
 
 export interface StaffOptions {
   withTenant: WithTenant;

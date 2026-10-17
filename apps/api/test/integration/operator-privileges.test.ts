@@ -74,6 +74,8 @@ describe('the operator database role is an allowlist', () => {
       // Creating an organization: its row, data key, owner invitation and first audit entry.
       'action_token',
       'audit_event',
+      // The country holiday catalog is platform data the operator maintains.
+      'holiday_catalog',
       // Administrative configuration, readable only under a support grant.
       'location',
       // The operator's own accounts, sessions and trail.

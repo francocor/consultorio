@@ -14,6 +14,7 @@ import {
   type OperatorSecrets,
 } from '../modules/operator/index.js';
 import { createPatients } from '../modules/patients/index.js';
+import { createScheduling } from '../modules/scheduling/index.js';
 import { createStaff } from '../modules/staff/index.js';
 import {
   createBranding,
@@ -214,6 +215,12 @@ export function createApplication(options: ApplicationOptions): FastifyInstance 
     },
   });
 
+  const scheduling = createScheduling({
+    withTenant,
+    auditDeny,
+    ...(options.clock ? { clock: options.clock } : {}),
+  });
+
   const auditViewer = createAudit({ withTenant });
   const supportAccess = createSupportAccess({ withTenant });
   const operatorConsole =
@@ -273,6 +280,7 @@ export function createApplication(options: ApplicationOptions): FastifyInstance 
       access.routes,
       staff.routes,
       patients.routes,
+      scheduling.routes,
       auditViewer.routes,
       branding.routes,
       supportAccess.routes,

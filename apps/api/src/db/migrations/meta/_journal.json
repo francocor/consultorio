@@ -169,6 +169,13 @@
       "when": 1792198600962,
       "tag": "0023_scheduling_config",
       "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "7",
+      "when": 1792199145797,
+      "tag": "0024_holiday_catalog_removed",
+      "breakpoints": true
     }
   ]
 }

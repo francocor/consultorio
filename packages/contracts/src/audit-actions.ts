@@ -75,6 +75,17 @@ export const AUDIT_ACTIONS = [
   'staff.reactivated',
   'staff.profile_updated',
   'professional.hours_updated',
+  // Scheduling setup: what can be booked, when the calendar is closed, hours for a range of dates.
+  'appointment_type.created',
+  'appointment_type.updated',
+  'appointment_type.deactivated',
+  'appointment_type.reactivated',
+  'schedule_block.created',
+  'schedule_block.removed',
+  'day_off.created',
+  'day_off.removed',
+  'professional.hours_period_set',
+  'professional.hours_period_removed',
   // Support access that the organization opens for the platform.
   'support.grant.created',
   'support.grant.revoked',
