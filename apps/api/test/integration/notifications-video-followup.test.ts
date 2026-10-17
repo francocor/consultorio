@@ -203,6 +203,19 @@ describe('the follow-up with the video link', () => {
     ]);
   });
 
+  it('is sent although the appointment changed state after the reminder (the patient confirmed)', async () => {
+    const { appointment } = await pendingReminder();
+    const confirmed = await video.act(appointment, 'confirm', video.reception);
+    expect(confirmed.statusCode, confirmed.body).toBe(200);
+
+    await createRooms();
+    await sendMessages();
+
+    expect(notes.email.sent.at(-1)?.subject).toMatch(/^El enlace de su videoconsulta/);
+    const rows = await messagesOf(appointment.id);
+    expect(rows.filter((row) => row.kind === 'video_link')).toHaveLength(1);
+  });
+
   it('is sent once, however many times the link is announced', async () => {
     const { appointment } = await pendingReminder();
     await createRooms();

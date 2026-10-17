@@ -21,8 +21,8 @@ import { UNLIMITED_QUOTA, whatsappQuotaAvailable } from './usage.js';
  * comes to exist (the room was created, or a person attached a manual one), in the transaction that
  * made it so:
  *
- * - only for an appointment that still stands and whose reminder went out saying the link would
- *   follow (`message.video_pending`); a reminder that already carried the link, or no reminder yet
+ * - only for an appointment that still stands and whose reminder went out, for its present time and
+ *   patient, saying the link would follow (`message.video_pending`); a reminder that already carried the link, or no reminder yet
  *   (the first one will carry it), needs no follow-up;
  * - on the channel the patient allows, by the same policy as any message of an appointment
  *   (WhatsApp with an opt-in, otherwise email, never both);
@@ -75,7 +75,11 @@ export async function queueVideoLinkFollowUp(
     .where(
       and(
         eq(message.appointmentId, appointment.id),
-        eq(message.appointmentVersion, appointment.version),
+        // For this time and this patient: an appointment that moved or changed hands has its
+        // earlier messages replaced. Any other change of state (a confirmation, a check-in) bumps
+        // the version of the appointment without making the reminder less true.
+        eq(message.plannedStartsAt, appointment.startsAt),
+        eq(message.patientId, appointment.patientId),
         eq(message.videoPending, true),
         inArray(message.status, [...SENT_STATUSES]),
       ),
