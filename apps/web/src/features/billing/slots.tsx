@@ -1,7 +1,16 @@
-import type { SlotContribution } from '../../app/registry.js';
+import { lazySlot } from '../../app/lazy-slot.js';
+import type { SlotContribution, SlotProps } from '../../app/registry.js';
 
-import { ChargePanel } from './components/ChargePanel.js';
-import { PatientChargesTab } from './components/PatientChargesTab.js';
+// The panels load when a drawer or a patient record opens them: the sign-in page does not pay for them.
+const ChargePanel = lazySlot<SlotProps['appointment-drawer']>(() =>
+  import('./components/ChargePanel.js').then((module) => ({ default: module.ChargePanel })),
+);
+
+const PatientChargesTab = lazySlot<SlotProps['patient-detail-tab']>(() =>
+  import('./components/PatientChargesTab.js').then((module) => ({
+    default: module.PatientChargesTab,
+  })),
+);
 
 /**
  * What billing mounts inside screens that other features own: the charge of the appointment in the
