@@ -39,6 +39,11 @@ export default defineConfig({
     // The service worker has its own spec; keep it out of the way of the page tests.
     serviceWorkers: 'block',
     locale: 'es-AR',
+    // A toast fades in and out. Axe blends the color of a half-transparent element with what is behind
+    // it, so a page checked while a toast is mid-fade reports a contrast failure that nobody sees
+    // (it shows up when the machine is busy). Without the motion the check always reads the final
+    // colors, and a toast that is still on screen is checked at full opacity.
+    reducedMotion: 'reduce',
     timezoneId: 'America/Argentina/Buenos_Aires',
   },
   projects: [
