@@ -34,6 +34,12 @@ const MAX_ENTRIES = 300;
 const MAX_CALLS = 10;
 /** The most dry runs of a booking one match makes. */
 const MAX_CHECKS = 40;
+/**
+ * The most offers one slot gets, however many entries wait: a slot nobody takes after this many
+ * offers is left to reception, so booking and cancelling cannot make the waitlist write to every
+ * patient on the list.
+ */
+const MAX_OFFERS_PER_SLOT = 5;
 
 type TypeRecord = NonNullable<Awaited<ReturnType<SchedulingPorts['findType']>>>;
 
@@ -99,6 +105,15 @@ async function busyPatients(
       ),
     );
   return new Set(rows.map((row) => row.patientId));
+}
+
+/** How many offers this slot has had, taken or not. */
+async function offersOfSlot(tx: Tx, slotKey: string): Promise<number> {
+  const [row] = await tx
+    .select({ n: sql<number>`count(*)::int` })
+    .from(waitlistOffer)
+    .where(eq(waitlistOffer.slotKey, slotKey));
+  return row?.n ?? 0;
 }
 
 /** Patients who were already offered this slot, through any of their entries. */
@@ -316,6 +331,19 @@ export async function matchFreedSlot(
           calls += 1;
         }
         handled.add(row.patientId);
+        continue;
+      }
+
+      if (
+        (await offersOfSlot(
+          tx,
+          slotKeyOf({
+            professionalId: candidate.professionalId,
+            locationId: candidate.locationId,
+            startsAt: candidate.startsAt,
+          }),
+        )) >= MAX_OFFERS_PER_SLOT
+      ) {
         continue;
       }
 

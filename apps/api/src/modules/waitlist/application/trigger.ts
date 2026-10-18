@@ -1,5 +1,6 @@
 import { and, eq, gt, lt } from 'drizzle-orm';
 
+import { appointment } from '../../../db/schema/scheduling.js';
 import { waitlistOffer, type WaitlistOfferRow } from '../../../db/schema/waitlist.js';
 import { currentTenantId, type Tx } from '../../../platform/db/tenant-context.js';
 import type {
@@ -75,6 +76,23 @@ async function endOffersTaken(tx: Tx, appointment: AppointmentFacts, now: Date):
   );
 }
 
+/** How long an online booking must have stood before its cancellation frees a slot for the waitlist. */
+const ONLINE_GRACE_MS = 30 * 60_000;
+
+async function madeAndCancelledAtOnce(
+  tx: Tx,
+  event: Extract<AppointmentEvent, { kind: 'slot_freed' }>,
+  now: Date,
+): Promise<boolean> {
+  const left = event.appointment;
+  if (event.cause !== 'cancelled' || left?.source !== 'online') return false;
+  const [row] = await tx
+    .select({ createdAt: appointment.createdAt })
+    .from(appointment)
+    .where(eq(appointment.id, left.appointmentId));
+  return row !== undefined && now.getTime() - row.createdAt.getTime() < ONLINE_GRACE_MS;
+}
+
 export interface SlotTrigger {
   handle(tx: Tx, event: AppointmentEvent): Promise<void>;
 }
@@ -96,6 +114,9 @@ export function createSlotTrigger(deps: {
     async handle(tx, event) {
       switch (event.kind) {
         case 'slot_freed':
+          // A booking made and cancelled in minutes frees nothing anybody was holding: matching it
+          // would let one visitor book and cancel to make the waitlist send offers.
+          if (await madeAndCancelledAtOnce(tx, event, deps.clock())) return;
           if (deps.jobs) {
             await enqueueMatch(
               tx,
