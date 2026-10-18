@@ -48,6 +48,20 @@ describe('fake WhatsApp sender', () => {
     expect(sender.sent).toHaveLength(2);
   });
 
+  it('keeps only the latest messages, so a long-running process does not grow without bound (JD-S3 B16)', async () => {
+    const sender = createFakeWhatsAppSender({ capacity: 3 });
+
+    for (let index = 0; index < 5; index += 1) {
+      await sender.send({ ...request, idempotencyKey: `key-${String(index)}` });
+    }
+
+    expect(sender.sent.map((message) => message.idempotencyKey)).toEqual([
+      'key-2',
+      'key-3',
+      'key-4',
+    ]);
+  });
+
   it('verifies a webhook signed with the app secret and refuses any other', () => {
     const sender = createFakeWhatsAppSender({ appSecret: 'fake-app-secret-0123456789' });
     const body = JSON.stringify({ events: [] });

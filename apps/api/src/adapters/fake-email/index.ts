@@ -13,9 +13,15 @@ export interface FakeEmailSender extends EmailSender {
   clear(): void;
 }
 
+/** The most messages the fake remembers: it serves demo organizations in a process that stays up. */
+export const FAKE_EMAIL_CAPACITY = 1_000;
+
 /** In-memory email sender for tests and for development without a mail server. */
-export function createFakeEmailSender(options: { failWith?: Error } = {}): FakeEmailSender {
+export function createFakeEmailSender(
+  options: { failWith?: Error; capacity?: number } = {},
+): FakeEmailSender {
   const sent: EmailMessage[] = [];
+  const capacity = options.capacity ?? FAKE_EMAIL_CAPACITY;
 
   return {
     get sent() {
@@ -26,6 +32,8 @@ export function createFakeEmailSender(options: { failWith?: Error } = {}): FakeE
         return Promise.reject(new EmailDeliveryError({ cause: options.failWith }));
       }
       sent.push(message);
+      // The oldest goes first: what a test or a console looks at is the latest.
+      if (sent.length > capacity) sent.splice(0, sent.length - capacity);
       return Promise.resolve();
     },
     lastTo(address) {

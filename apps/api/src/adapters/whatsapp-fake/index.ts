@@ -23,6 +23,8 @@ export interface FakeWhatsAppSender extends WhatsAppSender {
 }
 
 const DEFAULT_APP_SECRET = 'fake-whatsapp-app-secret';
+/** The most messages the fake remembers (and the idempotency keys with them). */
+export const FAKE_WHATSAPP_CAPACITY = 1_000;
 const SIGNATURE_HEADER = 'x-hub-signature-256';
 
 const EventBody = z.object({
@@ -55,8 +57,11 @@ function headerValue(headers: WebhookHeaders, name: string): string | undefined 
  * `WhatsAppSender` port). It is deterministic: the provider id comes from the idempotency key, so a
  * test can predict it, and nothing leaves the process.
  */
-export function createFakeWhatsAppSender(options: { appSecret?: string } = {}): FakeWhatsAppSender {
+export function createFakeWhatsAppSender(
+  options: { appSecret?: string; capacity?: number } = {},
+): FakeWhatsAppSender {
   const secret = options.appSecret ?? DEFAULT_APP_SECRET;
+  const capacity = options.capacity ?? FAKE_WHATSAPP_CAPACITY;
   const byKey = new Map<string, FakeWhatsAppMessage>();
 
   const sign = (rawBody: Buffer | string) =>
@@ -72,6 +77,13 @@ export function createFakeWhatsAppSender(options: { appSecret?: string } = {}): 
         const digest = createHash('sha256').update(request.idempotencyKey).digest('hex');
         message = { ...request, providerMessageId: `fake.${digest.slice(0, 24)}` };
         byKey.set(request.idempotencyKey, message);
+        // The oldest goes first (a Map keeps the order of insertion): the fake serves demo
+        // organizations in a process that stays up, and must not grow with every message.
+        while (byKey.size > capacity) {
+          const oldest = byKey.keys().next().value;
+          if (oldest === undefined) break;
+          byKey.delete(oldest);
+        }
       }
       return Promise.resolve({ status: 'accepted', providerMessageId: message.providerMessageId });
     },
