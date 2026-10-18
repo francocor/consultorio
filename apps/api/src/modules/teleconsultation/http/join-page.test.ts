@@ -42,7 +42,10 @@ describe('join page', () => {
     expect(page.html).not.toMatch(/<form[^>]*action=/);
     expect(page.html).toContain('servicio de videollamada de terceros');
     expect(page.hasForm).toBe(true);
-    expect(page.contentSecurityPolicy).toContain("form-action 'self'");
+    // `form-action 'self'` would stop the browser at the redirect to the call (JD-S3 R2-C3).
+    expect(page.contentSecurityPolicy).not.toContain('form-action');
+    expect(page.contentSecurityPolicy).toContain("default-src 'none'");
+    expect(page.contentSecurityPolicy).not.toMatch(/https?:/);
     expect(renderJoinPage(base).hasForm).toBe(false);
   });
 

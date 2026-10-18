@@ -104,6 +104,25 @@ export interface RenderedJoinPage {
   hasForm: boolean;
 }
 
+/**
+ * A page with no form forbids every form. The `ready` page leaves `form-action` out: Chromium
+ * checks the target of the 302 that answers a post against `form-action` too, so `'self'` made the
+ * button useless (the browser stopped at the redirect to the call). Listing the provider's host
+ * would put it in a header of every join page, so the directive is not set at all. The page is
+ * static, its values are escaped, and `default-src 'none'` keeps scripts, frames and requests out;
+ * the only thing the form can do is post to its own address.
+ */
+function contentSecurityPolicyOf(kind: JoinPageKind, styleHash: string): string {
+  const directives = [
+    "default-src 'none'",
+    `style-src 'sha256-${styleHash}'`,
+    "base-uri 'none'",
+    ...(kind === 'ready' ? [] : ["form-action 'none'"]),
+    "frame-ancestors 'none'",
+  ];
+  return directives.join('; ');
+}
+
 export function renderJoinPage(model: JoinPageModel): RenderedJoinPage {
   const { title, body, withNotice } = contentOf(model);
   const accent = accentOf(model.accent);
@@ -160,7 +179,7 @@ ${notice}
 
   return {
     html,
-    contentSecurityPolicy: `default-src 'none'; style-src 'sha256-${styleHash}'; base-uri 'none'; form-action ${model.kind === 'ready' ? "'self'" : "'none'"}; frame-ancestors 'none'`,
+    contentSecurityPolicy: contentSecurityPolicyOf(model.kind, styleHash),
     hasForm: model.kind === 'ready',
   };
 }

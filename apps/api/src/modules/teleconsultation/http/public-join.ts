@@ -45,6 +45,17 @@ const STATUS: Record<Exclude<PublicJoinOutcome['kind'], 'redirect'>, number> = {
  */
 export function publicJoinRoutes(deps: PublicJoinDeps) {
   return (app: FastifyInstance): void => {
+    // The button of the page is a form, and a browser posts a form as
+    // `application/x-www-form-urlencoded` (with no fields, here). Without a parser for it the
+    // request is refused with a 415 before the route runs, so the button never entered the call
+    // (judgment day round 2, finding R2-C3). Nothing of the body is read.
+    app.addContentTypeParser(
+      'application/x-www-form-urlencoded',
+      { parseAs: 'string', bodyLimit: 1024 },
+      (_request, _body, done) => {
+        done(null, null);
+      },
+    );
     const typed = app.withTypeProvider<ZodTypeProvider>();
 
     const Params = z.strictObject({ token: z.string().min(1).max(512) });

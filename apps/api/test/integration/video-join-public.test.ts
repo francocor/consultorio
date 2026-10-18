@@ -79,7 +79,10 @@ const open = (token: string, host = hostOf(world.slug), remoteAddress = nextAddr
     headers: { host, 'user-agent': 'vitest-patient' },
   });
 
-/** The button of the page: a POST from the page of the same host. */
+/**
+ * The button of the page: a POST from the page of the same host, as a browser sends a form with no
+ * fields (JD-S3 R2-C3: the form content type used to be refused with a 415).
+ */
 const enter = (
   token: string,
   options: { host?: string; origin?: string | null; remoteAddress?: string } = {},
@@ -92,8 +95,10 @@ const enter = (
     headers: {
       host,
       'user-agent': 'vitest-patient',
+      'content-type': 'application/x-www-form-urlencoded',
       ...(options.origin === null ? {} : { origin: options.origin ?? `https://${host}` }),
     },
+    payload: '',
   });
 };
 
@@ -161,7 +166,7 @@ describe('the platform join address', () => {
       expect(response.body).not.toContain(room);
       expect(response.body).not.toContain('meet.jit.si');
       expect(response.headers['referrer-policy']).toBe('same-origin');
-      expect(response.headers['content-security-policy']).toContain("form-action 'self'");
+      expect(response.headers['content-security-policy']).not.toContain('form-action');
     }
     expect((await world.sessionOf(appointment.id))?.firstOpenedAt).toBeNull();
     expect(await world.auditsOf('video.link.opened', appointment.id)).toHaveLength(0);
