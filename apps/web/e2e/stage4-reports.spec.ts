@@ -393,14 +393,17 @@ test('the owner exports the charges of the period: the request goes out with the
 
   const body = (await asked).postDataJSON() as Record<string, unknown>;
   expect(body).toEqual({ kind: 'charges', format: 'csv', ...range });
-  // The stack of the suite runs the worker without a bucket, so the file itself is not built here
-  // (the job and the three formats have their own integration tests): the request is followed.
-  await expect(
-    page
-      .getByText('Preparando el archivo…')
-      .or(page.getByText(/^Archivo listo: \d+ filas\.$/))
-      .or(page.getByText('No hay nada para exportar')),
-  ).toBeVisible();
+  // The stack of the suite runs the worker with the bucket of its MinIO, so the job builds the file.
+  // The demonstration data has no charges of its own (the cash and invoicing specs create them in
+  // the same stack): with charges in the period the panel must reach "ready", without them it says
+  // there is nothing to export. The empty state is as valid as the full one.
+  const report = await apiGet<FinancialReportResponse>(page, `/reports/financial?${query(range)}`);
+  expect(report.status).toBe(200);
+  if (report.body.totals.charged.count > 0) {
+    await expect(page.getByText(/^Archivo listo: \d+ filas\.$/)).toBeVisible({ timeout: 30_000 });
+  } else {
+    await expect(page.getByText('No hay nada para exportar')).toBeVisible();
+  }
   expect(await horizontalOverflow(page)).toBeLessThanOrEqual(0);
   expect(await axeViolations(page)).toEqual([]);
 });

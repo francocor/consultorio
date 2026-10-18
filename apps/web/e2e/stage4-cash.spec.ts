@@ -257,4 +257,22 @@ test('the front desk charges, takes a partial payment and closes the cash regist
   await expect(page.getByRole('heading', { name: 'Cajas anteriores' })).toBeVisible();
   await expect(page.getByText(/diferencia -\$ 50,00/).first()).toBeVisible();
   await expectFitsAndAccessible(page);
+
+  // 5. The worker of the stack has the bucket of its storage, so an export of the day's charges is
+  // built (the job is registered only when the worker can store the file).
+  const asked = await apiCall<{ id: string }>(page, 'POST', '/billing/exports', {
+    kind: 'charges',
+    format: 'csv',
+    from: slot.date,
+    to: slot.date,
+  });
+  expect(asked.status, JSON.stringify(asked.body)).toBe(202);
+  await expect
+    .poll(
+      async () =>
+        (await apiCall<{ status: string }>(page, 'GET', `/billing/exports/${asked.body.id}`)).body
+          .status,
+      { timeout: 30_000 },
+    )
+    .toBe('ready');
 });
