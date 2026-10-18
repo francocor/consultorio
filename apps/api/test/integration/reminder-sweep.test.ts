@@ -256,3 +256,46 @@ describe('reminder.sweep: addresses hashed before the pepper', () => {
     expect((await notes.message(gone)).addressHash).toBeNull();
   });
 });
+
+describe('reminder.sweep: more appointments than a page (JD-S3 B9)', () => {
+  it('goes through every appointment of the horizon, page after page, not just the nearest ones', async () => {
+    // Five patients nobody can remind, each with an appointment: with pages of two, the nearest
+    // two used to be all that one run looked at, and the others waited for ever behind them.
+    const booked = [];
+    for (let index = 0; index < 5; index += 1) {
+      booked.push(await bookedFor({ email: null, phone: null }));
+    }
+    const definition = createReminderSweepJob({ ...notes.deps }, { pageSize: 2 });
+
+    await runJob(runtime.db, definition, {
+      id: crypto.randomUUID(),
+      name: 'reminder.sweep',
+      data: { tenantId: scheduling.tenant.id },
+      enqueuedAt: notes.now(),
+      retryCount: 0,
+    });
+
+    for (const { appointment } of booked) {
+      expect(await openItems(appointment.id), appointment.id).toEqual([
+        { kind: 'reminder_not_sent', status: 'open' },
+      ]);
+    }
+  });
+
+  it('leaves alone an appointment whose reminders are planned and live', async () => {
+    const { patientId, appointment } = await bookedFor({ email: 'ok@example.test' });
+    await notes.queue({
+      kind: 'reminder',
+      patientId,
+      appointmentId: appointment.id,
+      plannedStartsAt: new Date(appointment.startsAt),
+      appointmentVersion: appointment.version,
+      dedupeKey: `paged:${appointment.id}:email`,
+    });
+
+    await sweep();
+
+    expect(await openItems(appointment.id)).toEqual([]);
+    expect(await notes.messagesOf(appointment.id)).toHaveLength(1);
+  });
+});
