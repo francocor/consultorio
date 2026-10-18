@@ -25,6 +25,7 @@ import {
   type SkipReason,
 } from '../domain/channel-policy.js';
 import { classifyEmailFailure, nextRetryAt } from '../domain/delivery-rules.js';
+import { applyQuietHours } from '../domain/quiet-hours.js';
 import { cancelReasonForAppointment } from '../domain/validity.js';
 
 import {
@@ -47,7 +48,13 @@ import {
 import { loadRecipient, type Recipient } from './recipients.js';
 import { renderMessage, type RenderedMessage } from './render.js';
 import { loadMessagingSettings, type MessagingSettings } from './settings.js';
-import { recordWhatsappUsage, UNLIMITED_QUOTA, whatsappQuotaAvailable } from './usage.js';
+import {
+  recordWhatsappUsage,
+  releaseWhatsappUsage,
+  reserveWhatsappUsage,
+  UNLIMITED_QUOTA,
+  whatsappQuotaAvailable,
+} from './usage.js';
 import { videoNoteOf } from './video-join.js';
 
 /**
@@ -127,6 +134,8 @@ async function cancelRow(tx: Tx, row: MessageRow, reason: MessageCancelReason): 
     .update(message)
     .set({ status: 'cancelled', cancelReason: reason })
     .where(and(eq(message.id, row.id), eq(message.status, 'queued')));
+  // A WhatsApp message that does not go gives its place in the quota back.
+  if (row.channel === 'whatsapp') await releaseWhatsappUsage(tx, row.id);
 }
 
 interface Situation {
@@ -290,6 +299,43 @@ async function settleUnavailable(
   }
 }
 
+/** Kinds that answer an action or carry a one-time code: quiet hours never hold them back. */
+const QUIET_EXEMPT: ReadonlySet<MessageKind> = new Set(['confirmation']);
+
+/**
+ * Quiet hours are checked again when the message is about to go, not only when it was planned: a
+ * retry, a fallback to the other channel, or a job that ran late after an outage must not wake a
+ * patient. Inside quiet hours the message WAITS for their end (same row, a new job) when that comes
+ * before `limit` (the start of the appointment, or the expiry of an offer); it is never dropped for
+ * that reason alone. A message a person asked for (a manual resend) and the exempt kinds are not
+ * held. Returns what happened: `send` (go on), `waiting` (deferred, nothing more to do now) or
+ * `too_late` (it could not arrive in time).
+ */
+async function checkQuietHours(
+  deps: MessagingDeps,
+  tx: Tx,
+  row: MessageRow,
+  input: { now: Date; timeZone: string; settings: MessagingSettings; limit: Date },
+): Promise<'send' | 'waiting' | 'too_late'> {
+  if (QUIET_EXEMPT.has(row.kind as MessageKind) || row.trigger === 'manual') return 'send';
+  const decision = applyQuietHours({
+    due: input.now,
+    startsAt: input.limit,
+    timeZone: input.timeZone,
+    quiet: input.settings.quietHours,
+  });
+  if (decision.kind === 'skip') return 'too_late';
+  if (decision.at.getTime() <= input.now.getTime()) return 'send';
+  await tx.update(message).set({ sendAt: decision.at }).where(eq(message.id, row.id));
+  await deps.jobs.enqueue(
+    tx,
+    REMINDER_SEND_JOB,
+    { tenantId: row.tenantId, messageId: row.id },
+    { startAfter: decision.at },
+  );
+  return 'waiting';
+}
+
 /**
  * Step 1 for a waitlist offer. It has no appointment: the message is written from the slot kept
  * with it (`message_offer`), and it is not sent once the offer has expired. Everything else (the
@@ -316,6 +362,17 @@ async function prepareOfferDelivery(
     await cancelRow(tx, row, 'no_channel');
     return { kind: 'settled' };
   }
+  const quiet = await checkQuietHours(deps, tx, row, {
+    now,
+    timeZone: (await loadOfferPlace(tx, offer.locationId, null)).timeZone,
+    settings,
+    limit: offer.expiresAt,
+  });
+  if (quiet !== 'send') {
+    // The offer cannot wait for the morning without expiring: it is over, and the waitlist moves on.
+    if (quiet === 'too_late') await cancelRow(tx, row, 'offer_expired');
+    return { kind: 'settled' };
+  }
   const decision = selectChannels(
     'waitlist_offer',
     recipient.facts,
@@ -329,6 +386,16 @@ async function prepareOfferDelivery(
   const to = channel === 'email' ? recipient.email : recipient.phone;
   if (to === null) {
     await cancelRow(tx, row, 'no_channel');
+    return { kind: 'settled' };
+  }
+  if (await quotaTakenByRace(deps, tx, row, now)) {
+    await settleUnavailable(
+      deps,
+      tx,
+      row,
+      await withoutQuota(deps, tx, 'waitlist_offer', recipient, settings, tenant),
+      null,
+    );
     return { kind: 'settled' };
   }
   const attempt = await startAttempt(tx, row, channel, to, now);
@@ -387,6 +454,41 @@ async function prepareOfferDelivery(
   };
 }
 
+/**
+ * Reserves the place of a WhatsApp message in its professional's quota. True when the quota ran
+ * out between the check that chose WhatsApp and now (another message took the last place).
+ */
+async function quotaTakenByRace(
+  deps: MessagingDeps,
+  tx: Tx,
+  row: MessageRow,
+  now: Date,
+): Promise<boolean> {
+  if (row.channel !== 'whatsapp' || row.professionalId === null) return false;
+  const reserved = await reserveWhatsappUsage(deps.quota ?? UNLIMITED_QUOTA, tx, {
+    messageId: row.id,
+    professionalId: row.professionalId,
+    now,
+  });
+  return reserved === 'exhausted';
+}
+
+/** The decision the policy would have made if the quota had been spent when the channel was chosen. */
+async function withoutQuota(
+  deps: MessagingDeps,
+  tx: Tx,
+  kind: MessageKind,
+  recipient: Recipient,
+  settings: MessagingSettings,
+  tenant: TenantRef,
+): Promise<ChannelDecision> {
+  const base = await channelOptions(deps, tx, { tenant, settings }, null);
+  return selectChannels(kind, recipient.facts, {
+    ...base,
+    whatsappQuotaAvailable: false,
+  });
+}
+
 /** Step 1. Runs in a transaction of its own, which is committed before the provider is called. */
 export function prepareDelivery(
   deps: MessagingDeps,
@@ -434,6 +536,23 @@ export function prepareDelivery(
       await cancelRow(tx, row, 'no_channel');
       return { kind: 'settled' };
     }
+    const quiet = await checkQuietHours(deps, tx, row, {
+      now,
+      timeZone: appointment.timeZone,
+      settings,
+      limit: appointment.startsAt,
+    });
+    if (quiet === 'waiting') return { kind: 'settled' };
+    if (quiet === 'too_late') {
+      // It cannot reach the patient before the appointment without waking them: reception is told.
+      await cancelRow(tx, row, 'no_channel');
+      await openWorklist(deps, tx, kind, {
+        worklistKind: 'reminder_not_sent',
+        appointmentId: appointment.id,
+        locationId: appointment.locationId,
+      });
+      return { kind: 'settled' };
+    }
     const situation: Situation = { state, tenant, appointment, recipient, settings };
     const decision = selectChannels(
       kind,
@@ -451,6 +570,18 @@ export function prepareDelivery(
     const to = channel === 'email' ? recipient.email : recipient.phone;
     if (to === null) {
       await cancelRow(tx, row, 'no_channel');
+      return { kind: 'settled' };
+    }
+
+    // The last place of the quota is taken here, under a lock, not by the check above.
+    if (await quotaTakenByRace(deps, tx, row, now)) {
+      await settleUnavailable(
+        deps,
+        tx,
+        row,
+        await withoutQuota(deps, tx, kind, recipient, settings, tenant),
+        appointment,
+      );
       return { kind: 'settled' };
     }
 
@@ -603,6 +734,8 @@ async function failPermanently(
     .update(message)
     .set({ status: 'failed', failureReason: reason })
     .where(and(eq(message.id, send.messageId), eq(message.status, 'queued')));
+  // The provider will not carry it: the place it held in the quota is free again.
+  if (send.channel === 'whatsapp') await releaseWhatsappUsage(tx, send.messageId);
   const [row] = await tx.select().from(message).where(eq(message.id, send.messageId));
   if (row) await continueAfterFailure(deps, tx, row, send.tenant);
 }

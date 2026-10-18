@@ -414,6 +414,13 @@
       "when": 1792282079009,
       "tag": "0395_message_offer_url_enc",
       "breakpoints": true
+    },
+    {
+      "idx": 59,
+      "version": "7",
+      "when": 1792282488314,
+      "tag": "0396_whatsapp_usage_reservation",
+      "breakpoints": true
     }
   ]
 }
