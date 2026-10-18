@@ -9,6 +9,7 @@ import { appointment, slotHold } from '../../src/db/schema/scheduling.js';
 import { verifyCode } from '../../src/modules/online-booking/application/otp.js';
 import { createRuntimeDb, type DbHandle } from '../../src/platform/db/pool.js';
 import { createBookingWorld, type BookingWorld, type Visitor } from '../support/booking-world.js';
+import { shapeOf } from '../support/security.js';
 
 let runtime: DbHandle;
 let world: BookingWorld;
@@ -413,7 +414,7 @@ describe('limits on the codes', () => {
 });
 
 describe('abuse protection', () => {
-  it('refuses a contact that already holds three future online appointments, with the contact-us answer', async () => {
+  it('does not answer differently before the code for a document that already holds three future online appointments (JD-S3 C2)', async () => {
     const document = { type: 'dni' as const, number: '29000111' };
     const patientId = await world.inTenant(async (tx) => {
       const result = await tx.execute<{ id: string }>(
@@ -437,23 +438,25 @@ describe('abuse protection', () => {
     );
     const { visitor, hold } = await heldBy();
 
-    const refused = await submit(visitor, hold, world.form({ document }));
+    const known = await submit(visitor, hold, world.form({ document }));
     const elsewhere = await submit(
       visitor,
       hold,
       world.form({ document: { type: 'dni', number: '29000222' } }),
     );
 
-    expect(refused.statusCode).toBe(409);
-    expect(refused.json<Problem>().code).toBe('booking_limit_reached');
+    // A visitor who has proved nothing yet learns nothing about the document: the same answer, and
+    // nothing flagged. The limits are applied after the code, on the address that was verified.
+    expect(known.statusCode).toBe(200);
     expect(elsewhere.statusCode).toBe(200);
+    expect(shapeOf(known)).toBe(shapeOf(elsewhere));
     const flagged = await world.inTenant((tx) =>
       tx
         .select({ metadata: auditEvent.metadata })
         .from(auditEvent)
         .where(eq(auditEvent.action, 'booking.suspicious')),
     );
-    expect(flagged.some((entry) => entry.metadata['reason'] === 'hoarding')).toBe(true);
+    expect(flagged.some((entry) => entry.metadata['reason'] === 'hoarding')).toBe(false);
   });
 
   it('limits the forms one address may send in an hour', async () => {

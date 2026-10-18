@@ -10,7 +10,7 @@ import { hashAddress } from '../domain/address.js';
 import { classifyEmailFailure, MAX_ATTEMPTS } from '../domain/delivery-rules.js';
 
 import { loadTenantState } from './context.js';
-import { loadPreferences, recordOptIn } from './preferences.js';
+import { recordOptIn } from './preferences.js';
 
 /**
  * The confirmation of an online booking, as the notifications module sends it (spec "Automatic
@@ -23,8 +23,10 @@ import { loadPreferences, recordOptIn } from './preferences.js';
  *   reception sees it was sent. The log keeps a hash of the address, never the address.
  * - It is sent once per appointment and time: asking again for the same booking changes nothing,
  *   and moving the appointment (another time) is a new confirmation.
- * - A patient who opted out of email does not get it: an opt-out covers every automated message of
- *   the channel (spec "Opt-out and consent").
+ * - It does not depend on the opt-outs of the record of the patient: the address is the
+ *   visitor's own, proved a moment ago, and the message answers what they just did. (An opt-out of
+ *   a record the visitor may not even own must not decide whether they are answered: it would tell
+ *   them that the document is on file.) A demonstration organization sends nothing.
  * - A temporary failure is tried again, up to three attempts in all, a few seconds apart (the
  *   visitor is not waiting: it runs after their answer). A failure never reaches the visitor.
  */
@@ -61,7 +63,8 @@ export function createBookingNotifier(deps: BookingNotifierDeps): BookingNotifie
       async (tx): Promise<string | null> => {
         const state = await loadTenantState(tx, notice.tenant.id);
         if (!state || state.status !== 'active') return null;
-        const optedOut = (await loadPreferences(tx, notice.patientId)).email === 'opted_out';
+        // A demonstration organization never reaches a real address: the log says it was not sent.
+        const demo = state.isDemo;
         const [inserted] = await tx
           .insert(message)
           .values({
@@ -75,11 +78,11 @@ export function createBookingNotifier(deps: BookingNotifierDeps): BookingNotifie
             // One confirmation per appointment and time.
             dedupeKey: `booking_confirmation:${notice.appointmentId}:${String(notice.startsAt.getTime())}:email`,
             addressHash: hashAddress('email', notice.to),
-            ...(optedOut ? { status: 'cancelled', cancelReason: 'opted_out' } : { attempts: 1 }),
+            ...(demo ? { status: 'cancelled', cancelReason: 'demo_tenant' } : { attempts: 1 }),
           })
           .onConflictDoNothing()
           .returning({ id: message.id });
-        if (!inserted || optedOut) return null;
+        if (!inserted || demo) return null;
         await tx.insert(messageAttempt).values({
           tenantId: sql`current_setting('app.tenant_id')::uuid`,
           messageId: inserted.id,

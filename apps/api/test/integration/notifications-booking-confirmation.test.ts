@@ -11,6 +11,7 @@ import { createRuntimeDb, type DbHandle } from '../../src/platform/db/pool.js';
 import { createWithTenant } from '../../src/platform/db/tenant-context.js';
 import { createPublicOrigins } from '../../src/platform/http/public-origin.js';
 import { BASE_DOMAIN } from '../support/app.js';
+import { insertAppointmentRow, insertPatient } from '../support/fixture-helpers.js';
 import {
   createNotificationsWorld,
   type NotificationsWorld,
@@ -19,6 +20,7 @@ import {
   createSchedulingHttpWorld,
   type SchedulingHttpWorld,
 } from '../support/scheduling-world.js';
+import { asTenant, createTestTenant } from '../support/tenants.js';
 
 /**
  * The confirmation of an online booking goes out through notifications: logged on the appointment,
@@ -148,7 +150,10 @@ describe('the confirmation of an online booking', () => {
     expect(await logOf(appointment.id)).toHaveLength(2);
   });
 
-  it('is not sent to a patient who opted out of email, and the log says why', async () => {
+  it('is sent to the verified address even when the record of the patient opted out of email (JD-S3 C2)', async () => {
+    // The address belongs to the visitor, who just proved it with a code: the answer to their
+    // action is service communication, and an opt-out of somebody else's record must not decide
+    // whether it is sent (it would tell the visitor that the document exists).
     const { notice, appointment, patientId } = await booking();
     await scheduling.inTenant((tx) =>
       recordOptOut(tx, { patientId, channel: 'email', source: 'email_link', actor }),
@@ -156,10 +161,39 @@ describe('the confirmation of an online booking', () => {
 
     await notifier().confirmBooking(notice);
 
-    expect(notes.email.sent).toHaveLength(0);
-    expect(await logOf(appointment.id)).toMatchObject([
-      { status: 'cancelled', cancelReason: 'opted_out' },
-    ]);
+    expect(notes.email.sent.map((mail) => mail.to)).toEqual(['verificado@example.test']);
+    expect(await logOf(appointment.id)).toMatchObject([{ status: 'sent' }]);
+  });
+
+  it('is not sent for a demonstration organization, and the log says so (JD-S3 B13)', async () => {
+    const demo = await createTestTenant(runtime, { slug: 'notif-booking-demo', isDemo: true });
+    const notice = await asTenant(runtime, demo.id, async (tx) => {
+      const patientId = await insertPatient(tx, demo.id);
+      const appointmentId = await insertAppointmentRow(tx, demo.id, { patient_id: patientId });
+      return {
+        patientId,
+        appointmentId,
+      };
+    });
+
+    await notifier().confirmBooking({
+      tenant: { id: demo.id, slug: 'notif-booking-demo', isDemo: true },
+      to: 'visitante@example.test',
+      organizationName: 'Demo',
+      professionalName: 'Dra. Demo',
+      locationName: 'Centro',
+      startsAt: new Date('2031-09-01T13:00:00.000Z'),
+      timeZone: 'America/Argentina/Buenos_Aires',
+      pendingApproval: false,
+      manageToken: null,
+      patientId: notice.patientId,
+      appointmentId: notice.appointmentId,
+    });
+
+    const rows = await asTenant(runtime, demo.id, (tx) =>
+      tx.select().from(message).where(eq(message.appointmentId, notice.appointmentId)),
+    );
+    expect(rows).toMatchObject([{ status: 'cancelled', cancelReason: 'demo_tenant' }]);
   });
 
   it('tries again after a temporary failure and records every attempt', async () => {

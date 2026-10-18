@@ -421,6 +421,13 @@
       "when": 1792282488314,
       "tag": "0396_whatsapp_usage_reservation",
       "breakpoints": true
+    },
+    {
+      "idx": 60,
+      "version": "7",
+      "when": 1792283698330,
+      "tag": "0397_booking_link_unconfirmed_cap",
+      "breakpoints": true
     }
   ]
 }

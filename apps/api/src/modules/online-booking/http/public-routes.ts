@@ -435,8 +435,6 @@ export function publicRoutes(deps: PublicRoutesDeps) {
           return conflictCode(request, reply, 'slot_no_longer_available');
         case 'rate_limited':
           throw new AppError('rate_limited');
-        case 'limit_reached':
-          throw new AppError('booking_limit_reached');
       }
     }
 

@@ -177,6 +177,73 @@ describe('the confirmation of a booking', () => {
   });
 });
 
+describe('a record that cannot take the booking (JD-S3 C2)', () => {
+  /** A patient with a document of their own that was deactivated. */
+  async function inactivePatient() {
+    people += 1;
+    const number = String(30_300_000 + people);
+    await world.inTenant((tx) =>
+      tx.execute(
+        sql`INSERT INTO patient (tenant_id, family_name, given_names, birth_date, national_id_type, national_id, phone, email, status)
+              VALUES (${world.tenant.id}, ${KNOWN.family}, ${KNOWN.given}, '1980-01-01', 'dni', ${number}, ${KNOWN.phone}, ${KNOWN.email}, 'inactive')`,
+      ),
+    );
+    return number;
+  }
+
+  async function confirmedPair(extra: Parameters<BookingWorld['form']>[0] = {}) {
+    const fresh = await submitted(extra);
+    const inactive = await submitted({
+      ...extra,
+      document: { type: 'dni', number: await inactivePatient() },
+      email: `impostor${String(week)}@example.test`,
+      givenNames: 'Otra',
+      familyName: 'Persona',
+    });
+    const answers: Awaited<ReturnType<Visitor['post']>>[] = [];
+    const queries: number[] = [];
+    for (const booking of [fresh, inactive]) {
+      queries.push(
+        await countQueries(async () => {
+          answers.push(
+            await booking.visitor.post(confirmPath(booking.hold), {
+              code: world.codeSentTo(booking.form.email),
+            }),
+          );
+          await world.app.background.idle();
+        }),
+      );
+    }
+    return { answers, queries };
+  }
+
+  it('answers a deactivated record like a person nobody had registered', async () => {
+    const { answers } = await confirmedPair();
+
+    const [freshAnswer, inactiveAnswer] = answers;
+    expect(inactiveAnswer?.statusCode, inactiveAnswer?.body).toBe(200);
+    expect(Object.keys(inactiveAnswer?.json() ?? {}).sort()).toEqual(
+      Object.keys(freshAnswer?.json() ?? {}).sort(),
+    );
+    expect(inactiveAnswer?.json()).toMatchObject({ status: 'scheduled' });
+    for (const secret of [KNOWN.given, KNOWN.family, KNOWN.phone, KNOWN.email]) {
+      expect(inactiveAnswer?.body ?? '').not.toContain(secret);
+    }
+  });
+
+  it('does the same amount of work for a deactivated record as for a new person', async () => {
+    const { queries } = await confirmedPair();
+
+    expect(queries[1]).toBe(queries[0]);
+  });
+
+  it('does the same amount of work when the visitor also asks for WhatsApp', async () => {
+    const { queries } = await confirmedPair({ whatsappOptIn: true });
+
+    expect(queries[1]).toBe(queries[0]);
+  });
+});
+
 describe('the waitlist form', () => {
   const path = (suffix = '') => `/public/${links.organization.slug}/waitlist${suffix}`;
   let forms = 0;

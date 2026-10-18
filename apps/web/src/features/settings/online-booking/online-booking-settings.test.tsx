@@ -22,6 +22,7 @@ const ORG_LINK: BookingLinkDto = {
   locationIds: [],
   typeIds: [IDS.first, IDS.control],
   regeneratedAt: null,
+  maxUnconfirmedAppointments: 20,
   path: '/book/clinica8x',
 };
 
@@ -33,6 +34,7 @@ const ANA_LINK: BookingLinkDto = {
   locationIds: [IDS.central],
   typeIds: [IDS.control],
   regeneratedAt: null,
+  maxUnconfirmedAppointments: 20,
   path: '/book/clinica8x/p/anaslug1',
 };
 

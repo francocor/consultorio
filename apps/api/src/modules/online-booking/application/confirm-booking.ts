@@ -8,14 +8,25 @@ import { evenOut } from '../../../platform/db/even-work.js';
 import type { Tx } from '../../../platform/db/tenant-context.js';
 import type { AppointmentFacts } from '../../../platform/events/appointment-events.js';
 import type { ActionTokens } from '../../../platform/tokens/index.js';
-import { createOnlinePatient, findPatientByDocument } from '../../patients/index.js';
+import {
+  createOnlinePatient,
+  findPatientByDocument,
+  type OnlinePatientMatch,
+} from '../../patients/index.js';
 import { SlotNoLongerAvailableError } from '../../scheduling/index.js';
 import type { SchedulingPorts, WorklistService } from '../../scheduling/index.js';
 import { readOrganizationName } from '../../tenancy/index.js';
 import { dailyCapReached } from '../domain/booking-rules.js';
 import { identityDifferences } from '../domain/identity-differences.js';
 
-import { ABUSE_LIMITS, bookingsInLastDay, futureOnlineAppointments, type Abuse } from './abuse.js';
+import {
+  ABUSE_LIMITS,
+  bookingsInLastDay,
+  futureOnlineByDocument,
+  futureOnlineByEmail,
+  unconfirmedOnLink,
+  type Abuse,
+} from './abuse.js';
 import type { BookingNotice, BookingNotifier } from './booking-notifier.js';
 import { readBookingSettings } from './booking-settings.js';
 import { renderIcs } from './ics.js';
@@ -35,6 +46,8 @@ import {
  */
 export const NEW_PERSON_EXTRA_STATEMENTS = 6;
 export const WHATSAPP_OPT_IN_EXTRA_STATEMENTS = 3;
+/** What opening the identity review of a match costs, which a new person does not need. */
+export const REVIEW_ITEM_STATEMENTS = 1;
 
 export interface ConfirmDeps {
   keys: TenantKeys;
@@ -51,6 +64,30 @@ export type ConfirmOutcome =
 
 export interface ConfirmInput extends SubmitInput {
   code: string;
+}
+
+/** Why an appointment is not put on the record that has the document the visitor typed. */
+export type DetachReason = 'inactive_patient' | 'document_limit' | 'link_limit';
+
+async function detachReason(
+  tx: Tx,
+  input: {
+    match: OnlinePatientMatch | null;
+    document: { type: string; number: string };
+    linkId: string;
+    linkLimit: number;
+    now: Date;
+  },
+): Promise<DetachReason | null> {
+  // Both counts are read whoever the document belongs to, so that the work behind the answer does
+  // not depend on it.
+  const onDocument = await futureOnlineByDocument(tx, { document: input.document, now: input.now });
+  const onLink = await unconfirmedOnLink(tx, { linkId: input.linkId, now: input.now });
+  if (input.match === null) return null;
+  if (input.match.status === 'inactive') return 'inactive_patient';
+  if (onDocument >= ABUSE_LIMITS.futureAppointmentsPerContact) return 'document_limit';
+  if (onLink >= input.linkLimit) return 'link_limit';
+  return null;
 }
 
 /** The facts an event carries about an appointment. */
@@ -135,13 +172,12 @@ export async function confirmBooking(
   ) {
     throw new SlotNoLongerAvailableError();
   }
-  const future = await futureOnlineAppointments(tx, {
-    email: submission.email,
-    document: payload.document,
-    now: input.now,
-  });
+  // The limits of a contact count the address that was just verified, and nothing else: it is the
+  // only thing the visitor has proved to control, and what this answer says is about their own
+  // address. (The limits of a document, and of the link, never change what the visitor is told.)
   if (
-    future >= ABUSE_LIMITS.futureAppointmentsPerContact ||
+    (await futureOnlineByEmail(tx, { email: submission.email, now: input.now })) >=
+      ABUSE_LIMITS.futureAppointmentsPerContact ||
     (await bookingsInLastDay(tx, submission.email, input.now)) >=
       ABUSE_LIMITS.bookingsPerContactPerDay
   ) {
@@ -163,16 +199,25 @@ export async function confirmBooking(
   });
   if (blocks.length > 0) throw new SlotNoLongerAvailableError();
 
-  // Who the appointment is for (D14): a new person, or the patient with that document.
+  // Who the appointment is for (D14): a new person, or the patient with that document - unless
+  // that record cannot take it. A deactivated record cannot be booked online; a record that already
+  // holds the online appointments one document may have, or a link that already holds the
+  // unconfirmed appointments it may have, is not piled on any further. In those cases the visitor is
+  // answered exactly as in any other (they cannot learn that the document belongs to somebody), the
+  // appointment stands on a record of its own that carries what they typed, and reception is asked
+  // to look at it. Nothing is sent to, or written on, the record that has the document.
   const match = await findPatientByDocument(tx, payload.document);
-  if (match?.status === 'inactive') {
-    // A deactivated record cannot be booked online, and the visitor is not told why.
-    return { ok: false, refusal: 'limit_reached' };
-  }
+  const detachedBecause = await detachReason(tx, {
+    match,
+    document: payload.document,
+    linkId: offer.link.id,
+    linkLimit: offer.link.maxUnconfirmedAppointments,
+    now: input.now,
+  });
   let patientId: string;
   let identityConfirmed: boolean;
   let createdPatient = false;
-  if (match) {
+  if (match && detachedBecause === null) {
     patientId = match.id;
     identityConfirmed = false;
   } else {
@@ -182,7 +227,7 @@ export async function confirmBooking(
         givenNames: payload.givenNames,
         familyName: payload.familyName,
         birthDate: payload.birthDate,
-        document: payload.document,
+        document: match ? null : payload.document,
         phone: payload.phone,
         email: submission.email,
         consent: payload.consent.textKey
@@ -190,7 +235,7 @@ export async function confirmBooking(
           : null,
       })
     ).id;
-    identityConfirmed = true;
+    identityConfirmed = match === null;
     createdPatient = true;
   }
 
@@ -235,6 +280,11 @@ export async function confirmBooking(
         }),
         // The visitor's choice is kept for staff; it is not recorded on a record nobody has checked.
         whatsappOptInRequested: payload.whatsappOptIn,
+        // Why the appointment is not on the record that has this document, and which record it is.
+        ...(detachedBecause === null
+          ? {}
+          : { notAttachedBecause: detachedBecause, matchedPatientId: match.id }),
+        ...(payload.reason === null ? {} : { reason: payload.reason }),
       },
     });
   }
@@ -244,6 +294,7 @@ export async function confirmBooking(
       subjectType: 'appointment',
       subjectId: appointment.id,
       locationId: hold.locationId,
+      ...(payload.reason === null ? {} : { detail: { reason: payload.reason } }),
     });
   }
 
@@ -291,7 +342,11 @@ export async function confirmBooking(
       await evenOut(tx, WHATSAPP_OPT_IN_EXTRA_STATEMENTS);
     }
   }
-  if (!createdPatient) await evenOut(tx, NEW_PERSON_EXTRA_STATEMENTS);
+  // Every way through costs the same, as seen from outside: registering a new person, reviewing a
+  // match, and registering a record of its own for a booking that cannot use the match (which does
+  // both). Each path sends the statements of the others that it does not need.
+  if (!createdPatient) await evenOut(tx, NEW_PERSON_EXTRA_STATEMENTS + REVIEW_ITEM_STATEMENTS);
+  else if (match === null) await evenOut(tx, REVIEW_ITEM_STATEMENTS);
 
   // What stays of the form: the consent it was made under. The rest was only needed to book.
   const evidence = await deps.keys.encryptField(
