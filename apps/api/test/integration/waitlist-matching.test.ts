@@ -5,8 +5,10 @@ import { eq, sql } from 'drizzle-orm';
 import { afterAll, beforeAll, beforeEach, describe, expect, inject, it } from 'vitest';
 
 import { slotHold } from '../../src/db/schema/scheduling.js';
+import { waitlistEntry } from '../../src/db/schema/waitlist.js';
 import { createSchedulingPorts, createHold } from '../../src/modules/scheduling/index.js';
 import { matchFreedSlot } from '../../src/modules/waitlist/application/match.js';
+import { createOffer } from '../../src/modules/waitlist/application/offers.js';
 import { createRuntimeDb, type DbHandle } from '../../src/platform/db/pool.js';
 import { createWaitlistWorld, type WaitlistWorld } from '../support/waitlist-world.js';
 
@@ -491,5 +493,47 @@ describe('matches that do not run side by side (JD-S3 B28)', () => {
     await Promise.all([first, second]);
 
     expect(waitedForTheLock).toBe(true);
+  });
+});
+
+describe('an offer for an entry that stopped waiting (JD-S3 B20)', () => {
+  it('is not made: the entry was closed between the match reading it and offering it', async () => {
+    const weeks = nextWeek();
+    const [entry] = await waiting(1);
+    if (!entry) throw new Error('entry missing');
+    const booked = await world.book(weeks, '10:00');
+    const read = await world.inTenant(
+      async (tx) =>
+        (await tx.select().from(waitlistEntry).where(eq(waitlistEntry.id, entry.id)))[0],
+    );
+    if (!read) throw new Error('entry row missing');
+    // Reception closes the entry after the match read it.
+    await world.inTenant((tx) =>
+      tx.execute(
+        sql`UPDATE waitlist_entry SET status = 'closed', close_reason = 'cancelled', closed_at = now() WHERE id = ${entry.id}`,
+      ),
+    );
+
+    const offer = await world.inTenant((tx) =>
+      createOffer(
+        tx,
+        { jobs: world.jobs },
+        {
+          entry: read,
+          professionalId: world.doctor.professionalId,
+          locationId: world.centro,
+          startsAt: new Date(booked.startsAt),
+          endsAt: new Date(booked.endsAt),
+          freed: { startsAt: new Date(booked.startsAt), endsAt: new Date(booked.endsAt) },
+          sendAt: world.now(),
+          expiresAt: new Date(world.now().getTime() + 30 * 60_000),
+          now: world.now(),
+        },
+      ),
+    );
+
+    expect(offer).toBeNull();
+    expect(await world.offersOf(entry.id)).toEqual([]);
+    expect(world.jobs.pending('waitlist.offer')).toEqual([]);
   });
 });

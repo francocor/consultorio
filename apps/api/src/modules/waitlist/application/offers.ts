@@ -48,7 +48,8 @@ export interface NewOffer {
  * Makes an offer: the row, the entry waiting for an answer, the audit entry, and the two jobs that
  * follow (the delivery at `sendAt` and the expiry at `expiresAt`), all in the transaction of the
  * match, so an offer exists with its jobs or not at all. Returns null when the slot is already
- * offered to somebody (two matches racing), in which case nothing was written.
+ * offered to somebody (two matches racing) or the entry no longer waits, in which case nothing was
+ * written.
  */
 export async function createOffer(
   tx: Tx,
@@ -56,6 +57,15 @@ export async function createOffer(
   input: NewOffer,
 ): Promise<WaitlistOfferRow | null> {
   const { entry } = input;
+  // The entry is locked and read again: the match read it a while ago, and reception or the patient
+  // may have closed it since. An offer for an entry that no longer waits would be sent to a patient
+  // who asked to be taken off the list.
+  const [current] = await tx
+    .select({ status: waitlistEntry.status })
+    .from(waitlistEntry)
+    .where(eq(waitlistEntry.id, entry.id))
+    .for('update');
+  if (current?.status !== 'active') return null;
   let created: WaitlistOfferRow | undefined;
   try {
     [created] = await tx.transaction((inner) =>
