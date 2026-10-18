@@ -4,8 +4,13 @@ import { sql, type SQL } from 'drizzle-orm';
 import type { TenantKeys } from '../../../platform/crypto/tenant-keys.js';
 import type { Tx } from '../../../platform/db/tenant-context.js';
 import { isClosedDay } from '../domain/holidays.js';
-import { dayBounds } from '../domain/time.js';
-import { subtractRanges, workingWindows } from '../domain/working-hours.js';
+import { dayBounds, localParts, weekdayOfDate } from '../domain/time.js';
+import {
+  subtractRanges,
+  workingWindows,
+  type HoursPeriod,
+  type HoursRow,
+} from '../domain/working-hours.js';
 
 import { createSchedulingPorts } from './drizzle-ports.js';
 import { datesBetween } from './schedule-facts.js';
@@ -101,16 +106,27 @@ const OPEN_LIST = sql.join(
   sql`, `,
 );
 
-const FROM_APPOINTMENTS = sql`
+const FROM_LOCATED = sql`
   FROM appointment a
-  JOIN location l ON l.tenant_id = a.tenant_id AND l.id = a.location_id
+  JOIN location l ON l.tenant_id = a.tenant_id AND l.id = a.location_id`;
+
+const FROM_APPOINTMENTS = sql`${FROM_LOCATED}
   JOIN professional p ON p.tenant_id = a.tenant_id AND p.id = a.professional_id`;
 
+/**
+ * The appointments of a cohort. The professional is joined only when the cohort filters by
+ * specialty (the specialties are theirs): joining it for every appointment of a year would cost a
+ * lookup each, to read what twenty professionals could be asked once, after the counting.
+ */
+const fromCohort = (cohort: ReportCohort): SQL =>
+  cohort.specialty === undefined ? FROM_LOCATED : FROM_APPOINTMENTS;
+
+// These two read small partial indexes (migration 0430): the moves, and the confirmations by a patient.
 const WAS_RESCHEDULED = sql`EXISTS (
   SELECT 1 FROM appointment_event e
    WHERE e.tenant_id = a.tenant_id AND e.appointment_id = a.id AND e.kind = 'rescheduled')`;
 
-const CONFIRMED_BY_PATIENT = sql`EXISTS (
+const WAS_CONFIRMED_BY_PATIENT = sql`EXISTS (
   SELECT 1 FROM appointment_event e
    WHERE e.tenant_id = a.tenant_id AND e.appointment_id = a.id
      AND e.kind = 'status_changed' AND e.to_status = 'confirmed' AND e.actor_kind = 'patient')`;
@@ -148,40 +164,60 @@ function cohortCondition(cohort: ReportCohort): SQL {
   return sql.join(parts, sql` AND `);
 }
 
-interface StatusRow extends Record<string, unknown> {
-  status: AppointmentStatus;
-  total: number;
-  staff: number;
-  online: number;
-  waitlist_offer: number;
-  booked_minutes: number;
-  past_open: number;
-  rescheduled: number;
-  confirmed_by_patient: number;
-  recovered: number;
-}
-
-interface BreakdownRow extends Record<string, unknown> {
-  dim: 'day' | 'location' | 'professional' | 'specialty';
+interface CountRow extends Record<string, unknown> {
+  dim: 'status' | 'day' | 'location' | 'professional' | 'specialty';
   key: string;
   label: string | null;
   total: number;
   attended: number;
   no_show: number;
   cancelled: number;
+  /** Only the rows of the status dimension carry these. */
+  staff: number | null;
+  online: number | null;
+  waitlist_offer: number | null;
+  booked_minutes: number | null;
+  past_open: number | null;
+  rescheduled: number | null;
+  confirmed_by_patient: number | null;
+  recovered: number | null;
 }
 
-const attendance = (row: BreakdownRow): AttendanceFigures => ({
+const attendance = (row: CountRow): AttendanceFigures => ({
   total: row.total,
   attended: row.attended,
   noShow: row.no_show,
   cancelled: row.cancelled,
 });
 
+/** The attendance figures of every group of the counts query. */
+const FIGURES = sql`count(*)::int AS total,
+  count(*) FILTER (WHERE status = 'attended')::int AS attended,
+  count(*) FILTER (WHERE status = 'no_show')::int AS no_show,
+  count(*) FILTER (WHERE status = 'cancelled')::int AS cancelled`;
+
+/** What only the status rows add up: sources, minutes and the figures derived from history. */
+const STATUS_EXTRAS = sql`count(*) FILTER (WHERE source = 'staff')::int AS staff,
+  count(*) FILTER (WHERE source = 'online')::int AS online,
+  count(*) FILTER (WHERE source = 'waitlist_offer')::int AS waitlist_offer,
+  coalesce(sum(minutes) FILTER (WHERE status <> 'cancelled'), 0)::int AS booked_minutes,
+  count(*) FILTER (WHERE past_open)::int AS past_open,
+  count(*) FILTER (WHERE rescheduled)::int AS rescheduled,
+  count(*) FILTER (WHERE confirmed)::int AS confirmed_by_patient,
+  count(*) FILTER (WHERE recovered)::int AS recovered`;
+
+const NO_EXTRAS = sql`NULL::int AS staff, NULL::int AS online, NULL::int AS waitlist_offer,
+  NULL::int AS booked_minutes, NULL::int AS past_open, NULL::int AS rescheduled,
+  NULL::int AS confirmed_by_patient, NULL::int AS recovered`;
+
 /**
  * The counts behind the operational report for a cohort. `recoveredIds` are the appointments that
  * the waitlist module says were recovered through an accepted offer; `now` decides which open
  * appointments are late for a status.
+ *
+ * One pass over the appointments of the period (the cohort), with the facts of each one worked out
+ * once (its day at the location, whether it was moved or confirmed by the patient), and then every
+ * grouping is added up from that: by status, day, location, professional and specialty.
  */
 export async function operationalFacts(
   tx: Tx,
@@ -191,23 +227,47 @@ export async function operationalFacts(
   const where = cohortCondition(cohort);
   const recovered = inList(sql`a.id`, input.recoveredIds);
 
-  const statusResult = await tx.execute<StatusRow>(sql`
-    SELECT a.status,
-           count(*)::int AS total,
-           count(*) FILTER (WHERE a.source = 'staff')::int AS staff,
-           count(*) FILTER (WHERE a.source = 'online')::int AS online,
-           count(*) FILTER (WHERE a.source = 'waitlist_offer')::int AS waitlist_offer,
-           coalesce(
-             sum(extract(epoch FROM (a.ends_at - a.starts_at)) / 60) FILTER (WHERE a.status <> 'cancelled'),
-             0
-           )::int AS booked_minutes,
-           count(*) FILTER (WHERE a.status IN (${OPEN_LIST}) AND a.ends_at <= ${input.now.toISOString()}::timestamptz)::int AS past_open,
-           count(*) FILTER (WHERE ${WAS_RESCHEDULED})::int AS rescheduled,
-           count(*) FILTER (WHERE ${CONFIRMED_BY_PATIENT})::int AS confirmed_by_patient,
-           count(*) FILTER (WHERE ${recovered})::int AS recovered
-      ${FROM_APPOINTMENTS}
-     WHERE ${where}
-     GROUP BY a.status`);
+  const counts = await tx.execute<CountRow>(sql`
+    WITH c AS MATERIALIZED (
+      SELECT a.status, a.source,
+             (a.starts_at AT TIME ZONE l.time_zone)::date AS day,
+             a.location_id, l.name AS location_name, a.professional_id,
+             extract(epoch FROM (a.ends_at - a.starts_at)) / 60 AS minutes,
+             (a.status IN (${OPEN_LIST}) AND a.ends_at <= ${input.now.toISOString()}::timestamptz) AS past_open,
+             ${WAS_RESCHEDULED} AS rescheduled,
+             ${WAS_CONFIRMED_BY_PATIENT} AS confirmed,
+             ${recovered} AS recovered
+        ${fromCohort(cohort)}
+       WHERE ${where}
+    ),
+    by_professional AS (
+      SELECT professional_id, ${FIGURES} FROM c GROUP BY professional_id
+    )
+    SELECT 'status' AS dim, status AS key, NULL::text AS label, ${FIGURES}, ${STATUS_EXTRAS}
+      FROM c GROUP BY status
+    UNION ALL
+    SELECT 'day', day::text, NULL, ${FIGURES}, ${NO_EXTRAS}
+      FROM c GROUP BY day
+    UNION ALL
+    SELECT 'location', location_id::text, location_name, ${FIGURES}, ${NO_EXTRAS}
+      FROM c GROUP BY location_id, location_name
+    UNION ALL
+    SELECT 'professional', g.professional_id::text, m.display_name,
+           g.total, g.attended, g.no_show, g.cancelled, ${NO_EXTRAS}
+      FROM by_professional g
+      JOIN professional p ON p.id = g.professional_id
+      JOIN membership m ON m.tenant_id = p.tenant_id AND m.id = p.membership_id
+    UNION ALL
+    SELECT 'specialty', s.specialty, NULL, sum(g.total)::int, sum(g.attended)::int,
+           sum(g.no_show)::int, sum(g.cancelled)::int, ${NO_EXTRAS}
+      FROM by_professional g
+      JOIN professional p ON p.id = g.professional_id
+      CROSS JOIN LATERAL unnest(p.specialties) AS s(specialty)
+     GROUP BY s.specialty
+    ORDER BY dim, key`);
+
+  const rows = counts.rows;
+  const of = (dim: CountRow['dim']) => rows.filter((row) => row.dim === dim);
 
   const byStatus = Object.fromEntries(STATUSES.map((status) => [status, 0])) as Record<
     AppointmentStatus,
@@ -221,58 +281,24 @@ export async function operationalFacts(
     confirmedByPatient: 0,
     recovered: 0,
   };
-  for (const row of statusResult.rows) {
-    byStatus[row.status] = row.total;
-    facts.sources.staff += row.staff;
-    facts.sources.online += row.online;
-    facts.sources.waitlistOffer += row.waitlist_offer;
-    facts.bookedMinutes += row.booked_minutes;
-    facts.notFinalPast += row.past_open;
-    facts.rescheduled += row.rescheduled;
-    facts.confirmedByPatient += row.confirmed_by_patient;
-    facts.recovered += row.recovered;
+  for (const row of of('status')) {
+    byStatus[row.key as AppointmentStatus] = row.total;
+    facts.sources.staff += row.staff ?? 0;
+    facts.sources.online += row.online ?? 0;
+    facts.sources.waitlistOffer += row.waitlist_offer ?? 0;
+    facts.bookedMinutes += row.booked_minutes ?? 0;
+    facts.notFinalPast += row.past_open ?? 0;
+    facts.rescheduled += row.rescheduled ?? 0;
+    facts.confirmedByPatient += row.confirmed_by_patient ?? 0;
+    facts.recovered += row.recovered ?? 0;
   }
 
-  const breakdown = await tx.execute<BreakdownRow>(sql`
-    WITH c AS MATERIALIZED (
-      SELECT a.status,
-             (a.starts_at AT TIME ZONE l.time_zone)::date AS day,
-             a.location_id, l.name AS location_name,
-             a.professional_id, m.display_name AS professional_name,
-             p.specialties
-        ${FROM_APPOINTMENTS}
-        JOIN membership m ON m.tenant_id = p.tenant_id AND m.id = p.membership_id
-       WHERE ${where}
-    )
-    SELECT 'day' AS dim, day::text AS key, NULL::text AS label, count(*)::int AS total,
-           count(*) FILTER (WHERE status = 'attended')::int AS attended,
-           count(*) FILTER (WHERE status = 'no_show')::int AS no_show,
-           count(*) FILTER (WHERE status = 'cancelled')::int AS cancelled
-      FROM c GROUP BY day
-    UNION ALL
-    SELECT 'location', location_id::text, location_name, count(*)::int,
-           count(*) FILTER (WHERE status = 'attended')::int,
-           count(*) FILTER (WHERE status = 'no_show')::int,
-           count(*) FILTER (WHERE status = 'cancelled')::int
-      FROM c GROUP BY location_id, location_name
-    UNION ALL
-    SELECT 'professional', professional_id::text, professional_name, count(*)::int,
-           count(*) FILTER (WHERE status = 'attended')::int,
-           count(*) FILTER (WHERE status = 'no_show')::int,
-           count(*) FILTER (WHERE status = 'cancelled')::int
-      FROM c GROUP BY professional_id, professional_name
-    UNION ALL
-    SELECT 'specialty', s.specialty, NULL, count(*)::int,
-           count(*) FILTER (WHERE c.status = 'attended')::int,
-           count(*) FILTER (WHERE c.status = 'no_show')::int,
-           count(*) FILTER (WHERE c.status = 'cancelled')::int
-      FROM c CROSS JOIN LATERAL unnest(c.specialties) AS s(specialty) GROUP BY s.specialty
-    ORDER BY dim, key`);
-
+  // New against returning: a patient is new when nothing earlier than their first appointment of
+  // the period was booked and kept (cancelled appointments never counted as a visit).
   const patients = await tx.execute<{ new: number; total: number }>(sql`
     WITH w AS (
       SELECT a.tenant_id, a.patient_id, min(a.starts_at) AS first_at
-        ${FROM_APPOINTMENTS}
+        ${fromCohort(cohort)}
        WHERE ${where} AND a.status <> 'cancelled'
        GROUP BY a.tenant_id, a.patient_id
     )
@@ -285,8 +311,6 @@ export async function operationalFacts(
       FROM w`);
   const patientRow = patients.rows[0];
 
-  const rows = breakdown.rows;
-  const of = (dim: BreakdownRow['dim']) => rows.filter((row) => row.dim === dim);
   const byName = <T extends { name: string | null }>(a: T, b: T) =>
     (a.name ?? '').localeCompare(b.name ?? '', 'es');
   return {
@@ -309,11 +333,29 @@ export async function operationalFacts(
 
 // Available time ---------------------------------------------------------------------------------
 
+const MINUTE_MS = 60_000;
+
+/** The hours of a professional at a location on a date, in minutes of the wall clock. */
+function wallMinutesOn(
+  hours: { weekly: readonly HoursRow[]; periods: readonly HoursPeriod[] },
+  locationId: string,
+  date: string,
+): number {
+  const weekday = weekdayOfDate(date);
+  const period = hours.periods.find((item) => item.dateFrom <= date && date <= item.dateTo);
+  return (period ? period.rows : hours.weekly)
+    .filter((row) => row.locationId === locationId && row.weekday === weekday)
+    .reduce((total, row) => total + Math.max(0, row.endMinute - row.startMinute), 0);
+}
+
 /**
  * Minutes the professionals of the cohort are available in its days: their working hours at each
  * location (weekly hours or the hours of a period of dates), minus the blocks, minus the days the
- * location is closed, times the number of appointments each can hold at once. Read in the zone of
- * each location, so a daylight saving change moves the instants and not the wall clock.
+ * location is closed, times the number of appointments each can hold at once.
+ *
+ * Hours are minutes of the wall clock at the location. A day no block touches is counted by
+ * arithmetic (a year of twenty professionals must not turn into thousands of zone conversions); a
+ * day a block touches is cut exactly, in instants, so a block of two hours takes two hours.
  */
 export async function availableMinutes(
   tx: Tx,
@@ -332,7 +374,24 @@ export async function availableMinutes(
 
   const dates = datesBetween(cohort.fromDate, cohort.toDate);
   const holidays = await ports.holidays(cohort.fromDate, cohort.toDate);
-  const zones = new Map<string, string | null>();
+  const places = new Map<string, { zone: string; closed: Set<string> } | null>();
+  const placeOf = async (locationId: string) => {
+    if (!places.has(locationId)) {
+      const found = await ports.findLocation(locationId);
+      places.set(
+        locationId,
+        found
+          ? {
+              zone: found.timeZone,
+              closed: new Set(
+                dates.filter((date) => isClosedDay(holidays, date, locationId) !== null),
+              ),
+            }
+          : null,
+      );
+    }
+    return places.get(locationId) ?? null;
+  };
   const mayCount = (locationId: string, professionalId: string) =>
     (cohort.scope.kind === 'all' ||
       cohort.scope.locationIds.includes(locationId) ||
@@ -348,31 +407,46 @@ export async function availableMinutes(
     ]);
     for (const locationId of [...locationIds].sort()) {
       if (!mayCount(locationId, professional.id)) continue;
-      if (!zones.has(locationId)) {
-        zones.set(locationId, (await ports.findLocation(locationId))?.timeZone ?? null);
-      }
-      const zone = zones.get(locationId);
-      if (!zone) continue;
+      const place = await placeOf(locationId);
+      if (!place) continue;
 
-      const open = dates.filter((date) => isClosedDay(holidays, date, locationId) === null);
-      const windows = workingWindows({
-        zone,
-        locationId,
-        dates: open,
-        weekly: hours.weekly,
-        periods: hours.periods,
-      });
       const range = {
-        start: dayBounds(zone, cohort.fromDate).start.getTime(),
-        end: dayBounds(zone, cohort.toDate).end.getTime(),
+        start: dayBounds(place.zone, cohort.fromDate).start.getTime(),
+        end: dayBounds(place.zone, cohort.toDate).end.getTime(),
       };
       const blocks = await ports.blocks(professional.id, locationId, range);
-      const free = subtractRanges(windows, blocks);
-      const worked = free.reduce(
-        (total, window) => total + (window.end - window.start) / 60_000,
-        0,
-      );
-      minutes += Math.round(worked) * professional.max_simultaneous;
+      const touched = new Set<string>();
+      for (const block of blocks) {
+        const first = localParts(place.zone, new Date(block.start)).date;
+        const last = localParts(place.zone, new Date(block.end - 1)).date;
+        for (const date of datesBetween(
+          first < cohort.fromDate ? cohort.fromDate : first,
+          last > cohort.toDate ? cohort.toDate : last,
+        )) {
+          touched.add(date);
+        }
+      }
+
+      let worked = 0;
+      for (const date of dates) {
+        if (place.closed.has(date)) continue;
+        if (!touched.has(date)) {
+          worked += wallMinutesOn(hours, locationId, date);
+          continue;
+        }
+        const windows = workingWindows({
+          zone: place.zone,
+          locationId,
+          dates: [date],
+          weekly: hours.weekly,
+          periods: hours.periods,
+        });
+        worked += subtractRanges(windows, blocks).reduce(
+          (total, window) => total + Math.round((window.end - window.start) / MINUTE_MS),
+          0,
+        );
+      }
+      minutes += worked * professional.max_simultaneous;
     }
   }
   return minutes;
