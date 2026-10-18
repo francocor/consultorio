@@ -221,10 +221,13 @@ export async function recordWhatsappUsage(
       period: await organizationPeriod(tx, input.now),
     })
     .onConflictDoNothing();
-  // Confirming is what counts "once": only the first acceptance finds it unconfirmed.
+  // Confirming is what counts "once": only the first acceptance finds it unconfirmed. The provider
+  // accepting the message is billable whatever our own status says, so a place that was released
+  // meanwhile (the message was cancelled while the send was in flight) is taken back too (judgment
+  // day round 4, finding W3).
   const [confirmed] = await tx
     .update(whatsappUsageEvent)
-    .set({ confirmedAt: input.now })
+    .set({ confirmedAt: input.now, releasedAt: null })
     .where(
       and(
         eq(whatsappUsageEvent.messageId, input.messageId),
