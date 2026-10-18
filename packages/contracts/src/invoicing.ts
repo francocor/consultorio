@@ -27,6 +27,22 @@ export type InvoiceType = (typeof INVOICE_TYPES)[number];
 export const TAX_CONDITIONS = ['monotributo', 'responsable_inscripto', 'exento'] as const;
 export type TaxCondition = (typeof TAX_CONDITIONS)[number];
 
+/**
+ * What a recipient is for the tax authority. It is not the issuer's `TaxCondition`: a recipient may
+ * be a consumer who has no registration at all.
+ */
+export const RECIPIENT_TAX_CONDITIONS = [
+  'consumidor_final',
+  'responsable_inscripto',
+  'monotributo',
+  'exento',
+] as const;
+export type RecipientTaxCondition = (typeof RECIPIENT_TAX_CONDITIONS)[number];
+
+/** The kind of document a recipient is identified with. */
+export const RECIPIENT_DOCUMENT_TYPES = ['cuit', 'dni'] as const;
+export type RecipientDocumentType = (typeof RECIPIENT_DOCUMENT_TYPES)[number];
+
 /** The environment is a property of the point of sale, not of the organization. */
 export const FISCAL_ENVIRONMENTS = ['homologation', 'production'] as const;
 export type FiscalEnvironment = (typeof FISCAL_ENVIRONMENTS)[number];
