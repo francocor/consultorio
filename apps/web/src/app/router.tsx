@@ -451,6 +451,8 @@ export function createAppRouter({
 
   // A 401 in the middle of a session: go to sign-in and come back to where the person was.
   services.onSessionEnded(() => {
+    // Already at sign-in: there is nothing to leave, and the page must not point back at itself.
+    if (router.state.location.pathname === '/login') return;
     const here = safeRedirect(router.state.location.href);
     void router.navigate({ to: '/login', search: { redirect: here, reason: 'expired' } });
   });
