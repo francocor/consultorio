@@ -10,6 +10,8 @@ import { message } from '../../../db/schema/notifications.js';
 import { audit, type AuditActor } from '../../../platform/audit/writer.js';
 import type { Tx } from '../../../platform/db/tenant-context.js';
 
+import { releaseWhatsappUsage } from './usage.js';
+
 /**
  * The channel choices of patients (spec "Opt-out and consent"). A history of events; the latest
  * event of a (patient, channel) is the choice in force.
@@ -103,6 +105,13 @@ export async function recordOptOut(
       ),
     )
     .returning({ id: message.id });
+  // The messages that will not go give their places in the quota back.
+  if (input.channel === 'whatsapp') {
+    await releaseWhatsappUsage(
+      tx,
+      cancelled.map((row) => row.id),
+    );
+  }
   await audit(tx, {
     action: 'notification.optout.recorded',
     outcome: 'allow',

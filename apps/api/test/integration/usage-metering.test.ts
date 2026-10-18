@@ -4,16 +4,26 @@ import { afterAll, beforeAll, beforeEach, describe, expect, inject, it } from 'v
 
 import { createLocalWhatsAppSender } from '../../src/adapters/whatsapp-local/index.js';
 import { whatsappUsageAlert, whatsappUsageEvent } from '../../src/db/schema/usage-event.js';
-import { prepareDelivery } from '../../src/modules/notifications/application/delivery.js';
-import { recordOptIn } from '../../src/modules/notifications/application/preferences.js';
+import {
+  failAcceptedMessage,
+  prepareDelivery,
+} from '../../src/modules/notifications/application/delivery.js';
+import { createReminderPlanner } from '../../src/modules/notifications/application/plan-reminders.js';
+import {
+  recordOptIn,
+  recordOptOut,
+} from '../../src/modules/notifications/application/preferences.js';
+import { createReminderSweepJob } from '../../src/modules/notifications/application/sweep.js';
 import {
   recordWhatsappUsage,
   UNLIMITED_QUOTA,
+  usageCount,
   type QuotaPolicy,
 } from '../../src/modules/notifications/application/usage.js';
 import { usageReport } from '../../src/modules/notifications/http/usage-routes.js';
 import type { AuditActor } from '../../src/platform/audit/writer.js';
 import { createRuntimeDb, type DbHandle } from '../../src/platform/db/pool.js';
+import { runJob } from '../../src/platform/jobs/define-job.js';
 import {
   createNotificationsWorld,
   type NotificationsWorld,
@@ -449,3 +459,151 @@ function quotaOfFor(professionalId: string, limit: number): QuotaPolicy {
       ),
   };
 }
+
+describe('a place of the quota is given back when the message never goes (JD-S3 R2-C2, A5)', () => {
+  const quotaOf = (limit: number): QuotaPolicy => ({
+    limitFor: () => Promise.resolve({ limit, overageAllowed: false }),
+  });
+  // Each test lives in a month of its own, so the places one holds never reach another.
+  let month = 0;
+  let period = '';
+
+  /** A WhatsApp reminder that was prepared (so it holds a place) and is still queued. */
+  async function reserved() {
+    slot += 1;
+    const patientId = await notes.patient({ phone: mobile(), email: 'respaldo@example.test' });
+    await scheduling.inTenant((tx) =>
+      recordOptIn(tx, {
+        patientId,
+        channel: 'whatsapp',
+        source: 'online_booking',
+        actor: patientActor,
+      }),
+    );
+    const time = `${String(9 + Math.floor((slot % 8) / 2)).padStart(2, '0')}:${slot % 2 === 0 ? '00' : '30'}`;
+    const booked = await notes.book(patientId, 120 + Math.floor(slot / 8), time);
+    const id = await notes.queue({
+      kind: 'reminder',
+      channel: 'whatsapp',
+      patientId,
+      appointmentId: booked.id,
+      professionalId: scheduling.doctor.professionalId,
+      plannedStartsAt: new Date(booked.startsAt),
+      appointmentVersion: booked.version,
+      dedupeKey: `release:${booked.id}:whatsapp`,
+    });
+    const prepared = await prepareDelivery(notes.deps, scheduling.tenant.id, id);
+    expect(prepared.kind).toBe('send');
+    return { id, patientId, appointment: booked };
+  }
+
+  const held = () =>
+    scheduling.inTenant((tx) => usageCount(tx, scheduling.doctor.professionalId, period));
+
+  beforeEach(() => {
+    month += 1;
+    period = `2033-${String(month).padStart(2, '0')}`;
+    notes.setNow(new Date(`${period}-03T12:00:00.000Z`));
+    notes.deps.quota = quotaOf(1);
+  });
+
+  const expectPlaceFree = async () => {
+    expect(await held()).toBe(0);
+    const next = await reserved();
+    expect(await held()).toBe(1);
+    expect(next.id).toBeTruthy();
+  };
+
+  it('keeps the place of a retried message instead of sending it by email (A5)', async () => {
+    const first = await reserved();
+    expect(await held()).toBe(1);
+
+    // The provider was down, the job runs again: the message counts its own place only once.
+    const again = await prepareDelivery(notes.deps, scheduling.tenant.id, first.id);
+
+    expect(again.kind).toBe('send');
+    expect(await notes.message(first.id)).toMatchObject({ status: 'queued', channel: 'whatsapp' });
+    expect(await held()).toBe(1);
+  });
+
+  it('gives it back when the appointment is cancelled', async () => {
+    const r = await reserved();
+    const planner = createReminderPlanner({
+      jobs: notes.jobs,
+      clock: () => notes.now(),
+      worklist: notes.deps.worklist,
+      whatsappAvailable: () => true,
+    });
+
+    await scheduling.inTenant((tx) =>
+      planner.handle(tx, {
+        kind: 'cancelled',
+        tenantId: scheduling.tenant.id,
+        appointment: {
+          appointmentId: r.appointment.id,
+          patientId: r.patientId,
+          professionalId: scheduling.doctor.professionalId,
+          locationId: scheduling.centro,
+          appointmentTypeId: scheduling.consulta,
+          startsAt: new Date(r.appointment.startsAt),
+          endsAt: new Date(new Date(r.appointment.startsAt).getTime() + 1_800_000),
+          status: 'cancelled',
+          source: 'staff',
+          version: r.appointment.version + 1,
+        },
+        fromStatus: 'scheduled',
+        cancelledBy: 'patient',
+      }),
+    );
+
+    expect(await notes.message(r.id)).toMatchObject({ status: 'cancelled' });
+    await expectPlaceFree();
+  });
+
+  it('gives it back when the patient opts out of WhatsApp', async () => {
+    const r = await reserved();
+
+    await scheduling.inTenant((tx) =>
+      recordOptOut(tx, {
+        patientId: r.patientId,
+        channel: 'whatsapp',
+        source: 'email_link',
+        actor: patientActor,
+      }),
+    );
+
+    expect(await notes.message(r.id)).toMatchObject({
+      status: 'cancelled',
+      cancelReason: 'opted_out',
+    });
+    await expectPlaceFree();
+  });
+
+  it('gives it back when the sweep closes a message left behind', async () => {
+    const r = await reserved();
+    notes.setNow(new Date(`${period}-03T16:00:00.000Z`));
+
+    await runJob(runtime.db, createReminderSweepJob({ ...notes.deps }), {
+      id: crypto.randomUUID(),
+      name: 'reminder.sweep',
+      data: { tenantId: scheduling.tenant.id },
+      enqueuedAt: notes.now(),
+      retryCount: 0,
+    });
+
+    expect(await notes.message(r.id)).toMatchObject({
+      status: 'cancelled',
+      cancelReason: 'tenant_read_only',
+    });
+    await expectPlaceFree();
+  });
+
+  it('gives it back when the provider reports the message failed', async () => {
+    const r = await reserved();
+
+    await scheduling.inTenant((tx) => failAcceptedMessage(notes.deps, tx, r.id, 'delivery_failed'));
+
+    expect(await notes.message(r.id)).toMatchObject({ status: 'failed' });
+    await expectPlaceFree();
+  });
+});

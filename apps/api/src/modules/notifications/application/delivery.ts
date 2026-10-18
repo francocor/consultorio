@@ -151,6 +151,8 @@ async function channelOptions(
   tx: Tx,
   situation: Pick<Situation, 'tenant' | 'settings'>,
   professionalId: string | null,
+  /** The message asking, when it may already hold a place of the quota (a retry). */
+  ownMessageId?: string,
 ) {
   return {
     whatsappEnabled:
@@ -163,6 +165,7 @@ async function channelOptions(
         tx,
         professionalId,
         deps.clock(),
+        ownMessageId,
       )),
   };
 }
@@ -557,7 +560,7 @@ export function prepareDelivery(
     const decision = selectChannels(
       kind,
       recipient.facts,
-      await channelOptions(deps, tx, situation, row.professionalId),
+      await channelOptions(deps, tx, situation, row.professionalId, row.id),
     );
     const sender =
       channel === 'email' ? deps.channels.email(tenant) : deps.channels.whatsapp(tenant);
@@ -756,6 +759,11 @@ export async function failAcceptedMessage(
     .where(and(eq(message.id, messageId), inArray(message.status, ['sent', 'queued'])))
     .returning();
   if (!failed) return false;
+  // The provider said it did not deliver: the place it held in the quota is free again, also when
+  // it had been confirmed on acceptance.
+  if (failed.channel === 'whatsapp') {
+    await releaseWhatsappUsage(tx, failed.id, { includeConfirmed: true });
+  }
   const state = await loadTenantState(tx, failed.tenantId);
   if (!state || state.isDemo) return true;
   await continueAfterFailure(deps, tx, failed, { id: state.id, isDemo: false });

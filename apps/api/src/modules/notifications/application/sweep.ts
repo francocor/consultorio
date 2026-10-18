@@ -15,6 +15,7 @@ import type { MessagingDeps, TenantRef } from './deps.js';
 import { createReminderPlanner } from './plan-reminders.js';
 import { loadRecipient } from './recipients.js';
 import { loadMessagingSettings } from './settings.js';
+import { releaseWhatsappUsage } from './usage.js';
 
 export const REMINDER_SWEEP_JOB = 'reminder.sweep';
 
@@ -63,7 +64,7 @@ export function createReminderSweepJob(deps: MessagingDeps, options: { pageSize?
   });
 
   async function closeStale(tx: Tx, now: Date): Promise<void> {
-    await tx
+    const closed = await tx
       .update(message)
       .set({ status: 'cancelled', cancelReason: 'tenant_read_only' })
       .where(
@@ -71,7 +72,13 @@ export function createReminderSweepJob(deps: MessagingDeps, options: { pageSize?
           eq(message.status, 'queued'),
           lt(message.sendAt, new Date(now.getTime() - STALE_AFTER_MS)),
         ),
-      );
+      )
+      .returning({ id: message.id, channel: message.channel });
+    // A WhatsApp message that never went gives its place in the quota back.
+    await releaseWhatsappUsage(
+      tx,
+      closed.filter((row) => row.channel === 'whatsapp').map((row) => row.id),
+    );
   }
 
   /**
