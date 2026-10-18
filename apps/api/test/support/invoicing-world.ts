@@ -5,6 +5,7 @@ import type {
   InvoiceDto,
   TaxCondition,
 } from '@consultorio/contracts';
+import { eq } from 'drizzle-orm';
 import type { LightMyRequestResponse } from 'fastify';
 import { expect } from 'vitest';
 
@@ -20,8 +21,13 @@ import {
   createMemoryObjectStorage,
   type MemoryObjectStorage,
 } from '../../src/adapters/memory-storage/index.js';
+import { invoice as invoiceTable, type InvoiceRow } from '../../src/db/schema/index.js';
 import type { AdapterResolver } from '../../src/main/adapter-resolver.js';
-import { createAfipIssueJob } from '../../src/modules/invoicing/index.js';
+import {
+  createAfipIssueJob,
+  runDueAttempts,
+  type AttemptOutcome,
+} from '../../src/modules/invoicing/index.js';
 import type { DbHandle } from '../../src/platform/db/pool.js';
 import type { JobRunResult } from '../../src/platform/jobs/define-job.js';
 
@@ -60,6 +66,15 @@ export interface InvoicingWorld extends BillingWorld {
   getInvoice(id: string, by?: TestSession): Promise<InvoiceDto>;
   /** Runs the `afip.issue` jobs that are pending now, the way the worker would (one round). */
   runIssue(clock?: () => Date): Promise<{ name: string; result: JobRunResult }[]>;
+  /**
+   * One pass of the sweeper of the worker (the clock of the retries) over THIS organization only:
+   * the database is shared with other test files.
+   */
+  sweep(clock: () => Date): Promise<{ invoiceId: string; outcome: AttemptOutcome }[]>;
+  /** The invoice row as the database holds it, retry bookkeeping included. */
+  rowOf(invoiceId: string): Promise<InvoiceRow>;
+  /** The `afip.issue` job as the worker would build it, to run it by hand. */
+  issueJob(clock?: () => Date): ReturnType<typeof createAfipIssueJob>;
   /** Asks for an invoice over the charge and runs the job: the invoice is issued. */
   issueInvoiceOf(charge: ChargeDto, extra?: Partial<CreateInvoiceRequest>): Promise<InvoiceDto>;
   /** Changes the tax condition of the issuer. */
@@ -146,6 +161,21 @@ export async function createInvoicingWorld(
     storage,
     email,
     runIssue,
+    issueJob: (clock = () => new Date()) => createAfipIssueJob({ adapters, clock, jobs: recorded }),
+    sweep: (clock) =>
+      runDueAttempts(
+        runtime.db,
+        { adapters, clock, jobs: recorded },
+        { error: () => undefined },
+        { tenantIds: [world.tenant.id] },
+      ),
+    rowOf: async (invoiceId) => {
+      const [row] = await world.inTenant((tx) =>
+        tx.select().from(invoiceTable).where(eq(invoiceTable.id, invoiceId)),
+      );
+      if (!row) throw new Error('no such invoice');
+      return row;
+    },
     issueInvoiceOf: async (charge, extra = {}) => {
       const response = await invoiceCharge(charge, extra);
       expect(response.statusCode, response.body).toBe(202);

@@ -275,7 +275,13 @@ export const CreateManualInvoiceRequest = z.strictObject({
   cae: z.string().regex(/^[0-9]{14}$/),
   issueDate: z.iso.date(),
   caeExpiresOn: z.iso.date().optional(),
+  /** Must be what the lines add up to. */
   totalCents: PositiveCents,
+  /**
+   * The pending invoice this voucher stands in for (the one that could not be issued during an
+   * outage). It is closed as rejected, so it is never issued as well, and its lines are used here.
+   */
+  replacesInvoiceId: z.uuid().optional(),
   lines: InvoiceLinesInput,
   recipient: InvoiceRecipientInput,
 });

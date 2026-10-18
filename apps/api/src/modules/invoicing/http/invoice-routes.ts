@@ -1,6 +1,7 @@
 import {
   CreateCreditNoteRequest,
   CreateInvoiceRequest,
+  CreateManualInvoiceRequest,
   InvoiceDto,
   InvoiceListQuery,
   InvoiceListResponse,
@@ -18,6 +19,7 @@ import type { InvoicingActor } from '../application/common.js';
 import { createInvoice, type InvoicingDeps, type Viewer } from '../application/create-invoice.js';
 import { createCreditNote } from '../application/credit-note.js';
 import { loadInvoice, loadInvoices, scopeCondition, scopeOf } from '../application/invoice-view.js';
+import { registerManualInvoice } from '../application/manual-invoice.js';
 
 export interface InvoiceRoutesDeps extends InvoicingDeps {
   withTenant: WithTenant;
@@ -77,6 +79,31 @@ export function invoiceRoutes(deps: InvoiceRoutesDeps) {
           }),
         );
         return reply.code(202).send(created);
+      },
+    );
+
+    // A voucher issued outside the system (the AFIP web tool): the owner or an admin enters its CAE.
+    typed.post(
+      '/invoices/manual',
+      {
+        config: {
+          readOnly: 'write',
+          permission: 'invoicing.manual',
+          audits: ['invoice.manual', 'invoice.rejected'],
+        },
+        schema: { body: CreateManualInvoiceRequest, response: { 201: InvoiceDto } },
+      },
+      async (request, reply) => {
+        const actor = actorOf(request);
+        const saved = await run(request, (tx) =>
+          registerManualInvoice(tx, deps, {
+            request: request.body,
+            actor: invoicingActorOf(request),
+            viewer: viewerOf(request),
+            tenantId: actor.tenantId,
+          }),
+        );
+        return reply.code(201).send(saved);
       },
     );
 

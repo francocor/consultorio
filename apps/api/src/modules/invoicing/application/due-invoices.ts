@@ -32,12 +32,18 @@ export async function runDueAttempts(
   db: Db,
   deps: IssueDeps,
   log: DueLog = { error: () => undefined },
+  options: { tenantIds?: readonly string[] } = {},
 ): Promise<{ invoiceId: string; outcome: AttemptOutcome }[]> {
   const withTenant = createWithTenant(db);
   const results: { invoiceId: string; outcome: AttemptOutcome }[] = [];
   const now = deps.clock();
 
-  for (const tenantId of await listTenantIds(db)) {
+  // Every organization, unless the caller narrows it (a test that shares its database).
+  const everyTenant = await listTenantIds(db);
+  const tenantIds = options.tenantIds
+    ? everyTenant.filter((id) => options.tenantIds?.includes(id))
+    : everyTenant;
+  for (const tenantId of tenantIds) {
     const due = await withTenant({ tenantId, userId: SYSTEM_USER_ID }, async (tx) => {
       const [state] = await tx
         .select({ status: tenant.status, readOnlySince: tenant.readOnlySince })

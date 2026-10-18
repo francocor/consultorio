@@ -11,10 +11,10 @@ const t = (file: string): AuditScenario => ({ test: `apps/api/test/integration/$
 export const INVOICING_SCENARIOS: Record<(typeof INVOICING_AUDIT_ACTIONS)[number], AuditScenario> =
   {
     'invoice.requested': t('invoice-create.test.ts'),
-    'invoice.issued': { pending: 'S4.11 (task 4.47): the issue job' },
+    'invoice.issued': t('afip-issue-job.test.ts'),
     'invoice.rejected': t('invoice-rejection.test.ts'),
     'invoice.retried': t('invoice-rejection.test.ts'),
-    'invoice.manual': { pending: 'S4.11 (task 4.49): manual entry of an invoice' },
+    'invoice.manual': t('invoice-manual.test.ts'),
     'invoice.credit_note': t('credit-note.test.ts'),
     'invoicing.config.changed': t('fiscal-config.test.ts'),
     'invoicing.credential.changed': t('fiscal-config.test.ts'),
