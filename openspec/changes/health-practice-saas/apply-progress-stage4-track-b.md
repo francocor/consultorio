@@ -11,11 +11,11 @@ Change: `health-practice-saas`. Branch `feat/stage-4-track-4b`, from the seam ti
 | 4.30 | done    | `GET /reports/options`, `GET /reports/operational`, `GET /reports/operational/records`; `report.accessed` on the drill-down only.                                                      |
 | 4.31 | done    | Migration `0430_report_indexes.sql` (3 indexes), `scripts/bench-reports.ts`, `docs/perf/reports.md` (see "Deviations": the doc content is in Engram).                                   |
 | 4.32 | done    | `features/reports/*`, `locales/es-AR/reports.json`; Recharts lazy-loaded; every chart has a table; patterns as non-colour encoding.                                                    |
-| 4.33 | done (wave 2) | Export buttons use track A's `export.build` job (task 4.24), which does not exist on this branch.                                                                                      |
+| 4.33 | done (wave 2) | Export panel on the money and cash screens, through track A's export job (wave 2).                                                                                      |
 | 4.34 | done    | `e2e/stage4-reports.spec.ts` (7 tests at 360 px).                                                                                                                                      |
-| 4.57 | done (wave 2) | S4.14, waits for tracks A (S4.03) and C (S4.10).                                                                                                                                       |
-| 4.58 | done (wave 2) | S4.14.                                                                                                                                                                                 |
-| 4.59 | done (wave 2) | S4.14.                                                                                                                                                                                 |
+| 4.57 | done (wave 2) | Financial report and drill-down (wave 2). |
+| 4.58 | done (wave 2) | Cash report (wave 2). |
+| 4.59 | done (wave 2) | Money and cash screens (wave 2). |
 
 ## Commits (in order)
 
