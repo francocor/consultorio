@@ -1,3 +1,5 @@
+import { randomUUID } from 'node:crypto';
+
 import { sql } from 'drizzle-orm';
 
 import {
@@ -53,9 +55,66 @@ async function insertCharge(
   );
 }
 
+async function insertPayment(
+  tx: Tx,
+  tenantId: string,
+  overrides?: Readonly<Record<string, string>>,
+): Promise<string> {
+  return returningId(
+    tx,
+    sql`INSERT INTO payment (tenant_id, charge_id, location_id, cash_session_id, method, amount_cents,
+                             recorded_by, idempotency_key, request_hash, corrects_payment_id)
+          VALUES (${tenantId},
+                  ${overrides?.['charge_id'] ?? (await insertCharge(tx, tenantId))},
+                  ${overrides?.['location_id'] ?? (await insertLocation(tx, tenantId))},
+                  ${overrides?.['cash_session_id'] ?? null},
+                  'debit', 1000000, gen_random_uuid(), ${randomUUID()}, 'hash',
+                  ${overrides?.['corrects_payment_id'] ?? null})
+          RETURNING id`,
+  );
+}
+
 export const fixtures: Record<string, TenantTableFixture> = {
   tenant_payer: { insert: insertTenantPayer },
   charge: { insert: insertCharge },
+  cash_session: {
+    insert: async (tx, tenantId, overrides) =>
+      returningId(
+        tx,
+        sql`INSERT INTO cash_session (tenant_id, location_id, opened_by, opening_cents)
+              VALUES (${tenantId},
+                      ${overrides?.['location_id'] ?? (await insertLocation(tx, tenantId))},
+                      gen_random_uuid(), 500000)
+              RETURNING id`,
+      ),
+  },
+  payment: { insert: insertPayment },
+  payment_reversal: {
+    insert: async (tx, tenantId, overrides) => {
+      const paymentId = overrides?.['payment_id'] ?? (await insertPayment(tx, tenantId));
+      return returningId(
+        tx,
+        sql`INSERT INTO payment_reversal (tenant_id, payment_id, charge_id, location_id, cash_session_id,
+                                          amount_cents, reason, kind, reversed_by, idempotency_key,
+                                          request_hash)
+              VALUES (${tenantId}, ${paymentId},
+                      ${overrides?.['charge_id'] ?? (await insertCharge(tx, tenantId))},
+                      ${overrides?.['location_id'] ?? (await insertLocation(tx, tenantId))},
+                      ${overrides?.['cash_session_id'] ?? null},
+                      100, 'Devolución', 'refund', gen_random_uuid(), ${randomUUID()}, 'hash')
+              RETURNING id`,
+      );
+    },
+  },
+  export_request: {
+    insert: (tx, tenantId) =>
+      returningId(
+        tx,
+        sql`INSERT INTO export_request (tenant_id, kind, format, filters, requested_by)
+              VALUES (${tenantId}, 'charges', 'csv', '{}'::jsonb, gen_random_uuid())
+              RETURNING id`,
+      ),
+  },
   charge_line: {
     insert: async (tx, tenantId, overrides) =>
       returningId(

@@ -11,4 +11,8 @@ export const exemptions: Record<string, string> = {
   payer_plan_price: WAITING,
   charge: WAITING,
   charge_line: WAITING,
+  cash_session: WAITING,
+  payment: WAITING,
+  payment_reversal: WAITING,
+  export_request: 'Made when someone asks for an export; the demo seed asks for none.',
 };

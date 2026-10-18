@@ -46,6 +46,21 @@ export const PAYMENT_METHODS = [
 ] as const;
 export type PaymentMethod = (typeof PAYMENT_METHODS)[number];
 
+/** A refund gives money back; a correction replaces an entry that was recorded wrong. */
+export const PAYMENT_REVERSAL_KINDS = ['refund', 'correction'] as const;
+export type PaymentReversalKind = (typeof PAYMENT_REVERSAL_KINDS)[number];
+
+export const CASH_SESSION_STATUSES = ['open', 'closed'] as const;
+export type CashSessionStatus = (typeof CASH_SESSION_STATUSES)[number];
+
+/** What an export lists: the charges, the payments, or the payer portions grouped by payer. */
+export const EXPORT_KINDS = ['charges', 'payments', 'payer_settlement'] as const;
+export type ExportKind = (typeof EXPORT_KINDS)[number];
+
+/** `ready` has a file; `empty` means nothing matched and no file was made; `failed` can be asked again. */
+export const EXPORT_STATUSES = ['queued', 'ready', 'empty', 'failed'] as const;
+export type ExportStatus = (typeof EXPORT_STATUSES)[number];
+
 /**
  * The formats of an export (billing exports and reports share one export job). The report screens
  * import this list from here.
