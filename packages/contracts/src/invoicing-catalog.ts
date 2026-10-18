@@ -8,10 +8,10 @@
  * join the API catalog (errors.ts); the messages go in `locales/es-AR/errors.invoicing.json`, keyed
  * by the code. The invoicing track (Track C) adds its codes here and nowhere else.
  */
-export const INVOICING_ERRORS = {} as const satisfies Record<
-  string,
-  { status: number; i18nKey: string }
->;
+export const INVOICING_ERRORS = {
+  // The certificate is checked against the CUIT of the fiscal profile, which does not exist yet.
+  fiscal_profile_required: { status: 409, i18nKey: 'errors.fiscal_profile_required' },
+} as const satisfies Record<string, { status: number; i18nKey: string }>;
 
 /** Audit actions of invoicing. They are registered in the shared catalogue. */
 export const INVOICING_AUDIT_ACTIONS = [

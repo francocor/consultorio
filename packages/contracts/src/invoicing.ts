@@ -69,3 +69,102 @@ export const InvoicingSettings = z.strictObject({
 export type InvoicingSettings = z.infer<typeof InvoicingSettings>;
 
 export const DEFAULT_INVOICING_SETTINGS: InvoicingSettings = { outageThresholdHours: 24 };
+
+// Fiscal configuration (S4.08) --------------------------------------------------------------------
+
+const Text = (max: number) => z.string().trim().min(1).max(max);
+
+/** The fiscal identity of the organization, as the owner enters it. The CUIT keeps any format. */
+export const UpsertFiscalProfileRequest = z.strictObject({
+  cuit: Text(20),
+  taxCondition: z.enum(TAX_CONDITIONS),
+  businessName: Text(120),
+  address: Text(200),
+  activityStartedOn: z.iso.date(),
+});
+export type UpsertFiscalProfileRequest = z.infer<typeof UpsertFiscalProfileRequest>;
+
+export const FiscalProfileDto = z.strictObject({
+  /** Eleven digits. */
+  cuit: z.string(),
+  taxCondition: z.enum(TAX_CONDITIONS),
+  businessName: z.string(),
+  address: z.string(),
+  activityStartedOn: z.iso.date(),
+});
+export type FiscalProfileDto = z.infer<typeof FiscalProfileDto>;
+
+export const CreatePointOfSaleRequest = z.strictObject({
+  number: z.int().min(1).max(99_999),
+  environment: z.enum(FISCAL_ENVIRONMENTS).optional(),
+});
+export type CreatePointOfSaleRequest = z.infer<typeof CreatePointOfSaleRequest>;
+
+export const UpdatePointOfSaleRequest = z
+  .strictObject({
+    environment: z.enum(FISCAL_ENVIRONMENTS).optional(),
+    active: z.boolean().optional(),
+  })
+  .refine((value) => value.environment !== undefined || value.active !== undefined, {
+    message: 'validation.required',
+  });
+export type UpdatePointOfSaleRequest = z.infer<typeof UpdatePointOfSaleRequest>;
+
+export const PointOfSaleDto = z.strictObject({
+  id: z.uuid(),
+  number: z.int(),
+  /** What the owner chose for this point of sale. */
+  environment: z.enum(FISCAL_ENVIRONMENTS),
+  /** What is used: the local simulator forces homologation whatever was chosen. */
+  effectiveEnvironment: z.enum(FISCAL_ENVIRONMENTS),
+  active: z.boolean(),
+});
+export type PointOfSaleDto = z.infer<typeof PointOfSaleDto>;
+
+/** The certificate and the key in PEM text. They are never returned by any endpoint. */
+export const PutCredentialRequest = z.strictObject({
+  certificate: z.string().min(1).max(20_000),
+  privateKey: z.string().min(1).max(20_000),
+});
+export type PutCredentialRequest = z.infer<typeof PutCredentialRequest>;
+
+/** What may be said about the certificate. Neither the certificate nor the key is in here. */
+export const CredentialSummaryDto = z.strictObject({
+  state: z.enum(CREDENTIAL_STATES),
+  notBefore: z.iso.datetime(),
+  notAfter: z.iso.datetime(),
+  subjectCuit: z.string(),
+  fingerprint: z.string(),
+  uploadedAt: z.iso.datetime(),
+});
+export type CredentialSummaryDto = z.infer<typeof CredentialSummaryDto>;
+
+/** Why invoicing is not available. Several can hold at once. */
+export const INVOICING_BLOCK_REASONS = [
+  'disabled',
+  'issuer_unavailable',
+  'profile_missing',
+  'point_of_sale_missing',
+  'credential_missing',
+  'credential_expired',
+  'credential_invalid',
+] as const;
+export type InvoicingBlockReason = (typeof INVOICING_BLOCK_REASONS)[number];
+
+export const InvoicingReadinessDto = z.strictObject({
+  available: z.boolean(),
+  reasons: z.array(z.enum(INVOICING_BLOCK_REASONS)),
+  /** True when the invoices of this organization come from a simulator (local or demo). */
+  simulated: z.boolean(),
+});
+export type InvoicingReadinessDto = z.infer<typeof InvoicingReadinessDto>;
+
+export const FiscalConfigResponse = z.strictObject({
+  /** `settings.integrations.einvoicing`. */
+  enabled: z.boolean(),
+  profile: FiscalProfileDto.nullable(),
+  pointsOfSale: z.array(PointOfSaleDto),
+  credential: CredentialSummaryDto.nullable(),
+  readiness: InvoicingReadinessDto,
+});
+export type FiscalConfigResponse = z.infer<typeof FiscalConfigResponse>;
