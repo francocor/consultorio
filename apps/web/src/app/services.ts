@@ -114,6 +114,11 @@ export function createAppServices(options: AppServicesOptions = {}): AppServices
       status.set({ enrollmentRequired: true });
     },
     onUnauthorized: () => {
+      // Only a session that is still held can end. After sign-out the cache is empty, and a request
+      // that was still in flight answers 401: that is not a session expiring, and it must not send
+      // the person back to sign-in with an "expired" notice. The same goes for a second 401 of a
+      // session that already ended.
+      if (!queryClient.getQueryData(SESSION_QUERY_KEY)) return;
       queryClient.setQueryData(SESSION_QUERY_KEY, null);
       sessionEnded();
     },

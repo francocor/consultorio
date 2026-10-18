@@ -151,6 +151,28 @@ export function localLink(link: string): string {
   return `http://${url.hostname}:${String(WEB_PORT)}${url.pathname}${url.search}`;
 }
 
+/**
+ * Waits until every confirmation toast on screen has stopped moving. A toast slides in and its
+ * content fades in, and a toast pushed behind a newer one fades its content out: all of it CSS
+ * transitions on the toast AND on its children (`[data-sonner-toast] > *`), so the opacity of the
+ * toast itself says nothing about the text inside it. Axe reading the colors of a title that is
+ * half faded reports a contrast failure that is not there once it settles. A toast counts as
+ * settled when it is mounted and none of the animations of its subtree is still running.
+ */
+export async function settleToasts(page: Page) {
+  await page.waitForFunction(() =>
+    [...document.querySelectorAll('[data-sonner-toast]')].every(
+      (toast) =>
+        toast.getAttribute('data-mounted') === 'true' &&
+        toast
+          .getAnimations({ subtree: true })
+          .every(
+            (animation) => animation.playState === 'finished' || animation.playState === 'idle',
+          ),
+    ),
+  );
+}
+
 /** Checks WCAG 2.2 AA with axe on the current page and returns the violations. */
 export async function axeViolations(page: Page) {
   const results = await new AxeBuilder({ page })

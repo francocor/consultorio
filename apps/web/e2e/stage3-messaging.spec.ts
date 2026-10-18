@@ -5,6 +5,7 @@ import { OPERATOR_STATE } from './support/operator.js';
 import {
   WEB_PORT,
   axeViolations,
+  settleToasts,
   emailTo,
   horizontalOverflow,
   linkIn,
@@ -47,12 +48,8 @@ const orgUrl = (slug: string, path = '/') =>
   `http://${slug}.${stack.baseDomain}:${String(WEB_PORT)}${path}`;
 
 async function settle(page: Page) {
-  // A confirmation toast fades in; axe reads the colors mid-fade, so let it settle first.
-  await page.waitForFunction(() =>
-    [...document.querySelectorAll('[data-sonner-toast]')].every(
-      (toast) => getComputedStyle(toast).opacity === '1',
-    ),
-  );
+  // A confirmation toast slides and fades in; axe reads the colors mid-transition, so let it settle first.
+  await settleToasts(page);
 }
 
 /** The screen fits a 360 px phone and passes axe in a real browser (contrast included). */

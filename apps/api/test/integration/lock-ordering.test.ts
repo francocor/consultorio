@@ -99,6 +99,41 @@ describe('the lock on a professional and the messages of their appointments (JD-
   }, 30_000);
 });
 
+describe('two callers of the lock on a professional (JD-S3 R4)', () => {
+  it('serialize: the second waits until the first has finished', async () => {
+    const withTenant = createWithTenant(runtime.db);
+    const tenant = { tenantId: scheduling.tenant.id, userId: SYSTEM_USER_ID };
+    const firstHolds = gate();
+    const firstMayEnd = gate();
+    const order: string[] = [];
+
+    const first = withTenant(tenant, async (tx) => {
+      await createSchedulingPorts(tx, { keys: scheduling.keys }).lockProfessional(
+        scheduling.doctor.professionalId,
+      );
+      firstHolds.open();
+      await firstMayEnd.opened;
+      order.push('first done');
+    });
+    const second = withTenant(tenant, async (tx) => {
+      await firstHolds.opened;
+      await createSchedulingPorts(tx, { keys: scheduling.keys }).lockProfessional(
+        scheduling.doctor.professionalId,
+      );
+      order.push('second locked');
+    });
+
+    // The second is waiting: after a while it has still not got the lock.
+    await firstHolds.opened;
+    await new Promise((resolve) => setTimeout(resolve, 400));
+    expect(order).toEqual([]);
+    firstMayEnd.open();
+    await Promise.all([first, second]);
+
+    expect(order).toEqual(['first done', 'second locked']);
+  }, 30_000);
+});
+
 describe('a preparation chosen as the victim of a deadlock (JD-S3 R2-B5)', () => {
   it('runs again, and gives up after a few attempts', async () => {
     const patientId = await notes.patient({ email: 'victima@example.test' });

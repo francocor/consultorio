@@ -30,7 +30,8 @@ export async function sealLegacyManualLinks(
   for (const row of rows) {
     const url = row.manualLink;
     if (url === null) continue;
-    // Closed: nobody can join. A link that was already sealed keeps its sealed form either way.
+    // Closed: nobody can join, so the link is dropped outright, in plaintext and sealed form alike.
+    // Any other session keeps the sealed form it already had, or gets one from the plaintext.
     const sealed =
       row.status === 'closed'
         ? null

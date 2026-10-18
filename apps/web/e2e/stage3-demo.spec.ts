@@ -13,6 +13,7 @@ import { OPERATOR_STATE } from './support/operator.js';
 import {
   WEB_PORT,
   axeViolations,
+  settleToasts,
   emailOf,
   emailTo,
   horizontalOverflow,
@@ -68,12 +69,8 @@ const DESK = {
 };
 
 async function settle(page: Page) {
-  // A confirmation toast fades in; axe reads the colors mid-fade, so let it settle first.
-  await page.waitForFunction(() =>
-    [...document.querySelectorAll('[data-sonner-toast]')].every(
-      (toast) => getComputedStyle(toast).opacity === '1',
-    ),
-  );
+  // A confirmation toast slides and fades in; axe reads the colors mid-transition, so let it settle first.
+  await settleToasts(page);
 }
 
 /** The screen fits its width and passes axe in a real browser (contrast included). */

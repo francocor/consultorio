@@ -48,7 +48,8 @@ export function publicJoinRoutes(deps: PublicJoinDeps) {
     // The button of the page is a form, and a browser posts a form as
     // `application/x-www-form-urlencoded` (with no fields, here). Without a parser for it the
     // request is refused with a 415 before the route runs, so the button never entered the call
-    // (judgment day round 2, finding R2-C3). Nothing of the body is read.
+    // (judgment day round 2, finding R2-C3). Nothing of the body is read. The caller registers these
+    // routes in a scope of their own, so the parser applies to them and to no other route.
     app.addContentTypeParser(
       'application/x-www-form-urlencoded',
       { parseAs: 'string', bodyLimit: 1024 },

@@ -12,6 +12,7 @@ import { OPERATOR_STATE } from './support/operator.js';
 import {
   WEB_PORT,
   axeViolations,
+  settleToasts,
   emailTo,
   horizontalOverflow,
   linkIn,
@@ -59,11 +60,7 @@ async function visitor(browser: Browser): Promise<{ context: BrowserContext; pag
 
 /** A confirmation toast fades in; axe reads the colors mid-fade, so let it settle first. */
 async function settle(page: Page) {
-  await page.waitForFunction(() =>
-    [...document.querySelectorAll('[data-sonner-toast]')].every(
-      (toast) => getComputedStyle(toast).opacity === '1',
-    ),
-  );
+  await settleToasts(page);
 }
 
 async function expectFitsAndAccessible(page: Page) {
