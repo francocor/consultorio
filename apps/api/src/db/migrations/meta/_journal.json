@@ -484,6 +484,13 @@
       "when": 1792316879029,
       "tag": "0442_local_afip",
       "breakpoints": true
+    },
+    {
+      "idx": 69,
+      "version": "7",
+      "when": 1792336849175,
+      "tag": "0444_invoices",
+      "breakpoints": true
     }
   ]
 }

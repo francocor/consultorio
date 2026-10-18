@@ -8,4 +8,9 @@ export const exemptions: Record<string, string> = {
   point_of_sale: 'Seeded by the Stage 4 demo seed (S4.16), together with the fiscal profile.',
   fiscal_credential:
     'A certificate is never part of a demo: the demo organization issues through the in-memory fake and holds no credential.',
+  invoice:
+    'Seeded by the Stage 4 demo seed (S4.16): invoices in every state through the demo fake.',
+  invoice_line: 'Seeded by the Stage 4 demo seed (S4.16), together with the invoices.',
+  invoice_document:
+    'Seeded by the Stage 4 demo seed (S4.16) for the issued invoices that have a PDF.',
 };
