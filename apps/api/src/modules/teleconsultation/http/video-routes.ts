@@ -10,6 +10,7 @@ import { z } from 'zod';
 import type { Actor } from '../../../platform/authz/actor.js';
 import type { AuthzOptions } from '../../../platform/authz/guard.js';
 import { refuseRequest } from '../../../platform/authz/refuse.js';
+import type { TenantKeys } from '../../../platform/crypto/tenant-keys.js';
 import type { Tx, WithTenant } from '../../../platform/db/tenant-context.js';
 import { AppError } from '../../../platform/http/problem.js';
 import { attachManualLink, joinAsProfessional, videoSummary } from '../application/staff-video.js';
@@ -18,6 +19,7 @@ import { VideoAccessRefused } from '../application/visibility.js';
 
 export interface VideoRoutesDeps {
   withTenant: WithTenant;
+  keys: TenantKeys;
   auditDeny: AuthzOptions['auditDeny'];
   adapters: SessionDeps['adapters'];
   clock: () => Date;

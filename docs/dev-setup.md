@@ -133,6 +133,8 @@ Start the virus scanner only when working on uploads: `docker compose --env-file
 | `ALLOW_LOCAL_PROVIDERS`   | `true`, `false` (`false`)                              | Lets a production process run the simulators. For a demo or staging deployment only                                                                                                                              |
 | `LOCAL_PROVIDERS_CONSOLE` | `true`, `false` (`false`)                              | Serves the simulator console (`/operator/dev/*`, behind the operator session). Without it those paths do not exist. In production it needs the flag above                                                        |
 
+The simulator's phone (`local_whatsapp_message`) is a platform table with no organization and no row level security, and the messages in it show the links they carry: it is for development and demonstrations with fictitious data, never for a deployment that serves real patients.
+
 A production process that selects a simulator, or turns the console on, without `ALLOW_LOCAL_PROVIDERS=true` refuses to start and names the variable. The defaults of production are "no simulator" (`off` and `turnstile`), so an existing production configuration keeps starting. These variables are described here, and not in `.env.example`, like the scanner ones; a test checks that each one appears in this guide.
 
 To try the production image locally: `docker compose --env-file .env -f infra/docker-compose.yml --profile app up --build`.

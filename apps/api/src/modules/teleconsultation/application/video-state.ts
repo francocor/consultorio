@@ -11,6 +11,7 @@ import { appointmentType } from '../../../db/schema/scheduling-config.js';
 import { appointment } from '../../../db/schema/scheduling.js';
 import { videoSession, type VideoSessionRow } from '../../../db/schema/teleconsultation.js';
 import { location, tenant } from '../../../db/schema/tenant.js';
+import type { TenantKeys } from '../../../platform/crypto/tenant-keys.js';
 import type { Tx } from '../../../platform/db/tenant-context.js';
 import { validateManualLink } from '../domain/manual-link.js';
 
@@ -154,6 +155,57 @@ export async function writeVideoRoom(
   room: string | null,
 ): Promise<void> {
   await tx.update(appointment).set({ videoRoom: room }).where(eq(appointment.id, appointmentId));
+}
+
+const MANUAL_LINK_FIELD = { table: 'video_session', column: 'manual_link_enc' } as const;
+
+/** Encrypts a manual link for the session `sessionId` with the key of the organization. */
+export function sealManualLink(
+  tx: Tx,
+  keys: TenantKeys,
+  sessionId: string,
+  url: string,
+): Promise<Buffer> {
+  return keys.encryptField(tx, { ...MANUAL_LINK_FIELD, rowId: sessionId }, url);
+}
+
+/** Whether the session has a manual link, without reading it. */
+export function hasManualLink(session: VideoSessionRow | null | undefined): boolean {
+  return session?.manualLinkEnc != null || session?.manualLink != null;
+}
+
+/**
+ * The manual link of a session in plain text, or null. An address written before links were
+ * encrypted (the legacy `manual_link` column) is read as it is.
+ */
+export async function readManualLink(
+  tx: Tx,
+  keys: TenantKeys,
+  session: VideoSessionRow,
+): Promise<string | null> {
+  if (session.manualLinkEnc != null) {
+    const plain = await keys.decryptField(
+      tx,
+      { ...MANUAL_LINK_FIELD, rowId: session.id },
+      session.manualLinkEnc,
+    );
+    return plain.toString('utf8');
+  }
+  return session.manualLink;
+}
+
+/** Replaces a link written in plaintext by its encrypted form. Write transactions only. */
+export async function sealLegacyManualLink(
+  tx: Tx,
+  keys: TenantKeys,
+  session: VideoSessionRow,
+  url: string,
+): Promise<void> {
+  if (session.manualLink === null) return;
+  await tx
+    .update(videoSession)
+    .set({ manualLinkEnc: await sealManualLink(tx, keys, session.id, url), manualLink: null })
+    .where(eq(videoSession.id, session.id));
 }
 
 /**

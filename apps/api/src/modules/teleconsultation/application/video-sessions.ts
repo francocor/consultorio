@@ -179,6 +179,7 @@ async function restartSession(
       closeReason: null,
       provider: null,
       manualLink: null,
+      manualLinkEnc: null,
       firstOpenedAt: null,
       lastOpenedAt: null,
     })

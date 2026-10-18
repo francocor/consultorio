@@ -2,6 +2,7 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 
+import type { TenantKeys } from '../../../platform/crypto/tenant-keys.js';
 import { SYSTEM_USER_ID, type WithTenant } from '../../../platform/db/tenant-context.js';
 import { AppError } from '../../../platform/http/problem.js';
 import type { ActionTokens } from '../../../platform/tokens/index.js';
@@ -14,6 +15,7 @@ import { renderJoinPage, type JoinPageModel } from './join-page.js';
 
 export interface PublicJoinDeps {
   withTenant: WithTenant;
+  keys: TenantKeys;
   tokens: ActionTokens;
   adapters: SessionDeps['adapters'];
   clock: () => Date;

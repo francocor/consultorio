@@ -136,6 +136,7 @@ export function createNotifications(options: NotificationsOptions): Notification
           clock,
           whatsappAvailable: options.whatsappAvailable ?? (() => true),
           quota: options.quota,
+          keys: options.keys,
         }
       : undefined,
   );
@@ -165,6 +166,7 @@ export function createNotifications(options: NotificationsOptions): Notification
           origins: options.origins,
           tokens,
           worklist,
+          keys: options.keys,
           ...(options.quota ? { quota: options.quota } : {}),
           ...(options.videoJoin ? { videoJoin: options.videoJoin } : {}),
         }

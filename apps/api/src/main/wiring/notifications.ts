@@ -144,7 +144,7 @@ export const notificationsWiring: ModuleWiring = {
       // next patient), through the same entry point.
       const whatsappAvailable = (tenant: TenantRef) =>
         adapters.forTenant(tenant, 'whatsapp') !== undefined;
-      bindOfferDelivery({ jobs: client, clock: now, whatsappAvailable });
+      bindOfferDelivery({ jobs: client, clock: now, whatsappAvailable, keys });
       const worklist = createWorklist({ keys });
       // The room is created by a job of this process: its link is followed up from here too.
       videoJoin.onLinkReady(async (tx, appointmentId) => {
@@ -167,6 +167,7 @@ export const notificationsWiring: ModuleWiring = {
         origins,
         tokens: createActionTokens({ clock: now }),
         worklist,
+        keys,
         // Reminders of a virtual appointment carry the join address teleconsultation registered.
         videoJoin: videoJoin.resolver,
       });

@@ -1,5 +1,5 @@
 import type { AppointmentStatus } from '@consultorio/contracts';
-import { and, asc, eq, gt, inArray, isNotNull, lt, sql } from 'drizzle-orm';
+import { and, asc, eq, gt, inArray, isNotNull, lt, or, sql } from 'drizzle-orm';
 
 import { message, messageOffer } from '../../../db/schema/notifications.js';
 import { appointment } from '../../../db/schema/scheduling.js';
@@ -77,10 +77,10 @@ export function createReminderSweepJob(deps: MessagingDeps) {
   async function clearExpiredOfferLinks(tx: Tx, now: Date): Promise<void> {
     await tx
       .update(messageOffer)
-      .set({ url: null })
+      .set({ url: null, urlEnc: null })
       .where(
         and(
-          isNotNull(messageOffer.url),
+          or(isNotNull(messageOffer.url), isNotNull(messageOffer.urlEnc)),
           lt(messageOffer.expiresAt, new Date(now.getTime() - OFFER_LINK_GRACE_MS)),
         ),
       );

@@ -400,6 +400,20 @@
       "when": 1792280387377,
       "tag": "0393_message_checks_not_valid",
       "breakpoints": true
+    },
+    {
+      "idx": 57,
+      "version": "7",
+      "when": 1792281692803,
+      "tag": "0394_video_manual_link_enc",
+      "breakpoints": true
+    },
+    {
+      "idx": 58,
+      "version": "7",
+      "when": 1792282079009,
+      "tag": "0395_message_offer_url_enc",
+      "breakpoints": true
     }
   ]
 }

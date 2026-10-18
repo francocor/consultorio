@@ -35,7 +35,7 @@ import {
 } from './context.js';
 import type { MessagingDeps, TenantRef } from './deps.js';
 import { issueEmailLinks, issueOfferEmailLinks } from './links.js';
-import { copyOffer, loadOfferPlace } from './offer-facts.js';
+import { copyOffer, loadOfferPlace, readOfferUrl } from './offer-facts.js';
 import type { WhatsAppSender } from './ports.js';
 import {
   dedupeKeyFor,
@@ -204,7 +204,9 @@ async function queueFallback(
       trigger: row.trigger === 'manual' ? 'manual' : 'automatic',
     });
     // The offer message is written from the slot kept with it: the fallback needs the same.
-    if (queued.created && row.kind === 'waitlist_offer') await copyOffer(tx, row.id, queued.id);
+    if (queued.created && row.kind === 'waitlist_offer') {
+      await copyOffer(tx, deps.keys, row.id, queued.id);
+    }
     return channel;
   }
   return null;
@@ -302,7 +304,8 @@ async function prepareOfferDelivery(
   const { tenantId, state, tenant, now } = context;
   const channel = row.channel as MessageChannel;
   const [offer] = await tx.select().from(messageOffer).where(eq(messageOffer.messageId, row.id));
-  if (!offer || offer.url === null || offer.expiresAt.getTime() <= now.getTime()) {
+  const offerUrl = offer ? await readOfferUrl(tx, deps.keys, offer) : null;
+  if (!offer || offerUrl === null || offer.expiresAt.getTime() <= now.getTime()) {
     await cancelRow(tx, row, 'offer_expired');
     return { kind: 'settled' };
   }
@@ -337,9 +340,9 @@ async function prepareOfferDelivery(
       ? await issueOfferEmailLinks(deps, tx, {
           tenantSlug: state.slug,
           patientId: row.patientId,
-          offerUrl: offer.url,
+          offerUrl,
         })
-      : { offerUrl: offer.url };
+      : { offerUrl };
   const rendered = renderMessage({
     kind: 'waitlist_offer',
     channel,
