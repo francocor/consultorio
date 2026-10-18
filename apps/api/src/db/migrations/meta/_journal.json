@@ -526,6 +526,13 @@
       "when": 1792350931282,
       "tag": "0431_report_money_indexes",
       "breakpoints": true
+    },
+    {
+      "idx": 75,
+      "version": "7",
+      "when": 1792367117988,
+      "tag": "0490_cash_payment_locks",
+      "breakpoints": true
     }
   ]
 }

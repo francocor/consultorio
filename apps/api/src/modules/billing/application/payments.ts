@@ -19,10 +19,16 @@ import type { Tx } from '../../../platform/db/tenant-context.js';
 import { AppError } from '../../../platform/http/problem.js';
 import { summarizeCharge } from '../domain/charge-status.js';
 
-import { findOpenSession } from './cash-register.js';
+import { assertMayOperate, findOpenSession } from './cash-register.js';
 import { refreshChargeStatus } from './charge-state.js';
 import { loadCharge } from './charge-view.js';
-import { CURRENT_TENANT, UNIQUE_VIOLATION, sqlState, type BillingActor } from './common.js';
+import {
+  CURRENT_TENANT,
+  UNIQUE_VIOLATION,
+  constraintOf,
+  sqlState,
+  type BillingActor,
+} from './common.js';
 import { paidNetByCharge } from './payment-totals.js';
 import { billingScopeOf, canSee, type BillingScope, type ScopeViewer } from './scope.js';
 
@@ -71,13 +77,22 @@ async function outstandingOf(tx: Tx, chargeId: string): Promise<number> {
  * Where the money of an entry is counted: cash needs the open register of the location and is
  * refused without one; any other method joins the open register for the daily summary when there
  * is one, and is not tied to a register otherwise.
+ *
+ * The register is read with a lock (a close in progress makes the entry wait, then the register is
+ * no longer open: JD-S4 R1-C1), and whoever puts money in it must be someone who may operate the
+ * location, the rule the register itself applies (JD-S4 R1-B-T4): seeing the charge is not enough,
+ * for example for staff who see their own appointments at a place they are not assigned to.
  */
 async function registerFor(
   tx: Tx,
+  viewer: ScopeViewer,
   locationId: string,
   methods: readonly PaymentMethod[],
 ): Promise<string | null> {
-  const open = await findOpenSession(tx, locationId);
+  const open = await findOpenSession(tx, locationId, { lock: true });
+  if (open !== undefined || methods.includes('cash')) {
+    await assertMayOperate(tx, viewer, locationId);
+  }
   if (methods.includes('cash') && !open) throw new AppError('cash_register_required');
   return open ?? null;
 }
@@ -100,6 +115,7 @@ interface NewPayment {
   requestHash: string;
   correctsPaymentId?: string;
   actor: BillingActor;
+  viewer: ScopeViewer;
   now: Date;
   patientId: string;
 }
@@ -110,7 +126,7 @@ async function insertPayment(tx: Tx, input: NewPayment): Promise<string> {
   const excess = Math.max(0, input.amountCents - outstanding);
   if (excess > 0 && input.confirmCredit !== true) throw new AppError('payment_overpayment');
 
-  const register = await registerFor(tx, input.locationId, [input.method]);
+  const register = await registerFor(tx, input.viewer, input.locationId, [input.method]);
 
   let repeatedReference = false;
   if (input.externalRef !== undefined) {
@@ -151,8 +167,13 @@ async function insertPayment(tx: Tx, input: NewPayment): Promise<string> {
       return row.id;
     });
   } catch (error) {
-    // Two payments with the same voucher met at the unique index: the second one repeats it.
-    if (sqlState(error) === UNIQUE_VIOLATION) throw new AppError('payment_voucher_duplicate');
+    // Two submissions met at a unique index. Which index says what went wrong: the same voucher
+    // twice, or the same idempotency key for another submission (JD-S4 R1-C10).
+    if (sqlState(error) === UNIQUE_VIOLATION) {
+      const constraint = constraintOf(error);
+      if (constraint === 'payment_reference_key') throw new AppError('payment_voucher_duplicate');
+      if (constraint === 'payment_idempotency_key') throw new AppError('idempotency_key_reused');
+    }
     throw error;
   }
 
@@ -243,6 +264,7 @@ export async function recordPayment(
     idempotencyKey: request.idempotencyKey,
     requestHash,
     actor: input.actor,
+    viewer: input.viewer,
     now: input.now,
     patientId: locked.patientId,
   });
@@ -331,7 +353,7 @@ export async function refundPayment(
   }
 
   if (request.amountCents > original.remainingCents) throw new AppError('payment_refund_exceeds');
-  const register = await registerFor(tx, original.locationId, [original.method]);
+  const register = await registerFor(tx, input.viewer, original.locationId, [original.method]);
 
   await tx.insert(paymentReversal).values({
     tenantId: CURRENT_TENANT,
@@ -413,7 +435,10 @@ export async function correctPayment(
   if (original.remainingCents <= 0) throw new AppError('payment_refund_exceeds');
   // Both entries go into the open register: the money of a cash payment leaves it, and the new
   // one may be cash as well. Cash on either side needs a register to be open.
-  const register = await registerFor(tx, original.locationId, [original.method, method]);
+  const register = await registerFor(tx, input.viewer, original.locationId, [
+    original.method,
+    method,
+  ]);
 
   await tx.insert(paymentReversal).values({
     tenantId: CURRENT_TENANT,
@@ -441,6 +466,7 @@ export async function correctPayment(
     requestHash,
     correctsPaymentId: original.id,
     actor: input.actor,
+    viewer: input.viewer,
     now: input.now,
     patientId: locked.patientId,
   });

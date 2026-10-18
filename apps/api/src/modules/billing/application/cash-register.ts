@@ -39,7 +39,11 @@ async function operableLocations(tx: Tx, viewer: LocationViewer): Promise<string
   return visibleLocationIds(tx, viewer);
 }
 
-async function assertMayOperate(tx: Tx, viewer: LocationViewer, locationId: string): Promise<void> {
+export async function assertMayOperate(
+  tx: Tx,
+  viewer: LocationViewer,
+  locationId: string,
+): Promise<void> {
   const allowed = await operableLocations(tx, viewer);
   const [place] = await tx
     .select({ id: location.id })
@@ -50,12 +54,23 @@ async function assertMayOperate(tx: Tx, viewer: LocationViewer, locationId: stri
     throw new AppError('not_found');
 }
 
-/** The id of the register that is open at a location, if there is one. */
-export async function findOpenSession(tx: Tx, locationId: string): Promise<string | undefined> {
-  const [open] = await tx
+/**
+ * The id of the register that is open at a location, if there is one. A writer of entries (a payment,
+ * a refund) reads it with `lock: true`: the row is locked FOR SHARE until the end of its
+ * transaction, so a close that is in progress makes it wait and, once the close commits, find no open
+ * register; and a close that arrives later waits for the entry, so the entry is in the total it
+ * writes (JD-S4 R1-C1). The guards of the database read the register the same way.
+ */
+export async function findOpenSession(
+  tx: Tx,
+  locationId: string,
+  options: { lock?: boolean } = {},
+): Promise<string | undefined> {
+  const query = tx
     .select({ id: cashSession.id })
     .from(cashSession)
     .where(and(eq(cashSession.locationId, locationId), eq(cashSession.status, 'open')));
+  const [open] = await (options.lock ? query.for('share') : query);
   return open?.id;
 }
 

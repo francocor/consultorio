@@ -17,6 +17,12 @@ export function sqlState(error: unknown): string | undefined {
   return typeof cause?.code === 'string' ? cause.code : undefined;
 }
 
+/** The name of the constraint a driver error is about, if it names one. */
+export function constraintOf(error: unknown): string | undefined {
+  const cause = (error as { cause?: { constraint?: unknown } } | null)?.cause;
+  return typeof cause?.constraint === 'string' ? cause.constraint : undefined;
+}
+
 /** `YYYY-MM-DD` of an instant in a time zone (the day the service is given, at the location). */
 export function localDay(instant: Date, timeZone: string): string {
   const parts = new Intl.DateTimeFormat('en-CA', {
