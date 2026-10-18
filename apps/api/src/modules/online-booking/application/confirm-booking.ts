@@ -110,6 +110,13 @@ export async function confirmBooking(
   );
   const payload = JSON.parse(plain.toString('utf8')) as SubmissionPayload;
 
+  // The professional is locked BEFORE anything is counted: the counts below (the day's cap, the
+  // contact's appointments) are only true while nobody else books this professional, so two
+  // visitors who confirm at once are served one after the other, the second against the first.
+  const ports = deps.portsOf(tx);
+  const professional = await ports.lockProfessional(offer.professionalId);
+  if (professional?.status !== 'active') throw new SlotNoLongerAvailableError();
+
   // The rules of a booking, run again: what was true when the visitor held the time may not be now.
   const settings = await readBookingSettings(tx);
   const type = offer.types.find((candidate) => candidate.id === typeId);
@@ -146,9 +153,6 @@ export async function confirmBooking(
     return { ok: false, refusal: 'limit_reached' };
   }
 
-  const ports = deps.portsOf(tx);
-  const professional = await ports.lockProfessional(offer.professionalId);
-  if (professional?.status !== 'active') throw new SlotNoLongerAvailableError();
   await ports.expireHolds(professional.id, input.now);
   const held = await ports.findHold(hold.id, { lock: true });
   // A staff override or the clock may have ended the hold since the visitor typed the code.

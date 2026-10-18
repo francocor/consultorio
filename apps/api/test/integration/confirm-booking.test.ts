@@ -532,6 +532,36 @@ describe('what stops a booking', () => {
   });
 });
 
+describe('two visitors confirm at the same moment (JD-S3 C6)', () => {
+  it('leaves room for one when the daily cap allows one: the second is told the slot is gone', async () => {
+    await world.api.patch('/settings', world.owner, { onlineBooking: { dailyCap: 1 } });
+    try {
+      const first = await submitted({}, '09:00');
+      // The same Monday, another time: the day has room for exactly one online booking.
+      week -= 1;
+      const second = await submitted({}, '11:00');
+      expect(second.hold.startsAt.slice(0, 10)).toBe(first.hold.startsAt.slice(0, 10));
+
+      const answers = await Promise.all([
+        first.visitor.post(confirmUrl(first.hold), { code: world.codeSentTo(first.form.email) }),
+        second.visitor.post(confirmUrl(second.hold), { code: world.codeSentTo(second.form.email) }),
+      ]);
+      await world.app.background.idle();
+
+      expect(answers.map((answer) => answer.statusCode).sort()).toEqual([200, 409]);
+      const refused = answers.find((answer) => answer.statusCode === 409);
+      expect(refused?.json<Problem>().code).toBe('slot_no_longer_available');
+      const booked = await Promise.all([
+        appointmentOf(first.hold.id),
+        appointmentOf(second.hold.id),
+      ]);
+      expect(booked.filter((entry) => entry !== undefined)).toHaveLength(1);
+    } finally {
+      await world.api.patch('/settings', world.owner, { onlineBooking: { dailyCap: null } });
+    }
+  });
+});
+
 describe('the WhatsApp choice', () => {
   it('is not recorded anywhere when the box stays unticked, and reminders stay on email', async () => {
     const booking = await submitted({ whatsappOptIn: false });
