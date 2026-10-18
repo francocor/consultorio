@@ -168,3 +168,30 @@ export const FiscalConfigResponse = z.strictObject({
   readiness: InvoicingReadinessDto,
 });
 export type FiscalConfigResponse = z.infer<typeof FiscalConfigResponse>;
+
+// Provider console: the AFIP simulator (S4.09) -----------------------------------------------------
+
+export const AfipSimulatorModeRequest = z.strictObject({ mode: z.enum(AFIP_SIMULATOR_MODES) });
+export type AfipSimulatorModeRequest = z.infer<typeof AfipSimulatorModeRequest>;
+
+/** A voucher the simulator authorized, as the console lists it. */
+export const AfipSimulatorVoucherDto = z.strictObject({
+  id: z.uuid(),
+  issuerCuit: z.string(),
+  pointOfSale: z.int(),
+  type: z.string(),
+  number: z.int(),
+  cae: z.string(),
+  caeExpiresOn: z.iso.date(),
+  issueDate: z.iso.date(),
+  totalCents: z.int(),
+  createdAt: z.iso.datetime(),
+});
+export type AfipSimulatorVoucherDto = z.infer<typeof AfipSimulatorVoucherDto>;
+
+export const AfipSimulatorStateResponse = z.strictObject({
+  mode: z.enum(AFIP_SIMULATOR_MODES),
+  /** The newest first. */
+  vouchers: z.array(AfipSimulatorVoucherDto),
+});
+export type AfipSimulatorStateResponse = z.infer<typeof AfipSimulatorStateResponse>;

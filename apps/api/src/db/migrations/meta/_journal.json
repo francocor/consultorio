@@ -393,6 +393,13 @@
       "when": 1792284632353,
       "tag": "0440_fiscal_config",
       "breakpoints": true
+    },
+    {
+      "idx": 56,
+      "version": "7",
+      "when": 1792287040240,
+      "tag": "0442_local_afip",
+      "breakpoints": true
     }
   ]
 }

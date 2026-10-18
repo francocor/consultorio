@@ -49,3 +49,50 @@ describe('what invoicing adds to the worker', () => {
     });
   });
 });
+
+describe('the invoice issuer slot of invoicing', () => {
+  const slot = (overrides: Record<string, string> = {}) => {
+    const adapters = invoicingWiring.adapters;
+    if (!adapters) throw new Error('invoicing registers an adapter');
+    return adapters({ config: loadConfig({ ...env, ...overrides }), db: {} as never })
+      .invoiceIssuer;
+  };
+
+  it('serves customers with the local simulator while AFIP_PROVIDER=local, marked as a fake', () => {
+    const registered = slot({ AFIP_PROVIDER: 'local' });
+
+    expect(registered?.real).toMatchObject({ kind: 'fake' });
+    expect(registered?.real?.adapter).toMatchObject({ simulated: true });
+  });
+
+  it('serves customers with nothing while the real adapter does not exist (afip) or invoicing is off', () => {
+    expect(slot({ AFIP_PROVIDER: 'afip', NODE_ENV: 'development' })?.real).toBeUndefined();
+    expect(slot({ AFIP_PROVIDER: 'off' })?.real).toBeUndefined();
+  });
+
+  it('always serves demo organizations with the in-memory fake', () => {
+    for (const provider of ['local', 'off', 'afip']) {
+      expect(slot({ AFIP_PROVIDER: provider })?.demo).toMatchObject({ kind: 'fake' });
+    }
+  });
+});
+
+describe('the AFIP entry of the provider console', () => {
+  it('lists the adapter that serves customers and has no controls without the simulator', async () => {
+    const entries = invoicingWiring.devProviders?.({
+      config: loadConfig({ ...env, AFIP_PROVIDER: 'off' }),
+    });
+
+    expect(entries?.map((entry) => entry.id)).toEqual(['afip']);
+    expect(await entries?.[0]?.status()).toEqual({ adapter: 'off', mode: null });
+    expect(entries?.[0]?.routes).toBeUndefined();
+  });
+
+  it('adds the simulator controls when the simulator runs', () => {
+    const entries = invoicingWiring.devProviders?.({
+      config: loadConfig({ ...env, AFIP_PROVIDER: 'local' }),
+    });
+
+    expect(entries?.[0]?.routes).toBeTypeOf('function');
+  });
+});
