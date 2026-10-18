@@ -275,7 +275,39 @@ describe('the links of the organization', () => {
     await user.click(within(dialog).getByRole('button', { name: 'Guardar' }));
 
     await waitFor(() => {
-      expect(bodies).toEqual([{ typeIds: [IDS.first, IDS.control].sort(), locationIds: [] }]);
+      expect(bodies).toEqual([
+        {
+          typeIds: [IDS.first, IDS.control].sort(),
+          locationIds: [],
+          maxUnconfirmedAppointments: 20,
+        },
+      ]);
+    });
+  });
+
+  it('changes how many unconfirmed appointments a link may hold', async () => {
+    const user = userEvent.setup();
+    const bodies: unknown[] = [];
+    open({
+      routes: {
+        [`PATCH /api/booking-links/${ANA_LINK.id}`]: (_url, init) => {
+          bodies.push(jsonBody(init));
+          return jsonResponse({ ...ANA_LINK, maxUnconfirmedAppointments: 5 });
+        },
+      },
+    });
+
+    const ana = await cardOf('Dra. Ana Pérez');
+    await user.click(ana.getByRole('button', { name: 'Elegir tipos y sedes' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Tipos y sedes de Dra. Ana Pérez' });
+    const field = within(dialog).getByLabelText('Turnos sin identidad confirmada, como máximo');
+    expect(field).toHaveValue(20);
+    await user.clear(field);
+    await user.type(field, '5');
+    await user.click(within(dialog).getByRole('button', { name: 'Guardar' }));
+
+    await waitFor(() => {
+      expect(bodies).toEqual([expect.objectContaining({ maxUnconfirmedAppointments: 5 })]);
     });
   });
 });

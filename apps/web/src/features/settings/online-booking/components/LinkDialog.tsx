@@ -13,12 +13,15 @@ import {
   DialogHeader,
   DialogTitle,
 } from '../../../../shared/ui/dialog.js';
+import { Input } from '../../../../shared/ui/input.js';
 import { Label } from '../../../../shared/ui/label.js';
 
 export interface LinkChoice {
   typeIds: string[];
   locationIds: string[];
   enabled: boolean;
+  /** Most future appointments on patients already on file that this link may have unconfirmed. */
+  maxUnconfirmedAppointments: number;
 }
 
 function toggled(set: ReadonlySet<string>, id: string, on: boolean): Set<string> {
@@ -53,7 +56,11 @@ export function LinkDialog({
   name: string;
   types: readonly AppointmentTypeDto[];
   locations: readonly LocationDto[];
-  initial: { typeIds: readonly string[]; locationIds: readonly string[] };
+  initial: {
+    typeIds: readonly string[];
+    locationIds: readonly string[];
+    maxUnconfirmedAppointments: number;
+  };
   /** What choosing no place means for this link. */
   locationsHelp: string;
   pending: boolean;
@@ -71,6 +78,7 @@ export function LinkDialog({
       new Set(locations.filter((place) => initial.locationIds.includes(place.id)).map((p) => p.id)),
   );
   const [enabled, setEnabled] = useState(false);
+  const [maxUnconfirmed, setMaxUnconfirmed] = useState(String(initial.maxUnconfirmedAppointments));
 
   return (
     <Dialog
@@ -102,6 +110,10 @@ export function LinkDialog({
               typeIds: types.filter((type) => typeIds.has(type.id)).map((type) => type.id),
               locationIds: locations.filter((place) => locationIds.has(place.id)).map((p) => p.id),
               enabled,
+              maxUnconfirmedAppointments: Math.min(
+                500,
+                Math.max(0, Math.trunc(Number(maxUnconfirmed)) || 0),
+              ),
             });
           }}
         >
@@ -151,6 +163,28 @@ export function LinkDialog({
                 </div>
               ))}
             </fieldset>
+          ) : null}
+
+          {offers && mode === 'edit' ? (
+            <div className="grid gap-1.5">
+              <Label htmlFor="link-max-unconfirmed">
+                {t('bookingAdmin:dialog.maxUnconfirmed')}
+              </Label>
+              <Input
+                id="link-max-unconfirmed"
+                type="number"
+                inputMode="numeric"
+                min={0}
+                max={500}
+                value={maxUnconfirmed}
+                onChange={(event) => {
+                  setMaxUnconfirmed(event.target.value);
+                }}
+              />
+              <p className="text-sm text-muted-foreground">
+                {t('bookingAdmin:dialog.maxUnconfirmedHelp')}
+              </p>
+            </div>
           ) : null}
 
           {mode === 'create' ? (
