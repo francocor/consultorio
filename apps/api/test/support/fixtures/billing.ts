@@ -1,0 +1,63 @@
+import { sql } from 'drizzle-orm';
+
+import {
+  insertLocation,
+  insertProfessional,
+  returningId,
+  unique,
+  type TenantTableFixture,
+} from '../fixture-helpers.js';
+
+/**
+ * Fixtures of the tables of billing (track A): one valid row per table, for the generated isolation
+ * suite. The overrides replace a foreign key with an id of another organization.
+ */
+
+type Tx = Parameters<TenantTableFixture['insert']>[0];
+
+async function insertType(tx: Tx, tenantId: string): Promise<string> {
+  return returningId(
+    tx,
+    sql`INSERT INTO appointment_type (tenant_id, name, duration_minutes)
+          VALUES (${tenantId}, ${unique('Consulta')}, 30) RETURNING id`,
+  );
+}
+
+async function insertTenantPayer(tx: Tx, tenantId: string): Promise<string> {
+  return returningId(
+    tx,
+    sql`INSERT INTO tenant_payer (tenant_id, custom_name)
+          VALUES (${tenantId}, ${unique('Prepaga')}) RETURNING id`,
+  );
+}
+
+export const fixtures: Record<string, TenantTableFixture> = {
+  tenant_payer: { insert: insertTenantPayer },
+  price: {
+    insert: async (tx, tenantId, overrides) =>
+      returningId(
+        tx,
+        sql`INSERT INTO price (tenant_id, appointment_type_id, professional_id, location_id,
+                               amount_cents, effective_from)
+              VALUES (${tenantId},
+                      ${overrides?.['appointment_type_id'] ?? (await insertType(tx, tenantId))},
+                      ${overrides?.['professional_id'] ?? (await insertProfessional(tx, tenantId))},
+                      ${overrides?.['location_id'] ?? (await insertLocation(tx, tenantId))},
+                      2000000, '2031-01-01')
+              RETURNING id`,
+      ),
+  },
+  payer_plan_price: {
+    insert: async (tx, tenantId, overrides) =>
+      returningId(
+        tx,
+        sql`INSERT INTO payer_plan_price (tenant_id, tenant_payer_id, appointment_type_id,
+                                          payer_amount_cents, copago_cents, effective_from)
+              VALUES (${tenantId},
+                      ${overrides?.['tenant_payer_id'] ?? (await insertTenantPayer(tx, tenantId))},
+                      ${overrides?.['appointment_type_id'] ?? (await insertType(tx, tenantId))},
+                      1500000, 300000, '2031-01-01')
+              RETURNING id`,
+      ),
+  },
+};
