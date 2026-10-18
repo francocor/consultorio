@@ -21,3 +21,4 @@ export {
   type DemoResetDeps,
   type DemoResetResult,
 } from './reset.js';
+export { useServerAddressPepper } from './pepper.js';
