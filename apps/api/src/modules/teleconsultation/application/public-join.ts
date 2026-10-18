@@ -8,7 +8,12 @@ import { joinWindowOf, windowStateAt } from '../domain/join-window.js';
 
 import { auditLinkEvent } from './video-audit.js';
 import { providerFor, type SessionDeps } from './video-sessions.js';
-import { loadAppointmentFacts, loadSession, readVideoPolicy } from './video-state.js';
+import {
+  followableManualLink,
+  loadAppointmentFacts,
+  loadSession,
+  readVideoPolicy,
+} from './video-state.js';
 
 /**
  * What the platform join address does when somebody opens it (teleconsultation, "Link access and
@@ -69,11 +74,14 @@ export async function openPublicJoin(
   if (state === 'closed') return { kind: 'closed' };
 
   const provider = providerFor(deps, policy);
+  // A manual link that is no longer allowed is not followed, and the platform room is not a
+  // substitute for it (the professional is waiting in the other one).
   const target =
-    session.manualLink ??
-    (session.status === 'ready' && facts.videoRoom !== null && provider
-      ? provider.joinUrl(facts.videoRoom)
-      : null);
+    session.manualLink !== null
+      ? followableManualLink(session.manualLink, provider)
+      : session.status === 'ready' && facts.videoRoom !== null && provider
+        ? provider.joinUrl(facts.videoRoom)
+        : null;
   if (target === null) return { kind: 'pending' };
   if (input.mode === 'view') return { kind: 'ready' };
 

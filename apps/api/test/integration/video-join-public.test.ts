@@ -10,7 +10,7 @@ import { createRuntimeDb, type DbHandle } from '../../src/platform/db/pool.js';
 import { createActionTokens } from '../../src/platform/tokens/index.js';
 import { hostOf } from '../support/app.js';
 import { asTenant, createTestTenant } from '../support/tenants.js';
-import { createVideoWorld, type VideoWorld } from '../support/video-world.js';
+import { createSpyProvider, createVideoWorld, type VideoWorld } from '../support/video-world.js';
 
 let runtime: DbHandle;
 let world: VideoWorld;
@@ -275,6 +275,34 @@ describe('the platform join address', () => {
 
     expect(response.statusCode).toBe(302);
     expect(response.headers['location']).toBe('https://meet.google.com/abc-defg-hij');
+  });
+});
+
+describe('a manual link is checked again when somebody follows it (JD-S3 B31)', () => {
+  it('does not forward the patient to a host that stopped being allowed after the link was attached', async () => {
+    const { token, appointment, startsAt } = await readyAppointment();
+    await asTenant(runtime, world.tenant.id, (tx) =>
+      tx
+        .update(videoSession)
+        .set({ manualLink: 'https://meet.google.com/abc-defg-hij', provider: null })
+        .where(eq(videoSession.appointmentId, appointment.id)),
+    );
+    at(startsAt, 1);
+    expect((await enter(token)).statusCode).toBe(302);
+
+    // The organization narrows the list of hosts (`VIDEO_ALLOWED_DOMAINS`) after the attachment.
+    world.useProvider(createSpyProvider(['zoom.us']));
+    const refused = await enter(token);
+    const asProfessional = await world.api.post(
+      `/appointments/${appointment.id}/video/join`,
+      world.doctor,
+      {},
+    );
+
+    expect(refused.statusCode).toBe(200);
+    expect(refused.headers['location']).toBeUndefined();
+    expect(refused.body).toContain('todavía no está disponible');
+    expect(asProfessional.statusCode, asProfessional.body).toBe(409);
   });
 });
 

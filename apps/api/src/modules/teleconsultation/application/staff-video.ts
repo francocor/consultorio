@@ -17,6 +17,7 @@ import { validateManualLink } from '../domain/manual-link.js';
 import { auditLinkEvent } from './video-audit.js';
 import { providerFor, type LinkReadyNotifier, type SessionDeps } from './video-sessions.js';
 import {
+  followableManualLink,
   loadAppointmentFacts,
   loadSession,
   readVideoPolicy,
@@ -130,8 +131,11 @@ export async function joinAsProfessional(
 
   const provider = providerFor(deps, policy);
   const url =
-    session.manualLink ??
-    (facts.videoRoom !== null && provider ? provider.joinUrl(facts.videoRoom) : null);
+    session.manualLink !== null
+      ? followableManualLink(session.manualLink, provider)
+      : facts.videoRoom !== null && provider
+        ? provider.joinUrl(facts.videoRoom)
+        : null;
   if (url === null) throw new AppError('video_link_unavailable');
 
   await auditLinkEvent(tx, {

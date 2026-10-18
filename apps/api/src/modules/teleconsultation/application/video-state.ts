@@ -12,6 +12,9 @@ import { appointment } from '../../../db/schema/scheduling.js';
 import { videoSession, type VideoSessionRow } from '../../../db/schema/teleconsultation.js';
 import { location, tenant } from '../../../db/schema/tenant.js';
 import type { Tx } from '../../../platform/db/tenant-context.js';
+import { validateManualLink } from '../domain/manual-link.js';
+
+import type { VideoLinkProvider } from './ports.js';
 
 /** What the module needs to know about the organization to decide what a video session does. */
 export interface VideoPolicy {
@@ -151,6 +154,21 @@ export async function writeVideoRoom(
   room: string | null,
 ): Promise<void> {
   await tx.update(appointment).set({ videoRoom: room }).where(eq(appointment.id, appointmentId));
+}
+
+/**
+ * The manual link of a session, when it may still be followed. It was checked when it was
+ * attached, but the hosts the platform allows can change after that (`VIDEO_ALLOWED_DOMAINS`), so
+ * it is checked again whenever somebody is about to go to it. Null: there is none, or it is no
+ * longer allowed.
+ */
+export function followableManualLink(
+  link: string | null,
+  provider: Pick<VideoLinkProvider, 'manualLinkDomains'> | undefined,
+): string | null {
+  if (link === null) return null;
+  const checked = validateManualLink(link, provider?.manualLinkDomains ?? []);
+  return checked.ok ? checked.url : null;
 }
 
 /** The name and the color the pages shown to patients carry. */
