@@ -28,6 +28,7 @@ export const JOB_CATEGORIES: Readonly<Record<string, RouteCategory>> = {
   'reminder.sweep': 'write',
   'otp.send': 'write',
   'booking.purge': 'write',
+  'tokens.purge': 'write',
   'waitlist.match': 'write',
   'waitlist.offer': 'write',
   'waitlist.expire': 'write',

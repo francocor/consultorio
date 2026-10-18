@@ -13,6 +13,7 @@ import { createDbProbe } from '../platform/db/probe.js';
 import { createWithTenant } from '../platform/db/tenant-context.js';
 import { createBoss, createLazyJobs } from '../platform/jobs/boss.js';
 import { startWorker } from '../platform/jobs/worker.js';
+import { createTokenPurgeJob } from '../platform/tokens/purge-job.js';
 
 import { createAdapterResolver, createTenantRoutedEmail } from './adapter-resolver.js';
 import { buildAdapterRegistry } from './adapters.js';
@@ -189,6 +190,8 @@ async function runWorker(config: Config): Promise<void> {
     ...combineWorkerContributions([
       // Scheduling: the holds that ran out are ended every minute (they are also ended lazily).
       { tenantJobs: [{ definition: holdExpireJob, everyMs: 60_000 }] },
+      // The links that expired a week ago are deleted once a day.
+      { tenantJobs: [{ definition: createTokenPurgeJob(), everyMs: 86_400_000 }] },
       ...(storage ? [documentWorker({ storage, scanner, email: email.sender })] : []),
       ...MODULE_WIRINGS.map(
         (module) => module.worker?.({ config, adapters, email: email.sender, videoJoin }) ?? {},

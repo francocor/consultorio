@@ -79,6 +79,7 @@ describe('job classification (every queue declares one category)', () => {
     'reminder.sweep',
     'otp.send',
     'booking.purge',
+    'tokens.purge',
     'waitlist.match',
     'waitlist.offer',
     'waitlist.expire',
