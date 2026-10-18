@@ -46,9 +46,9 @@ describe('i18n catalog', () => {
     const onMissing = vi.fn();
     const i18n = createI18n({ onMissing });
 
-    const text = translateApiKey(i18n.t, 'billing.never_translated');
+    const text = translateApiKey(i18n.t, 'ghost.never_translated');
 
-    expect(onMissing).toHaveBeenCalledWith('billing.never_translated');
+    expect(onMissing).toHaveBeenCalledWith('ghost.never_translated');
     expect(text).toBe(i18n.t('errors:unexpected_response'));
   });
 
