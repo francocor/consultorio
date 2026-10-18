@@ -14,7 +14,7 @@ import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 
 import type { Actor } from '../../../platform/authz/actor.js';
-import { calendarAccess } from '../../../platform/authz/calendar-scope.js';
+import { calendarAccess, calendarProfessionalIds } from '../../../platform/authz/calendar-scope.js';
 import type { Tx, WithTenant } from '../../../platform/db/tenant-context.js';
 import { AppError, conflictWith } from '../../../platform/http/problem.js';
 import { visibleLocationIds } from '../../access/index.js';
@@ -31,6 +31,7 @@ import {
   updateEntry,
   type EntryActor,
   type EntryDeps,
+  type EntryScope,
 } from '../application/entries.js';
 import { loadOffers } from '../application/entry-view.js';
 
@@ -54,7 +55,7 @@ function actorOf(request: FastifyRequest) {
  * or any professional is everybody's; the others answer "not found" outside the scope, like the
  * rest of the product (judgment day finding B12).
  */
-interface Scope {
+interface Scope extends EntryScope {
   may(entry: { professionalId: string | null; locationId: string | null }): boolean;
 }
 
@@ -64,6 +65,8 @@ async function scopeOf(tx: Tx, actor: Actor): Promise<Scope> {
     membershipId: actor.membershipId,
   });
   return {
+    locationIds: visible,
+    professionalIds: calendarProfessionalIds(actor),
     may: (entry) =>
       (entry.locationId === null || visible === 'all' || visible.includes(entry.locationId)) &&
       (entry.professionalId === null || calendarAccess(actor, entry.professionalId)),
@@ -173,7 +176,9 @@ export function entryRoutes(deps: EntryRoutesDeps) {
           { tenantId: actor.tenantId, userId: actor.userId },
           async (tx) => {
             const scope = await scopeOf(tx, actor);
-            return (await listEntries(tx, request.query)).filter((entry) => scope.may(entry));
+            return (await listEntries(tx, request.query, scope)).filter((entry) =>
+              scope.may(entry),
+            );
           },
         );
         return { entries };
@@ -235,7 +240,18 @@ export function entryRoutes(deps: EntryRoutesDeps) {
       },
       async (request, reply) =>
         await change(request, reply, async (tx, actor, now, member) => {
-          await visibleEntry(tx, member, request.params.id);
+          const current = await visibleEntry(tx, member, request.params.id);
+          // The entry after the edit must still be one the member may have: an edit cannot move it
+          // to a place or a calendar outside their scope (judgment day round 2, finding C6).
+          const merged = {
+            professionalId:
+              request.body.professionalId === undefined
+                ? current.professionalId
+                : request.body.professionalId,
+            locationId:
+              request.body.locationId === undefined ? current.locationId : request.body.locationId,
+          };
+          if (!(await scopeOf(tx, member)).may(merged)) throw new AppError('not_found');
           return updateEntry(tx, deps.entries, {
             id: request.params.id,
             request: request.body,

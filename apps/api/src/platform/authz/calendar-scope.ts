@@ -25,3 +25,24 @@ export function calendarAccess(actor: Actor, professionalId: string): boolean {
   );
   return delegated && (actor.delegatedProfessionalIds ?? []).includes(professionalId);
 }
+
+/**
+ * The calendars `calendarAccess` opens, as a list that a query can filter by: `'all'` for the roles
+ * that run every calendar, the professionals the member reaches otherwise (their own, and the ones
+ * delegated to them while the grant is live), or none. It answers exactly what `calendarAccess`
+ * answers for each professional.
+ */
+export function calendarProfessionalIds(actor: Actor): 'all' | string[] {
+  if (actor.kind !== 'staff') return [];
+  if (actor.roles.some((role) => role === 'owner' || role === 'admin' || role === 'reception')) {
+    return 'all';
+  }
+  if (!actor.roles.includes('professional')) return [];
+  const own = actor.professionalId === null ? [] : [actor.professionalId];
+  const delegated = effectivePermissions(actor.roles, actor.grants).includes(
+    'scheduling.delegated_calendar',
+  )
+    ? (actor.delegatedProfessionalIds ?? [])
+    : [];
+  return [...new Set([...own, ...delegated])];
+}

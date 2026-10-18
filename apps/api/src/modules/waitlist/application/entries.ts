@@ -255,8 +255,41 @@ export function createEntry(
 }
 
 /** The entries still in play unless a status is asked for, filtered as staff asked. */
-export function listEntries(tx: Tx, query: WaitlistListQuery): Promise<WaitlistEntryDto[]> {
+/** The entries a member may see: the places and calendars they work in (null: every one). */
+export interface EntryScope {
+  locationIds: 'all' | readonly string[];
+  professionalIds: 'all' | readonly string[];
+}
+
+export function listEntries(
+  tx: Tx,
+  query: WaitlistListQuery,
+  scope?: EntryScope,
+): Promise<WaitlistEntryDto[]> {
   const conditions: SQL[] = [];
+  // The scope belongs in the query: filtering the page afterwards fills it with entries the member
+  // may not see and leaves them an empty or short list (judgment day round 2, finding C6). An entry
+  // for any place, or for any professional, is everybody's.
+  if (scope && scope.locationIds !== 'all') {
+    conditions.push(
+      scope.locationIds.length === 0
+        ? sql`${waitlistEntry.locationId} is null`
+        : sql`(${waitlistEntry.locationId} is null or ${waitlistEntry.locationId} in (${sql.join(
+            scope.locationIds.map((id) => sql`${id}::uuid`),
+            sql`, `,
+          )}))`,
+    );
+  }
+  if (scope && scope.professionalIds !== 'all') {
+    conditions.push(
+      scope.professionalIds.length === 0
+        ? sql`${waitlistEntry.professionalId} is null`
+        : sql`(${waitlistEntry.professionalId} is null or ${waitlistEntry.professionalId} in (${sql.join(
+            scope.professionalIds.map((id) => sql`${id}::uuid`),
+            sql`, `,
+          )}))`,
+    );
+  }
   if (query.status !== undefined) conditions.push(eq(waitlistEntry.status, query.status));
   else conditions.push(IN_PLAY);
   if (query.patientId !== undefined) conditions.push(eq(waitlistEntry.patientId, query.patientId));
