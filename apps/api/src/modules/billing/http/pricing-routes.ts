@@ -18,7 +18,7 @@ import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 
 import type { WithTenant } from '../../../platform/db/tenant-context.js';
-import { addPayer, listPayers, setPayerActive } from '../application/payers.js';
+import { addPayer, listPayers, updatePayer } from '../application/payers.js';
 import {
   createPayerPrice,
   createPrice,
@@ -101,9 +101,10 @@ export function pricingRoutes(deps: PricingRoutesDeps) {
       (request) => {
         const actor = actorOf(request);
         return deps.withTenant({ tenantId: actor.tenantId, userId: actor.userId }, (tx) =>
-          setPayerActive(tx, {
+          updatePayer(tx, {
             id: request.params.id,
-            active: request.body.active,
+            request: request.body,
+            country: tenantOf(request).country,
             actor: billingActorOf(request),
             now: deps.clock(),
           }),

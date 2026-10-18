@@ -1,9 +1,12 @@
+import { readdirSync, readFileSync, statSync } from 'node:fs';
+import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+import type { ChargeDto, TenantPayerDto } from '@consultorio/contracts';
 import { sql } from 'drizzle-orm';
 import { afterAll, beforeAll, describe, expect, inject, it } from 'vitest';
 
 import {
-  ChargeLineAdjustmentError,
-  adjustInvoicedCents,
   readChargeLines,
   readChargeLinesOfCharges,
   readChargesForInvoicing,
@@ -13,18 +16,36 @@ import { createBillingWorld, type BillingWorld } from '../support/billing-world.
 import { asTenant, createTestTenant } from '../support/tenants.js';
 
 /**
- * What the invoicing module (track C) reads and writes of the charge lines, only through the index
- * of billing: the lines with their charge, locked while an invoice is built, and the amount already
- * invoiced, which can never go above the line or below zero.
+ * What the invoicing module (track C) reads of the charge lines, only through the index of billing:
+ * the lines with their charge and their payer, locked while an invoice is built. Billing never
+ * writes the amount invoiced: the trigger of the invoices does, and the database keeps it between
+ * zero and the amount of the line.
  */
 
 let runtime: DbHandle;
 let world: BillingWorld;
+let osde: TenantPayerDto;
+let osdeCatalogId: string;
 
 beforeAll(async () => {
   runtime = createRuntimeDb(inject('runtimeUrl'));
   world = await createBillingWorld(runtime, { slug: 'charge-lines-api' });
   await world.setPrice(1_000_000);
+  osdeCatalogId = await world.catalogPayer('charge-lines-osde', 'OSDE Facturable');
+  osde = (
+    await world.api.post('/billing/payers', world.owner, {
+      payerId: osdeCatalogId,
+      cuit: '30-70857833-5',
+    })
+  ).json<TenantPayerDto>();
+  await world.api.post('/billing/payer-prices', world.owner, {
+    tenantPayerId: osde.id,
+    appointmentTypeId: world.consulta,
+    payerAmountCents: 1_500_000,
+    copagoCents: 300_000,
+    plusCents: 0,
+    effectiveFrom: '2031-01-01',
+  });
 });
 
 afterAll(async () => {
@@ -45,12 +66,6 @@ async function chargeWithLines() {
   return { charge, lines };
 }
 
-const attempt = (work: () => Promise<unknown>) =>
-  work().then(
-    () => undefined,
-    (error: unknown) => error,
-  );
-
 describe('reading the lines', () => {
   it('gives each line with its charge, what is invoiced and what is not', async () => {
     const { charge, lines } = await chargeWithLines();
@@ -63,10 +78,11 @@ describe('reading the lines', () => {
       appointmentId: charge.appointmentId,
       locationId: charge.locationId,
       professionalId: charge.professionalId,
-      tenantPayerId: null,
+      payer: null,
       position: 1,
       kind: 'service',
       portion: 'patient',
+      description: 'Consulta',
       amountCents: 1_000_000,
       invoicedCents: 0,
       uninvoicedCents: 1_000_000,
@@ -77,6 +93,22 @@ describe('reading the lines', () => {
       description: 'Material',
       uninvoicedCents: 200_000,
     });
+  });
+
+  it('names the payer of the charge with its name and CUIT on every line, payer lines included', async () => {
+    const patientId = await world.freshPatient();
+    await world.cover(patientId, { payerId: osdeCatalogId });
+    const charge = await world.charge({ patientId });
+
+    const lines = await inTenant((tx) => readChargeLinesOfCharges(tx, [charge.id]));
+
+    expect(lines.map((line) => [line.kind, line.portion])).toEqual([
+      ['payer_coverage', 'payer'],
+      ['copago', 'patient'],
+    ]);
+    for (const line of lines) {
+      expect(line.payer).toEqual({ id: osde.id, name: 'OSDE Facturable', cuit: '30708578335' });
+    }
   });
 
   it('reads some lines by id, in one order whatever the order asked, locking them when told to', async () => {
@@ -93,6 +125,29 @@ describe('reading the lines', () => {
     expect(asked.map((line) => line.id).sort()).toEqual([first.id, second.id].sort());
   });
 
+  it('locks the lines for the transaction of the caller: another invoice waits for them', async () => {
+    const { lines } = await chargeWithLines();
+    const ids = lines.map((line) => line.id);
+    let second: unknown;
+
+    await inTenant(async (holder) => {
+      await readChargeLines(holder, ids, { lock: true });
+      // Another transaction asks for the same lines and gives up quickly: they are held.
+      second = await inTenant(async (waiter) => {
+        await waiter.execute(sql`SET LOCAL lock_timeout = '300ms'`);
+        return readChargeLines(waiter, ids, { lock: true });
+      }).then(
+        () => 'got them',
+        (error: unknown) => (error as { cause?: { code?: string } }).cause?.code,
+      );
+    });
+
+    // 55P03: lock_not_available.
+    expect(second).toBe('55P03');
+    const free = await inTenant((tx) => readChargeLines(tx, ids, { lock: true }));
+    expect(free).toHaveLength(ids.length);
+  });
+
   it('flags the lines of a voided charge, which no invoice may cover', async () => {
     const { charge } = await chargeWithLines();
     await world.api.post(`/billing/charges/${charge.id}/void`, world.owner, {
@@ -105,22 +160,32 @@ describe('reading the lines', () => {
     expect(lines.every((line) => line.chargeStatus === 'voided')).toBe(true);
   });
 
-  it('summarizes charges for invoicing: who, what for, and the amounts', async () => {
+  it('summarizes charges for invoicing: who, what for, the payer and the amounts', async () => {
     const { charge } = await chargeWithLines();
+    const patientId = await world.freshPatient();
+    await world.cover(patientId, { payerId: osdeCatalogId });
+    const covered = await world.charge({ patientId });
 
-    const [summary] = await inTenant((tx) => readChargesForInvoicing(tx, [charge.id]));
+    const summaries = await inTenant((tx) => readChargesForInvoicing(tx, [charge.id, covered.id]));
 
-    expect(summary).toMatchObject({
-      id: charge.id,
+    const own = summaries.find((entry) => entry.id === charge.id);
+    const insured = summaries.find((entry) => entry.id === covered.id);
+    expect(own).toMatchObject({
       status: 'pending',
       patientId: charge.patientId,
       appointmentTypeName: 'Consulta',
+      payer: null,
       totalCents: 1_200_000,
       patientCents: 1_200_000,
       payerCents: 0,
       invoicedCents: 0,
     });
-    expect(summary?.serviceDate).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+    expect(own?.serviceDate).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+    expect(insured).toMatchObject({
+      payer: { id: osde.id, name: 'OSDE Facturable', cuit: '30708578335' },
+      payerCents: 1_500_000,
+      patientCents: 300_000,
+    });
   });
 
   it('does not see the lines of another organization', async () => {
@@ -138,98 +203,75 @@ describe('reading the lines', () => {
   });
 });
 
-describe('the amount invoiced of a line', () => {
-  it('goes up and down in cents, within the line', async () => {
-    const { lines } = await chargeWithLines();
-    const line = lines[0];
-    if (!line) throw new Error('a line is expected');
-
-    const up = await inTenant((tx) => adjustInvoicedCents(tx, line.id, 400_000));
-    const more = await inTenant((tx) => adjustInvoicedCents(tx, line.id, 600_000));
-    const down = await inTenant((tx) => adjustInvoicedCents(tx, line.id, -1_000_000));
-
-    expect(up).toMatchObject({ invoicedCents: 400_000, uninvoicedCents: 600_000 });
-    expect(more).toMatchObject({ invoicedCents: 1_000_000, uninvoicedCents: 0 });
-    expect(down).toMatchObject({ invoicedCents: 0, uninvoicedCents: 1_000_000 });
-  });
-
-  it('refuses to go above the amount of the line or below zero, and a fraction', async () => {
-    const { lines } = await chargeWithLines();
-    const line = lines[1];
-    if (!line) throw new Error('a line is expected');
-
-    const above = await inTenant((tx) => attempt(() => adjustInvoicedCents(tx, line.id, 200_001)));
-    const below = await inTenant((tx) => attempt(() => adjustInvoicedCents(tx, line.id, -1)));
-    const fraction = await inTenant((tx) => attempt(() => adjustInvoicedCents(tx, line.id, 10.5)));
-
-    expect(above).toBeInstanceOf(ChargeLineAdjustmentError);
-    expect(above).toMatchObject({ reason: 'exceeds_amount' });
-    expect(below).toMatchObject({ reason: 'below_zero' });
-    expect(fraction).toBeInstanceOf(RangeError);
-    const [after] = await inTenant((tx) => readChargeLines(tx, [line.id]));
-    expect(after?.invoicedCents).toBe(0);
-  });
-
-  it('never lets two invoices over the same line add up to more than the line', async () => {
-    const { lines } = await chargeWithLines();
-    const line = lines[0];
-    if (!line) throw new Error('a line is expected');
-
-    const [one, two] = await Promise.all([
-      attempt(() => inTenant((tx) => adjustInvoicedCents(tx, line.id, 600_000))),
-      attempt(() => inTenant((tx) => adjustInvoicedCents(tx, line.id, 600_000))),
-    ]);
-
-    const failures = [one, two].filter((outcome) => outcome instanceof ChargeLineAdjustmentError);
-    expect(failures).toHaveLength(1);
-    const [after] = await inTenant((tx) => readChargeLines(tx, [line.id]));
-    expect(after?.invoicedCents).toBe(600_000);
-  });
-
-  it('refuses to invoice more of a voided charge, and answers not found for a line that is not there', async () => {
-    const { charge, lines } = await chargeWithLines();
-    await world.api.post(`/billing/charges/${charge.id}/void`, world.owner, {
-      reason: 'Cargado por error',
-    });
-    const line = lines[0];
-    if (!line) throw new Error('a line is expected');
-
-    const voided = await inTenant((tx) => attempt(() => adjustInvoicedCents(tx, line.id, 1)));
-    const missing = await inTenant((tx) =>
-      attempt(() => adjustInvoicedCents(tx, '0190a000-0000-7000-8000-0000000000aa', 1)),
-    );
-
-    expect(voided).toMatchObject({ reason: 'charge_voided' });
-    expect(missing).toMatchObject({ reason: 'not_found' });
-  });
-
-  it('moves the invoiced position of the charge that the API shows', async () => {
+describe('the amount invoiced of a line belongs to the invoices', () => {
+  it('starts at zero, can be moved by the trigger of the invoices as the application role, and shows in the charge', async () => {
     const { charge, lines } = await chargeWithLines();
     const [first, second] = lines;
     if (!first || !second) throw new Error('two lines expected');
 
-    await inTenant((tx) => adjustInvoicedCents(tx, first.id, 1_000_000));
-    const partly = (await world.api.get(`/billing/charges/${charge.id}`, world.owner)).json<{
-      invoicing: string;
-      invoicedCents: number;
-    }>();
-    await inTenant((tx) => adjustInvoicedCents(tx, second.id, 200_000));
-    const fully = (await world.api.get(`/billing/charges/${charge.id}`, world.owner)).json<{
-      invoicing: string;
-      invoicedCents: number;
-    }>();
+    // What the trigger of migration 0444 does: it updates only `invoiced_cents`.
+    const move = (lineId: string, cents: number) =>
+      inTenant((tx) =>
+        tx.execute(sql`UPDATE charge_line SET invoiced_cents = ${cents} WHERE id = ${lineId}`),
+      );
+    await move(first.id, 1_000_000);
+    const partly = (
+      await world.api.get(`/billing/charges/${charge.id}`, world.owner)
+    ).json<ChargeDto>();
+    await move(second.id, 200_000);
+    const fully = (
+      await world.api.get(`/billing/charges/${charge.id}`, world.owner)
+    ).json<ChargeDto>();
+    const read = await inTenant((tx) => readChargeLines(tx, [first.id]));
 
+    expect(lines.every((line) => line.invoicedCents === 0)).toBe(true);
     expect(partly).toMatchObject({ invoicing: 'partly_invoiced', invoicedCents: 1_000_000 });
     expect(fully).toMatchObject({ invoicing: 'invoiced', invoicedCents: 1_200_000 });
-    // The row the guard protects: the amount of the line itself did not move.
-    const [row] = await inTenant(
-      async (tx) =>
-        (
-          await tx.execute<{ amount_cents: string }>(
-            sql`SELECT amount_cents FROM charge_line WHERE id = ${first.id}`,
-          )
-        ).rows,
+    expect(read[0]).toMatchObject({ invoicedCents: 1_000_000, uninvoicedCents: 0 });
+  });
+
+  it('is refused above the amount of the line or below zero by the database, and nothing else of the line may move', async () => {
+    const { lines } = await chargeWithLines();
+    const line = lines[1];
+    if (!line) throw new Error('a line is expected');
+    const code = (work: (tx: Parameters<Parameters<typeof inTenant>[0]>[0]) => Promise<unknown>) =>
+      inTenant((tx) => tx.transaction(work)).then(
+        () => undefined,
+        (error: unknown) => (error as { cause?: { code?: string } }).cause?.code,
+      );
+
+    const above = await code((tx) =>
+      tx.execute(sql`UPDATE charge_line SET invoiced_cents = 200001 WHERE id = ${line.id}`),
     );
-    expect(row?.amount_cents).toBe('1000000');
+    const below = await code((tx) =>
+      tx.execute(sql`UPDATE charge_line SET invoiced_cents = -1 WHERE id = ${line.id}`),
+    );
+    const amount = await code((tx) =>
+      tx.execute(sql`UPDATE charge_line SET amount_cents = 1 WHERE id = ${line.id}`),
+    );
+
+    expect([above, below, amount]).toEqual(['23514', '23514', '42501']);
+  });
+
+  it('is never written by the code of billing', () => {
+    const root = fileURLToPath(new URL('../../src/modules/billing/', import.meta.url));
+    const sources: string[] = [];
+    const walk = (dir: string) => {
+      for (const name of readdirSync(dir)) {
+        const path = join(dir, name);
+        if (statSync(path).isDirectory()) walk(path);
+        else if (name.endsWith('.ts') && !name.endsWith('.test.ts')) sources.push(path);
+      }
+    };
+    walk(root);
+
+    expect(sources.length).toBeGreaterThan(10);
+    for (const path of sources) {
+      const text = readFileSync(path, 'utf8');
+      // No update of a charge line, and no write that names the invoiced column.
+      expect(text, path).not.toMatch(/\.update\(\s*chargeLine\s*\)/);
+      expect(text, path).not.toMatch(/invoiced_cents\s*=/);
+      expect(text, path).not.toMatch(/\.set\(\s*\{[^}]*invoicedCents/);
+    }
   });
 });

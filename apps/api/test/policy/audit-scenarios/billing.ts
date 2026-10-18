@@ -20,5 +20,5 @@ export const BILLING_SCENARIOS: Record<(typeof BILLING_AUDIT_ACTIONS)[number], A
   'cash.opened': t('cash-register.test.ts'),
   'cash.closed': t('cash-register.test.ts'),
   'cash.adjusted': t('refund-payment.test.ts'),
-  'export.requested': { pending: 'S4.05 (task 4.24): the export job' },
+  'export.requested': t('billing-exports.test.ts'),
 };

@@ -114,6 +114,8 @@ export const TenantPayerDto = z.strictObject({
   payerId: z.uuid().nullable(),
   name: z.string(),
   kind: z.enum(BILLING_PAYER_KINDS),
+  /** The 11 digits of the tax id of the payer (a Factura A needs it); null until it is entered. */
+  cuit: z.string().nullable(),
   active: z.boolean(),
   deactivatedAt: z.iso.datetime().nullable(),
 });
@@ -135,13 +137,24 @@ export const PayerListResponse = z.strictObject({
 export type PayerListResponse = z.infer<typeof PayerListResponse>;
 
 /** Copy a payer of the catalog, or add one of the organization's own. Exactly one of the two. */
+/**
+ * A CUIT as a person types it (`30-70857833-0` or the digits). The server checks its digits and
+ * check digit through the country pack, so this only bounds the text.
+ */
+const CuitText = z.string().trim().min(1).max(20);
+
 export const CreateTenantPayerRequest = z.union([
-  z.strictObject({ payerId: z.uuid() }),
-  z.strictObject({ customName: z.string().trim().min(2).max(80) }),
+  z.strictObject({ payerId: z.uuid(), cuit: CuitText.optional() }),
+  z.strictObject({ customName: z.string().trim().min(2).max(80), cuit: CuitText.optional() }),
 ]);
 export type CreateTenantPayerRequest = z.infer<typeof CreateTenantPayerRequest>;
 
-export const UpdateTenantPayerRequest = z.strictObject({ active: z.boolean() });
+/** Switch a payer on or off, and/or set its CUIT (`null` removes it). */
+export const UpdateTenantPayerRequest = z
+  .strictObject({ active: z.boolean().optional(), cuit: CuitText.nullable().optional() })
+  .refine((value) => value.active !== undefined || value.cuit !== undefined, {
+    message: 'nothing to change',
+  });
 export type UpdateTenantPayerRequest = z.infer<typeof UpdateTenantPayerRequest>;
 
 // Prices --------------------------------------------------------------------------------------
@@ -538,6 +551,58 @@ export const ReceivablesResponse = z.strictObject({
   totalCents: Cents,
 });
 export type ReceivablesResponse = z.infer<typeof ReceivablesResponse>;
+
+// Exports -------------------------------------------------------------------------------------
+
+/** The longest period one export may cover, in days. */
+export const MAX_EXPORT_DAYS = 366;
+
+function daysBetween(from: string, to: string): number {
+  return (Date.parse(`${to}T00:00:00Z`) - Date.parse(`${from}T00:00:00Z`)) / 86_400_000;
+}
+
+/**
+ * Asks for an export of charges, payments or the payer settlement for a period (the first and last
+ * day of the service, inclusive), optionally narrowed to a place, a professional or a payer. What a
+ * person may see is decided by the server; the request carries no scope.
+ */
+export const CreateExportRequest = z
+  .strictObject({
+    kind: z.enum(EXPORT_KINDS),
+    format: z.enum(EXPORT_FORMATS),
+    from: IsoDay,
+    to: IsoDay,
+    locationId: z.uuid().optional(),
+    professionalId: z.uuid().optional(),
+    tenantPayerId: z.uuid().optional(),
+  })
+  .refine((value) => value.from <= value.to, { message: 'from is after to', path: ['to'] })
+  .refine((value) => daysBetween(value.from, value.to) < MAX_EXPORT_DAYS, {
+    message: 'the period is too long',
+    path: ['to'],
+  });
+export type CreateExportRequest = z.infer<typeof CreateExportRequest>;
+
+export const ExportRequestDto = z.strictObject({
+  id: z.uuid(),
+  kind: z.enum(EXPORT_KINDS),
+  format: z.enum(EXPORT_FORMATS),
+  status: z.enum(EXPORT_STATUSES),
+  from: IsoDay,
+  to: IsoDay,
+  createdAt: z.iso.datetime(),
+  completedAt: z.iso.datetime().nullable(),
+  /** The name the downloaded file has; null until it is ready. */
+  fileName: z.string().nullable(),
+  sizeBytes: z.int().nullable(),
+  /** How many rows it lists (without subtotals); zero for an empty export. */
+  rowCount: z.int().nullable(),
+  failureCode: z.string().nullable(),
+});
+export type ExportRequestDto = z.infer<typeof ExportRequestDto>;
+
+export const ExportRequestListResponse = z.strictObject({ exports: z.array(ExportRequestDto) });
+export type ExportRequestListResponse = z.infer<typeof ExportRequestListResponse>;
 
 // Cash register -------------------------------------------------------------------------------
 

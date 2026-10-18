@@ -35,10 +35,17 @@ export const tenantPayer = tenantTable(
   {
     payerId: uuid('payer_id'),
     customName: text('custom_name'),
+    /**
+     * The tax id of the payer, 11 digits, validated through the country pack. The platform catalog
+     * has none, and a Factura A to a payer needs it (e-invoicing-afip); null until the organization
+     * enters it.
+     */
+    cuit: text('cuit'),
     active: boolean('active').notNull().default(true),
     deactivatedAt: timestamp('deactivated_at', { withTimezone: true }),
   },
   (table) => [
+    check('tenant_payer_cuit_check', sql`${table.cuit} is null or ${table.cuit} ~ '^[0-9]{11}$'`),
     foreignKey({
       name: 'tenant_payer_tenant_id_fkey',
       columns: [table.tenantId],

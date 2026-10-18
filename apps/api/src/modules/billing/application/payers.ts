@@ -3,6 +3,7 @@ import type {
   CreateTenantPayerRequest,
   PayerListResponse,
   TenantPayerDto,
+  UpdateTenantPayerRequest,
 } from '@consultorio/contracts';
 import { and, asc, eq, notInArray, sql } from 'drizzle-orm';
 
@@ -13,11 +14,13 @@ import type { Tx } from '../../../platform/db/tenant-context.js';
 import { AppError } from '../../../platform/http/problem.js';
 
 import { CURRENT_TENANT, UNIQUE_VIOLATION, sqlState, type BillingActor } from './common.js';
+import { validTaxId } from './tax-id.js';
 
 interface PayerRow {
   id: string;
   payerId: string | null;
   customName: string | null;
+  cuit: string | null;
   active: boolean;
   deactivatedAt: Date | null;
   catalogName: string | null;
@@ -28,6 +31,7 @@ const columns = {
   id: tenantPayer.id,
   payerId: tenantPayer.payerId,
   customName: tenantPayer.customName,
+  cuit: tenantPayer.cuit,
   active: tenantPayer.active,
   deactivatedAt: tenantPayer.deactivatedAt,
   catalogName: payer.name,
@@ -51,6 +55,7 @@ export function toPayerDto(row: PayerRow): TenantPayerDto {
     payerId: row.payerId,
     name: row.catalogName ?? row.customName ?? '',
     kind: kindOf(row),
+    cuit: row.cuit,
     active: row.active,
     deactivatedAt: row.deactivatedAt?.toISOString() ?? null,
   };
@@ -119,6 +124,7 @@ export async function addPayer(
       );
     if (!found) throw new AppError('not_found');
   }
+  const cuit = request.cuit === undefined ? null : validTaxId(input.country, request.cuit);
 
   let id: string;
   try {
@@ -128,6 +134,7 @@ export async function addPayer(
         tenantId: CURRENT_TENANT,
         payerId: 'payerId' in request ? request.payerId : null,
         customName: 'customName' in request ? request.customName : null,
+        cuit,
       })
       .returning({ id: tenantPayer.id });
     if (!row) throw new Error('payer insert returned no row');
@@ -148,35 +155,75 @@ export async function addPayer(
       entity: 'payer',
       change: 'created',
       source: created.payerId ? 'catalog' : 'custom',
+      cuit: cuit !== null,
     },
   });
   return created;
 }
 
-/** Deactivates or reactivates a payer. The row stays: charges made for it keep showing it. */
-export async function setPayerActive(
+/**
+ * Deactivates or reactivates a payer, and sets or removes its CUIT. The row stays: charges made for
+ * it keep showing it. The CUIT goes through the country pack (digits and check digit).
+ */
+export async function updatePayer(
   tx: Tx,
-  input: { id: string; active: boolean; actor: BillingActor; now: Date },
+  input: {
+    id: string;
+    request: UpdateTenantPayerRequest;
+    country: string;
+    actor: BillingActor;
+    now: Date;
+  },
 ): Promise<TenantPayerDto> {
+  const { request } = input;
   const [current] = await tx
-    .select({ active: tenantPayer.active })
+    .select({ active: tenantPayer.active, cuit: tenantPayer.cuit })
     .from(tenantPayer)
     .where(eq(tenantPayer.id, input.id))
     .for('update');
   if (!current) throw new AppError('not_found');
 
-  if (current.active !== input.active) {
+  const cuit =
+    request.cuit === undefined
+      ? current.cuit
+      : request.cuit === null
+        ? null
+        : validTaxId(input.country, request.cuit);
+  const activeChanged = request.active !== undefined && request.active !== current.active;
+  const cuitChanged = cuit !== current.cuit;
+
+  if (activeChanged || cuitChanged) {
     await tx
       .update(tenantPayer)
-      .set({ active: input.active, deactivatedAt: input.active ? null : input.now })
+      .set({
+        cuit,
+        ...(activeChanged
+          ? {
+              active: request.active ?? current.active,
+              deactivatedAt: request.active ? null : input.now,
+            }
+          : {}),
+      })
       .where(eq(tenantPayer.id, input.id));
+  }
+  if (activeChanged) {
     await audit(tx, {
       action: 'billing.price.changed',
       outcome: 'allow',
       actor: input.actor,
       resourceType: 'payer',
       resourceId: input.id,
-      metadata: { entity: 'payer', change: input.active ? 'activated' : 'deactivated' },
+      metadata: { entity: 'payer', change: request.active ? 'activated' : 'deactivated' },
+    });
+  }
+  if (cuitChanged) {
+    await audit(tx, {
+      action: 'billing.price.changed',
+      outcome: 'allow',
+      actor: input.actor,
+      resourceType: 'payer',
+      resourceId: input.id,
+      metadata: { entity: 'payer', change: 'cuit_changed', cuit: cuit !== null },
     });
   }
   return loadPayer(tx, input.id);

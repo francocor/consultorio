@@ -7,9 +7,11 @@ import {
   type ChargeLinePortion,
   type ChargeStatus,
 } from '@consultorio/contracts';
-import { and, asc, eq, inArray } from 'drizzle-orm';
+import { asc, eq, inArray } from 'drizzle-orm';
 
 import { charge, chargeLine } from '../../../db/schema/billing-charges.js';
+import { tenantPayer } from '../../../db/schema/billing-pricing.js';
+import { payer as payerCatalog } from '../../../db/schema/platform-catalogs.js';
 import { appointment } from '../../../db/schema/scheduling.js';
 import { location } from '../../../db/schema/tenant.js';
 import type { Tx } from '../../../platform/db/tenant-context.js';
@@ -21,7 +23,19 @@ import { localDay } from './common.js';
  * The charge lines as the invoicing module (track C) uses them. Invoices cover lines of one or
  * several charges, and a line can be invoiced in parts (e-invoicing-afip); billing owns the lines
  * and exposes them here, through its index, so invoicing never reads the tables.
+ *
+ * Billing only READS `invoiced_cents`. The trigger of the invoices (migration 0444) is the one
+ * writer of that column, and nothing in billing sets it.
  */
+
+/** The payer a charge was made for: who an invoice of its payer lines is addressed to. */
+export interface ChargePayer {
+  /** The payer in the organization's list (`tenant_payer`). */
+  id: string;
+  name: string;
+  /** The 11 digits of the CUIT, or null when the organization has not entered it yet. */
+  cuit: string | null;
+}
 
 export interface ChargeLineForInvoicing {
   id: string;
@@ -33,7 +47,7 @@ export interface ChargeLineForInvoicing {
   locationId: string;
   professionalId: string;
   /** The payer the charge was made for; null for a private patient. */
-  tenantPayerId: string | null;
+  payer: ChargePayer | null;
   position: number;
   kind: ChargeLineKind;
   portion: ChargeLinePortion;
@@ -59,16 +73,35 @@ const lineColumns = {
   locationId: charge.locationId,
   professionalId: charge.professionalId,
   tenantPayerId: charge.tenantPayerId,
+  catalogPayerName: payerCatalog.name,
+  customPayerName: tenantPayer.customName,
+  payerCuit: tenantPayer.cuit,
 };
 
 function lineQuery(tx: Tx) {
   return tx
     .select(lineColumns)
     .from(chargeLine)
-    .innerJoin(charge, eq(charge.id, chargeLine.chargeId));
+    .innerJoin(charge, eq(charge.id, chargeLine.chargeId))
+    .leftJoin(tenantPayer, eq(tenantPayer.id, charge.tenantPayerId))
+    .leftJoin(payerCatalog, eq(payerCatalog.id, tenantPayer.payerId));
 }
 
 type LineView = Awaited<ReturnType<typeof lineQuery>>[number];
+
+function payerOf(view: {
+  tenantPayerId: string | null;
+  catalogPayerName: string | null;
+  customPayerName: string | null;
+  payerCuit: string | null;
+}): ChargePayer | null {
+  if (view.tenantPayerId === null) return null;
+  return {
+    id: view.tenantPayerId,
+    name: view.catalogPayerName ?? view.customPayerName ?? '',
+    cuit: view.payerCuit,
+  };
+}
 
 function toLine(view: LineView): ChargeLineForInvoicing {
   const { line } = view;
@@ -80,7 +113,7 @@ function toLine(view: LineView): ChargeLineForInvoicing {
     appointmentId: view.appointmentId,
     locationId: view.locationId,
     professionalId: view.professionalId,
-    tenantPayerId: view.tenantPayerId,
+    payer: payerOf(view),
     position: line.position,
     kind: oneOf(CHARGE_LINE_KINDS, line.kind),
     portion: oneOf(CHARGE_LINE_PORTIONS, line.portion),
@@ -94,7 +127,7 @@ function toLine(view: LineView): ChargeLineForInvoicing {
 /**
  * Reads lines by id, in the order of their ids (so two invoices that lock the same lines always
  * lock them in the same order and cannot deadlock). With `lock: true` the rows are locked FOR UPDATE
- * until the end of the transaction: the invoice is built over what it read.
+ * until the end of the transaction of the caller: the invoice is built over what it read.
  */
 export async function readChargeLines(
   tx: Tx,
@@ -113,11 +146,13 @@ export async function readChargeLines(
 export async function readChargeLinesOfCharges(
   tx: Tx,
   chargeIds: readonly string[],
+  options: { lock?: boolean } = {},
 ): Promise<ChargeLineForInvoicing[]> {
   if (chargeIds.length === 0) return [];
-  const views = await lineQuery(tx)
+  const base = lineQuery(tx)
     .where(inArray(chargeLine.chargeId, [...chargeIds]))
     .orderBy(asc(chargeLine.chargeId), asc(chargeLine.position));
+  const views = await (options.lock ? base.for('update', { of: chargeLine }) : base);
   return views.map(toLine);
 }
 
@@ -128,7 +163,7 @@ export interface ChargeForInvoicing {
   appointmentId: string;
   locationId: string;
   professionalId: string;
-  tenantPayerId: string | null;
+  payer: ChargePayer | null;
   /** What the invoice prints as the service (the name of the appointment type). */
   appointmentTypeName: string;
   /** The day of the service in the time zone of the location (`YYYY-MM-DD`). */
@@ -150,10 +185,15 @@ export async function readChargesForInvoicing(
       row: charge,
       startsAt: appointment.startsAt,
       timeZone: location.timeZone,
+      catalogPayerName: payerCatalog.name,
+      customPayerName: tenantPayer.customName,
+      payerCuit: tenantPayer.cuit,
     })
     .from(charge)
     .innerJoin(appointment, eq(appointment.id, charge.appointmentId))
     .innerJoin(location, eq(location.id, charge.locationId))
+    .leftJoin(tenantPayer, eq(tenantPayer.id, charge.tenantPayerId))
+    .leftJoin(payerCatalog, eq(payerCatalog.id, tenantPayer.payerId))
     .where(inArray(charge.id, [...chargeIds]))
     .orderBy(asc(charge.id));
   const lines = await tx
@@ -166,7 +206,8 @@ export async function readChargesForInvoicing(
       ),
     );
 
-  return rows.map(({ row, startsAt, timeZone }) => {
+  return rows.map((entry) => {
+    const { row } = entry;
     const summary = summarizeCharge(
       lines.filter((line) => line.chargeId === row.id),
       0,
@@ -179,53 +220,14 @@ export async function readChargesForInvoicing(
       appointmentId: row.appointmentId,
       locationId: row.locationId,
       professionalId: row.professionalId,
-      tenantPayerId: row.tenantPayerId,
+      payer: payerOf({ tenantPayerId: row.tenantPayerId, ...entry }),
       appointmentTypeName:
         typeof snapshot.appointmentTypeName === 'string' ? snapshot.appointmentTypeName : '',
-      serviceDate: localDay(startsAt, timeZone),
+      serviceDate: localDay(entry.startsAt, entry.timeZone),
       totalCents: summary.totalCents,
       patientCents: summary.patientCents,
       payerCents: summary.payerCents,
       invoicedCents: summary.invoicedCents,
     };
   });
-}
-
-export type ChargeLineAdjustmentReason =
-  'not_found' | 'charge_voided' | 'exceeds_amount' | 'below_zero';
-
-/** An invoiced amount that cannot be applied; the line is left as it was. */
-export class ChargeLineAdjustmentError extends Error {
-  constructor(readonly reason: ChargeLineAdjustmentReason) {
-    super(`charge line adjustment refused: ${reason}`);
-    this.name = 'ChargeLineAdjustmentError';
-  }
-}
-
-/**
- * Adds `deltaCents` (negative for a credit note) to what has been invoiced of a line. The row is
- * locked first, so two invoices over one line cannot both pass the check; the amount stays between
- * zero and the amount of the line, and nothing else about the line changes (a trigger insists).
- * More cannot be invoiced of a voided charge. If the invoicing tables keep `invoiced_cents` with
- * a trigger of their own (migration 0444), the trigger is the one writer and this is not called.
- */
-export async function adjustInvoicedCents(
-  tx: Tx,
-  lineId: string,
-  deltaCents: number,
-): Promise<ChargeLineForInvoicing> {
-  const delta = money(deltaCents);
-  const [view] = await lineQuery(tx)
-    .where(and(eq(chargeLine.id, lineId)))
-    .for('update', { of: chargeLine });
-  if (!view) throw new ChargeLineAdjustmentError('not_found');
-  if (delta > 0 && view.chargeStatus === 'voided')
-    throw new ChargeLineAdjustmentError('charge_voided');
-
-  const next = view.line.invoicedCents + delta;
-  if (next < 0) throw new ChargeLineAdjustmentError('below_zero');
-  if (next > view.line.amountCents) throw new ChargeLineAdjustmentError('exceeds_amount');
-
-  await tx.update(chargeLine).set({ invoicedCents: next }).where(eq(chargeLine.id, lineId));
-  return toLine({ ...view, line: { ...view.line, invoicedCents: next } });
 }
