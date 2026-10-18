@@ -18,6 +18,12 @@ export interface BookingNotice {
   pendingApproval: boolean;
   /** The token of the link to change or cancel; null when the time has already passed. */
   manageToken: string | null;
+  /**
+   * The token of the link that accepts reminders by WhatsApp, when the visitor asked for them on
+   * the form. The number they typed is not verified, so the choice is only a request: the link
+   * travels to the address they did verify, and the opt-in exists once they follow it.
+   */
+  whatsappOptInToken: string | null;
   /** The patient of the appointment, for the message log. */
   patientId: string;
   appointmentId: string;
@@ -31,10 +37,14 @@ export interface BookingNotice {
  */
 export interface BookingNotifier {
   /**
-   * Records the WhatsApp opt-in the visitor ticked on the form (source `online_booking`), for a
-   * patient created by this booking. Absent while the notifications module has no preferences.
+   * Prepares the request to accept WhatsApp that the visitor made on the form, for a patient
+   * created by this booking, and returns the token of its link. It records no opt-in: that happens
+   * when the patient follows the link. Absent while the notifications module has no preferences.
    */
-  recordWhatsAppOptIn?(tx: Tx, input: { patientId: string; at: Date }): Promise<void>;
+  requestWhatsAppOptIn?(
+    tx: Tx,
+    input: { patientId: string; at: Date },
+  ): Promise<{ token: string } | null>;
   /**
    * Tells the patient. Called after the booking is committed, never inside its transaction, and
    * exempt from quiet hours: it answers an action of the patient.
@@ -44,6 +54,9 @@ export interface BookingNotifier {
 
 /** The path of the page where the patient changes or cancels. */
 export const MANAGE_PATH = '/book/manage';
+
+/** The address of every single-purpose link of the platform; the token follows it. */
+const TOKEN_PATH = '/public/t/';
 
 /**
  * The email of the confirmation: the details of the appointment and the link to change or cancel
@@ -65,6 +78,10 @@ export function composeBookingConfirmation(
     timeZone: notice.timeZone,
     pendingApproval: notice.pendingApproval,
     manageLink,
+    whatsappOptInLink:
+      notice.whatsappOptInToken === null
+        ? null
+        : `${origins(notice.tenant.slug)}${TOKEN_PATH}${notice.whatsappOptInToken}`,
   });
 }
 

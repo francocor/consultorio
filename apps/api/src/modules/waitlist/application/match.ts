@@ -34,6 +34,12 @@ const MAX_ENTRIES = 300;
 const MAX_CALLS = 10;
 /** The most dry runs of a booking one match makes. */
 const MAX_CHECKS = 40;
+/**
+ * The most offers one slot gets, however many entries wait: a slot nobody takes after this many
+ * offers is left to reception, so booking and cancelling cannot make the waitlist write to every
+ * patient on the list.
+ */
+const MAX_OFFERS_PER_SLOT = 5;
 
 type TypeRecord = NonNullable<Awaited<ReturnType<SchedulingPorts['findType']>>>;
 
@@ -101,6 +107,15 @@ async function busyPatients(
   return new Set(rows.map((row) => row.patientId));
 }
 
+/** How many offers this slot has had, taken or not. */
+async function offersOfSlot(tx: Tx, slotKey: string): Promise<number> {
+  const [row] = await tx
+    .select({ n: sql<number>`count(*)::int` })
+    .from(waitlistOffer)
+    .where(eq(waitlistOffer.slotKey, slotKey));
+  return row?.n ?? 0;
+}
+
 /** Patients who were already offered this slot, through any of their entries. */
 async function patientsOffered(tx: Tx, slotKey: string): Promise<Set<string>> {
   const rows = await tx
@@ -155,10 +170,22 @@ export async function matchFreedSlot(
 ): Promise<MatchResult> {
   const ports = deps.portsOf(tx);
   const { now } = input;
-  // Two matches of the same professional never run side by side.
-  await tx.execute(
-    sql`select pg_advisory_xact_lock(hashtextextended(${input.professionalId ?? 'any'}, 361))`,
-  );
+  // Two matches of the same professional never run side by side. A match that is not about one
+  // professional touches all of them, so it takes the lock of every active professional (in a
+  // fixed order, so two of them cannot wait for each other).
+  const professionalIds =
+    input.professionalId === null
+      ? (
+          await tx
+            .select({ id: professional.id })
+            .from(professional)
+            .where(eq(professional.status, 'active'))
+            .orderBy(asc(professional.id))
+        ).map((row) => row.id)
+      : [input.professionalId];
+  for (const lockedId of professionalIds) {
+    await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${lockedId}, 361))`);
+  }
 
   // One offer at a time for a freed range.
   const [inFlight] = await tx
@@ -191,15 +218,6 @@ export async function matchFreedSlot(
     const type = await ports.findType(typeId);
     if (type?.active) types.set(typeId, type);
   }
-  const professionalIds =
-    input.professionalId === null
-      ? (
-          await tx
-            .select({ id: professional.id })
-            .from(professional)
-            .where(eq(professional.status, 'active'))
-        ).map((row) => row.id)
-      : [input.professionalId];
 
   // Every visit that fits in the range, for each place, professional and type somebody waits for.
   const candidates: Candidate[] = [];
@@ -313,6 +331,19 @@ export async function matchFreedSlot(
           calls += 1;
         }
         handled.add(row.patientId);
+        continue;
+      }
+
+      if (
+        (await offersOfSlot(
+          tx,
+          slotKeyOf({
+            professionalId: candidate.professionalId,
+            locationId: candidate.locationId,
+            startsAt: candidate.startsAt,
+          }),
+        )) >= MAX_OFFERS_PER_SLOT
+      ) {
         continue;
       }
 

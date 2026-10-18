@@ -7,7 +7,7 @@ import {
 import { sql } from 'drizzle-orm';
 import { check, foreignKey, text, timestamp, unique, uuid } from 'drizzle-orm/pg-core';
 
-import { tenantTable } from './_helpers.js';
+import { bytea, tenantTable } from './_helpers.js';
 import { appointment } from './scheduling.js';
 import { tenant } from './tenant.js';
 
@@ -37,8 +37,14 @@ export const videoSession = tenantTable(
     closeReason: text('close_reason'),
     /** The adapter that created the room (`local`, `fake`); null for a session with a manual link. */
     provider: text('provider'),
-    /** An https address a person attached; the platform join address wraps it. */
+    /**
+     * LEGACY, plaintext: an address attached before the link was encrypted (judgment day finding
+     * C9). Nothing writes it any more; it is read while it exists, and replaced the next time the
+     * link is followed. A manual link can carry a passcode, so it does not rest in plaintext.
+     */
     manualLink: text('manual_link'),
+    /** The https address a person attached, encrypted with the key of the organization. */
+    manualLinkEnc: bytea('manual_link_enc'),
     /** Administrative: the patient opened the platform address inside the join window. */
     firstOpenedAt: timestamp('first_opened_at', { withTimezone: true }),
     lastOpenedAt: timestamp('last_opened_at', { withTimezone: true }),

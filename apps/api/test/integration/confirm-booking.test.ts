@@ -6,6 +6,7 @@ import type {
   WorklistResponse,
 } from '@consultorio/contracts';
 import { and, eq, sql } from 'drizzle-orm';
+import type { LightMyRequestResponse } from 'fastify';
 import { afterAll, beforeAll, describe, expect, inject, it } from 'vitest';
 
 import { auditEvent } from '../../src/db/schema/audit.js';
@@ -106,6 +107,19 @@ const patientWithDocument = async (number: string) => {
     tx.select().from(patient).where(eq(patient.nationalId, number)),
   );
   return row;
+};
+
+/** What a visitor can compare in the answer to a confirmation: its status, its fields and the kind of their values. */
+const visible = (response: LightMyRequestResponse) => {
+  const body = response.json<Record<string, unknown>>();
+  return {
+    statusCode: response.statusCode,
+    fields: Object.keys(body).sort(),
+    status: body['status'],
+    mode: body['mode'],
+    hasManageLink: typeof body['managePath'] === 'string',
+    hasCalendarFile: typeof body['calendarFile'] === 'string',
+  };
 };
 
 const openItems = async (kind: string) =>
@@ -359,20 +373,181 @@ describe('a patient the organization already has', () => {
     expect((await relationships()).length).toBeGreaterThan(0);
   });
 
-  it('refuses a patient who was deactivated with the answer for a contact that cannot book', async () => {
-    await world.inTenant((tx) =>
-      tx.execute(
-        sql`INSERT INTO patient (tenant_id, family_name, given_names, birth_date, national_id_type, national_id, status)
-              VALUES (${world.tenant.id}, 'Baja', 'Beto', '1970-01-01', 'dni', '30222333', 'inactive')`,
-      ),
-    );
+  it('answers a patient who was deactivated like anybody else, books nothing on that record and tells reception (JD-S3 C2)', async () => {
+    const [inactive] = (
+      await world.inTenant((tx) =>
+        tx.execute<{ id: string }>(
+          sql`INSERT INTO patient (tenant_id, family_name, given_names, birth_date, national_id_type, national_id, status)
+                VALUES (${world.tenant.id}, 'Baja', 'Beto', '1970-01-01', 'dni', '30222333', 'inactive')
+                RETURNING id`,
+        ),
+      )
+    ).rows;
+    const fresh = await submitted();
     const booking = await submitted({ document: { type: 'dni', number: '30222333' } });
 
+    const freshAnswer = await confirm(fresh);
     const response = await confirm(booking);
+
+    // The same answer as for a person nobody had registered, and the confirmation email too.
+    expect(response.statusCode, response.body).toBe(200);
+    expect(visible(response)).toEqual(visible(freshAnswer));
+    expect(world.email.lastTo(booking.form.email)?.text).toContain('Su turno está confirmado');
+    // Nothing on the deactivated record: the appointment stands on a record of its own, and
+    // reception is asked to look at it.
+    const stored = await appointmentOf(booking.hold.id);
+    expect(stored).toBeDefined();
+    expect(stored?.patientId).not.toBe(inactive?.id);
+    expect(stored?.identityConfirmed).toBe(false);
+    const onInactive = await world.inTenant((tx) =>
+      tx
+        .select()
+        .from(appointment)
+        .where(eq(appointment.patientId, inactive?.id ?? '')),
+    );
+    expect(onInactive).toEqual([]);
+    const items = (await openItems('identity_review')).filter(
+      (item) => item.subjectId === stored?.id,
+    );
+    expect(items).toHaveLength(1);
+    expect(JSON.stringify(items[0]?.detail)).toContain('inactive_patient');
+  });
+});
+
+describe('the limits of a contact are applied to the address that was verified (JD-S3 C2, D23)', () => {
+  /** A patient on file with a document of their own. */
+  async function patientOnFile(number: string) {
+    return world.inTenant(async (tx) => {
+      const result = await tx.execute<{ id: string }>(
+        sql`INSERT INTO patient (tenant_id, family_name, given_names, birth_date, national_id_type, national_id)
+              VALUES (${world.tenant.id}, 'Registrada', 'Rita', '1982-02-02', 'dni', ${number}) RETURNING id`,
+      );
+      return result.rows[0]?.id ?? '';
+    });
+  }
+
+  /** A patient on file with three future online appointments (the cap of a document). */
+  async function documentAtItsCap(number: string) {
+    const patientId = await world.inTenant(async (tx) => {
+      const result = await tx.execute<{ id: string }>(
+        sql`INSERT INTO patient (tenant_id, family_name, given_names, birth_date, national_id_type, national_id)
+              VALUES (${world.tenant.id}, 'Acaparada', 'Ana', '1985-05-05', 'dni', ${number}) RETURNING id`,
+      );
+      return result.rows[0]?.id ?? '';
+    });
+    for (const time of ['09:00', '10:00', '11:00']) {
+      const booked = await world.api.post('/appointments', world.owner, {
+        patientId,
+        professionalId: world.colleague.professionalId,
+        locationId: world.centro,
+        appointmentTypeId: world.consulta,
+        local: { date: world.monday(90), time },
+      });
+      expect(booked.statusCode, booked.body).toBe(201);
+    }
+    await world.inTenant((tx) =>
+      tx.execute(sql`UPDATE appointment SET source = 'online' WHERE patient_id = ${patientId}`),
+    );
+    return patientId;
+  }
+
+  it('does not attach a fourth appointment to a document at its cap, and answers like any other booking', async () => {
+    const patientId = await documentAtItsCap('29000333');
+    const fresh = await submitted();
+    const booking = await submitted({ document: { type: 'dni', number: '29000333' } });
+
+    const freshAnswer = await confirm(fresh);
+    const response = await confirm(booking);
+
+    expect(response.statusCode, response.body).toBe(200);
+    expect(visible(response)).toEqual(visible(freshAnswer));
+    const stored = await appointmentOf(booking.hold.id);
+    expect(stored?.patientId).not.toBe(patientId);
+    const items = (await openItems('identity_review')).filter(
+      (item) => item.subjectId === stored?.id,
+    );
+    expect(JSON.stringify(items[0]?.detail)).toContain('document_limit');
+  });
+
+  it('refuses a verified address that already holds three future online appointments, and flags it', async () => {
+    const email = 'acaparador@example.test';
+    const HOURS_25 = 25 * 3_600_000;
+    // One booking a day (three codes an hour is the limit of an address, and so are three a day).
+    const bookAt = async (index: number) => {
+      week += 1;
+      world.setNow(new Date(EARLY.getTime() + index * HOURS_25));
+      const visitor = world.visitor();
+      const hold = await world.hold(visitor, links, { weeksAfter: week, time: '10:00' });
+      const form = world.form({ email });
+      const submission = await visitor.post(
+        `/public/${links.organization.slug}/booking/holds/${hold.id}/submission`,
+        { ...form, challengeProof: await visitor.solve() },
+      );
+      expect(submission.statusCode, submission.body).toBe(200);
+      await world.runJobs();
+      return { visitor, hold, form };
+    };
+    for (let index = 0; index < 3; index += 1) {
+      expect((await confirm(await bookAt(index))).statusCode).toBe(200);
+    }
+    const fourth = await bookAt(3);
+
+    const response = await confirm(fourth);
 
     expect(response.statusCode).toBe(409);
     expect(response.json<Problem>().code).toBe('booking_limit_reached');
-    expect(await appointmentOf(booking.hold.id)).toBeUndefined();
+    expect(await appointmentOf(fourth.hold.id)).toBeUndefined();
+    const flagged = await world.inTenant((tx) =>
+      tx
+        .select({ metadata: auditEvent.metadata })
+        .from(auditEvent)
+        .where(eq(auditEvent.action, 'booking.suspicious')),
+    );
+    expect(flagged.some((entry) => entry.metadata['reason'] === 'hoarding')).toBe(true);
+    world.setNow(EARLY);
+  });
+
+  it('stops attaching to patients on file once the link holds its limit of unconfirmed appointments', async () => {
+    // A professional of its own, so no earlier booking of the file counts against this link.
+    const other = await world.addProfessional();
+    const own = await world.openLinks({ doctor: other });
+    expect(own.professional.maxUnconfirmedAppointments).toBe(20);
+    const set = await world.api.patch(`/booking-links/${own.professional.id}`, world.owner, {
+      maxUnconfirmedAppointments: 1,
+    });
+    expect(set.statusCode, set.body).toBe(200);
+    const bookOnTheLink = async (number: string) => {
+      world.setNow(EARLY);
+      week += 1;
+      const visitor = world.visitor();
+      const hold = await world.hold(visitor, own, { weeksAfter: week, time: '10:00' });
+      const form = world.form({ document: { type: 'dni', number } });
+      const submission = await visitor.post(
+        `/public/${own.organization.slug}/booking/holds/${hold.id}/submission`,
+        { ...form, challengeProof: await visitor.solve() },
+      );
+      expect(submission.statusCode, submission.body).toBe(200);
+      await world.runJobs();
+      return { visitor, hold, form };
+    };
+
+    const first = await patientOnFile('29100001');
+    const second = await patientOnFile('29100002');
+    const one = await bookOnTheLink('29100001');
+    const two = await bookOnTheLink('29100002');
+    const answerOne = await confirm(one);
+    const answerTwo = await confirm(two);
+
+    expect([answerOne.statusCode, answerTwo.statusCode]).toEqual([200, 200]);
+    expect(visible(answerTwo)).toEqual(visible(answerOne));
+    // The first stands on the record of the patient with that document; the second does not.
+    expect((await appointmentOf(one.hold.id))?.patientId).toBe(first);
+    const stored = await appointmentOf(two.hold.id);
+    expect(stored?.patientId).not.toBe(second);
+    const items = (await openItems('identity_review')).filter(
+      (item) => item.subjectId === stored?.id,
+    );
+    expect(JSON.stringify(items[0]?.detail)).toContain('link_limit');
   });
 });
 
@@ -526,6 +701,36 @@ describe('what stops a booking', () => {
       expect(response.statusCode).toBe(409);
       expect(response.json<Problem>().code).toBe('slot_no_longer_available');
       expect(await appointmentOf(booking.hold.id)).toBeUndefined();
+    } finally {
+      await world.api.patch('/settings', world.owner, { onlineBooking: { dailyCap: null } });
+    }
+  });
+});
+
+describe('two visitors confirm at the same moment (JD-S3 C6)', () => {
+  it('leaves room for one when the daily cap allows one: the second is told the slot is gone', async () => {
+    await world.api.patch('/settings', world.owner, { onlineBooking: { dailyCap: 1 } });
+    try {
+      const first = await submitted({}, '09:00');
+      // The same Monday, another time: the day has room for exactly one online booking.
+      week -= 1;
+      const second = await submitted({}, '11:00');
+      expect(second.hold.startsAt.slice(0, 10)).toBe(first.hold.startsAt.slice(0, 10));
+
+      const answers = await Promise.all([
+        first.visitor.post(confirmUrl(first.hold), { code: world.codeSentTo(first.form.email) }),
+        second.visitor.post(confirmUrl(second.hold), { code: world.codeSentTo(second.form.email) }),
+      ]);
+      await world.app.background.idle();
+
+      expect(answers.map((answer) => answer.statusCode).sort()).toEqual([200, 409]);
+      const refused = answers.find((answer) => answer.statusCode === 409);
+      expect(refused?.json<Problem>().code).toBe('slot_no_longer_available');
+      const booked = await Promise.all([
+        appointmentOf(first.hold.id),
+        appointmentOf(second.hold.id),
+      ]);
+      expect(booked.filter((entry) => entry !== undefined)).toHaveLength(1);
     } finally {
       await world.api.patch('/settings', world.owner, { onlineBooking: { dailyCap: null } });
     }

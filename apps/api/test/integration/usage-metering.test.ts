@@ -1,9 +1,10 @@
 import type { UsageResponse } from '@consultorio/contracts';
-import { and, eq, sql } from 'drizzle-orm';
+import { and, eq, isNull, sql } from 'drizzle-orm';
 import { afterAll, beforeAll, beforeEach, describe, expect, inject, it } from 'vitest';
 
 import { createLocalWhatsAppSender } from '../../src/adapters/whatsapp-local/index.js';
 import { whatsappUsageAlert, whatsappUsageEvent } from '../../src/db/schema/usage-event.js';
+import { prepareDelivery } from '../../src/modules/notifications/application/delivery.js';
 import { recordOptIn } from '../../src/modules/notifications/application/preferences.js';
 import {
   recordWhatsappUsage,
@@ -117,6 +118,7 @@ const usageOf = async (professionalId: string) => {
         and(
           eq(whatsappUsageEvent.professionalId, professionalId),
           eq(whatsappUsageEvent.period, notes.now().toISOString().slice(0, 7)),
+          isNull(whatsappUsageEvent.releasedAt),
         ),
       ),
   );
@@ -286,6 +288,93 @@ describe('the quota', () => {
     expect(ownerMails().map((mail) => mail.subject)).toEqual([
       expect.stringContaining('agotó el cupo mensual') as string,
     ]);
+  });
+});
+
+describe('the quota under concurrency and across the month boundary (JD-S3 C7)', () => {
+  const quotaOf = (limit: number | null, overageAllowed: boolean): QuotaPolicy => ({
+    limitFor: () => Promise.resolve({ limit, overageAllowed }),
+  });
+
+  /** An opted-in patient whose WhatsApp reminder is queued, not yet sent. */
+  async function queuedReminder() {
+    slot += 1;
+    const patientId = await notes.patient({ phone: mobile(), email: 'respaldo@example.test' });
+    await scheduling.inTenant((tx) =>
+      recordOptIn(tx, {
+        patientId,
+        channel: 'whatsapp',
+        source: 'online_booking',
+        actor: patientActor,
+      }),
+    );
+    const time = `${String(9 + Math.floor((slot % 8) / 2)).padStart(2, '0')}:${slot % 2 === 0 ? '00' : '30'}`;
+    const booked = await notes.book(patientId, 60 + Math.floor(slot / 8), time);
+    return notes.queue({
+      kind: 'reminder',
+      channel: 'whatsapp',
+      patientId,
+      appointmentId: booked.id,
+      professionalId: scheduling.doctor.professionalId,
+      plannedStartsAt: new Date(booked.startsAt),
+      appointmentVersion: booked.version,
+      dedupeKey: `race:${booked.id}:whatsapp`,
+    });
+  }
+
+  it('lets exactly one of two messages prepared at the same moment take the last place of the quota', async () => {
+    notes.setNow(new Date('2032-03-02T12:00:00.000Z'));
+    notes.deps.quota = quotaOf(1, false);
+    const first = await queuedReminder();
+    const second = await queuedReminder();
+
+    const prepared = await Promise.all([
+      prepareDelivery(notes.deps, scheduling.tenant.id, first),
+      prepareDelivery(notes.deps, scheduling.tenant.id, second),
+    ]);
+
+    expect(prepared.map((entry) => entry.kind).sort()).toEqual(['send', 'settled']);
+    const rows = await Promise.all([notes.message(first), notes.message(second)]);
+    expect(rows.map((row) => row.cancelReason).sort()).toEqual([null, 'quota_exhausted']);
+    expect(await usageOf(scheduling.doctor.professionalId)).toBe(1);
+  });
+
+  it('gives the place back when the provider refuses the message', async () => {
+    notes.setNow(new Date('2032-04-06T12:00:00.000Z'));
+    notes.deps.quota = quotaOf(1, false);
+    const refused = await whatsappReminder({ phone: '+99910012001' });
+    expect(await notes.message(refused.id)).toMatchObject({ status: 'failed' });
+    expect(await usageOf(scheduling.doctor.professionalId)).toBe(0);
+
+    const next = await whatsappReminder();
+
+    expect(await notes.message(next.id)).toMatchObject({ status: 'sent', channel: 'whatsapp' });
+    expect(await usageOf(scheduling.doctor.professionalId)).toBe(1);
+  });
+
+  it('counts a message accepted in the last night of the month in that month, in the zone of the organization', async () => {
+    // 22:00 of 31 May in Buenos Aires is 01:00 UTC of 1 June (quiet hours, so the delivery itself
+    // would wait for the morning: the acceptance is processed directly).
+    const accepted = new Date('2032-06-01T01:00:00.000Z');
+    const id = await queuedReminder();
+
+    await scheduling.inTenant((tx) =>
+      recordWhatsappUsage({ quota: UNLIMITED_QUOTA, channels: notes.deps.channels }, tx, {
+        messageId: id,
+        professionalId: scheduling.doctor.professionalId,
+        now: accepted,
+        tenant: { id: scheduling.tenant.id, isDemo: false },
+      }),
+    );
+
+    const [event] = await scheduling.inTenant((tx) =>
+      tx.select().from(whatsappUsageEvent).where(eq(whatsappUsageEvent.messageId, id)),
+    );
+    expect(event?.period).toBe('2032-05');
+    const report = await scheduling.inTenant((tx) =>
+      usageReport(tx, UNLIMITED_QUOTA, new Date('2032-06-01T01:00:00.000Z')),
+    );
+    expect(report.period).toBe('2032-05');
   });
 });
 

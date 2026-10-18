@@ -3,6 +3,7 @@ import {
   boolean,
   check,
   foreignKey,
+  integer,
   text,
   timestamp,
   uniqueIndex,
@@ -43,6 +44,12 @@ export const bookingLink = tenantTable(
       .notNull()
       .default(sql`'{}'::uuid[]`),
     regeneratedAt: timestamp('regenerated_at', { withTimezone: true }),
+    /**
+     * Most future appointments of this link that stand on a patient already on file with the
+     * identity unconfirmed. Past it, a booking made with somebody else's document stands on a
+     * record of its own (judgment day decision D23).
+     */
+    maxUnconfirmedAppointments: integer('max_unconfirmed_appointments').notNull().default(20),
   },
   (table) => [
     foreignKey({
@@ -56,6 +63,10 @@ export const bookingLink = tenantTable(
       foreignColumns: [professional.tenantId, professional.id],
     }),
     check('booking_link_slug_check', sql`${table.slug} ~ '^[a-z0-9]{8,32}$'`),
+    check(
+      'booking_link_max_unconfirmed_check',
+      sql`${table.maxUnconfirmedAppointments} between 0 and 500`,
+    ),
     // Unique across the platform: the URL names the link, not the organization.
     uniqueIndex('booking_link_slug_key').on(table.slug),
     uniqueIndex('booking_link_organization_key')

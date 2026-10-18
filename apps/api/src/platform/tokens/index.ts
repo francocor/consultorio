@@ -70,6 +70,25 @@ export interface ActionTokens {
   revokeForSubject(tx: Tx, kind: TokenKind, subjectId: string): Promise<number>;
 }
 
+/** How long a token is kept after it expired, for whoever looks into what happened to a link. */
+export const EXPIRED_TOKEN_GRACE_MS = 7 * 86_400_000;
+
+/**
+ * Deletes the tokens of the organization of the transaction that expired more than a week ago
+ * (spent, revoked or never used: past its expiry none of them can do anything). A token is not an
+ * audit record - what a link did is in the audit trail of the action - so keeping them is only
+ * weight. Returns how many it deleted.
+ */
+export async function purgeExpiredTokens(tx: Tx, input: { now: Date }): Promise<number> {
+  const deleted = await tx
+    .delete(actionToken)
+    .where(
+      sql`${actionToken.expiresAt} < ${new Date(input.now.getTime() - EXPIRED_TOKEN_GRACE_MS).toISOString()}::timestamptz`,
+    )
+    .returning({ id: actionToken.id });
+  return deleted.length;
+}
+
 export function createActionTokens(options: { clock?: () => Date } = {}): ActionTokens {
   const clock = options.clock ?? (() => new Date());
 

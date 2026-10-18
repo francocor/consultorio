@@ -56,6 +56,7 @@ beforeEach(() => {
     jobs: notes.jobs,
     clock: () => notes.now(),
     whatsappAvailable: () => true,
+    keys: scheduling.keys,
   });
 });
 

@@ -1745,6 +1745,94 @@ Success criteria of `proposal.md` that Stage 3 can show, and the evidence:
 
 Not claimed here: the Stage 1 and 2 criteria (10-minute first booking, 30-second reception booking, PWA and 4G load, clinical audit, legacy removal) were verified at their own gates, and the e2e suite that guards them passed.
 
+## Judgment Day Stage 3, round 1
+
+Two judges reviewed `7b6df20` (diff `f8db04c..7b6df20`) and found no critical issue. This section records the fixes of round 1 on branch `feat/stage-3-patient-engagement`: the 15 confirmed findings (C1 to C15), the two orchestrator decisions (D22, D23), the suspects and the CI failure. Every fix has a commit that names its finding ("JD-S3 <id>") and a test that failed before it (the exceptions are said below). Migrations used: `0392` to `0397` (the range `3e` has `0398` and `0399` left).
+
+### Confirmed findings
+
+| Id | Fix | Test |
+| -- | --- | ---- |
+| C1 | A WhatsApp reply is attributed to ONE organization: the one of the message it quotes (when that message went to the same number), else the ones that wrote within seven days. With several candidates "1" and "2" go to reception in each, and BAJA acts only in them, naming each organization in the acknowledgment (the idempotency key now includes the organization, or the second acknowledgment collapsed into the first). A "2" now honours the cancel deadline of the organization: past it the patient is told to contact the organization (`cancel_closed`) and reception gets an item. | `whatsapp-attribution.test.ts` |
+| C2 | The pre-code check of future appointments is gone; the limits count the verified address after the code, under the lock of the professional. A deactivated record, a document at its cap and a link at its limit are answered like any booking (the appointment stands on a record of its own, without the document, with an identity review that says why: `inactive_patient`, `document_limit`, `link_limit`). The confirmation always goes to the verified address. Statement counts are kept equal across paths (`REVIEW_ITEM_STATEMENTS`). | `confirm-booking.test.ts`, `booking-submission.test.ts`, `public-nondisclosure.test.ts`, `notifications-booking-confirmation.test.ts` |
+| C3 | A self-join with the document of a patient on file no longer records an offers agreement; the entry is manual contact only (`no_offers_opt_in`). | `waitlist-join.test.ts` |
+| C4 | A correction that puts a cancelled, no-show or attended virtual appointment back among the appointments to come reopens its session with a new room (a manual link can be attached again). | `video-attendance.test.ts` |
+| C5 | The move by link compares the local days of the place, takes the lock of the professional before reading the cap, and subtracts the appointment only when it is an online one. | `booking-manage-zone.test.ts` |
+| C6 | The confirmation takes the lock of the professional before counting the day and the contact. | `confirm-booking.test.ts` (two at once) |
+| C7 | A place in the monthly WhatsApp quota is reserved at prepare time under an advisory lock per professional and month, confirmed when the provider accepts, released when it does not carry the message; the month is the one of the time zone of the organization (migration `0396`: `confirmed_at`, `released_at`, with a column grant, since the table stays immutable otherwise). | `usage-metering.test.ts`, `usage.test.ts` |
+| C8 | `prepareDelivery` checks quiet hours again for reminders, offers and video follow-ups (not for confirmations or manual resends): the message waits for the end of quiet hours when that comes before the appointment (or the expiry of the offer), and otherwise ends with `no_channel` plus a reception item (or `offer_expired`). | `notifications-quiet-send.test.ts`, `notifications-offers.test.ts` |
+| C9 | `video_session.manual_link` and `message_offer.url` are field-encrypted with the key of the organization (`manual_link_enc`, `url_enc`, migrations `0394` and `0395`); rows written before are read as they are and replaced. The simulator's `local_whatsapp_message` is documented as development and demonstration only. | `video-manual-link-encryption.test.ts`, `notifications-offers.test.ts` |
+| C10 | The two permissive lookup policies on `message` are replaced by three hardened `SECURITY DEFINER` functions that return tenant ids only (migration `0392`, allowlisted in `definer-functions.test.ts`). | `whatsapp-attribution.test.ts`, `definer-functions.test.ts` |
+| C11 | `address_hash` is an HMAC-SHA256 keyed with `ADDRESS_HASH_PEPPER` (required in production, a public default elsewhere, prefix `h2:`); the hourly sweep rewrites old hashes when the patient still has that address and drops the ones that cannot be recognized. | `delivery-rules.test.ts`, `reminder-sweep.test.ts`, `config-providers.test.ts` |
+| C12 | The local bot challenge is signed for the address that asked for the puzzle (`issue(ip)`), prunes by expiry, refuses new proofs when its memory is full instead of dropping live ones, and documents its per-process limits. | `bot-challenge-local/index.test.ts` |
+| C13 | Numbers of any country are understood (`normalizeInboundNumber`); PARAR and NO MAS opt out too (B30). | `phone.test.ts`, `keywords.test.ts`, `whatsapp-attribution.test.ts` |
+| C14 | Migration `0393` states the three CHECK constraints of `message` as NOT VALID and validates them in separate statements, proven on a populated table. | `migration-message-checks.test.ts` |
+| C15 | `GET /public/v/:token` only looks (notice plus a button); the POST of the button, from the same origin, spends the use, records the opening and forwards. | `video-join-public.test.ts` and the e2e specs |
+
+### Orchestrator decisions
+
+- **D22.** A WhatsApp choice on a public form is a request. The booking asks the notifications module for a `whatsapp_opt_in` token (`requestWhatsAppOptIn`), the confirmation email carries the link to the verified address, and no preference is written until the patient follows it. The waitlist join does the same through `WhatsappOptInPort` (its own email after the answer; before this the waitlist wiring did not record the choice at all). Only for a patient the form registered.
+- **D23.** The limits count the verified address and run after the lock (C2, C6). `booking_link.max_unconfirmed_appointments` (default 20, 0 to 500, migration `0397`) is editable through `PATCH /booking-links/:id` and in the edit dialog of the link.
+- Both are written in `proposal.md` ("orchestrator decision in automatic mode, pending owner confirmation") with a requirement and scenarios in the specs of online-booking, notifications and waitlist.
+
+### The CI failure
+
+`waitlist-offer-link.test.ts`, "produces exactly one appointment when reception and the patient take the slot at once", failed with "offer undefined was not delivered". **Root cause, a test that carried state between rounds**: when reception wins a round, the entry of that round stays active (its offer is invalidated, the entry waits again). In the next round that older entry takes the freed slot by fairness, so the new entry the test looks at has no offer. Which side wins is a race, so it failed only on some runs. Reproduced deterministically (reception books first, then a second round) and fixed with `world.reset()` at the start of each round. The hint about quiet hours was checked and is **not** the cause: the waitlist module reads only its injected clock and the world pins it to 09:00 local, so the wall clock cannot reach the test (the failure also reproduces with the pinned clock). The delivery of an offer after quiet hours began is now covered anyway (`notifications-offers.test.ts`), and no test of the suite depends on the wall clock near quiet hours (the whole suite ran at night, inside quiet hours, with the same results).
+
+### Suspects
+
+| Id | Result |
+| -- | ------ |
+| A3-rest | Covered by D23 and C2 (tests of the link limit and the document cap). |
+| A6 | Reproduced; fixed: `booking.suspicious` is written with a null address and browser, once per link and reason in ten minutes (the metric still counts every one). |
+| A7 | Reproduced; fixed: the WhatsApp opt-in request is refused with `channel_opted_out` for a patient who opted out of email. Not done: logging the refusal as a message (message kinds are a closed set) and a dedicated audit action. |
+| A8 | Reproduced; fixed: an online booking cancelled within 30 minutes of being made starts no match, and a slot gets at most five offers. |
+| A10 | Reproduced; fixed: the manage DTO returns `null` for the professional and the type when the organization uses neutral wording (the page hides the row). |
+| A-sugg | Reproduced; fixed: approving an online booking queues a confirmation whatever the lead times. |
+| B3 | Reproduced; fixed: `bindOptOutListener` runs `closeEntriesOfOptedOutPatient` in the transaction of any recorded opt-out. |
+| B5 | Fixed with C2: the reason travels encrypted in the review and approval items. |
+| B6 | Reproduced; fixed: the hold is extended to the expiry of the code under the lock of the professional. |
+| B9 | Fixed: the sweep reads every page of the horizon, keyset by `(starts_at, id)`, up to 20 pages. |
+| B11 | Done: administrative exports of the history of choices, the message log (metadata), the usage, the waitlist entries and offers, the video sessions (a flag for the manual link, never the link) and the new link limit. |
+| B12 | Reproduced; fixed: location and calendar scope on the waitlist list, detail, changes, creation and the to-call panel. |
+| B13 | Not applied (tried, then reverted): the development demo stack and its end-to-end suite read the demo organization's confirmation from the local mail catcher by design, and in production the sender of a demo organization is already the fake, so no real address is reached. |
+| B14 | Covered by D22. |
+| B16 | Fixed: the fake email and WhatsApp senders keep the latest 1000. |
+| B20 | Reproduced; fixed: `createOffer` locks the entry and returns null unless it is active. |
+| B23 | Reproduced; fixed: `auth: 'public'` routes count in `tenant-public|<id>`. |
+| B26 | Reproduced; fixed: the confirm and cancel links spend their use after the change, which runs in a savepoint. |
+| B28 | Reproduced; fixed: a match with no professional takes the lock of every active professional, in order. |
+| B30 | Fixed with C13. |
+| B31 | Reproduced; fixed: the manual link is validated again when the patient or the professional follows it. |
+| B32 | Fixed: `tokens.purge` deletes tokens a week after they expired, daily per organization. |
+
+### Follow-ups (INFO, not fixed)
+
+- Public hold and reschedule start times are not aligned to the grid of the professional.
+- An orphaned confirmation row is cancelled with the wrong reason (`tenant_read_only`).
+- The journal applies 0370 before 0360 (harmless).
+- `local_whatsapp_*` has no tenant column and no row level security: it is the development simulator; documented in the schema and in `docs/dev-setup.md`.
+- The refusal of A7 is not logged as a message or as an audit action of its own.
+- The cap of five offers per slot leaves no item for reception when it is reached.
+- Production now REQUIRES `ADDRESS_HASH_PEPPER` (32 characters or more): deployments must set it before this branch is released. Rotating it forgets which addresses failed and which numbers were written to.
+
+### Verification
+
+Run in the worktree after the last code change:
+
+- `pnpm typecheck`, `pnpm lint`, `pnpm format:check`, `pnpm db:check` (migrations 0392 to 0397): all clean.
+- `pnpm test` (unit): green.
+- `pnpm --filter @consultorio/api test:integration`: 184 files passed (1 skipped), 2805 tests passed (4 skipped).
+- `pnpm build`: green.
+- `playwright test --workers=3` (ports 4680, 3680, 9680): 185 passed.
+- Docker image: built from `infra/Dockerfile` and `GET /health` answered `{"status":"ok"}` with the production configuration including `ADDRESS_HASH_PEPPER`.
+
+Notes:
+
+- CI failure of the waitlist race test: the quiet-hours and wall-clock hint was checked and was not the cause. The `waitlist.offer` job failed with `KeyManagementError` in the end-to-end stack because the API and the job worker were given two different random KEKs; the stack now shares one. Separately, the demo spec had to follow three behaviours of this round: the WhatsApp opt-in link (D22), the 30-minute rule of A8 (the freed time now comes from an appointment that stood), and the new BAJA acknowledgement text.
+- A round-1 integration run once failed 4 unit tests that did not repeat; integration runs were starved by containers of other agents and by a Docker outage, and were re-run in full afterwards.
+- Incident: a `git stash pop` took another agent's lint-staged backup; recovered by saving the patch, resetting, reapplying it and dropping only the stash created here. No stash is used any more.
+
 ## Stage 4 seam: S4.00 (tasks 4.1 to 4.6)
 
 Branch `feat/stage-4-revenue`, stacked on `feat/stage-3-patient-engagement` (tip `7b6df20`). Mode: automatic, strict TDD, `size:exception` (work-unit commits, draft PR with base the Stage 3 branch, merges after #16, CI not polled). The seam registers every shared Stage 4 piece once so that the tracks (A billing and payments, B reports, C AFIP invoicing, D integration) only add files. The per-track boundaries are in `docs/stage4-tracks.md`; the migration convention is in `docs/migration-ranges.md`.

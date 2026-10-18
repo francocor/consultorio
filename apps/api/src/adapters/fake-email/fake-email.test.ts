@@ -23,6 +23,16 @@ describe('fake email sender', () => {
     ]);
   });
 
+  it('keeps only the latest messages, so a long-running process does not grow without bound (JD-S3 B16)', async () => {
+    const email = createFakeEmailSender({ capacity: 3 });
+
+    for (let index = 0; index < 5; index += 1) {
+      await email.send({ ...message, subject: `Mensaje ${String(index)}` });
+    }
+
+    expect(email.sent.map((sent) => sent.subject)).toEqual(['Mensaje 2', 'Mensaje 3', 'Mensaje 4']);
+  });
+
   it('finds the last message to an address and the links inside it', async () => {
     const email = createFakeEmailSender();
     await email.send({

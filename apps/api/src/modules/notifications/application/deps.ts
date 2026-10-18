@@ -1,5 +1,6 @@
 import type { WorklistKind, WorklistSubjectType } from '@consultorio/contracts';
 
+import type { TenantKeys } from '../../../platform/crypto/tenant-keys.js';
 import type { Tx, WithTenant } from '../../../platform/db/tenant-context.js';
 import type { PublicOrigins } from '../../../platform/http/public-origin.js';
 import type { JobClient } from '../../../platform/jobs/boss.js';
@@ -57,6 +58,8 @@ export interface MessagingDeps {
   origins: PublicOrigins;
   tokens: ActionTokens;
   worklist: Worklist;
+  /** Encrypts what messaging keeps that is a capability (the address of an offer). */
+  keys: TenantKeys;
   /** The plan's WhatsApp quota. Absent: no quota, everything is allowed and counted. */
   quota?: QuotaPolicy;
   /**

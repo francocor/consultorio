@@ -18,6 +18,8 @@ export interface BookingConfirmationEmailInput {
   pendingApproval: boolean;
   /** The link to change or cancel; null when the time has already passed. */
   manageLink: string | null;
+  /** The link that accepts reminders by WhatsApp, when the visitor asked for them; else null. */
+  whatsappOptInLink?: string | null;
 }
 
 /** "lunes 12 de mayo de 2031, 10:00" in the zone of the location. */
@@ -54,6 +56,7 @@ export function renderBookingConfirmationEmail(
     ? 'Recibimos su pedido. El consultorio lo va a confirmar y le avisaremos por este medio.'
     : 'Su turno está confirmado.';
 
+  const whatsappLink = input.whatsappOptInLink ?? null;
   const text = [
     headline,
     '',
@@ -63,6 +66,13 @@ export function renderBookingConfirmationEmail(
     ...(input.manageLink === null
       ? []
       : ['', 'Para cambiar o cancelar el turno, use este enlace:', input.manageLink]),
+    ...(whatsappLink === null
+      ? []
+      : [
+          '',
+          'Pidió recibir los recordatorios por WhatsApp. Para activarlos, abra este enlace y acepte:',
+          whatsappLink,
+        ]),
     '',
     'Si usted no pidió este turno, comuníquese con el consultorio.',
   ].join('\n');
@@ -79,6 +89,11 @@ export function renderBookingConfirmationEmail(
 <strong>Dónde:</strong> ${escapeHtml(input.locationName)}<br>
 <strong>Con:</strong> ${escapeHtml(input.professionalName)}</p>
 ${manage}
+${
+  whatsappLink === null
+    ? ''
+    : `<p>Pidió recibir los recordatorios por WhatsApp. <a href="${escapeHtml(whatsappLink)}">Active los recordatorios por WhatsApp</a>.</p>`
+}
 <p style="font-size: 13px; color: #6b7280;">Si usted no pidió este turno, comuníquese con el consultorio.</p>
 </body>
 </html>`;

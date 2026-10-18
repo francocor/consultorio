@@ -57,8 +57,13 @@ export interface NewOnlinePatient {
   givenNames: string;
   familyName: string;
   birthDate: string;
-  /** Already validated and normalized by the country rules. */
-  document: { type: string; number: string };
+  /**
+   * Already validated and normalized by the country rules. Null for a booking that cannot stand on
+   * the record that has this document (the record is deactivated, or already carries all the
+   * online appointments it may): the person gets a record of their own, without the document, and
+   * reception decides what it is.
+   */
+  document: { type: string; number: string } | null;
   phone?: string | null;
   email: string;
   /** The text the visitor accepted; null when no consent record is to be written. */
@@ -86,8 +91,8 @@ export async function createOnlinePatient(
           familyName: input.familyName,
           givenNames: input.givenNames,
           birthDate: input.birthDate,
-          nationalIdType: input.document.type,
-          nationalId: input.document.number,
+          nationalIdType: input.document?.type ?? null,
+          nationalId: input.document?.number ?? null,
           phone: input.phone ?? null,
           email: input.email,
           origin: 'online',
@@ -117,7 +122,7 @@ export async function createOnlinePatient(
     resourceType: 'patient',
     resourceId: row.id,
     patientId: row.id,
-    metadata: { origin: 'online', hasDocument: true },
+    metadata: { origin: 'online', hasDocument: input.document !== null },
   });
   if (input.consent) {
     const [consent] = await tx

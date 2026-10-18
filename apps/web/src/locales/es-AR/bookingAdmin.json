@@ -40,6 +40,8 @@
   "dialog.locations": "Sedes",
   "dialog.locationsHelp": "Sin ninguna, se ofrecen todas las sedes donde atiende el profesional.",
   "dialog.locationsHelpOrg": "Sin ninguna, se ofrecen todas las sedes.",
+  "dialog.maxUnconfirmed": "Turnos sin identidad confirmada, como máximo",
+  "dialog.maxUnconfirmedHelp": "Cuántos turnos futuros de este enlace pueden quedar a nombre de un paciente ya registrado sin que recepción haya confirmado la identidad. Pasado ese número, el turno se guarda en una ficha aparte y recepción lo revisa. De 0 a 500.",
   "dialog.enable": "Activar el enlace ahora",
   "dialog.enableHelp": "Un enlace desactivado muestra a los pacientes una página de «no disponible».",
   "dialog.save": "Guardar",

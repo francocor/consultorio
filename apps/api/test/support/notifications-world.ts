@@ -132,6 +132,7 @@ export function createNotificationsWorld(
     origins: createPublicOrigins({ mode: 'multi', baseDomain: BASE_DOMAIN }, { secure: true }),
     tokens: createActionTokens({ clock }),
     worklist: createWorklist({ keys: world.keys }),
+    keys: world.keys,
   };
   const definitions = createNotificationJobs(deps).all;
 

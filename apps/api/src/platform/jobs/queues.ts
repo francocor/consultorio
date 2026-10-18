@@ -42,6 +42,7 @@ export const QUEUES: readonly QueueDefinition[] = [
   { name: 'otp.send', options: { retryLimit: 3, retryDelay: 15, expireInSeconds: 120 } },
   // Hourly: deletes the unverified online-booking submissions older than 24 hours.
   { name: 'booking.purge', options: { retryLimit: 1, retryDelay: 300, expireInSeconds: 900 } },
+  { name: 'tokens.purge', options: { retryLimit: 1, retryDelay: 300, expireInSeconds: 900 } },
   // A slot was freed: finds the waiting entries that match it.
   { name: 'waitlist.match', options: { retryLimit: 2, retryDelay: 15, expireInSeconds: 120 } },
   // Delivers one waitlist offer.

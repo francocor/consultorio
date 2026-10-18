@@ -56,6 +56,18 @@ describe('renderBookingConfirmationEmail', () => {
     expect(email.html).toContain('&lt;script&gt;');
   });
 
+  it('offers the link to accept reminders by WhatsApp when the visitor asked for them', () => {
+    const email = renderBookingConfirmationEmail({
+      ...base,
+      whatsappOptInLink: 'https://aillu.example.test/public/t/xyz',
+    });
+
+    expect(email.text).toContain('WhatsApp');
+    expect(email.text).toContain('https://aillu.example.test/public/t/xyz');
+    expect(email.html).toContain('href="https://aillu.example.test/public/t/xyz"');
+    expect(renderBookingConfirmationEmail(base).text).not.toContain('WhatsApp');
+  });
+
   it('carries no patient, no type of visit and no reason', () => {
     const email = renderBookingConfirmationEmail(base);
 

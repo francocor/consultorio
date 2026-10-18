@@ -94,7 +94,11 @@ function OnlineBooking() {
   });
   const edit = useMutation({
     mutationFn: ({ link, choice }: { link: BookingLinkDto; choice: LinkChoice }) =>
-      admin.update(link.id, { typeIds: choice.typeIds, locationIds: choice.locationIds }),
+      admin.update(link.id, {
+        typeIds: choice.typeIds,
+        locationIds: choice.locationIds,
+        maxUnconfirmedAppointments: choice.maxUnconfirmedAppointments,
+      }),
     onSuccess: closeAnd(t('bookingAdmin:done.updated')),
   });
   const toggle = useMutation({
@@ -240,8 +244,12 @@ function OnlineBooking() {
           locations={locations.data}
           initial={
             dialog.kind === 'edit'
-              ? { typeIds: dialog.link.typeIds, locationIds: dialog.link.locationIds }
-              : { typeIds: [], locationIds: [] }
+              ? {
+                  typeIds: dialog.link.typeIds,
+                  locationIds: dialog.link.locationIds,
+                  maxUnconfirmedAppointments: dialog.link.maxUnconfirmedAppointments,
+                }
+              : { typeIds: [], locationIds: [], maxUnconfirmedAppointments: 20 }
           }
           locationsHelp={
             dialog.target.professionalId === null

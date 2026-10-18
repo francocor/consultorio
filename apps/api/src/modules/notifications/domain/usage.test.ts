@@ -3,7 +3,15 @@ import { describe, expect, it } from 'vitest';
 import { periodOf, thresholdsReached, usageState } from './usage.js';
 
 describe('periodOf', () => {
-  it('is the calendar month of the instant, in UTC', () => {
+  it('is the calendar month of the instant in the time zone of the organization (JD-S3 C7)', () => {
+    const lastNightOfMay = new Date('2031-06-01T01:00:00.000Z');
+
+    expect(periodOf(lastNightOfMay)).toBe('2031-06');
+    expect(periodOf(lastNightOfMay, 'America/Argentina/Buenos_Aires')).toBe('2031-05');
+    expect(periodOf(new Date('2031-05-31T22:00:00.000Z'), 'Asia/Tokyo')).toBe('2031-06');
+  });
+
+  it('is the calendar month of the instant, in UTC, when no zone is given', () => {
     expect(periodOf(new Date('2031-05-12T13:00:00.000Z'))).toBe('2031-05');
     expect(periodOf(new Date('2031-12-31T23:59:59.999Z'))).toBe('2031-12');
     expect(periodOf(new Date('2032-01-01T00:00:00.000Z'))).toBe('2032-01');

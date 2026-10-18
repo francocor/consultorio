@@ -1,8 +1,9 @@
-import { and, eq, gt, ne, sql } from 'drizzle-orm';
+import { and, eq, gt, isNotNull, ne, sql } from 'drizzle-orm';
 
 import { bookingSubmission } from '../../../db/schema/booking-submission.js';
+import { publicHold } from '../../../db/schema/online-booking.js';
 import { patient } from '../../../db/schema/patients.js';
-import { appointment } from '../../../db/schema/scheduling.js';
+import { appointment, slotHold } from '../../../db/schema/scheduling.js';
 import { audit, type AuditActor } from '../../../platform/audit/writer.js';
 import type { Tx } from '../../../platform/db/tenant-context.js';
 import { clientKeyOf, type RateLimitStore } from '../../../platform/http/rate-limit.js';
@@ -27,6 +28,8 @@ const HOUR = 3_600_000;
 export type SuspiciousReason = 'rate_limit' | 'code_flood' | 'hoarding';
 
 const HOLD_WINDOW = 600_000;
+/** One entry per link and reason in this long. */
+const SUSPICIOUS_WINDOW = 600_000;
 
 export interface Abuse {
   /** Counts a hold request from this address; false when it already has too many. */
@@ -69,11 +72,19 @@ export function createAbuse(deps: { store: RateLimitStore; metrics: Metrics }): 
       within(`booking|submission|link|${tenantId}|${linkId}`, ABUSE_LIMITS.submissionsPerLink),
 
     async recordSuspicious(tx, input) {
+      // Every one is counted; only the first of a kind per link and window is written down, so a
+      // flood cannot fill the audit trail.
       deps.metrics.increment('booking_suspicious_total', { reason: input.reason });
+      if (
+        !(await within(`booking|suspicious|${input.linkId}|${input.reason}`, 1, SUSPICIOUS_WINDOW))
+      ) {
+        return;
+      }
       await audit(tx, {
         action: 'booking.suspicious',
         outcome: 'deny',
-        actor: input.actor,
+        // What happened, never who: the address and the browser of the visitor are not kept.
+        actor: { ...input.actor, ip: null, userAgent: null },
         resourceType: 'booking_link',
         resourceId: input.linkId,
         // What happened, never who: no address, name or document.
@@ -84,27 +95,41 @@ export function createAbuse(deps: { store: RateLimitStore; metrics: Metrics }): 
 }
 
 /**
- * Future online appointments a contact already holds: by the email they verified and by the
- * document, which is how the same person reappears under a different address. The larger count
- * decides. A cancelled appointment gives its place back.
+ * Future online appointments that were booked with an email address that the visitor verified. A
+ * cancelled appointment gives its place back. Only a verified address counts: what a visitor types
+ * in a form proves nothing until the code arrives.
  */
-export async function futureOnlineAppointments(
+export async function futureOnlineByEmail(
   tx: Tx,
-  input: { email: string; document: { type: string; number: string }; now: Date },
+  input: { email: string; now: Date },
 ): Promise<number> {
-  const byEmail = await tx
+  const [row] = await tx
     .select({ n: sql<number>`count(*)::int` })
     .from(appointment)
     .innerJoin(bookingSubmission, eq(bookingSubmission.appointmentId, appointment.id))
     .where(
       and(
         eq(bookingSubmission.email, input.email),
+        eq(bookingSubmission.status, 'verified'),
         eq(appointment.source, 'online'),
         ne(appointment.status, 'cancelled'),
         gt(appointment.startsAt, input.now),
       ),
     );
-  const byDocument = await tx
+  return row?.n ?? 0;
+}
+
+/**
+ * Future online appointments that stand on the record with this document. It is how the same
+ * person reappears under a different address, so it is also how a stranger would pile appointments
+ * on somebody else's record. It is read only after the code of a booking was accepted, and what the
+ * booking does with it never shows to the visitor.
+ */
+export async function futureOnlineByDocument(
+  tx: Tx,
+  input: { document: { type: string; number: string }; now: Date },
+): Promise<number> {
+  const [row] = await tx
     .select({ n: sql<number>`count(*)::int` })
     .from(appointment)
     .innerJoin(patient, eq(patient.id, appointment.patientId))
@@ -117,7 +142,36 @@ export async function futureOnlineAppointments(
         gt(appointment.startsAt, input.now),
       ),
     );
-  return Math.max(byEmail[0]?.n ?? 0, byDocument[0]?.n ?? 0);
+  return row?.n ?? 0;
+}
+
+/**
+ * Future appointments booked through a link that stand on a patient already on file (one with a
+ * document) with the identity not confirmed by reception: what a stranger could pile on other
+ * people's records through that link. An appointment on a record of its own, without a document,
+ * is not one of them.
+ */
+export async function unconfirmedOnLink(
+  tx: Tx,
+  input: { linkId: string; now: Date },
+): Promise<number> {
+  const [row] = await tx
+    .select({ n: sql<number>`count(*)::int` })
+    .from(appointment)
+    .innerJoin(slotHold, eq(slotHold.appointmentId, appointment.id))
+    .innerJoin(publicHold, eq(publicHold.holdId, slotHold.id))
+    .innerJoin(patient, eq(patient.id, appointment.patientId))
+    .where(
+      and(
+        eq(publicHold.bookingLinkId, input.linkId),
+        eq(appointment.identityConfirmed, false),
+        isNotNull(patient.nationalId),
+        eq(appointment.source, 'online'),
+        ne(appointment.status, 'cancelled'),
+        gt(appointment.startsAt, input.now),
+      ),
+    );
+  return row?.n ?? 0;
 }
 
 /** Bookings an email completed in the last 24 hours. */

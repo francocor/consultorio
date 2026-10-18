@@ -122,6 +122,7 @@ export function whatsappDevRoutes(deps: WhatsAppDevRoutesDeps) {
           from: request.body.from,
           text: request.body.text,
           occurredAt: new Date().toISOString(),
+          ...(request.body.replyTo === undefined ? {} : { contextMessageId: request.body.replyTo }),
         });
         return { delivered };
       },

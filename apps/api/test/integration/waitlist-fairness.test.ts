@@ -378,4 +378,22 @@ describe('what is kept for the reports', () => {
       1000;
     expect(seconds).toBe(7 * 60);
   });
+
+  it('closes the entries of a patient who opts out through the channels of the patient, without anybody calling the waitlist (JD-S3 B3)', async () => {
+    const patientId = await world.patient();
+    await world.advance(MINUTE);
+    const entry = await world.join(patientId);
+
+    const response = await world.api.post(
+      `/patients/${patientId}/channels/email/opt-out`,
+      world.owner,
+      {},
+    );
+
+    expect(response.statusCode, response.body).toBe(200);
+    expect(await world.entryRow(entry.id)).toMatchObject({
+      status: 'closed',
+      close_reason: 'patient_opted_out',
+    });
+  });
 });

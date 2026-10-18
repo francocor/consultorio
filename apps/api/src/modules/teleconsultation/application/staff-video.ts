@@ -5,11 +5,14 @@ import {
   type VideoJoinResponse,
   type VideoSessionSummary,
 } from '@consultorio/contracts';
+import { eq } from 'drizzle-orm';
 
 import { videoSession } from '../../../db/schema/teleconsultation.js';
 import type { AuditActor } from '../../../platform/audit/writer.js';
 import type { Actor } from '../../../platform/authz/actor.js';
+import type { TenantKeys } from '../../../platform/crypto/tenant-keys.js';
 import type { Tx } from '../../../platform/db/tenant-context.js';
+import { uuidv7 } from '../../../platform/db/uuid.js';
 import { AppError } from '../../../platform/http/problem.js';
 import { joinWindowOf, noShowAllowedFrom, windowStateAt } from '../domain/join-window.js';
 import { validateManualLink } from '../domain/manual-link.js';
@@ -17,14 +20,20 @@ import { validateManualLink } from '../domain/manual-link.js';
 import { auditLinkEvent } from './video-audit.js';
 import { providerFor, type LinkReadyNotifier, type SessionDeps } from './video-sessions.js';
 import {
+  followableManualLink,
+  hasManualLink,
   loadAppointmentFacts,
   loadSession,
+  readManualLink,
   readVideoPolicy,
+  sealLegacyManualLink,
+  sealManualLink,
   type AppointmentVideoFacts,
 } from './video-state.js';
 import { mayWorkOn, VideoAccessRefused } from './visibility.js';
 
 type StaffDeps = Pick<SessionDeps, 'adapters' | 'clock'> & {
+  keys: TenantKeys;
   /** Announces that the appointment now has a link (a manual one was attached). */
   onLinkReady?: LinkReadyNotifier | undefined;
 };
@@ -91,7 +100,7 @@ export async function videoSummary(
           (policy.integrationEnabled ? 'provider_unavailable' : 'integration_off'))
         : null,
     hasLink,
-    manual: session?.manualLink != null,
+    manual: hasManualLink(session),
     patientOpenedLink: session?.firstOpenedAt != null,
     firstOpenedAt: session?.firstOpenedAt?.toISOString() ?? null,
     integrationEnabled: policy.integrationEnabled,
@@ -129,16 +138,23 @@ export async function joinAsProfessional(
   if (windowStateAt(window, deps.clock()) !== 'open') throw new AppError('video_outside_window');
 
   const provider = providerFor(deps, policy);
+  const manualLink = await readManualLink(tx, deps.keys, session);
   const url =
-    session.manualLink ??
-    (facts.videoRoom !== null && provider ? provider.joinUrl(facts.videoRoom) : null);
+    manualLink !== null
+      ? followableManualLink(manualLink, provider)
+      : hasManualLink(session)
+        ? null
+        : facts.videoRoom !== null && provider
+          ? provider.joinUrl(facts.videoRoom)
+          : null;
   if (url === null) throw new AppError('video_link_unavailable');
+  if (manualLink !== null) await sealLegacyManualLink(tx, deps.keys, session, manualLink);
 
   await auditLinkEvent(tx, {
     action: 'video.link.joined',
     appointmentId: facts.id,
     actor: input.auditActor,
-    metadata: { manual: session.manualLink !== null },
+    metadata: { manual: hasManualLink(session) },
   });
   return { url };
 }
@@ -168,13 +184,17 @@ export async function attachManualLink(
     ]);
   }
 
-  await tx
+  // The ciphertext is bound to the row it lives in, so the row id comes first.
+  const rowId = session?.id ?? uuidv7();
+  const sealed = await sealManualLink(tx, deps.keys, rowId, checked.url);
+  const [written] = await tx
     .insert(videoSession)
     .values({
+      id: rowId,
       tenantId: policy.tenant.id,
       appointmentId: facts.id,
       status: 'ready',
-      manualLink: checked.url,
+      manualLinkEnc: sealed,
     })
     .onConflictDoUpdate({
       target: [videoSession.tenantId, videoSession.appointmentId],
@@ -182,10 +202,19 @@ export async function attachManualLink(
         status: 'ready',
         pendingReason: null,
         closeReason: null,
-        manualLink: checked.url,
+        manualLink: null,
+        manualLinkEnc: sealed,
         provider: null,
       },
-    });
+    })
+    .returning({ id: videoSession.id });
+  // Somebody opened the session between the read and the write: its id is the one that counts.
+  if (written && written.id !== rowId) {
+    await tx
+      .update(videoSession)
+      .set({ manualLinkEnc: await sealManualLink(tx, deps.keys, written.id, checked.url) })
+      .where(eq(videoSession.id, written.id));
+  }
   await auditLinkEvent(tx, {
     action: 'video.link.manual_attached',
     appointmentId: facts.id,

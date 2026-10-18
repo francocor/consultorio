@@ -193,8 +193,18 @@ export function publicRoutes(deps: PublicRoutesDeps) {
             now: deps.clock(),
           }),
         );
-        if (outcome.ok)
+        if (outcome.ok) {
+          const optIn = outcome.whatsappOptIn;
+          const port = deps.join.whatsappOptIn;
+          // After the answer: the link goes to the address the visitor verified, and a failure to
+          // send is logged, never shown to them (they are on the list either way).
+          if (optIn && port) {
+            request.server.background.run(() =>
+              port.send({ tenant: joinTenant(tenant), ...optIn }),
+            );
+          }
           return { joined: true as const, expiresAt: outcome.expiresAt.toISOString() };
+        }
         if (outcome.refusal === 'invalid_code') throw new AppError('waitlist_code_invalid');
         return denied(request, reply);
       },

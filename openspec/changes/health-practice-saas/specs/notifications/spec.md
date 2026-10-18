@@ -289,3 +289,31 @@ Opt-outs, opt-ins, staff-recorded opt-outs, manual resends and integration switc
 - GIVEN an admin in organization A
 - WHEN they request the message log of an appointment in organization B
 - THEN the system responds as not found
+
+---
+
+### Requirement: WhatsApp opt-in from a public form
+
+A WhatsApp opt-in entered on a public form (online booking or waitlist join) for a phone number nobody has verified MUST stay pending: the form records no opt-in. The system MUST send the patient a single-use `whatsapp_opt_in` link at the email address the visitor verified, and the opt-in MUST exist only after the patient follows it. Until then the messages of that patient MUST go by email. A request MUST be made only for a patient the form registered, never for a record that already had the typed document. The same rule MUST hold for staff: a request to accept WhatsApp is an email, so it MUST be refused for a patient who opted out of email.
+
+#### Scenario: Pending until the link
+- GIVEN a visitor who ticked WhatsApp on the booking form and verified their email
+- WHEN the booking is confirmed
+- THEN no opt-in is recorded and the confirmation email carries the link to accept WhatsApp
+- AND the reminders go by email
+
+#### Scenario: Accepting records the opt-in
+- GIVEN the link of the confirmation
+- WHEN the patient follows it and accepts
+- THEN the opt-in is recorded from the patient's email link and WhatsApp may be used from then on
+
+#### Scenario: Record that already existed
+- GIVEN a visitor who typed the document of a patient on file and ticked WhatsApp
+- WHEN the booking is confirmed
+- THEN no request is made and nothing is written on that record
+
+#### Scenario: Replies attributed to one organization
+- GIVEN a number that two organizations wrote to
+- WHEN the patient replies "2" without quoting any message
+- THEN neither cancels anything and each organization's reception sees the reply
+- AND a reply that quotes a message of one organization acts only in that one

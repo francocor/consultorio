@@ -8,14 +8,17 @@ import {
 import { appointment } from '../../../db/schema/scheduling.js';
 import type { AuditActor } from '../../../platform/audit/writer.js';
 import { currentTenantId, type Tx } from '../../../platform/db/tenant-context.js';
+import { readOrganizationName } from '../../tenancy/index.js';
 import { hashAddress } from '../domain/address.js';
 import { classifyReply } from '../domain/keywords.js';
+import { withinCancelDeadline } from '../domain/validity.js';
 
 import { loadAppointment, loadTenantState } from './context.js';
 import type { Channels, Worklist } from './deps.js';
 import { optOutChannel } from './opt-out.js';
 import { actForPatient, type PatientActionDeps } from './patient-actions.js';
 import type { WhatsAppEvent } from './ports.js';
+import { loadMessagingSettings } from './settings.js';
 
 type InboundEvent = Extract<WhatsAppEvent, { kind: 'inbound' }>;
 type InboundOutcome = (typeof INBOUND_OUTCOMES)[number];
@@ -51,11 +54,14 @@ const SYSTEM_ACTOR: AuditActor = {
  * patient", "Opt-out and consent"). The organization was found from OUR record of what it sent to
  * that number; the reply never says which one it is.
  *
- * - `BAJA` or `STOP` opts the patients that number was written about out of WhatsApp, and is
- *   answered with one acknowledgment.
+ * - `BAJA`, `STOP`, `PARAR` or `NO MAS` opts the patients that number was written about out of
+ *   WhatsApp, and is answered with one acknowledgment that names the organization.
  * - `1` confirms and `2` cancels the appointment of the outstanding reminder, but only when exactly
- *   one appointment is outstanding for that number. Two patients on one number, or none
- *   outstanding, change nothing and go to reception.
+ *   one appointment is outstanding for that number (the one of the quoted message, when the reply
+ *   quotes one). Two patients on one number, none outstanding, or another organization that could
+ *   be the one the reply is about, change nothing and go to reception.
+ * - `2` cancels only until the organization's deadline for changes by link, like the link of the
+ *   reminder: later, the patient is told to contact the organization and reception is shown it.
  * - Anything else changes nothing and goes to reception. A reply never opts anybody IN.
  * - A read-only organization still lets a patient cancel or opt out; it does not confirm.
  */
@@ -63,7 +69,13 @@ export async function processInbound(
   deps: InboundDeps,
   tx: Tx,
   event: InboundEvent,
-  options: { from: string },
+  options: {
+    from: string;
+    /** Another organization could be the one this reply is about: only an opt-out acts. */
+    ambiguous?: boolean;
+    /** The provider id of the message the reply quotes, already known to be this organization's. */
+    quotedMessageId?: string;
+  },
 ): Promise<InboundResult> {
   const tenantId = await currentTenantId(tx);
   const fromHash = hashAddress('whatsapp', options.from);
@@ -97,13 +109,19 @@ export async function processInbound(
   const patientIds = written.map((row) => row.patientId);
   if (patientIds.length === 0) return finish('ignored');
 
-  const review = async (): Promise<InboundResult> => {
+  const review = async (
+    reason?: 'several_organizations' | 'cancel_deadline',
+  ): Promise<InboundResult> => {
     await deps.worklist.open(tx, {
       kind: 'reply_to_review',
       subjectType: 'inbound_message',
       subjectId: recorded.id,
       locationId: null,
-      detail: { text: event.text.slice(0, MAX_REVIEW_TEXT), patientIds },
+      detail: {
+        text: event.text.slice(0, MAX_REVIEW_TEXT),
+        patientIds,
+        ...(reason === undefined ? {} : { reason }),
+      },
     });
     return finish('needs_review');
   };
@@ -120,18 +138,21 @@ export async function processInbound(
     }
     const sender = active ? deps.channels.whatsapp({ id: tenantId, isDemo: false }) : undefined;
     if (sender) {
-      // One acknowledgment per reply: the key is the event, so a replay sends nothing more.
+      // One acknowledgment per reply and organization: the key is the event, so a replay sends nothing
+      // more, and two organizations that answer the same reply do not collapse into one message.
       await sender.send({
         templateKey: 'optout_ack',
         to: options.from,
-        vars: {},
-        idempotencyKey: `ack:${event.eventId}`,
+        vars: { organization: await readOrganizationName(tx) },
+        idempotencyKey: `ack:${tenantId}:${event.eventId}`,
       });
     }
     return finish('opted_out');
   }
 
   if (kind === 'other') return review();
+  // The reply may be about another organization's reminder: nothing is confirmed or cancelled here.
+  if (options.ambiguous) return review('several_organizations');
 
   // 1 and 2 apply to the one appointment that is outstanding for this number.
   const outstanding = await tx
@@ -142,6 +163,9 @@ export async function processInbound(
       and(
         eq(message.channel, 'whatsapp'),
         eq(message.addressHash, fromHash),
+        ...(options.quotedMessageId === undefined
+          ? []
+          : [eq(message.providerMessageId, options.quotedMessageId)]),
         inArray(message.kind, ['reminder', 'confirmation']),
         inArray(message.status, ['sent', 'delivered', 'read']),
         gt(message.sentAt, new Date(now.getTime() - OUTSTANDING_DAYS * 86_400_000)),
@@ -167,6 +191,25 @@ export async function processInbound(
       if (!done) return review();
     }
     return finish('confirmed');
+  }
+  const settings = await loadMessagingSettings(tx);
+  if (
+    !withinCancelDeadline({
+      now,
+      startsAt: target.startsAt,
+      deadlineHours: settings.cancelDeadlineHours,
+    })
+  ) {
+    const sender = active ? deps.channels.whatsapp({ id: tenantId, isDemo: false }) : undefined;
+    if (sender) {
+      await sender.send({
+        templateKey: 'cancel_closed',
+        to: options.from,
+        vars: { organization: await readOrganizationName(tx) },
+        idempotencyKey: `cancel-closed:${tenantId}:${event.eventId}`,
+      });
+    }
+    return review('cancel_deadline');
   }
   const cancelled = await actForPatient(deps, tx, {
     appointment: target,

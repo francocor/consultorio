@@ -5,7 +5,10 @@ import { eq, sql } from 'drizzle-orm';
 import { afterAll, beforeAll, beforeEach, describe, expect, inject, it } from 'vitest';
 
 import { slotHold } from '../../src/db/schema/scheduling.js';
+import { waitlistEntry } from '../../src/db/schema/waitlist.js';
 import { createSchedulingPorts, createHold } from '../../src/modules/scheduling/index.js';
+import { matchFreedSlot } from '../../src/modules/waitlist/application/match.js';
+import { createOffer } from '../../src/modules/waitlist/application/offers.js';
 import { createRuntimeDb, type DbHandle } from '../../src/platform/db/pool.js';
 import { createWaitlistWorld, type WaitlistWorld } from '../support/waitlist-world.js';
 
@@ -435,5 +438,163 @@ describe('entries that reception has to call', () => {
       status: 'active',
     });
     expect(await world.callsOf(entry.id)).toHaveLength(1);
+  });
+});
+
+describe('matches that do not run side by side (JD-S3 B28)', () => {
+  const lockOf = (professionalId: string) =>
+    sql`select pg_advisory_xact_lock(hashtextextended(${professionalId}, 361))`;
+
+  it('makes a match of every professional wait for the match of one of them', async () => {
+    const weeks = nextWeek();
+    await waiting(1);
+    const booked = await world.book(weeks, '10:00');
+    await world.cancel(booked);
+    const range = {
+      professionalId: null,
+      locationId: null,
+      startsAt: new Date(booked.startsAt),
+      endsAt: new Date(booked.endsAt),
+    };
+    let released!: () => void;
+    const hold = new Promise<void>((resolve) => {
+      released = resolve;
+    });
+    let holding!: () => void;
+    const held = new Promise<void>((resolve) => {
+      holding = resolve;
+    });
+    // A match of one professional is in the middle of its work: it holds that professional's lock.
+    const first = world.inTenant(async (tx) => {
+      await tx.execute(lockOf(world.doctor.professionalId));
+      holding();
+      await hold;
+    });
+    await held;
+
+    let finished = false;
+    const second = world
+      .inTenant((tx) =>
+        matchFreedSlot(
+          tx,
+          {
+            portsOf: (inner) => createSchedulingPorts(inner, { keys: world.keys }),
+            jobs: world.jobs,
+          },
+          { ...range, now: world.now() },
+        ),
+      )
+      .then(() => {
+        finished = true;
+      });
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    const waitedForTheLock = !finished;
+    released();
+    await Promise.all([first, second]);
+
+    expect(waitedForTheLock).toBe(true);
+  });
+});
+
+describe('an offer for an entry that stopped waiting (JD-S3 B20)', () => {
+  it('is not made: the entry was closed between the match reading it and offering it', async () => {
+    const weeks = nextWeek();
+    const [entry] = await waiting(1);
+    if (!entry) throw new Error('entry missing');
+    const booked = await world.book(weeks, '10:00');
+    const read = await world.inTenant(
+      async (tx) =>
+        (await tx.select().from(waitlistEntry).where(eq(waitlistEntry.id, entry.id)))[0],
+    );
+    if (!read) throw new Error('entry row missing');
+    // Reception closes the entry after the match read it.
+    await world.inTenant((tx) =>
+      tx.execute(
+        sql`UPDATE waitlist_entry SET status = 'closed', close_reason = 'cancelled', closed_at = now() WHERE id = ${entry.id}`,
+      ),
+    );
+
+    const offer = await world.inTenant((tx) =>
+      createOffer(
+        tx,
+        { jobs: world.jobs },
+        {
+          entry: read,
+          professionalId: world.doctor.professionalId,
+          locationId: world.centro,
+          startsAt: new Date(booked.startsAt),
+          endsAt: new Date(booked.endsAt),
+          freed: { startsAt: new Date(booked.startsAt), endsAt: new Date(booked.endsAt) },
+          sendAt: world.now(),
+          expiresAt: new Date(world.now().getTime() + 30 * 60_000),
+          now: world.now(),
+        },
+      ),
+    );
+
+    expect(offer).toBeNull();
+    expect(await world.offersOf(entry.id)).toEqual([]);
+    expect(world.jobs.pending('waitlist.offer')).toEqual([]);
+  });
+});
+
+describe('a booking made and cancelled at once does not stir the waitlist (JD-S3 A8)', () => {
+  /** An appointment that came from the public booking page, created `minutesAgo` before now. */
+  async function onlineBooking(minutesAgo: number) {
+    const weeks = nextWeek();
+    await waiting(1);
+    const booked = await world.book(weeks, '10:00');
+    await world.inTenant((tx) =>
+      tx.execute(
+        sql`UPDATE appointment SET source = 'online',
+                   created_at = ${new Date(world.now().getTime() - minutesAgo * 60_000).toISOString()}::timestamptz
+             WHERE id = ${booked.id}`,
+      ),
+    );
+    world.jobs.jobs.length = 0;
+    return booked;
+  }
+
+  it('queues no match when an online booking is cancelled within 30 minutes of being made', async () => {
+    const booked = await onlineBooking(10);
+
+    await world.cancel(booked);
+
+    expect(world.jobs.pending('waitlist.match')).toEqual([]);
+  });
+
+  it('queues the match when the online booking had stood for longer, and for a booking of staff at any time', async () => {
+    const later = await onlineBooking(31);
+    await world.cancel(later);
+    expect(world.jobs.pending('waitlist.match')).toHaveLength(1);
+
+    const weeks = nextWeek();
+    const staff = await world.book(weeks, '11:00');
+    world.jobs.jobs.length = 0;
+    await world.cancel(staff);
+    expect(world.jobs.pending('waitlist.match')).toHaveLength(1);
+  });
+
+  it('stops offering the same slot after five offers that were not taken', async () => {
+    const weeks = nextWeek();
+    const entries = await waiting(7);
+    const booked = await world.book(weeks, '10:00');
+    await world.cancel(booked);
+
+    for (let round = 0; round < 7; round += 1) {
+      await world.run('waitlist.match');
+      await world.run('waitlist.offer');
+      const open = (
+        await Promise.all(
+          entries.map(async (entry) => ({ entry, offers: await world.offersOf(entry.id) })),
+        )
+      ).flatMap(({ offers }) => offers.filter((offer) => offer['status'] === 'open'));
+      const offer = open[0];
+      if (!offer) break;
+      await world.press(world.tokenOf(String(offer['id'])), 'decline');
+    }
+
+    const made = (await Promise.all(entries.map((entry) => world.offersOf(entry.id)))).flat();
+    expect(made).toHaveLength(5);
   });
 });

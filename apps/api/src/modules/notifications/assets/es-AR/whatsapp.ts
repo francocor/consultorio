@@ -13,6 +13,8 @@ export const WHATSAPP_TEMPLATE_KEYS = [
   'video_link',
   /** The single reply to an opt-out keyword. */
   'optout_ack',
+  /** The reply to a "2" that came too late to cancel by WhatsApp: reception takes it from there. */
+  'cancel_closed',
 ] as const;
 export type WhatsAppTemplateKey = (typeof WHATSAPP_TEMPLATE_KEYS)[number];
 
@@ -83,8 +85,10 @@ const BODIES: Record<WhatsAppTemplateKey, (vars: Vars) => string> = {
       ...videoLine(vars),
       'Responda BAJA para dejar de recibir estos mensajes.',
     ].join('\n\n'),
-  optout_ack: () =>
-    'Listo: no le enviaremos más mensajes por WhatsApp. Si cambia de opinión, avise en la recepción.',
+  optout_ack: (vars) =>
+    `Listo: ${vars['organization'] ?? 'la organización'} no le enviará más mensajes por WhatsApp. Si cambia de opinión, avise en la recepción.`,
+  cancel_closed: (vars) =>
+    `No pudimos cancelar su turno por este medio porque falta muy poco. Comuníquese con ${vars['organization'] ?? 'la organización'} para cancelarlo o cambiarlo.`,
 };
 
 /** The text of a template filled with its variables, as the patient reads it. */

@@ -2,13 +2,16 @@ import { eq } from 'drizzle-orm';
 
 import { messageOffer } from '../../../db/schema/notifications.js';
 import { location } from '../../../db/schema/tenant.js';
+import type { TenantKeys } from '../../../platform/crypto/tenant-keys.js';
 import { currentTenantId, type Tx } from '../../../platform/db/tenant-context.js';
+import { uuidv7 } from '../../../platform/db/uuid.js';
 import type { JobClient } from '../../../platform/jobs/boss.js';
 import { selectChannels } from '../domain/channel-policy.js';
 import { isInQuietHours, quietHoursEnd } from '../domain/quiet-hours.js';
 
 import { loadTenantState } from './context.js';
 import type { TenantRef } from './deps.js';
+import { sealOfferUrl } from './offer-facts.js';
 import { dedupeKeyFor, queueMessage } from './queue.js';
 import { loadRecipient } from './recipients.js';
 import { loadMessagingSettings } from './settings.js';
@@ -61,6 +64,8 @@ export interface OfferDeliveryDeps {
   /** False when no WhatsApp provider serves the organization. */
   whatsappAvailable(tenant: TenantRef): boolean;
   quota?: QuotaPolicy | undefined;
+  /** Encrypts the address of an offer, which is a capability, while it waits to be sent. */
+  keys: TenantKeys;
 }
 
 /**
@@ -148,7 +153,9 @@ export async function deliverWaitlistOffer(
     dedupeKey: dedupeKeyFor(group, channel),
   });
   if (queued.created) {
+    const id = uuidv7();
     await tx.insert(messageOffer).values({
+      id,
       tenantId: state.id,
       messageId: queued.id,
       offerId: input.offerId,
@@ -156,7 +163,7 @@ export async function deliverWaitlistOffer(
       startsAt: input.startsAt,
       endsAt: input.endsAt,
       expiresAt: input.expiresAt,
-      url: input.offerTokenUrl,
+      urlEnc: await sealOfferUrl(tx, deps.keys, id, input.offerTokenUrl),
     });
   }
   return { channel, messageId: queued.id };

@@ -265,3 +265,36 @@ When the tenant is read-only (`subscriptions`, allowlist in `tenancy`), the publ
 - GIVEN a read-only tenant and a patient with an online appointment
 - WHEN the patient cancels through the link in the confirmation
 - THEN the appointment becomes cancelled by the patient
+
+---
+
+### Requirement: Limits that never reveal what the organization holds
+
+The limits of a contact MUST be applied to the email address the visitor verified with the one-time code, and only after the code was accepted and the professional of the slot was locked, so that two visitors who confirm at the same moment are served one after the other. Before the code is accepted, no answer of the public flow MAY depend on the patients or the appointments of the organization. The cap of future online appointments per document MUST be evaluated after verification and MUST NOT produce an answer different from any other booking. When a booking cannot stand on the record that has the typed document (the record is deactivated, the document is at its cap, or the link already holds its limit of unconfirmed appointments), the visitor MUST be answered as for any booking, the appointment MUST stand on a record of its own that carries what the visitor typed, nothing MUST be written on or sent to the record that has the document, and reception MUST get an identity review that says why. Each booking link MUST have a limit of future appointments standing on a patient already on file with the identity unconfirmed; the default is 20 and an administrator MAY change it from 0 to 500. The booking confirmation MUST always be sent to the verified address, whatever the opt-outs of the matched record. The WhatsApp choice on the form MUST be a request (see notifications, "WhatsApp opt-in from a public form").
+
+#### Scenario: Document at its cap
+- GIVEN a patient with three future online appointments
+- WHEN a visitor verifies an email and books with that patient's document
+- THEN the answer is the same as for a person nobody registered
+- AND the appointment stands on a new record without the document
+- AND reception sees an identity review whose reason is the cap on the document
+
+#### Scenario: Deactivated record
+- GIVEN a deactivated patient with document D
+- WHEN a visitor verifies an email and books with document D
+- THEN the answer is the same as for a new person and the confirmation goes to the verified address
+- AND the deactivated record has no appointment
+
+#### Scenario: Nothing is refused before the code
+- GIVEN a document that has three future online appointments
+- WHEN a visitor submits the form with that document
+- THEN the answer is the same as for any other document and nothing is flagged
+
+#### Scenario: Limit of the link
+- GIVEN a link whose limit of unconfirmed appointments is 1 and that already holds one
+- WHEN another visitor books with the document of a patient on file
+- THEN the appointment stands on a record of its own and reception reviews it
+
+#### Scenario: Two confirmations at once
+- GIVEN a daily cap of one online booking and two visitors who confirm at the same moment
+- THEN exactly one booking is made and the other visitor is told the time is no longer available

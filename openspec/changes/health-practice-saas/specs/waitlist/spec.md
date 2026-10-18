@@ -189,3 +189,29 @@ Every offer, acceptance, decline, expiry, priority override and manual change MU
 - GIVEN 12 slots were filled through offers in a month
 - WHEN the report is requested
 - THEN the waitlist count of recovered slots is 12
+
+---
+
+### Requirement: Self-join cannot forge consent
+
+A public join MUST NOT record the agreement to receive offers on a record that already had the typed document: the entry is created for reception to call (reason "no offers opt-in"), because the visitor proved an email address, not who the document belongs to. For a patient the join registers, the agreement of the form MAY be recorded, and a WhatsApp choice MUST be only a request (see notifications, "WhatsApp opt-in from a public form"). A patient who opts out of a channel MUST leave the waitlist: their entries close with reason "patient opted out" and their offers end. Staff MUST see only the entries of the places they work at and, for a professional, of the calendars they may work in; an entry outside that scope answers not found. An online booking cancelled within thirty minutes of being made MUST NOT start a match, and a slot MUST get at most five offers.
+
+#### Scenario: Self-join with a document on file
+- GIVEN a patient on file with document D
+- WHEN a visitor verifies an email and joins the waitlist with document D
+- THEN the entry exists as manual contact only, with no offers agreement recorded
+- AND the record of the patient is unchanged
+
+#### Scenario: Opt-out leaves the list
+- GIVEN a patient with two entries and an open offer
+- WHEN the patient opts out of email
+- THEN both entries close as "patient opted out" and the offer ends
+
+#### Scenario: Scope
+- GIVEN reception assigned to one place and an entry for another
+- WHEN reception lists the waitlist
+- THEN the entry is not in the list and its detail answers not found
+
+#### Scenario: Book and cancel at once
+- GIVEN an online booking cancelled ten minutes after it was made
+- THEN no match is queued and nobody on the waitlist is offered the slot

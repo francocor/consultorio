@@ -28,7 +28,7 @@ export function runBotChallengeContract(name: string, subject: BotChallengeContr
     it('issues a challenge made of a kind and a payload that survive JSON', async () => {
       const { challenge } = subject.create();
 
-      const token = await challenge.issue();
+      const token = await challenge.issue(IP);
 
       expect(typeof token.kind).toBe('string');
       expect(token.kind.length).toBeGreaterThan(0);
@@ -50,7 +50,7 @@ export function runBotChallengeContract(name: string, subject: BotChallengeContr
       it('accepts the solution of a challenge it issued', async () => {
         const { challenge } = subject.create();
 
-        const proof = await solve(await challenge.issue());
+        const proof = await solve(await challenge.issue(IP));
 
         expect(await challenge.verify(proof, IP)).toBe(true);
       });
@@ -64,16 +64,25 @@ export function runBotChallengeContract(name: string, subject: BotChallengeContr
 
       it('refuses a solution that was already used (replay)', async () => {
         const { challenge } = subject.create();
-        const proof = await solve(await challenge.issue());
+        const proof = await solve(await challenge.issue(IP));
 
         expect(await challenge.verify(proof, IP)).toBe(true);
         expect(await challenge.verify(proof, IP)).toBe(false);
         expect(await challenge.verify(proof, '198.51.100.9')).toBe(false);
       });
 
+      it('refuses a solution presented from another address than the one it was issued to', async () => {
+        const { challenge } = subject.create();
+        const proof = await solve(await challenge.issue(IP));
+
+        expect(await challenge.verify(proof, '198.51.100.9')).toBe(false);
+        // The refusal did not spend it: the address it was issued to can still use it.
+        expect(await challenge.verify(proof, IP)).toBe(true);
+      });
+
       it('refuses a solution that was altered', async () => {
         const { challenge } = subject.create();
-        const proof = await solve(await challenge.issue());
+        const proof = await solve(await challenge.issue(IP));
         const altered = `${proof.slice(0, -1)}${proof.endsWith('a') ? 'b' : 'a'}`;
 
         expect(await challenge.verify(altered, IP)).toBe(false);
@@ -82,7 +91,7 @@ export function runBotChallengeContract(name: string, subject: BotChallengeContr
       it('refuses a solution of a challenge another instance issued', async () => {
         const first = subject.create().challenge;
         const second = subject.create().challenge;
-        const proof = await solve(await first.issue());
+        const proof = await solve(await first.issue(IP));
 
         expect(await second.verify(proof, IP)).toBe(false);
       });
@@ -90,7 +99,7 @@ export function runBotChallengeContract(name: string, subject: BotChallengeContr
       it('refuses a solution that arrives after the challenge expired', async () => {
         const { challenge, advance } = subject.create();
         if (!advance || subject.lifetimeMs === undefined) return;
-        const proof = await solve(await challenge.issue());
+        const proof = await solve(await challenge.issue(IP));
 
         advance(subject.lifetimeMs + 1);
 

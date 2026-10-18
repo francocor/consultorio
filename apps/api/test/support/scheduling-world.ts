@@ -94,14 +94,22 @@ export interface SchedulingHttpWorld {
 
 export async function createSchedulingHttpWorld(
   runtime: DbHandle,
-  options: { slug: string; now?: Date; app?: Partial<ApplicationOptions> },
+  options: {
+    slug: string;
+    now?: Date;
+    /** Shared by several organizations of one test that one application serves (default: its own). */
+    keys?: TenantKeys;
+    app?: Partial<ApplicationOptions>;
+  },
 ): Promise<SchedulingHttpWorld> {
   let current = options.now ?? new Date('2031-05-05T12:00:00.000Z');
   const tenant = await createTestTenant(runtime, { slug: options.slug });
   // Only scheduling runs on the moving clock: sessions keep the real one, so they do not expire.
-  const keys = createTenantKeys({
-    kms: createLocalKeyManagement(randomBytes(32).toString('base64')),
-  });
+  const keys =
+    options.keys ??
+    createTenantKeys({
+      kms: createLocalKeyManagement(randomBytes(32).toString('base64')),
+    });
   await asTenant(runtime, tenant.id, (tx) => keys.ensureTenantKey(tx));
   const app = buildTestApplication(runtime, {
     schedulingClock: () => current,

@@ -104,6 +104,9 @@ function server(limits: { client: number; tenant: number }) {
         scope.get('/auth/ping', { config: { readOnly: 'read', auth: 'public' } }, () => ({
           pong: true,
         }));
+        scope.get('/auth/staff-ping', { config: { readOnly: 'read', auth: 'session' } }, () => ({
+          pong: true,
+        }));
         scope.get(
           '/auth/strict',
           {
@@ -182,6 +185,22 @@ describe('rate limiting per client and per tenant', () => {
     expect(statuses).toEqual([200, 200, 200, 429, 429]);
     expect(other.statusCode).toBe(200);
     await app.close();
+  });
+
+  it('counts the public routes of a tenant apart from the staff ones, so a flood of visitors cannot lock staff out (JD-S3 B23)', async () => {
+    const app = server({ client: 100, tenant: 3 });
+
+    const flood: number[] = [];
+    for (let index = 0; index < 6; index += 1) {
+      flood.push((await ping(app, 'norte', `203.0.113.${String(10 + index)}`)).statusCode);
+    }
+    const staff = await ping(app, 'norte', '198.51.100.7', '/auth/staff-ping');
+    const moreVisitors = await ping(app, 'norte', '203.0.113.99');
+
+    expect(flood.filter((status) => status === 429).length).toBeGreaterThan(0);
+    // The staff route is not answered 429: the request got as far as the authentication.
+    expect(staff.statusCode).not.toBe(429);
+    expect(moreVisitors.statusCode).toBe(429);
   });
 
   it('lets one route be stricter than the default', async () => {

@@ -22,7 +22,7 @@ import {
   uuid,
 } from 'drizzle-orm/pg-core';
 
-import { tenantTable } from './_helpers.js';
+import { bytea, tenantTable } from './_helpers.js';
 import { patient } from './patients.js';
 import { appointment } from './scheduling.js';
 import { professional } from './staff.js';
@@ -199,8 +199,16 @@ export const messageOffer = tenantTable(
     endsAt: timestamp('ends_at', { withTimezone: true }).notNull(),
     /** After this moment the message is not sent and the link is cleared. */
     expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
-    /** The single-use address that accepts the offer. Null once the offer expired. */
+    /**
+     * LEGACY, plaintext: the address as it was kept before it was encrypted (judgment day finding
+     * C9). Nothing writes it any more; a row that still has it is read as it is.
+     */
     url: text('url'),
+    /**
+     * The single-use address that accepts the offer, encrypted with the key of the organization:
+     * it is a capability, so it does not rest in plaintext. Null once the offer expired.
+     */
+    urlEnc: bytea('url_enc'),
   },
   (table) => [
     foreignKey({
@@ -223,7 +231,7 @@ export const messageOffer = tenantTable(
     // The sweep looks for links still held after their offer expired.
     index('message_offer_url_idx')
       .on(table.tenantId, table.expiresAt)
-      .where(sql`${table.url} is not null`),
+      .where(sql`${table.urlEnc} is not null or ${table.url} is not null`),
   ],
 );
 
@@ -309,6 +317,12 @@ export const LOCAL_WHATSAPP_STATUSES = [
  * reply typed into it. Platform table, no `tenant_id`: the provider knows nothing about our
  * organizations, and the simulator exists only while `WHATSAPP_PROVIDER=local` (the production
  * guard refuses it otherwise). The API and the worker share it through Postgres.
+ *
+ * DEVELOPMENT AND DEMONSTRATION ONLY (judgment day findings C9 and INFO): the body is what the
+ * patient would read, so it can carry the address of a link (an offer, a video room), and the
+ * table has no tenant column and no row level security, because the simulator's phone belongs to
+ * nobody. A deployment that serves real patients must not run it: production refuses it unless
+ * `ALLOW_LOCAL_PROVIDERS=true`, which is meant for a demo with fictitious data.
  */
 export const localWhatsappMessage = pgTable(
   'local_whatsapp_message',

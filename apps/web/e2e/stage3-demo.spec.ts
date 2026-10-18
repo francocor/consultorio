@@ -334,6 +334,16 @@ test('a patient books online, is reminded and confirms, has a video visit, and a
     await expectFitsAndAccessible(phonePage);
   });
 
+  // The number typed on the form is unverified: asking for WhatsApp only requested it. The link
+  // that goes to the verified address in the confirmation is what turns it on.
+  await test.step('the patient accepts WhatsApp with the link of the confirmation', async () => {
+    const [received] = await mailbox(email, /Recibimos su pedido/);
+    const link = localLink(linkIn(received ?? '', '/public/t/'));
+    await phonePage.goto(link);
+    await phonePage.getByRole('button', { name: 'Aceptar recordatorios por WhatsApp' }).click();
+    await expect(phonePage.getByText('Listo: recibirá recordatorios por WhatsApp')).toBeVisible();
+  });
+
   // 2. Reception finds it in the pending list and approves it.
   await test.step('reception approves the booking from the pending list', async () => {
     await staff.goto(`${org.origin}/worklist`);
@@ -372,7 +382,10 @@ test('a patient books online, is reminded and confirms, has a video visit, and a
     const inbox = console_.getByRole('list', {
       name: 'Mensajes del teléfono del simulador, el más nuevo primero',
     });
-    const reminder = inbox.getByRole('listitem').filter({ hasText: `Para ${phone}` });
+    const reminder = inbox
+      .getByRole('listitem')
+      .filter({ hasText: `Para ${phone}` })
+      .filter({ hasText: 'le recordamos su turno en' });
     await expect(reminder).toHaveCount(1, { timeout: 30_000 });
     await expect(reminder).toContainText('le recordamos su turno en');
     await expect(reminder).toContainText('Responda 1 para confirmar o 2 para cancelar');
@@ -402,7 +415,7 @@ test('a patient books online, is reminded and confirms, has a video visit, and a
       console_
         .getByRole('listitem')
         .filter({ hasText: `Para ${phone}` })
-        .filter({ hasText: 'no le enviaremos más mensajes por WhatsApp' }),
+        .filter({ hasText: 'no le enviará más mensajes por WhatsApp' }),
     ).toHaveCount(1, { timeout: 30_000 });
 
     // The consultorio's screen now shows the channel as left, and the reminder goes by email.
@@ -495,7 +508,13 @@ test('a patient books online, is reminded and confirms, has a video visit, and a
 
   await test.step('the address opens the call, and the professional joins from the appointment', async () => {
     const anonymous = await playwright.request.newContext();
-    const opened = await anonymous.get(call.link, { maxRedirects: 0 });
+    // Looking at the address only shows the button; pressing it (a POST from the same origin) enters.
+    const looked = await anonymous.get(call.link, { maxRedirects: 0 });
+    expect(looked.status()).toBe(200);
+    const opened = await anonymous.post(call.link, {
+      maxRedirects: 0,
+      headers: { origin: new URL(call.link).origin },
+    });
     expect(opened.status()).toBe(302);
     expect(opened.headers()['location']).toBe(MANUAL_CALL);
 
@@ -556,7 +575,33 @@ test('a patient books online, is reminded and confirms, has a video visit, and a
     ).toBeVisible();
     await expectFitsAndAccessible(phonePage);
 
-    // The freed time is offered to the patient who waits, by email.
+    // A booking made and cancelled within minutes frees nothing for the waitlist, so the time the
+    // visitor gave back is not offered. Reception gives that time to a patient who then cancels
+    // an appointment that stood, and the freed time is offered to the patient who waits, by email.
+    const holder = await org.owner.call<{ patient: { id: string } }>('POST', '/patients', {
+      familyName: `Libera${suffix.slice(-5)}`,
+      givenNames: 'Nora',
+      birthDate: '1979-06-06',
+      document: { type: 'dni', number: `92${suffix.slice(-6)}` },
+      email: `libera.etapa.${suffix}@demo.invalid`,
+      dataProcessingConsent: true,
+    });
+    expect(holder.status, JSON.stringify(holder.body)).toBe(201);
+    const standing = await org.owner.call<FeedEntry>('POST', '/appointments', {
+      patientId: holder.body.patient.id,
+      professionalId: org.professionalId,
+      locationId: org.locationId,
+      appointmentTypeId: org.typeId,
+      startsAt: booked.startsAt,
+    });
+    expect(standing.status, JSON.stringify(standing.body)).toBe(201);
+    const released = await org.owner.call('POST', `/appointments/${standing.body.id}/cancel`, {
+      cancelledBy: 'patient',
+      reasonCode: 'patient_request',
+      expectedVersion: standing.body.version,
+    });
+    expect(released.status, JSON.stringify(released.body)).toBe(200);
+
     const [offer] = await mailbox(waiting.email, /Hay un turno disponible/);
     expect(offer).toContain('Lugar:');
     expect(offer).toContain(`Hora: ${when}`);

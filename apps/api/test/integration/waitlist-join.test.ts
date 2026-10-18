@@ -338,6 +338,14 @@ describe('proving the address', () => {
       identity_unconfirmed: true,
       status: 'active',
     });
+    // Nobody on the record agreed to offers: a stranger cannot forge that agreement with a document
+    // (JD-S3 C3). The entry waits for reception to call.
+    expect(entry?.['offers_opt_in_at']).toBeNull();
+    expect(entry?.['offers_opt_in_source']).toBeNull();
+    expect(entry).toMatchObject({
+      manual_contact_only: true,
+      manual_reason: 'no_offers_opt_in',
+    });
     // The record is exactly what the organization had.
     const [record] = await patientsWith(document);
     expect(record).toMatchObject({
@@ -367,6 +375,50 @@ describe('proving the address', () => {
     expect(first.statusCode).toBe(200);
     expect(second.statusCode).toBe(200);
     expect(second.json()).toEqual(first.json());
+  });
+
+  it('only requests WhatsApp for a patient it registered: the link goes to the verified address and nothing is recorded (JD-S3 D22)', async () => {
+    world.email.clear();
+    const { body, visitor, id, code } = await requested(form({ channels: ['email', 'whatsapp'] }));
+    await confirm(visitor, id, code);
+    await world.app.background.idle();
+
+    const sent = world.email.sent.filter((mail) => mail.to === body.email);
+    const link = sent
+      .map((mail) => /\/public\/t\/[A-Za-z0-9_-]{43}/.exec(mail.text)?.[0])
+      .find(Boolean);
+    expect(link).toBeDefined();
+    const preferences = await world.inTenant(
+      async (tx) =>
+        (
+          await tx.execute(
+            sql`SELECT c.* FROM channel_preference c JOIN patient p ON p.id = c.patient_id
+                  WHERE p.national_id = ${body.document.number}`,
+          )
+        ).rows,
+    );
+    expect(preferences).toEqual([]);
+  });
+
+  it('asks nothing for WhatsApp on a record that was already there', async () => {
+    const document = '31999777';
+    await world.inTenant((tx) =>
+      tx.execute(
+        sql`INSERT INTO patient (tenant_id, family_name, given_names, birth_date,
+                                 national_id_type, national_id)
+              VALUES (${world.tenant.id}, 'Ya', 'Estaba', '1985-01-01', 'dni', ${document})`,
+      ),
+    );
+    world.email.clear();
+    const known = await requested(
+      form({ document: { type: 'dni', number: document }, channels: ['email', 'whatsapp'] }),
+    );
+    const before = world.email.sent.length;
+
+    await confirm(known.visitor, known.id, known.code);
+    await world.app.background.idle();
+
+    expect(world.email.sent.slice(before)).toEqual([]);
   });
 
   it('records the WhatsApp choice on the entry, and reaches nobody on WhatsApp by itself', async () => {

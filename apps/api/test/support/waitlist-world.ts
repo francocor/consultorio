@@ -11,6 +11,7 @@ import {
   type WaitlistOfferDelivery,
   type WaitlistJobs,
 } from '../../src/modules/waitlist/index.js';
+import type { TenantKeys } from '../../src/platform/crypto/tenant-keys.js';
 import {
   createAppointmentEvents,
   type AppointmentEvents,
@@ -84,7 +85,7 @@ let presses = 0;
  */
 export async function createWaitlistWorld(
   runtime: Parameters<typeof createSchedulingHttpWorld>[0],
-  options: { slug: string; now?: Date },
+  options: { slug: string; now?: Date; keys?: TenantKeys },
 ): Promise<WaitlistWorld> {
   const initial = options.now ?? new Date('2031-05-05T12:00:00.000Z');
   let current = initial;
@@ -94,6 +95,7 @@ export async function createWaitlistWorld(
   const base = await createSchedulingHttpWorld(runtime, {
     slug: options.slug,
     now: current,
+    ...(options.keys ? { keys: options.keys } : {}),
     app: { clock: () => current, jobs, appointmentEvents: events, email },
   });
 

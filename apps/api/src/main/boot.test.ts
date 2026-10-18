@@ -33,6 +33,7 @@ function smokeEnv(port: number): NodeJS.ProcessEnv {
     PATH: process.env['PATH'],
     ...(process.env['SystemRoot'] ? { SystemRoot: process.env['SystemRoot'] } : {}),
     NODE_ENV: 'production',
+    ADDRESS_HASH_PEPPER: 'placeholder-pepper-0123456789-abcdefghij',
     PORT: String(port),
     DATABASE_URL: 'postgres://unused:unused@127.0.0.1:1/unused',
     DEPLOYMENT_MODE: 'multi',
