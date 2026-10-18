@@ -276,6 +276,7 @@ export async function startStack(options: StackOptions): Promise<Stack> {
       localProviders: {
         console: config.providers.localProvidersConsole,
         providers: MODULE_WIRINGS.flatMap((module) => module.devProviders?.({ config }) ?? []),
+        simulated: { afip: config.providers.afip === 'local' },
       },
       passwordValidator,
       storage,

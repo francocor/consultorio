@@ -159,7 +159,12 @@ export interface ApplicationOptions {
    * The provider console (`LOCAL_PROVIDERS_CONSOLE`): with `console: false` no `/operator/dev`
    * route exists. It lives inside the operator console, so it needs one.
    */
-  localProviders?: { console: boolean; providers: readonly DevProvider[] };
+  localProviders?: {
+    console: boolean;
+    providers: readonly DevProvider[];
+    /** Which providers run on a simulator; the public boot payload tells the app. */
+    simulated?: { afip: boolean };
+  };
   /**
    * The appointment event bus. Defaults to a new one per application; a test passes its own to
    * listen to what scheduling publishes.
@@ -405,6 +410,7 @@ export function createApplication(options: ApplicationOptions): FastifyInstance 
     storage: options.storage,
     boot: {
       deploymentMode: options.deployment.mode,
+      localProviders: options.localProviders?.simulated ?? { afip: false },
       locale: (country) => {
         const found = getCountryPack(country, createCatalogReader(db));
         return found.ok ? found.value.defaults.locale : 'es-AR';

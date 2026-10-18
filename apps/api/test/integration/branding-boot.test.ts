@@ -145,6 +145,7 @@ describe('GET /public/boot', () => {
         'features',
         'isDemo',
         'locale',
+        'localProviders',
         'logoUrl',
         'name',
         'shortName',
@@ -155,6 +156,32 @@ describe('GET /public/boot', () => {
     expect(text).not.toContain(clinic.id);
     expect(text).not.toContain('boot-clinic');
     expect(text).not.toContain('ignored');
+  });
+
+  it('says which providers are simulators, so the app can mark a simulated invoice: none by default', async () => {
+    const boot = (await get('/public/boot', 'boot-clinic')).json<BootPayload>();
+
+    expect(boot.localProviders).toEqual({ afip: false });
+  });
+
+  it('says so when the AFIP simulator serves the deployment, and still nothing else about it', async () => {
+    const simulated = buildTestApplication(runtime, {
+      storage: createMemoryObjectStorage(),
+      localProviders: { console: false, providers: [], simulated: { afip: true } },
+    });
+    await simulated.ready();
+    try {
+      const response = await simulated.inject({
+        method: 'GET',
+        url: '/public/boot',
+        headers: browserHeaders('boot-clinic'),
+        remoteAddress: '10.98.0.1',
+      });
+
+      expect(BootPayload.parse(response.json()).localProviders).toEqual({ afip: true });
+    } finally {
+      await simulated.close();
+    }
   });
 
   it('lists only the features that are on', async () => {

@@ -95,6 +95,12 @@ export const BootPayload = z.strictObject({
   deploymentMode: z.enum(['multi', 'single']),
   /** Demo organizations show a banner; the flag is fixed when the organization is created. */
   isDemo: z.boolean(),
+  /**
+   * Which providers of this deployment run on a local simulator (Stages 3 to 6). A screen that
+   * shows what a simulator produced says so: `afip` marks the invoices as test documents. Only
+   * yes or no per provider; the deployment's settings never travel.
+   */
+  localProviders: z.strictObject({ afip: z.boolean() }),
 });
 export type BootPayload = z.infer<typeof BootPayload>;
 

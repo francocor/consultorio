@@ -93,6 +93,7 @@ async function runApi(config: Config): Promise<void> {
     localProviders: {
       console: config.providers.localProvidersConsole,
       providers: MODULE_WIRINGS.flatMap((module) => module.devProviders?.({ config }) ?? []),
+      simulated: { afip: config.providers.afip === 'local' },
     },
     passwordValidator,
     lockout: config.lockout,
