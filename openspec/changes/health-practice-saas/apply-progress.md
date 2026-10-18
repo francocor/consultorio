@@ -2076,3 +2076,22 @@ Run in the worktree after the last code change (ports 4840, 3840, 9840):
 - `playwright test e2e/pwa.spec.ts e2e/stage3-messaging.spec.ts e2e/stage3-teleconsult.spec.ts --workers=2 --project=desktop`: 14 passed (the signing-out spec of `pwa`, the messaging journey with axe at 360 px and the real-browser join button are among them). The whole e2e suite was not rerun: only the toast wait of five specs and the sign-out redirect changed.
 - Docker image built from `infra/Dockerfile`; the database was migrated twice with `db:migrate` (the second run exercises the idempotent backfill step), and `GET /health` answered `{"status":"ok"}` with a production configuration that includes `ADDRESS_HASH_PEPPER` and `CLAMAV_HOST` (KMS `aws`, `S3_BUCKET`, SMTP with starttls).
 - Incident: a first launch of the e2e run and a second one overlapped and collided on the MinIO port; the second failed at start, the first ran normally, and the test containers were removed by the testcontainers reaper. The smoke containers (`s3fix-r4-api`, `s3fix-r4-pg`) and the image were removed by name.
+
+## Stage 4 integration 2a (track C)
+
+Track C (invoicing, S4.10 to S4.13) merged into `feat/stage-4-revenue` as a merge commit (`--no-ff`) from `feat/stage-4-track-4c` (tip `cad5473`).
+
+### Merge
+
+- No textual conflicts. Git merged `meta/_journal.json` without a conflict marker but left a duplicate `idx` (`0444` took `69`, the idx that `0442` already had).
+- `pnpm --filter @consultorio/api db:restamp` renumbered the two new entries (`0444` is `70`, `0446` is `71`). The journal has 72 entries, `idx` runs 0 to 71 without a gap, `when` rises strictly, and the order ends `0397, 0398, 0399, 0410, 0412, 0414, 0416, 0430, 0440, 0442, 0444, 0446`. No applied entry moved and no migration SQL changed. Committed as `chore(db): restamp the track C migrations after the merge`. After the commit (lint-staged ran prettier on the JSON), `db:restamp` and `db:check` reported no change.
+
+### Verification (tip of the branch after the restamp, Node v24.22.0, pnpm 10.34.7, Docker running and shared with other agents)
+
+- `pnpm install --frozen-lockfile`, `pnpm typecheck`, `pnpm lint`, `pnpm format:check`: clean.
+- `pnpm test` (unit): 376 files, 4769 tests. One timeout under load (`render.test.ts`, "renders a PDF with the title, author and creation date it was given", 5 s); the file passed alone (12 of 12). Recorded as a load flake: 4769 passed, 0 failed on the final read.
+- `pnpm test:integration` (the full suite): 225 files passed (1 skipped), 3432 tests passed (4 skipped), 0 failed.
+- `pnpm build`: green. `pnpm db:check`: no drift.
+- Full e2e (`E2E_WEB_PORT=4880 E2E_API_PORT=3880 E2E_MINIO_PORT=9880`, `--workers=2`): 194 passed, 0 failed, 0 flaky, 0 skipped.
+- Docker: `infra/Dockerfile` built; a fresh `postgres:17` with `infra/postgres/init`; `db:migrate` run twice (both: migrations applied, platform catalogs loaded; 72 migrations recorded; `invoice`, `invoice_line` and `invoice_document` exist); the image started as `api` with `NODE_ENV=production`, multi-tenant, KMS `aws`, `S3_BUCKET`, SMTP starttls, `ADDRESS_HASH_PEPPER` (32 or more characters) and `CLAMAV_HOST`, and `GET /health` answered `{"status":"ok"}`. Containers `s4c-int-api` and `s4c-int-pg` and the image `consultorio-api:s4c-int` were removed by name.
+- Fixes: none were needed beyond the journal restamp.
