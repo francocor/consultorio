@@ -101,7 +101,16 @@ export async function createBillingWorld(
     }
     if (stage === 'in_progress' || stage === 'attended') await step('start', professional);
     if (stage === 'attended') await step('attend', professional);
-    if (stage === 'no_show') await step('no-show', base.reception);
+    if (stage === 'no_show') {
+      // A no-show can only be marked once the appointment has started.
+      const before = base.now();
+      base.setNow(new Date(Date.parse(created.startsAt) + 10 * 60_000));
+      try {
+        await step('no-show', base.reception);
+      } finally {
+        base.setNow(before);
+      }
+    }
     if (stage === 'cancelled') {
       await step('cancel', base.reception, { cancelledBy: 'patient', reasonCode: 'illness' });
     }

@@ -275,3 +275,127 @@ export const PriceQuoteResponse = z.strictObject({
   quote: QuoteDto.nullable(),
 });
 export type PriceQuoteResponse = z.infer<typeof PriceQuoteResponse>;
+
+// Charges -------------------------------------------------------------------------------------
+
+const ReasonText = z.string().trim().min(3).max(200);
+
+/**
+ * Charges an appointment. The price comes from the catalog (the same quote the desk saw); when
+ * nothing prices the service, a person types the amount (`explicitAmountCents`) and the capture is
+ * audited as an override. `payer` picks the private price or a payer of the list by hand; omitted,
+ * the coverage of the patient decides.
+ */
+export const CaptureChargeRequest = z.strictObject({
+  appointmentId: z.uuid(),
+  payer: z.union([z.literal('private'), z.uuid()]).optional(),
+  planName: PlanName.optional(),
+  explicitAmountCents: PositiveMoney.optional(),
+});
+export type CaptureChargeRequest = z.infer<typeof CaptureChargeRequest>;
+
+/** A line a person adds to a charge that exists (material, a study, an adjustment owed). */
+export const AddChargeLineRequest = z.strictObject({
+  description: z.string().trim().min(1).max(200),
+  amountCents: PositiveMoney,
+  portion: z.enum(CHARGE_LINE_PORTIONS).optional(),
+});
+export type AddChargeLineRequest = z.infer<typeof AddChargeLineRequest>;
+
+export const VoidChargeRequest = z.strictObject({ reason: ReasonText });
+export type VoidChargeRequest = z.infer<typeof VoidChargeRequest>;
+
+/** `true` / `false` in a query string. */
+const QueryFlag = z.enum(['true', 'false']).transform((value) => value === 'true');
+
+export const ChargeListQuery = z.strictObject({
+  status: z.enum(CHARGE_STATUSES).optional(),
+  patientId: z.uuid().optional(),
+  appointmentId: z.uuid().optional(),
+  locationId: z.uuid().optional(),
+  professionalId: z.uuid().optional(),
+  /** The first and last day of the service (the appointment), inclusive. */
+  from: IsoDay.optional(),
+  to: IsoDay.optional(),
+  needsReview: QueryFlag.optional(),
+});
+export type ChargeListQuery = z.infer<typeof ChargeListQuery>;
+
+export const ChargeLineDto = z.strictObject({
+  id: z.uuid(),
+  position: z.int().min(1),
+  kind: z.enum(CHARGE_LINE_KINDS),
+  portion: z.enum(CHARGE_LINE_PORTIONS),
+  description: z.string(),
+  amountCents: Cents,
+  /** How much of the line invoices cover so far (the invoicing module moves it). */
+  invoicedCents: Cents,
+});
+export type ChargeLineDto = z.infer<typeof ChargeLineDto>;
+
+/** The figures a charge applied when it was made. Changing a price never changes them. */
+export const ChargeSnapshotDto = z.strictObject({
+  quote: QuoteDto.nullable(),
+  /** The amount a person typed when nothing priced the service. */
+  explicitAmountCents: Cents.nullable(),
+  appointmentTypeName: z.string(),
+  /** The day of the service, in the time zone of the location. */
+  serviceDate: IsoDay,
+});
+export type ChargeSnapshotDto = z.infer<typeof ChargeSnapshotDto>;
+
+/** Where invoicing stands, derived from the lines; it is not a state of the charge. */
+export const CHARGE_INVOICING_POSITIONS = ['not_invoiced', 'partly_invoiced', 'invoiced'] as const;
+export type ChargeInvoicingPosition = (typeof CHARGE_INVOICING_POSITIONS)[number];
+
+/**
+ * A charge as the screens and the invoicing module read it. Administrative data only: names, the
+ * appointment, amounts and states. Nothing clinical is ever part of it.
+ */
+export const ChargeDto = z.strictObject({
+  id: z.uuid(),
+  appointmentId: z.uuid(),
+  appointmentTypeName: z.string(),
+  startsAt: z.iso.datetime(),
+  patientId: z.uuid(),
+  patientName: z.string(),
+  professionalId: z.uuid(),
+  professionalName: z.string(),
+  locationId: z.uuid(),
+  locationName: z.string(),
+  /** The payer the charge was made for; null for a private patient. */
+  tenantPayerId: z.uuid().nullable(),
+  payerName: z.string().nullable(),
+  planName: z.string().nullable(),
+  status: z.enum(CHARGE_STATUSES),
+  explicitAmount: z.boolean(),
+  needsReview: z.boolean(),
+  reviewReason: z.enum(CHARGE_REVIEW_REASONS).nullable(),
+  flaggedAt: z.iso.datetime().nullable(),
+  voidReason: z.string().nullable(),
+  voidedAt: z.iso.datetime().nullable(),
+  lines: z.array(ChargeLineDto),
+  /** Everything the charge adds up to, what the patient owes and what the payer owes. */
+  totalCents: Cents,
+  patientCents: Cents,
+  payerCents: Cents,
+  /** What the patient has paid, net of refunds. */
+  paidCents: Cents,
+  /** What the patient still owes of their portion (never below zero). */
+  outstandingCents: Cents,
+  /** What the patient paid above their portion and a person confirmed as a credit balance. */
+  creditCents: Cents,
+  invoicedCents: Cents,
+  invoicing: z.enum(CHARGE_INVOICING_POSITIONS),
+  snapshot: ChargeSnapshotDto,
+  capturedBy: z.uuid(),
+  capturedAt: z.iso.datetime(),
+});
+export type ChargeDto = z.infer<typeof ChargeDto>;
+
+export const ChargeListResponse = z.strictObject({ charges: z.array(ChargeDto) });
+export type ChargeListResponse = z.infer<typeof ChargeListResponse>;
+
+/** An appointment that already has a charge answers with it (the 409 of a double capture). */
+export const ChargeExistsExtension = z.object({ existingChargeId: z.uuid() });
+export type ChargeExistsExtension = z.infer<typeof ChargeExistsExtension>;

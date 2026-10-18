@@ -22,6 +22,8 @@ export interface AppointmentForCharge {
   startsAt: Date;
   endsAt: Date;
   locationTimeZone: string;
+  /** Set when the appointment was cancelled too late for the organization's rule; null before. */
+  lateCancellation: boolean | null;
 }
 
 /**
@@ -45,6 +47,7 @@ export async function readAppointmentsForCharge(
       startsAt: appointment.startsAt,
       endsAt: appointment.endsAt,
       locationTimeZone: location.timeZone,
+      lateCancellation: appointment.lateCancellation,
     })
     .from(appointment)
     .innerJoin(appointmentType, eq(appointmentType.id, appointment.appointmentTypeId))

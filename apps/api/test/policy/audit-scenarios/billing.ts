@@ -10,10 +10,8 @@ const t = (file: string): AuditScenario => ({ test: `apps/api/test/integration/$
  */
 export const BILLING_SCENARIOS: Record<(typeof BILLING_AUDIT_ACTIONS)[number], AuditScenario> = {
   'billing.price.changed': t('billing-pricing-api.test.ts'),
-  'billing.price.override': {
-    pending: 'S4.02 (task 4.12): a charge captured with an explicit amount',
-  },
-  'charge.captured': { pending: 'S4.02 (task 4.12): charge capture' },
+  'billing.price.override': t('capture-charge.test.ts'),
+  'charge.captured': t('capture-charge.test.ts'),
   'charge.voided': { pending: 'S4.02 (task 4.14): voiding a charge' },
   'charge.flagged': {
     pending: 'S4.02 (task 4.13): a no-show or cancelled appointment flags its charge',
