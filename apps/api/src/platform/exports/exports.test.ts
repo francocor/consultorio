@@ -78,7 +78,13 @@ function matchGolden(name: string, actual: string): void {
   if (process.env['UPDATE_GOLDEN'] === '1' || !existsSync(path)) {
     writeFileSync(path, actual);
   }
-  expect(actual).toBe(readFileSync(path, 'utf8'));
+  const expected = readFileSync(path, 'utf8');
+  if (name.endsWith('.json')) {
+    // The formatter owns the layout of a JSON file: what is compared is its content.
+    expect(JSON.parse(actual)).toEqual(JSON.parse(expected));
+    return;
+  }
+  expect(actual).toBe(expected);
 }
 
 describe('amounts and days as people read them in an export', () => {
