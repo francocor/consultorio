@@ -38,7 +38,8 @@ describe('no tracked source file contains a NUL byte', () => {
 
     // To spell a NUL in source, write the escape (\u0000) instead of the raw byte.
     expect(offenders).toEqual([]);
-  });
+    // The scan reads every tracked text file: on a loaded machine it needs more than the default 5 s.
+  }, 60_000);
 
   describe('the scanner itself', () => {
     it('finds the offset of a NUL byte', () => {
