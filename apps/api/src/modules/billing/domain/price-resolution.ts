@@ -75,7 +75,7 @@ export interface QuoteLine {
  * price for the type, or is not in the organization's list of payers (the last one is added by
  * the service that matches the coverage with the list).
  */
-export type QuoteNote = 'payer_inactive' | 'payer_without_price' | 'payer_not_listed';
+export type QuoteReason = 'payer_inactive' | 'payer_without_price' | 'payer_not_listed';
 
 export interface Quote {
   source: 'private' | 'payer';
@@ -91,7 +91,7 @@ export interface Quote {
   totalCents: number;
   patientCents: number;
   payerCents: number;
-  notes: QuoteNote[];
+  reasons: QuoteReason[];
 }
 
 export type QuoteResult = { ok: true; quote: Quote } | { ok: false; reason: 'no_price' };
@@ -184,11 +184,11 @@ function payerQuote(rule: PayerPriceRule, payer: PayerChoice): Quote {
     totalCents: money(payerCents + patientCents),
     patientCents,
     payerCents,
-    notes: [],
+    reasons: [],
   };
 }
 
-function privateQuote(rule: PriceRule, notes: QuoteNote[]): Quote {
+function privateQuote(rule: PriceRule, reasons: QuoteReason[]): Quote {
   const amountCents = money(rule.amountCents);
   return {
     source: 'private',
@@ -201,25 +201,25 @@ function privateQuote(rule: PriceRule, notes: QuoteNote[]): Quote {
     totalCents: amountCents,
     patientCents: amountCents,
     payerCents: 0,
-    notes,
+    reasons,
   };
 }
 
 export function resolvePrice(input: ResolveInput): QuoteResult {
   const { context, payer } = input;
-  const notes: QuoteNote[] = [];
+  const reasons: QuoteReason[] = [];
 
   if (payer !== null) {
     if (!payer.active) {
-      notes.push('payer_inactive');
+      reasons.push('payer_inactive');
     } else {
       const rule = pickPayerPrice(payer, context, input.payerPrices);
       if (rule) return { ok: true, quote: payerQuote(rule, payer) };
-      notes.push('payer_without_price');
+      reasons.push('payer_without_price');
     }
   }
 
   const rule = pickPrivatePrice(context, input.prices);
   if (!rule) return { ok: false, reason: 'no_price' };
-  return { ok: true, quote: privateQuote(rule, notes) };
+  return { ok: true, quote: privateQuote(rule, reasons) };
 }

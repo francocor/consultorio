@@ -232,8 +232,8 @@ export type PriceListResponse = z.infer<typeof PriceListResponse>;
 export const QUOTE_LINE_KINDS = ['service', 'payer_coverage', 'copago', 'plus'] as const;
 export type QuoteLineKind = (typeof QUOTE_LINE_KINDS)[number];
 
-export const QUOTE_NOTES = ['payer_inactive', 'payer_without_price', 'payer_not_listed'] as const;
-export type QuoteNote = (typeof QUOTE_NOTES)[number];
+export const QUOTE_REASONS = ['payer_inactive', 'payer_without_price', 'payer_not_listed'] as const;
+export type QuoteReason = (typeof QUOTE_REASONS)[number];
 
 export const QuoteLineDto = z.strictObject({
   kind: z.enum(QUOTE_LINE_KINDS),
@@ -256,7 +256,7 @@ export const QuoteDto = z.strictObject({
   patientCents: Cents,
   payerCents: Cents,
   /** Why a private price was used for a patient who has a payer. */
-  notes: z.array(z.enum(QUOTE_NOTES)),
+  reasons: z.array(z.enum(QUOTE_REASONS)),
 });
 export type QuoteDto = z.infer<typeof QuoteDto>;
 

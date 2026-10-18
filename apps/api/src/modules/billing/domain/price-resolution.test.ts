@@ -323,7 +323,7 @@ describe('the payer plan price', () => {
     const result = quote({ prices: [rule()], payerPrices, payer: osde() });
 
     expect(result).toMatchObject({
-      quote: { source: 'private', notes: ['payer_without_price'] },
+      quote: { source: 'private', reasons: ['payer_without_price'] },
     });
   });
 
@@ -332,7 +332,7 @@ describe('the payer plan price', () => {
 
     expect(result).toMatchObject({
       ok: true,
-      quote: { source: 'private', totalCents: 2_000_000, notes: ['payer_without_price'] },
+      quote: { source: 'private', totalCents: 2_000_000, reasons: ['payer_without_price'] },
     });
   });
 
@@ -348,7 +348,7 @@ describe('the payer plan price', () => {
     });
 
     expect(result).toMatchObject({
-      quote: { source: 'private', patientCents: 2_000_000, notes: ['payer_inactive'] },
+      quote: { source: 'private', patientCents: 2_000_000, reasons: ['payer_inactive'] },
     });
   });
 });

@@ -12,7 +12,7 @@ import {
   resolvePrice,
   type PayerChoice,
   type Quote,
-  type QuoteNote,
+  type QuoteReason,
 } from '../domain/price-resolution.js';
 
 import { localDay } from './common.js';
@@ -104,7 +104,7 @@ export interface ResolvedQuote {
 function toQuoteDto(
   quote: Quote,
   chosen: ChosenPayer | null,
-  extraNotes: readonly QuoteNote[],
+  extraReasons: readonly QuoteReason[],
 ): QuoteDto {
   return {
     source: quote.source,
@@ -119,7 +119,7 @@ function toQuoteDto(
     totalCents: money(quote.totalCents),
     patientCents: money(quote.patientCents),
     payerCents: money(quote.payerCents),
-    notes: [...quote.notes, ...extraNotes],
+    reasons: [...quote.reasons, ...extraReasons],
   };
 }
 

@@ -81,7 +81,7 @@ describe('the quote of an appointment', () => {
       patientCents: 2_000_000,
       payerCents: 0,
       lines: [{ kind: 'service', portion: 'patient', amountCents: 2_000_000 }],
-      notes: [],
+      reasons: [],
     });
   });
 
@@ -156,7 +156,7 @@ describe('the quote of a patient with a payer', () => {
 
     const body = (await quote(appointment.id)).json<PriceQuoteResponse>();
 
-    expect(body.quote).toMatchObject({ source: 'private', notes: ['payer_without_price'] });
+    expect(body.quote).toMatchObject({ source: 'private', reasons: ['payer_without_price'] });
   });
 
   it('uses the price for every plan of the payer when no price names the plan', async () => {
@@ -198,7 +198,7 @@ describe('the quote of a patient with a payer', () => {
     const after = (await quote(appointment.id)).json<PriceQuoteResponse>();
 
     expect(before.quote).toMatchObject({ source: 'payer', payerCents: 450_000 });
-    expect(after.quote).toMatchObject({ source: 'private', notes: ['payer_inactive'] });
+    expect(after.quote).toMatchObject({ source: 'private', reasons: ['payer_inactive'] });
   });
 
   it('ignores a coverage that ended before the day of the appointment', async () => {
@@ -228,7 +228,7 @@ describe('choosing the payer by hand', () => {
     ).json<PriceQuoteResponse>();
 
     expect(covered.quote?.source).toBe('payer');
-    expect(privately.quote).toMatchObject({ source: 'private', payerCents: 0, notes: [] });
+    expect(privately.quote).toMatchObject({ source: 'private', payerCents: 0, reasons: [] });
   });
 
   it('quotes a payer of the list for a patient who has no coverage', async () => {
