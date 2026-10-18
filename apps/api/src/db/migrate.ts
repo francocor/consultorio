@@ -4,6 +4,7 @@ import { sql } from 'drizzle-orm';
 import { migrate } from 'drizzle-orm/node-postgres/migrator';
 import type { Pool } from 'pg';
 
+import { describeFailure } from '../platform/db/failure-log.js';
 import { createOwnerDb, type Db } from '../platform/db/pool.js';
 import { installJobs } from '../platform/jobs/install.js';
 import type { QueueDefinition } from '../platform/jobs/queues.js';
@@ -64,54 +65,98 @@ const USAGE_BACKFILL_BATCH = 500;
  * `tenant_isolation` policy applies and FORCE is never touched. It works a batch of rows per
  * transaction and skips a row another transaction holds (`FOR UPDATE SKIP LOCKED`), so it never
  * waits for a writer nor makes one wait; a skipped row is done by the next run. It is idempotent
- * (it only touches rows still unconfirmed and unreleased) and runs on every boot.
+ * (it only touches rows still unconfirmed and unreleased) and runs on every boot. The partial index
+ * `whatsapp_usage_event_unsettled_idx` (migration 0498) holds exactly those rows, so a boot reads
+ * the few that are left (the live reservations of queued messages among them) and not the whole table.
+ *
+ * It is best effort and never rejects: it is a repair of old rows, not a condition of the deploy, so
+ * a failure must not stop the application from starting. A tenant that fails is reported (the
+ * class and the database code of the error and the tenant id, never the message, which can carry row
+ * values) and skipped; the others go on, and the next run retries it.
  */
 export async function backfillUsageConfirmation(
   db: Db,
-  options: { batchSize?: number } = {},
+  options: { batchSize?: number; onFailure?: (failure: UsageBackfillFailure) => void } = {},
 ): Promise<{ confirmed: number; released: number }> {
   const batchSize = options.batchSize ?? USAGE_BACKFILL_BATCH;
+  const reportFailure = options.onFailure ?? reportUsageBackfillFailure;
   const totals = { confirmed: 0, released: 0 };
-  // A database migrated from a folder that has no such table (the tests of the runner) has nothing to do.
-  const present = await db.execute<{ found: boolean }>(
-    sql`select to_regclass('public.whatsapp_usage_event') is not null and to_regclass('public.tenant') is not null as found`,
-  );
-  if (present.rows[0]?.found !== true) return totals;
-  for (const tenantId of await listTenantIds(db)) {
-    for (const step of ['confirm', 'release'] as const) {
-      for (;;) {
-        const changed = await db.transaction(async (tx) => {
-          await tx.execute(sql`select set_config('app.tenant_id', ${tenantId}, true)`);
-          const result =
-            step === 'confirm'
-              ? await tx.execute(sql`
-                  WITH batch AS (
-                    SELECT e.id FROM whatsapp_usage_event e
-                      JOIN message m ON m.tenant_id = e.tenant_id AND m.id = e.message_id
-                     WHERE e.confirmed_at IS NULL AND e.released_at IS NULL
-                       AND m.status IN ('sent', 'delivered', 'read')
-                     ORDER BY e.id LIMIT ${batchSize}
-                       FOR UPDATE OF e SKIP LOCKED)
-                  UPDATE whatsapp_usage_event e SET confirmed_at = e.counted_at
-                    FROM batch WHERE e.id = batch.id`)
-              : await tx.execute(sql`
-                  WITH batch AS (
-                    SELECT e.id FROM whatsapp_usage_event e
-                      JOIN message m ON m.tenant_id = e.tenant_id AND m.id = e.message_id
-                     WHERE e.confirmed_at IS NULL AND e.released_at IS NULL
-                       AND m.status IN ('cancelled', 'failed')
-                     ORDER BY e.id LIMIT ${batchSize}
-                       FOR UPDATE OF e SKIP LOCKED)
-                  UPDATE whatsapp_usage_event e SET released_at = now()
-                    FROM batch WHERE e.id = batch.id`);
-          return result.rowCount ?? 0;
-        });
-        totals[step === 'confirm' ? 'confirmed' : 'released'] += changed;
-        if (changed < batchSize) break;
-      }
+  let tenantIds: string[];
+  try {
+    // A database migrated from a folder that has no such table (the tests of the runner) has nothing to do.
+    const present = await db.execute<{ found: boolean }>(
+      sql`select to_regclass('public.whatsapp_usage_event') is not null and to_regclass('public.tenant') is not null as found`,
+    );
+    if (present.rows[0]?.found !== true) return totals;
+    tenantIds = await listTenantIds(db);
+  } catch (error) {
+    reportFailure({ tenantId: null, ...describeFailure(error) });
+    return totals;
+  }
+  for (const tenantId of tenantIds) {
+    try {
+      await backfillTenant(db, tenantId, batchSize, totals);
+    } catch (error) {
+      reportFailure({ tenantId, ...describeFailure(error) });
     }
   }
   return totals;
+}
+
+/** What is reported about a tenant the backfill could not finish: no message, no row value. */
+export interface UsageBackfillFailure {
+  /** `null` when the failure came before any tenant (the lookup of the tenants itself). */
+  tenantId: string | null;
+  name: string;
+  code: string;
+}
+
+/** One structured line on stderr, where the log shipper and the alerts read it. */
+function reportUsageBackfillFailure(failure: UsageBackfillFailure): void {
+  process.stderr.write(
+    `${JSON.stringify({ level: 'error', msg: 'usage_backfill_failed', ...failure })}\n`,
+  );
+}
+
+/** Works the rows of one tenant, batch after batch, adding what each batch changed to `totals`. */
+async function backfillTenant(
+  db: Db,
+  tenantId: string,
+  batchSize: number,
+  totals: { confirmed: number; released: number },
+): Promise<void> {
+  for (const step of ['confirm', 'release'] as const) {
+    for (;;) {
+      const changed = await db.transaction(async (tx) => {
+        await tx.execute(sql`select set_config('app.tenant_id', ${tenantId}, true)`);
+        const result =
+          step === 'confirm'
+            ? await tx.execute(sql`
+                WITH batch AS (
+                  SELECT e.id FROM whatsapp_usage_event e
+                    JOIN message m ON m.tenant_id = e.tenant_id AND m.id = e.message_id
+                   WHERE e.confirmed_at IS NULL AND e.released_at IS NULL
+                     AND m.status IN ('sent', 'delivered', 'read')
+                   ORDER BY e.id LIMIT ${batchSize}
+                     FOR UPDATE OF e SKIP LOCKED)
+                UPDATE whatsapp_usage_event e SET confirmed_at = e.counted_at
+                  FROM batch WHERE e.id = batch.id`)
+            : await tx.execute(sql`
+                WITH batch AS (
+                  SELECT e.id FROM whatsapp_usage_event e
+                    JOIN message m ON m.tenant_id = e.tenant_id AND m.id = e.message_id
+                   WHERE e.confirmed_at IS NULL AND e.released_at IS NULL
+                     AND m.status IN ('cancelled', 'failed')
+                   ORDER BY e.id LIMIT ${batchSize}
+                     FOR UPDATE OF e SKIP LOCKED)
+                UPDATE whatsapp_usage_event e SET released_at = now()
+                  FROM batch WHERE e.id = batch.id`);
+        return result.rowCount ?? 0;
+      });
+      totals[step === 'confirm' ? 'confirmed' : 'released'] += changed;
+      if (changed < batchSize) break;
+    }
+  }
 }
 
 function quoteIdentifier(name: string): string {
@@ -120,7 +165,9 @@ function quoteIdentifier(name: string): string {
 
 /**
  * Applies pending migrations as the owner role, validates the constraints they left NOT VALID, runs
- * the data backfill steps that must not run inside the migrator's transaction, then installs or upgrades the pg-boss schema and its queues (also as the owner). Migrations are
+ * the data backfill steps that must not run inside the migrator's transaction (best effort: a tenant
+ * the backfill cannot finish is reported and left to the next run, it never fails the deploy), then
+ * installs or upgrades the pg-boss schema and its queues (also as the owner). Migrations are
  * forward-only.
  *
  * @param extraQueues queues to create besides the application's own (tests add theirs)

@@ -64,6 +64,11 @@ export const whatsappUsageEvent = tenantTable(
       table.professionalId,
       table.period,
     ),
+    // The rows the runner's backfill still looks at: neither confirmed nor released. Without it
+    // every boot reads the whole table (JD-S3 follow-up). Live reservations match too.
+    index('whatsapp_usage_event_unsettled_idx')
+      .on(table.tenantId, table.id)
+      .where(sql`${table.confirmedAt} is null and ${table.releasedAt} is null`),
   ],
 );
 
