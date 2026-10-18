@@ -10,6 +10,7 @@ import type { AppointmentFacts } from '../../../platform/events/appointment-even
 import type { ActionTokens } from '../../../platform/tokens/index.js';
 import {
   createOnlinePatient,
+  findOnlineRecordOfItsOwn,
   findPatientByDocument,
   type OnlinePatientMatch,
 } from '../../patients/index.js';
@@ -214,11 +215,25 @@ export async function confirmBooking(
     linkLimit: offer.link.maxUnconfirmedAppointments,
     now: input.now,
   });
+  // The record of its own that this verified address already has (an earlier booking that could not
+  // stand on a record with its document). Always looked up, so that the work behind the answer does
+  // not depend on the document; used only by a booking that is detached.
+  const ofItsOwn = await findOnlineRecordOfItsOwn(tx, {
+    email: submission.email,
+    givenNames: payload.givenNames,
+    familyName: payload.familyName,
+    birthDate: payload.birthDate,
+  });
   let patientId: string;
   let identityConfirmed: boolean;
   let createdPatient = false;
   if (match && detachedBecause === null) {
     patientId = match.id;
+    identityConfirmed = false;
+  } else if (match && ofItsOwn) {
+    // The same person under the same verified address again: the record they already have, not
+    // another one. Nothing is written on it, and reception is asked to look at the booking.
+    patientId = ofItsOwn.id;
     identityConfirmed = false;
   } else {
     patientId = (

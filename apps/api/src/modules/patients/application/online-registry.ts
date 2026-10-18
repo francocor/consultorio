@@ -1,4 +1,4 @@
-import { and, eq, sql } from 'drizzle-orm';
+import { and, asc, eq, isNull, sql } from 'drizzle-orm';
 
 import { patient, patientVersion } from '../../../db/schema/patients.js';
 import { dataProcessingConsent } from '../../../db/schema/privacy.js';
@@ -49,6 +49,36 @@ export async function findPatientByDocument(
     .from(patient)
     .where(and(eq(patient.nationalIdType, document.type), eq(patient.nationalId, document.number)));
   return row ? { ...row, status: row.status === 'active' ? 'active' : 'inactive' } : null;
+}
+
+/**
+ * The record of its own that a verified address already has: a person registered online WITHOUT a
+ * document (a booking that could not stand on the record that has its document), active, with the
+ * same name and birth date. A second booking of the same person under the same address is put on it
+ * instead of creating another record (judgment day round 2, finding C5): the address was verified, so
+ * repeating the story cannot pile up records. Only the id leaves; nothing here tells the visitor.
+ */
+export async function findOnlineRecordOfItsOwn(
+  tx: Tx,
+  input: { email: string; givenNames: string; familyName: string; birthDate: string },
+): Promise<{ id: string } | null> {
+  const [row] = await tx
+    .select({ id: patient.id })
+    .from(patient)
+    .where(
+      and(
+        eq(patient.origin, 'online'),
+        isNull(patient.nationalId),
+        eq(patient.status, 'active'),
+        sql`lower(${patient.email}) = lower(${input.email})`,
+        sql`lower(${patient.givenNames}) = lower(${input.givenNames})`,
+        sql`lower(${patient.familyName}) = lower(${input.familyName})`,
+        eq(patient.birthDate, input.birthDate),
+      ),
+    )
+    .orderBy(asc(patient.createdAt), asc(patient.id))
+    .limit(1);
+  return row ?? null;
 }
 
 export interface NewOnlinePatient {

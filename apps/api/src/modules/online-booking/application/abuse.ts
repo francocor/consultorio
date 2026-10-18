@@ -1,4 +1,4 @@
-import { and, eq, gt, isNotNull, ne, sql } from 'drizzle-orm';
+import { and, eq, gt, ne, sql } from 'drizzle-orm';
 
 import { bookingSubmission } from '../../../db/schema/booking-submission.js';
 import { publicHold } from '../../../db/schema/online-booking.js';
@@ -146,10 +146,11 @@ export async function futureOnlineByDocument(
 }
 
 /**
- * Future appointments booked through a link that stand on a patient already on file (one with a
- * document) with the identity not confirmed by reception: what a stranger could pile on other
- * people's records through that link. An appointment on a record of its own, without a document,
- * is not one of them.
+ * Future appointments booked through a link whose identity reception has not confirmed: what a
+ * stranger could pile on other people's records through that link, AND the ones that were put on a
+ * record of their own because the record with the document could not take them (judgment day round
+ * 2, finding C5: those were not counted, so a link could be filled with them without ever reaching
+ * its limit).
  */
 export async function unconfirmedOnLink(
   tx: Tx,
@@ -160,12 +161,10 @@ export async function unconfirmedOnLink(
     .from(appointment)
     .innerJoin(slotHold, eq(slotHold.appointmentId, appointment.id))
     .innerJoin(publicHold, eq(publicHold.holdId, slotHold.id))
-    .innerJoin(patient, eq(patient.id, appointment.patientId))
     .where(
       and(
         eq(publicHold.bookingLinkId, input.linkId),
         eq(appointment.identityConfirmed, false),
-        isNotNull(patient.nationalId),
         eq(appointment.source, 'online'),
         ne(appointment.status, 'cancelled'),
         gt(appointment.startsAt, input.now),
