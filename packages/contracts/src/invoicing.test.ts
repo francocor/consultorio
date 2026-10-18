@@ -11,8 +11,15 @@ import {
   INVOICE_TYPES,
   INVOICING_AUDIT_ACTIONS,
   INVOICING_ERRORS,
+  CREDIT_NOTE_TYPES,
+  INVOICE_ONLY_TYPES,
+  CreateCreditNoteRequest,
+  CreateInvoiceRequest,
+  CreateManualInvoiceRequest,
   CreatePointOfSaleRequest,
   FiscalConfigResponse,
+  InvoiceDto,
+  invoiceKindOf,
   InvoicingSettings,
   PutCredentialRequest,
   TAX_CONDITIONS,
@@ -62,12 +69,120 @@ describe('invoicing catalogues', () => {
     for (const action of INVOICING_AUDIT_ACTIONS) expect(AUDIT_ACTIONS).toContain(action);
   });
 
-  it('has the error codes of the fiscal configuration', () => {
-    expect(Object.keys(INVOICING_ERRORS)).toEqual(['fiscal_profile_required']);
+  it('has the error codes of the fiscal configuration and of the invoices', () => {
+    expect(Object.keys(INVOICING_ERRORS)).toEqual([
+      'fiscal_profile_required',
+      'invoicing_not_ready',
+      'invoice_charge_voided',
+      'invoice_lines_mixed',
+      'invoice_line_over_invoiced',
+      'invoice_payer_cuit_required',
+      'invoice_point_of_sale_invalid',
+      'invoice_cannot_void',
+      'invoice_credit_note_exceeds',
+      'invoice_credit_note_not_applicable',
+      'invoice_number_taken',
+      'invoice_not_rejected',
+      'invoice_pdf_not_ready',
+    ]);
     expect(INVOICING_ERRORS.fiscal_profile_required).toEqual({
       status: 409,
       i18nKey: 'errors.fiscal_profile_required',
     });
+    // Every key points at its own code, so the web catalog can be checked against the codes.
+    for (const [code, entry] of Object.entries(INVOICING_ERRORS)) {
+      expect(entry.i18nKey).toBe(`errors.${code}`);
+    }
+  });
+});
+
+describe('invoice requests (S4.10)', () => {
+  const key = '0190a000-0000-7000-8000-000000000001';
+  const lineId = '0190a000-0000-7000-8000-0000000000a1';
+  const create = {
+    idempotencyKey: key,
+    lines: [{ chargeLineId: lineId }],
+    recipient: { kind: 'patient' },
+  };
+
+  it('tells an invoice type from a credit note type', () => {
+    expect(invoiceKindOf('FA')).toBe('invoice');
+    expect(invoiceKindOf('FC')).toBe('invoice');
+    expect(invoiceKindOf('NCB')).toBe('credit_note');
+    expect([...INVOICE_ONLY_TYPES, ...CREDIT_NOTE_TYPES]).toEqual([...INVOICE_TYPES]);
+  });
+
+  it('accepts lines with or without an amount, and never a credit note type for an invoice', () => {
+    expect(CreateInvoiceRequest.parse(create)).toEqual(create);
+    expect(
+      CreateInvoiceRequest.parse({
+        ...create,
+        lines: [{ chargeLineId: lineId, amountCents: 1200 }],
+        type: 'FB',
+        pointOfSale: 3,
+      }).lines[0]?.amountCents,
+    ).toBe(1200);
+    for (const bad of [
+      { ...create, type: 'NCA' },
+      { ...create, lines: [] },
+      { ...create, lines: [{ chargeLineId: lineId, amountCents: 0 }] },
+      { ...create, lines: [{ chargeLineId: lineId, amountCents: 10.5 }] },
+      { ...create, idempotencyKey: 'not-a-key' },
+      { ...create, pointOfSale: 0 },
+      { ...create, recipient: { kind: 'doctor' } },
+      { ...create, total: 5 },
+    ]) {
+      expect(CreateInvoiceRequest.safeParse(bad).success).toBe(false);
+    }
+  });
+
+  it('needs a reason for a credit note, and a whole positive amount if it is partial', () => {
+    expect(
+      CreateCreditNoteRequest.safeParse({ idempotencyKey: key, reason: 'Error' }).success,
+    ).toBe(true);
+    expect(CreateCreditNoteRequest.safeParse({ idempotencyKey: key }).success).toBe(false);
+    expect(
+      CreateCreditNoteRequest.safeParse({ idempotencyKey: key, reason: 'Error', amountCents: -1 })
+        .success,
+    ).toBe(false);
+    expect(CreateCreditNoteRequest.safeParse({ idempotencyKey: key, reason: '  ' }).success).toBe(
+      false,
+    );
+  });
+
+  it('needs the 14 digits of a CAE for a manual invoice, and no credit note types', () => {
+    const manual = {
+      idempotencyKey: key,
+      type: 'FC',
+      pointOfSale: 1,
+      number: 77,
+      cae: '70123456789012',
+      issueDate: '2031-03-01',
+      totalCents: 500_000,
+      lines: [{ chargeLineId: lineId }],
+      recipient: { kind: 'patient' },
+    };
+
+    expect(CreateManualInvoiceRequest.safeParse(manual).success).toBe(true);
+    for (const bad of [
+      { ...manual, cae: '1234' },
+      { ...manual, cae: '7012345678901A' },
+      { ...manual, type: 'NCC' },
+      { ...manual, number: 0 },
+      { ...manual, issueDate: '01/03/2031' },
+      { ...manual, totalCents: 0 },
+    ]) {
+      expect(CreateManualInvoiceRequest.safeParse(bad).success).toBe(false);
+    }
+  });
+
+  it('has no field for the retry progress in the invoice a screen reads', () => {
+    const fields = Object.keys(InvoiceDto.shape);
+
+    expect(fields).not.toContain('deliveryState');
+    expect(fields).not.toContain('attempts');
+    expect(fields).toContain('ageMinutes');
+    expect(fields).toContain('outageFlag');
   });
 });
 

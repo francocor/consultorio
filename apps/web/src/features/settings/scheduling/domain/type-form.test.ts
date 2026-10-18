@@ -79,6 +79,7 @@ describe('editing an existing type', () => {
     bufferMinutes: 5,
     mode: 'in_person',
     priceReference: 'ctrl-1',
+    invoiceDescription: null,
     requiresApproval: false,
     color: '#1d4ed8',
     professionalIds: [PRO],
