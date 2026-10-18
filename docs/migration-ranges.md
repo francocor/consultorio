@@ -53,6 +53,8 @@ Inside a stage each track has its own range (the track names are the ones `pnpm 
 
 The gaps (`0380 - 0389`, `0470 - 0489`, `0580 - 0589`, `0680 - 0689`) are reserved and are not used by `pnpm db:new`.
 
+**Stage 4 (revenue).** The seam (S4.00) has no tables, so `4seam` stays empty. The numbers that `tasks.md` names are: `4a` 0410 pricing, 0412 charges, 0414 payments and cash; `4b` 0430 report indexes (a custom migration, the reports have no tables); `4c` 0440 fiscal configuration, 0442 the local AFIP simulator (platform tables, no `tenant_id`), 0444 invoices; `4d` as the integration slices need. The invoices migration (0444) has a foreign key and a trigger on `charge_line` (0412): it must come later in the journal, which the run order guarantees (S4.10 waits for S4.02). What each track may touch is in `docs/stage4-tracks.md`.
+
 ## Working on a track
 
 1. Edit the Drizzle schema (`apps/api/src/db/schema/`).
