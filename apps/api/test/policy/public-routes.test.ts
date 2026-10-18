@@ -193,6 +193,10 @@ const DECLARED: Record<string, Declaration> = {
     guards: ['token', 'rate-limit'],
     probes: [SURFACE_PROBES, 'test/integration/video-join-public.test.ts'],
   },
+  'POST /public/v/:token': {
+    guards: ['token', 'rate-limit'],
+    probes: ['test/integration/video-join-public.test.ts'],
+  },
   'POST /webhooks/whatsapp': {
     guards: ['signature'],
     probes: ['test/integration/whatsapp-webhook.test.ts'],
@@ -223,7 +227,11 @@ describe('the public surface of the whole product', () => {
   it('protects every route with a guard, and every form with the challenge or the code', () => {
     for (const [route, declaration] of Object.entries(DECLARED)) {
       expect(declaration.guards.length, route).toBeGreaterThan(0);
-      if (route.startsWith('POST /public/') && !route.startsWith('POST /public/t/')) {
+      if (
+        route.startsWith('POST /public/') &&
+        !route.startsWith('POST /public/t/') &&
+        !route.startsWith('POST /public/v/')
+      ) {
         expect(
           declaration.guards.some((guard) => guard === 'bot-challenge' || guard === 'otp'),
           route,

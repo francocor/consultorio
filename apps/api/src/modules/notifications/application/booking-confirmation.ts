@@ -1,16 +1,15 @@
 import { and, eq, sql } from 'drizzle-orm';
 
 import { message, messageAttempt } from '../../../db/schema/notifications.js';
-import type { AuditActor } from '../../../platform/audit/writer.js';
 import { SYSTEM_USER_ID, type WithTenant } from '../../../platform/db/tenant-context.js';
 import type { EmailSender } from '../../../platform/mail/email-sender.js';
 import type { RenderedEmail } from '../../../platform/mail/templates.js';
+import type { ActionTokens } from '../../../platform/tokens/index.js';
 import type { BookingNotice, BookingNotifier } from '../../online-booking/index.js';
 import { hashAddress } from '../domain/address.js';
 import { classifyEmailFailure, MAX_ATTEMPTS } from '../domain/delivery-rules.js';
 
 import { loadTenantState } from './context.js';
-import { recordOptIn } from './preferences.js';
 
 /**
  * The confirmation of an online booking, as the notifications module sends it (spec "Automatic
@@ -31,15 +30,6 @@ import { recordOptIn } from './preferences.js';
  *   visitor is not waiting: it runs after their answer). A failure never reaches the visitor.
  */
 
-/** The patient is the actor of the opt-in the form recorded; there is no staff member. */
-const VISITOR: AuditActor = {
-  userId: null,
-  actingRole: null,
-  ip: null,
-  userAgent: null,
-  requestId: null,
-};
-
 const RETRY_WAITS_MS = [2_000, 8_000] as const;
 
 export interface BookingNotifierDeps {
@@ -47,6 +37,8 @@ export interface BookingNotifierDeps {
   /** Routed by organization: a demonstration organization never reaches a real mail server. */
   email: EmailSender;
   clock: () => Date;
+  /** Issues the link with which a patient accepts WhatsApp. */
+  tokens: ActionTokens;
   /** Writes the email (the details and the link to change the booking). */
   compose(notice: BookingNotice): RenderedEmail;
   /** Replaced in tests, so they do not sleep. */
@@ -134,13 +126,15 @@ export function createBookingNotifier(deps: BookingNotifierDeps): BookingNotifie
   }
 
   return {
-    recordWhatsAppOptIn: async (tx, input) => {
-      await recordOptIn(tx, {
-        patientId: input.patientId,
-        channel: 'whatsapp',
-        source: 'online_booking',
-        actor: VISITOR,
+    requestWhatsAppOptIn: async (tx, input) => {
+      // A number typed into a public form is nobody's yet: the choice waits for the patient to
+      // follow a link sent to the address that was verified. A newer request replaces the older link.
+      await deps.tokens.revokeForSubject(tx, 'whatsapp_opt_in', input.patientId);
+      const issued = await deps.tokens.issue(tx, {
+        kind: 'whatsapp_opt_in',
+        subjectId: input.patientId,
       });
+      return { token: issued.token };
     },
 
     async confirmBooking(notice) {

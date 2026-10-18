@@ -45,7 +45,7 @@ import {
  * two cannot be told apart by the work behind the answer (pinned by `public-nondisclosure.test.ts`).
  */
 export const NEW_PERSON_EXTRA_STATEMENTS = 6;
-export const WHATSAPP_OPT_IN_EXTRA_STATEMENTS = 3;
+export const WHATSAPP_OPT_IN_EXTRA_STATEMENTS = 2;
 /** What opening the identity review of a match costs, which a new person does not need. */
 export const REVIEW_ITEM_STATEMENTS = 1;
 
@@ -334,9 +334,13 @@ export async function confirmBooking(
   });
   await ports.publishEvent({ kind: 'created', appointment: factsOf(appointment) });
 
-  if (payload.whatsappOptIn && deps.notifier.recordWhatsAppOptIn) {
+  let whatsappOptInToken: string | null = null;
+  if (payload.whatsappOptIn && deps.notifier.requestWhatsAppOptIn) {
     if (createdPatient) {
-      await deps.notifier.recordWhatsAppOptIn(tx, { patientId, at: input.now });
+      // Only a request: the number is unverified, so nothing is recorded until the patient follows
+      // the link that goes to the address they did verify (decision D22).
+      whatsappOptInToken =
+        (await deps.notifier.requestWhatsAppOptIn(tx, { patientId, at: input.now }))?.token ?? null;
     } else {
       // The choice of somebody else's record is not written, but the work looks the same.
       await evenOut(tx, WHATSAPP_OPT_IN_EXTRA_STATEMENTS);
@@ -412,6 +416,7 @@ export async function confirmBooking(
       timeZone: place.timeZone,
       pendingApproval: needsApproval,
       manageToken: issued?.token ?? null,
+      whatsappOptInToken,
       patientId,
       appointmentId: appointment.id,
     },

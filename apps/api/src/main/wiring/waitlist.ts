@@ -2,6 +2,7 @@ import { DEFAULT_WAITLIST_SETTINGS, WaitlistSettings } from '@consultorio/contra
 
 import {
   boundDelivery,
+  createWhatsappOptInRequests,
   deliverWaitlistOffer,
   offerQuietHoursEnd,
 } from '../../modules/notifications/index.js';
@@ -65,6 +66,12 @@ export const waitlistWiring: ModuleWiring = {
   needsJobs: true,
   create: (context) =>
     createWaitlist({
+      // A WhatsApp choice on the public form is a request: the link goes to the verified address.
+      whatsappOptIn: createWhatsappOptInRequests({
+        tokens: createActionTokens({ clock: context.clock ?? (() => new Date()) }),
+        origins: context.origins,
+        email: context.email,
+      }),
       withTenant: context.withTenant,
       auditDeny: context.auditDeny,
       keys: context.keys,

@@ -233,6 +233,8 @@ export function createNotifications(options: NotificationsOptions): Notification
 }
 
 export { configureAddressHash } from './domain/address.js';
+export { createWhatsappOptInRequests } from './application/whatsapp-opt-in.js';
+export type { WhatsappOptInRequests, WhatsappOptInEmail } from './application/whatsapp-opt-in.js';
 export { createBookingNotifier } from './application/booking-confirmation.js';
 export type { BookingNotifierDeps } from './application/booking-confirmation.js';
 export {

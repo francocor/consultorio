@@ -331,6 +331,7 @@ export async function rescheduleManaged(
             timeZone: place.timeZone,
             pendingApproval: pending,
             manageToken: issued.token,
+            whatsappOptInToken: null,
             patientId: peek.patientId,
             appointmentId: peek.appointmentId,
           },
