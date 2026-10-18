@@ -68,11 +68,21 @@ describe('the address a reminder carries for a virtual appointment', () => {
     const path = pathOf(address);
     const open = () =>
       world.app.inject({ method: 'GET', url: path, headers: { host: hostOf(world.slug) } });
+    const press = () =>
+      world.app.inject({
+        method: 'POST',
+        url: path,
+        headers: { host: hostOf(world.slug), origin: `https://${hostOf(world.slug)}` },
+      });
 
-    const inside = await open();
+    const looked = await open();
+    const inside = await press();
     world.setVideoNow(new Date(new Date(created.startsAt).getTime() - HOUR));
     const early = await open();
 
+    // Looking inside the window offers the button; pressing it goes to the call.
+    expect(looked.statusCode).toBe(200);
+    expect(looked.body).toContain('Entrar a la videoconsulta');
     expect(inside.statusCode).toBe(302);
     expect(inside.headers['location']).toContain('https://meet.jit.si/');
     expect(early.statusCode).toBe(200);
@@ -88,9 +98,9 @@ describe('the address a reminder carries for a virtual appointment', () => {
     expect(first).not.toBe(second);
     for (const path of [first, second]) {
       const response = await world.app.inject({
-        method: 'GET',
+        method: 'POST',
         url: path,
-        headers: { host: hostOf(world.slug) },
+        headers: { host: hostOf(world.slug), origin: `https://${hostOf(world.slug)}` },
       });
       expect(response.statusCode).toBe(302);
     }
@@ -154,9 +164,9 @@ describe('the address a reminder carries for a virtual appointment', () => {
 
     expect(address.kind).toBe('link');
     const response = await world.app.inject({
-      method: 'GET',
+      method: 'POST',
       url: pathOf(address),
-      headers: { host: hostOf(world.slug) },
+      headers: { host: hostOf(world.slug), origin: `https://${hostOf(world.slug)}` },
     });
     expect(response.statusCode).toBe(302);
   });
@@ -181,9 +191,9 @@ describe('the address a reminder carries for a virtual appointment', () => {
 
     const path = pathOf(await resolve(created.id));
     const response = await world.app.inject({
-      method: 'GET',
+      method: 'POST',
       url: path,
-      headers: { host: hostOf(world.slug) },
+      headers: { host: hostOf(world.slug), origin: `https://${hostOf(world.slug)}` },
     });
 
     expect(response.statusCode).toBe(302);
