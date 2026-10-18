@@ -188,7 +188,10 @@ export async function startStack(options: StackOptions): Promise<Stack> {
     // The files of the demo are checked by the fake scanner, like in any development environment.
     const scanner = createFakeScanner();
 
-    const kms = createLocalKeyManagement(randomBytes(32).toString('base64'));
+    // One key-encryption key for the whole stack, like in production, where the API and the worker
+    // share it: the worker wiring builds its own key service from the configuration below.
+    const kek = randomBytes(32).toString('base64');
+    const kms = createLocalKeyManagement(kek);
     const keys = createTenantKeys({ kms });
     const email = createConfiguredEmail({
       host: mailpit.getHost(),
@@ -248,7 +251,7 @@ export async function startStack(options: StackOptions): Promise<Stack> {
       DATABASE_URL: runtimeUrl,
       BASE_DOMAIN: baseDomain,
       PLATFORM_HOST: platformHost,
-      KMS_LOCAL_KEK_BASE64: randomBytes(32).toString('base64'),
+      KMS_LOCAL_KEK_BASE64: kek,
       LOCAL_PROVIDERS_CONSOLE: 'true',
     });
     const adapters = createAdapterResolver(

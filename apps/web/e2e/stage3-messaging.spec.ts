@@ -300,7 +300,7 @@ test('the owner resends a reminder, the patient confirms and then opts out of Wh
     phone
       .getByRole('listitem')
       .filter({ hasText: `Para ${patientPhone}` })
-      .filter({ hasText: 'no le enviaremos más mensajes por WhatsApp' }),
+      .filter({ hasText: 'no le enviará más mensajes por WhatsApp' }),
   ).toHaveCount(1, { timeout: 30_000 });
   await console_.context().close();
 
