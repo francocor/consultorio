@@ -144,6 +144,11 @@ export const message = tenantTable(
     index('message_address_idx')
       .on(table.tenantId, table.channel, table.addressHash)
       .where(sql`${table.addressHash} is not null`),
+    // The WhatsApp webhook attributes a reply by the hash of the number ACROSS organizations
+    // (`app.whatsapp_reply_tenants_any`), so tenant_id cannot lead the index (JD-S3 follow-up).
+    index('message_whatsapp_address_hash_idx')
+      .on(table.addressHash)
+      .where(sql`${table.channel} = 'whatsapp'`),
   ],
 );
 
