@@ -12,8 +12,12 @@ import { asTenant, createTestTenant } from '../support/tenants.js';
  * Judgment day finding C14. Migrations 0390 and 0391 added their CHECK constraints on `message`
  * already validated, while 0322 had used NOT VALID for the same table (a table with row level
  * security forced and many rows). Migration 0393 states them again as NOT VALID and validates them
- * in a separate statement, which takes a lock that lets reads and writes go on. The proof is run on
- * a table that already has rows.
+ * in separate statements. What it does NOT do (round 2, finding R2-C1) is keep writers going: Drizzle
+ * runs all pending migrations in one transaction, so the lock of the `ADD CONSTRAINT` stays until the
+ * end of the run. A migration that wants a constraint added without stopping writers leaves it NOT
+ * VALID and `runMigrations` validates it afterwards (`migrate-validation.test.ts` proves that with the
+ * real runner). This file only proves 0393 ends with the three constraints validated on a table that
+ * already has rows.
  */
 
 const FILE = new URL('../../src/db/migrations/0393_message_checks_not_valid.sql', import.meta.url);
@@ -93,7 +97,6 @@ describe('the CHECK constraints of message (migration 0393)', () => {
     await owner.query('BEGIN');
     try {
       for (const statement of statements()) await owner.query(statement);
-      // Between the two steps a writer is not blocked: the constraint is there but not yet validated.
       await owner.query('COMMIT');
     } catch (error) {
       await owner.query('ROLLBACK');

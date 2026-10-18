@@ -3,6 +3,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, inject, it } from 'v
 
 import { channelPreference } from '../../src/db/schema/channel-preference.js';
 import { message, messageAttempt } from '../../src/db/schema/notifications.js';
+import { worklistItem } from '../../src/db/schema/worklist.js';
 import { recordOptOut } from '../../src/modules/notifications/application/preferences.js';
 import { createBookingNotifier } from '../../src/modules/notifications/index.js';
 import type { BookingNotice } from '../../src/modules/online-booking/index.js';
@@ -217,7 +218,10 @@ describe('the WhatsApp choice of the booking form (JD-S3 D22)', () => {
 
     const requested = await scheduling.inTenant(
       async (tx) =>
-        (await notify.requestWhatsAppOptIn?.(tx, { patientId, at: notes.now() })) ?? null,
+        (await notify.requestWhatsAppOptIn?.(tx, {
+          ...submissionOf(appointment, patientId, true),
+          at: notes.now(),
+        })) ?? null,
     );
 
     expect(requested?.token).toMatch(/^[A-Za-z0-9_-]{43}$/);
@@ -253,19 +257,147 @@ describe('the WhatsApp choice of the booking form (JD-S3 D22)', () => {
     ]);
   });
 
-  it('replaces the link of an earlier request', async () => {
-    const patientId = await notes.patient({ phone: '+5491155550199' });
+  it('gives each submission a link of its own', async () => {
+    const { appointment, patientId } = await booking();
     const notify = notifier();
 
     const first = await scheduling.inTenant(
       async (tx) =>
-        (await notify.requestWhatsAppOptIn?.(tx, { patientId, at: notes.now() })) ?? null,
+        (await notify.requestWhatsAppOptIn?.(tx, {
+          ...submissionOf(appointment, patientId, true),
+          at: notes.now(),
+        })) ?? null,
     );
     const second = await scheduling.inTenant(
       async (tx) =>
-        (await notify.requestWhatsAppOptIn?.(tx, { patientId, at: notes.now() })) ?? null,
+        (await notify.requestWhatsAppOptIn?.(tx, {
+          ...submissionOf(appointment, patientId, true),
+          at: notes.now(),
+        })) ?? null,
     );
 
     expect(second?.token).not.toBe(first?.token);
+  });
+});
+
+/** What the booking tells the port: the submission, the patient it ended on, and whether it made them. */
+const submissionOf = (appointment: { id: string }, patientId: string, created: boolean) => ({
+  submissionId: crypto.randomUUID(),
+  patientId,
+  created,
+  appointmentId: appointment.id,
+  locationId: scheduling.centro,
+});
+
+describe('the link of a submission that did not create the patient (JD-S3 R2-A1)', () => {
+  const follow = (token: string, method: 'GET' | 'POST') =>
+    scheduling.app.inject({
+      method,
+      url: `/public/t/${token}`,
+      headers: {
+        host: `${scheduling.slug}.${BASE_DOMAIN}`,
+        origin: `https://${scheduling.slug}.${BASE_DOMAIN}`,
+        ...(method === 'POST' ? { 'content-type': 'application/x-www-form-urlencoded' } : {}),
+      },
+      ...(method === 'POST' ? { payload: 'choice=accept' } : {}),
+    });
+
+  const request = async (created: boolean) => {
+    const { appointment, patientId } = await booking();
+    const requested = await scheduling.inTenant(
+      async (tx) =>
+        (await notifier().requestWhatsAppOptIn?.(tx, {
+          ...submissionOf(appointment, patientId, created),
+          at: notes.now(),
+        })) ?? null,
+    );
+    return { appointment, patientId, token: requested?.token ?? '' };
+  };
+
+  it('shows the same page and answers the same, and records no opt-in on a record it did not create', async () => {
+    const made = await request(true);
+    const other = await request(false);
+
+    const pages = [await follow(made.token, 'GET'), await follow(other.token, 'GET')];
+    expect(pages.map((page) => page.statusCode)).toEqual([200, 200]);
+    expect(pages[1]?.body).toBe(pages[0]?.body);
+    const answers = [await follow(made.token, 'POST'), await follow(other.token, 'POST')];
+    expect(answers.map((answer) => answer.statusCode)).toEqual([200, 200]);
+    expect(answers[1]?.body).toBe(answers[0]?.body);
+
+    const choices = (patientId: string) =>
+      scheduling.inTenant((tx) =>
+        tx.select().from(channelPreference).where(eq(channelPreference.patientId, patientId)),
+      );
+    expect(await choices(made.patientId)).toMatchObject([
+      { channel: 'whatsapp', state: 'opted_in', source: 'patient_email_link' },
+    ]);
+    expect(await choices(other.patientId)).toEqual([]);
+  });
+
+  it('opens an identity review for reception instead', async () => {
+    const other = await request(false);
+
+    await follow(other.token, 'POST');
+
+    const items = await scheduling.inTenant((tx) =>
+      tx
+        .select({ kind: worklistItem.kind, subjectId: worklistItem.subjectId })
+        .from(worklistItem)
+        .where(eq(worklistItem.subjectId, other.appointment.id)),
+    );
+    expect(items).toEqual([{ kind: 'identity_review', subjectId: other.appointment.id }]);
+  });
+});
+
+describe('a BAJA and the links that accept WhatsApp (JD-S3 R2-B10)', () => {
+  it('revokes the pending link of the patient, so following it later does not opt them back in', async () => {
+    const { appointment, patientId } = await booking();
+    const requested = await scheduling.inTenant(
+      async (tx) =>
+        (await notifier().requestWhatsAppOptIn?.(tx, {
+          ...submissionOf(appointment, patientId, true),
+          at: notes.now(),
+        })) ?? null,
+    );
+    await scheduling.inTenant((tx) =>
+      recordOptOut(tx, { patientId, channel: 'whatsapp', source: 'whatsapp_keyword', actor }),
+    );
+
+    const page = await scheduling.app.inject({
+      method: 'POST',
+      url: `/public/t/${requested?.token ?? ''}`,
+      headers: {
+        host: `${scheduling.slug}.${BASE_DOMAIN}`,
+        origin: `https://${scheduling.slug}.${BASE_DOMAIN}`,
+        'content-type': 'application/x-www-form-urlencoded',
+      },
+      payload: 'choice=accept',
+    });
+
+    expect(page.statusCode).toBe(404);
+    const choices = await scheduling.inTenant((tx) =>
+      tx.select().from(channelPreference).where(eq(channelPreference.patientId, patientId)),
+    );
+    expect(choices.map((choice) => choice.state)).toEqual(['opted_out']);
+  });
+
+  it('revokes the link staff sent from the record too', async () => {
+    const patientId = await notes.patient({ phone: '+5491155550188' });
+    const issued = await scheduling.inTenant((tx) =>
+      createActionTokens({ clock: () => notes.now() }).issue(tx, {
+        kind: 'whatsapp_opt_in',
+        subjectId: patientId,
+      }),
+    );
+    await scheduling.inTenant((tx) =>
+      recordOptOut(tx, { patientId, channel: 'whatsapp', source: 'whatsapp_keyword', actor }),
+    );
+
+    const inspected = await scheduling.inTenant((tx) =>
+      createActionTokens({ clock: () => notes.now() }).inspect(tx, 'whatsapp_opt_in', issued.token),
+    );
+
+    expect(inspected).toBeNull();
   });
 });

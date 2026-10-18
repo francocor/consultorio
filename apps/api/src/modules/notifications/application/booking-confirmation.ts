@@ -10,6 +10,7 @@ import { hashAddress } from '../domain/address.js';
 import { classifyEmailFailure, MAX_ATTEMPTS } from '../domain/delivery-rules.js';
 
 import { loadTenantState } from './context.js';
+import { optInPayload } from './whatsapp-opt-in.js';
 
 /**
  * The confirmation of an online booking, as the notifications module sends it (spec "Automatic
@@ -128,11 +129,12 @@ export function createBookingNotifier(deps: BookingNotifierDeps): BookingNotifie
   return {
     requestWhatsAppOptIn: async (tx, input) => {
       // A number typed into a public form is nobody's yet: the choice waits for the patient to
-      // follow a link sent to the address that was verified. A newer request replaces the older link.
-      await deps.tokens.revokeForSubject(tx, 'whatsapp_opt_in', input.patientId);
+      // follow a link sent to the address that was verified. Every submission that ticked the box
+      // gets its link, whoever the document belongs to (judgment day round 2, finding A1).
       const issued = await deps.tokens.issue(tx, {
         kind: 'whatsapp_opt_in',
-        subjectId: input.patientId,
+        subjectId: input.submissionId,
+        payload: optInPayload(input),
       });
       return { token: issued.token };
     },

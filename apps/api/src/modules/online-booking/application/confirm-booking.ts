@@ -10,6 +10,7 @@ import type { AppointmentFacts } from '../../../platform/events/appointment-even
 import type { ActionTokens } from '../../../platform/tokens/index.js';
 import {
   createOnlinePatient,
+  findOnlineRecordOfItsOwn,
   findPatientByDocument,
   type OnlinePatientMatch,
 } from '../../patients/index.js';
@@ -41,11 +42,11 @@ import {
 
 /**
  * What registering a new person costs over reviewing an existing patient, in statements sent to
- * Postgres, and what ticking WhatsApp adds. The existing-patient branch sends this many reads so the
- * two cannot be told apart by the work behind the answer (pinned by `public-nondisclosure.test.ts`).
+ * Postgres. The existing-patient branch sends this many reads so the two cannot be told apart by the
+ * work behind the answer (pinned by `public-nondisclosure.test.ts`). Ticking WhatsApp adds nothing to
+ * either: both ask for the link of the submission.
  */
 export const NEW_PERSON_EXTRA_STATEMENTS = 6;
-export const WHATSAPP_OPT_IN_EXTRA_STATEMENTS = 2;
 /** What opening the identity review of a match costs, which a new person does not need. */
 export const REVIEW_ITEM_STATEMENTS = 1;
 
@@ -214,11 +215,25 @@ export async function confirmBooking(
     linkLimit: offer.link.maxUnconfirmedAppointments,
     now: input.now,
   });
+  // The record of its own that this verified address already has (an earlier booking that could not
+  // stand on a record with its document). Always looked up, so that the work behind the answer does
+  // not depend on the document; used only by a booking that is detached.
+  const ofItsOwn = await findOnlineRecordOfItsOwn(tx, {
+    email: submission.email,
+    givenNames: payload.givenNames,
+    familyName: payload.familyName,
+    birthDate: payload.birthDate,
+  });
   let patientId: string;
   let identityConfirmed: boolean;
   let createdPatient = false;
   if (match && detachedBecause === null) {
     patientId = match.id;
+    identityConfirmed = false;
+  } else if (match && ofItsOwn) {
+    // The same person under the same verified address again: the record they already have, not
+    // another one. Nothing is written on it, and reception is asked to look at the booking.
+    patientId = ofItsOwn.id;
     identityConfirmed = false;
   } else {
     patientId = (
@@ -336,15 +351,22 @@ export async function confirmBooking(
 
   let whatsappOptInToken: string | null = null;
   if (payload.whatsappOptIn && deps.notifier.requestWhatsAppOptIn) {
-    if (createdPatient) {
-      // Only a request: the number is unverified, so nothing is recorded until the patient follows
-      // the link that goes to the address they did verify (decision D22).
-      whatsappOptInToken =
-        (await deps.notifier.requestWhatsAppOptIn(tx, { patientId, at: input.now }))?.token ?? null;
-    } else {
-      // The choice of somebody else's record is not written, but the work looks the same.
-      await evenOut(tx, WHATSAPP_OPT_IN_EXTRA_STATEMENTS);
-    }
+    // Only a request: the number is unverified, so nothing is recorded until the patient follows
+    // the link that goes to the address they did verify (decision D22). The link exists whoever the
+    // document belongs to, so the email does not tell the visitor whether it was on file; the
+    // token remembers whether this booking created the patient, and following it records the
+    // opt-in only then.
+    whatsappOptInToken =
+      (
+        await deps.notifier.requestWhatsAppOptIn(tx, {
+          submissionId: submission.id,
+          patientId,
+          created: createdPatient,
+          appointmentId: appointment.id,
+          locationId: hold.locationId,
+          at: input.now,
+        })
+      )?.token ?? null;
   }
   // Every way through costs the same, as seen from outside: registering a new person, reviewing a
   // match, and registering a record of its own for a booking that cannot use the match (which does

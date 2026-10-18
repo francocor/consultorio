@@ -12,7 +12,25 @@ import { TOKEN_PATH } from './links.js';
  * Nobody verified that number, so the choice on the form is only a request: the patient gets a link
  * at the address that WAS verified, and the opt-in exists once they follow it. Until then the
  * patient's messages go by email (a patient with no opt-in is never written to over WhatsApp).
+ *
+ * The link exists for EVERY submission that ticked the box, whoever the document belongs to (judgment
+ * day round 2, finding A1): an email that carried it only when the form had created the patient
+ * would tell the visitor that a document was already on file. So the token belongs to the
+ * SUBMISSION, not to a patient. It remembers the patient and whether this submission created them;
+ * when it is followed, the opt-in is recorded only if it did, and in any other case reception is
+ * asked to look, and the patient sees the same page.
  */
+
+/** What the token of a submission remembers (its payload). */
+export interface OptInRequest {
+  /** The record the submission ended on, or none (an entry that was refused). */
+  patientId: string | null;
+  /** True when this submission created that record: only then may following the link opt in. */
+  created: boolean;
+  /** The appointment of a booking, for the item reception is asked to look at. */
+  appointmentId?: string | undefined;
+  locationId?: string | undefined;
+}
 
 export interface WhatsappOptInEmail {
   tenant: { id: string; slug: string; isDemo: boolean };
@@ -24,13 +42,26 @@ export interface WhatsappOptInEmail {
 }
 
 export interface WhatsappOptInRequests {
-  /** In the transaction that registers the patient: a newer request replaces the older link. */
-  request(tx: Tx, input: { patientId: string; at: Date }): Promise<{ token: string }>;
+  /** In the transaction that registers the submission: prepares the link of that submission. */
+  request(
+    tx: Tx,
+    input: OptInRequest & { submissionId: string; at: Date },
+  ): Promise<{ token: string }>;
   /** After that transaction committed: emails the link. */
   send(input: WhatsappOptInEmail): Promise<void>;
 }
 
 const DAY_MS = 86_400_000;
+
+/** The payload of the token of a submission. */
+export function optInPayload(input: OptInRequest): Record<string, unknown> {
+  return {
+    patientId: input.patientId,
+    created: input.created,
+    ...(input.appointmentId === undefined ? {} : { appointmentId: input.appointmentId }),
+    ...(input.locationId === undefined ? {} : { locationId: input.locationId }),
+  };
+}
 
 export function createWhatsappOptInRequests(deps: {
   tokens: ActionTokens;
@@ -40,10 +71,10 @@ export function createWhatsappOptInRequests(deps: {
 }): WhatsappOptInRequests {
   return {
     async request(tx, input) {
-      await deps.tokens.revokeForSubject(tx, 'whatsapp_opt_in', input.patientId);
       const issued = await deps.tokens.issue(tx, {
         kind: 'whatsapp_opt_in',
-        subjectId: input.patientId,
+        subjectId: input.submissionId,
+        payload: optInPayload(input),
       });
       return { token: issued.token };
     },

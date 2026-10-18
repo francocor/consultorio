@@ -9,7 +9,7 @@ import { appointment } from '../../../db/schema/scheduling.js';
 import type { AuditActor } from '../../../platform/audit/writer.js';
 import { currentTenantId, type Tx } from '../../../platform/db/tenant-context.js';
 import { readOrganizationName } from '../../tenancy/index.js';
-import { hashAddress } from '../domain/address.js';
+import { hashAddress, legacyAddressHash } from '../domain/address.js';
 import { classifyReply } from '../domain/keywords.js';
 import { withinCancelDeadline } from '../domain/validity.js';
 
@@ -73,12 +73,21 @@ export async function processInbound(
     from: string;
     /** Another organization could be the one this reply is about: only an opt-out acts. */
     ambiguous?: boolean;
+    /**
+     * Among several candidates, the one that wrote to the number last: the best guess for whose reply
+     * this is. Only it keeps the text of a reply for reception; the others are told a reply came in.
+     * A reply may contain health information, and it must not be copied to every organization that
+     * once wrote to the number (judgment day round 2, finding B8).
+     */
+    primary?: boolean;
     /** The provider id of the message the reply quotes, already known to be this organization's. */
     quotedMessageId?: string;
   },
 ): Promise<InboundResult> {
   const tenantId = await currentTenantId(tx);
   const fromHash = hashAddress('whatsapp', options.from);
+  // The log may still hold the unsalted hash of this number until the rehash has reached it.
+  const knownHashes = [fromHash, legacyAddressHash('whatsapp', options.from)];
   const [recorded] = await tx
     .insert(inboundMessage)
     .values({
@@ -105,22 +114,25 @@ export async function processInbound(
   const written = await tx
     .selectDistinct({ patientId: message.patientId })
     .from(message)
-    .where(and(eq(message.channel, 'whatsapp'), eq(message.addressHash, fromHash)));
+    .where(and(eq(message.channel, 'whatsapp'), inArray(message.addressHash, knownHashes)));
   const patientIds = written.map((row) => row.patientId);
   if (patientIds.length === 0) return finish('ignored');
 
   const review = async (
     reason?: 'several_organizations' | 'cancel_deadline',
   ): Promise<InboundResult> => {
+    const shared = options.ambiguous === true;
+    const withText = !shared || options.primary === true;
+    const why = reason ?? (shared ? 'several_organizations' : undefined);
     await deps.worklist.open(tx, {
       kind: 'reply_to_review',
       subjectType: 'inbound_message',
       subjectId: recorded.id,
       locationId: null,
       detail: {
-        text: event.text.slice(0, MAX_REVIEW_TEXT),
+        ...(withText ? { text: event.text.slice(0, MAX_REVIEW_TEXT) } : {}),
         patientIds,
-        ...(reason === undefined ? {} : { reason }),
+        ...(why === undefined ? {} : { reason: why }),
       },
     });
     return finish('needs_review');
@@ -162,7 +174,7 @@ export async function processInbound(
     .where(
       and(
         eq(message.channel, 'whatsapp'),
-        eq(message.addressHash, fromHash),
+        inArray(message.addressHash, knownHashes),
         ...(options.quotedMessageId === undefined
           ? []
           : [eq(message.providerMessageId, options.quotedMessageId)]),

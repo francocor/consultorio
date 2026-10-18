@@ -4,6 +4,7 @@ import type {
   BotChallenge,
   BotChallengeToken,
 } from '../../platform/bot-challenge/bot-challenge.js';
+import { clientKeyOf } from '../../platform/http/rate-limit.js';
 
 /** How long a puzzle can be solved after it was issued. */
 export const LOCAL_CHALLENGE_LIFETIME_MS = 5 * 60_000;
@@ -50,7 +51,12 @@ export function leadingZeroBits(bytes: Uint8Array): number {
   return bits;
 }
 
-/** The signature covers the address the puzzle was issued to, so a proof cannot be carried elsewhere. */
+/**
+ * The signature covers the client the puzzle was issued to, so a proof cannot be carried elsewhere.
+ * The client is the key the rate limiter uses (`clientKeyOf`: an IPv6 /64, an IPv4 address), not
+ * the raw address: a phone that rotates its IPv6 privacy address while the visitor fills in the
+ * form is the same subscriber, and must not have its proof refused.
+ */
 function sign(
   secret: Buffer,
   id: string,
@@ -121,7 +127,7 @@ export function solveProofOfWork(token: BotChallengeToken): string {
  * before. It makes a script pay for every form it submits; it does not tell people from patient
  * machines, which is what Cloudflare Turnstile will add behind the same port.
  *
- * A puzzle is issued to one address and solves only from it (the signature covers the address).
+ * A puzzle is issued to one client (see `clientKeyOf`) and solves only from it.
  * Used puzzles live in memory until they would have expired anyway, so a replay is refused for as
  * long as it could have been valid. A live entry is never dropped to make room: when the memory is
  * full, new proofs are refused until some expire, which is the safe way to fail.
@@ -183,7 +189,8 @@ export function createLocalBotChallenge(options: LocalBotChallengeOptions = {}):
   }
 
   return {
-    issue(ip) {
+    issue(address) {
+      const ip = clientKeyOf(address);
       const at = now();
       const id = randomBytes(16).toString('base64url');
       const expiresAt = at + LOCAL_CHALLENGE_LIFETIME_MS;
@@ -200,7 +207,8 @@ export function createLocalBotChallenge(options: LocalBotChallengeOptions = {}):
       return Promise.resolve(token);
     },
 
-    verify(proof, ip) {
+    verify(proof, address) {
+      const ip = clientKeyOf(address);
       const at = now();
       prune(at);
       if (blocked(ip, at)) return Promise.resolve(false);

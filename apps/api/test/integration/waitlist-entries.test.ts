@@ -601,3 +601,62 @@ describe('who sees which entries (JD-S3 B12)', () => {
     expect(pause.statusCode).toBe(404);
   });
 });
+
+describe('the scope of the entries also holds for what is listed and what is changed (JD-S3 R2-C6)', () => {
+  it('fills the page of a list with entries the member may see, not with the ones they may not', async () => {
+    // An entry for Norte that sorts before every other one (priority 2), and one for any place.
+    const hidden = await world.api.post(
+      '/waitlist',
+      world.owner,
+      body(await reachablePatient(), { locationId: world.norte }),
+    );
+    expect(hidden.statusCode, hidden.body).toBe(201);
+    const raised = await world.api.post(
+      `/waitlist/${hidden.json<WaitlistEntryDto>().id}/priority`,
+      world.owner,
+      { priority: 2 },
+    );
+    expect(raised.statusCode, raised.body).toBe(200);
+    const anywhere = await add(await reachablePatient());
+
+    const page = await world.api.get('/waitlist?limit=1', world.reception);
+
+    expect(page.statusCode, page.body).toBe(200);
+    const entries = page.json<WaitlistListResponse>().entries;
+    expect(entries).toHaveLength(1);
+    expect(entries[0]?.locationId === null || entries[0]?.locationId === world.centro).toBe(true);
+    expect(anywhere.id).toBeTruthy();
+  });
+
+  it('does not let an edit move an entry to a place outside the scope of the member', async () => {
+    const entry = await add(await reachablePatient());
+
+    const moved = await world.api.patch(`/waitlist/${entry.id}`, world.reception, {
+      locationId: world.norte,
+    });
+
+    expect(moved.statusCode, moved.body).toBe(404);
+    const unchanged = await world.api.get(`/waitlist/${entry.id}`, world.owner);
+    expect(unchanged.json<{ entry: WaitlistEntryDto }>().entry.locationId).toBeNull();
+  });
+
+  it("does not let a professional point an entry at a colleague's calendar", async () => {
+    const mine = await world.api.post(
+      '/waitlist',
+      world.doctor,
+      body(await reachablePatient(), { professionalId: world.doctor.professionalId }),
+    );
+    expect(mine.statusCode, mine.body).toBe(201);
+    const id = mine.json<WaitlistEntryDto>().id;
+
+    const moved = await world.api.patch(`/waitlist/${id}`, world.doctor, {
+      professionalId: world.colleague.professionalId,
+    });
+
+    expect(moved.statusCode, moved.body).toBe(404);
+    const unchanged = await world.api.get(`/waitlist/${id}`, world.owner);
+    expect(unchanged.json<{ entry: WaitlistEntryDto }>().entry.professionalId).toBe(
+      world.doctor.professionalId,
+    );
+  });
+});

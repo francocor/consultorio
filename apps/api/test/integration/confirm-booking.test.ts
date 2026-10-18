@@ -551,6 +551,119 @@ describe('the limits of a contact are applied to the address that was verified (
   });
 });
 
+describe('bookings that stand on a record of their own (JD-S3 R2-C5, D23)', () => {
+  /** A deactivated record: a booking with its document cannot stand on it, so it is detached. */
+  async function inactiveDocument(number: string) {
+    await world.inTenant((tx) =>
+      tx.execute(
+        sql`INSERT INTO patient (tenant_id, family_name, given_names, birth_date, national_id_type, national_id, status)
+              VALUES (${world.tenant.id}, 'Baja', 'Beto', '1970-01-01', 'dni', ${number}, 'inactive')`,
+      ),
+    );
+  }
+
+  const documentlessOf = (email: string) =>
+    world.inTenant((tx) =>
+      tx
+        .select({ id: patient.id })
+        .from(patient)
+        .where(and(eq(patient.email, email), sql`${patient.nationalId} is null`)),
+    );
+
+  it('reuses the record of its own that the same verified address, name and birth date already have', async () => {
+    await inactiveDocument('29200001');
+    await inactiveDocument('29200002');
+    const same = {
+      email: 'repetida@example.test',
+      givenNames: 'Rosa',
+      familyName: 'Repetida',
+      birthDate: '1991-01-01',
+    };
+    // One after the other: the code of an address is the latest one sent to it.
+    const first = await submitted({ ...same, document: { type: 'dni', number: '29200001' } });
+    const firstAnswer = await confirm(first);
+    const second = await submitted({ ...same, document: { type: 'dni', number: '29200002' } });
+    const answers = [firstAnswer, await confirm(second)];
+
+    expect(answers.map((answer) => answer.statusCode)).toEqual([200, 200]);
+    expect(visible(answers[1] as LightMyRequestResponse)).toEqual(
+      visible(answers[0] as LightMyRequestResponse),
+    );
+    const owners = [await appointmentOf(first.hold.id), await appointmentOf(second.hold.id)].map(
+      (row) => row?.patientId,
+    );
+    expect(owners[1]).toBe(owners[0]);
+    expect(await documentlessOf(same.email)).toHaveLength(1);
+  });
+
+  it('does not reuse the record for another name or birth date on the same address', async () => {
+    await inactiveDocument('29200003');
+    await inactiveDocument('29200004');
+    const email = 'compartida@example.test';
+    const first = await submitted({
+      email,
+      givenNames: 'Ana',
+      familyName: 'Uno',
+      document: { type: 'dni', number: '29200003' },
+    });
+    await confirm(first);
+    const second = await submitted({
+      email,
+      givenNames: 'Ana',
+      familyName: 'Dos',
+      document: { type: 'dni', number: '29200004' },
+    });
+    await confirm(second);
+
+    expect(await documentlessOf(email)).toHaveLength(2);
+  });
+
+  it('counts a booking that was detached toward the unconfirmed limit of the link', async () => {
+    const other = await world.addProfessional();
+    const own = await world.openLinks({ doctor: other });
+    const set = await world.api.patch(`/booking-links/${own.professional.id}`, world.owner, {
+      maxUnconfirmedAppointments: 1,
+    });
+    expect(set.statusCode, set.body).toBe(200);
+    await inactiveDocument('29200005');
+    const onFile = await world.inTenant(async (tx) => {
+      const result = await tx.execute<{ id: string }>(
+        sql`INSERT INTO patient (tenant_id, family_name, given_names, birth_date, national_id_type, national_id)
+              VALUES (${world.tenant.id}, 'Registrada', 'Rita', '1982-02-02', 'dni', '29200006') RETURNING id`,
+      );
+      return result.rows[0]?.id ?? '';
+    });
+    const bookOnTheLink = async (number: string) => {
+      world.setNow(EARLY);
+      week += 1;
+      const visitor = world.visitor();
+      const hold = await world.hold(visitor, own, { weeksAfter: week, time: '10:00' });
+      const form = world.form({ document: { type: 'dni', number } });
+      const submission = await visitor.post(
+        `/public/${own.organization.slug}/booking/holds/${hold.id}/submission`,
+        { ...form, challengeProof: await visitor.solve() },
+      );
+      expect(submission.statusCode, submission.body).toBe(200);
+      await world.runJobs();
+      return { visitor, hold, form };
+    };
+    // The first is detached (a deactivated record) and takes the only place of the link.
+    const detached = await bookOnTheLink('29200005');
+    const onRecord = await bookOnTheLink('29200006');
+
+    await confirm(detached);
+    await confirm(onRecord);
+
+    // The second would have been attached to the patient on file; the link is full, so it is not.
+    const stored = await appointmentOf(onRecord.hold.id);
+    expect(stored?.patientId).not.toBe(onFile);
+    const items = (await openItems('identity_review')).filter(
+      (item) => item.subjectId === stored?.id,
+    );
+    expect(JSON.stringify(items[0]?.detail)).toContain('link_limit');
+  });
+});
+
 describe('an organization that requires approval', () => {
   it('leaves the appointment pending, shows it on the worklist and keeps the identity separate from the approval', async () => {
     await world.api.patch('/settings', world.owner, { onlineBooking: { requireApproval: true } });

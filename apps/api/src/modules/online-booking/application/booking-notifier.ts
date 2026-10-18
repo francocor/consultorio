@@ -37,13 +37,24 @@ export interface BookingNotice {
  */
 export interface BookingNotifier {
   /**
-   * Prepares the request to accept WhatsApp that the visitor made on the form, for a patient
-   * created by this booking, and returns the token of its link. It records no opt-in: that happens
-   * when the patient follows the link. Absent while the notifications module has no preferences.
+   * Prepares the request to accept WhatsApp that the visitor made on the form, and returns the
+   * token of its link. It is asked for EVERY submission that ticked the box, whoever the document
+   * belongs to: a link that existed only for a patient this booking created would tell the visitor
+   * that a document was already on file. The token belongs to the submission and remembers whether
+   * this booking created the patient; it records no opt-in itself: that happens when the link is
+   * followed, and only if it did. Absent while the notifications module has no preferences.
    */
   requestWhatsAppOptIn?(
     tx: Tx,
-    input: { patientId: string; at: Date },
+    input: {
+      submissionId: string;
+      patientId: string;
+      /** True when this booking registered the patient. */
+      created: boolean;
+      appointmentId: string;
+      locationId: string;
+      at: Date;
+    },
   ): Promise<{ token: string } | null>;
   /**
    * Tells the patient. Called after the booking is committed, never inside its transaction, and

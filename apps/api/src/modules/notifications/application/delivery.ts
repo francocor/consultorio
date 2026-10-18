@@ -109,7 +109,17 @@ export type ProviderResult =
   | { status: 'retryable'; reason: string }
   | { status: 'rejected'; reason: MessageFailureReason };
 
-const WORKLIST_KINDS: ReadonlySet<MessageKind> = new Set(['reminder', 'confirmation']);
+/**
+ * The messages whose failure to reach the patient reception is told about. The follow-up with the
+ * video link is one: the patient was promised it, so a follow-up that cannot arrive before the call
+ * (quiet hours, no channel, a failure) leaves a worklist item and not a silent cancellation
+ * (judgment day round 2, finding B11).
+ */
+const WORKLIST_KINDS: ReadonlySet<MessageKind> = new Set([
+  'reminder',
+  'confirmation',
+  'video_link',
+]);
 
 function cancelReasonOf(skip: SkipReason | undefined): MessageCancelReason {
   switch (skip) {
@@ -151,6 +161,8 @@ async function channelOptions(
   tx: Tx,
   situation: Pick<Situation, 'tenant' | 'settings'>,
   professionalId: string | null,
+  /** The message asking, when it may already hold a place of the quota (a retry). */
+  ownMessageId?: string,
 ) {
   return {
     whatsappEnabled:
@@ -163,6 +175,7 @@ async function channelOptions(
         tx,
         professionalId,
         deps.clock(),
+        ownMessageId,
       )),
   };
 }
@@ -489,12 +502,35 @@ async function withoutQuota(
   });
 }
 
-/** Step 1. Runs in a transaction of its own, which is committed before the provider is called. */
-export function prepareDelivery(
+const DEADLOCK = '40P01';
+const PREPARE_ATTEMPTS = 3;
+
+function isDeadlock(error: unknown): boolean {
+  const own = (error as { code?: unknown } | null)?.code;
+  const cause = (error as { cause?: { code?: unknown } } | null)?.cause?.code;
+  return own === DEADLOCK || cause === DEADLOCK;
+}
+
+/**
+ * Step 1. Runs in a transaction of its own, which is committed before the provider is called. If
+ * Postgres picks it as the victim of a deadlock with a change of the agenda, nothing was committed
+ * and nothing was sent, so it simply runs again (judgment day round 2, finding B5).
+ */
+export async function prepareDelivery(
   deps: MessagingDeps,
   tenantId: string,
   messageId: string,
 ): Promise<Prepared> {
+  for (let attempt = 1; ; attempt += 1) {
+    try {
+      return await prepareOnce(deps, tenantId, messageId);
+    } catch (error) {
+      if (attempt >= PREPARE_ATTEMPTS || !isDeadlock(error)) throw error;
+    }
+  }
+}
+
+function prepareOnce(deps: MessagingDeps, tenantId: string, messageId: string): Promise<Prepared> {
   return deps.withTenant({ tenantId, userId: SYSTEM_USER_ID }, async (tx): Promise<Prepared> => {
     const [row] = await tx.select().from(message).where(eq(message.id, messageId)).for('update');
     if (!row || row.status !== 'queued') return { kind: 'idle' };
@@ -557,7 +593,7 @@ export function prepareDelivery(
     const decision = selectChannels(
       kind,
       recipient.facts,
-      await channelOptions(deps, tx, situation, row.professionalId),
+      await channelOptions(deps, tx, situation, row.professionalId, row.id),
     );
     const sender =
       channel === 'email' ? deps.channels.email(tenant) : deps.channels.whatsapp(tenant);
@@ -756,6 +792,11 @@ export async function failAcceptedMessage(
     .where(and(eq(message.id, messageId), inArray(message.status, ['sent', 'queued'])))
     .returning();
   if (!failed) return false;
+  // The provider said it did not deliver: the place it held in the quota is free again, also when
+  // it had been confirmed on acceptance.
+  if (failed.channel === 'whatsapp') {
+    await releaseWhatsappUsage(tx, failed.id, { includeConfirmed: true });
+  }
   const state = await loadTenantState(tx, failed.tenantId);
   if (!state || state.isDemo) return true;
   await continueAfterFailure(deps, tx, failed, { id: state.id, isDemo: false });

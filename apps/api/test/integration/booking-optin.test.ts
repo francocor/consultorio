@@ -28,7 +28,7 @@ import { createBookingWorld, type BookingWorld, type Visitor } from '../support/
 let runtime: DbHandle;
 let world: BookingWorld;
 let links: Awaited<ReturnType<BookingWorld['openLinks']>>;
-const optIns: { patientId: string; at: Date }[] = [];
+const optIns: { patientId: string; created: boolean; at: Date }[] = [];
 const notices: { whatsappOptInToken: string | null }[] = [];
 
 const EARLY = new Date('2031-05-05T12:00:00.000Z');
@@ -130,6 +130,7 @@ describe('the WhatsApp choice at booking', () => {
       )
       .then((result) => result.rows);
     expect(optIns[0]?.patientId).toBe(created?.id);
+    expect(optIns[0]?.created).toBe(true);
   });
 
   it('asks for nothing when the box stays unticked', async () => {
@@ -142,7 +143,7 @@ describe('the WhatsApp choice at booking', () => {
     expect(notices.at(-1)?.whatsappOptInToken).toBeNull();
   });
 
-  it('asks for nothing on a record the organization already had, whoever ticked the box', async () => {
+  it('asks the same on a record the organization already had, saying it did not create it, so the email does not tell (JD-S3 R2-A1)', async () => {
     optIns.length = 0;
     await world.inTenant((tx) =>
       tx.execute(
@@ -154,7 +155,8 @@ describe('the WhatsApp choice at booking', () => {
     notices.length = 0;
     await confirmed({ whatsappOptIn: true, document: { type: 'dni', number: '31000999' } });
 
-    expect(optIns).toEqual([]);
-    expect(notices.at(-1)?.whatsappOptInToken).toBeNull();
+    expect(optIns).toHaveLength(1);
+    expect(optIns[0]?.created).toBe(false);
+    expect(notices.at(-1)?.whatsappOptInToken).toBe('OPT-IN-TOKEN');
   });
 });

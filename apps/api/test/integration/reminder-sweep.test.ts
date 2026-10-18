@@ -3,6 +3,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, inject, it } from 'v
 
 import { message } from '../../src/db/schema/notifications.js';
 import { worklistItem } from '../../src/db/schema/worklist.js';
+import { rehashLegacyAddresses } from '../../src/modules/notifications/application/address-rehash.js';
 import { createReminderSweepJob } from '../../src/modules/notifications/application/sweep.js';
 import { hashAddress, legacyAddressHash } from '../../src/modules/notifications/domain/address.js';
 import { createRuntimeDb, type DbHandle } from '../../src/platform/db/pool.js';
@@ -257,6 +258,42 @@ describe('reminder.sweep: addresses hashed before the pepper', () => {
   });
 });
 
+describe('the address rehash goes newest first (JD-S3 R2-C4)', () => {
+  it('rehashes the most recent messages first, so a patient who wrote lately is found before the log is done', async () => {
+    const { patientId, appointment } = await bookedFor({ email: 'reciente@example.test' });
+    const ids: string[] = [];
+    for (const [index, day] of ['01', '02', '03'].entries()) {
+      ids.push(
+        await notes.queue({
+          kind: 'reminder',
+          patientId,
+          appointmentId: appointment.id,
+          plannedStartsAt: new Date(appointment.startsAt),
+          appointmentVersion: appointment.version,
+          dedupeKey: `rehash-order:${appointment.id}:${String(index)}`,
+        }),
+      );
+      await scheduling.inTenant((tx) =>
+        tx.execute(
+          sql`UPDATE message SET created_at = ${`2031-04-${day}T00:00:00Z`}::timestamptz,
+                                  address_hash = ${legacyAddressHash('email', 'reciente@example.test')}
+               WHERE id = ${ids[index] ?? ''}`,
+        ),
+      );
+    }
+
+    // A batch of one: only the newest row can be done.
+    await scheduling.inTenant((tx) => rehashLegacyAddresses(tx, { batch: 1 }));
+
+    const hashes = await Promise.all(ids.map(async (id) => (await notes.message(id)).addressHash));
+    expect(hashes).toEqual([
+      legacyAddressHash('email', 'reciente@example.test'),
+      legacyAddressHash('email', 'reciente@example.test'),
+      hashAddress('email', 'reciente@example.test'),
+    ]);
+  });
+});
+
 describe('reminder.sweep: more appointments than a page (JD-S3 B9)', () => {
   it('goes through every appointment of the horizon, page after page, not just the nearest ones', async () => {
     // Five patients nobody can remind, each with an appointment: with pages of two, the nearest
@@ -297,5 +334,30 @@ describe('reminder.sweep: more appointments than a page (JD-S3 B9)', () => {
 
     expect(await openItems(appointment.id)).toEqual([]);
     expect(await notes.messagesOf(appointment.id)).toHaveLength(1);
+  });
+});
+
+describe('reminder.sweep: housekeeping of other modules (JD-S3 R2-C7)', () => {
+  it('runs what the composition root plugged in, once per sweep, in the sweep transaction', async () => {
+    const calls: Date[] = [];
+    const definition = createReminderSweepJob({
+      ...notes.deps,
+      housekeeping: [
+        (_tx, now) => {
+          calls.push(now);
+          return Promise.resolve();
+        },
+      ],
+    });
+
+    await runJob(runtime.db, definition, {
+      id: crypto.randomUUID(),
+      name: 'reminder.sweep',
+      data: { tenantId: scheduling.tenant.id },
+      enqueuedAt: notes.now(),
+      retryCount: 0,
+    });
+
+    expect(calls).toEqual([notes.now()]);
   });
 });

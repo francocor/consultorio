@@ -54,6 +54,36 @@ describe('leadingZeroBits', () => {
   });
 });
 
+describe('the address a proof is bound to (JD-S3 R2-C8)', () => {
+  it('accepts a proof from another address of the same IPv6 /64, as the rate limiter counts them', async () => {
+    const { challenge } = local();
+    const token = await challenge.issue('2001:db8:1:2:aaaa:bbbb:cccc:dddd');
+
+    // A privacy-extension rotation changes the last 64 bits; the subscriber is the same.
+    expect(
+      await challenge.verify(solveProofOfWork(token), '2001:db8:1:2:1111:2222:3333:4444'),
+    ).toBe(true);
+  });
+
+  it('treats an IPv4-mapped IPv6 address as the IPv4 address', async () => {
+    const { challenge } = local();
+    const token = await challenge.issue('203.0.113.7');
+
+    expect(await challenge.verify(solveProofOfWork(token), '::ffff:203.0.113.7')).toBe(true);
+  });
+
+  it('still refuses a proof carried to another subscriber', async () => {
+    const { challenge } = local();
+    const token = await challenge.issue('2001:db8:1:2:aaaa:bbbb:cccc:dddd');
+
+    expect(
+      await challenge.verify(solveProofOfWork(token), '2001:db8:1:3:aaaa:bbbb:cccc:dddd'),
+    ).toBe(false);
+    const other = await challenge.issue('203.0.113.7');
+    expect(await challenge.verify(solveProofOfWork(other), '203.0.113.8')).toBe(false);
+  });
+});
+
 describe('local proof of work', () => {
   it('asks for the configured difficulty and signs it', async () => {
     const { challenge } = local({ difficulty: 10 });

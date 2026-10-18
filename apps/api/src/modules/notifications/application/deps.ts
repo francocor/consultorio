@@ -29,7 +29,10 @@ export interface Channels {
 
 /** What messaging asks of the reception worklist (the queue itself belongs to scheduling). */
 export interface WorklistItem {
-  kind: Extract<WorklistKind, 'reminder_not_sent' | 'reminder_not_delivered' | 'reply_to_review'>;
+  kind: Extract<
+    WorklistKind,
+    'reminder_not_sent' | 'reminder_not_delivered' | 'reply_to_review' | 'identity_review'
+  >;
   subjectType: WorklistSubjectType;
   subjectId: string;
   locationId: string | null;
@@ -58,6 +61,11 @@ export interface MessagingDeps {
   origins: PublicOrigins;
   tokens: ActionTokens;
   worklist: Worklist;
+  /**
+   * Housekeeping other modules ask the hourly sweep to do for an organization (the composition root
+   * plugs them in; the modules never import each other). Each one runs in the sweep's transaction.
+   */
+  housekeeping?: readonly ((tx: Tx, now: Date) => Promise<void>)[];
   /** Encrypts what messaging keeps that is a capability (the address of an offer). */
   keys: TenantKeys;
   /** The plan's WhatsApp quota. Absent: no quota, everything is allowed and counted. */

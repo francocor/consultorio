@@ -254,6 +254,29 @@ test('inside the window the address forwards to the call, and the link opened is
   expect((await summaryOf(owner, inWindow.appointmentId)).patientOpenedLink).toBe(true);
 });
 
+test('the button of the join page takes a real browser to the call (JD-S3 R2-C3)', async ({
+  page,
+  playwright,
+}) => {
+  // A browser posts the form as `application/x-www-form-urlencoded` and checks the redirect that
+  // answers the post against the policy of the page; an API client does neither. The provider's
+  // address is a `.invalid` name, which never resolves, so the browser getting as far as the name
+  // lookup is the proof: a redirect refused by the policy of the page fails as `ERR_BLOCKED_BY_CSP`
+  // before any lookup. No route or setting bypasses the policy.
+  const link = await patientLink(playwright, inWindow.appointmentId);
+  const toCall = page.waitForEvent('requestfailed', {
+    predicate: (request) => request.url().startsWith(FAKE_CALL),
+    timeout: 15_000,
+  });
+
+  await page.goto(link);
+  await page.getByRole('button', { name: 'Entrar a la videoconsulta' }).click();
+
+  const attempt = await toCall;
+  expect(attempt.url()).toMatch(new RegExp(`^${FAKE_CALL.replaceAll('.', '\\.')}[0-9a-f]{32}$`));
+  expect(attempt.failure()?.errorText).toBe('net::ERR_NAME_NOT_RESOLVED');
+});
+
 test('a link that does not exist looks the same as an old one, on a phone', async ({ page }) => {
   await page.goto(urlOf('aillu', `/public/v/${'a'.repeat(43)}`));
 

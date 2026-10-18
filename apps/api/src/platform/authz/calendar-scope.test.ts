@@ -2,7 +2,7 @@ import type { Role } from '@consultorio/contracts';
 import { describe, expect, it } from 'vitest';
 
 import type { Actor } from './actor.js';
-import { calendarAccess } from './calendar-scope.js';
+import { calendarAccess, calendarProfessionalIds } from './calendar-scope.js';
 import { can } from './can.js';
 
 const TENANT = '0190a000-0000-7000-8000-0000000000e1';
@@ -100,4 +100,31 @@ describe('can() with the calendar of the resource', () => {
       reason: 'not_permitted',
     });
   });
+});
+
+describe('the calendars as a list for a query (JD-S3 R2-C6)', () => {
+  const actors: Actor[] = [
+    staff(['owner']),
+    staff(['admin']),
+    staff(['reception']),
+    professional(),
+    professional({
+      grants: ['scheduling.delegated_calendar'],
+      delegatedProfessionalIds: [COLLEAGUE],
+    }),
+    professional({ delegatedProfessionalIds: [COLLEAGUE] }),
+    staff(['professional'], { professionalId: null }),
+  ];
+
+  it.each(actors.map((actor, index) => [index, actor] as const))(
+    'agrees with calendarAccess for each professional (actor %i)',
+    (_index, actor) => {
+      const ids = calendarProfessionalIds(actor);
+      for (const professionalId of [ME, COLLEAGUE, THIRD]) {
+        expect(ids === 'all' || ids.includes(professionalId)).toBe(
+          calendarAccess(actor, professionalId),
+        );
+      }
+    },
+  );
 });

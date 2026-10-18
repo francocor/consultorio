@@ -32,6 +32,7 @@ export type { VideoJoinAddress, VideoJoinUrlResolver } from './application/join-
 export { createJoinUrlResolver } from './application/join-address.js';
 export { devVideoRoutes, type DevVideoControls } from './http/dev-routes.js';
 export { createVideoLinkCreateJob };
+export { sealLegacyManualLinks } from './application/legacy-links.js';
 export { VIDEO_LINK_CREATE_JOB } from './application/video-sessions.js';
 export type { LinkReadyNotifier } from './application/video-sessions.js';
 

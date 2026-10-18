@@ -1,6 +1,7 @@
-import { and, asc, eq, isNull, sql } from 'drizzle-orm';
+import { and, asc, eq, inArray, isNotNull, isNull, ne, or, sql } from 'drizzle-orm';
 
 import { membership, userAccount } from '../../../db/schema/identity.js';
+import { message } from '../../../db/schema/notifications.js';
 import { professional } from '../../../db/schema/staff.js';
 import { location } from '../../../db/schema/tenant.js';
 import { whatsappUsageAlert, whatsappUsageEvent } from '../../../db/schema/usage-event.js';
@@ -52,16 +53,38 @@ export async function organizationPeriod(tx: Tx, instant: Date): Promise<string>
   return periodOf(instant, await organizationTimeZone(tx));
 }
 
-/** The messages that take a place of the quota: reserved or confirmed, not released. */
-export async function usageCount(tx: Tx, professionalId: string, period: string): Promise<number> {
+/**
+ * The messages that take a place of the quota: confirmed (the provider accepted them), or reserved
+ * and still waiting to go. A reservation whose message ended without going (cancelled, failed) does
+ * not count, whichever path ended it: the count does not depend on every such path remembering to
+ * release (judgment day round 2, finding R2-C2). `excludeMessageId` leaves one message's own
+ * place out, for the question "may THIS message go".
+ */
+export async function usageCount(
+  tx: Tx,
+  professionalId: string,
+  period: string,
+  excludeMessageId?: string,
+): Promise<number> {
   const [row] = await tx
     .select({ count: sql<number>`count(*)::int` })
     .from(whatsappUsageEvent)
+    .innerJoin(
+      message,
+      and(
+        eq(message.tenantId, whatsappUsageEvent.tenantId),
+        eq(message.id, whatsappUsageEvent.messageId),
+      ),
+    )
     .where(
       and(
         eq(whatsappUsageEvent.professionalId, professionalId),
         eq(whatsappUsageEvent.period, period),
         isNull(whatsappUsageEvent.releasedAt),
+        or(isNotNull(whatsappUsageEvent.confirmedAt), eq(message.status, 'queued')),
+        excludeMessageId === undefined
+          ? undefined
+          : ne(whatsappUsageEvent.messageId, excludeMessageId),
       ),
     );
   return row?.count ?? 0;
@@ -69,18 +92,21 @@ export async function usageCount(tx: Tx, professionalId: string, period: string)
 
 /**
  * Whether one more WhatsApp message may go out for this professional now: there is no quota, the
- * plan allows overage, or the month's count is still under the limit.
+ * plan allows overage, or the month's count is still under the limit. `ownMessageId` is the message
+ * asking, when it may already hold a place.
  */
 export async function whatsappQuotaAvailable(
   quota: QuotaPolicy,
   tx: Tx,
   professionalId: string,
   now: Date,
+  ownMessageId?: string,
 ): Promise<boolean> {
   const period = await organizationPeriod(tx, now);
   const { limit, overageAllowed } = await quota.limitFor(tx, professionalId, period);
   if (limit === null || overageAllowed) return true;
-  return (await usageCount(tx, professionalId, period)) < limit;
+  // A message that already holds a place (a retry) does not compete with itself for the last one.
+  return (await usageCount(tx, professionalId, period, ownMessageId)) < limit;
 }
 
 /**
@@ -126,15 +152,25 @@ export async function reserveWhatsappUsage(
   return 'reserved';
 }
 
-/** Gives the place back: the message did not go over WhatsApp. Nothing happens if it had none. */
-export async function releaseWhatsappUsage(tx: Tx, messageId: string): Promise<void> {
+/**
+ * Gives the place back: the messages did not go over WhatsApp. Nothing happens for one that had
+ * none. A place the provider already accepted stays counted unless `includeConfirmed` says the
+ * provider later reported the message undelivered.
+ */
+export async function releaseWhatsappUsage(
+  tx: Tx,
+  messageIds: string | readonly string[],
+  options: { includeConfirmed?: boolean } = {},
+): Promise<void> {
+  const ids = typeof messageIds === 'string' ? [messageIds] : messageIds;
+  if (ids.length === 0) return;
   await tx
     .update(whatsappUsageEvent)
     .set({ releasedAt: sql`now()` })
     .where(
       and(
-        eq(whatsappUsageEvent.messageId, messageId),
-        isNull(whatsappUsageEvent.confirmedAt),
+        inArray(whatsappUsageEvent.messageId, [...ids]),
+        options.includeConfirmed ? undefined : isNull(whatsappUsageEvent.confirmedAt),
         isNull(whatsappUsageEvent.releasedAt),
       ),
     );

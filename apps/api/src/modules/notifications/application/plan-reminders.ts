@@ -15,6 +15,7 @@ import type { MessagingDeps, TenantRef } from './deps.js';
 import { dedupeKeyFor, queueMessage } from './queue.js';
 import { loadRecipient } from './recipients.js';
 import { loadMessagingSettings } from './settings.js';
+import { releaseWhatsappUsage } from './usage.js';
 
 /**
  * Keeps the reminder queue of an appointment right, from the appointment events and nothing else:
@@ -62,10 +63,16 @@ async function cancelQueued(
   appointmentId: string,
   reason: 'appointment_cancelled' | 'appointment_changed' | 'appointment_over',
 ): Promise<void> {
-  await tx
+  const cancelled = await tx
     .update(message)
     .set({ status: 'cancelled', cancelReason: reason })
-    .where(and(eq(message.appointmentId, appointmentId), eq(message.status, 'queued')));
+    .where(and(eq(message.appointmentId, appointmentId), eq(message.status, 'queued')))
+    .returning({ id: message.id, channel: message.channel });
+  // A WhatsApp message that does not go gives its place in the quota back.
+  await releaseWhatsappUsage(
+    tx,
+    cancelled.filter((row) => row.channel === 'whatsapp').map((row) => row.id),
+  );
 }
 
 export function createReminderPlanner(deps: PlannerDeps): ReminderPlanner {

@@ -124,7 +124,14 @@ export function createNotifications(options: NotificationsOptions): Notification
   registerTokenHandler('appointment_confirm', createConfirmHandler(handlerDeps));
   registerTokenHandler('appointment_cancel', createCancelHandler(handlerDeps));
   registerTokenHandler('notification_opt_out', createOptOutHandler());
-  registerTokenHandler('whatsapp_opt_in', createWhatsappOptInHandler());
+  registerTokenHandler(
+    'whatsapp_opt_in',
+    createWhatsappOptInHandler({
+      worklist: options.worklist
+        ? createWorklistFromService(options.worklist)
+        : createWorklist({ keys: options.keys }),
+    }),
+  );
   const revoker = createLinkRevoker(tokens);
   options.events.subscribe((tx, event) => revoker.handle(tx, event));
 
