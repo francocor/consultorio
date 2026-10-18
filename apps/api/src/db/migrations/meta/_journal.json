@@ -481,40 +481,47 @@
     {
       "idx": 68,
       "version": "7",
-      "when": 1792336452027,
-      "tag": "0440_fiscal_config",
+      "when": 1792349346848,
+      "tag": "0431_report_money_indexes",
       "breakpoints": true
     },
     {
       "idx": 69,
       "version": "7",
-      "when": 1792336452028,
-      "tag": "0442_local_afip",
+      "when": 1792349346849,
+      "tag": "0440_fiscal_config",
       "breakpoints": true
     },
     {
       "idx": 70,
       "version": "7",
-      "when": 1792336849175,
-      "tag": "0444_invoices",
+      "when": 1792349346850,
+      "tag": "0442_local_afip",
       "breakpoints": true
     },
     {
       "idx": 71,
       "version": "7",
-      "when": 1792341217959,
-      "tag": "0446_appointment_type_invoice_description",
+      "when": 1792349346851,
+      "tag": "0444_invoices",
       "breakpoints": true
     },
     {
       "idx": 72,
+      "version": "7",
+      "when": 1792349346852,
+      "tag": "0446_appointment_type_invoice_description",
+      "breakpoints": true
+    },
+    {
+      "idx": 73,
       "version": "7",
       "when": 1792350616886,
       "tag": "0498_whatsapp_usage_unsettled_idx",
       "breakpoints": true
     },
     {
-      "idx": 73,
+      "idx": 74,
       "version": "7",
       "when": 1792350931281,
       "tag": "0499_message_whatsapp_lookup",

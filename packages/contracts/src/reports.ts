@@ -1,5 +1,7 @@
 import { z } from 'zod';
 
+import { CASH_SESSION_STATUSES, PAYMENT_METHODS } from './billing.js';
+import { Money } from './money.js';
 import { APPOINTMENT_SOURCES, APPOINTMENT_STATUSES } from './scheduling.js';
 
 export { REPORTS_ERRORS, REPORTS_AUDIT_ACTIONS } from './reports-catalog.js';
@@ -80,8 +82,12 @@ export const ReportOptionsResponse = z.strictObject({
   /** The name is null for a member who has not set how they appear in the directory. */
   professionals: z.array(z.strictObject({ id: Id, name: z.string().nullable() })),
   specialties: z.array(z.string()),
+  /** The payers of the organization, for the filter of the financial report. */
+  payers: z.array(z.strictObject({ id: Id, name: z.string() })),
   /** Owner and admin only: reception never sees revenue by professional, a professional sees their own. */
   canSeeRevenueByProfessional: z.boolean(),
+  /** The cash register report is for the organization and for reception; a professional has none. */
+  canSeeCashReport: z.boolean(),
   maxSpanDays: z.number().int().min(1),
 });
 export type ReportOptionsResponse = z.infer<typeof ReportOptionsResponse>;
@@ -185,3 +191,243 @@ export const ReportRecordsResponse = z.strictObject({
   records: z.array(ReportRecordDto),
 });
 export type ReportRecordsResponse = z.infer<typeof ReportRecordsResponse>;
+
+// Financial report -------------------------------------------------------------------------------
+
+/**
+ * The filters of the financial report. A period of calendar days, read in the time zone of each
+ * location, and the narrowing choices; what the viewer may see is cut by the server. Unknown members
+ * of the query (an organization id, a specialty) are ignored, never trusted.
+ */
+export const FinancialFilters = z.object({
+  from: z.iso.date(),
+  to: z.iso.date(),
+  locationId: Id.optional(),
+  professionalId: Id.optional(),
+  /** The payer of the organization's own list (`tenant_payer.id`). */
+  tenantPayerId: Id.optional(),
+});
+export type FinancialFilters = z.infer<typeof FinancialFilters>;
+
+export const AppliedFinancialFilters = z.strictObject({
+  from: z.iso.date(),
+  to: z.iso.date(),
+  locationId: Id.nullable(),
+  professionalId: Id.nullable(),
+  tenantPayerId: Id.nullable(),
+  scope: z.enum(REPORT_SCOPES),
+});
+export type AppliedFinancialFilters = z.infer<typeof AppliedFinancialFilters>;
+
+/**
+ * One row of a breakdown. A row is a group of the same dimension for every figure, so a table reads
+ * across. Every amount is whole cents (`Money`). Each figure keeps the date it is counted by:
+ * `charged`, `voided`, `outstanding` and `receivable` by the day of the service, `payments`,
+ * `refunds` and `collected` by the day the money moved, and `invoicedNet` by the date on the voucher.
+ */
+export const FinancialRow = z.strictObject({
+  /** The day (`YYYY-MM-DD`), the id of the location, professional or payer, `private`, or the name of the type. */
+  key: z.string(),
+  /** The name of the location, professional or payer; null where the key says it all. */
+  label: z.string().nullable(),
+  /** Charges that are not voided: the patient's part and the payer's part. */
+  chargedCents: Money,
+  /** Voided charges, apart: they never count as charged. */
+  voidedCents: Money,
+  paymentsCents: Money,
+  /** Refunds and corrections: reductions of what was collected. */
+  refundsCents: Money,
+  /** Payments minus refunds. */
+  collectedCents: Money,
+  /** What patients still owe on those charges. */
+  outstandingCents: Money,
+  /** The payer's part of those charges. */
+  receivableCents: Money,
+  /** Invoices minus credit notes; null where the voucher does not say it (by appointment type). */
+  invoicedNetCents: Money.nullable(),
+});
+export type FinancialRow = z.infer<typeof FinancialRow>;
+
+export const MethodRow = z.strictObject({
+  method: z.enum(PAYMENT_METHODS),
+  /** Entries: payments and refunds. */
+  count: Count,
+  paymentsCents: Money,
+  refundsCents: Money,
+  netCents: Money,
+});
+export type MethodRow = z.infer<typeof MethodRow>;
+
+export const FinancialReportResponse = z.strictObject({
+  filters: AppliedFinancialFilters,
+  generatedAt: Instant,
+  totals: z.strictObject({
+    charged: z.strictObject({
+      count: Count,
+      totalCents: Money,
+      patientCents: Money,
+      payerCents: Money,
+    }),
+    /** Shown apart; never part of `charged`. */
+    voided: z.strictObject({ count: Count, totalCents: Money }),
+    collected: z.strictObject({
+      paymentCount: Count,
+      paymentsCents: Money,
+      refundCount: Count,
+      refundsCents: Money,
+      netCents: Money,
+    }),
+    outstanding: z.strictObject({ chargeCount: Count, cents: Money }),
+    receivable: z.strictObject({ cents: Money }),
+    /** Issued and registered vouchers only; a credit note is a reduction. */
+    invoiced: z.strictObject({
+      invoicedCents: Money,
+      creditedCents: Money,
+      netCents: Money,
+      documents: Count,
+    }),
+  }),
+  byMethod: z.array(MethodRow),
+  /** One row per day; the screen adds them up by month for a long period. */
+  byPeriod: z.array(FinancialRow),
+  byLocation: z.array(FinancialRow),
+  /** Null when the viewer may not see revenue by professional (reception). */
+  byProfessional: z.array(FinancialRow).nullable(),
+  byPayer: z.array(FinancialRow),
+  byType: z.array(FinancialRow),
+});
+export type FinancialReportResponse = z.infer<typeof FinancialReportResponse>;
+
+// Financial drill-down ---------------------------------------------------------------------------
+
+/** The figures that can be opened into the records that compose them. */
+export const FINANCIAL_RECORD_KINDS = [
+  'charged',
+  'voided',
+  'collected',
+  'outstanding',
+  'receivable',
+  'invoiced',
+] as const;
+export type FinancialRecordKind = (typeof FINANCIAL_RECORD_KINDS)[number];
+
+export const FinancialRecordsQuery = FinancialFilters.extend({
+  kind: z.enum(FINANCIAL_RECORD_KINDS).default('charged'),
+  limit: z.coerce.number().int().min(1).max(200).default(50),
+  offset: z.coerce.number().int().min(0).default(0),
+});
+export type FinancialRecordsQuery = z.infer<typeof FinancialRecordsQuery>;
+
+/**
+ * One record behind a figure: a charge, a payment or a refund, or a voucher. Identification and
+ * money only; never a note, a diagnosis or a prescription.
+ */
+export const FinancialRecordDto = z.strictObject({
+  /** The charge, the payment or refund entry, or the voucher. */
+  id: Id,
+  /** The day of the service, of the movement, or on the voucher. */
+  date: z.iso.date(),
+  /** Null on a voucher, which names no patient. */
+  patientName: z.string().nullable(),
+  locationId: Id,
+  locationName: z.string(),
+  professionalId: Id,
+  professionalName: z.string().nullable(),
+  /** Null for a private patient. */
+  payerName: z.string().nullable(),
+  typeName: z.string().nullable(),
+  /** The state of the charge, the movement (`payment`, `refund`, `correction`) or the voucher type. */
+  status: z.string(),
+  method: z.enum(PAYMENT_METHODS).nullable(),
+  /** What the record adds to the figure it was opened from; negative for a refund or a credit note. */
+  amountCents: Money,
+  /** The whole charge, where the amount is only a part of it; null on a payment or a voucher. */
+  chargeTotalCents: Money.nullable(),
+});
+export type FinancialRecordDto = z.infer<typeof FinancialRecordDto>;
+
+export const FinancialRecordsResponse = z.strictObject({
+  filters: AppliedFinancialFilters,
+  kind: z.enum(FINANCIAL_RECORD_KINDS),
+  /** Every record of the kind, whatever the page. */
+  total: Count,
+  /** The sum of every record of the kind: it equals the figure the kind was opened from. */
+  sumCents: Money,
+  limit: z.number().int().min(1),
+  offset: Count,
+  records: z.array(FinancialRecordDto),
+});
+export type FinancialRecordsResponse = z.infer<typeof FinancialRecordsResponse>;
+
+// Cash report ------------------------------------------------------------------------------------
+
+export const CashReportFilters = z.object({
+  from: z.iso.date(),
+  to: z.iso.date(),
+  locationId: Id.optional(),
+});
+export type CashReportFilters = z.infer<typeof CashReportFilters>;
+
+export const AppliedCashFilters = z.strictObject({
+  from: z.iso.date(),
+  to: z.iso.date(),
+  locationId: Id.nullable(),
+  scope: z.enum(REPORT_SCOPES),
+});
+export type AppliedCashFilters = z.infer<typeof AppliedCashFilters>;
+
+/** One register of a day, with the difference it closed with and the reason that was given. */
+export const CashSessionRow = z.strictObject({
+  id: Id,
+  status: z.enum(CASH_SESSION_STATUSES),
+  openedAt: Instant,
+  closedAt: Instant.nullable(),
+  openingCents: Money,
+  /** What a closed register wrote when it closed; what an open one holds now. */
+  expectedCents: Money,
+  countedCents: Money.nullable(),
+  /** Counted minus expected: negative when cash is missing. Null while the register is open. */
+  differenceCents: Money.nullable(),
+  differenceReason: z.string().nullable(),
+});
+export type CashSessionRow = z.infer<typeof CashSessionRow>;
+
+/** A location and a day (the day the register was opened, at the clock of the location). */
+export const CashDayRow = z.strictObject({
+  date: z.iso.date(),
+  locationId: Id,
+  locationName: z.string(),
+  openingCents: Money,
+  /** Money received by every method, and refunds, in the registers of the day. */
+  paymentsCents: Money,
+  refundsCents: Money,
+  /** Cash that should be in the drawers: opening plus cash taken minus cash given back. */
+  expectedCents: Money,
+  /** Counted cash of the closed registers; null when none closed. */
+  countedCents: Money.nullable(),
+  /** The sum of the differences of the closed registers; null when none closed. */
+  differenceCents: Money.nullable(),
+  openSessions: Count,
+  closedSessions: Count,
+  byMethod: z.array(MethodRow),
+  sessions: z.array(CashSessionRow),
+});
+export type CashDayRow = z.infer<typeof CashDayRow>;
+
+export const CashReportResponse = z.strictObject({
+  filters: AppliedCashFilters,
+  generatedAt: Instant,
+  totals: z.strictObject({
+    openingCents: Money,
+    paymentsCents: Money,
+    refundsCents: Money,
+    expectedCents: Money,
+    countedCents: Money.nullable(),
+    differenceCents: Money.nullable(),
+    /** Days with a register that closed with a difference. */
+    daysWithDifference: Count,
+    byMethod: z.array(MethodRow),
+  }),
+  days: z.array(CashDayRow),
+});
+export type CashReportResponse = z.infer<typeof CashReportResponse>;

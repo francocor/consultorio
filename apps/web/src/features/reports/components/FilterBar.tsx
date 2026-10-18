@@ -9,15 +9,20 @@ import { Label } from '../../../shared/ui/label.js';
 import type { ReportQuery } from '../api/reports-api.js';
 import { rangeIssue } from '../domain/period.js';
 
-/** The filters of the dashboard. A range that cannot run is explained on the field and never sent. */
+/** Which report the bar filters: each one reads the filters that mean something to it. */
+export type FilterVariant = 'operational' | 'financial' | 'cash';
+
+/** The filters of a report. A range that cannot run is explained on the field and never sent. */
 export function FilterBar({
   query,
   options,
   onApply,
+  variant = 'operational',
 }: {
   query: ReportQuery;
   options: ReportOptionsResponse | undefined;
   onApply: (query: ReportQuery) => void;
+  variant?: FilterVariant;
 }) {
   const { t } = useTranslation('reports');
   const ids = {
@@ -26,6 +31,7 @@ export function FilterBar({
     location: useId(),
     professional: useId(),
     specialty: useId(),
+    payer: useId(),
     error: useId(),
   };
   const [draft, setDraft] = useState<ReportQuery>(query);
@@ -42,8 +48,13 @@ export function FilterBar({
   };
   const text = issue === null ? '' : t(`range.${issue}`, { days: REPORT_MAX_SPAN_DAYS });
   const locations = options?.locations ?? [];
-  const professionals = options?.professionals ?? [];
-  const specialties = options?.specialties ?? [];
+  // Reception never reaches revenue by professional, so the money report does not offer the choice.
+  const professionals =
+    variant === 'cash' || (variant === 'financial' && !options?.canSeeRevenueByProfessional)
+      ? []
+      : (options?.professionals ?? []);
+  const specialties = variant === 'operational' ? (options?.specialties ?? []) : [];
+  const payers = variant === 'financial' ? (options?.payers ?? []) : [];
 
   return (
     <form noValidate onSubmit={submit} className="grid gap-3 rounded-lg border bg-card p-4">
@@ -133,6 +144,25 @@ export function FilterBar({
               </Select>
             </div>
           ) : null}
+          {payers.length > 0 ? (
+            <div className="grid gap-1.5">
+              <Label htmlFor={ids.payer}>{t('filter.payer')}</Label>
+              <Select
+                id={ids.payer}
+                value={draft.tenantPayerId ?? ''}
+                onChange={(event) => {
+                  change({ tenantPayerId: event.target.value || undefined });
+                }}
+              >
+                <option value="">{t('filter.allPayers')}</option>
+                {payers.map((payer) => (
+                  <option key={payer.id} value={payer.id}>
+                    {payer.name}
+                  </option>
+                ))}
+              </Select>
+            </div>
+          ) : null}
         </div>
         {issue === null ? null : (
           <p id={ids.error} role="alert" className="text-sm font-medium text-destructive">
@@ -147,28 +177,43 @@ export function FilterBar({
   );
 }
 
-/** What the report on screen covers, in words: the period, the narrowing filters and the scope. */
-export function AppliedFilters({
-  query,
-  options,
-  scope,
-}: {
-  query: ReportQuery;
-  options: ReportOptionsResponse | undefined;
-  scope: ReportOptionsResponse['scope'] | undefined;
-}) {
-  const { t } = useTranslation('reports');
+type Translate = (key: string, options?: Record<string, unknown>) => string;
+
+/** The period and the narrowing filters in words, in the order the screen writes them. */
+export function appliedParts(
+  query: ReportQuery,
+  options: ReportOptionsResponse | undefined,
+  t: Translate,
+): string[] {
   const location = options?.locations.find((item) => item.id === query.locationId);
   const professional = options?.professionals.find((item) => item.id === query.professionalId);
-  const parts = [
+  const payer = options?.payers.find((item) => item.id === query.tenantPayerId);
+  return [
     t('applied.period', { from: formatCalendarDay(query.from), to: formatCalendarDay(query.to) }),
     ...(location ? [t('applied.location', { name: location.name })] : []),
     ...(professional
       ? [t('applied.professional', { name: professional.name ?? t('filter.unnamedProfessional') })]
       : []),
     ...(query.specialty ? [t('applied.specialty', { name: query.specialty })] : []),
-    ...(scope ? [t(`applied.scope.${scope}`)] : []),
+    ...(payer ? [t('applied.payer', { name: payer.name })] : []),
   ];
+}
+
+/** What the report on screen covers, in words: the period, the narrowing filters and the scope. */
+export function AppliedFilters({
+  query,
+  options,
+  scope,
+  scopeKey = 'applied.scope',
+}: {
+  query: ReportQuery;
+  options: ReportOptionsResponse | undefined;
+  scope: ReportOptionsResponse['scope'] | undefined;
+  /** The prefix of the sentences that say whose figures these are. */
+  scopeKey?: string;
+}) {
+  const { t } = useTranslation('reports');
+  const parts = [...appliedParts(query, options, t), ...(scope ? [t(`${scopeKey}.${scope}`)] : [])];
   return (
     <p className="text-sm text-muted-foreground">
       <span className="font-medium text-foreground">{t('applied.title')}: </span>

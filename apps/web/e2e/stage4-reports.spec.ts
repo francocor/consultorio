@@ -1,4 +1,7 @@
 import type {
+  CashReportResponse,
+  FinancialRecordsResponse,
+  FinancialReportResponse,
   OperationalReportResponse,
   ReportOptionsResponse,
   ReportRecordsResponse,
@@ -194,6 +197,210 @@ test('an inverted range is explained on the field and the figures stay', async (
   await expect(page.getByRole('alert')).toContainText(
     'La fecha «Hasta» no puede ser anterior a «Desde».',
   );
+  expect(await horizontalOverflow(page)).toBeLessThanOrEqual(0);
+  expect(await axeViolations(page)).toEqual([]);
+});
+
+// The money and the cash register (Stage 4, track B, S4.14), the same three people ---------------------
+
+/** Waits for the money figures to show: the tiles when there is money, the pointer when not. */
+async function moneyShown(page: Page): Promise<void> {
+  await expect(
+    page
+      .locator('dt', { hasText: /^Cargos$/ })
+      .or(page.getByRole('link', { name: 'Ir a cobros' }).first()),
+  ).toBeVisible();
+}
+
+const MONEY_SCOPES: Record<string, string> = {
+  owner: 'Toda la organización',
+  professional: 'Solo el dinero de sus propios turnos',
+  reception: 'Solo las sedes en las que trabaja',
+};
+
+for (const { account, label } of ACCOUNTS) {
+  test(`${label}: the money report shows what the API answers for their scope, fits 360 px and has no violations`, async ({
+    page,
+  }) => {
+    const range = wideRange();
+    await openAs(page, account, '/reports/financial');
+    await expect(page.getByRole('heading', { level: 1, name: 'Informe de dinero' })).toBeVisible();
+    await applyRange(page, range);
+    await moneyShown(page);
+
+    const report = await apiGet<FinancialReportResponse>(
+      page,
+      `/reports/financial?${query(range)}`,
+    );
+    expect(report.status).toBe(200);
+    await expect(page.getByText(/Filtros aplicados/).locator('..')).toContainText(
+      MONEY_SCOPES[label] ?? '',
+    );
+    // Revenue by professional: the organization and the professional (about themselves) have it;
+    // reception never does, in the answer and on the screen.
+    if (label === 'reception') {
+      expect(report.body.byProfessional).toBeNull();
+      await expect(page.getByLabel('Profesional', { exact: true })).toHaveCount(0);
+      await expect(page.getByRole('tab', { name: 'Por profesional' })).toHaveCount(0);
+    } else {
+      expect(report.body.byProfessional).not.toBeNull();
+    }
+
+    const charged = page.locator('dt', { hasText: /^Cargos$/ }).locator('..');
+    if (report.body.totals.charged.count > 0) {
+      await expect(charged).toContainText('$');
+      // The table of the chart is one tab away.
+      const series = page
+        .getByRole('heading', { name: /^Dinero por (día|mes)$/ })
+        .locator('xpath=ancestor::section[1]');
+      await series.getByRole('tab', { name: 'Tabla' }).click();
+      await expect(series.getByRole('table')).toBeVisible();
+      await series.getByRole('tab', { name: 'Gráfico' }).click();
+      await expect(
+        series.getByRole('img', { name: 'Gráfico de barras: cargos y cobrado por período' }),
+      ).toBeVisible();
+    }
+
+    expect(await horizontalOverflow(page)).toBeLessThanOrEqual(0);
+    expect(await axeViolations(page)).toEqual([]);
+  });
+}
+
+test('the records behind each money figure add up to it, for the same filters', async ({
+  page,
+}) => {
+  const range = wideRange();
+  await openAs(page, 'owner', '/reports/financial');
+  await applyRange(page, range);
+  await moneyShown(page);
+
+  const report = await apiGet<FinancialReportResponse>(page, `/reports/financial?${query(range)}`);
+  const figures: Record<string, number> = {
+    charged: report.body.totals.charged.totalCents,
+    voided: report.body.totals.voided.totalCents,
+    collected: report.body.totals.collected.netCents,
+    outstanding: report.body.totals.outstanding.cents,
+    receivable: report.body.totals.receivable.cents,
+    invoiced: report.body.totals.invoiced.netCents,
+  };
+  for (const [kind, figure] of Object.entries(figures)) {
+    const records = await apiGet<FinancialRecordsResponse>(
+      page,
+      `/reports/financial/records?${query(range)}&kind=${kind}&limit=200`,
+    );
+    expect(records.status).toBe(200);
+    // The sum of the whole kind is always in the answer; a page of 200 usually holds all the rows.
+    expect(records.body.sumCents, kind).toBe(figure);
+    if (records.body.total <= 200) {
+      expect(
+        records.body.records.reduce((total, record) => total + record.amountCents, 0),
+        kind,
+      ).toBe(figure);
+    }
+  }
+
+  expect(await horizontalOverflow(page)).toBeLessThanOrEqual(0);
+});
+
+test('reception is denied revenue by professional and a location it does not work at; a professional is denied a colleague', async ({
+  page,
+}) => {
+  const range = wideRange();
+  await openAs(page, 'owner', '/');
+  const everything = await apiGet<ReportOptionsResponse>(page, '/reports/options');
+
+  await openAs(page, 'reception', '/');
+  const front = await apiGet<ReportOptionsResponse>(page, '/reports/options');
+  const someone = everything.body.professionals[0]?.id ?? '';
+  const byProfessional = await apiGet<{ code: string }>(
+    page,
+    `/reports/financial?${query(range)}&professionalId=${someone}`,
+  );
+  expect(byProfessional.status).toBe(403);
+  const outside = everything.body.locations.find(
+    (location) => !front.body.locations.some((mine) => mine.id === location.id),
+  );
+  if (outside) {
+    const refusedLocation = await apiGet<{ code: string }>(
+      page,
+      `/reports/cash?${query(range)}&locationId=${outside.id}`,
+    );
+    expect(refusedLocation.status).toBe(403);
+  }
+
+  await openAs(page, 'cardiology', '/');
+  const own = await apiGet<ReportOptionsResponse>(page, '/reports/options');
+  const colleague = everything.body.professionals.find(
+    (professional) => professional.id !== own.body.professionals[0]?.id,
+  );
+  const refusedColleague = await apiGet<{ code: string }>(
+    page,
+    `/reports/financial?${query(range)}&professionalId=${colleague?.id ?? ''}`,
+  );
+  expect(refusedColleague.status).toBe(403);
+});
+
+for (const { account, label } of ACCOUNTS.filter((entry) => entry.label !== 'professional')) {
+  test(`${label}: the cash report fits 360 px, has no violations and matches the API`, async ({
+    page,
+  }) => {
+    const range = wideRange();
+    await openAs(page, account, '/reports/cash');
+    await expect(page.getByRole('heading', { level: 1, name: 'Informe de caja' })).toBeVisible();
+    await applyRange(page, range);
+    const days = page
+      .getByRole('heading', { name: 'Cajas por sede y día' })
+      .locator('xpath=ancestor::section[1]');
+    await expect(days).toBeVisible();
+
+    const report = await apiGet<CashReportResponse>(page, `/reports/cash?${query(range)}`);
+    expect(report.status).toBe(200);
+    if (report.body.days.length > 0) {
+      await expect(days.getByRole('row')).toHaveCount(1 + report.body.days.length);
+    }
+    expect(await horizontalOverflow(page)).toBeLessThanOrEqual(0);
+    expect(await axeViolations(page)).toEqual([]);
+  });
+}
+
+test('a professional has no cash report: the screen says so and the API refuses it', async ({
+  page,
+}) => {
+  await openAs(page, 'cardiology', '/reports/cash');
+
+  await expect(page.getByText('Su rol no incluye el informe de caja')).toBeVisible();
+  await expect(
+    page.getByRole('navigation', { name: 'Tipo de informe' }).getByRole('link', { name: 'Caja' }),
+  ).toHaveCount(0);
+  const refused = await apiGet<{ code: string }>(page, `/reports/cash?${query(wideRange())}`);
+  expect(refused.status).toBe(403);
+  expect(await horizontalOverflow(page)).toBeLessThanOrEqual(0);
+  expect(await axeViolations(page)).toEqual([]);
+});
+
+test('the owner exports the charges of the period: the request goes out with the filters and is followed', async ({
+  page,
+}) => {
+  const range = wideRange();
+  await openAs(page, 'owner', '/reports/financial');
+  await applyRange(page, range);
+  await moneyShown(page);
+
+  const asked = page.waitForRequest(
+    (request) => request.method() === 'POST' && request.url().endsWith('/api/billing/exports'),
+  );
+  await page.getByRole('button', { name: 'Exportar a CSV' }).click();
+
+  const body = (await asked).postDataJSON() as Record<string, unknown>;
+  expect(body).toEqual({ kind: 'charges', format: 'csv', ...range });
+  // The stack of the suite runs the worker without a bucket, so the file itself is not built here
+  // (the job and the three formats have their own integration tests): the request is followed.
+  await expect(
+    page
+      .getByText('Preparando el archivo…')
+      .or(page.getByText(/^Archivo listo: \d+ filas\.$/))
+      .or(page.getByText('No hay nada para exportar')),
+  ).toBeVisible();
   expect(await horizontalOverflow(page)).toBeLessThanOrEqual(0);
   expect(await axeViolations(page)).toEqual([]);
 });

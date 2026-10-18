@@ -1,8 +1,12 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  canSeeCashReport,
   canSeeRevenueByProfessional,
+  checkCashFilters,
   checkFilters,
+  checkFinancialFilters,
+  moneyScope,
   resolveScope,
   type ScopeViewer,
 } from './scope.js';
@@ -135,5 +139,99 @@ describe('checkFilters: a filter may narrow the report, never widen it', () => {
   it('accepts no filters at all', () => {
     expect(checkFilters(reception, {})).toEqual({ ok: true });
     expect(checkFilters(professional, {})).toEqual({ ok: true });
+  });
+});
+
+describe('checkFinancialFilters: reception never reaches revenue by professional', () => {
+  const reception = {
+    kind: 'locations',
+    locationIds: [CENTRO],
+    professionalIds: [],
+  } as const;
+  const receptionWhoIsAlsoAProfessional = {
+    kind: 'locations',
+    locationIds: [CENTRO],
+    professionalIds: [DRA_PAZ],
+  } as const;
+  const professional = { kind: 'professional', professionalId: DRA_PAZ } as const;
+
+  it('refuses a professional filter from reception, because it would reveal the revenue of one person', () => {
+    expect(checkFinancialFilters(reception, { professionalId: DR_RIOS })).toEqual({
+      ok: false,
+      reason: 'revenue_by_professional_denied',
+    });
+  });
+
+  it('lets a reception user who is also a professional ask for their own figures only', () => {
+    expect(
+      checkFinancialFilters(receptionWhoIsAlsoAProfessional, { professionalId: DRA_PAZ }),
+    ).toEqual({ ok: true });
+    expect(
+      checkFinancialFilters(receptionWhoIsAlsoAProfessional, { professionalId: DR_RIOS }),
+    ).toEqual({ ok: false, reason: 'revenue_by_professional_denied' });
+  });
+
+  it('keeps the rules of every report: a place outside reception, a colleague of a professional', () => {
+    expect(checkFinancialFilters(reception, { locationId: SUR })).toEqual({
+      ok: false,
+      reason: 'location_outside_scope',
+    });
+    expect(checkFinancialFilters(professional, { professionalId: DR_RIOS })).toEqual({
+      ok: false,
+      reason: 'professional_outside_scope',
+    });
+    expect(checkFinancialFilters({ kind: 'organization' }, { professionalId: DR_RIOS })).toEqual({
+      ok: true,
+    });
+    expect(checkFinancialFilters(reception, { locationId: CENTRO })).toEqual({ ok: true });
+  });
+});
+
+describe('the cash register report', () => {
+  it('is for the organization and for reception, never for a professional', () => {
+    expect(canSeeCashReport({ kind: 'organization' })).toBe(true);
+    expect(
+      canSeeCashReport({ kind: 'locations', locationIds: [CENTRO], professionalIds: [] }),
+    ).toBe(true);
+    expect(canSeeCashReport({ kind: 'professional', professionalId: DRA_PAZ })).toBe(false);
+  });
+
+  it('refuses a location outside the ones reception works at, and a professional altogether', () => {
+    const reception = { kind: 'locations', locationIds: [CENTRO], professionalIds: [] } as const;
+
+    expect(checkCashFilters(reception, { locationId: SUR })).toEqual({
+      ok: false,
+      reason: 'location_outside_scope',
+    });
+    expect(checkCashFilters(reception, { locationId: CENTRO })).toEqual({ ok: true });
+    expect(checkCashFilters({ kind: 'organization' }, { locationId: SUR })).toEqual({ ok: true });
+    expect(checkCashFilters({ kind: 'professional', professionalId: DRA_PAZ }, {})).toEqual({
+      ok: false,
+      reason: 'cash_report_outside_scope',
+    });
+  });
+});
+
+describe('moneyScope: what billing is asked to read for a scope', () => {
+  it('reads everything for the organization', () => {
+    expect(moneyScope({ kind: 'organization' })).toEqual({ kind: 'all' });
+  });
+
+  it('reads the locations of reception, and the own appointments of a reception user who is a professional', () => {
+    expect(
+      moneyScope({ kind: 'locations', locationIds: [CENTRO], professionalIds: [DRA_PAZ] }),
+    ).toEqual({
+      kind: 'limited',
+      locationIds: [CENTRO],
+      professionalIds: [DRA_PAZ],
+    });
+  });
+
+  it('reads only the own appointments of a professional, at any location', () => {
+    expect(moneyScope({ kind: 'professional', professionalId: DRA_PAZ })).toEqual({
+      kind: 'limited',
+      locationIds: [],
+      professionalIds: [DRA_PAZ],
+    });
   });
 });

@@ -12,6 +12,7 @@ import { reportKeys, reportsApi, type ReportQuery } from './api/reports-api.js';
 import { BreakdownWidget } from './components/BreakdownWidget.js';
 import { AppliedFilters, FilterBar } from './components/FilterBar.js';
 import { RecordsWidget } from './components/RecordsWidget.js';
+import { ReportNav } from './components/ReportNav.js';
 import { SeriesWidget } from './components/SeriesWidget.js';
 import { StatusWidget } from './components/StatusWidget.js';
 import { SummaryWidget } from './components/SummaryWidget.js';
@@ -48,6 +49,7 @@ function Reports() {
   return (
     <div className="grid grid-cols-1 gap-4">
       <PageHeader title={t('title')} description={t('description')} className="mb-0" />
+      <ReportNav canSeeCash={options.data?.canSeeCashReport ?? false} />
       <FilterBar
         // A fresh bar for each applied period, so its fields start from what is on screen.
         key={JSON.stringify(query)}
