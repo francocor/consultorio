@@ -12,6 +12,8 @@ Stage 2: slices S2.01 to S2.16 done (tasks 2.1 to 2.46, the scheduling backend a
 
 Stage 3: the seam slices S3.00 and S3.00b are done (tasks 3.1 to 3.10) on branch `feat/stage-3-patient-engagement`, stacked on the Stage 2 branch; see "Stage 3 seam" at the end of this file. Next: the parallel tracks A to D, then the integration track E (`docs/stage3-tracks.md`).
 
+Stage 4: the seam slice S4.00 is done (tasks 4.1 to 4.6) on branch `feat/stage-4-revenue`, stacked on the Stage 3 branch; see "Stage 4 seam" at the end of this file. Next: the parallel tracks A (billing), B (reports) and C (invoicing), then the integration track D (`docs/stage4-tracks.md`).
+
 ## Batch 1: Stage 0, slices S0.01 to S0.05
 
 | Slice | Branch (stacked on previous) | Commits | Tasks | State |
@@ -1742,3 +1744,83 @@ Success criteria of `proposal.md` that Stage 3 can show, and the evidence:
 | A single-tenant deployment runs from the same build | Unchanged; the image smoke test uses the multi-tenant configuration and `/health` answers |
 
 Not claimed here: the Stage 1 and 2 criteria (10-minute first booking, 30-second reception booking, PWA and 4G load, clinical audit, legacy removal) were verified at their own gates, and the e2e suite that guards them passed.
+
+## Stage 4 seam: S4.00 (tasks 4.1 to 4.6)
+
+Branch `feat/stage-4-revenue`, stacked on `feat/stage-3-patient-engagement` (tip `7b6df20`). Mode: automatic, strict TDD, `size:exception` (work-unit commits, draft PR with base the Stage 3 branch, merges after #16, CI not polled). The seam registers every shared Stage 4 piece once so that the tracks (A billing and payments, B reports, C AFIP invoicing, D integration) only add files. The per-track boundaries are in `docs/stage4-tracks.md`; the migration convention is in `docs/migration-ranges.md`.
+
+### Commits (in order)
+
+| Task   | Commit    | What                                                                                                                                                                                      |
+| ------ | --------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 4.1    | `20c4183` | `Money` (whole cents, branded), `addMoney`/`sumMoney`, `applyBasisPoints` (half away from zero), `allocateProportional` (largest remainder, ties to the earliest line), `formatArs`/`parseArs`; web `formatMoney`/`parseMoney` use it |
+| 4.3    | `de75aaf` | Seven permissions, 21 audit actions, `billing`/`reports`/`invoicing` contract files with `-catalog.ts` apart from the schemas, audit scenario files, es-AR labels, card/certificate/key metadata keys refused |
+| 4.4    | `8890290` | Queues `afip.issue`, `fiscal.credential_watch`, `invoice.pdf`, `invoice.deliver`, `export.build` and their read-only categories                                                           |
+| 4.2    | `4ed8d9d` | `AFIP_PROVIDER` (`local\|afip\|off`) and its production guard                                                                                                                             |
+| 4.2/4.4| `fc5a466` | `invoiceIssuer` port, `adapters/afip-fake/` placeholder, three module skeletons and wiring, export contributors, settings sections (`billing`, `invoicing`, `integrations.einvoicing`), schema files pre-exported |
+| 4.4    | `2ca20c1` | `platform/files/file-resources.ts` and `file-routes.ts`: one registry behind `GET /files/:token`; documents register `document_download`; token kinds `export_download` and `invoice_pdf` (disabled) |
+| 4.5    | `40d9f0a` | `platform/pdf/render.ts` (`renderPdf`, `pdfSafeText`), `test/support/pdf.ts`, golden reading of the frame; `@react-pdf/renderer`, `react`                                                 |
+| 4.6    | `05795e5` | `BootPayload.localProviders.afip`, carried from `main`/`start-stack` to the public boot document                                                                                          |
+| 4.6    | `bef3bbc` | `MoneyInput`, `SimulatedBillingBanner`/`SimulatedBillingNotice`, `cash` and `reports` out of the shell navigation; dependencies for the tracks (`exceljs`, `qrcode`, `recharts`)           |
+| docs   | `184c2d4` | `docs/stage4-tracks.md`, Stage 4 paragraph in `docs/migration-ranges.md`, tasks 4.1 to 4.6 marked                                                                                         |
+
+### Migration convention for the Stage 4 tracks
+
+The ranges were already in `scripts/migration-journal.ts` and `docs/migration-ranges.md` (`4seam` 0400-0409, `4a` 0410-0429, `4b` 0430-0439, `4c` 0440-0469, `4d` 0490-0499; 0470-0489 reserved), so no tool change was needed. The seam has no tables and adds no migration. Tracks run `pnpm db:new 4a|4b|4c|4d <name>` (with `--number` for the numbers `tasks.md` names: A 0410, 0412, 0414; B 0430; C 0440, 0442, 0444), then `pnpm db:restamp` and `pnpm db:check` after every merge. The invoices migration (0444) has a foreign key and a trigger on `charge_line` (0412), so it must come later in the journal: the run order (S4.10 waits for S4.02) guarantees it.
+
+### Extra seam work (not listed as tasks, or listed under other slices)
+
+1. **`reports.read` for professional and reception.** `tasks.md` says it "already exists", but only owner and admin held it, and the spec scopes professionals (own figures) and reception (operations and cash of its locations) on the server. A route cannot be reached without the permission, so S4.07 and S4.34 could not work. Added to both bundles; the scope stays the job of Track B (`application/scope.ts`).
+2. **`/files/:token` is a platform door.** The route moved out of the documents module into `platform/files/file-routes.ts`; documents keep their rules through a `FileResource` (`modules/documents/application/file-resource.ts`). The generic refusal is `file_link_invalid` (it was `document_link_invalid`), and a link of an unknown kind fails closed with the same uniform 403 and a deny entry. The route declares the union of the audit actions of the registered resources, so it is registered last in `createApplication`.
+3. **Dependencies installed once** (`@react-pdf/renderer`, `react`, `@types/react`, `exceljs`, `qrcode`, `@types/qrcode` in the API; `recharts` in the web app) so that no track edits a manifest or the lockfile.
+4. **Forbidden audit metadata keys** gained `cardNumber`, `cvv`, `pan`, `certificate`, `privateKey`, `pem` (task 4.62 proves it later; the writer refuses them from now on).
+5. **`InvoiceLookup`**: `modules/invoicing/index.ts` exports a stub (`invoiceLookup`, always "no invoice") so billing can build the void rule of task 4.14 without waiting for task 4.45.
+6. **`test/support/pdf.ts`** (`readPdf`, `allText`): reads the text, the page count and the information of the PDFs the product renders, for the tracks' tests.
+7. **Settings sections** `billing` (`lateFeeEnabled`, `lateFeeAmount`) and `invoicing` (`outageThresholdHours`, default 24); `integrations.einvoicing` (default off) is audited as `invoicing.config.changed`.
+
+### TDD cycle evidence
+
+| Task    | Tests                                                                                                                                              | RED                                                                                                   | GREEN  | Notes                                                                                                                                       |
+| ------- | -------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------- | ------ | ------------------------------------------------------------------------------------------------------------------------------------------- |
+| 4.1     | `money.test.ts` (35, with fast-check: parts sum to the total and are never negative, each part within one cent of its quota, round trip of format and parse), `format.test.ts` | module missing / `parseMoney` not a function                                                          | passed | the sign of `negateMoney` needed `0 - amount` for the lint rule on branded numbers                                                         |
+| 4.3     | `billing`/`reports`/`invoicing.test.ts`, `roles.test.ts` (Stage 4 describe), `audit-actions.test.ts`, `errors.test.ts`, `access.test.ts` (sections)  | 7 files failed                                                                                        | passed | `access.ts` was applied after its test alone failed (3 tests)                                                                               |
+| 4.4     | `jobs.test.ts` (classification), `job-queues.test.ts` (integration)                                                                                | 2 failed                                                                                              | passed |                                                                                                                                             |
+| 4.2     | `guard.test.ts` matrix with `afip`, `config-providers.test.ts`                                                                                      | 9 failed                                                                                              | passed |                                                                                                                                             |
+| 4.2/4.4 | `adapter-resolver.test.ts`, `wiring.test.ts` (sections, owners, console entry), `schema-index.test.ts`, `settings.test.ts`, `access-settings.test.ts` | 12 failed (resolver, wiring, schema index)                                                            | passed | the `afip-fake` test was written together with its trivial placeholder: no separate RED                                                     |
+| 4.4     | `file-resources.test.ts` (9), `kinds.test.ts`, integration `file-resources.test.ts` (7, a probe module registers `export_download`), `documents-download.test.ts` unchanged apart from the reason name | integration: `context.fileResources` undefined                                                        | passed | the unit tests of the registry were written before the module; the integration test failed first                                           |
+| 4.5     | `render.test.ts` (12: metadata, deterministic bytes, golden reading, accents, header and footer, watermark, many pages, image, empty document)       | `render.js` missing; then 7 failed on the test reader (regexes) and one on hyphenation of the mark    | passed | bugs found by the tests: the library hyphenated "PRUEBA" (hyphenation callback now returns the word whole); the reader had to join wrapped lines |
+| 4.6     | `money-input.test.tsx` (14, with axe), `simulated-billing.test.tsx` (5), `nav-config.test.ts` (Stage 4 describe), `branding-boot.test.ts`            | boot payload: schema field missing; nav: 4 failed                                                     | passed | `money-input` and the banner were written after their test files, with the missing-module state as the RED                                  |
+
+### Deviations from the tasks and the design
+
+1. **Nav entries and slot pieces are the tracks' files, not the seam's.** Task 4.6 lists "slot entries for billing" and "nav entries ... through `nav.ts`". The registries are globs, so a track adds its `nav.ts`, `slots.tsx` and `routes.tsx`; if the seam had created them, the shell would show entries (and a patient tab) that lead nowhere. What the seam did: freed the ids `cash` and `reports` (the shell used to hold them, and a contributed entry cannot reuse a shell id), fixed the plan (ids, paths, permissions, places) in `docs/stage4-tracks.md`, and tests the plan against the real permission bundles (`nav-config.test.ts`). The charges screen is `/charges`, not `/billing`: the shell id `billing` and the path belong to the Stage 6 subscription.
+2. **`localProviders` in the boot payload is `{ afip: boolean }`, not a bare boolean.** One flag would mark invoices as simulated whenever WhatsApp or video run on a simulator; a flag per provider family is precise and extends to Stages 5 and 6. The banner shows for a demo organization too (it only ever has the fake issuer).
+3. **No payments gateway port.** The brief asked for "the payment-related providers"; the design puts `PaymentsGateway` (Mercado Pago) in Stage 6 (S6.03), and Stage 4 records payments by hand. The only new port is `invoiceIssuer`.
+4. **The port is the Stage 1 `InvoiceIssuer` of `packages/contracts/src/ports.ts`**, not a new file under `modules/invoicing/application/ports.ts` (the country pack already types it). Track C may add optional fields to `InvoiceRequest` (declared in `docs/stage4-tracks.md`).
+5. **The golden file is a reading of the PDF, not its bytes** (`src/platform/pdf/__golden__/frame.txt`): page count, information dictionary and the text of each page. Compressed streams can differ between zlib versions; the reading cannot. `UPDATE_GOLDEN=1` rewrites it.
+6. **PDF fonts are the standard Helvetica (WinAnsi)**: it draws every character of Spanish and the euro sign without bundling a font; anything else is replaced by `?` (`pdfSafeText`).
+7. **`ENABLED_STAGE` stays 2**; contributed entries carry no stage.
+
+### Risks and follow-ups
+
+- The appointment type has no invoice description (task 4.51 assumes one). Track C adds a nullable `invoice_description` to `appointment_type` with a `4c` migration (declared exception) or falls back to the type name.
+- Reports read other modules' data only through their `index.ts`; `modules/scheduling/index.ts`, `modules/patients/index.ts` and `modules/waitlist/index.ts` will each get new export lines from the tracks (declared exceptions in `docs/stage4-tracks.md`).
+- `test/security/public-tokens.test.ts` needs one line in `ELSEWHERE` when a track enables `export_download` or `invoice_pdf` (its test fails until the kind is placed).
+- The Judgment Day of Stage 3 lands fixes on `feat/stage-3-patient-engagement`; this branch merges them later (documents, tokens or the shell may conflict in `access-routes.ts` if the review touched the download route).
+- Lighthouse, CI and the real ARCA adapter were not run (S4.D is deferred).
+
+### Verification (tip of `feat/stage-4-revenue` before this progress commit, Node v24.22.0, pnpm 10.34.7, Docker running and shared with other projects)
+
+| Command | Result |
+| --- | --- |
+| `corepack pnpm install --frozen-lockfile` | exit 0 |
+| `corepack pnpm typecheck` | exit 0 (contracts, api, web) |
+| `corepack pnpm lint` / `format:check` | exit 0 |
+| `corepack pnpm test` | **329 files, 4,228 tests passed** (`boot.test.ts` included: boot stays DB-free) |
+| `corepack pnpm test:integration` | **178 files passed, 1 skipped (the slow ClamAV suite); 2,784 tests passed, 4 skipped** |
+| `corepack pnpm build` | exit 0 (the entry chunk of the web app holds none of the new schemas or `recharts`: they sit in lazy chunks) |
+| `corepack pnpm db:check` | No migration drift |
+| `test:e2e` (`vite build`, private ports 3660/4660/9660, `--workers=3`) | **185 passed** |
+| `docker build -f infra/Dockerfile` and a smoke run with the production configuration of the CI smoke test (private port 3667) | image built; `/health` answered `{"status":"ok"}`; inside the image `@react-pdf/renderer` rendered a PDF and `exceljs` and `qrcode` loaded; the container and the image were removed |
+
+CI was not run or polled. Lighthouse was not run. No `.env` file was read or written.
