@@ -11,8 +11,13 @@ import {
   INVOICE_TYPES,
   INVOICING_AUDIT_ACTIONS,
   INVOICING_ERRORS,
+  CreatePointOfSaleRequest,
+  FiscalConfigResponse,
   InvoicingSettings,
+  PutCredentialRequest,
   TAX_CONDITIONS,
+  UpdatePointOfSaleRequest,
+  UpsertFiscalProfileRequest,
 } from './invoicing.js';
 
 describe('invoicing catalogues', () => {
@@ -57,8 +62,12 @@ describe('invoicing catalogues', () => {
     for (const action of INVOICING_AUDIT_ACTIONS) expect(AUDIT_ACTIONS).toContain(action);
   });
 
-  it('starts with no error codes of its own: the track adds them to its catalog', () => {
-    expect(Object.keys(INVOICING_ERRORS)).toEqual([]);
+  it('has the error codes of the fiscal configuration', () => {
+    expect(Object.keys(INVOICING_ERRORS)).toEqual(['fiscal_profile_required']);
+    expect(INVOICING_ERRORS.fiscal_profile_required).toEqual({
+      status: 409,
+      i18nKey: 'errors.fiscal_profile_required',
+    });
   });
 });
 
@@ -78,5 +87,93 @@ describe('invoicing settings', () => {
     expect(InvoicingSettings.safeParse({ outageThresholdHours: 24, cuit: '20' }).success).toBe(
       false,
     );
+  });
+});
+
+describe('fiscal profile request', () => {
+  const valid = {
+    cuit: '20-12345678-6',
+    taxCondition: 'monotributo',
+    businessName: '  Consultorio Aillu ',
+    address: 'Av. Siempre Viva 123',
+    activityStartedOn: '2020-03-01',
+  };
+
+  it('accepts the fiscal identity and trims the text', () => {
+    expect(UpsertFiscalProfileRequest.parse(valid)).toEqual({
+      ...valid,
+      businessName: 'Consultorio Aillu',
+    });
+  });
+
+  it('refuses an unknown tax condition, a blank name, a malformed date and extra keys', () => {
+    for (const bad of [
+      { ...valid, taxCondition: 'consumidor_final' },
+      { ...valid, businessName: '   ' },
+      { ...valid, activityStartedOn: '01/03/2020' },
+      { ...valid, enabled: true },
+    ]) {
+      expect(UpsertFiscalProfileRequest.safeParse(bad).success).toBe(false);
+    }
+  });
+});
+
+describe('point of sale requests', () => {
+  it('creates a point of sale in homologation unless told otherwise', () => {
+    expect(CreatePointOfSaleRequest.parse({ number: 3 })).toEqual({ number: 3 });
+    expect(CreatePointOfSaleRequest.parse({ number: 3, environment: 'production' })).toEqual({
+      number: 3,
+      environment: 'production',
+    });
+  });
+
+  it('keeps the number inside what AFIP allows', () => {
+    expect(CreatePointOfSaleRequest.safeParse({ number: 0 }).success).toBe(false);
+    expect(CreatePointOfSaleRequest.safeParse({ number: 100000 }).success).toBe(false);
+    expect(CreatePointOfSaleRequest.safeParse({ number: 1.5 }).success).toBe(false);
+  });
+
+  it('changes the environment or the active flag, and needs at least one of them', () => {
+    expect(UpdatePointOfSaleRequest.parse({ active: false })).toEqual({ active: false });
+    expect(UpdatePointOfSaleRequest.parse({ environment: 'production' })).toEqual({
+      environment: 'production',
+    });
+    expect(UpdatePointOfSaleRequest.safeParse({}).success).toBe(false);
+    expect(UpdatePointOfSaleRequest.safeParse({ number: 2 }).success).toBe(false);
+  });
+});
+
+describe('credential upload request', () => {
+  it('carries the certificate and the key as text', () => {
+    expect(PutCredentialRequest.parse({ certificate: 'c', privateKey: 'k' })).toEqual({
+      certificate: 'c',
+      privateKey: 'k',
+    });
+  });
+
+  it('refuses a missing part and anything that is not one of the two', () => {
+    expect(PutCredentialRequest.safeParse({ certificate: 'c' }).success).toBe(false);
+    expect(PutCredentialRequest.safeParse({ certificate: '', privateKey: 'k' }).success).toBe(
+      false,
+    );
+    expect(
+      PutCredentialRequest.safeParse({ certificate: 'c', privateKey: 'k', passphrase: 'x' })
+        .success,
+    ).toBe(false);
+  });
+});
+
+describe('fiscal configuration response', () => {
+  it('has no field that could hold the certificate or the key', () => {
+    const shape = Object.keys(FiscalConfigResponse.shape.credential.unwrap().shape);
+
+    expect(shape).toEqual([
+      'state',
+      'notBefore',
+      'notAfter',
+      'subjectCuit',
+      'fingerprint',
+      'uploadedAt',
+    ]);
   });
 });

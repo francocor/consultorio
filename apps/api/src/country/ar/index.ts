@@ -9,6 +9,7 @@ import {
 
 import type { CatalogReader, CountryPack } from '../../platform/country/country-pack.js';
 
+import { AR_INVOICE_RULES } from './afip/index.js';
 import { AR_DEFAULTS } from './defaults.js';
 import { AR_LEGAL_ADAPTERS } from './legal-adapters.js';
 import { AR_PERSONAL_DATA } from './personal-data.js';
@@ -48,5 +49,6 @@ export function createArPack(catalogs: CatalogReader): CountryPack {
     personalData: AR_PERSONAL_DATA,
     retention: AR_RETENTION,
     legalAdapters: AR_LEGAL_ADAPTERS,
+    invoiceRules: AR_INVOICE_RULES,
   };
 }
