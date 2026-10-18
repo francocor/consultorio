@@ -28,6 +28,8 @@ const HOUR = 3_600_000;
 export type SuspiciousReason = 'rate_limit' | 'code_flood' | 'hoarding';
 
 const HOLD_WINDOW = 600_000;
+/** One entry per link and reason in this long. */
+const SUSPICIOUS_WINDOW = 600_000;
 
 export interface Abuse {
   /** Counts a hold request from this address; false when it already has too many. */
@@ -70,11 +72,19 @@ export function createAbuse(deps: { store: RateLimitStore; metrics: Metrics }): 
       within(`booking|submission|link|${tenantId}|${linkId}`, ABUSE_LIMITS.submissionsPerLink),
 
     async recordSuspicious(tx, input) {
+      // Every one is counted; only the first of a kind per link and window is written down, so a
+      // flood cannot fill the audit trail.
       deps.metrics.increment('booking_suspicious_total', { reason: input.reason });
+      if (
+        !(await within(`booking|suspicious|${input.linkId}|${input.reason}`, 1, SUSPICIOUS_WINDOW))
+      ) {
+        return;
+      }
       await audit(tx, {
         action: 'booking.suspicious',
         outcome: 'deny',
-        actor: input.actor,
+        // What happened, never who: the address and the browser of the visitor are not kept.
+        actor: { ...input.actor, ip: null, userAgent: null },
         resourceType: 'booking_link',
         resourceId: input.linkId,
         // What happened, never who: no address, name or document.

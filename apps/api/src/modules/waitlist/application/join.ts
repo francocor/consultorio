@@ -135,7 +135,8 @@ async function recordSuspicious(
   await audit(tx, {
     action: 'booking.suspicious',
     outcome: 'deny',
-    actor,
+    // What happened, never who: the address and the browser of the visitor are not kept.
+    actor: { ...actor, ip: null, userAgent: null },
     resourceType: 'booking_link',
     resourceId: linkId,
     // What happened, never who: no address, name or document.

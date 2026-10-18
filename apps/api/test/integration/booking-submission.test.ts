@@ -474,6 +474,37 @@ describe('abuse protection', () => {
     );
   });
 
+  it('writes what looked suspicious without who did it, and once per link and reason in a window (JD-S3 A6)', async () => {
+    const { visitor, hold } = await heldBy(
+      world.visitor({ ip: '10.88.0.2', userAgent: 'flood-agent' }),
+    );
+    for (let attempt = 0; attempt < 25; attempt += 1) {
+      await submit(visitor, hold, world.form());
+    }
+
+    const rows = await world.inTenant((tx) =>
+      tx
+        .select({
+          ip: auditEvent.ip,
+          userAgent: auditEvent.userAgent,
+          metadata: auditEvent.metadata,
+        })
+        .from(auditEvent)
+        .where(eq(auditEvent.action, 'booking.suspicious')),
+    );
+
+    // This file already provoked the limit once (the test before): a flood writes one entry.
+    expect(rows.filter((row) => row.metadata['reason'] === 'rate_limit')).toHaveLength(1);
+    for (const row of rows) {
+      expect(row.ip).toBeNull();
+      expect(row.userAgent).toBeNull();
+    }
+    // The metric still counts every one of them.
+    expect(world.metrics.get('booking_suspicious_total', { reason: 'rate_limit' })).toBeGreaterThan(
+      1,
+    );
+  });
+
   it('keeps the slot of a form that was refused: the hold is untouched', async () => {
     const { visitor, hold } = await heldBy();
     await submit(visitor, hold, world.form({ dataProcessingConsent: false }));
