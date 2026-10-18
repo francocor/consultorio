@@ -2005,3 +2005,43 @@ CI was not run or polled. No `.env` file was read or written.
 - `platform/http/rate-limit.ts` has a separate bucket for public routes; new public routes of Stage 4 (none planned) must choose a bucket.
 - Migrations `0392` to `0397` exist; Stage 4 ranges (`0410` and up) do not overlap. Run `pnpm db:restamp` then `pnpm db:check` after the merge.
 - `pnpm test:e2e` now runs with reduced motion: a new spec that checks a toast with axe gets the final colors.
+
+## Stage 4 integration 1: tracks A, B and C (wave 1) and the Stage 3 round-2 fixes
+
+Branch `feat/stage-4-revenue`, from the seam tip `e3a7f6c`. Automatic mode, strict TDD, merge commits only (no rebase, no force push). Each track keeps its own progress file, which has the commits, the TDD evidence, the deviations and the track's own verification:
+
+- Track A (billing, S4.01 to S4.05, tasks 4.7 to 4.27): `apply-progress-stage4-track-a.md`. Merge `649bd6e`. Migrations `0410`, `0412`, `0414`, `0416`.
+- Track B (reports, S4.06 and S4.07, tasks 4.28 to 4.32 and 4.34): `apply-progress-stage4-track-b.md`. Merge `22ae1d1`. Migration `0430`. Task 4.33 and S4.14 are pending.
+- Track C, first wave (invoicing configuration and the AFIP simulator, S4.08 and S4.09, tasks 4.35 to 4.42 and the settings half of 4.54): `apply-progress-stage4-track-c.md`. Merge `01f48fc`. Migrations `0440`, `0442`. S4.10 to S4.13 are pending.
+- `6609f25` removes the NUL bytes that a track left in `translate.ts` (they made git treat the file as binary and refuse a text merge) and adds the `no-nul-bytes` policy test; `bded4e5` gives that scan a 60 s timeout because it took more than 5 s on a loaded machine.
+
+### Stage 3 round 2 merged
+
+`origin/feat/stage-3-patient-engagement` at `53e7dfd` (the Stage 3 Judgment Day round 2: migration `0398_usage_confirmed_backfill`, and changes in notifications, online booking, teleconsultation, waitlist and scheduling, among them `lockProfessional` with `FOR NO KEY UPDATE` in the scheduling `drizzle-ports.ts`, `validateDeferredConstraints` in `db/migrate.ts` and `calendar-scope.ts`) was merged with commit `71564da`. Three files conflicted and both sides were kept:
+
+- `meta/_journal.json`: `0398` is inserted between `0397` and `0410`, the indexes are renumbered, and `pnpm db:restamp` raised the stamps of `0410` to `0442` above the `when` of `0398` and re-chained the snapshot of `0410`.
+- `docs/dev-setup.md`: the provider table keeps the `AFIP_PROVIDER` row of Stage 4 and takes the longer `ADDRESS_HASH_PEPPER` row of round 2 (the demo seed and reset hash the message log with the same value).
+- `apply-progress.md`: the section "Judgment Day Stage 3, round 2" goes before the Stage 4 sections.
+
+The journal order after the merge: `0397_booking_link_unconfirmed_cap`, `0398_usage_confirmed_backfill`, `0410_pricing`, `0412_charges`, `0414_payments_cash`, `0416_payer_cuit`, `0430_report_indexes`, `0440_fiscal_config`, `0442_local_afip` (69 entries, indexes 0 to 68, linear).
+
+### Verification of the merged tip
+
+| Check | Result |
+| ----- | ------ |
+| `pnpm install --frozen-lockfile` | up to date |
+| `typecheck`, `lint`, `format:check` | exit 0 |
+| `pnpm test` | 4,628 of 4,634 passed; 6 files timed out at 5 s under load (`boot`, `no-nul-bytes`, `request-context`, `read-only/index`, `pdf/render`, `teleconsultation/dev-routes`) and passed alone, 73 of 73 |
+| `pnpm test:integration` (alone, nothing else using Docker) | 212 files passed, 1 skipped (ClamAV), 3,267 tests passed; `backup-restore.test.ts` failed to start with `socket hang up` (a container start) and passed alone, 4 of 4 |
+| `pnpm build`, `pnpm db:check` | exit 0, no migration drift |
+| `playwright test --workers=3` (ports 4800, 3800, 9800, fresh stack) | 193 passed |
+| Docker image and smoke run with the CI production environment, `ADDRESS_HASH_PEPPER` and `CLAMAV_HOST` included (private port 3810) | `/health` answered `{"status":"ok"}` |
+
+The containers and the image started by these runs were removed by their ID (the Testcontainers ones by Ryuk). CI was not run or polled. No `.env` file was read or written.
+
+### Notes for wave 2
+
+- Track C, S4.10 to S4.13 (tasks 4.43 to 4.56): the charge lines are now readable through `modules/billing/index.ts`; migration `0444` (FK and trigger on `charge_line`) must come after `0412` and use the FORCE RLS lift of `docs/migration-ranges.md`; the payer CUIT exists now (`0416`), so the recipient form does not need to ask for it; `invoiceLookup` (stub) is replaced by task 4.45 without changing its signature; the `country.ar.invoice.*` failure keys have no es-AR text yet; the `invoices` navigation entry and the `invoice_pdf` token kind are still open.
+- Track B, S4.14 (tasks 4.57 to 4.59) and task 4.33: they need the export job of task 4.24 (track A, now on this branch) and the invoicing read functions of S4.10. The list of what S4.14 needs from A and C is in `apply-progress-stage4-track-b.md`.
+- After any new migration: `pnpm db:restamp`, `pnpm db:check`, and remove `node_modules/.vitest-cache` when a glob-found fixture or demo exemption was added.
+- Under load the unit suite can time out on a handful of files that pass alone (the list above): re-run those files alone before suspecting the code.
