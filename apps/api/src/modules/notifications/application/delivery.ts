@@ -109,7 +109,17 @@ export type ProviderResult =
   | { status: 'retryable'; reason: string }
   | { status: 'rejected'; reason: MessageFailureReason };
 
-const WORKLIST_KINDS: ReadonlySet<MessageKind> = new Set(['reminder', 'confirmation']);
+/**
+ * The messages whose failure to reach the patient reception is told about. The follow-up with the
+ * video link is one: the patient was promised it, so a follow-up that cannot arrive before the call
+ * (quiet hours, no channel, a failure) leaves a worklist item and not a silent cancellation
+ * (judgment day round 2, finding B11).
+ */
+const WORKLIST_KINDS: ReadonlySet<MessageKind> = new Set([
+  'reminder',
+  'confirmation',
+  'video_link',
+]);
 
 function cancelReasonOf(skip: SkipReason | undefined): MessageCancelReason {
   switch (skip) {
