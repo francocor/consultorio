@@ -49,8 +49,14 @@ export function InvoiceCard({
         </p>
       ) : null}
       <div>
-        <Button type="button" size="sm" variant="outline" onClick={onOpen}>
-          {t('list.open', { voucher: label })}
+        <Button
+          type="button"
+          size="sm"
+          variant="outline"
+          aria-label={t('list.open', { voucher: label })}
+          onClick={onOpen}
+        >
+          {t('list.openShort')}
         </Button>
       </div>
     </li>

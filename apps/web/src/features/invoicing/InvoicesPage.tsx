@@ -118,7 +118,7 @@ function Invoices() {
           ) : null}
         </TabsList>
 
-        <TabsContent value="invoices" className="grid gap-3 pt-4">
+        <TabsContent value="invoices" className="grid grid-cols-1 gap-3 pt-4">
           <div className="grid max-w-xs gap-1.5">
             <Label htmlFor="invoices-status">{t('invoicing:filter.status')}</Label>
             <Select
@@ -154,7 +154,7 @@ function Invoices() {
             />
           ) : null}
           {invoices.length > 0 ? (
-            <ul aria-label={t('invoicing:list.caption')} className="grid gap-3">
+            <ul aria-label={t('invoicing:list.caption')} className="grid grid-cols-1 gap-3">
               {invoices.map((invoice) => (
                 <InvoiceCard
                   key={invoice.id}
