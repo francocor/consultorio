@@ -1,6 +1,6 @@
 {
   "id": "f17c1768-15f3-4936-90fa-1eabd4473c11",
-  "prevId": "7592225a-ad69-4f34-8f7f-a6a0d6394015",
+  "prevId": "c631a0d8-2892-43f6-a3d7-f02fcc841c0a",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
@@ -8858,6 +8858,22 @@
           "concurrently": false,
           "method": "btree",
           "with": {}
+        },
+        "message_whatsapp_address_hash_idx": {
+          "name": "message_whatsapp_address_hash_idx",
+          "columns": [
+            {
+              "expression": "address_hash",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "where": "\"message\".\"channel\" = 'whatsapp'",
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
         }
       },
       "foreignKeys": {
@@ -13962,6 +13978,28 @@
             }
           ],
           "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "whatsapp_usage_event_unsettled_idx": {
+          "name": "whatsapp_usage_event_unsettled_idx",
+          "columns": [
+            {
+              "expression": "tenant_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "where": "\"whatsapp_usage_event\".\"confirmed_at\" is null and \"whatsapp_usage_event\".\"released_at\" is null",
           "concurrently": false,
           "method": "btree",
           "with": {}
