@@ -155,10 +155,22 @@ export async function matchFreedSlot(
 ): Promise<MatchResult> {
   const ports = deps.portsOf(tx);
   const { now } = input;
-  // Two matches of the same professional never run side by side.
-  await tx.execute(
-    sql`select pg_advisory_xact_lock(hashtextextended(${input.professionalId ?? 'any'}, 361))`,
-  );
+  // Two matches of the same professional never run side by side. A match that is not about one
+  // professional touches all of them, so it takes the lock of every active professional (in a
+  // fixed order, so two of them cannot wait for each other).
+  const professionalIds =
+    input.professionalId === null
+      ? (
+          await tx
+            .select({ id: professional.id })
+            .from(professional)
+            .where(eq(professional.status, 'active'))
+            .orderBy(asc(professional.id))
+        ).map((row) => row.id)
+      : [input.professionalId];
+  for (const lockedId of professionalIds) {
+    await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${lockedId}, 361))`);
+  }
 
   // One offer at a time for a freed range.
   const [inFlight] = await tx
@@ -191,15 +203,6 @@ export async function matchFreedSlot(
     const type = await ports.findType(typeId);
     if (type?.active) types.set(typeId, type);
   }
-  const professionalIds =
-    input.professionalId === null
-      ? (
-          await tx
-            .select({ id: professional.id })
-            .from(professional)
-            .where(eq(professional.status, 'active'))
-        ).map((row) => row.id)
-      : [input.professionalId];
 
   // Every visit that fits in the range, for each place, professional and type somebody waits for.
   const candidates: Candidate[] = [];

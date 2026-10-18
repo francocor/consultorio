@@ -6,6 +6,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, inject, it } from 'v
 
 import { slotHold } from '../../src/db/schema/scheduling.js';
 import { createSchedulingPorts, createHold } from '../../src/modules/scheduling/index.js';
+import { matchFreedSlot } from '../../src/modules/waitlist/application/match.js';
 import { createRuntimeDb, type DbHandle } from '../../src/platform/db/pool.js';
 import { createWaitlistWorld, type WaitlistWorld } from '../support/waitlist-world.js';
 
@@ -435,5 +436,60 @@ describe('entries that reception has to call', () => {
       status: 'active',
     });
     expect(await world.callsOf(entry.id)).toHaveLength(1);
+  });
+});
+
+describe('matches that do not run side by side (JD-S3 B28)', () => {
+  const lockOf = (professionalId: string) =>
+    sql`select pg_advisory_xact_lock(hashtextextended(${professionalId}, 361))`;
+
+  it('makes a match of every professional wait for the match of one of them', async () => {
+    const weeks = nextWeek();
+    await waiting(1);
+    const booked = await world.book(weeks, '10:00');
+    await world.cancel(booked);
+    const range = {
+      professionalId: null,
+      locationId: null,
+      startsAt: new Date(booked.startsAt),
+      endsAt: new Date(booked.endsAt),
+    };
+    let released!: () => void;
+    const hold = new Promise<void>((resolve) => {
+      released = resolve;
+    });
+    let holding!: () => void;
+    const held = new Promise<void>((resolve) => {
+      holding = resolve;
+    });
+    // A match of one professional is in the middle of its work: it holds that professional's lock.
+    const first = world.inTenant(async (tx) => {
+      await tx.execute(lockOf(world.doctor.professionalId));
+      holding();
+      await hold;
+    });
+    await held;
+
+    let finished = false;
+    const second = world
+      .inTenant((tx) =>
+        matchFreedSlot(
+          tx,
+          {
+            portsOf: (inner) => createSchedulingPorts(inner, { keys: world.keys }),
+            jobs: world.jobs,
+          },
+          { ...range, now: world.now() },
+        ),
+      )
+      .then(() => {
+        finished = true;
+      });
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    const waitedForTheLock = !finished;
+    released();
+    await Promise.all([first, second]);
+
+    expect(waitedForTheLock).toBe(true);
   });
 });
