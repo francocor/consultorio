@@ -1050,10 +1050,10 @@ Start: S4.02. Done when: payments, refunds and the cash register behave as speci
 
 Start: S4.03, S4.00 web seams. Done when: reception runs a desk day at 360 px. Verify: default plus `e2e/stage4-cash.spec.ts`. Rollback: default. May run to about 450 lines because splitting leaves the desk flow half working.
 
-- [ ] 4.20 `features/billing/*`: charge capture in the `appointment-drawer` slot at check-in, quote display, explicit-amount flow when there is no price, line list, void dialog with reason, status chips (icon and text), review flag; `locales/es-AR/billing.json`. [BIL-04, BIL-05, BIL-16] Test: component tests plus axe.
-- [ ] 4.21 Payment dialog with `MoneyInput`, method, partial payment, overpayment confirmation, voucher duplicate override with reason, a client-generated idempotency key per submit, payer receivable view. [BIL-06, BIL-07] Test: component tests including the double-click case.
-- [ ] 4.22 `features/cash/*`: open and close register, daily summary by method, difference reason, correction after close, location filter; `locales/es-AR/cash.json`. [BIL-09, BIL-10] Test: component tests.
-- [ ] 4.23 `e2e/stage4-cash.spec.ts` at 360 px: check in, capture, partial payment, close the register with a difference reason; reception sees the forbidden state on void and refund; amounts read "$ 1.234,50". [BIL-04, BIL-06, BIL-09, BIL-12, BIL-16] Test: that spec.
+- [x] 4.20 `features/billing/*`: charge capture in the `appointment-drawer` slot at check-in, quote display, explicit-amount flow when there is no price, line list, void dialog with reason, status chips (icon and text), review flag; `locales/es-AR/billing.json`. [BIL-04, BIL-05, BIL-16] Test: component tests plus axe.
+- [x] 4.21 Payment dialog with `MoneyInput`, method, partial payment, overpayment confirmation, voucher duplicate override with reason, a client-generated idempotency key per submit, payer receivable view. [BIL-06, BIL-07] Test: component tests including the double-click case.
+- [x] 4.22 `features/cash/*`: open and close register, daily summary by method, difference reason, correction after close, location filter; `locales/es-AR/cash.json`. [BIL-09, BIL-10] Test: component tests.
+- [x] 4.23 `e2e/stage4-cash.spec.ts` at 360 px: check in, capture, partial payment, close the register with a difference reason; reception sees the forbidden state on void and refund; amounts read "$ 1.234,50". [BIL-04, BIL-06, BIL-09, BIL-12, BIL-16] Test: that spec.
 
 ## S4.05 Exports (~350) [Track A]
 
