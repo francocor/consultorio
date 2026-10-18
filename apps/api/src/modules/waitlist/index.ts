@@ -29,6 +29,7 @@ import { publicRoutes } from './http/public-routes.js';
 export { closeEntriesOfOptedOutPatient, closeExpiredEntries } from './application/entries.js';
 export { createWaitlistJobs } from './application/jobs.js';
 export { waitlistOutcomes } from './application/outcomes.js';
+export { recoveredAppointmentIds } from './application/report-facts.js';
 export type { WaitlistOutcomes } from './application/outcomes.js';
 export type { WaitlistJobDeps, WaitlistJobs } from './application/jobs.js';
 export type {

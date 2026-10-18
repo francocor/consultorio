@@ -77,7 +77,8 @@ export type AppliedReportFilters = z.infer<typeof AppliedReportFilters>;
 export const ReportOptionsResponse = z.strictObject({
   scope: z.enum(REPORT_SCOPES),
   locations: z.array(z.strictObject({ id: Id, name: z.string() })),
-  professionals: z.array(z.strictObject({ id: Id, name: z.string() })),
+  /** The name is null for a member who has not set how they appear in the directory. */
+  professionals: z.array(z.strictObject({ id: Id, name: z.string().nullable() })),
   specialties: z.array(z.string()),
   /** Owner and admin only: reception never sees revenue by professional, a professional sees their own. */
   canSeeRevenueByProfessional: z.boolean(),
