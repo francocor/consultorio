@@ -24,7 +24,7 @@ import {
 } from '../../scheduling/index.js';
 import type { SchedulingPorts } from '../../scheduling/index.js';
 import { readOrganizationName } from '../../tenancy/index.js';
-import { dailyCapReached, filterBookableSlots } from '../domain/booking-rules.js';
+import { dailyCapReached, filterBookableSlots, localDateOf } from '../domain/booking-rules.js';
 
 import type { BookingNotice } from './booking-notifier.js';
 import { readBookingSettings } from './booking-settings.js';
@@ -69,6 +69,8 @@ interface Managed {
   mode: 'in_person' | 'virtual';
   patientId: string;
   version: number;
+  /** Where the appointment came from: only an online one counts against the cap of online bookings. */
+  source: string;
 }
 
 async function describeAppointment(
@@ -107,6 +109,7 @@ async function describeAppointment(
     mode: type.mode === 'virtual' ? 'virtual' : 'in_person',
     patientId: record.patientId,
     version: record.version,
+    source: record.source,
   };
 }
 
@@ -235,19 +238,24 @@ export async function rescheduleManaged(
     throw new SlotNoLongerAvailableError();
   }
   const target = new Date(input.startsAt);
+  // Room for one, whatever the professional allows internally: the public never uses an
+  // overbooked lane. Taken under the professional's lock, so nothing slips in before the move, and
+  // before the day's cap is read, so two moves into the same day are served one after the other.
+  await ports.lockProfessional(peek.professionalId);
   const booked = await onlineBookingsOnDay(tx, {
     professionalId: peek.professionalId,
     startsAt: target,
     timeZone: place.timeZone,
   });
-  const sameDay = peek.startsAt.toISOString().slice(0, 10) === target.toISOString().slice(0, 10);
-  if (dailyCapReached(settings.booking.dailyCap, sameDay ? booked - 1 : booked)) {
+  // The cap counts days of the place, not of Greenwich. The appointment being moved is one of the
+  // bookings of its own day (when it is an online one), so it does not count against the day it
+  // stays in.
+  const staysInDay =
+    peek.source === 'online' &&
+    localDateOf(place.timeZone, peek.startsAt) === localDateOf(place.timeZone, target);
+  if (dailyCapReached(settings.booking.dailyCap, staysInDay ? booked - 1 : booked)) {
     throw new SlotNoLongerAvailableError();
   }
-
-  // Room for one, whatever the professional allows internally: the public never uses an
-  // overbooked lane. Taken under the professional's lock, so nothing slips in before the move.
-  await ports.lockProfessional(peek.professionalId);
   const end = target.getTime() + (peek.endsAt.getTime() - peek.startsAt.getTime());
   const occupied = await publicCapacityPorts(ports).occupancies(peek.professionalId, {
     start: target.getTime(),
