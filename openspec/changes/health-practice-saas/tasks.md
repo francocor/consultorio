@@ -1145,8 +1145,8 @@ Start: S4.03, S4.10, S4.07. Done when: money figures reproduce from payments, re
 
 Start: A, B and C merged. Done when: every Stage 4 route has a category and the money rules hold under random input. Verify: default plus the named tests. Rollback: default.
 
-- [ ] 4.60 Read-only audit of all Stage 4 routes: category present, billing writes and invoice creation 402, reads, exports, reports and PDF links allowed. [BIL-14, INV-13, RPT-12, TEN-11] Test: `route-categories.test.ts` plus an inject matrix per route.
-- [ ] 4.61 `apps/api/test/policy/money-invariants.test.ts` (fast-check): payments never exceed the patient portion without a confirmed credit, reversals never exceed the net payment, invoice lines never exceed charge lines, credit notes never exceed the invoice, expected cash equals opening plus cash in minus cash out. [BIL-06, BIL-08, INV-05, INV-07] Test: that file.
+- [x] 4.60 Read-only audit of all Stage 4 routes: category present, billing writes and invoice creation 402, reads, exports, reports and PDF links allowed. [BIL-14, INV-13, RPT-12, TEN-11] Test: `route-categories.test.ts` plus an inject matrix per route.
+- [x] 4.61 `apps/api/test/policy/money-invariants.test.ts` (fast-check): payments never exceed the patient portion without a confirmed credit, reversals never exceed the net payment, invoice lines never exceed charge lines, credit notes never exceed the invoice, expected cash equals opening plus cash in minus cash out. [BIL-06, BIL-08, INV-05, INV-07] Test: that file.
 - [ ] 4.62 Audit coverage and redaction: Stage 4 actions registered in `audit-coverage.test.ts`; log capture proves no card data, certificates or keys are logged. [BIL-15, INV-12] Test: both files.
 
 ## S4.16 Demo seed (~300) [Track D]
