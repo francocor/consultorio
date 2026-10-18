@@ -538,3 +538,66 @@ describe('who can see and change the waitlist', () => {
     expect(response.statusCode).toBe(400);
   });
 });
+
+describe('who sees which entries (JD-S3 B12)', () => {
+  it('shows reception only the entries of the places it works at, and answers not found for the others', async () => {
+    // Reception works at Centro only. An entry for Norte is not theirs to see or to change.
+    const patientId = await reachablePatient();
+    const made = await world.api.post(
+      '/waitlist',
+      world.owner,
+      body(patientId, { locationId: world.norte }),
+    );
+    expect(made.statusCode, made.body).toBe(201);
+    const entry = made.json<WaitlistEntryDto>();
+    const anywhere = await add(await reachablePatient());
+
+    const list = await world.api.get('/waitlist', world.reception);
+    const detail = await world.api.get(`/waitlist/${entry.id}`, world.reception);
+    const closed = await world.api.post(`/waitlist/${entry.id}/close`, world.reception, {
+      reason: 'cancelled',
+    });
+    const ownerList = await world.api.get('/waitlist', world.owner);
+
+    const ids = (response: typeof list) =>
+      response.json<WaitlistListResponse>().entries.map((item) => item.id);
+    expect(ids(list)).toContain(anywhere.id);
+    expect(ids(list)).not.toContain(entry.id);
+    expect(ids(ownerList)).toContain(entry.id);
+    expect(detail.statusCode).toBe(404);
+    expect(closed.statusCode).toBe(404);
+    const refused = await world.api.post(
+      '/waitlist',
+      world.reception,
+      body(await reachablePatient(), { locationId: world.norte }),
+    );
+    expect(refused.statusCode).toBe(404);
+  });
+
+  it("keeps a professional to their own calendar: the entries of a colleague's are not theirs", async () => {
+    const patientId = await reachablePatient();
+    const made = await world.api.post(
+      '/waitlist',
+      world.owner,
+      body(patientId, { professionalId: world.colleague.professionalId }),
+    );
+    expect(made.statusCode, made.body).toBe(201);
+    const entry = made.json<WaitlistEntryDto>();
+    const mine = await world.api.post(
+      '/waitlist',
+      world.doctor,
+      body(await reachablePatient(), { professionalId: world.doctor.professionalId }),
+    );
+    expect(mine.statusCode, mine.body).toBe(201);
+
+    const list = await world.api.get('/waitlist', world.doctor);
+    const detail = await world.api.get(`/waitlist/${entry.id}`, world.doctor);
+    const pause = await world.api.post(`/waitlist/${entry.id}/pause`, world.doctor, {});
+
+    const ids = list.json<WaitlistListResponse>().entries.map((item) => item.id);
+    expect(ids).toContain(mine.json<WaitlistEntryDto>().id);
+    expect(ids).not.toContain(entry.id);
+    expect(detail.statusCode).toBe(404);
+    expect(pause.statusCode).toBe(404);
+  });
+});
