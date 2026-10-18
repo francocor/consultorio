@@ -4,6 +4,7 @@ import {
   ChargeDto,
   ChargeListQuery,
   ChargeListResponse,
+  VoidChargeRequest,
   type ChargeExistsExtension,
 } from '@consultorio/contracts';
 import { and, eq, gte, lte, type SQL } from 'drizzle-orm';
@@ -14,15 +15,19 @@ import { z } from 'zod';
 import { charge } from '../../../db/schema/billing-charges.js';
 import type { WithTenant } from '../../../platform/db/tenant-context.js';
 import { AppError, conflictWith } from '../../../platform/http/problem.js';
+import type { InvoiceLookup } from '../../invoicing/index.js';
 import { addChargeLine, captureCharge } from '../application/capture-charge.js';
 import { loadCharge, loadCharges, scopeCondition, serviceDay } from '../application/charge-view.js';
 import { billingScopeOf } from '../application/scope.js';
+import { voidCharge } from '../application/void-charge.js';
 
 import { actorOf, billingActorOf } from './context.js';
 
 export interface ChargeRoutesDeps {
   withTenant: WithTenant;
   clock: () => Date;
+  /** Asks the invoicing module whether an issued invoice stands over a charge. */
+  invoices: InvoiceLookup;
 }
 
 const Params = z.strictObject({ id: z.uuid() });
@@ -106,6 +111,27 @@ export function chargeRoutes(deps: ChargeRoutesDeps) {
           if (!found) throw new AppError('not_found');
           return found;
         });
+      },
+    );
+
+    typed.post(
+      '/billing/charges/:id/void',
+      {
+        config: { readOnly: 'write', permission: 'charges.void', audits: ['charge.voided'] },
+        schema: { params: Params, body: VoidChargeRequest, response: { 200: ChargeDto } },
+      },
+      (request) => {
+        const actor = actorOf(request);
+        return deps.withTenant({ tenantId: actor.tenantId, userId: actor.userId }, (tx) =>
+          voidCharge(tx, {
+            chargeId: request.params.id,
+            request: request.body,
+            actor: billingActorOf(request),
+            viewer: actor,
+            invoices: deps.invoices,
+            now: deps.clock(),
+          }),
+        );
       },
     );
 

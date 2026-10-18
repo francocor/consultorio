@@ -12,10 +12,8 @@ export const BILLING_SCENARIOS: Record<(typeof BILLING_AUDIT_ACTIONS)[number], A
   'billing.price.changed': t('billing-pricing-api.test.ts'),
   'billing.price.override': t('capture-charge.test.ts'),
   'charge.captured': t('capture-charge.test.ts'),
-  'charge.voided': { pending: 'S4.02 (task 4.14): voiding a charge' },
-  'charge.flagged': {
-    pending: 'S4.02 (task 4.13): a no-show or cancelled appointment flags its charge',
-  },
+  'charge.voided': t('void-charge.test.ts'),
+  'charge.flagged': t('charge-review.test.ts'),
   'payment.recorded': { pending: 'S4.03 (task 4.17): recording a payment' },
   'payment.override': { pending: 'S4.03 (task 4.17): a repeated voucher number with a reason' },
   'payment.refunded': { pending: 'S4.03 (task 4.18): refunds' },

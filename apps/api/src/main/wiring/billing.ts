@@ -20,6 +20,7 @@ export const billingWiring: ModuleWiring = {
     createBilling({
       withTenant: context.withTenant,
       auditDeny: context.auditDeny,
+      events: context.appointmentEvents,
       ...(context.clock ? { clock: context.clock } : {}),
     }),
 };
