@@ -61,6 +61,11 @@ export interface MessagingDeps {
   origins: PublicOrigins;
   tokens: ActionTokens;
   worklist: Worklist;
+  /**
+   * Housekeeping other modules ask the hourly sweep to do for an organization (the composition root
+   * plugs them in; the modules never import each other). Each one runs in the sweep's transaction.
+   */
+  housekeeping?: readonly ((tx: Tx, now: Date) => Promise<void>)[];
   /** Encrypts what messaging keeps that is a capability (the address of an offer). */
   keys: TenantKeys;
   /** The plan's WhatsApp quota. Absent: no quota, everything is allowed and counted. */

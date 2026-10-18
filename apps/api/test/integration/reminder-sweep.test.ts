@@ -336,3 +336,28 @@ describe('reminder.sweep: more appointments than a page (JD-S3 B9)', () => {
     expect(await notes.messagesOf(appointment.id)).toHaveLength(1);
   });
 });
+
+describe('reminder.sweep: housekeeping of other modules (JD-S3 R2-C7)', () => {
+  it('runs what the composition root plugged in, once per sweep, in the sweep transaction', async () => {
+    const calls: Date[] = [];
+    const definition = createReminderSweepJob({
+      ...notes.deps,
+      housekeeping: [
+        (_tx, now) => {
+          calls.push(now);
+          return Promise.resolve();
+        },
+      ],
+    });
+
+    await runJob(runtime.db, definition, {
+      id: crypto.randomUUID(),
+      name: 'reminder.sweep',
+      data: { tenantId: scheduling.tenant.id },
+      enqueuedAt: notes.now(),
+      retryCount: 0,
+    });
+
+    expect(calls).toEqual([notes.now()]);
+  });
+});

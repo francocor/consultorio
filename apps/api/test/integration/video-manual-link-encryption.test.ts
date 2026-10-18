@@ -2,6 +2,7 @@ import { eq, sql } from 'drizzle-orm';
 import { afterAll, beforeAll, beforeEach, describe, expect, inject, it } from 'vitest';
 
 import { videoSession } from '../../src/db/schema/teleconsultation.js';
+import { sealLegacyManualLinks } from '../../src/modules/teleconsultation/index.js';
 import { createRuntimeDb, type DbHandle } from '../../src/platform/db/pool.js';
 import { createActionTokens } from '../../src/platform/tokens/index.js';
 import { hostOf } from '../support/app.js';
@@ -143,5 +144,68 @@ describe('the manual link at rest', () => {
     const row = await raw(appointment.id);
     expect(row?.manual_link).toBeNull();
     expect(row?.enc).toBeNull();
+  });
+});
+
+describe('the links written in plaintext before (JD-S3 R2-C7)', () => {
+  const seal = () =>
+    asTenant(runtime, world.tenant.id, (tx) => sealLegacyManualLinks(tx, world.keys));
+
+  it('are sealed by the sweep without anybody following them, and still followed afterwards', async () => {
+    const { appointment, token } = await inWindow();
+    await asTenant(runtime, world.tenant.id, (tx) =>
+      tx
+        .update(videoSession)
+        .set({ manualLink: LINK, manualLinkEnc: null, provider: null })
+        .where(eq(videoSession.appointmentId, appointment.id)),
+    );
+
+    await seal();
+
+    const row = await raw(appointment.id);
+    expect(row?.manual_link).toBeNull();
+    expect(row?.enc).toBeInstanceOf(Buffer);
+    expect(row?.enc?.toString('latin1')).not.toContain('SECRETPASSCODE');
+    const patient = await enter(token);
+    expect(patient.headers['location']).toBe(LINK);
+  });
+
+  it('are dropped outright when the session is closed: nobody can follow them any more', async () => {
+    const { appointment } = await inWindow();
+    await asTenant(runtime, world.tenant.id, (tx) =>
+      tx
+        .update(videoSession)
+        .set({
+          manualLink: LINK,
+          manualLinkEnc: null,
+          provider: null,
+          status: 'closed',
+          pendingReason: null,
+          closeReason: 'attended',
+        })
+        .where(eq(videoSession.appointmentId, appointment.id)),
+    );
+
+    await seal();
+
+    const row = await raw(appointment.id);
+    expect(row?.manual_link).toBeNull();
+    expect(row?.enc).toBeNull();
+  });
+
+  it('leaves alone a session that has none, and does nothing the second time', async () => {
+    const { appointment } = await inWindow();
+    await asTenant(runtime, world.tenant.id, (tx) =>
+      tx
+        .update(videoSession)
+        .set({ manualLink: LINK, manualLinkEnc: null, provider: null })
+        .where(eq(videoSession.appointmentId, appointment.id)),
+    );
+
+    const first = await seal();
+    const second = await seal();
+
+    expect(first).toBeGreaterThanOrEqual(1);
+    expect(second).toBe(0);
   });
 });

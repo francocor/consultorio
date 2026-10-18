@@ -17,6 +17,7 @@ import {
   queueVideoLinkFollowUp,
   type TenantRef,
 } from '../../modules/notifications/index.js';
+import { sealLegacyManualLinks } from '../../modules/teleconsultation/index.js';
 import { createTenantKeys } from '../../platform/crypto/tenant-keys.js';
 import { createRuntimeDb } from '../../platform/db/pool.js';
 import { createWithTenant } from '../../platform/db/tenant-context.js';
@@ -170,6 +171,13 @@ export const notificationsWiring: ModuleWiring = {
         keys,
         // Reminders of a virtual appointment carry the join address teleconsultation registered.
         videoJoin: videoJoin.resolver,
+        // What other modules ask the hourly sweep to do: seal the manual video links that were
+        // written in plaintext before they were encrypted (the modules meet only here).
+        housekeeping: [
+          async (tx) => {
+            await sealLegacyManualLinks(tx, keys);
+          },
+        ],
       });
     };
     return {

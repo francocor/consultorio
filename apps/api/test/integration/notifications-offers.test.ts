@@ -456,6 +456,30 @@ describe('the link of an offer', () => {
     expect(notes.email.sent.at(-1)?.text).toContain(OFFER_URL);
   });
 
+  it('seals a link written in plaintext before, without anybody following it (JD-S3 R2-C7)', async () => {
+    const patientId = await notes.patient({ email: 'legado@example.test' });
+    const input = offerFor(patientId);
+    const { messageId } = await deliver(input);
+    await notes.runAllJobs();
+    await scheduling.inTenant((tx) =>
+      tx.execute(
+        sql`UPDATE message_offer SET url = ${OFFER_URL}, url_enc = NULL WHERE message_id = ${messageId ?? ''}`,
+      ),
+    );
+
+    await sweep();
+
+    const [row] = await scheduling.inTenant((tx) =>
+      tx
+        .select()
+        .from(messageOffer)
+        .where(eq(messageOffer.messageId, messageId ?? '')),
+    );
+    expect(row?.url).toBeNull();
+    expect(row?.urlEnc).toBeInstanceOf(Buffer);
+    expect(await urlOf(messageId ?? '')).toBe(OFFER_URL);
+  });
+
   it('is cleared by the sweep an hour after the offer expired, and not before', async () => {
     const patientId = await notes.patient({ email: 'limpieza@example.test' });
     const input = offerFor(patientId);

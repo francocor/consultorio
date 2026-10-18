@@ -12,6 +12,7 @@ import { selectChannels } from '../domain/channel-policy.js';
 import { rehashLegacyAddresses } from './address-rehash.js';
 import { loadTenantState } from './context.js';
 import type { MessagingDeps, TenantRef } from './deps.js';
+import { sealOfferUrl } from './offer-facts.js';
 import { createReminderPlanner } from './plan-reminders.js';
 import { loadRecipient } from './recipients.js';
 import { loadMessagingSettings } from './settings.js';
@@ -36,6 +37,9 @@ const STALE_AFTER_MS = 2 * 3_600_000;
 
 /** How long past its expiry the link of an offer is kept. */
 const OFFER_LINK_GRACE_MS = 3_600_000;
+
+/** Offer links written in plaintext that one run seals. */
+const OFFER_SEAL_BATCH = 200;
 
 const LIVE_MESSAGE = ['queued', 'sent', 'delivered', 'read'] as const;
 
@@ -79,6 +83,31 @@ export function createReminderSweepJob(deps: MessagingDeps, options: { pageSize?
       tx,
       closed.filter((row) => row.channel === 'whatsapp').map((row) => row.id),
     );
+  }
+
+  /**
+   * An offer link written in plaintext, before links were encrypted, is sealed now: it used to be
+   * sealed only when a message was prepared from it, so one that was never read again rested in
+   * plaintext (judgment day round 2, finding C7). The expired ones are cleared just after, by
+   * `clearExpiredOfferLinks`, once their grace is over.
+   */
+  async function sealLegacyOfferUrls(tx: Tx): Promise<void> {
+    const rows = await tx
+      .select()
+      .from(messageOffer)
+      .where(isNotNull(messageOffer.url))
+      .orderBy(asc(messageOffer.createdAt), asc(messageOffer.id))
+      .limit(OFFER_SEAL_BATCH);
+    for (const row of rows) {
+      if (row.url === null) continue;
+      await tx
+        .update(messageOffer)
+        .set({
+          url: null,
+          urlEnc: row.urlEnc ?? (await sealOfferUrl(tx, deps.keys, row.id, row.url)),
+        })
+        .where(eq(messageOffer.id, row.id));
+    }
   }
 
   /**
@@ -214,6 +243,8 @@ export function createReminderSweepJob(deps: MessagingDeps, options: { pageSize?
       await rehashLegacyAddresses(tx);
       await closeStale(tx, deps.clock());
       await clearExpiredOfferLinks(tx, deps.clock());
+      await sealLegacyOfferUrls(tx);
+      for (const run of deps.housekeeping ?? []) await run(tx, deps.clock());
       await sweepAppointments(tx, tenantId, deps.clock());
     },
   });
