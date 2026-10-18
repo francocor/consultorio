@@ -73,6 +73,13 @@ export async function processInbound(
     from: string;
     /** Another organization could be the one this reply is about: only an opt-out acts. */
     ambiguous?: boolean;
+    /**
+     * Among several candidates, the one that wrote to the number last: the best guess for whose reply
+     * this is. Only it keeps the text of a reply for reception; the others are told a reply came in.
+     * A reply may contain health information, and it must not be copied to every organization that
+     * once wrote to the number (judgment day round 2, finding B8).
+     */
+    primary?: boolean;
     /** The provider id of the message the reply quotes, already known to be this organization's. */
     quotedMessageId?: string;
   },
@@ -114,15 +121,18 @@ export async function processInbound(
   const review = async (
     reason?: 'several_organizations' | 'cancel_deadline',
   ): Promise<InboundResult> => {
+    const shared = options.ambiguous === true;
+    const withText = !shared || options.primary === true;
+    const why = reason ?? (shared ? 'several_organizations' : undefined);
     await deps.worklist.open(tx, {
       kind: 'reply_to_review',
       subjectType: 'inbound_message',
       subjectId: recorded.id,
       locationId: null,
       detail: {
-        text: event.text.slice(0, MAX_REVIEW_TEXT),
+        ...(withText ? { text: event.text.slice(0, MAX_REVIEW_TEXT) } : {}),
         patientIds,
-        ...(reason === undefined ? {} : { reason }),
+        ...(why === undefined ? {} : { reason: why }),
       },
     });
     return finish('needs_review');

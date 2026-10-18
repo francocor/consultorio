@@ -117,11 +117,13 @@ export function whatsappWebhookRoutes(deps: WhatsAppWebhookDeps) {
               continue;
             }
             const attribution = await attribute(deps, event, from);
-            for (const tenantId of attribution.tenantIds) {
+            for (const [index, tenantId] of attribution.tenantIds.entries()) {
               const outcome = await deps.withTenant({ tenantId, userId: SYSTEM_USER_ID }, (tx) =>
                 processInbound(deps.inbound, tx, event, {
                   from,
                   ambiguous: attribution.tenantIds.length > 1,
+                  // The organization that wrote last comes first.
+                  primary: index === 0,
                   ...(attribution.quoted ? { quotedMessageId: attribution.quoted } : {}),
                 }),
               );
