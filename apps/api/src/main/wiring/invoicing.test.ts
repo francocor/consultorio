@@ -140,8 +140,8 @@ describe('the AFIP entry of the provider console', () => {
     });
 
     expect(entries?.map((entry) => entry.id)).toEqual(['afip']);
-    // Nothing serves customers, but a demo organization still issues through the fake: its mode shows.
-    expect(await entries?.[0]?.status()).toEqual({ adapter: 'off', mode: 'ok' });
+    // Nothing serves customers (no mode to show), but the routes still drive the demo fake.
+    expect(await entries?.[0]?.status()).toEqual({ adapter: 'off', mode: null });
     expect(entries?.[0]?.routes).toBeTypeOf('function');
   });
 
@@ -176,6 +176,6 @@ describe('the AFIP entry of the provider console', () => {
     });
 
     expect(issuer?.mode()).toBe('down');
-    expect(await entry?.status()).toEqual({ adapter: 'off', mode: 'down' });
+    expect(await entry?.status()).toEqual({ adapter: 'off', mode: null });
   });
 });

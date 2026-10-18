@@ -113,8 +113,10 @@ export const invoicingWiring: ModuleWiring = {
         label: 'AFIP',
         status: async () => ({
           adapter: adapterOfSetting(config.providers.afip),
-          // The console lists the providers even when the database is not reachable.
-          mode: await controls.mode().catch(() => null),
+          // Only the simulator that serves customers is a mode of the provider; the fake of the demo
+          // organizations is driven through the routes. The console lists the providers even when the
+          // database is not reachable.
+          mode: local ? await controls.mode().catch(() => null) : null,
         }),
         routes: afipDevRoutes({ controls }),
       },
