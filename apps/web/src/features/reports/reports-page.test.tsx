@@ -108,7 +108,9 @@ function options(overrides: Partial<ReportOptionsResponse> = {}): ReportOptionsR
       { id: '0190a000-0000-7000-8000-0000000000d2', name: 'Dr. Paz' },
     ],
     specialties: ['clinica', 'pediatria'],
+    payers: [],
     canSeeRevenueByProfessional: true,
+    canSeeCashReport: true,
     maxSpanDays: 366,
     ...overrides,
   };

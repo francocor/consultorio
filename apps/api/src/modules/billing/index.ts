@@ -47,6 +47,34 @@ export type {
   ChargePayer,
 } from './application/charge-lines.js';
 
+// Reports (S4.14, track B): the sums of charges, payments and refunds, the records that compose
+// them and the registers of a period, cut by a cohort and a scope. Read-only; the reports module
+// adds the invoices (through the index of invoicing) and decides who sees what.
+export {
+  PRIVATE_PAYER,
+  cashRegisters,
+  chargeFacts,
+  chargeRecords,
+  paymentFacts,
+  paymentRecords,
+  reportNames,
+  reportPayers,
+} from './application/report-facts.js';
+export type {
+  CashRegisterFact,
+  CashRegisterFilter,
+  CashRegisterMethod,
+  ChargeFact,
+  ChargeFacts,
+  ChargeRecordKind,
+  MoneyCohort,
+  MoneyRecord,
+  MoneyRecordPage,
+  MoneyScope,
+  PaymentFact,
+  PaymentFacts,
+} from './application/report-facts.js';
+
 /** Registers what billing takes with an organization that leaves (the cancellation export). */
 export function registerBillingExportContributors(registry: ExportRegistry): void {
   registry.registerExportContributor('administrative', 'billing', exportBilling);

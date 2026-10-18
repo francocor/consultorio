@@ -2,6 +2,13 @@ import { describe, expect, it } from 'vitest';
 
 import { AUDIT_ACTIONS } from './audit-actions.js';
 import {
+  CashReportFilters,
+  CashReportResponse,
+  FINANCIAL_RECORD_KINDS,
+  FinancialFilters,
+  FinancialRecordsQuery,
+  FinancialRecordsResponse,
+  FinancialReportResponse,
   OperationalReportResponse,
   REPORTS_AUDIT_ACTIONS,
   REPORTS_ERRORS,
@@ -218,10 +225,262 @@ describe('ReportOptionsResponse', () => {
       locations: [{ id: ID, name: 'Centro' }],
       professionals: [{ id: ID, name: 'Dra. Paz' }],
       specialties: ['clinica'],
+      payers: [{ id: ID, name: 'OSDE' }],
       canSeeRevenueByProfessional: false,
+      canSeeCashReport: true,
       maxSpanDays: 366,
     };
 
     expect(ReportOptionsResponse.parse(options)).toEqual(options);
+  });
+});
+
+const FINANCIAL_FILTERS = {
+  from: '2031-05-01',
+  to: '2031-05-31',
+  locationId: null,
+  professionalId: null,
+  tenantPayerId: null,
+  scope: 'organization' as const,
+};
+
+const MONEY_ROW = {
+  key: 'x',
+  label: null as string | null,
+  chargedCents: 10_000_000,
+  voidedCents: 2_000_000,
+  paymentsCents: 6_000_000,
+  refundsCents: 500_000,
+  collectedCents: 5_500_000,
+  outstandingCents: 1_000_000,
+  receivableCents: 3_000_000,
+  invoicedNetCents: 8_000_000 as number | null,
+};
+
+const METHOD_ROW = {
+  method: 'cash' as const,
+  count: 4,
+  paymentsCents: 6_000_000,
+  refundsCents: 500_000,
+  netCents: 5_500_000,
+};
+
+function financial() {
+  return {
+    filters: FINANCIAL_FILTERS,
+    generatedAt: '2031-06-01T12:00:00.000Z',
+    totals: {
+      charged: { count: 4, totalCents: 10_000_000, patientCents: 7_000_000, payerCents: 3_000_000 },
+      voided: { count: 1, totalCents: 2_000_000 },
+      collected: {
+        paymentCount: 3,
+        paymentsCents: 6_000_000,
+        refundCount: 1,
+        refundsCents: 500_000,
+        netCents: 5_500_000,
+      },
+      outstanding: { chargeCount: 2, cents: 1_000_000 },
+      receivable: { cents: 3_000_000 },
+      invoiced: {
+        invoicedCents: 10_000_000,
+        creditedCents: 2_000_000,
+        netCents: 8_000_000,
+        documents: 3,
+      },
+    },
+    byMethod: [METHOD_ROW],
+    byPeriod: [{ ...MONEY_ROW, key: '2031-05-12' }],
+    byLocation: [{ ...MONEY_ROW, key: ID, label: 'Centro' }],
+    byProfessional: [{ ...MONEY_ROW, key: ID, label: 'Dra. Paz' }] as (typeof MONEY_ROW)[] | null,
+    byPayer: [{ ...MONEY_ROW, key: 'private', label: null }],
+    byType: [{ ...MONEY_ROW, key: 'Consulta', invoicedNetCents: null }],
+  };
+}
+
+describe('FinancialFilters', () => {
+  it('takes the period, the place, the professional and the payer, and ignores what else is sent', () => {
+    const parsed = FinancialFilters.parse({
+      from: '2031-05-01',
+      to: '2031-05-31',
+      locationId: ID,
+      tenantPayerId: ID,
+      tenantId: '0190a000-0000-7000-8000-0000000000ff',
+      specialty: 'clinica',
+    });
+
+    expect(parsed).toEqual({
+      from: '2031-05-01',
+      to: '2031-05-31',
+      locationId: ID,
+      tenantPayerId: ID,
+    });
+  });
+
+  it('refuses a day that is not a date and an id that is not an id', () => {
+    expect(FinancialFilters.safeParse({ from: '01/05/2031', to: '2031-05-31' }).success).toBe(
+      false,
+    );
+    expect(
+      FinancialFilters.safeParse({ from: '2031-05-01', to: '2031-05-31', tenantPayerId: 'osde' })
+        .success,
+    ).toBe(false);
+  });
+});
+
+describe('FinancialReportResponse', () => {
+  it('carries whole cents, signed where a reduction is a figure, and nothing clinical', () => {
+    expect(FinancialReportResponse.parse(financial()).totals.invoiced.netCents).toBe(8_000_000);
+  });
+
+  it('refuses a fraction of a cent anywhere in the figures', () => {
+    const response = financial();
+    response.totals.charged.totalCents = 10_000_000.5;
+
+    expect(FinancialReportResponse.safeParse(response).success).toBe(false);
+  });
+
+  it('is null in the breakdown by professional when the viewer may not see revenue by professional', () => {
+    const response = { ...financial(), byProfessional: null };
+
+    expect(FinancialReportResponse.parse(response).byProfessional).toBeNull();
+  });
+
+  it('refuses a member it does not know (a note, a diagnosis)', () => {
+    expect(FinancialReportResponse.safeParse({ ...financial(), diagnosis: 'x' }).success).toBe(
+      false,
+    );
+  });
+});
+
+describe('financial drill-down', () => {
+  it('lists six kinds of records, one for each figure that can be opened', () => {
+    expect(FINANCIAL_RECORD_KINDS).toEqual([
+      'charged',
+      'voided',
+      'collected',
+      'outstanding',
+      'receivable',
+      'invoiced',
+    ]);
+  });
+
+  it('pages 50 records of the charged kind unless asked otherwise, and at most 200', () => {
+    const query = FinancialRecordsQuery.parse({ from: '2031-05-01', to: '2031-05-31' });
+
+    expect(query).toMatchObject({ kind: 'charged', limit: 50, offset: 0 });
+    expect(
+      FinancialRecordsQuery.safeParse({ from: '2031-05-01', to: '2031-05-31', limit: '201' })
+        .success,
+    ).toBe(false);
+  });
+
+  it('answers with the sum of the whole kind next to the page, and only administrative columns', () => {
+    const record = {
+      id: ID,
+      date: '2031-05-12',
+      patientName: 'Pérez, Ana',
+      locationId: ID,
+      locationName: 'Centro',
+      professionalId: ID,
+      professionalName: 'Dra. Paz',
+      payerName: null,
+      typeName: 'Consulta',
+      status: 'paid',
+      method: null,
+      amountCents: 2_000_000,
+      chargeTotalCents: 2_000_000,
+    };
+    const response = {
+      filters: FINANCIAL_FILTERS,
+      kind: 'charged' as const,
+      total: 1,
+      sumCents: 2_000_000,
+      limit: 50,
+      offset: 0,
+      records: [record],
+    };
+
+    expect(FinancialRecordsResponse.parse(response).records[0]).toEqual(record);
+    expect(
+      FinancialRecordsResponse.safeParse({ ...response, records: [{ ...record, note: 'x' }] })
+        .success,
+    ).toBe(false);
+  });
+});
+
+describe('cash report', () => {
+  it('takes a period and one place, and ignores the rest', () => {
+    expect(
+      CashReportFilters.parse({
+        from: '2031-05-01',
+        to: '2031-05-31',
+        locationId: ID,
+        tenantId: ID,
+      }),
+    ).toEqual({ from: '2031-05-01', to: '2031-05-31', locationId: ID });
+  });
+
+  it('shows the difference of a day together with its reason', () => {
+    const session = {
+      id: ID,
+      status: 'closed' as const,
+      openedAt: '2031-05-12T11:00:00.000Z',
+      closedAt: '2031-05-12T20:00:00.000Z',
+      openingCents: 1_000_000,
+      expectedCents: 3_000_000,
+      countedCents: 2_900_000,
+      differenceCents: -100_000,
+      differenceReason: 'Vuelto mal dado',
+    };
+    const method = { ...METHOD_ROW, paymentsCents: 2_500_000, netCents: 2_000_000 };
+    const response = {
+      filters: {
+        from: '2031-05-01',
+        to: '2031-05-31',
+        locationId: null,
+        scope: 'organization' as const,
+      },
+      generatedAt: '2031-06-01T12:00:00.000Z',
+      totals: {
+        openingCents: 1_000_000,
+        paymentsCents: 2_500_000,
+        refundsCents: 500_000,
+        expectedCents: 3_000_000,
+        countedCents: 2_900_000 as number | null,
+        differenceCents: -100_000 as number | null,
+        daysWithDifference: 1,
+        byMethod: [method],
+      },
+      days: [
+        {
+          date: '2031-05-12',
+          locationId: ID,
+          locationName: 'Centro',
+          openingCents: 1_000_000,
+          paymentsCents: 2_500_000,
+          refundsCents: 500_000,
+          expectedCents: 3_000_000,
+          countedCents: 2_900_000 as number | null,
+          differenceCents: -100_000 as number | null,
+          openSessions: 0,
+          closedSessions: 1,
+          byMethod: [method],
+          sessions: [session],
+        },
+      ],
+    };
+
+    const parsed = CashReportResponse.parse(response);
+
+    expect(parsed.days[0]?.sessions[0]).toMatchObject({
+      differenceCents: -100_000,
+      differenceReason: 'Vuelto mal dado',
+    });
+    expect(
+      CashReportResponse.safeParse({
+        ...response,
+        days: [{ ...response.days[0], openingCents: 10.5 }],
+      }).success,
+    ).toBe(false);
   });
 });
