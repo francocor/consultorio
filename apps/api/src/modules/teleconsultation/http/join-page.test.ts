@@ -32,6 +32,23 @@ describe('join page', () => {
     expect(html).toContain('no graba ni guarda');
   });
 
+  it('offers the ready patient one button that posts back to the page, with the notice above it', () => {
+    const page = renderJoinPage({ ...base, kind: 'ready' });
+
+    expect(page.html).toContain('<h1>Su videoconsulta está lista</h1>');
+    expect(page.html).toMatch(
+      /<form method="post"><button type="submit">Entrar a la videoconsulta/,
+    );
+    expect(page.html).not.toMatch(/<form[^>]*action=/);
+    expect(page.html).toContain('servicio de videollamada de terceros');
+    expect(page.hasForm).toBe(true);
+    // `form-action 'self'` would stop the browser at the redirect to the call (JD-S3 R2-C3).
+    expect(page.contentSecurityPolicy).not.toContain('form-action');
+    expect(page.contentSecurityPolicy).toContain("default-src 'none'");
+    expect(page.contentSecurityPolicy).not.toMatch(/https?:/);
+    expect(renderJoinPage(base).hasForm).toBe(false);
+  });
+
   it('keeps the generic page free of the notice and of anything about the appointment', () => {
     const { html } = renderJoinPage({ ...base, kind: 'unavailable' });
 

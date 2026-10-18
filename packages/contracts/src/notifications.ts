@@ -151,6 +151,8 @@ export type SimulatorStatusRequest = z.infer<typeof SimulatorStatusRequest>;
 export const SimulatorInboundRequest = z.strictObject({
   from: z.string().min(5).max(20),
   text: z.string().max(1000),
+  /** The provider id of the message the reply answers, as a phone shows it when a message is quoted. */
+  replyTo: z.string().min(1).max(128).optional(),
 });
 export type SimulatorInboundRequest = z.infer<typeof SimulatorInboundRequest>;
 

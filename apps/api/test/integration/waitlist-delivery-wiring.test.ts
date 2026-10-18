@@ -1,6 +1,7 @@
 import { sql } from 'drizzle-orm';
 import { afterAll, beforeAll, beforeEach, describe, expect, inject, it } from 'vitest';
 
+import { createLocalKeyManagement } from '../../src/adapters/local-kek/index.js';
 import { createFakeWhatsAppSender } from '../../src/adapters/whatsapp-fake/index.js';
 import { message } from '../../src/db/schema/notifications.js';
 import { loadConfig } from '../../src/main/config.js';
@@ -9,6 +10,7 @@ import { waitlistWiring } from '../../src/main/wiring/waitlist.js';
 import type { WhatsAppSendRequest } from '../../src/modules/notifications/application/ports.js';
 import { recordOptIn } from '../../src/modules/notifications/application/preferences.js';
 import { createVideoJoinRegistry } from '../../src/modules/notifications/index.js';
+import { createTenantKeys } from '../../src/platform/crypto/tenant-keys.js';
 import { createRuntimeDb, type DbHandle } from '../../src/platform/db/pool.js';
 import type { JobDefinition } from '../../src/platform/jobs/define-job.js';
 import { runPending } from '../support/jobs.js';
@@ -33,16 +35,22 @@ const email = createScriptedEmail();
 const whatsappRequests: WhatsAppSendRequest[] = [];
 let mobiles = 0;
 
+/** The key service of the worker comes from this environment: the organization's keys must be its own. */
+const KEK = Buffer.alloc(32, 7).toString('base64');
 const env = {
   DATABASE_URL: 'postgres://app_rw:placeholder@localhost:5432/app',
   BASE_DOMAIN: 'consultorio.test',
   PLATFORM_HOST: 'platform.consultorio.test',
-  KMS_LOCAL_KEK_BASE64: Buffer.alloc(32, 7).toString('base64'),
+  KMS_LOCAL_KEK_BASE64: KEK,
 };
 
 beforeAll(async () => {
   runtime = createRuntimeDb(inject('runtimeUrl'));
-  world = await createWaitlistWorld(runtime, { slug: 'waitlist-wiring', now: START });
+  world = await createWaitlistWorld(runtime, {
+    slug: 'waitlist-wiring',
+    now: START,
+    keys: createTenantKeys({ kms: createLocalKeyManagement(KEK) }),
+  });
   const settings = await world.api.patch('/settings', world.owner, {
     waitlist: { entryExpiryDays: 365 },
   });

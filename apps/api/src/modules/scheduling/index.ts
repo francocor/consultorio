@@ -29,6 +29,12 @@ export {
   type CareSourceAppointment,
 } from './application/care-source.js';
 export type { OpenItemInput, WorklistService } from './application/worklist.js';
+// Billing (Stage 4, track A): read an appointment to charge for it.
+export {
+  readAppointmentForCharge,
+  readAppointmentsForCharge,
+  type AppointmentForCharge,
+} from './application/charge-source.js';
 export { createAppointmentTypeService } from './application/appointment-types.js';
 export type { AppointmentTypeService } from './application/appointment-types.js';
 export { HOLD_EXPIRE_JOB, holdExpireJob } from './application/hold-expiry.js';

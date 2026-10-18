@@ -10,7 +10,7 @@ import { createRuntimeDb, type DbHandle } from '../../src/platform/db/pool.js';
 import { createActionTokens } from '../../src/platform/tokens/index.js';
 import { hostOf } from '../support/app.js';
 import { asTenant, createTestTenant } from '../support/tenants.js';
-import { createVideoWorld, type VideoWorld } from '../support/video-world.js';
+import { createSpyProvider, createVideoWorld, type VideoWorld } from '../support/video-world.js';
 
 let runtime: DbHandle;
 let world: VideoWorld;
@@ -79,6 +79,29 @@ const open = (token: string, host = hostOf(world.slug), remoteAddress = nextAddr
     headers: { host, 'user-agent': 'vitest-patient' },
   });
 
+/**
+ * The button of the page: a POST from the page of the same host, as a browser sends a form with no
+ * fields (JD-S3 R2-C3: the form content type used to be refused with a 415).
+ */
+const enter = (
+  token: string,
+  options: { host?: string; origin?: string | null; remoteAddress?: string } = {},
+) => {
+  const host = options.host ?? hostOf(world.slug);
+  return world.app.inject({
+    method: 'POST',
+    url: `/public/v/${token}`,
+    remoteAddress: options.remoteAddress ?? nextAddress(),
+    headers: {
+      host,
+      'user-agent': 'vitest-patient',
+      'content-type': 'application/x-www-form-urlencoded',
+      ...(options.origin === null ? {} : { origin: options.origin ?? `https://${host}` }),
+    },
+    payload: '',
+  });
+};
+
 const at = (startsAt: Date, minutesFromStart: number) => {
   world.setVideoNow(new Date(startsAt.getTime() + minutesFromStart * MINUTE));
 };
@@ -124,14 +147,37 @@ describe('the platform join address', () => {
     expect((await world.sessionOf(appointment.id))?.firstOpenedAt).toBeNull();
     expect(await world.auditsOf('video.link.opened', appointment.id)).toHaveLength(0);
     at(startsAt, -10);
-    expect((await open(token)).statusCode).toBe(302);
+    expect((await enter(token)).statusCode).toBe(302);
   });
 
-  it('forwards to the provider room inside the window, from 15 minutes before the start', async () => {
+  it('only looks when it is opened inside the window: the notice and a button, nothing spent and nothing recorded', async () => {
+    const { token, room, appointment, startsAt } = await readyAppointment();
+    at(startsAt, -5);
+
+    // A mail scanner opens the link, and so does a preview, and so does the patient.
+    const looks = [await open(token), await open(token), await open(token)];
+
+    for (const response of looks) {
+      expect(response.statusCode).toBe(200);
+      expect(response.headers['location']).toBeUndefined();
+      expect(response.body).toContain('Entrar a la videoconsulta');
+      expect(response.body).toContain('servicio de videollamada de terceros');
+      expect(response.body).toMatch(/<form[^>]*method="post"/i);
+      expect(response.body).not.toContain(room);
+      expect(response.body).not.toContain('meet.jit.si');
+      expect(response.headers['referrer-policy']).toBe('same-origin');
+      expect(response.headers['content-security-policy']).not.toContain('form-action');
+    }
+    expect((await world.sessionOf(appointment.id))?.firstOpenedAt).toBeNull();
+    expect(await world.auditsOf('video.link.opened', appointment.id)).toHaveLength(0);
+    expect((await enter(token)).statusCode).toBe(302);
+  });
+
+  it('forwards to the provider room when the button is pressed inside the window, from 15 minutes before the start', async () => {
     const { token, room, startsAt } = await readyAppointment();
     at(startsAt, -15);
 
-    const response = await open(token);
+    const response = await enter(token);
 
     expect(response.statusCode).toBe(302);
     const location = new URL(response.headers['location'] as string);
@@ -144,18 +190,29 @@ describe('the platform join address', () => {
     const { token, startsAt } = await readyAppointment();
 
     at(startsAt, 40);
-    expect((await open(token)).statusCode).toBe(302);
+    expect((await enter(token)).statusCode).toBe(302);
     // The appointment lasts 30 minutes: the window closes at 90 minutes after the start.
     at(startsAt, 90);
-    expect((await open(token)).statusCode).toBe(302);
+    expect((await enter(token)).statusCode).toBe(302);
+  });
+
+  it('refuses the button when the request does not come from the page of the same host', async () => {
+    const { token, appointment, startsAt } = await readyAppointment();
+    at(startsAt, -5);
+
+    const foreign = await enter(token, { origin: 'https://evil.example' });
+
+    expect(foreign.statusCode).toBe(403);
+    expect(foreign.headers['location']).toBeUndefined();
+    expect((await world.sessionOf(appointment.id))?.firstOpenedAt).toBeNull();
   });
 
   it('records that the patient opened the link, once as first and again as last, and audits it without the token', async () => {
     const { token, appointment, startsAt } = await readyAppointment();
     at(startsAt, -5);
-    await open(token);
+    await enter(token);
     at(startsAt, 3);
-    await open(token);
+    await enter(token);
 
     const session = await world.sessionOf(appointment.id);
     const entries = await world.auditsOf('video.link.opened', appointment.id);
@@ -219,10 +276,38 @@ describe('the platform join address', () => {
     );
     at(startsAt, 1);
 
-    const response = await open(token);
+    const response = await enter(token);
 
     expect(response.statusCode).toBe(302);
     expect(response.headers['location']).toBe('https://meet.google.com/abc-defg-hij');
+  });
+});
+
+describe('a manual link is checked again when somebody follows it (JD-S3 B31)', () => {
+  it('does not forward the patient to a host that stopped being allowed after the link was attached', async () => {
+    const { token, appointment, startsAt } = await readyAppointment();
+    await asTenant(runtime, world.tenant.id, (tx) =>
+      tx
+        .update(videoSession)
+        .set({ manualLink: 'https://meet.google.com/abc-defg-hij', provider: null })
+        .where(eq(videoSession.appointmentId, appointment.id)),
+    );
+    at(startsAt, 1);
+    expect((await enter(token)).statusCode).toBe(302);
+
+    // The organization narrows the list of hosts (`VIDEO_ALLOWED_DOMAINS`) after the attachment.
+    world.useProvider(createSpyProvider(['zoom.us']));
+    const refused = await enter(token);
+    const asProfessional = await world.api.post(
+      `/appointments/${appointment.id}/video/join`,
+      world.doctor,
+      {},
+    );
+
+    expect(refused.statusCode).toBe(200);
+    expect(refused.headers['location']).toBeUndefined();
+    expect(refused.body).toContain('todavía no está disponible');
+    expect(asProfessional.statusCode, asProfessional.body).toBe(409);
   });
 });
 

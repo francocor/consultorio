@@ -14,6 +14,11 @@ describe('classifyReply', () => {
     'stop',
     'Stop.',
     '¡BAJA!',
+    'PARAR',
+    'parar.',
+    'No más',
+    'NO MAS',
+    ' no   mas! ',
   ])('reads %j as an opt-out keyword', (text) => {
     expect(classifyReply(text)).toBe('opt_out');
   });

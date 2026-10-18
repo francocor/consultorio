@@ -3,6 +3,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, inject, it } from 'v
 
 import { createFakeWhatsAppSender } from '../../src/adapters/whatsapp-fake/index.js';
 import { message, messageOffer } from '../../src/db/schema/notifications.js';
+import { readOfferUrl } from '../../src/modules/notifications/application/offer-facts.js';
 import type {
   WhatsAppSender,
   WhatsAppSendRequest,
@@ -98,6 +99,7 @@ beforeEach(async () => {
     jobs: notes.jobs,
     clock: () => notes.now(),
     whatsappAvailable: () => true,
+    keys: scheduling.keys,
     get quota() {
       return quota;
     },
@@ -135,6 +137,45 @@ const deliver = (input: WaitlistOfferInput) =>
 
 const offerMessages = (patientId: string) =>
   scheduling.inTenant((tx) => tx.select().from(message).where(eq(message.patientId, patientId)));
+
+describe('an offer whose message runs after quiet hours began (CI hint of JD-S3 round 1)', () => {
+  // Buenos Aires is UTC-3: 20:50 local is 23:50Z, and 21:30 local is 00:30Z of the next day.
+  const AT_2050 = new Date('2031-05-06T23:50:00.000Z');
+  const AT_2130 = new Date('2031-05-07T00:30:00.000Z');
+  const AT_0800 = new Date('2031-05-07T11:00:00.000Z');
+
+  async function queuedAt2050(expiresAt: Date) {
+    notes.setNow(AT_2050);
+    const patientId = await notes.patient({ email: `noche${String(++mobiles)}@example.test` });
+    const result = await deliver(offerFor(patientId, { expiresAt }));
+    notes.setNow(AT_2130);
+    return { patientId, messageId: result.messageId ?? '' };
+  }
+
+  it('waits for the morning when the offer is still open then, instead of waking the patient', async () => {
+    const { messageId } = await queuedAt2050(new Date('2031-05-07T14:00:00.000Z'));
+
+    await notes.runAllJobs();
+
+    expect(notes.email.sent).toHaveLength(0);
+    expect((await notes.message(messageId)).sendAt).toEqual(AT_0800);
+    notes.setNow(AT_0800);
+    await notes.runAllJobs();
+    expect(notes.email.sent).toHaveLength(1);
+  });
+
+  it('ends the message when the offer runs out before the morning: it is not sent late', async () => {
+    const { messageId } = await queuedAt2050(new Date('2031-05-07T00:20:00.000Z'));
+
+    await notes.runAllJobs();
+
+    expect(notes.email.sent).toHaveLength(0);
+    expect(await notes.message(messageId)).toMatchObject({
+      status: 'cancelled',
+      cancelReason: 'offer_expired',
+    });
+  });
+});
 
 describe('deliverWaitlistOffer: the channel', () => {
   it('sends the offer by email to a patient with an email, and logs the message', async () => {
@@ -393,8 +434,51 @@ describe('the link of an offer', () => {
         .select()
         .from(messageOffer)
         .where(eq(messageOffer.messageId, messageId));
-      return row?.url ?? null;
+      return row ? readOfferUrl(tx, scheduling.keys, row) : null;
     });
+
+  it('rests encrypted, not in plaintext, and is read back for the message that carries it (JD-S3 C9)', async () => {
+    const patientId = await notes.patient({ email: 'cifrado@example.test' });
+    const { messageId } = await deliver(offerFor(patientId));
+
+    const [row] = await scheduling.inTenant((tx) =>
+      tx
+        .select()
+        .from(messageOffer)
+        .where(eq(messageOffer.messageId, messageId ?? '')),
+    );
+
+    expect(row?.url).toBeNull();
+    expect(row?.urlEnc).toBeInstanceOf(Buffer);
+    expect(row?.urlEnc?.toString('latin1')).not.toContain('OFFER-TOKEN');
+    expect(await urlOf(messageId ?? '')).toBe(OFFER_URL);
+    await notes.runAllJobs();
+    expect(notes.email.sent.at(-1)?.text).toContain(OFFER_URL);
+  });
+
+  it('seals a link written in plaintext before, without anybody following it (JD-S3 R2-C7)', async () => {
+    const patientId = await notes.patient({ email: 'legado@example.test' });
+    const input = offerFor(patientId);
+    const { messageId } = await deliver(input);
+    await notes.runAllJobs();
+    await scheduling.inTenant((tx) =>
+      tx.execute(
+        sql`UPDATE message_offer SET url = ${OFFER_URL}, url_enc = NULL WHERE message_id = ${messageId ?? ''}`,
+      ),
+    );
+
+    await sweep();
+
+    const [row] = await scheduling.inTenant((tx) =>
+      tx
+        .select()
+        .from(messageOffer)
+        .where(eq(messageOffer.messageId, messageId ?? '')),
+    );
+    expect(row?.url).toBeNull();
+    expect(row?.urlEnc).toBeInstanceOf(Buffer);
+    expect(await urlOf(messageId ?? '')).toBe(OFFER_URL);
+  });
 
   it('is cleared by the sweep an hour after the offer expired, and not before', async () => {
     const patientId = await notes.patient({ email: 'limpieza@example.test' });

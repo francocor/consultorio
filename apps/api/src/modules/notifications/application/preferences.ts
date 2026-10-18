@@ -9,6 +9,9 @@ import {
 import { message } from '../../../db/schema/notifications.js';
 import { audit, type AuditActor } from '../../../platform/audit/writer.js';
 import type { Tx } from '../../../platform/db/tenant-context.js';
+import { createActionTokens } from '../../../platform/tokens/index.js';
+
+import { releaseWhatsappUsage } from './usage.js';
 
 /**
  * The channel choices of patients (spec "Opt-out and consent"). A history of events; the latest
@@ -103,6 +106,19 @@ export async function recordOptOut(
       ),
     )
     .returning({ id: message.id });
+  if (input.channel === 'whatsapp') {
+    // The messages that will not go give their places in the quota back.
+    await releaseWhatsappUsage(
+      tx,
+      cancelled.map((row) => row.id),
+    );
+    // A link to accept WhatsApp that was still waiting must not undo this: following it later
+    // would opt the patient back in (judgment day round 2, finding B10). A patient who changes
+    // their mind asks for a new one.
+    const tokens = createActionTokens();
+    await tokens.revokeForSubject(tx, 'whatsapp_opt_in', input.patientId);
+    await tokens.revokeForPayload(tx, 'whatsapp_opt_in', 'patientId', input.patientId);
+  }
   await audit(tx, {
     action: 'notification.optout.recorded',
     outcome: 'allow',

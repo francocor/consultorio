@@ -15,6 +15,40 @@ import { UNLIMITED_QUOTA, whatsappQuotaAvailable } from './usage.js';
 
 type OptOutInput = Parameters<typeof recordOptOut>[1];
 
+/**
+ * Who is told when a patient opts out (the waitlist closes their entries). Bound by the
+ * composition root, in the transaction of the opt-out: another module's rule, run by messaging
+ * without messaging knowing the module (judgment day finding B3).
+ */
+type OptOutListener = (tx: Tx, event: { patientId: string; now: Date }) => Promise<void>;
+let optOutListener: OptOutListener | undefined;
+let reportListenerFailure: (error: unknown) => void = defaultReport;
+
+/** One structured line on stderr, where the log shipper and the alerts read it. Ids only. */
+function defaultReport(error: unknown): void {
+  process.stderr.write(
+    `${JSON.stringify({
+      level: 'error',
+      msg: 'opt_out_listener_failed',
+      error: error instanceof Error ? error.message : 'unknown error',
+    })}
+`,
+  );
+}
+
+/**
+ * Binds who is told of an opt-out. The listener runs in a savepoint of the opt-out's transaction:
+ * if it fails, only its own work is undone, the failure is reported (`onFailure`, by default an
+ * error line on stderr) and the patient's opt-out stands (judgment day round 2, finding A7).
+ */
+export function bindOptOutListener(
+  listener: OptOutListener | undefined,
+  options: { onFailure?: (error: unknown) => void } = {},
+): void {
+  optOutListener = listener;
+  reportListenerFailure = options.onFailure ?? defaultReport;
+}
+
 export interface OptOutResult {
   recorded: boolean;
   /** Queued messages of the channel that were cancelled. */
@@ -49,6 +83,15 @@ export async function optOutChannel(tx: Tx, input: OptOutInput): Promise<OptOutR
       ),
     );
   const recorded = await recordOptOut(tx, input);
+  if (recorded.recorded && optOutListener) {
+    const listener = optOutListener;
+    const now = boundDelivery()?.clock() ?? new Date();
+    try {
+      await tx.transaction((inner) => listener(inner, { patientId: input.patientId, now }));
+    } catch (error) {
+      reportListenerFailure(error);
+    }
+  }
   const deps = boundDelivery();
   if (!recorded.recorded || deps === undefined || queued.length === 0) {
     return { ...recorded, replaced: 0 };

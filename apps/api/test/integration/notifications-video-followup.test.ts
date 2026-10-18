@@ -418,3 +418,41 @@ describe('the follow-up with the video link', () => {
     expect(notes.email.sent).toHaveLength(1);
   });
 });
+
+describe('a follow-up that cannot reach the patient before the call (JD-S3 R2-B11)', () => {
+  it('is cancelled and reception is told, as for any other message that was promised', async () => {
+    const { appointment } = await pendingReminder();
+    const startsAt = new Date(appointment.startsAt);
+    // 20:30 the evening before: outside quiet hours, the link comes to exist and the follow-up is queued.
+    now = new Date(startsAt.getTime() - 13.5 * 3_600_000);
+    await createRooms();
+    // The organization widens its quiet hours to cover the morning of the call.
+    const widened = await video.api.patch('/settings', video.owner, {
+      quietHours: { start: '21:00', end: '10:30' },
+    });
+    expect(widened.statusCode, widened.body).toBe(200);
+
+    // Whatever reception was told until now is settled, so what follows is the follow-up's own.
+    await video.inTenant((tx) =>
+      tx.execute(
+        sql`UPDATE worklist_item SET status = 'resolved', resolved_at = now(), resolved_by = ${video.owner.user.id},
+                resolution = 'test'
+              WHERE subject_id = ${appointment.id} AND status = 'open'`,
+      ),
+    );
+    expect(await notes.worklistKinds(appointment.id)).toEqual([]);
+
+    // 21:30: its turn comes inside quiet hours that end after the call starts.
+    now = new Date(startsAt.getTime() - 12.5 * 3_600_000);
+    await sendMessages();
+
+    const [followUp] = await video.inTenant((tx) =>
+      tx
+        .select({ status: message.status, cancelReason: message.cancelReason })
+        .from(message)
+        .where(and(eq(message.appointmentId, appointment.id), eq(message.kind, 'video_link'))),
+    );
+    expect(followUp).toMatchObject({ status: 'cancelled', cancelReason: 'no_channel' });
+    expect(await notes.worklistKinds(appointment.id)).toContain('reminder_not_sent');
+  });
+});

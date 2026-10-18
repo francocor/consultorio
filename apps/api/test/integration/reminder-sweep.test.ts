@@ -3,7 +3,9 @@ import { afterAll, beforeAll, beforeEach, describe, expect, inject, it } from 'v
 
 import { message } from '../../src/db/schema/notifications.js';
 import { worklistItem } from '../../src/db/schema/worklist.js';
+import { rehashLegacyAddresses } from '../../src/modules/notifications/application/address-rehash.js';
 import { createReminderSweepJob } from '../../src/modules/notifications/application/sweep.js';
+import { hashAddress, legacyAddressHash } from '../../src/modules/notifications/domain/address.js';
 import { createRuntimeDb, type DbHandle } from '../../src/platform/db/pool.js';
 import { runJob } from '../../src/platform/jobs/define-job.js';
 import {
@@ -34,11 +36,12 @@ afterAll(async () => {
 beforeEach(async () => {
   notes.setNow(new Date('2031-05-06T12:00:00.000Z'));
   notes.jobs.jobs.length = 0;
+  // Active first: an earlier test may have left the organization read-only, which refuses the PATCH.
+  await notes.setTenant({ status: 'active' });
   const response = await scheduling.api.patch('/settings', scheduling.owner, {
     notifications: { reminderLeadHours: [24] },
   });
   expect(response.statusCode, response.body).toBe(200);
-  await notes.setTenant({ status: 'active' });
 });
 
 /** Runs the sweep of the organization once, the way the worker's hourly tick would. */
@@ -213,5 +216,148 @@ describe('reminder.sweep: messages left behind', () => {
     await notes.setTenant({ status: 'read_only' });
 
     expect(await sweep()).toEqual({ status: 'cancelled', reason: 'tenant_read_only' });
+  });
+});
+
+describe('reminder.sweep: addresses hashed before the pepper', () => {
+  it('rewrites the unsalted hash of a message to the keyed one when the patient still has that address, and forgets one that no longer matches', async () => {
+    const { patientId, appointment } = await bookedFor({ email: 'viejo@example.test' });
+    const kept = await notes.queue({
+      kind: 'reminder',
+      patientId,
+      appointmentId: appointment.id,
+      plannedStartsAt: new Date(appointment.startsAt),
+      appointmentVersion: appointment.version,
+      dedupeKey: `legacy:${appointment.id}:kept`,
+    });
+    const gone = await notes.queue({
+      kind: 'reminder',
+      patientId,
+      appointmentId: appointment.id,
+      plannedStartsAt: new Date(appointment.startsAt),
+      appointmentVersion: appointment.version,
+      dedupeKey: `legacy:${appointment.id}:gone`,
+    });
+    await scheduling.inTenant(async (tx) => {
+      await tx
+        .update(message)
+        .set({ addressHash: legacyAddressHash('email', 'viejo@example.test') })
+        .where(eq(message.id, kept));
+      await tx
+        .update(message)
+        .set({ addressHash: legacyAddressHash('email', 'otro-correo@example.test') })
+        .where(eq(message.id, gone));
+    });
+
+    await sweep();
+
+    expect((await notes.message(kept)).addressHash).toBe(
+      hashAddress('email', 'viejo@example.test'),
+    );
+    expect((await notes.message(gone)).addressHash).toBeNull();
+  });
+});
+
+describe('the address rehash goes newest first (JD-S3 R2-C4)', () => {
+  it('rehashes the most recent messages first, so a patient who wrote lately is found before the log is done', async () => {
+    const { patientId, appointment } = await bookedFor({ email: 'reciente@example.test' });
+    const ids: string[] = [];
+    for (const [index, day] of ['01', '02', '03'].entries()) {
+      ids.push(
+        await notes.queue({
+          kind: 'reminder',
+          patientId,
+          appointmentId: appointment.id,
+          plannedStartsAt: new Date(appointment.startsAt),
+          appointmentVersion: appointment.version,
+          dedupeKey: `rehash-order:${appointment.id}:${String(index)}`,
+        }),
+      );
+      await scheduling.inTenant((tx) =>
+        tx.execute(
+          sql`UPDATE message SET created_at = ${`2031-04-${day}T00:00:00Z`}::timestamptz,
+                                  address_hash = ${legacyAddressHash('email', 'reciente@example.test')}
+               WHERE id = ${ids[index] ?? ''}`,
+        ),
+      );
+    }
+
+    // A batch of one: only the newest row can be done.
+    await scheduling.inTenant((tx) => rehashLegacyAddresses(tx, { batch: 1 }));
+
+    const hashes = await Promise.all(ids.map(async (id) => (await notes.message(id)).addressHash));
+    expect(hashes).toEqual([
+      legacyAddressHash('email', 'reciente@example.test'),
+      legacyAddressHash('email', 'reciente@example.test'),
+      hashAddress('email', 'reciente@example.test'),
+    ]);
+  });
+});
+
+describe('reminder.sweep: more appointments than a page (JD-S3 B9)', () => {
+  it('goes through every appointment of the horizon, page after page, not just the nearest ones', async () => {
+    // Five patients nobody can remind, each with an appointment: with pages of two, the nearest
+    // two used to be all that one run looked at, and the others waited for ever behind them.
+    const booked = [];
+    for (let index = 0; index < 5; index += 1) {
+      booked.push(await bookedFor({ email: null, phone: null }));
+    }
+    const definition = createReminderSweepJob({ ...notes.deps }, { pageSize: 2 });
+
+    await runJob(runtime.db, definition, {
+      id: crypto.randomUUID(),
+      name: 'reminder.sweep',
+      data: { tenantId: scheduling.tenant.id },
+      enqueuedAt: notes.now(),
+      retryCount: 0,
+    });
+
+    for (const { appointment } of booked) {
+      expect(await openItems(appointment.id), appointment.id).toEqual([
+        { kind: 'reminder_not_sent', status: 'open' },
+      ]);
+    }
+  });
+
+  it('leaves alone an appointment whose reminders are planned and live', async () => {
+    const { patientId, appointment } = await bookedFor({ email: 'ok@example.test' });
+    await notes.queue({
+      kind: 'reminder',
+      patientId,
+      appointmentId: appointment.id,
+      plannedStartsAt: new Date(appointment.startsAt),
+      appointmentVersion: appointment.version,
+      dedupeKey: `paged:${appointment.id}:email`,
+    });
+
+    await sweep();
+
+    expect(await openItems(appointment.id)).toEqual([]);
+    expect(await notes.messagesOf(appointment.id)).toHaveLength(1);
+  });
+});
+
+describe('reminder.sweep: housekeeping of other modules (JD-S3 R2-C7)', () => {
+  it('runs what the composition root plugged in, once per sweep, in the sweep transaction', async () => {
+    const calls: Date[] = [];
+    const definition = createReminderSweepJob({
+      ...notes.deps,
+      housekeeping: [
+        (_tx, now) => {
+          calls.push(now);
+          return Promise.resolve();
+        },
+      ],
+    });
+
+    await runJob(runtime.db, definition, {
+      id: crypto.randomUUID(),
+      name: 'reminder.sweep',
+      data: { tenantId: scheduling.tenant.id },
+      enqueuedAt: notes.now(),
+      retryCount: 0,
+    });
+
+    expect(calls).toEqual([notes.now()]);
   });
 });

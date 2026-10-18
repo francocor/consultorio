@@ -20,13 +20,17 @@ import { createSchedulingPorts } from '../scheduling/index.js';
 import type { ExportRegistry } from '../tenancy/index.js';
 
 import { exportWaitlist } from './application/export-contributor.js';
-import { createJoinLimiter } from './application/join.js';
+import { createJoinLimiter, type WhatsappOptInPort } from './application/join.js';
 import { createSlotTrigger } from './application/trigger.js';
 import { entryRoutes } from './http/entry-routes.js';
 import { createOfferHandler } from './http/offer-handler.js';
 import { publicRoutes } from './http/public-routes.js';
 
-export { closeEntriesOfOptedOutPatient, closeExpiredEntries } from './application/entries.js';
+export {
+  closeEntriesOfOptedOutPatient,
+  closeEntriesOfUnreachablePatient,
+  closeExpiredEntries,
+} from './application/entries.js';
 export { createWaitlistJobs } from './application/jobs.js';
 export { waitlistOutcomes } from './application/outcomes.js';
 export { recoveredAppointmentIds } from './application/report-facts.js';
@@ -62,12 +66,11 @@ export interface WaitlistOptions {
   /** Which adapter serves which organization: the bot challenge of the public form. */
   adapters?: AdapterResolver | undefined;
   /**
-   * Records the WhatsApp opt-in of a patient a public join registered (source `online_booking`).
-   * The notifications module owns that record; the composition root connects it. Absent: the
-   * WhatsApp choice stays a preference of the entry.
+   * The request to accept WhatsApp of a patient a public join registered: a link, emailed to the
+   * address the visitor verified. The notifications module owns it; the composition root connects
+   * it. Absent: the WhatsApp choice stays a preference of the entry.
    */
-  recordWhatsAppOptIn?:
-    ((tx: Tx, input: { patientId: string; at: Date }) => Promise<void>) | undefined;
+  whatsappOptIn?: WhatsappOptInPort | undefined;
   clock?: () => Date;
 }
 
@@ -108,7 +111,7 @@ export function createWaitlist(options: WaitlistOptions): Waitlist {
       email: options.email,
       limiter: createJoinLimiter(options.rateLimitStore),
       entries: entryDeps,
-      ...(options.recordWhatsAppOptIn ? { recordWhatsAppOptIn: options.recordWhatsAppOptIn } : {}),
+      ...(options.whatsappOptIn ? { whatsappOptIn: options.whatsappOptIn } : {}),
     },
   });
 

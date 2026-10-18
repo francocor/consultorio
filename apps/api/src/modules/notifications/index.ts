@@ -124,7 +124,14 @@ export function createNotifications(options: NotificationsOptions): Notification
   registerTokenHandler('appointment_confirm', createConfirmHandler(handlerDeps));
   registerTokenHandler('appointment_cancel', createCancelHandler(handlerDeps));
   registerTokenHandler('notification_opt_out', createOptOutHandler());
-  registerTokenHandler('whatsapp_opt_in', createWhatsappOptInHandler());
+  registerTokenHandler(
+    'whatsapp_opt_in',
+    createWhatsappOptInHandler({
+      worklist: options.worklist
+        ? createWorklistFromService(options.worklist)
+        : createWorklist({ keys: options.keys }),
+    }),
+  );
   const revoker = createLinkRevoker(tokens);
   options.events.subscribe((tx, event) => revoker.handle(tx, event));
 
@@ -136,6 +143,7 @@ export function createNotifications(options: NotificationsOptions): Notification
           clock,
           whatsappAvailable: options.whatsappAvailable ?? (() => true),
           quota: options.quota,
+          keys: options.keys,
         }
       : undefined,
   );
@@ -165,6 +173,7 @@ export function createNotifications(options: NotificationsOptions): Notification
           origins: options.origins,
           tokens,
           worklist,
+          keys: options.keys,
           ...(options.quota ? { quota: options.quota } : {}),
           ...(options.videoJoin ? { videoJoin: options.videoJoin } : {}),
         }
@@ -230,6 +239,10 @@ export function createNotifications(options: NotificationsOptions): Notification
   };
 }
 
+export { configureAddressHash } from './domain/address.js';
+export { bindOptOutListener } from './application/opt-out.js';
+export { createWhatsappOptInRequests } from './application/whatsapp-opt-in.js';
+export type { WhatsappOptInRequests, WhatsappOptInEmail } from './application/whatsapp-opt-in.js';
 export { createBookingNotifier } from './application/booking-confirmation.js';
 export type { BookingNotifierDeps } from './application/booking-confirmation.js';
 export {

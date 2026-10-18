@@ -5,7 +5,7 @@ import { afterAll, beforeAll, describe, expect, inject, it } from 'vitest';
 
 import { actionToken } from '../../src/db/schema/action-token.js';
 import { createRuntimeDb, type DbHandle } from '../../src/platform/db/pool.js';
-import { createActionTokens } from '../../src/platform/tokens/index.js';
+import { createActionTokens, purgeExpiredTokens } from '../../src/platform/tokens/index.js';
 import { TOKEN_KIND_REGISTRY } from '../../src/platform/tokens/kinds.js';
 import { asTenant, createTestTenant, type TestTenant } from '../support/tenants.js';
 
@@ -242,5 +242,48 @@ describe('session binding', () => {
     expect(wrong).toBeNull();
     expect(none).toBeNull();
     expect(right).toMatchObject({ subjectId: subject });
+  });
+});
+
+describe('purging the tokens that expired (JD-S3 B32)', () => {
+  const DAY = 24 * 60 * MINUTE;
+
+  it('deletes tokens a week after they expired, and keeps the live ones and the recent ones', async () => {
+    const { clock, issue } = setup();
+    const old = await issue('password_reset');
+    clock.advance(TOKEN_KIND_REGISTRY.password_reset.ttlMs + 8 * DAY);
+    const recent = await issue('password_reset', { ttlMs: MINUTE });
+    clock.advance(2 * MINUTE);
+    const live = await issue('password_reset');
+    const rows = () =>
+      asTenant(runtime, a.id, (tx) =>
+        tx.select({ id: actionToken.id }).from(actionToken).where(eq(actionToken.tenantId, a.id)),
+      );
+    const before = (await rows()).map((row) => row.id);
+    expect(before).toEqual(expect.arrayContaining([old.id, recent.id, live.id]));
+
+    const purged = await asTenant(runtime, a.id, (tx) =>
+      purgeExpiredTokens(tx, { now: clock.now() }),
+    );
+
+    const after = (await rows()).map((row) => row.id);
+    expect(purged).toBeGreaterThanOrEqual(1);
+    expect(after).not.toContain(old.id);
+    expect(after).toEqual(expect.arrayContaining([recent.id, live.id]));
+  });
+
+  it('never touches the tokens of another organization', async () => {
+    const { clock, tokens, subject } = setup();
+    const other = await asTenant(runtime, b.id, (tx) =>
+      tokens.issue(tx, { kind: 'password_reset', subjectId: subject }),
+    );
+    clock.advance(TOKEN_KIND_REGISTRY.password_reset.ttlMs + 30 * DAY);
+
+    await asTenant(runtime, a.id, (tx) => purgeExpiredTokens(tx, { now: clock.now() }));
+
+    const rows = await asTenant(runtime, b.id, (tx) =>
+      tx.select({ id: actionToken.id }).from(actionToken).where(eq(actionToken.id, other.id)),
+    );
+    expect(rows).toHaveLength(1);
   });
 });

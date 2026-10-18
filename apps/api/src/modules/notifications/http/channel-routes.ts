@@ -177,8 +177,10 @@ export function channelRoutes(deps: ChannelRoutesDeps) {
           if (contact.phone === null || normalizeWhatsAppNumber(contact.phone) === null) {
             throw new AppError('patient_without_phone');
           }
-          if ((await loadPreferences(tx, id)).whatsapp === 'opted_in')
-            throw new AppError('conflict');
+          const preferences = await loadPreferences(tx, id);
+          if (preferences.whatsapp === 'opted_in') throw new AppError('conflict');
+          // The request is an email: a patient who opted out of email is not written to by it.
+          if (preferences.email === 'opted_out') throw new AppError('channel_opted_out');
 
           // A newer request replaces the older link.
           await deps.tokens.revokeForSubject(tx, 'whatsapp_opt_in', id);

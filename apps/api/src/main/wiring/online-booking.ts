@@ -11,6 +11,7 @@ import {
 } from '../../modules/online-booking/index.js';
 import { adapterOfSetting } from '../../platform/local-providers/dev-routes.js';
 import { createMetrics } from '../../platform/metrics.js';
+import { createActionTokens } from '../../platform/tokens/index.js';
 import { createTenantRoutedEmail, fake, real } from '../adapter-resolver.js';
 
 import type { ModuleWiring } from './types.js';
@@ -80,6 +81,7 @@ export const onlineBookingWiring: ModuleWiring = {
         withTenant: context.withTenant,
         email: context.email,
         clock: context.clock ?? (() => new Date()),
+        tokens: createActionTokens({ clock: context.clock ?? (() => new Date()) }),
         compose: (notice) => composeBookingConfirmation(context.origins, notice),
       }),
       worklist: context.worklist,

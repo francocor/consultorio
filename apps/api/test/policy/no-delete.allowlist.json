@@ -2,6 +2,11 @@
   "description": "The only places that may delete rows. Tenant data is deactivated, ended or revoked, never deleted (tenancy, \"No deletion\"). Each entry says why, and the test fails when an entry no longer matches anything, so this list cannot rot.",
   "code": [
     {
+      "file": "src/platform/tokens/index.ts",
+      "table": "actionToken",
+      "why": "A single-purpose link is not a record: a week after it expired nothing can use it, and what it did is in the audit trail of the action. The daily tokens.purge job deletes it."
+    },
+    {
       "file": "src/modules/identity/application/two-factor.ts",
       "table": "recoveryCode",
       "why": "A recovery code is a single-use credential. Enrolling again or regenerating replaces the whole set; the previous codes stop working and keep no history worth keeping (the event is audited)."

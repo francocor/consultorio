@@ -86,11 +86,44 @@ export interface JoinDeps {
   limiter: JoinLimiter;
   entries: EntryDeps;
   /**
-   * Records the WhatsApp opt-in of a patient this join created (source `online_booking`). The
-   * notifications module owns that record; without it a WhatsApp choice stays a preference of the
-   * entry, and the delivery still asks messaging for the opt-in before it uses WhatsApp.
+   * The request to accept WhatsApp that a visitor made on the form, for a patient this join
+   * created. The number they typed is not verified, so nothing is recorded: the notifications
+   * module hands out a link, and the confirmation sends it to the address that was verified
+   * (decision D22). Without it a WhatsApp choice stays a preference of the entry, and the delivery
+   * still asks messaging for the opt-in before it uses WhatsApp.
    */
-  recordWhatsAppOptIn?: (tx: Tx, input: { patientId: string; at: Date }) => Promise<void>;
+  whatsappOptIn?: WhatsappOptInPort;
+}
+
+/** What the waitlist asks of the notifications module about WhatsApp. */
+export interface WhatsappOptInPort {
+  /**
+   * Inside the transaction of the join: prepares the link of this submission and returns its token.
+   * It is asked for every join that ticked WhatsApp, whatever became of it (a new patient, one on
+   * file, a record that cannot wait, an entry that was refused): the email must not tell the visitor
+   * which. `created` says whether this join registered the patient; only then does following the
+   * link opt in.
+   */
+  request(
+    tx: Tx,
+    input: { submissionId: string; patientId: string | null; created: boolean; at: Date },
+  ): Promise<{ token: string }>;
+  /** After the join is committed: emails the link to the address the visitor verified. */
+  send(input: {
+    tenant: { id: string; slug: string; isDemo: boolean };
+    to: string;
+    patientName: string;
+    organizationName: string;
+    token: string;
+  }): Promise<void>;
+}
+
+/** The request to send once the join is committed. */
+export interface PendingWhatsappOptIn {
+  to: string;
+  patientName: string;
+  organizationName: string;
+  token: string;
 }
 
 export interface JoinTenant {
@@ -111,7 +144,8 @@ async function recordSuspicious(
   await audit(tx, {
     action: 'booking.suspicious',
     outcome: 'deny',
-    actor,
+    // What happened, never who: the address and the browser of the visitor are not kept.
+    actor: { ...actor, ip: null, userAgent: null },
     resourceType: 'booking_link',
     resourceId: linkId,
     // What happened, never who: no address, name or document.
@@ -356,15 +390,15 @@ async function verifyCode(
 
 /**
  * What registering a new person costs over attaching the entry to an existing patient, in statements
- * sent to Postgres, and what ticking WhatsApp adds: the existing-patient branch sends this many
- * reads so the work behind the answer does not tell the two apart (see `evenOut`; pinned by
- * `test/security/public-nondisclosure.test.ts`).
+ * sent to Postgres: the existing-patient branch sends this many reads so the work behind the answer
+ * does not tell the two apart (see `evenOut`; pinned by `test/security/public-nondisclosure.test.ts`).
+ * Ticking WhatsApp adds the same to every branch: each one asks for the link of the submission.
  */
 export const JOIN_NEW_PERSON_EXTRA_STATEMENTS = 7;
-export const JOIN_WHATSAPP_OPT_IN_EXTRA_STATEMENTS = 3;
 
 export type ConfirmOutcome =
-  { ok: true; expiresAt: Date } | { ok: false; refusal: 'not_found' | 'invalid_code' };
+  | { ok: true; expiresAt: Date; whatsappOptIn?: PendingWhatsappOptIn }
+  | { ok: false; refusal: 'not_found' | 'invalid_code' };
 
 /**
  * Finishes a join once the visitor proved the address (waitlist, "Joining the waitlist";
@@ -409,6 +443,8 @@ export async function confirmJoin(
   const expiresAt = new Date(input.now.getTime() + config.waitlist.entryExpiryDays * 86_400_000);
 
   const match = await findPatientByDocument(tx, payload.document);
+  /** The patient this join registered, when the entry was accepted. */
+  const registered: { patientId: string | null } = { patientId: null };
   // A deactivated record cannot wait for a turn, and the visitor is not told why.
   if (match?.status !== 'inactive') {
     try {
@@ -442,21 +478,17 @@ export async function confirmJoin(
             earliestDate: payload.earliestDate,
             latestDate: payload.latestDate,
             channels: payload.channels,
-            optIn: { source: 'public_join', recordedBy: null },
+            // The visitor typed a document, not a proof: they can say they want offers for their
+            // own new record, but never for the record that already has that document (a stranger
+            // would be forging the agreement of the patient). That entry waits for reception.
+            optIn: match === null ? { source: 'public_join', recordedBy: null } : null,
             source: 'public_join',
             createdBy: null,
             identityUnconfirmed: match !== null,
           },
         });
-        if (payload.channels.includes('whatsapp') && deps.recordWhatsAppOptIn) {
-          if (created) {
-            await deps.recordWhatsAppOptIn(inner, { patientId: created.id, at: input.now });
-          } else {
-            // The choice of somebody else's record is not written, but the work looks the same.
-            await evenOut(inner, JOIN_WHATSAPP_OPT_IN_EXTRA_STATEMENTS);
-          }
-        }
         if (!created) await evenOut(inner, JOIN_NEW_PERSON_EXTRA_STATEMENTS);
+        registered.patientId = created?.id ?? null;
       });
     } catch (error) {
       const refused =
@@ -467,7 +499,28 @@ export async function confirmJoin(
         if (error instanceof AppError) return { ok: false, refusal: 'not_found' };
         throw error;
       }
+      // The savepoint was rolled back with the request: nobody was registered.
+      registered.patientId = null;
     }
+  }
+
+  // The link to accept WhatsApp, for every join that asked for it, whatever became of it: a new
+  // person, a patient on file, a record that cannot wait or an entry that was refused. The email
+  // that carries it must not tell the visitor which one it was (judgment day round 2, finding A1).
+  let whatsappOptIn: PendingWhatsappOptIn | undefined;
+  if (payload.channels.includes('whatsapp') && deps.whatsappOptIn) {
+    const requested = await deps.whatsappOptIn.request(tx, {
+      submissionId: stored.id,
+      patientId: registered.patientId,
+      created: registered.patientId !== null,
+      at: input.now,
+    });
+    whatsappOptIn = {
+      to: stored.email,
+      patientName: payload.givenNames,
+      organizationName: await readOrganizationName(tx),
+      token: requested.token,
+    };
   }
 
   // What stays of the form: the consent it was made under. The rest was only needed to join.
@@ -480,5 +533,5 @@ export async function confirmJoin(
     .update(bookingSubmission)
     .set({ status: 'verified', verifiedAt: input.now, payloadEnc: evidence })
     .where(eq(bookingSubmission.id, stored.id));
-  return { ok: true, expiresAt };
+  return { ok: true, expiresAt, ...(whatsappOptIn ? { whatsappOptIn } : {}) };
 }

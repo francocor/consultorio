@@ -58,6 +58,7 @@ function toDto(row: BookingLinkRow, organizationSlug: string | undefined): Booki
     locationIds: row.locationIds,
     typeIds: row.typeIds,
     regeneratedAt: row.regeneratedAt?.toISOString() ?? null,
+    maxUnconfirmedAppointments: row.maxUnconfirmedAppointments,
     path: pathOf(row, organizationSlug),
   };
 }
@@ -241,6 +242,9 @@ export function createLinkService(
           ...(request.locationIds === undefined
             ? {}
             : { locationIds: [...new Set(request.locationIds)] }),
+          ...(request.maxUnconfirmedAppointments === undefined
+            ? {}
+            : { maxUnconfirmedAppointments: request.maxUnconfirmedAppointments }),
         })
         .where(eq(bookingLink.id, current.id))
         .returning();

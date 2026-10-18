@@ -40,6 +40,10 @@ export const DEFAULT_ONLINE_BOOKING_SETTINGS: OnlineBookingSettings = {
   requireApproval: false,
 };
 
+/** The default and the ceiling of the limit of unconfirmed appointments of a link. */
+export const DEFAULT_MAX_UNCONFIRMED_APPOINTMENTS = 20;
+export const MAX_UNCONFIRMED_APPOINTMENTS = 500;
+
 const Id = z.uuid();
 const Instant = z.iso.datetime({ offset: true });
 const LINK_SLUG = /^[a-z0-9]{8,32}$/;
@@ -63,6 +67,12 @@ export const BookingLinkDto = z.strictObject({
   /** Empty: nothing is bookable yet. */
   typeIds: z.array(Id),
   regeneratedAt: Instant.nullable(),
+  /**
+   * Most future appointments that stand on a patient already on file, with the identity not yet
+   * confirmed by reception, that this link may have at once. Past it, a booking by someone else's
+   * document stands on a record of its own and reception reviews it.
+   */
+  maxUnconfirmedAppointments: z.int().min(0).max(MAX_UNCONFIRMED_APPOINTMENTS),
   /** Where the visitor opens it in the web app, such as `/book/abc123` or `/book/abc123/p/def456`. */
   path: z.string().nullable(),
 });
@@ -85,6 +95,7 @@ export const UpdateBookingLinkRequest = z
     enabled: z.boolean(),
     locationIds: z.array(Id).max(50),
     typeIds: z.array(Id).max(50),
+    maxUnconfirmedAppointments: z.int().min(0).max(MAX_UNCONFIRMED_APPOINTMENTS),
   })
   .partial()
   .refine((value) => Object.keys(value).length > 0, 'at least one field to change');
@@ -281,9 +292,18 @@ export const PublicConfirmationDto = z.strictObject({
 });
 export type PublicConfirmationDto = z.infer<typeof PublicConfirmationDto>;
 
-/** The appointment behind a link, and whether the patient can still change it. */
+/**
+ * The appointment behind a link, and whether the patient can still change it. The professional and
+ * the type of visit are null when the organization uses neutral wording in its messages
+ * (`notifications.hideProfessional`, `notifications.hideAppointmentType`): a link that anybody who
+ * holds it can open says no more than the emails say.
+ */
 export const PublicManageDto = z.strictObject({
-  appointment: z.strictObject(PublicAppointmentFields),
+  appointment: z.strictObject({
+    ...PublicAppointmentFields,
+    professionalName: z.string().nullable(),
+    typeName: z.string().nullable(),
+  }),
   organizationName: z.string(),
   /** False after the deadline of the organization: the page then says to contact it. */
   canChange: z.boolean(),

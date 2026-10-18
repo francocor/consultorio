@@ -1,16 +1,16 @@
 import { and, eq, sql } from 'drizzle-orm';
 
 import { message, messageAttempt } from '../../../db/schema/notifications.js';
-import type { AuditActor } from '../../../platform/audit/writer.js';
 import { SYSTEM_USER_ID, type WithTenant } from '../../../platform/db/tenant-context.js';
 import type { EmailSender } from '../../../platform/mail/email-sender.js';
 import type { RenderedEmail } from '../../../platform/mail/templates.js';
+import type { ActionTokens } from '../../../platform/tokens/index.js';
 import type { BookingNotice, BookingNotifier } from '../../online-booking/index.js';
 import { hashAddress } from '../domain/address.js';
 import { classifyEmailFailure, MAX_ATTEMPTS } from '../domain/delivery-rules.js';
 
 import { loadTenantState } from './context.js';
-import { loadPreferences, recordOptIn } from './preferences.js';
+import { optInPayload } from './whatsapp-opt-in.js';
 
 /**
  * The confirmation of an online booking, as the notifications module sends it (spec "Automatic
@@ -23,20 +23,15 @@ import { loadPreferences, recordOptIn } from './preferences.js';
  *   reception sees it was sent. The log keeps a hash of the address, never the address.
  * - It is sent once per appointment and time: asking again for the same booking changes nothing,
  *   and moving the appointment (another time) is a new confirmation.
- * - A patient who opted out of email does not get it: an opt-out covers every automated message of
- *   the channel (spec "Opt-out and consent").
+ * - It does not depend on the opt-outs of the record of the patient: the address is the
+ *   visitor's own, proved a moment ago, and the message answers what they just did. (An opt-out of
+ *   a record the visitor may not even own must not decide whether they are answered: it would tell
+ *   them that the document is on file.) The sender is routed by organization: a demonstration
+ *   organization's confirmation goes to the fake (or, in development, to the local mail catcher
+ *   that the demo stack and its end-to-end suite read), never to a real mailbox.
  * - A temporary failure is tried again, up to three attempts in all, a few seconds apart (the
  *   visitor is not waiting: it runs after their answer). A failure never reaches the visitor.
  */
-
-/** The patient is the actor of the opt-in the form recorded; there is no staff member. */
-const VISITOR: AuditActor = {
-  userId: null,
-  actingRole: null,
-  ip: null,
-  userAgent: null,
-  requestId: null,
-};
 
 const RETRY_WAITS_MS = [2_000, 8_000] as const;
 
@@ -45,6 +40,8 @@ export interface BookingNotifierDeps {
   /** Routed by organization: a demonstration organization never reaches a real mail server. */
   email: EmailSender;
   clock: () => Date;
+  /** Issues the link with which a patient accepts WhatsApp. */
+  tokens: ActionTokens;
   /** Writes the email (the details and the link to change the booking). */
   compose(notice: BookingNotice): RenderedEmail;
   /** Replaced in tests, so they do not sleep. */
@@ -61,7 +58,6 @@ export function createBookingNotifier(deps: BookingNotifierDeps): BookingNotifie
       async (tx): Promise<string | null> => {
         const state = await loadTenantState(tx, notice.tenant.id);
         if (!state || state.status !== 'active') return null;
-        const optedOut = (await loadPreferences(tx, notice.patientId)).email === 'opted_out';
         const [inserted] = await tx
           .insert(message)
           .values({
@@ -75,11 +71,11 @@ export function createBookingNotifier(deps: BookingNotifierDeps): BookingNotifie
             // One confirmation per appointment and time.
             dedupeKey: `booking_confirmation:${notice.appointmentId}:${String(notice.startsAt.getTime())}:email`,
             addressHash: hashAddress('email', notice.to),
-            ...(optedOut ? { status: 'cancelled', cancelReason: 'opted_out' } : { attempts: 1 }),
+            attempts: 1,
           })
           .onConflictDoNothing()
           .returning({ id: message.id });
-        if (!inserted || optedOut) return null;
+        if (!inserted) return null;
         await tx.insert(messageAttempt).values({
           tenantId: sql`current_setting('app.tenant_id')::uuid`,
           messageId: inserted.id,
@@ -131,13 +127,16 @@ export function createBookingNotifier(deps: BookingNotifierDeps): BookingNotifie
   }
 
   return {
-    recordWhatsAppOptIn: async (tx, input) => {
-      await recordOptIn(tx, {
-        patientId: input.patientId,
-        channel: 'whatsapp',
-        source: 'online_booking',
-        actor: VISITOR,
+    requestWhatsAppOptIn: async (tx, input) => {
+      // A number typed into a public form is nobody's yet: the choice waits for the patient to
+      // follow a link sent to the address that was verified. Every submission that ticked the box
+      // gets its link, whoever the document belongs to (judgment day round 2, finding A1).
+      const issued = await deps.tokens.issue(tx, {
+        kind: 'whatsapp_opt_in',
+        subjectId: input.submissionId,
+        payload: optInPayload(input),
       });
+      return { token: issued.token };
     },
 
     async confirmBooking(notice) {

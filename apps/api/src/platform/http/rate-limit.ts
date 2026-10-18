@@ -61,7 +61,10 @@ export interface RateLimitSettings {
   store: RateLimitStore;
   /** Per client address, inside one tenant. */
   perClient: RateLimit;
-  /** For the whole tenant, whatever the addresses. */
+  /**
+   * For the whole tenant, whatever the addresses. The routes with no account (`auth: 'public'`)
+   * count in a bucket of their own with the same allowance.
+   */
   perTenant: RateLimit;
 }
 
@@ -129,9 +132,12 @@ export function registerRateLimit(app: FastifyInstance, settings: RateLimitSetti
       ? `route|${request.method} ${request.routeOptions.url ?? ''}|${tenant}|${clientKeyOf(request.ip)}`
       : `client|${tenant}|${clientKeyOf(request.ip)}`;
 
+    // The public routes (visitors with no account) have an allowance of their own: a flood of
+    // them must not use up the one the staff of the same organization work with.
+    const isPublic = request.routeOptions.config.auth === 'public';
     const checks: [string, RateLimit][] = [
       [clientKey, clientLimit],
-      [`tenant|${tenant}`, settings.perTenant],
+      [isPublic ? `tenant-public|${tenant}` : `tenant|${tenant}`, settings.perTenant],
     ];
     for (const [key, limit] of checks) {
       let state: { count: number; resetsInMs: number };

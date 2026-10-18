@@ -15,6 +15,7 @@ const base = {
 const production = {
   ...base,
   NODE_ENV: 'production',
+  ADDRESS_HASH_PEPPER: 'placeholder-pepper-0123456789-abcdefghij',
   KMS_PROVIDER: 'aws',
   AWS_REGION: 'sa-east-1',
   AWS_KMS_KEY_ID: 'alias/consultorio',
@@ -87,6 +88,19 @@ describe('provider configuration', () => {
       loadConfig({ ...meta, WHATSAPP_APP_SECRET: 'placeholder-app-secret-0123456789' }).providers
         .whatsappAppSecret,
     ).toBe('placeholder-app-secret-0123456789');
+  });
+
+  it('requires the pepper of the address hashes in production, and names it without printing it', () => {
+    expect(() => loadConfig({ ...production, ADDRESS_HASH_PEPPER: undefined })).toThrow(
+      /ADDRESS_HASH_PEPPER/,
+    );
+    expect(loadConfig(production).providers.addressHashPepper).toBe(
+      'placeholder-pepper-0123456789-abcdefghij',
+    );
+    expect(loadConfig(base).providers.addressHashPepper).toBeUndefined();
+    expect(() => loadConfig({ ...base, ADDRESS_HASH_PEPPER: 'short-pepper' })).toThrow(
+      /ADDRESS_HASH_PEPPER/,
+    );
   });
 
   it('reads the hosts a manual video link may point at', () => {

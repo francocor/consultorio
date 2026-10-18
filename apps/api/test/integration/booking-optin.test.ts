@@ -18,15 +18,18 @@ import { createActionTokens } from '../../src/platform/tokens/index.js';
 import { createBookingWorld, type BookingWorld, type Visitor } from '../support/booking-world.js';
 
 /**
- * The WhatsApp choice of the form (online-booking, "WhatsApp opt-in at booking"). The opt-in itself is
- * stored by the notifications module; online booking asks for it through a port, and only for a
- * patient that this very booking created: a record nobody has checked never gets an opt-in from
- * whoever typed a document that happens to match it.
+ * The WhatsApp choice of the form (online-booking, "WhatsApp opt-in at booking"). A number typed
+ * into a public form is not verified, so the choice is only a REQUEST (decision D22): the
+ * notifications module hands out a link, which goes in the confirmation to the verified address,
+ * and the opt-in is recorded when the patient follows it. Online booking asks through a port, and
+ * only for a patient that this very booking created: a record nobody has checked never gets a
+ * request from whoever typed a document that happens to match it.
  */
 let runtime: DbHandle;
 let world: BookingWorld;
 let links: Awaited<ReturnType<BookingWorld['openLinks']>>;
-const optIns: { patientId: string; at: Date }[] = [];
+const optIns: { patientId: string; created: boolean; at: Date }[] = [];
+const notices: { whatsappOptInToken: string | null }[] = [];
 
 const EARLY = new Date('2031-05-05T12:00:00.000Z');
 
@@ -66,9 +69,9 @@ async function confirmed(options: {
   await world.runJobs();
 
   const notifier: BookingNotifier = {
-    recordWhatsAppOptIn: (_tx, input) => {
+    requestWhatsAppOptIn: (_tx, input) => {
       optIns.push(input);
-      return Promise.resolve();
+      return Promise.resolve({ token: 'OPT-IN-TOKEN' });
     },
     confirmBooking: () => Promise.resolve(),
   };
@@ -105,15 +108,18 @@ async function confirmed(options: {
       }),
   );
   expect(outcome.ok).toBe(true);
+  if (outcome.ok) notices.push(outcome.notice);
   return form;
 }
 
 describe('the WhatsApp choice at booking', () => {
-  it('asks for an opt-in, with the time, for the patient this booking created', async () => {
+  it('asks for an opt-in, with the time, for the patient this booking created, and puts its link in the notice', async () => {
     optIns.length = 0;
+    notices.length = 0;
 
     const form = await confirmed({ whatsappOptIn: true });
 
+    expect(notices.at(-1)?.whatsappOptInToken).toBe('OPT-IN-TOKEN');
     expect(optIns).toHaveLength(1);
     expect(optIns[0]?.at).toEqual(world.now());
     const [created] = await world
@@ -124,17 +130,20 @@ describe('the WhatsApp choice at booking', () => {
       )
       .then((result) => result.rows);
     expect(optIns[0]?.patientId).toBe(created?.id);
+    expect(optIns[0]?.created).toBe(true);
   });
 
   it('asks for nothing when the box stays unticked', async () => {
     optIns.length = 0;
 
+    notices.length = 0;
     await confirmed({ whatsappOptIn: false });
 
     expect(optIns).toEqual([]);
+    expect(notices.at(-1)?.whatsappOptInToken).toBeNull();
   });
 
-  it('asks for nothing on a record the organization already had, whoever ticked the box', async () => {
+  it('asks the same on a record the organization already had, saying it did not create it, so the email does not tell (JD-S3 R2-A1)', async () => {
     optIns.length = 0;
     await world.inTenant((tx) =>
       tx.execute(
@@ -143,8 +152,11 @@ describe('the WhatsApp choice at booking', () => {
       ),
     );
 
+    notices.length = 0;
     await confirmed({ whatsappOptIn: true, document: { type: 'dni', number: '31000999' } });
 
-    expect(optIns).toEqual([]);
+    expect(optIns).toHaveLength(1);
+    expect(optIns[0]?.created).toBe(false);
+    expect(notices.at(-1)?.whatsappOptInToken).toBe('OPT-IN-TOKEN');
   });
 });

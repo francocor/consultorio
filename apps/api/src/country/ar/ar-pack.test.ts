@@ -115,14 +115,36 @@ describe('Argentina country pack', () => {
     ).toEqual([]);
   });
 
-  it('declares the legal adapters but implements none of them yet', () => {
+  it('declares the legal adapters; the invoice issuer has its local and fake adapters (Stage 4), the e-prescription provider none yet', () => {
     const pack = createArPack(catalogs());
 
     expect(pack.legalAdapters).toEqual([
-      { port: 'InvoiceIssuer', provider: 'afip-wsfe', implemented: false },
+      { port: 'InvoiceIssuer', provider: 'afip-wsfe', implemented: true },
       { port: 'PrescriptionProvider', provider: 'e-rx', implemented: false },
     ]);
     expect(pack.invoiceIssuer).toBeUndefined();
     expect(pack.prescriptionProvider).toBeUndefined();
+  });
+
+  it('gives the invoice type rules of Argentina through the pack', () => {
+    const { invoiceRules } = createArPack(catalogs());
+
+    expect(
+      invoiceRules.resolveInvoiceType({ issuer: 'monotributo', recipient: 'consumidor_final' }),
+    ).toEqual({ ok: true, value: 'FC' });
+    expect(
+      invoiceRules.resolveInvoiceType({
+        issuer: 'responsable_inscripto',
+        recipient: 'responsable_inscripto',
+      }),
+    ).toEqual({ ok: true, value: 'FA' });
+    expect(invoiceRules.creditNoteTypeFor('FB')).toEqual({ ok: true, value: 'NCB' });
+    expect(
+      invoiceRules.checkRecipient({
+        type: 'FA',
+        totalCents: 100_00,
+        recipient: { taxCondition: 'responsable_inscripto' },
+      }),
+    ).toEqual({ ok: false, error: { i18nKey: 'country.ar.invoice.recipient_cuit_required' } });
   });
 });

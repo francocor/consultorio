@@ -34,7 +34,7 @@ import { UNLIMITED_QUOTA, whatsappQuotaAvailable } from './usage.js';
  */
 
 /** What queueing it needs from the process: the queue, the clock, the providers, the worklist. */
-export interface VideoFollowUpDeps extends OfferDeliveryDeps {
+export interface VideoFollowUpDeps extends Omit<OfferDeliveryDeps, 'keys'> {
   /** Reception is told when the patient cannot be given the link. Absent: nobody is told. */
   worklist?: Worklist | undefined;
 }

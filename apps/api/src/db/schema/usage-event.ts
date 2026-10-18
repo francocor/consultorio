@@ -22,7 +22,7 @@ import { tenant } from './tenant.js';
  * refusal costs nothing, and email is never counted), once per message, also in a single-tenant
  * deployment whose subscription billing is off. Counts only: no patient, no text.
  *
- * `period` is the calendar month of `counted_at` in UTC, as `YYYY-MM`.
+ * `period` is the calendar month of `counted_at` in the time zone of the organization, as `YYYY-MM`.
  */
 export const whatsappUsageEvent = tenantTable(
   'whatsapp_usage_event',
@@ -31,6 +31,14 @@ export const whatsappUsageEvent = tenantTable(
     professionalId: uuid('professional_id').notNull(),
     countedAt: timestamp('counted_at', { withTimezone: true }).notNull().defaultNow(),
     period: text('period').notNull(),
+    /**
+     * A place in the quota is RESERVED when a message is prepared (under a lock, so two messages
+     * cannot take the last one) and CONFIRMED when the provider accepts it. A message the
+     * provider refuses, or that never goes, RELEASES it: the row stays as the record, and stops
+     * counting. Only these two columns can change (judgment day finding C7).
+     */
+    confirmedAt: timestamp('confirmed_at', { withTimezone: true }),
+    releasedAt: timestamp('released_at', { withTimezone: true }),
   },
   (table) => [
     foreignKey({

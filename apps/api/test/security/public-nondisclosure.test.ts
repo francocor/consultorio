@@ -177,6 +177,154 @@ describe('the confirmation of a booking', () => {
   });
 });
 
+describe('a record that cannot take the booking (JD-S3 C2)', () => {
+  /** A patient with a document of their own that was deactivated. */
+  async function inactivePatient() {
+    people += 1;
+    const number = String(30_300_000 + people);
+    await world.inTenant((tx) =>
+      tx.execute(
+        sql`INSERT INTO patient (tenant_id, family_name, given_names, birth_date, national_id_type, national_id, phone, email, status)
+              VALUES (${world.tenant.id}, ${KNOWN.family}, ${KNOWN.given}, '1980-01-01', 'dni', ${number}, ${KNOWN.phone}, ${KNOWN.email}, 'inactive')`,
+      ),
+    );
+    return number;
+  }
+
+  async function confirmedPair(extra: Parameters<BookingWorld['form']>[0] = {}) {
+    const fresh = await submitted(extra);
+    const inactive = await submitted({
+      ...extra,
+      document: { type: 'dni', number: await inactivePatient() },
+      email: `impostor${String(week)}@example.test`,
+      givenNames: 'Otra',
+      familyName: 'Persona',
+    });
+    const answers: Awaited<ReturnType<Visitor['post']>>[] = [];
+    const queries: number[] = [];
+    for (const booking of [fresh, inactive]) {
+      queries.push(
+        await countQueries(async () => {
+          answers.push(
+            await booking.visitor.post(confirmPath(booking.hold), {
+              code: world.codeSentTo(booking.form.email),
+            }),
+          );
+          await world.app.background.idle();
+        }),
+      );
+    }
+    return { answers, queries };
+  }
+
+  it('answers a deactivated record like a person nobody had registered', async () => {
+    const { answers } = await confirmedPair();
+
+    const [freshAnswer, inactiveAnswer] = answers;
+    expect(inactiveAnswer?.statusCode, inactiveAnswer?.body).toBe(200);
+    expect(Object.keys(inactiveAnswer?.json() ?? {}).sort()).toEqual(
+      Object.keys(freshAnswer?.json() ?? {}).sort(),
+    );
+    expect(inactiveAnswer?.json()).toMatchObject({ status: 'scheduled' });
+    for (const secret of [KNOWN.given, KNOWN.family, KNOWN.phone, KNOWN.email]) {
+      expect(inactiveAnswer?.body ?? '').not.toContain(secret);
+    }
+  });
+
+  it('does the same amount of work for a deactivated record as for a new person', async () => {
+    const { queries } = await confirmedPair();
+
+    expect(queries[1]).toBe(queries[0]);
+  });
+
+  it('does the same amount of work when the visitor also asks for WhatsApp', async () => {
+    const { queries } = await confirmedPair({ whatsappOptIn: true });
+
+    expect(queries[1]).toBe(queries[0]);
+  });
+});
+
+/**
+ * Judgment day round 2, finding A1. The confirmation goes to the address the visitor typed, and it
+ * used to carry the link that accepts WhatsApp only when the form had CREATED the patient: with the
+ * document of somebody on file the link was missing, so a visitor learned that the document was
+ * known. Every outcome now carries the same link; what following it does is decided when it is
+ * followed, and the visitor sees the same page either way.
+ */
+describe('the WhatsApp link of the confirmation (JD-S3 R2-A1)', () => {
+  const TOKEN = /[A-Za-z0-9_-]{43}/g;
+
+  /** What a mail says apart from the facts of one booking: the same words and the same links. */
+  const shapeOfMail = (mail: { subject: string; text: string; html?: string | undefined }) => ({
+    subject: mail.subject,
+    text: mail.text.replace(TOKEN, 'TOKEN').replace(/^Cuándo:.*$/m, 'Cuándo: WHEN'),
+    html: (mail.html ?? '')
+      .replace(TOKEN, 'TOKEN')
+      .replace(/<strong>Cuándo:[<][/]strong>[^<]*/, '<strong>Cuándo:</strong> WHEN'),
+  });
+
+  async function inactiveDocument() {
+    people += 1;
+    const number = String(30_400_000 + people);
+    await world.inTenant((tx) =>
+      tx.execute(
+        sql`INSERT INTO patient (tenant_id, family_name, given_names, birth_date, national_id_type, national_id, phone, email, status)
+              VALUES (${world.tenant.id}, ${KNOWN.family}, ${KNOWN.given}, '1980-01-01', 'dni', ${number}, ${KNOWN.phone}, ${KNOWN.email}, 'inactive')`,
+      ),
+    );
+    return number;
+  }
+
+  async function confirmationFor(booking: Booking, code: string) {
+    world.email.clear();
+    const answer = await booking.visitor.post(confirmPath(booking.hold), { code });
+    expect(answer.statusCode, answer.body).toBe(200);
+    await world.app.background.idle();
+    const mail = world.email.sent.find(
+      (message) => message.to === booking.form.email && /turno/i.test(message.subject),
+    );
+    expect(mail, JSON.stringify(world.email.sent.map((entry) => entry.subject))).toBeDefined();
+    return mail as NonNullable<typeof mail>;
+  }
+
+  it('carries the link whether the document is new, on file, or on a record that cannot take the booking', async () => {
+    const fresh = await submitted({ whatsappOptIn: true, phone: '+54 11 5555 0000' });
+    const onFile = await submitted({
+      whatsappOptIn: true,
+      phone: '+54 11 5555 0000',
+      document: { type: 'dni', number: await patientOnFile() },
+      email: `impostor${String(week)}@example.test`,
+      givenNames: 'Otra',
+      familyName: 'Persona',
+    });
+    const inactive = await submitted({
+      whatsappOptIn: true,
+      phone: '+54 11 5555 0000',
+      document: { type: 'dni', number: await inactiveDocument() },
+      email: `impostor${String(week)}b@example.test`,
+      givenNames: 'Otra',
+      familyName: 'Persona',
+    });
+
+    // The codes first: reading the confirmation of one booking starts from an empty outbox.
+    const codes = [fresh, onFile, inactive].map((booking) => world.codeSentTo(booking.form.email));
+    const mails = [
+      await confirmationFor(fresh, codes[0] ?? ''),
+      await confirmationFor(onFile, codes[1] ?? ''),
+      await confirmationFor(inactive, codes[2] ?? ''),
+    ];
+
+    // The link to accept WhatsApp is in every one, in text and in html.
+    for (const [index, mail] of mails.entries()) {
+      const outcome = ['new person', 'document on file', 'record that cannot take it'][index];
+      expect(mail.text, outcome).toContain('Para activarlos, abra este enlace y acepte:');
+      expect(mail.html ?? '', outcome).toContain('Active los recordatorios por WhatsApp');
+    }
+    const [first, ...others] = mails.map(shapeOfMail);
+    for (const other of others) expect(other).toEqual(first);
+  });
+});
+
 describe('the waitlist form', () => {
   const path = (suffix = '') => `/public/${links.organization.slug}/waitlist${suffix}`;
   let forms = 0;
@@ -261,6 +409,65 @@ describe('the waitlist form', () => {
     const { queries } = await confirmedBoth({ channels: ['email', 'whatsapp'] }, 'c');
 
     expect(queries[1]).toBe(queries[0]);
+  });
+
+  it('emails the same link to accept WhatsApp whatever became of the join (JD-S3 R2-A1)', async () => {
+    const wants = { channels: ['email', 'whatsapp'] };
+    freshDocuments += 1;
+    const newDocument = String(31_800_000 + freshDocuments);
+    people += 1;
+    const inactiveDocument = String(30_500_000 + people);
+    await world.inTenant((tx) =>
+      tx.execute(
+        sql`INSERT INTO patient (tenant_id, family_name, given_names, birth_date, national_id_type, national_id, phone, email, status)
+              VALUES (${world.tenant.id}, ${KNOWN.family}, ${KNOWN.given}, '1980-01-01', 'dni', ${inactiveDocument}, ${KNOWN.phone}, ${KNOWN.email}, 'inactive')`,
+      ),
+    );
+    const onFileDocument = await patientOnFile();
+    const joins = {
+      'new person': await requested(newDocument, 'lucas.n1@example.test', wants),
+      'document on file': await requested(onFileDocument, 'lucas.n2@example.test', wants),
+      'record that cannot wait': await requested(inactiveDocument, 'lucas.n3@example.test', wants),
+    };
+    const outcomes = Object.entries(joins);
+    const codes = outcomes.map(([, join]) => world.codeSentTo(join.email));
+    const mails: Record<string, { subject: string; text: string; html?: string | undefined }> = {};
+    const confirmJoinOf = async (
+      name: string,
+      join: (typeof joins)['new person'],
+      code: string,
+    ) => {
+      world.email.clear();
+      const answer = await join.visitor.post(path(`/${join.id}/confirm`), { code });
+      expect(answer.statusCode, answer.body).toBe(200);
+      await world.app.background.idle();
+      const mail = world.email.sent.find((message) => message.to === join.email);
+      expect(mail, name).toBeDefined();
+      mails[name] = mail as NonNullable<typeof mail>;
+    };
+    for (const [index, [name, join]] of outcomes.entries()) {
+      await confirmJoinOf(name, join, codes[index] ?? '');
+    }
+    // The same person asks again for the same wait: the entry is refused as a duplicate.
+    const again = await requested(newDocument, 'lucas.n4@example.test', wants);
+    const againCode = world.codeSentTo(again.email);
+    await confirmJoinOf('entry refused as a duplicate', again, againCode);
+
+    const TOKEN = /[A-Za-z0-9_-]{43}/g;
+    const shape = (mail: { subject: string; text: string; html?: string | undefined }) => ({
+      subject: mail.subject,
+      text: mail.text.replace(TOKEN, 'TOKEN'),
+      html: (mail.html ?? '').replace(TOKEN, 'TOKEN'),
+    });
+    const names = Object.keys(mails);
+    expect(names).toHaveLength(4);
+    for (const name of names) {
+      expect(mails[name]?.text, name).toContain('/public/t/');
+    }
+    const [first, ...others] = names.map((name) =>
+      shape(mails[name] as NonNullable<(typeof mails)[string]>),
+    );
+    for (const other of others) expect(other).toEqual(first);
   });
 });
 

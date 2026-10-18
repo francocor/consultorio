@@ -106,6 +106,7 @@ export const teleconsultationWiring: ModuleWiring = {
   create: (context) => {
     const module = createTeleconsultation({
       withTenant: context.withTenant,
+      keys: context.keys,
       auditDeny: context.auditDeny,
       events: context.appointmentEvents,
       origins: context.origins,

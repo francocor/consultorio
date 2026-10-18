@@ -200,6 +200,7 @@ describe('the simulator console entries of the modules', () => {
   it('reports the real provider, or none, when the configuration selects it', async () => {
     const entries = entriesFor({
       NODE_ENV: 'production',
+      ADDRESS_HASH_PEPPER: 'placeholder-pepper-0123456789-abcdefghij',
       KMS_PROVIDER: 'aws',
       AWS_REGION: 'sa-east-1',
       AWS_KMS_KEY_ID: 'alias/consultorio',

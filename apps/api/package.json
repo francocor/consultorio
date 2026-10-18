@@ -23,6 +23,7 @@
     "e2e:stack": "tsx scripts/e2e-stack.ts --port 3100 --info ../web/e2e/.stack/info.json",
     "demo:stack": "tsx scripts/e2e-stack.ts --port 3000 --minio-port 9100 --banner",
     "backup:local": "tsx scripts/backup-local.ts",
+    "dev:afip-cert": "tsx scripts/dev-afip-cert.ts",
     "bench:clinical": "tsx scripts/bench-clinical-readable.ts"
   },
   "dependencies": {

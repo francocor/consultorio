@@ -1,4 +1,4 @@
-import { and, eq, sql } from 'drizzle-orm';
+import { and, asc, eq, isNull, sql } from 'drizzle-orm';
 
 import { patient, patientVersion } from '../../../db/schema/patients.js';
 import { dataProcessingConsent } from '../../../db/schema/privacy.js';
@@ -51,14 +51,49 @@ export async function findPatientByDocument(
   return row ? { ...row, status: row.status === 'active' ? 'active' : 'inactive' } : null;
 }
 
+/**
+ * The record of its own that a verified address already has: a person registered online WITHOUT a
+ * document (a booking that could not stand on the record that has its document), active, with the
+ * same name and birth date. A second booking of the same person under the same address is put on it
+ * instead of creating another record (judgment day round 2, finding C5): the address was verified, so
+ * repeating the story cannot pile up records. Only the id leaves; nothing here tells the visitor.
+ */
+export async function findOnlineRecordOfItsOwn(
+  tx: Tx,
+  input: { email: string; givenNames: string; familyName: string; birthDate: string },
+): Promise<{ id: string } | null> {
+  const [row] = await tx
+    .select({ id: patient.id })
+    .from(patient)
+    .where(
+      and(
+        eq(patient.origin, 'online'),
+        isNull(patient.nationalId),
+        eq(patient.status, 'active'),
+        sql`lower(${patient.email}) = lower(${input.email})`,
+        sql`lower(${patient.givenNames}) = lower(${input.givenNames})`,
+        sql`lower(${patient.familyName}) = lower(${input.familyName})`,
+        eq(patient.birthDate, input.birthDate),
+      ),
+    )
+    .orderBy(asc(patient.createdAt), asc(patient.id))
+    .limit(1);
+  return row ?? null;
+}
+
 export interface NewOnlinePatient {
   /** The request that registers them: an anonymous visitor, so no user. */
   actor: AuditActor;
   givenNames: string;
   familyName: string;
   birthDate: string;
-  /** Already validated and normalized by the country rules. */
-  document: { type: string; number: string };
+  /**
+   * Already validated and normalized by the country rules. Null for a booking that cannot stand on
+   * the record that has this document (the record is deactivated, or already carries all the
+   * online appointments it may): the person gets a record of their own, without the document, and
+   * reception decides what it is.
+   */
+  document: { type: string; number: string } | null;
   phone?: string | null;
   email: string;
   /** The text the visitor accepted; null when no consent record is to be written. */
@@ -86,8 +121,8 @@ export async function createOnlinePatient(
           familyName: input.familyName,
           givenNames: input.givenNames,
           birthDate: input.birthDate,
-          nationalIdType: input.document.type,
-          nationalId: input.document.number,
+          nationalIdType: input.document?.type ?? null,
+          nationalId: input.document?.number ?? null,
           phone: input.phone ?? null,
           email: input.email,
           origin: 'online',
@@ -117,7 +152,7 @@ export async function createOnlinePatient(
     resourceType: 'patient',
     resourceId: row.id,
     patientId: row.id,
-    metadata: { origin: 'online', hasDocument: true },
+    metadata: { origin: 'online', hasDocument: input.document !== null },
   });
   if (input.consent) {
     const [consent] = await tx

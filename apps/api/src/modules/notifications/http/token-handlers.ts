@@ -7,6 +7,7 @@ import type {
 } from '../../../platform/public/token-router.js';
 import { readPatientContact } from '../../patients/index.js';
 import { loadAppointment, type AppointmentContext } from '../application/context.js';
+import type { Worklist } from '../application/deps.js';
 import { optOutChannel } from '../application/opt-out.js';
 import { actForPatient, type PatientActionDeps } from '../application/patient-actions.js';
 import { recordOptIn } from '../application/preferences.js';
@@ -92,8 +93,11 @@ export function createConfirmHandler(deps: TokenHandlerDeps): TokenHandler {
       if (appointment.status === 'confirmed') {
         return { title: 'Su asistencia ya está confirmada', details: rows };
       }
-      if (!(await context.redeem())) return null;
+      // The use is spent when the change was made, not before: a change the appointment refuses
+      // leaves the link as it was. (A change may revoke the links of the appointment itself, so
+      // whether this one is still there to spend does not matter once it was made.)
       if (!(await transition(deps, context, appointment, 'confirm'))) return GONE;
+      await context.redeem();
       return { title: 'Asistencia confirmada', details: rows, message: 'Gracias. Lo esperamos.' };
     },
   };
@@ -142,8 +146,9 @@ export function createCancelHandler(deps: TokenHandlerDeps): TokenHandler {
       ) {
         return closed(rows);
       }
-      if (!(await context.redeem())) return null;
       if (!(await transition(deps, context, appointment, 'cancel'))) return GONE;
+      // The cancellation revokes the links of the appointment, this one included.
+      await context.redeem();
       return {
         title: 'Turno cancelado',
         message:
@@ -189,37 +194,104 @@ export function createOptOutHandler(): TokenHandler {
 }
 
 /**
+ * What a link to accept WhatsApp is about. The link of a public form belongs to the SUBMISSION (its
+ * payload remembers the patient and whether that submission created them); the link staff send from
+ * a patient's record belongs to the patient.
+ */
+type OptInTarget =
+  | { kind: 'patient'; patientId: string }
+  | {
+      kind: 'submission';
+      patientId: string | null;
+      created: boolean;
+      appointmentId: string | null;
+      locationId: string | null;
+    };
+
+function optInTarget(context: TokenContext): OptInTarget {
+  const { payload } = context;
+  if (!('created' in payload)) return { kind: 'patient', patientId: context.subjectId };
+  const text = (value: unknown) => (typeof value === 'string' ? value : null);
+  return {
+    kind: 'submission',
+    patientId: text(payload['patientId']),
+    created: payload['created'] === true,
+    appointmentId: text(payload['appointmentId']),
+    locationId: text(payload['locationId']),
+  };
+}
+
+const OPT_IN_PAGE = {
+  title: 'Aceptar recordatorios por WhatsApp',
+  message:
+    'Recibirá por WhatsApp los recordatorios y las confirmaciones de sus turnos. Podrá dejar de recibirlos cuando quiera respondiendo BAJA a cualquiera de los mensajes.',
+  action: { label: 'Aceptar recordatorios por WhatsApp' },
+} as const;
+
+const OPT_IN_DONE = {
+  title: 'Listo: recibirá recordatorios por WhatsApp',
+  message:
+    'Puede dejar de recibirlos cuando quiera respondiendo BAJA a cualquiera de los mensajes.',
+} as const;
+
+/**
  * The link of the email that asks a patient to accept WhatsApp. It is how the opt-in "by the
  * patient on an email link" is recorded; a WhatsApp message can never do it.
+ *
+ * The link of a public form exists whoever the document belongs to, so the email never says
+ * whether it was on file (judgment day round 2, finding A1). Following it shows the same page and
+ * answers the same in every case; what differs is only what is recorded: the opt-in, when that
+ * submission created the patient, and otherwise nothing on the record, but a reception item to look
+ * at (the number is unverified and the record is somebody's already).
  */
-export function createWhatsappOptInHandler(): TokenHandler {
+export function createWhatsappOptInHandler(deps: { worklist: Worklist }): TokenHandler {
   return {
     // Opting in is not a protective action: a read-only organization sends no WhatsApp at all.
     allowedWhenReadOnly: false,
     audits: ['notification.optin.recorded'],
     async describe(context) {
-      if (!(await readPatientContact(context.tx, context.subjectId))) return null;
-      return {
-        title: 'Aceptar recordatorios por WhatsApp',
-        message:
-          'Recibirá por WhatsApp los recordatorios y las confirmaciones de sus turnos. Podrá dejar de recibirlos cuando quiera respondiendo BAJA a cualquiera de los mensajes.',
-        action: { label: 'Aceptar recordatorios por WhatsApp' },
-      };
+      const target = optInTarget(context);
+      // A link staff sent is about a patient who must still exist; the link of a form says the same
+      // thing whatever became of its submission.
+      if (target.kind === 'patient' && !(await readPatientContact(context.tx, target.patientId))) {
+        return null;
+      }
+      return { ...OPT_IN_PAGE };
     },
     async perform(context) {
-      if (!(await readPatientContact(context.tx, context.subjectId))) return null;
+      const target = optInTarget(context);
+      if (target.kind === 'patient') {
+        if (!(await readPatientContact(context.tx, target.patientId))) return null;
+        if (!(await context.redeem())) return null;
+        await recordOptIn(context.tx, {
+          patientId: target.patientId,
+          channel: 'whatsapp',
+          source: 'patient_email_link',
+          actor: context.actor,
+        });
+        return { ...OPT_IN_DONE };
+      }
       if (!(await context.redeem())) return null;
-      await recordOptIn(context.tx, {
-        patientId: context.subjectId,
-        channel: 'whatsapp',
-        source: 'patient_email_link',
-        actor: context.actor,
-      });
-      return {
-        title: 'Listo: recibirá recordatorios por WhatsApp',
-        message:
-          'Puede dejar de recibirlos cuando quiera respondiendo BAJA a cualquiera de los mensajes.',
-      };
+      if (target.created && target.patientId !== null) {
+        if (await readPatientContact(context.tx, target.patientId)) {
+          await recordOptIn(context.tx, {
+            patientId: target.patientId,
+            channel: 'whatsapp',
+            source: 'patient_email_link',
+            actor: context.actor,
+          });
+        }
+      } else if (target.appointmentId !== null) {
+        // The record is not this submission's: nothing is written on it, and reception looks.
+        await deps.worklist.open(context.tx, {
+          kind: 'identity_review',
+          subjectType: 'appointment',
+          subjectId: target.appointmentId,
+          locationId: target.locationId,
+          detail: { source: 'whatsapp_opt_in_link', whatsappOptInRequested: true },
+        });
+      }
+      return { ...OPT_IN_DONE };
     },
   };
 }

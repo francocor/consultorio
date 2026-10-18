@@ -17,6 +17,7 @@ import {
   queueVideoLinkFollowUp,
   type TenantRef,
 } from '../../modules/notifications/index.js';
+import { sealLegacyManualLinks } from '../../modules/teleconsultation/index.js';
 import { createTenantKeys } from '../../platform/crypto/tenant-keys.js';
 import { createRuntimeDb } from '../../platform/db/pool.js';
 import { createWithTenant } from '../../platform/db/tenant-context.js';
@@ -144,7 +145,7 @@ export const notificationsWiring: ModuleWiring = {
       // next patient), through the same entry point.
       const whatsappAvailable = (tenant: TenantRef) =>
         adapters.forTenant(tenant, 'whatsapp') !== undefined;
-      bindOfferDelivery({ jobs: client, clock: now, whatsappAvailable });
+      bindOfferDelivery({ jobs: client, clock: now, whatsappAvailable, keys });
       const worklist = createWorklist({ keys });
       // The room is created by a job of this process: its link is followed up from here too.
       videoJoin.onLinkReady(async (tx, appointmentId) => {
@@ -167,8 +168,16 @@ export const notificationsWiring: ModuleWiring = {
         origins,
         tokens: createActionTokens({ clock: now }),
         worklist,
+        keys,
         // Reminders of a virtual appointment carry the join address teleconsultation registered.
         videoJoin: videoJoin.resolver,
+        // What other modules ask the hourly sweep to do: seal the manual video links that were
+        // written in plaintext before they were encrypted (the modules meet only here).
+        housekeeping: [
+          async (tx) => {
+            await sealLegacyManualLinks(tx, keys);
+          },
+        ],
       });
     };
     return {

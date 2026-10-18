@@ -213,7 +213,7 @@ export interface SchedulingPorts {
   insertHold(values: NewHold): Promise<HoldRecord>;
   updateHold(
     id: string,
-    patch: { status?: HoldRecord['status']; appointmentId?: string },
+    patch: { status?: HoldRecord['status']; appointmentId?: string; expiresAt?: Date },
   ): Promise<void>;
   /**
    * Releases the active holds of a source beyond the newest `keep` (a new hold from the same source

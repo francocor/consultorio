@@ -2,11 +2,15 @@ import {
   fail,
   type Holiday,
   type InvoiceIssuer,
+  type InvoiceType,
   type Matricula,
   type NationalId,
   type PayerSeed,
   type PrescriptionProvider,
+  type RecipientDocumentType,
+  type RecipientTaxCondition,
   type Result,
+  type TaxCondition,
   type TaxId,
 } from '@consultorio/contracts';
 
@@ -51,6 +55,36 @@ export interface LegalAdapterDeclaration {
   implemented: boolean;
 }
 
+/** What a recipient of an invoice looks like to the type rules. */
+export interface InvoiceRecipientInput {
+  taxCondition: RecipientTaxCondition;
+  name?: string;
+  document?: { type: RecipientDocumentType; number: string };
+}
+
+/**
+ * The invoice rules of a country (e-invoicing-afip, "Invoice type selection" and "Recipient
+ * identification"): which voucher type an issuer gives a recipient, the credit note that cancels
+ * it, and what must be known about the recipient. Pure; the invoicing module asks the pack and
+ * never embeds the rules.
+ */
+export interface InvoiceRules {
+  /** The type the rules give; a `requested` type that differs is refused. */
+  resolveInvoiceType(input: {
+    issuer: TaxCondition;
+    recipient: RecipientTaxCondition;
+    requested?: InvoiceType;
+  }): Result<InvoiceType>;
+  creditNoteTypeFor(invoice: InvoiceType): Result<InvoiceType>;
+  /** The recipient data the type needs for this amount, validated and normalized. */
+  checkRecipient(input: {
+    type: InvoiceType;
+    totalCents: number;
+    recipient: InvoiceRecipientInput;
+    thresholdCents?: number;
+  }): Result<InvoiceRecipientInput>;
+}
+
 /**
  * Where a pack reads data that platform operators maintain without a release (holiday and payer
  * catalogs). The API implements it on top of the platform tables; tests pass a fake.
@@ -84,6 +118,7 @@ export interface CountryPack {
   readonly personalData: PersonalDataRules;
   readonly retention: { clinicalYearsAfterLastEncounter: 10 };
   readonly legalAdapters: readonly LegalAdapterDeclaration[];
+  readonly invoiceRules: InvoiceRules;
   readonly invoiceIssuer?: InvoiceIssuer;
   readonly prescriptionProvider?: PrescriptionProvider;
 }
