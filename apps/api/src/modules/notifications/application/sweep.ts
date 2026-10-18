@@ -3,6 +3,7 @@ import { and, asc, eq, gt, inArray, isNotNull, lt, or, sql } from 'drizzle-orm';
 
 import { message, messageOffer } from '../../../db/schema/notifications.js';
 import { appointment } from '../../../db/schema/scheduling.js';
+import { describeFailure } from '../../../platform/db/failure-log.js';
 import type { Tx } from '../../../platform/db/tenant-context.js';
 import type { AppointmentFacts } from '../../../platform/events/appointment-events.js';
 import { JobPayload } from '../../../platform/jobs/boss.js';
@@ -20,15 +21,29 @@ import { releaseWhatsappUsage } from './usage.js';
 
 export const REMINDER_SWEEP_JOB = 'reminder.sweep';
 
-/** One structured line on stderr, where the log shipper and the alerts read it. Ids only. */
-function defaultReport(error: unknown): void {
+/** A cleanup of the sweep: its name in the reports and what it does in a savepoint of its own. */
+type Cleanup = readonly [step: string, run: (tx: Tx) => Promise<unknown>];
+
+/** A step of the sweep that failed and was left behind: which one, for whom, and the error itself. */
+export interface SweepFailure {
+  step: string;
+  tenantId: string;
+  error: unknown;
+}
+
+/**
+ * One structured line on stderr, where the log shipper and the alerts read it: the step, the tenant
+ * id, the class of the error and its database code. Never the message, which can carry row values.
+ */
+function defaultReport({ step, tenantId, error }: SweepFailure): void {
   process.stderr.write(
     `${JSON.stringify({
       level: 'error',
       msg: 'reminder_sweep_housekeeping_failed',
-      error: error instanceof Error ? error.message : 'unknown error',
-    })}
-`,
+      step,
+      tenantId,
+      ...describeFailure(error),
+    })}\n`,
   );
 }
 
@@ -72,7 +87,7 @@ const LIVE_MESSAGE = ['queued', 'sent', 'delivered', 'read'] as const;
  */
 export function createReminderSweepJob(
   deps: MessagingDeps,
-  options: { pageSize?: number; onFailure?: (error: unknown) => void } = {},
+  options: { pageSize?: number; onFailure?: (failure: SweepFailure) => void } = {},
 ) {
   const pageSize = options.pageSize ?? PAGE_SIZE;
   const reportFailure = options.onFailure ?? defaultReport;
@@ -256,24 +271,38 @@ export function createReminderSweepJob(
     category: 'write',
     payload: JobPayload,
     handler: async ({ tx, tenantId }) => {
-      await rehashLegacyAddresses(tx);
-      await closeStale(tx, deps.clock());
-      await clearExpiredOfferLinks(tx, deps.clock());
-      // The reminders come first and the cleanups after, each in a savepoint of its own: a sealer
-      // that fails undoes only its own work and is reported, and never stops the reminders
-      // (judgment day round 4, finding W1).
-      await sweepAppointments(tx, tenantId, deps.clock());
-      const cleanups = [
-        (inner: Tx) => sealLegacyOfferUrls(inner),
-        ...(deps.housekeeping ?? []).map((run) => (inner: Tx) => run(inner, deps.clock())),
+      // The reminders are the job: they run first, in a savepoint of their own, and no cleanup may
+      // keep them from committing. No cleanup is needed BEFORE the planning for correctness: a stale
+      // queued message is closed after the planning looked at it, and since the appointment already
+      // has messages it is not planned again either way (at most, the worklist item of a patient
+      // nobody can remind is opened one sweep later). Each cleanup has a savepoint of its own too: one
+      // that fails undoes only its own work and is reported, and stops neither the planning nor the
+      // next cleanup (judgment day round 4, finding W1, and the follow-up of the final round).
+      let planningFailure: { error: unknown } | null = null;
+      try {
+        await tx.transaction((inner) => sweepAppointments(inner, tenantId, deps.clock()));
+      } catch (error) {
+        planningFailure = { error };
+      }
+      const cleanups: readonly Cleanup[] = [
+        ['seal_legacy_offer_urls', (inner) => sealLegacyOfferUrls(inner)],
+        ...(deps.housekeeping ?? []).map((run, index): Cleanup => [
+          `housekeeping_${String(index + 1)}`,
+          (inner) => run(inner, deps.clock()),
+        ]),
+        ['rehash_legacy_addresses', (inner) => rehashLegacyAddresses(inner)],
+        ['close_stale', (inner) => closeStale(inner, deps.clock())],
+        ['clear_expired_offer_links', (inner) => clearExpiredOfferLinks(inner, deps.clock())],
       ];
-      for (const cleanup of cleanups) {
+      for (const [step, cleanup] of cleanups) {
         try {
           await tx.transaction((inner) => cleanup(inner));
         } catch (error) {
-          reportFailure(error);
+          reportFailure({ step, tenantId, error });
         }
       }
+      // A planning that failed fails the job (it is retried and shows as failed).
+      if (planningFailure) throw planningFailure.error;
     },
   });
 }
