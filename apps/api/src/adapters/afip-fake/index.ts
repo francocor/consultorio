@@ -7,8 +7,9 @@ import type { InvoiceIssuer } from '@consultorio/contracts';
  * in-memory issuer with sequential numbers and a deterministic CAE, and runs the shared contract
  * suite (`adapters/invoice-issuer.contract.ts`) against it.
  */
-export function createFakeInvoiceIssuer(): InvoiceIssuer {
+export function createFakeInvoiceIssuer(): InvoiceIssuer & { readonly simulated: true } {
   return {
+    simulated: true,
     issue: () =>
       Promise.resolve({
         status: 'retryable',

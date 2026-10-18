@@ -119,3 +119,7 @@ export const fiscalCredential = tenantTable(
     check('fiscal_credential_window_check', sql`${table.notAfter} > ${table.notBefore}`),
   ],
 );
+
+export type FiscalProfileRow = typeof fiscalProfile.$inferSelect;
+export type PointOfSaleRow = typeof pointOfSale.$inferSelect;
+export type FiscalCredentialRow = typeof fiscalCredential.$inferSelect;
