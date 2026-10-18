@@ -134,14 +134,15 @@ describe('the invoice issuer slot of invoicing', () => {
 });
 
 describe('the AFIP entry of the provider console', () => {
-  it('lists the adapter that serves customers and has no controls without the simulator', async () => {
+  it('lists the adapter that serves customers, and drives the fake of the demo organizations even without the simulator', async () => {
     const entries = invoicingWiring.devProviders?.({
       config: loadConfig({ ...env, AFIP_PROVIDER: 'off' }),
     });
 
     expect(entries?.map((entry) => entry.id)).toEqual(['afip']);
-    expect(await entries?.[0]?.status()).toEqual({ adapter: 'off', mode: null });
-    expect(entries?.[0]?.routes).toBeUndefined();
+    // Nothing serves customers, but a demo organization still issues through the fake: its mode shows.
+    expect(await entries?.[0]?.status()).toEqual({ adapter: 'off', mode: 'ok' });
+    expect(entries?.[0]?.routes).toBeTypeOf('function');
   });
 
   it('adds the simulator controls when the simulator runs', () => {
@@ -150,5 +151,31 @@ describe('the AFIP entry of the provider console', () => {
     });
 
     expect(entries?.[0]?.routes).toBeTypeOf('function');
+  });
+
+  it('puts the fake of the demo organizations in the mode the console sets, the same one the demo issues with', async () => {
+    const config = loadConfig({ ...env, AFIP_PROVIDER: 'off' });
+    const issuer = invoicingWiring.adapters?.({ config, db: {} as never }).invoiceIssuer?.demo
+      .adapter as { mode(): string; setMode(mode: string): void } | undefined;
+    const routes: { handler: (...args: never[]) => unknown; url: string; method: string }[] = [];
+    const [entry] = invoicingWiring.devProviders?.({ config }) ?? [];
+    entry?.routes?.({
+      withTypeProvider: () => ({
+        get: (url: string, _options: unknown, handler: never) =>
+          routes.push({ url, method: 'get', handler }),
+        put: (url: string, _options: unknown, handler: never) =>
+          routes.push({ url, method: 'put', handler }),
+        post: (url: string, _options: unknown, handler: never) =>
+          routes.push({ url, method: 'post', handler }),
+      }),
+    } as never);
+    const setMode = routes.find((route) => route.url.endsWith('/mode'));
+
+    await (setMode?.handler as (request: { body: { mode: string } }) => Promise<unknown>)({
+      body: { mode: 'down' },
+    });
+
+    expect(issuer?.mode()).toBe('down');
+    expect(await entry?.status()).toEqual({ adapter: 'off', mode: 'down' });
   });
 });

@@ -1,10 +1,11 @@
 import { DEFAULT_INVOICING_SETTINGS, InvoicingSettings } from '@consultorio/contracts';
 
-import { createFakeInvoiceIssuer } from '../../adapters/afip-fake/index.js';
+import { createFakeInvoiceIssuer, type FakeInvoiceIssuer } from '../../adapters/afip-fake/index.js';
 import { afipDevRoutes } from '../../adapters/afip-local/dev-routes.js';
 import {
   createLocalAfipControls,
   createLocalInvoiceIssuer,
+  type LocalAfipControls,
 } from '../../adapters/afip-local/index.js';
 import { createS3ObjectStorage } from '../../adapters/s3/index.js';
 import {
@@ -32,6 +33,45 @@ import type { ModuleWiring } from './types.js';
 const usesSimulator = (config: Config) =>
   (config as { providers?: Config['providers'] }).providers?.afip === 'local';
 
+/**
+ * The in-memory fake that serves the demo organizations. One per configuration, so the adapter
+ * registry and the provider console, which are both built from the same `config`, hold the same one:
+ * the console can put the demo issuer in a mode (an outage, a timeout) and the demo issues with it.
+ */
+const demoIssuers = new WeakMap<Config, FakeInvoiceIssuer>();
+function demoIssuerOf(config: Config): FakeInvoiceIssuer {
+  let issuer = demoIssuers.get(config);
+  if (!issuer) {
+    issuer = createFakeInvoiceIssuer();
+    demoIssuers.set(config, issuer);
+  }
+  return issuer;
+}
+
+/**
+ * What the console drives: the local simulator that serves customers (when it runs) and the fake of
+ * the demo organizations, always, so a demo can show an outage too. The mode shown is the
+ * simulator's when there is one; the vouchers listed are the simulator's (the fake keeps its own in
+ * memory and numbers them per process).
+ */
+function composedControls(
+  local: LocalAfipControls | undefined,
+  demo: FakeInvoiceIssuer,
+): LocalAfipControls {
+  return {
+    mode: () => (local ? local.mode() : Promise.resolve(demo.mode())),
+    async setMode(mode) {
+      demo.setMode(mode);
+      await local?.setMode(mode);
+    },
+    vouchers: (limit) => (local ? local.vouchers(limit) : Promise.resolve([])),
+    async reset() {
+      demo.reset();
+      await local?.reset();
+    },
+  };
+}
+
 /** How often every organization's certificate is looked at (every six hours). */
 const WATCH_EVERY_MS = 6 * 3_600_000;
 
@@ -56,14 +96,17 @@ export const invoicingWiring: ModuleWiring = {
   adapters: ({ config, db }) => ({
     invoiceIssuer: {
       real: usesSimulator(config) ? fake(createLocalInvoiceIssuer({ db })) : undefined,
-      demo: fake(createFakeInvoiceIssuer()),
+      demo: fake(demoIssuerOf(config)),
     },
   }),
   devProviders: ({ config }) => {
     const local = usesSimulator(config);
     // The simulator keeps its state in Postgres; the console reads it through a connection of its own.
     const database = local ? createRuntimeDb(config.databaseUrl) : undefined;
-    const controls = database ? createLocalAfipControls(database.db) : undefined;
+    const controls = composedControls(
+      database ? createLocalAfipControls(database.db) : undefined,
+      demoIssuerOf(config),
+    );
     return [
       {
         id: 'afip',
@@ -71,9 +114,9 @@ export const invoicingWiring: ModuleWiring = {
         status: async () => ({
           adapter: adapterOfSetting(config.providers.afip),
           // The console lists the providers even when the database is not reachable.
-          mode: controls ? await controls.mode().catch(() => null) : null,
+          mode: await controls.mode().catch(() => null),
         }),
-        ...(controls ? { routes: afipDevRoutes({ controls }) } : {}),
+        routes: afipDevRoutes({ controls }),
       },
     ];
   },
