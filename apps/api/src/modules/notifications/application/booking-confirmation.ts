@@ -25,7 +25,9 @@ import { loadTenantState } from './context.js';
  * - It does not depend on the opt-outs of the record of the patient: the address is the
  *   visitor's own, proved a moment ago, and the message answers what they just did. (An opt-out of
  *   a record the visitor may not even own must not decide whether they are answered: it would tell
- *   them that the document is on file.) A demonstration organization sends nothing.
+ *   them that the document is on file.) The sender is routed by organization: a demonstration
+ *   organization's confirmation goes to the fake (or, in development, to the local mail catcher
+ *   that the demo stack and its end-to-end suite read), never to a real mailbox.
  * - A temporary failure is tried again, up to three attempts in all, a few seconds apart (the
  *   visitor is not waiting: it runs after their answer). A failure never reaches the visitor.
  */
@@ -55,8 +57,6 @@ export function createBookingNotifier(deps: BookingNotifierDeps): BookingNotifie
       async (tx): Promise<string | null> => {
         const state = await loadTenantState(tx, notice.tenant.id);
         if (!state || state.status !== 'active') return null;
-        // A demonstration organization never reaches a real address: the log says it was not sent.
-        const demo = state.isDemo;
         const [inserted] = await tx
           .insert(message)
           .values({
@@ -70,11 +70,11 @@ export function createBookingNotifier(deps: BookingNotifierDeps): BookingNotifie
             // One confirmation per appointment and time.
             dedupeKey: `booking_confirmation:${notice.appointmentId}:${String(notice.startsAt.getTime())}:email`,
             addressHash: hashAddress('email', notice.to),
-            ...(demo ? { status: 'cancelled', cancelReason: 'demo_tenant' } : { attempts: 1 }),
+            attempts: 1,
           })
           .onConflictDoNothing()
           .returning({ id: message.id });
-        if (!inserted || demo) return null;
+        if (!inserted) return null;
         await tx.insert(messageAttempt).values({
           tenantId: sql`current_setting('app.tenant_id')::uuid`,
           messageId: inserted.id,
