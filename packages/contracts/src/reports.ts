@@ -160,6 +160,8 @@ export const ReportRecordDto = z.strictObject({
   startsAt: Instant,
   /** The day at the location, in its time zone. */
   localDate: z.iso.date(),
+  /** The time of day at the location, `HH:mm`. */
+  localTime: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/),
   status: z.enum(APPOINTMENT_STATUSES),
   source: z.enum(APPOINTMENT_SOURCES),
   rescheduled: z.boolean(),

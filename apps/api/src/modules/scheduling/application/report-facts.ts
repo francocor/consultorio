@@ -458,6 +458,7 @@ export interface AppointmentRecord {
   appointmentId: string;
   startsAt: Date;
   localDate: string;
+  localTime: string;
   status: AppointmentStatus;
   source: AppointmentSource;
   rescheduled: boolean;
@@ -474,6 +475,7 @@ interface RecordRow extends Record<string, unknown> {
   appointment_id: string;
   starts_at: Date;
   local_date: string;
+  local_time: string;
   status: AppointmentStatus;
   source: AppointmentSource;
   rescheduled: boolean;
@@ -517,6 +519,7 @@ export async function appointmentRecords(
   const page = await tx.execute<RecordRow>(sql`
     SELECT a.id AS appointment_id, a.starts_at,
            (a.starts_at AT TIME ZONE l.time_zone)::date::text AS local_date,
+           to_char(a.starts_at AT TIME ZONE l.time_zone, 'HH24:MI') AS local_time,
            a.status, a.source, ${WAS_RESCHEDULED} AS rescheduled,
            a.patient_id, (pt.family_name || ', ' || pt.given_names) AS patient_name,
            a.location_id, l.name AS location_name,
@@ -536,6 +539,7 @@ export async function appointmentRecords(
       appointmentId: row.appointment_id,
       startsAt: new Date(row.starts_at),
       localDate: row.local_date,
+      localTime: row.local_time,
       status: row.status,
       source: row.source,
       rescheduled: row.rescheduled,

@@ -652,6 +652,7 @@ describe('the drill-down', () => {
         'appointmentId',
         'appointmentTypeName',
         'localDate',
+        'localTime',
         'locationId',
         'locationName',
         'patientId',

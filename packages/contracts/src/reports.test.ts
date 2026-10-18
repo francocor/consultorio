@@ -180,6 +180,7 @@ describe('ReportRecordsResponse', () => {
       appointmentId: ID,
       startsAt: '2031-05-12T13:00:00.000Z',
       localDate: '2031-05-12',
+      localTime: '10:00',
       status: 'attended' as const,
       source: 'online' as const,
       rescheduled: false,
