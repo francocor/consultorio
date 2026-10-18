@@ -144,9 +144,10 @@ describe('the migration tools together (two tracks, one merge)', () => {
     expect(
       (await checkMigrationDrift({ schemaFile: schemaA, migrationsDir: a, scratchDir })).drift,
     ).toBe(false);
-    // The number is the next free one of the range, whatever the track already merged.
-    expect(createdA.tag).toMatch(/^04[12][0-9]_track_a_table$/);
-    expect(await readFile(join(a, `${createdA.tag}.sql`), 'utf8')).toContain('"track_a_table"');
+    // The number is the next free one of the range: a track that already has migrations of its own
+    // does not change what this test expects.
+    expect(createdA.tag).toMatch(/^04[12]\d_track_a_table$/);
+    expect(await readFile(join(a, createdA.sqlFile), 'utf8')).toContain('"track_a_table"');
 
     // Track B does the same, at the same time, from the same base.
     const b = await copyOfMigrations();
@@ -167,7 +168,7 @@ describe('the migration tools together (two tracks, one merge)', () => {
 
     // The merge: B's files and journal entry land after A's.
     const prefixB = createdB.tag.slice(0, 4);
-    await cp(join(b, `${createdB.tag}.sql`), join(a, `${createdB.tag}.sql`));
+    await cp(join(b, createdB.sqlFile), join(a, createdB.sqlFile));
     await cp(
       join(b, 'meta', `${prefixB}_snapshot.json`),
       join(a, 'meta', `${prefixB}_snapshot.json`),

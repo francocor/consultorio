@@ -53,6 +53,22 @@ export { SlotNoLongerAvailableError, SlotTakenError } from './application/placem
 export type { BookActor } from './application/placement.js';
 export type { SchedulingPorts } from './application/ports.js';
 
+// What the reports module reads (Stage 4, Track B): counts, hours and the appointments behind them.
+export {
+  appointmentRecords,
+  availableMinutes,
+  operationalFacts,
+  reportProfessionals,
+} from './application/report-facts.js';
+export type {
+  AppointmentRecord,
+  AttendanceFigures,
+  OperationalFacts,
+  ReportAppointmentScope,
+  ReportCohort,
+  ReportProfessional,
+} from './application/report-facts.js';
+
 /** Registers what scheduling takes with an organization that leaves (the cancellation export). */
 export function registerSchedulingExportContributors(registry: ExportRegistry): void {
   registry.registerExportContributor('administrative', 'scheduling', exportScheduling);
