@@ -1831,3 +1831,57 @@ Notes:
 - CI failure of the waitlist race test: the quiet-hours and wall-clock hint was checked and was not the cause. The `waitlist.offer` job failed with `KeyManagementError` in the end-to-end stack because the API and the job worker were given two different random KEKs; the stack now shares one. Separately, the demo spec had to follow three behaviours of this round: the WhatsApp opt-in link (D22), the 30-minute rule of A8 (the freed time now comes from an appointment that stood), and the new BAJA acknowledgement text.
 - A round-1 integration run once failed 4 unit tests that did not repeat; integration runs were starved by containers of other agents and by a Docker outage, and were re-run in full afterwards.
 - Incident: a `git stash pop` took another agent's lint-staged backup; recovered by saving the patch, resetting, reapplying it and dropping only the stash created here. No stash is used any more.
+
+## Judgment Day Stage 3, round 2
+
+Two judges reviewed `ac8751b`. This section records the fixes of round 2 on branch `feat/stage-3-patient-engagement`: the 8 confirmed findings (R2-C1 to R2-C8), the 11 suspects, and the INFO items. Every commit names its finding ("JD-S3 R2-<id>"). Strict TDD: each fix has a test that failed before it. Where a test could not fail first it is said below. One migration was used: `0398` (the range `3e` has `0399` left). No applied migration was edited.
+
+### Confirmed findings
+
+| Id | Fix | Test |
+| -- | --- | ---- |
+| R2-C1 | Drizzle runs all pending migrations in one transaction, so `VALIDATE CONSTRAINT` inside `0393` kept the ACCESS EXCLUSIVE lock of the `ADD CONSTRAINT`. `0393` is applied and is not edited. `runMigrations` (and so `db:migrate`) now validates every constraint a migration left `NOT VALID`, one statement at a time, outside the migrator's transaction (`validateDeferredConstraints`), and `docs/migration-ranges.md` says that a migration on a large table states the constraint `NOT VALID` and leaves the validation to the runner. The old test no longer claims that `0393` keeps writers going (it hid the problem by wrapping its own `BEGIN`/`COMMIT`). `0393` itself keeps the cost; it is harmless where `message` is still small. | `migrate-validation.test.ts` runs the real runner against a throwaway database with a check that sleeps while it is validated, and shows a writer inserting during the validation |
+| R2-C2 | The bulk cancels (appointment cancelled or changed, opt-out, stale sweep) and the provider's failure report (`failAcceptedMessage`) now release the place of the quota. Besides, `usageCount` takes only places that are confirmed or reserved for a message that is still queued, so no path, present or future, can leak one. Migration `0398` confirms the places written before `0396` (`confirmed_at = counted_at` for messages the provider took) and releases the ones that leaked (cancelled or failed messages). | `usage-metering.test.ts` (one test per path), `migration-usage-backfill.test.ts` |
+| R2-C3 | A real browser showed two defects. (1) The CSP `form-action 'self'` of the `ready` page is applied by Chromium to the 302 that follows the post: removed from the `ready` policy (the other pages keep `form-action 'none'`). (2) Not in the report: the route had no parser for `application/x-www-form-urlencoded`, which is what a browser posts, so the button answered **415** and never worked; only API clients (no content type) had been tested. The route now accepts that content type and reads nothing of the body. The `.invalid` provider address never resolves, and Playwright's `route` does not intercept the redirect target, so the test waits for the `requestfailed` event of the provider origin and requires `ERR_NAME_NOT_RESOLVED` (the browser got past the page's policy); a redirect refused by the policy fails as a blocked request or never fails. | `stage3-teleconsult.spec.ts` "the button of the join page takes a real browser to the call" (it failed with the old policy and, before the parser, with the 415), `video-join-public.test.ts` (posts as a browser does), `join-page.test.ts` |
+| R2-C4 | The address rehash goes newest first, 1000 rows per run. The webhook (`attribute`) and `processInbound` also look for the unsalted hash until the log is done, so a BAJA from a patient whose last message predates the deploy finds its organization. | `whatsapp-attribution.test.ts` (3 tests), `reminder-sweep.test.ts` |
+| R2-C5 | A detached booking reuses the document-less online record that the same verified address, name and birth date already have (`findOnlineRecordOfItsOwn`, looked up on every path so the work behind the answer is the same), and detached bookings count toward the link's unconfirmed limit. The per-address bounds already counted them (they count verified submissions). The visible answer is unchanged. | `confirm-booking.test.ts`, `public-nondisclosure.test.ts` (same amount of work) |
+| R2-C6 | The scope is part of the list query (locations and calendars, `calendarProfessionalIds`, which agrees with `calendarAccess`), and an edit is checked on the merged professional and place. | `waitlist-entries.test.ts`, `calendar-scope.test.ts` |
+| R2-C7 | The hourly sweep seals the plaintext offer links (`sealLegacyOfferUrls`) and, through a `housekeeping` hook that the composition root plugs in (the modules do not import each other), the manual video links (`sealLegacyManualLinks`). A closed session has its link dropped outright; expired offer links were already cleared. A one-off migration was not possible: sealing needs the key of each organization. | `video-manual-link-encryption.test.ts`, `notifications-offers.test.ts`, `reminder-sweep.test.ts` |
+| R2-C8 | The proof of the local bot challenge is bound to `clientKeyOf(ip)` (an IPv6 /64, an IPv4 address): the key the rate limiter uses. | `bot-challenge-local/index.test.ts` |
+
+### Suspects
+
+| Id | Result |
+| -- | ------ |
+| A1 | **Reproduced, and it was a real oracle.** The confirmation email of a booking carried the link to accept WhatsApp only for a patient the form created. Now every submission that ticks WhatsApp gets a link, in booking (new, on file, a record that cannot take it) and waitlist (new, on file, inactive, entry refused as a duplicate); the emails are identical in text and html once the tokens and the date are masked. The token belongs to the **submission** and remembers `patientId` and whether the submission created them. Following it opts in only then; in any other case the page is the same and reception gets an `identity_review` of the appointment. `evenOut` for the WhatsApp branch is gone: every path does the same work. | `public-nondisclosure.test.ts` (booking and waitlist), `notifications-booking-confirmation.test.ts`, `booking-optin.test.ts`, `waitlist-join.test.ts` |
+| A5 | Reproduced (a retried message holding the last place went to email); fixed: `whatsappQuotaAvailable` excludes the message's own place. | `usage-metering.test.ts` |
+| A6 | Reproduced; fixed for the case the finding names: when nobody wrote in the last 7 days a BAJA reaches every organization that ever wrote (up to the cap), not only the last. The window case is unchanged (an organization that has not written for weeks is left alone, as its existing test says). | `whatsapp-attribution.test.ts` |
+| A7 | Reproduced (a listener that fails poisons the transaction and rolled the opt-out back); fixed: the listener runs in a savepoint, its failure is reported (`onFailure`, by default one JSON error line on stderr) and the opt-out stands. | `notifications-optout-listener.test.ts` |
+| A12 | Not an independent bug but a consequence of R2-C2: with the new count, rows from before `0396` (`confirmed_at` null) would stop counting. Migration `0398` backfills `confirmed_at = counted_at` (messages the provider took). The test of the migration fails without it. | `migration-usage-backfill.test.ts` |
+| A15 | The seed and reset scripts never configured the pepper, so with `ADDRESS_HASH_PEPPER` set they hashed with the development default. Both call `useServerAddressPepper(config)` now; documented in `docs/dev-setup.md`. The scripts themselves are not run by a test: the unit test pins the helper. | `seed/demo/pepper.test.ts` |
+| B5 | Reproduced with two transactions (a deadlock, `40P01`); fixed: `lockProfessional` is `FOR NO KEY UPDATE` (bookings still serialize, a row that only references the professional is let through) and `prepareDelivery` runs again, up to three times, if it is the victim of a deadlock. | `lock-ordering.test.ts` |
+| B7 | Decision applied: entries close only when no channel is left for offers (`closeEntriesOfUnreachablePatient`, `reachOf`). The waitlist spec is aligned (requirement text, the "Opt-out leaves the list" scenario, a new one for one channel, and "Patient stops waitlist messages"). | `waitlist-fairness.test.ts` |
+| B8 | Reproduced; fixed: among several candidates only the one that wrote last (`primary`) keeps the text of a reply; the others get the item with `reason: several_organizations` and no text. | `whatsapp-attribution.test.ts` |
+| B10 | Reproduced; fixed: a BAJA from WhatsApp revokes the pending `whatsapp_opt_in` links of the patient (`revokeForSubject` for the ones staff sent, the new `revokeForPayload` for the ones of a submission). | `notifications-booking-confirmation.test.ts` |
+| B11 | Reproduced (cancelled `no_channel`, no item); fixed: `video_link` is one of the kinds that open a `reminder_not_sent` or `reminder_not_delivered` item. | `notifications-video-followup.test.ts` |
+
+### Follow-ups (INFO, recorded)
+
+- `keepHoldUntil` is extended once per new code, and that is bounded by the per-address limits of the public flow.
+- The header comment of `0392` says two functions and the migration defines three. It is not edited (applied); a corrective comment belongs to a later migration (`0399` is the last number of the range `3e`).
+- D22 verifies the owner of the email, not of the phone number. Declared in the notifications spec ("WhatsApp opt-in from a public form").
+- `0393` still validates inside the migrator's transaction; the new runner step covers the next migrations, not that one.
+- `recipients.ts` (the "failed for good" check) still compares only the keyed hash; until the rehash finishes an old failure is not recognized for an address. It does not affect opt-outs.
+
+### Verification
+
+Run in the worktree after the last code change (ports 4780, 3780, 9780):
+
+- `pnpm install --frozen-lockfile`, `pnpm typecheck`, `pnpm lint`, `pnpm format:check`, `pnpm db:check`: clean.
+- `pnpm test` (unit): 321 files, 4101 tests passed.
+- `pnpm test:integration`: 188 files passed (1 skipped), 2841 tests passed (4 skipped).
+- `pnpm build`: green.
+- `playwright test --workers=3`: 186 passed (3.6 min; the new test of the join button is one of them).
+- Docker image: built from `infra/Dockerfile` and `GET /health` answered `{"status":"ok"}` with a production configuration that includes `ADDRESS_HASH_PEPPER`.
+- Not run here: the Lighthouse budget (CI) and the browser pass over `lighthouserc.json`; no web page changed in this round (only an e2e spec). `boot.test.ts` is part of the unit run above.
+- Incident: none. The containers this agent started (e2e stack, test databases, the smoke container and image) were removed by name.
