@@ -1153,8 +1153,8 @@ Start: A, B and C merged. Done when: every Stage 4 route has a category and the 
 
 Start: A, B and C merged. Done when: the demo shows revenue data and resets in under a minute. Verify: default plus the gap check. Rollback: default.
 
-- [ ] 4.63 `db/seed/demo/stage4/{billing,invoicing,reports}.ts`: prices and payers, charges in every state, payments of every method, a closed register with a difference and one open, invoices in every state (a pending one flagged, a rejected one, a manual one, a credit note) through the demo fake issuer; registered in `contributors.ts`. [DEM-04, DEM-02, DEM-03] Test: gap check; deterministic content.
-- [ ] 4.64 Reset timing with Stage 4 data under 60 s; report totals equal the seeded totals. [DEM-05] Test: timing and totals test.
+- [x] 4.63 `db/seed/demo/stage4/{billing,invoicing,reports}.ts`: prices and payers, charges in every state, payments of every method, a closed register with a difference and one open, invoices in every state (a pending one flagged, a rejected one, a manual one, a credit note) through the demo fake issuer; registered in `contributors.ts`. [DEM-04, DEM-02, DEM-03] Test: gap check; deterministic content.
+- [x] 4.64 Reset timing with Stage 4 data under 60 s; report totals equal the seeded totals. [DEM-05] Test: timing and totals test.
 
 ## S4.17 Stage 4 gate (~200) [Track D]
 
