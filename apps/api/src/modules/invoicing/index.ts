@@ -11,10 +11,12 @@ import type { AdapterResolver } from '../../main/adapter-resolver.js';
 import type { AuthzOptions } from '../../platform/authz/guard.js';
 import type { TenantKeys } from '../../platform/crypto/tenant-keys.js';
 import type { WithTenant } from '../../platform/db/tenant-context.js';
+import type { JobClient } from '../../platform/jobs/boss.js';
 import type { ExportRegistry } from '../tenancy/index.js';
 
 import { exportInvoicing } from './application/export-contributor.js';
 import { configRoutes } from './http/config-routes.js';
+import { invoiceRoutes } from './http/invoice-routes.js';
 
 export { invoiceLookup } from './application/invoice-lookup.js';
 export type { InvoiceLookup } from './application/invoice-lookup.js';
@@ -23,6 +25,10 @@ export type { ReadinessDeps } from './application/readiness.js';
 export { isSimulatedIssuer } from './application/issuer.js';
 export type { SimulatedInvoiceIssuer } from './application/issuer.js';
 export { createCredentialWatchJob, CREDENTIAL_WATCH_JOB } from './jobs/credential-watch.js';
+export { createAfipIssueJob, AFIP_ISSUE_JOB } from './jobs/afip-issue.js';
+export { runDueAttempts } from './application/due-invoices.js';
+export type { DueLog } from './application/due-invoices.js';
+export type { IssueDeps, AttemptOutcome } from './application/issue-attempt.js';
 
 /** Registers what invoicing takes with an organization that leaves (the cancellation export). */
 export function registerInvoicingExportContributors(registry: ExportRegistry): void {
@@ -36,6 +42,8 @@ export interface InvoicingOptions {
   keys: TenantKeys;
   /** Which issuer serves which organization (the simulator, the real one, or none). */
   adapters?: AdapterResolver | undefined;
+  /** Queues the submission of an invoice. Without a queue the worker's sweeper takes them up. */
+  jobs?: JobClient | undefined;
   clock?: () => Date;
 }
 
@@ -54,10 +62,17 @@ export function createInvoicing(options: InvoicingOptions): Invoicing {
     adapters: options.adapters,
     clock,
   });
+  const invoices = invoiceRoutes({
+    withTenant: options.withTenant,
+    adapters: options.adapters,
+    jobs: options.jobs,
+    clock,
+  });
   return {
     options,
     routes: (app) => {
       config(app);
+      invoices(app);
     },
   };
 }

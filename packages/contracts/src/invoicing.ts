@@ -195,3 +195,177 @@ export const AfipSimulatorStateResponse = z.strictObject({
   vouchers: z.array(AfipSimulatorVoucherDto),
 });
 export type AfipSimulatorStateResponse = z.infer<typeof AfipSimulatorStateResponse>;
+
+// Invoices and credit notes (S4.10 to S4.13) ------------------------------------------------------
+
+/** An invoice is a Factura; a credit note is a Nota de Credito. */
+export const INVOICE_KINDS = ['invoice', 'credit_note'] as const;
+export type InvoiceKind = (typeof INVOICE_KINDS)[number];
+
+/** The types that are invoices (the others are credit notes). */
+export const INVOICE_ONLY_TYPES = ['FA', 'FB', 'FC'] as const;
+export type InvoiceOnlyType = (typeof INVOICE_ONLY_TYPES)[number];
+
+export const CREDIT_NOTE_TYPES = ['NCA', 'NCB', 'NCC'] as const;
+export type CreditNoteType = (typeof CREDIT_NOTE_TYPES)[number];
+
+export function invoiceKindOf(type: InvoiceType): InvoiceKind {
+  return CREDIT_NOTE_TYPES.some((note) => note === type) ? 'credit_note' : 'invoice';
+}
+
+/** Who the invoice is addressed to: the patient (their own portion) or the payer (its portion). */
+export const INVOICE_RECIPIENT_KINDS = ['patient', 'payer'] as const;
+export type InvoiceRecipientKind = (typeof INVOICE_RECIPIENT_KINDS)[number];
+
+/** Made by the client for each submission, so a retry of the same one cannot create two invoices. */
+const SubmissionKey = z.uuid();
+const PositiveCents = z.int().positive();
+const PointOfSaleNumber = z.int().min(1).max(99_999);
+
+/**
+ * What is known of the person or entity an invoice is addressed to. The payer's name and CUIT come
+ * from the payer in the organization's list, the patient's name from the patient; what the person
+ * enters is the tax condition, a document where the rules ask for one, and a name to print.
+ */
+export const InvoiceRecipientInput = z.strictObject({
+  kind: z.enum(INVOICE_RECIPIENT_KINDS),
+  taxCondition: z.enum(RECIPIENT_TAX_CONDITIONS).optional(),
+  name: Text(120).optional(),
+  document: z.strictObject({ type: z.enum(RECIPIENT_DOCUMENT_TYPES), number: Text(20) }).optional(),
+});
+export type InvoiceRecipientInput = z.infer<typeof InvoiceRecipientInput>;
+
+/** A charge line and how much of it the invoice covers (all that is still uninvoiced, if absent). */
+export const InvoiceLineInput = z.strictObject({
+  chargeLineId: z.uuid(),
+  amountCents: PositiveCents.optional(),
+});
+export type InvoiceLineInput = z.infer<typeof InvoiceLineInput>;
+
+const InvoiceLinesInput = z.array(InvoiceLineInput).min(1).max(50);
+
+export const CreateInvoiceRequest = z.strictObject({
+  idempotencyKey: SubmissionKey,
+  lines: InvoiceLinesInput,
+  recipient: InvoiceRecipientInput,
+  /** Only checked against the rules: a type beyond them is refused. Absent: the rules decide. */
+  type: z.enum(INVOICE_ONLY_TYPES).optional(),
+  /** The number of an active point of sale. Absent: the only active one. */
+  pointOfSale: PointOfSaleNumber.optional(),
+  /** The rejected attempt this one corrects and retries. */
+  previousAttemptId: z.uuid().optional(),
+});
+export type CreateInvoiceRequest = z.infer<typeof CreateInvoiceRequest>;
+
+export const CreateCreditNoteRequest = z.strictObject({
+  idempotencyKey: SubmissionKey,
+  reason: z.string().trim().min(3).max(200),
+  /** Absent: a total note, for everything of the invoice that is not credited yet. */
+  amountCents: PositiveCents.optional(),
+});
+export type CreateCreditNoteRequest = z.infer<typeof CreateCreditNoteRequest>;
+
+/** An invoice issued outside the system (the AFIP web tool), registered by the owner or an admin. */
+export const CreateManualInvoiceRequest = z.strictObject({
+  idempotencyKey: SubmissionKey,
+  type: z.enum(INVOICE_ONLY_TYPES),
+  pointOfSale: PointOfSaleNumber,
+  number: z.int().min(1).max(99_999_999),
+  /** The 14 digits of the CAE. */
+  cae: z.string().regex(/^[0-9]{14}$/),
+  issueDate: z.iso.date(),
+  caeExpiresOn: z.iso.date().optional(),
+  totalCents: PositiveCents,
+  lines: InvoiceLinesInput,
+  recipient: InvoiceRecipientInput,
+});
+export type CreateManualInvoiceRequest = z.infer<typeof CreateManualInvoiceRequest>;
+
+export const InvoiceRecipientDto = z.strictObject({
+  kind: z.enum(INVOICE_RECIPIENT_KINDS),
+  patientId: z.uuid().nullable(),
+  tenantPayerId: z.uuid().nullable(),
+  name: z.string().nullable(),
+  taxCondition: z.enum(RECIPIENT_TAX_CONDITIONS),
+  document: z
+    .strictObject({ type: z.enum(RECIPIENT_DOCUMENT_TYPES), number: z.string() })
+    .nullable(),
+});
+export type InvoiceRecipientDto = z.infer<typeof InvoiceRecipientDto>;
+
+export const InvoiceLineDto = z.strictObject({
+  id: z.uuid(),
+  chargeLineId: z.uuid(),
+  chargeId: z.uuid(),
+  description: z.string(),
+  amountCents: z.int(),
+});
+export type InvoiceLineDto = z.infer<typeof InvoiceLineDto>;
+
+/**
+ * An invoice or a credit note, as the screens read it. The state is one of four. The retry
+ * progress of a pending invoice is not here on purpose: a person sees "pending", its age and, past
+ * the threshold, the outage flag.
+ */
+export const InvoiceDto = z.strictObject({
+  id: z.uuid(),
+  kind: z.enum(INVOICE_KINDS),
+  type: z.enum(INVOICE_TYPES),
+  status: z.enum(INVOICE_STATUSES),
+  pointOfSale: z.int(),
+  number: z.int().nullable(),
+  cae: z.string().nullable(),
+  caeExpiresOn: z.iso.date().nullable(),
+  issueDate: z.iso.date(),
+  environment: z.enum(FISCAL_ENVIRONMENTS),
+  /** A simulator is behind the voucher. */
+  simulated: z.boolean(),
+  /** The document says "documento de prueba sin validez fiscal": a test environment or a simulator. */
+  testDocument: z.boolean(),
+  recipient: InvoiceRecipientDto,
+  totalCents: z.int(),
+  netCents: z.int(),
+  vatCents: z.int(),
+  exemptCents: z.int(),
+  /** The invoice a credit note cancels. */
+  creditNoteOfId: z.uuid().nullable(),
+  reason: z.string().nullable(),
+  /** The rejected attempt this one retries. */
+  previousAttemptId: z.uuid().nullable(),
+  /** What the tax authority said about a rejected attempt. */
+  rejectionMessage: z.string().nullable(),
+  /** For an invoice: what its credit notes (issued or still pending) take back so far. */
+  creditedCents: z.int(),
+  /** Pending only: minutes since it was requested. */
+  ageMinutes: z.int().nullable(),
+  /** Pending only: it waited longer than the threshold of the organization (a prolonged outage). */
+  outageFlag: z.boolean(),
+  hasPdf: z.boolean(),
+  createdAt: z.iso.datetime(),
+  issuedAt: z.iso.datetime().nullable(),
+  lines: z.array(InvoiceLineDto),
+});
+export type InvoiceDto = z.infer<typeof InvoiceDto>;
+
+const QueryFlag = z.enum(['true', 'false']).transform((value) => value === 'true');
+
+export const InvoiceListQuery = z.strictObject({
+  status: z.enum(INVOICE_STATUSES).optional(),
+  kind: z.enum(INVOICE_KINDS).optional(),
+  patientId: z.uuid().optional(),
+  /** The invoices that cover a line of this charge. */
+  chargeId: z.uuid().optional(),
+  /** The credit notes of this invoice. */
+  creditNoteOfId: z.uuid().optional(),
+  /** `true`: the pending ones that waited longer than the threshold (a prolonged outage). */
+  prolonged: QueryFlag.optional(),
+  limit: z.coerce.number().int().min(1).max(200).optional(),
+});
+export type InvoiceListQuery = z.infer<typeof InvoiceListQuery>;
+
+export const InvoiceListResponse = z.strictObject({
+  invoices: z.array(InvoiceDto),
+  /** The setting that decides the outage flag, so a screen can say it. */
+  outageThresholdHours: z.int(),
+});
+export type InvoiceListResponse = z.infer<typeof InvoiceListResponse>;

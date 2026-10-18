@@ -38,6 +38,8 @@ export interface InvoiceRequest {
   netCents?: number;
   vatCents?: number;
   exemptCents?: number;
+  /** For a credit note: the voucher it cancels (the authority wants it associated). */
+  associatedVoucher?: { type: string; pointOfSale: number; number: number };
 }
 
 export type IssueResult =

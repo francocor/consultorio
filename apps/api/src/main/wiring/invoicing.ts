@@ -8,8 +8,10 @@ import {
 } from '../../adapters/afip-local/index.js';
 import {
   CREDENTIAL_WATCH_JOB,
+  createAfipIssueJob,
   createCredentialWatchJob,
   createInvoicing,
+  runDueAttempts,
 } from '../../modules/invoicing/index.js';
 import { createRuntimeDb } from '../../platform/db/pool.js';
 import { fanOut } from '../../platform/jobs/worker.js';
@@ -28,6 +30,9 @@ const usesSimulator = (config: Config) =>
 
 /** How often every organization's certificate is looked at (every six hours). */
 const WATCH_EVERY_MS = 6 * 3_600_000;
+
+/** How often the pending invoices that are due are tried again (the shortest wait is a minute). */
+const RETRY_EVERY_MS = 30_000;
 
 /**
  * Everything the invoicing module registers with the composition root (Track C). The track edits
@@ -68,19 +73,33 @@ export const invoicingWiring: ModuleWiring = {
       },
     ];
   },
+  // An invoice is requested in a request and submitted by a job queued in the same transaction.
+  needsJobs: true,
   create: (context) =>
     createInvoicing({
       withTenant: context.withTenant,
       auditDeny: context.auditDeny,
       keys: context.keys,
       adapters: context.adapters,
+      jobs: context.jobs,
       ...(context.clock ? { clock: context.clock } : {}),
     }),
-  worker: ({ email, clock }) => {
+  worker: ({ email, clock, adapters }) => {
     const now = clock ?? (() => new Date());
     return {
-      jobs: () => [createCredentialWatchJob({ email, clock: now })],
-      schedules: ({ client, db }) => [
+      jobs: ({ client }) => [
+        createCredentialWatchJob({ email, clock: now }),
+        createAfipIssueJob({ adapters, clock: now, jobs: client }),
+      ],
+      schedules: ({ client, db, log }) => [
+        {
+          // The clock of the retries: a pending invoice whose next attempt is due is tried again.
+          name: 'afip.issue retries',
+          intervalMs: RETRY_EVERY_MS,
+          run: async () => {
+            await runDueAttempts(db, { adapters, clock: now, jobs: client }, log);
+          },
+        },
         {
           name: `${CREDENTIAL_WATCH_JOB} tick`,
           intervalMs: WATCH_EVERY_MS,

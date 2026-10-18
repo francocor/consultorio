@@ -35,18 +35,40 @@ describe('what invoicing adds to the worker', () => {
   it('registers the credential watch on its queue, as a job that a read-only tenant does not run', () => {
     const jobs = contribution().jobs?.(workerContext);
 
-    expect(jobs?.map((job) => job.name)).toEqual(['fiscal.credential_watch']);
-    expect(jobs?.[0]?.category).toBe('write');
+    const watch = jobs?.find((job) => job.name === 'fiscal.credential_watch');
+    expect(watch?.category).toBe('write');
+  });
+
+  it('registers the submission to AFIP, the one job a read-only tenant still runs (for what was queued before)', () => {
+    const jobs = contribution().jobs?.(workerContext);
+
+    const issue = jobs?.find((job) => job.name === 'afip.issue');
+    expect(issue?.category).toBe('afip_submission');
+    expect(jobs?.map((job) => job.name).sort()).toEqual(['afip.issue', 'fiscal.credential_watch']);
   });
 
   it('looks at every organization certificate every six hours', () => {
     const schedules = contribution().schedules?.(workerContext);
 
-    expect(schedules).toHaveLength(1);
-    expect(schedules?.[0]).toMatchObject({
-      name: 'fiscal.credential_watch tick',
-      intervalMs: 6 * 3_600_000,
+    expect(
+      schedules?.find((schedule) => schedule.name === 'fiscal.credential_watch tick'),
+    ).toMatchObject({ intervalMs: 6 * 3_600_000 });
+  });
+
+  it('tries the pending invoices that are due again every thirty seconds', () => {
+    const schedules = contribution().schedules?.(workerContext);
+
+    expect(schedules?.find((schedule) => schedule.name === 'afip.issue retries')).toMatchObject({
+      intervalMs: 30_000,
     });
+    expect(schedules?.map((schedule) => schedule.name).sort()).toEqual([
+      'afip.issue retries',
+      'fiscal.credential_watch tick',
+    ]);
+  });
+
+  it('needs the queue in the API, which queues each invoice with its request', () => {
+    expect(invoicingWiring.needsJobs).toBe(true);
   });
 });
 

@@ -1,3 +1,15 @@
 {
-  "fiscal_profile_required": "Cargue primero los datos fiscales (CUIT y condición frente al IVA): el certificado se verifica contra ese CUIT."
+  "fiscal_profile_required": "Cargue primero los datos fiscales (CUIT y condición frente al IVA): el certificado se verifica contra ese CUIT.",
+  "invoicing_not_ready": "Todavía no se puede facturar. Complete la configuración fiscal o revise el estado de la facturación electrónica.",
+  "invoice_charge_voided": "El cobro está anulado: no se puede facturar.",
+  "invoice_lines_mixed": "Las líneas elegidas no corresponden a un mismo destinatario. Facture por separado la parte del paciente y la de la obra social o prepaga.",
+  "invoice_line_over_invoiced": "El importe supera lo que todavía no está facturado de esa línea.",
+  "invoice_payer_cuit_required": "La obra social o prepaga no tiene CUIT cargado. Cárguelo en la configuración de financiadores y vuelva a intentar.",
+  "invoice_point_of_sale_invalid": "Elija un punto de venta activo para emitir la factura.",
+  "invoice_cannot_void": "Una factura emitida no se anula ni se borra: para dejarla sin efecto emita una nota de crédito.",
+  "invoice_credit_note_exceeds": "Las notas de crédito de una factura no pueden superar su importe.",
+  "invoice_credit_note_not_applicable": "Solo una factura emitida o registrada puede tener nota de crédito, y una nota de crédito no tiene otra nota.",
+  "invoice_number_taken": "Ya hay un comprobante registrado con ese tipo, punto de venta y número.",
+  "invoice_not_rejected": "Solo se puede reintentar un intento rechazado que todavía no se haya reintentado.",
+  "invoice_pdf_not_ready": "El PDF de la factura todavía no está listo. Intente de nuevo en unos minutos."
 }
