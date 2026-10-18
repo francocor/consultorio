@@ -1,12 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import {
-  inScope,
-  mergeRows,
-  type ChargeFact,
-  type InvoicedScope,
-  type PaymentFact,
-} from './financial-rows.js';
+import { mergeRows, type ChargeFact, type PaymentFact } from './financial-rows.js';
 
 const charge = (key: string, extra: Partial<ChargeFact> = {}): ChargeFact => ({
   key,
@@ -105,28 +99,5 @@ describe('mergeRows', () => {
 
     expect(days.map((row) => row.key)).toEqual(['2031-05-02', '2031-05-12']);
     expect(payers.map((row) => row.key)).toEqual(['private', 'galeno', 'osde']);
-  });
-});
-
-describe('inScope', () => {
-  const row = { locationId: 'l1', professionalId: 'p1' };
-  const everything: InvoicedScope = { kind: 'all' };
-
-  it('lets the organization see every voucher', () => {
-    expect(inScope(everything, row)).toBe(true);
-  });
-
-  it('lets reception see the vouchers of its locations and of its own professional profile', () => {
-    expect(inScope({ kind: 'limited', locationIds: ['l1'], professionalIds: [] }, row)).toBe(true);
-    expect(inScope({ kind: 'limited', locationIds: ['l2'], professionalIds: ['p1'] }, row)).toBe(
-      true,
-    );
-  });
-
-  it('keeps out a voucher of a location and a colleague the viewer has nothing to do with', () => {
-    expect(inScope({ kind: 'limited', locationIds: ['l2'], professionalIds: ['p2'] }, row)).toBe(
-      false,
-    );
-    expect(inScope({ kind: 'limited', locationIds: [], professionalIds: [] }, row)).toBe(false);
   });
 });

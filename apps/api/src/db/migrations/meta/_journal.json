@@ -505,6 +505,13 @@
       "when": 1792341217959,
       "tag": "0446_appointment_type_invoice_description",
       "breakpoints": true
+    },
+    {
+      "idx": 72,
+      "version": "7",
+      "when": 1792349346848,
+      "tag": "0431_report_money_indexes",
+      "breakpoints": true
     }
   ]
 }

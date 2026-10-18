@@ -17,6 +17,8 @@ import { afterAll, beforeAll, describe, expect, inject, it } from 'vitest';
 import { auditEvent } from '../../src/db/schema/audit.js';
 import { tenant as tenantTable } from '../../src/db/schema/tenant.js';
 import { chargeFacts } from '../../src/modules/billing/index.js';
+import { readInvoicedLines, summarizeInvoiced } from '../../src/modules/invoicing/index.js';
+import { invoicedFacts } from '../../src/modules/reports/application/invoiced-facts.js';
 import { createRuntimeDb, type DbHandle } from '../../src/platform/db/pool.js';
 import { createInvoicingWorld, type InvoicingWorld } from '../support/invoicing-world.js';
 import { asTenant, createTestTenant } from '../support/tenants.js';
@@ -639,6 +641,75 @@ describe('what each role is allowed to read', () => {
     expect(
       [owner, doctor, reception].map((options) => options.canSeeRevenueByProfessional),
     ).toEqual([true, true, false]);
+  });
+});
+
+describe('the vouchers, added up by the database', () => {
+  const plain = (group: {
+    key: string;
+    invoicedCents: number;
+    creditedCents: number;
+    netCents: number;
+    documents: number;
+  }) => ({
+    key: group.key,
+    invoicedCents: group.invoicedCents,
+    creditedCents: group.creditedCents,
+    netCents: group.netCents,
+    documents: group.documents,
+  });
+
+  it('gives what summarizeInvoiced gives over the lines the index of invoicing reads, in every cut', async () => {
+    const lines = await world.inTenant((tx) => readInvoicedLines(tx, MAY));
+    const facts = await world.inTenant((tx) =>
+      invoicedFacts(tx, { fromDate: MAY.from, toDate: MAY.to, scope: { kind: 'all' } }),
+    );
+
+    expect(lines).toHaveLength(4);
+    expect([plain(facts.total)]).toEqual(summarizeInvoiced(lines, 'total').map(plain));
+    expect(facts.byDay.map(plain)).toEqual(summarizeInvoiced(lines, 'day').map(plain));
+    expect(facts.byLocation.map(plain)).toEqual(summarizeInvoiced(lines, 'location').map(plain));
+    expect(facts.byProfessional.map(plain)).toEqual(
+      summarizeInvoiced(lines, 'professional').map(plain),
+    );
+    expect(facts.byPayer.map(plain)).toEqual(summarizeInvoiced(lines, 'payer').map(plain));
+  });
+
+  it('keeps to the date on the voucher, and to the scope and the payer asked for', async () => {
+    const june = await world.inTenant((tx) =>
+      invoicedFacts(tx, { fromDate: '2031-06-01', toDate: '2031-06-30', scope: { kind: 'all' } }),
+    );
+    const norteOnly = await world.inTenant((tx) =>
+      invoicedFacts(tx, {
+        fromDate: MAY.from,
+        toDate: MAY.to,
+        scope: { kind: 'limited', locationIds: [world.norte], professionalIds: [] },
+      }),
+    );
+    const colleague = await world.inTenant((tx) =>
+      invoicedFacts(tx, {
+        fromDate: MAY.from,
+        toDate: MAY.to,
+        scope: {
+          kind: 'limited',
+          locationIds: [],
+          professionalIds: [world.colleague.professionalId],
+        },
+      }),
+    );
+    const doctor = await world.inTenant((tx) =>
+      invoicedFacts(tx, {
+        fromDate: MAY.from,
+        toDate: MAY.to,
+        scope: { kind: 'all' },
+        professionalId: world.doctor.professionalId,
+      }),
+    );
+
+    expect(june.total.netCents).toBe(0);
+    expect(norteOnly.total.netCents).toBe(0);
+    expect(colleague.total.netCents).toBe(0);
+    expect(doctor.total.netCents).toBe(8_000_000);
   });
 });
 

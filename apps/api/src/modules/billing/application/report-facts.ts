@@ -141,32 +141,109 @@ function chargeCondition(cohort: MoneyCohort): SQL {
   return parts.length > 0 ? sql.join(parts, sql` AND `) : sql`true`;
 }
 
+/**
+ * A report adds up tens of thousands of rows in one statement. The default 4 MB of working memory
+ * makes the hash tables of that spill to disk (the plan of a year of charges showed it), so the
+ * statements of a report ask for more, for the length of their transaction only.
+ */
+async function reportMemory(tx: Tx): Promise<void> {
+  await tx.execute(sql`SET LOCAL work_mem = '32MB'`);
+}
+
 // Charges ----------------------------------------------------------------------------------------
 
 /**
- * The charges of a cohort, one row each, with what the patient and the payer owe and what the
- * patient paid net of refunds. A charge is in the cohort by the day of its SERVICE, as the clock of
- * its location says it (the same day the exports and the charge list use).
+ * The charges of a cohort as a chain of common table expressions that ends in `s`, one row per
+ * charge, with what the patient and the payer owe and what the patient paid net of refunds. A
+ * charge is in the cohort by the day of its SERVICE, as the clock of its location says it (the same
+ * day the exports and the charge list use).
+ *
+ * What was paid is added by joining the payments to the cohort and then adding up, never by asking
+ * for each charge: the planner then chooses an index probe for a small cohort and one pass over the
+ * payments for a year, instead of two probes for each of thousands of charges.
  */
-function chargeRows(cohort: MoneyCohort): SQL {
+function chargeCtes(cohort: MoneyCohort): SQL {
   return sql`
-    SELECT ch.id AS charge_id, ch.tenant_id, ch.location_id, ch.professional_id, ch.tenant_payer_id,
-           ch.patient_id, ch.status,
-           coalesce(ch.snapshot ->> 'appointmentTypeName', '') AS type_name,
-           (ch.status = 'voided') AS voided,
-           (a.starts_at AT TIME ZONE l.time_zone)::date AS day,
-           coalesce(sum(cl.amount_cents) FILTER (WHERE cl.portion = 'patient'), 0) AS patient_cents,
-           coalesce(sum(cl.amount_cents) FILTER (WHERE cl.portion = 'payer'), 0) AS payer_cents,
-           coalesce((SELECT sum(p.amount_cents) FROM payment p
-                      WHERE p.tenant_id = ch.tenant_id AND p.charge_id = ch.id), 0)
-           - coalesce((SELECT sum(r.amount_cents) FROM payment_reversal r
-                        WHERE r.tenant_id = ch.tenant_id AND r.charge_id = ch.id), 0) AS paid_cents
-      FROM charge ch
-      JOIN appointment a ON a.tenant_id = ch.tenant_id AND a.id = ch.appointment_id
-      JOIN location l ON l.tenant_id = ch.tenant_id AND l.id = ch.location_id
-      JOIN charge_line cl ON cl.tenant_id = ch.tenant_id AND cl.charge_id = ch.id
-     WHERE ${windowCondition(sql`a.starts_at`, cohort)} AND ${chargeCondition(cohort)}
-     GROUP BY ch.id, a.starts_at, l.time_zone`;
+    c AS MATERIALIZED (
+      SELECT ch.id AS charge_id, ch.tenant_id, ch.location_id, ch.professional_id,
+             ch.tenant_payer_id, ch.patient_id, ch.status,
+             coalesce(ch.snapshot ->> 'appointmentTypeName', '') AS type_name,
+             (ch.status = 'voided') AS voided,
+             (a.starts_at AT TIME ZONE l.time_zone)::date AS day,
+             coalesce(sum(cl.amount_cents) FILTER (WHERE cl.portion = 'patient'), 0) AS patient_cents,
+             coalesce(sum(cl.amount_cents) FILTER (WHERE cl.portion = 'payer'), 0) AS payer_cents
+        FROM charge ch
+        JOIN appointment a ON a.tenant_id = ch.tenant_id AND a.id = ch.appointment_id
+        JOIN location l ON l.tenant_id = ch.tenant_id AND l.id = ch.location_id
+        JOIN charge_line cl ON cl.tenant_id = ch.tenant_id AND cl.charge_id = ch.id
+       WHERE ${windowCondition(sql`a.starts_at`, cohort)} AND ${chargeCondition(cohort)}
+       GROUP BY ch.id, a.starts_at, l.time_zone
+    ),
+    paid AS (
+      SELECT p.charge_id, sum(p.amount_cents) AS cents
+        FROM payment p JOIN c ON c.tenant_id = p.tenant_id AND c.charge_id = p.charge_id
+       GROUP BY p.charge_id
+    ),
+    refunded AS (
+      SELECT r.charge_id, sum(r.amount_cents) AS cents
+        FROM payment_reversal r JOIN c ON c.tenant_id = r.tenant_id AND c.charge_id = r.charge_id
+       GROUP BY r.charge_id
+    ),
+    s AS (
+      SELECT c.*, coalesce(paid.cents, 0) - coalesce(refunded.cents, 0) AS paid_cents
+        FROM c
+        LEFT JOIN paid ON paid.charge_id = c.charge_id
+        LEFT JOIN refunded ON refunded.charge_id = c.charge_id
+    )`;
+}
+
+/** One way of cutting a set of rows: the column it groups by and how the key of a group is written. */
+interface Cut {
+  dim: string;
+  column: string;
+  /** The key of a group, as SQL over the column. */
+  key: string;
+}
+
+const COMMON_CUTS: readonly Cut[] = [
+  { dim: 'day', column: 'day', key: 'day::text' },
+  { dim: 'location', column: 'location_id', key: 'location_id::text' },
+  { dim: 'professional', column: 'professional_id', key: 'professional_id::text' },
+  {
+    dim: 'payer',
+    column: 'tenant_payer_id',
+    key: `coalesce(tenant_payer_id::text, '${PRIVATE_PAYER}')`,
+  },
+  { dim: 'type', column: 'type_name', key: 'type_name' },
+];
+const CHARGE_CUTS = COMMON_CUTS;
+const PAYMENT_CUTS: readonly Cut[] = [
+  ...COMMON_CUTS,
+  { dim: 'method', column: 'method', key: 'method' },
+];
+
+/**
+ * The same figures cut every way in ONE pass over the rows (GROUPING SETS), as rows of `dim`, `key`
+ * and the figures; the grand total is the group with no cut. Cutting the rows once for each way
+ * reads them once for each way, and the rows are the expensive part.
+ */
+function cutsOf(source: string, cuts: readonly Cut[], figures: SQL): SQL {
+  const columns = cuts.map((cut) => cut.column).join(', ');
+  const all = (1 << cuts.length) - 1;
+  // GROUPING() has a bit for each column, the first the highest, set when the column is NOT a cut.
+  const maskOf = (index: number) => all ^ (1 << (cuts.length - 1 - index));
+  const sets = [...cuts.map((cut) => `(${cut.column})`), '()'].join(', ');
+  const dim = cuts.map((cut, index) => `WHEN ${String(maskOf(index))} THEN '${cut.dim}'`).join(' ');
+  const key = cuts.map((cut, index) => `WHEN ${String(maskOf(index))} THEN ${cut.key}`).join(' ');
+  return sql`
+    SELECT CASE x.g ${sql.raw(dim)} ELSE 'total' END AS dim,
+           CASE x.g ${sql.raw(key)} ELSE 'all' END AS key,
+           x.*
+      FROM (
+        SELECT GROUPING(${sql.raw(columns)}) AS g, ${sql.raw(columns)}, ${figures}
+          FROM ${sql.raw(source)}
+         GROUP BY GROUPING SETS (${sql.raw(sets)})
+      ) x`;
 }
 
 const CHARGE_FIGURES = sql`
@@ -281,6 +358,13 @@ async function withNames<T extends { key: string; label: string | null }>(
   }
 }
 
+/** The statement of `chargeFacts`, apart so the benchmark can ask the database for its plan. */
+export function chargeFactsStatement(cohort: MoneyCohort): SQL {
+  return sql`
+    WITH ${chargeCtes(cohort)}
+    ${cutsOf('s', CHARGE_CUTS, CHARGE_FIGURES)}`;
+}
+
 /**
  * The sums behind the charged, voided, outstanding and payer-receivable figures of a cohort, in one
  * pass over its charges and cut by day, location, professional, payer and appointment type.
@@ -292,20 +376,8 @@ async function withNames<T extends { key: string; label: string | null }>(
  * - The payer's part is the receivable from the payer.
  */
 export async function chargeFacts(tx: Tx, cohort: MoneyCohort): Promise<ChargeFacts> {
-  const result = await tx.execute<ChargeFactRow>(sql`
-    WITH c AS MATERIALIZED (${chargeRows(cohort)})
-    SELECT 'day' AS dim, day::text AS key, ${CHARGE_FIGURES} FROM c GROUP BY day
-    UNION ALL
-    SELECT 'location', location_id::text, ${CHARGE_FIGURES} FROM c GROUP BY location_id
-    UNION ALL
-    SELECT 'professional', professional_id::text, ${CHARGE_FIGURES} FROM c GROUP BY professional_id
-    UNION ALL
-    SELECT 'payer', coalesce(tenant_payer_id::text, ${PRIVATE_PAYER}), ${CHARGE_FIGURES}
-      FROM c GROUP BY tenant_payer_id
-    UNION ALL
-    SELECT 'type', type_name, ${CHARGE_FIGURES} FROM c GROUP BY type_name
-    UNION ALL
-    SELECT 'total', 'all', ${CHARGE_FIGURES} FROM c`);
+  await reportMemory(tx);
+  const result = await tx.execute<ChargeFactRow>(chargeFactsStatement(cohort));
 
   const of = (dim: string) =>
     result.rows.filter((row) => row.dim === dim).map((row) => chargeFact(row));
@@ -385,28 +457,21 @@ const EMPTY_PAYMENTS: PaymentFact = {
   refundsCents: 0,
 };
 
+/** The statement of `paymentFacts`, apart so the benchmark can ask the database for its plan. */
+export function paymentFactsStatement(cohort: MoneyCohort): SQL {
+  return sql`
+    WITH m AS MATERIALIZED (${movementRows(cohort)})
+    ${cutsOf('m', PAYMENT_CUTS, PAYMENT_FIGURES)}`;
+}
+
 /**
  * The money received and given back in a cohort, cut like the charges and also by method. Refunds
  * and corrections are reductions: they are counted apart from the payments, in the period they
  * happened, never by editing the payment they correct.
  */
 export async function paymentFacts(tx: Tx, cohort: MoneyCohort): Promise<PaymentFacts> {
-  const result = await tx.execute<PaymentFactRow>(sql`
-    WITH m AS MATERIALIZED (${movementRows(cohort)})
-    SELECT 'day' AS dim, day::text AS key, ${PAYMENT_FIGURES} FROM m GROUP BY day
-    UNION ALL
-    SELECT 'location', location_id::text, ${PAYMENT_FIGURES} FROM m GROUP BY location_id
-    UNION ALL
-    SELECT 'professional', professional_id::text, ${PAYMENT_FIGURES} FROM m GROUP BY professional_id
-    UNION ALL
-    SELECT 'payer', coalesce(tenant_payer_id::text, ${PRIVATE_PAYER}), ${PAYMENT_FIGURES}
-      FROM m GROUP BY tenant_payer_id
-    UNION ALL
-    SELECT 'type', type_name, ${PAYMENT_FIGURES} FROM m GROUP BY type_name
-    UNION ALL
-    SELECT 'method', method, ${PAYMENT_FIGURES} FROM m GROUP BY method
-    UNION ALL
-    SELECT 'total', 'all', ${PAYMENT_FIGURES} FROM m`);
+  await reportMemory(tx);
+  const result = await tx.execute<PaymentFactRow>(paymentFactsStatement(cohort));
 
   const of = (dim: string) =>
     result.rows.filter((row) => row.dim === dim).map((row) => paymentFact(row));
@@ -522,8 +587,9 @@ export async function chargeRecords(
   cohort: MoneyCohort,
   input: { kind: ChargeRecordKind; limit: number; offset: number },
 ): Promise<MoneyRecordPage> {
+  await reportMemory(tx);
   const { amount, where } = KIND_AMOUNT[input.kind];
-  const base = sql`WITH s AS MATERIALIZED (${chargeRows(cohort)})`;
+  const base = sql`WITH ${chargeCtes(cohort)}`;
 
   const totals = await tx.execute<{ total: number; sum_cents: string }>(sql`
     ${base}
@@ -565,6 +631,7 @@ export async function paymentRecords(
   cohort: MoneyCohort,
   input: { limit: number; offset: number },
 ): Promise<MoneyRecordPage> {
+  await reportMemory(tx);
   const base = sql`WITH s AS MATERIALIZED (${movementRows(cohort)})`;
   const signed = sql`(CASE WHEN s.movement = 'payment' THEN s.amount_cents ELSE -s.amount_cents END)`;
 

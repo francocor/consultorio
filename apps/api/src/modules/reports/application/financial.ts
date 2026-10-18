@@ -19,14 +19,9 @@ import {
   type MoneyRecord,
   type MoneyRecordPage,
 } from '../../billing/index.js';
-import {
-  readInvoicedLines,
-  summarizeInvoiced,
-  type InvoicedGroup,
-  type InvoicedLine,
-} from '../../invoicing/index.js';
-import { inScope, mergeRows } from '../domain/financial-rows.js';
+import { mergeRows } from '../domain/financial-rows.js';
 
+import { invoicedFacts, voucherLinesPage } from './invoiced-facts.js';
 import { canSeeRevenueByProfessional, moneyScope, type ReportScope } from './scope.js';
 
 /** The filters as the server applied them, for the screen and for an export to show. */
@@ -55,37 +50,6 @@ export function moneyCohortOf(scope: ReportScope, filters: FinancialFilters): Mo
     tenantPayerId: filters.tenantPayerId,
   };
 }
-
-// Invoices ---------------------------------------------------------------------------------------
-
-/**
- * The lines of the issued and registered vouchers whose date falls in the period, cut like the
- * charges they cover: what the viewer may see, and the narrowing filters. A voucher is in the period
- * by the date printed on it. Invoices are read only through the index of invoicing.
- */
-async function invoicedLines(
-  tx: Tx,
-  scope: ReportScope,
-  filters: FinancialFilters,
-): Promise<InvoicedLine[]> {
-  const visible = moneyScope(scope);
-  const rows = await readInvoicedLines(tx, { from: filters.from, to: filters.to });
-  return rows.filter(
-    (row) =>
-      inScope(visible, row) &&
-      (filters.locationId === undefined || row.locationId === filters.locationId) &&
-      (filters.professionalId === undefined || row.professionalId === filters.professionalId) &&
-      (filters.tenantPayerId === undefined || row.payerId === filters.tenantPayerId),
-  );
-}
-
-const NO_INVOICES: InvoicedGroup = {
-  key: 'all',
-  invoicedCents: 0,
-  creditedCents: 0,
-  netCents: 0,
-  documents: 0,
-};
 
 // The report -------------------------------------------------------------------------------------
 
@@ -117,10 +81,8 @@ export async function financialReport(
   // One query at a time: all of them share the connection of the transaction.
   const charged = await chargeFacts(tx, cohort);
   const paid = await paymentFacts(tx, cohort);
-  const vouchers = await invoicedLines(tx, scope, filters);
-  const invoiced = (by: Parameters<typeof summarizeInvoiced>[1]) => summarizeInvoiced(vouchers, by);
-
-  const invoicedTotal = invoiced('total')[0] ?? NO_INVOICES;
+  const vouchers = await invoicedFacts(tx, cohort);
+  const invoicedTotal = vouchers.total;
   return {
     filters: appliedFinancialFilters(scope, filters),
     generatedAt: deps.clock().toISOString(),
@@ -161,12 +123,12 @@ export async function financialReport(
       refundsCents: money(fact.refundsCents),
       netCents: money(fact.paymentsCents - fact.refundsCents),
     })),
-    byPeriod: mergeRows(charged.byDay, paid.byDay, invoiced('day')),
-    byLocation: mergeRows(charged.byLocation, paid.byLocation, invoiced('location')),
+    byPeriod: mergeRows(charged.byDay, paid.byDay, vouchers.byDay),
+    byLocation: mergeRows(charged.byLocation, paid.byLocation, vouchers.byLocation),
     byProfessional: canSeeRevenueByProfessional(scope)
-      ? mergeRows(charged.byProfessional, paid.byProfessional, invoiced('professional'))
+      ? mergeRows(charged.byProfessional, paid.byProfessional, vouchers.byProfessional)
       : null,
-    byPayer: mergeRows(charged.byPayer, paid.byPayer, invoiced('payer')),
+    byPayer: mergeRows(charged.byPayer, paid.byPayer, vouchers.byPayer),
     // A voucher does not say the appointment type: the net invoiced is not reported by it.
     byType: mergeRows(charged.byType, paid.byType, null),
   };
@@ -196,27 +158,19 @@ function toRecordDto(record: MoneyRecord, scope: ReportScope): FinancialRecordDt
 /** The voucher lines of the period as records: one per line, so the amounts add up to the figure. */
 async function invoicedRecords(
   tx: Tx,
-  scope: ReportScope,
-  query: FinancialRecordsQuery,
+  cohort: MoneyCohort,
+  paging: { limit: number; offset: number },
 ): Promise<MoneyRecordPage> {
-  const lines = await invoicedLines(tx, scope, query);
-  const ordered = [...lines].sort(
-    (a, b) =>
-      a.issueDate.localeCompare(b.issueDate) ||
-      a.invoiceId.localeCompare(b.invoiceId) ||
-      a.chargeLineId.localeCompare(b.chargeLineId),
-  );
-  const page = ordered.slice(query.offset, query.offset + query.limit);
-
+  const page = await voucherLinesPage(tx, cohort, paging);
   const names = await reportNames(tx, {
-    locations: [...new Set(page.map((line) => line.locationId))],
-    professionals: [...new Set(page.map((line) => line.professionalId))],
+    locations: [...new Set(page.lines.map((line) => line.locationId))],
+    professionals: [...new Set(page.lines.map((line) => line.professionalId))],
     payers: [],
   });
   return {
-    total: ordered.length,
-    sumCents: ordered.reduce((sum, line) => sum + line.netCents, 0),
-    records: page.map((line) => ({
+    total: page.total,
+    sumCents: page.sumCents,
+    records: page.lines.map((line) => ({
       id: line.invoiceId,
       date: line.issueDate,
       // A voucher line names no patient.
@@ -246,7 +200,7 @@ export async function financialRecords(
     query.kind === 'collected'
       ? await paymentRecords(tx, cohort, paging)
       : query.kind === 'invoiced'
-        ? await invoicedRecords(tx, scope, query)
+        ? await invoicedRecords(tx, cohort, paging)
         : await chargeRecords(tx, cohort, { kind: query.kind, ...paging });
   return {
     filters: appliedFinancialFilters(scope, query),

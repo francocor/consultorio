@@ -8,25 +8,6 @@ export type { ChargeFact, PaymentFact, InvoicedGroup };
 /** The key of the private patients in a breakdown by payer (the one invoicing also uses). */
 export const PRIVATE_KEY = 'private';
 
-/**
- * Which charges a viewer may see: all of them, or the ones at some locations or of some
- * professionals (reports, "Role-scoped visibility"). The same shape billing's read functions take.
- */
-export type InvoicedScope =
-  | { kind: 'all' }
-  | { kind: 'limited'; locationIds: readonly string[]; professionalIds: readonly string[] };
-
-/** Whether a voucher line, by the charge it covers, is inside what the viewer may see. */
-export function inScope(
-  scope: InvoicedScope,
-  row: { locationId: string; professionalId: string },
-): boolean {
-  if (scope.kind === 'all') return true;
-  return (
-    scope.locationIds.includes(row.locationId) || scope.professionalIds.includes(row.professionalId)
-  );
-}
-
 interface Parts {
   label: string | null;
   charge: ChargeFact | undefined;
