@@ -1,7 +1,11 @@
 import {
+  CashReportResponse,
+  FinancialRecordsResponse,
+  FinancialReportResponse,
   OperationalReportResponse,
   ReportOptionsResponse,
   ReportRecordsResponse,
+  type FinancialRecordKind,
   type ReportGroup,
 } from '@consultorio/contracts';
 
@@ -13,6 +17,8 @@ export interface ReportQuery extends Period {
   locationId?: string | undefined;
   professionalId?: string | undefined;
   specialty?: string | undefined;
+  /** A payer of the organization; only the financial report reads it. */
+  tenantPayerId?: string | undefined;
 }
 
 export const reportKeys = {
@@ -21,7 +27,22 @@ export const reportKeys = {
   operational: (query: ReportQuery) => ['reports', 'operational', query] as const,
   records: (query: ReportQuery, group: ReportGroup, offset: number) =>
     ['reports', 'records', query, group, offset] as const,
+  financial: (query: ReportQuery) => ['reports', 'financial', query] as const,
+  financialRecords: (query: ReportQuery, kind: FinancialRecordKind, offset: number) =>
+    ['reports', 'financial-records', query, kind, offset] as const,
+  cash: (query: ReportQuery) => ['reports', 'cash', query] as const,
 };
+
+/** The members the financial report reads: it has no specialty. */
+function financialParams(query: ReportQuery) {
+  return {
+    from: query.from,
+    to: query.to,
+    locationId: query.locationId,
+    professionalId: query.professionalId,
+    tenantPayerId: query.tenantPayerId,
+  };
+}
 
 /** What the report screens ask of the API. The scope of the viewer is applied by the server. */
 export function reportsApi(api: ApiClient) {
@@ -33,6 +54,30 @@ export function reportsApi(api: ApiClient) {
       api.get('/reports/operational/records', {
         query: { ...query, group, limit, offset },
         schema: ReportRecordsResponse,
+      }),
+    financial: (query: ReportQuery) =>
+      api.get('/reports/financial', {
+        query: financialParams(query),
+        schema: FinancialReportResponse,
+      }),
+    financialRecords: (
+      query: ReportQuery,
+      kind: FinancialRecordKind,
+      limit: number,
+      offset: number,
+    ) =>
+      api.get('/reports/financial/records', {
+        query: { ...financialParams(query), kind, limit, offset },
+        schema: FinancialRecordsResponse,
+      }),
+    cash: (query: ReportQuery) =>
+      api.get('/reports/cash', {
+        query: {
+          from: query.from,
+          to: query.to,
+          locationId: query.locationId,
+        },
+        schema: CashReportResponse,
       }),
   };
 }

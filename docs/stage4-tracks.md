@@ -90,6 +90,8 @@ Needs from the others: S4.14 waits for the read functions that billing (S4.03) a
 
 Declared exceptions (new export lines only): `modules/scheduling/index.ts` (counts per status, occupancy, `appointment_event` figures) and `modules/waitlist/index.ts` (slots recovered through accepted offers).
 
+Declared exceptions of S4.14 (S4.03 and S4.10 did not export what the money reports need): `modules/billing/index.ts` (new export lines) over the new file `modules/billing/application/report-facts.ts` (sums of charges, payments and refunds, the records behind them, the registers of a period; read-only). Migration `0431` adds indexes on `charge`, `payment`, `payment_reversal` and `invoice` (indexes only, like `0430`). The vouchers are added up by `modules/reports/application/invoiced-facts.ts`, one query over `invoice`, `invoice_line` and `charge`, because `readInvoicedLines` takes about 2 s for a year (docs/perf/reports.md); `financial-report.test.ts` holds it to `readInvoicedLines` and `summarizeInvoiced`. Report exports use the `export.build` job and `POST /billing/exports` of track A with its three kinds (charges, payments, payer settlement); an export of appointments needs a new kind, which is a change to track A.
+
 Must not: write to any table of another module, edit billing or invoicing, add an audit action (`report.accessed` exists), compute revenue anywhere but the server.
 
 ## Track C, AFIP invoicing (S4.08 to S4.13)
