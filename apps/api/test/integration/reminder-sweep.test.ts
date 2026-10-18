@@ -360,4 +360,39 @@ describe('reminder.sweep: housekeeping of other modules (JD-S3 R2-C7)', () => {
 
     expect(calls).toEqual([notes.now()]);
   });
+
+  it('plans the reminders even when a step throws (JD-S3 R4-W1), reports it, and still runs the next one', async () => {
+    const { appointment } = await bookedFor({ email: 'sealer@example.test' });
+    const failures: unknown[] = [];
+    const calls: string[] = [];
+    const definition = createReminderSweepJob(
+      {
+        ...notes.deps,
+        housekeeping: [
+          () => Promise.reject(new Error('sealer exploded')),
+          () => {
+            calls.push('after');
+            return Promise.resolve();
+          },
+        ],
+      },
+      { onFailure: (error) => failures.push(error) },
+    );
+
+    const outcome = await runJob(runtime.db, definition, {
+      id: crypto.randomUUID(),
+      name: 'reminder.sweep',
+      data: { tenantId: scheduling.tenant.id },
+      enqueuedAt: notes.now(),
+      retryCount: 0,
+    });
+
+    expect(outcome).toEqual({ status: 'completed' });
+    expect(failures).toHaveLength(1);
+    expect((failures[0] as Error).message).toBe('sealer exploded');
+    expect(calls).toEqual(['after']);
+    const rows = await notes.messagesOf(appointment.id);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ kind: 'reminder', channel: 'email', status: 'queued' });
+  });
 });
