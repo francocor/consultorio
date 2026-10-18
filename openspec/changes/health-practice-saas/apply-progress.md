@@ -1912,3 +1912,42 @@ The ranges were already in `scripts/migration-journal.ts` and `docs/migration-ra
 | `docker build -f infra/Dockerfile` and a smoke run with the production configuration of the CI smoke test (private port 3667) | image built; `/health` answered `{"status":"ok"}`; inside the image `@react-pdf/renderer` rendered a PDF and `exceljs` and `qrcode` loaded; the container and the image were removed |
 
 CI was not run or polled. Lighthouse was not run. No `.env` file was read or written.
+
+## Stage 4: merged Stage 3 JD round 1
+
+`origin/feat/stage-3-patient-engagement` at `ac8751b` (the 38 commits of the Stage 3 Judgment Day round 1, migrations `0392` to `0397`) was merged into `feat/stage-4-revenue` with a merge commit (no rebase, no force push). Only two files conflicted:
+
+- `docs/dev-setup.md`: the table of provider variables. Both sides edited it; the result is the Stage 3 table (with `ADDRESS_HASH_PEPPER` and the note on the simulator's phone) plus the `AFIP_PROVIDER` row of the seam.
+- `apply-progress.md`: the Stage 3 "Judgment Day Stage 3, round 1" section comes first and the Stage 4 seam section after it. `tasks.md` merged without conflict.
+
+Everything else merged on its own (`platform/tokens`, `platform/files`, `rate-limit.ts`, the contracts, `main/*`, `config-providers.ts`, the web shell, the locales, `ci.yml`), and `typecheck` stayed green, so the seam and the round-1 fixes touch disjoint lines. The migration journal is linear: `0397` is the last entry and Stage 4 has none yet (its ranges start at `0410`). `pnpm db:restamp` found nothing to change and `pnpm db:check` reports no drift.
+
+### The toast contrast failure of the Stage 3 messaging journey
+
+Reported: `stage3-messaging.spec.ts` ("the owner resends a reminder...") failed axe `color-contrast` on a toast title on a Stage 4 track branch, even alone. On the merged tip it passes on a quiet machine (185 of 185, and 6 of 6 of that journey alone), so the seam did not change `shared/ui` toast or tokens (the seam adds `MoneyInput` and a banner; `toaster.tsx` and the colors are untouched, and the Stage 3 round-1 fixes touch no toast either).
+
+**Root cause, a race in the check and not a palette problem.** With 12 busy CPU loops running next to the suite, 2 of 6 runs of the journey failed with `li[data-index="0"] > div[data-content] > div[data-title]` at the step that records the WhatsApp opt-in in person (a "saved" toast). The spec's `settle()` waits until every toast is at `opacity: 1`, but it passes at once when the toast is not in the page yet, and a toast that is fading out is read half transparent; axe blends a half-transparent element with the page behind it, which reads as low contrast. The final colors are fine. A busy machine (several tracks running at once) moves the toast timing past the check, which is why the track branches saw it and the quiet gate did not.
+
+**Fix, without weakening the check.** `reducedMotion: 'reduce'` in `apps/web/playwright.config.ts` (the same option other specs already set one by one): Sonner drops its transitions under `prefers-reduced-motion`, so a toast is either absent or at full opacity and axe checks its real colors. Under the same load the six runs then showed no contrast failure (one run timed out waiting for a slot button because of the load, unrelated). The check itself is untouched.
+
+### Verification of the merged tip
+
+| Check | Result |
+| ----- | ------ |
+| `pnpm install --frozen-lockfile` | up to date |
+| `typecheck`, `lint`, `format:check` | exit 0 |
+| `pnpm test` | 4,255 passed; 4 files timed out under load (`boot`, `request-context`, `problem`, `read-only/index`) and passed alone, 56 of 56 |
+| `pnpm test:integration` | **185 files passed, 1 skipped (ClamAV); 2,849 tests passed, 4 skipped.** Two earlier runs failed with `ECONNREFUSED` because the shared Postgres container of the run was stopped from outside while other agents cleaned up their own; the third run was clean |
+| `pnpm build`, `pnpm db:check` | exit 0, no drift |
+| `test:e2e` (ports 4760, 3760, 9760, `--workers=3`) | **185 passed**, before and after the motion fix |
+| Docker image and smoke run with the CI production environment, `ADDRESS_HASH_PEPPER` included (private port 3767) | `/health` answered `{"status":"ok"}` |
+
+CI was not run or polled. No `.env` file was read or written.
+
+### What the Stage 4 tracks take when they merge this seam
+
+- The seam is stacked on `ac8751b`, not `7b6df20`: a track branch that already has the seam must merge the seam tip (or this branch) before its own PR.
+- Production now requires `ADDRESS_HASH_PEPPER` (at least 32 characters) in any environment that starts the API or the worker; `ci.yml` has it in the smoke test, and `docs/dev-setup.md` describes it.
+- `platform/http/rate-limit.ts` has a separate bucket for public routes; new public routes of Stage 4 (none planned) must choose a bucket.
+- Migrations `0392` to `0397` exist; Stage 4 ranges (`0410` and up) do not overlap. Run `pnpm db:restamp` then `pnpm db:check` after the merge.
+- `pnpm test:e2e` now runs with reduced motion: a new spec that checks a toast with axe gets the final colors.
