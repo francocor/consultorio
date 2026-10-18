@@ -502,12 +502,35 @@ async function withoutQuota(
   });
 }
 
-/** Step 1. Runs in a transaction of its own, which is committed before the provider is called. */
-export function prepareDelivery(
+const DEADLOCK = '40P01';
+const PREPARE_ATTEMPTS = 3;
+
+function isDeadlock(error: unknown): boolean {
+  const own = (error as { code?: unknown } | null)?.code;
+  const cause = (error as { cause?: { code?: unknown } } | null)?.cause?.code;
+  return own === DEADLOCK || cause === DEADLOCK;
+}
+
+/**
+ * Step 1. Runs in a transaction of its own, which is committed before the provider is called. If
+ * Postgres picks it as the victim of a deadlock with a change of the agenda, nothing was committed
+ * and nothing was sent, so it simply runs again (judgment day round 2, finding B5).
+ */
+export async function prepareDelivery(
   deps: MessagingDeps,
   tenantId: string,
   messageId: string,
 ): Promise<Prepared> {
+  for (let attempt = 1; ; attempt += 1) {
+    try {
+      return await prepareOnce(deps, tenantId, messageId);
+    } catch (error) {
+      if (attempt >= PREPARE_ATTEMPTS || !isDeadlock(error)) throw error;
+    }
+  }
+}
+
+function prepareOnce(deps: MessagingDeps, tenantId: string, messageId: string): Promise<Prepared> {
   return deps.withTenant({ tenantId, userId: SYSTEM_USER_ID }, async (tx): Promise<Prepared> => {
     const [row] = await tx.select().from(message).where(eq(message.id, messageId)).for('update');
     if (!row || row.status !== 'queued') return { kind: 'idle' };
