@@ -20,6 +20,22 @@ import { chargeRoutes } from './http/charge-routes.js';
 import { paymentRoutes } from './http/payment-routes.js';
 import { pricingRoutes } from './http/pricing-routes.js';
 
+// The charge lines, for the invoicing module (track C). Invoices are built over these and nothing
+// else of billing: read the lines (locked while an invoice is built), the facts of their charges,
+// and move what has been invoiced of a line. The contract is documented in docs/stage4-charge-lines.md.
+export {
+  ChargeLineAdjustmentError,
+  adjustInvoicedCents,
+  readChargeLines,
+  readChargeLinesOfCharges,
+  readChargesForInvoicing,
+} from './application/charge-lines.js';
+export type {
+  ChargeForInvoicing,
+  ChargeLineAdjustmentReason,
+  ChargeLineForInvoicing,
+} from './application/charge-lines.js';
+
 /** Registers what billing takes with an organization that leaves (the cancellation export). */
 export function registerBillingExportContributors(registry: ExportRegistry): void {
   registry.registerExportContributor('administrative', 'billing', exportBilling);
