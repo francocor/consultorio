@@ -1,5 +1,5 @@
 import { eq, sql } from 'drizzle-orm';
-import { afterAll, afterEach, beforeAll, describe, expect, inject, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, describe, expect, inject, it, vi } from 'vitest';
 
 import { channelPreference } from '../../src/db/schema/channel-preference.js';
 import {
@@ -67,6 +67,38 @@ describe('a listener of the opt-out that fails', () => {
     );
     expect(choices.map((choice) => choice.state)).toEqual(['opted_out']);
     expect(failures).toHaveLength(1);
+  });
+
+  it('is reported by default on stderr with the class of the error and its database code, never the message (S4.15, 4.62)', async () => {
+    const patientId = await notes.patient({ email: 'listener3@example.test' });
+    const write = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
+    try {
+      bindOptOutListener(() =>
+        Promise.reject(
+          Object.assign(new Error('patient 600123456 exploded (ana@example.test)'), {
+            code: '23505',
+          }),
+        ),
+      );
+
+      await scheduling.inTenant((tx) =>
+        optOutChannel(tx, { patientId, channel: 'email', source: 'email_link', actor }),
+      );
+
+      const lines = write.mock.calls.map(([chunk]) => String(chunk));
+      const line = lines.find((entry) => entry.includes('opt_out_listener_failed'));
+      expect(line).toBeDefined();
+      expect(JSON.parse(line ?? '')).toEqual({
+        level: 'error',
+        msg: 'opt_out_listener_failed',
+        name: 'Error',
+        code: '23505',
+      });
+      expect(line).not.toContain('600123456');
+      expect(line).not.toContain('ana@example.test');
+    } finally {
+      write.mockRestore();
+    }
   });
 
   it('still runs when it works', async () => {

@@ -23,6 +23,7 @@ import {
 } from '../../src/adapters/memory-storage/index.js';
 import { invoice as invoiceTable, type InvoiceRow } from '../../src/db/schema/index.js';
 import type { AdapterResolver } from '../../src/main/adapter-resolver.js';
+import type { ApplicationOptions } from '../../src/main/application.js';
 import {
   createAfipIssueJob,
   createInvoiceDeliverJob,
@@ -104,7 +105,12 @@ export interface InvoicingWorld extends BillingWorld {
  */
 export async function createInvoicingWorld(
   runtime: DbHandle,
-  options: { slug: string; taxCondition?: TaxCondition },
+  options: {
+    slug: string;
+    taxCondition?: TaxCondition;
+    /** More options of the application, such as a log stream to read what it wrote. */
+    app?: Partial<ApplicationOptions>;
+  },
 ): Promise<InvoicingWorld> {
   const issuer = createFakeInvoiceIssuer();
   const adapters: AdapterResolver = {
@@ -115,7 +121,7 @@ export async function createInvoicingWorld(
   const email = createFakeEmailSender();
   const world = await createBillingWorld(runtime, {
     slug: options.slug,
-    app: { adapters, jobs: recorded, storage, email },
+    app: { adapters, jobs: recorded, storage, email, ...options.app },
   });
 
   const profile = async (taxCondition: TaxCondition) => {
