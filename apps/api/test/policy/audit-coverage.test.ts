@@ -8,6 +8,12 @@ import { createRuntimeDb } from '../../src/platform/db/pool.js';
 import { buildTestApplication } from '../support/app.js';
 
 import { AUDIT_SCENARIOS } from './audit-scenarios.js';
+import {
+  NO_AUDIT_ON_PURPOSE,
+  STAGE4_AUDIT_ACTIONS,
+  WRITTEN_OUTSIDE_ROUTES,
+  findStage4AuditProblems,
+} from './stage4-audit.js';
 
 /**
  * Audit coverage (audit-log, "Mandatory events"). Two rules keep the trail honest as the product
@@ -110,6 +116,79 @@ describe('every mutating route declares what it audits', () => {
       ]);
 
       expect(findUntaggedMutatingRoutes(routes)).toEqual(['POST /things', 'PUT /things/:id']);
+    });
+  });
+});
+
+/**
+ * Stage 4 (billing, invoicing, reports), tasks 4.62 (BIL-15, INV-12). The catalogue rule above is
+ * the floor; money needs a stricter one, because the trail of a payment, a voucher or a cash
+ * register is what an owner shows an accountant:
+ *
+ * - every action of Stage 4 is proven by a test (never "pending") that also reads the trail back;
+ * - every action is written by a route, or says which other writer owns it;
+ * - a route that changes money declares what it audits, and the two that audit nothing say why.
+ */
+describe('the audit trail of Stage 4', () => {
+  it('has a scenario for every action of billing, invoicing and reports, none of them pending', () => {
+    expect(STAGE4_AUDIT_ACTIONS.length).toBeGreaterThanOrEqual(21);
+    for (const action of STAGE4_AUDIT_ACTIONS) {
+      const scenario = AUDIT_SCENARIOS[action];
+
+      expect('test' in scenario, `${action} is still pending`).toBe(true);
+      if (!('test' in scenario)) continue;
+      const text = readFileSync(`${REPO}${scenario.test}`, 'utf8');
+      expect(text, `${scenario.test} does not read the audit trail back`).toMatch(
+        /auditEvent|audit_event|auditRows/,
+      );
+    }
+  });
+
+  it('finds an author for every action: a route declares it, or the table names the other writer', async () => {
+    const routes = await realRoutes();
+
+    expect(findStage4AuditProblems(routes)).toEqual([]);
+  });
+
+  describe('the check itself', () => {
+    const declared = (extra: Record<string, Declared> = {}) => {
+      const routes = new Map<string, Declared>();
+      for (const action of STAGE4_AUDIT_ACTIONS) {
+        if (action in WRITTEN_OUTSIDE_ROUTES) continue;
+        routes.set(`POST /billing/${action}`, [action]);
+      }
+      for (const route of Object.keys(NO_AUDIT_ON_PURPOSE)) routes.set(route, 'none');
+      for (const [route, audits] of Object.entries(extra)) routes.set(route, audits);
+      return routes;
+    };
+
+    it('accepts a complete picture', () => {
+      expect(findStage4AuditProblems(declared())).toEqual([]);
+    });
+
+    it('flags a money route that declares nothing, one that audits nothing without saying why, and an action nobody writes', () => {
+      const routes = declared({
+        'POST /billing/new-thing': undefined,
+        'POST /invoices/unexplained': 'none',
+      });
+      routes.delete('POST /billing/payment.recorded');
+
+      expect(findStage4AuditProblems(routes)).toEqual([
+        'POST /billing/new-thing declares nothing about its audit trail',
+        'POST /invoices/unexplained audits nothing and the table does not say why',
+        'payment.recorded is written by no route and no other writer is named for it',
+      ]);
+    });
+
+    it('flags a table entry that went stale', () => {
+      const routes = declared({ 'POST /billing/export.requested': ['export.requested'] });
+      routes.set('POST /invoices/:id/void', ['invoice.rejected']);
+      routes.set('POST /billing/more', ['charge.flagged']);
+
+      expect(findStage4AuditProblems(routes)).toEqual([
+        'POST /invoices/:id/void is listed as auditing nothing but it declares invoice.rejected',
+        'charge.flagged is listed as written outside the routes but POST /billing/more declares it',
+      ]);
     });
   });
 });

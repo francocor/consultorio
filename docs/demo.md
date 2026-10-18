@@ -1,6 +1,6 @@
 # The demo organization
 
-"Centro Médico Aillu" is a fictitious medical center that ships with the product. It exists to show the whole product built so far (scheduling, clinical records, documents, the guided first run, and the patient side of Stage 3: online booking, reminders, the waitlist and video visits) with realistic content, to run the browser test suite against, and to be reset to a known state in seconds. Nothing in it is real: names, documents, phones, emails and clinical notes are invented.
+"Centro Médico Aillu" is a fictitious medical center that ships with the product. It exists to show the whole product built so far (scheduling, clinical records, documents, the guided first run, the patient side of Stage 3: online booking, reminders, the waitlist and video visits, and Stage 4: prices, charges, cash registers, invoices and reports) with realistic content, to run the browser test suite against, and to be reset to a known state in seconds. Nothing in it is real: names, documents, phones, emails and clinical notes are invented.
 
 ## Run it on your machine
 
@@ -132,6 +132,42 @@ pnpm --filter @consultorio/web exec playwright test e2e/stage3-demo.spec.ts --pr
 
 It books online, approves the booking, sends the reminder to the simulator and the mailbox, confirms with the link, writes BAJA, makes a video visit whose link follows, joins it, and offers a cancelled time to the waitlist, checking accessibility at 360 px and at 1280 px on every screen.
 
+## Stage 4: billing, cash, invoices and reports
+
+The demo organizations open on their Stage 4 data. All of it was written through the same services the API runs (so the rules are the real ones and every step is in the audit trail), and nothing leaves the process: the invoices go through an in-memory fake of AFIP, the payments are recorded by hand, and every voucher says it is a test document with no fiscal validity.
+
+| Area           | Content                                                                                                                                                                                                                                                                                                                                                                |
+| -------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Prices         | A private price for each type of appointment, an older list and the current one (10% higher); payer prices for OSDE (plans 210 and 310 differ), Swiss Medical and Galeno, with the copago and the plus the patient adds                                                                                                                                                |
+| Payers         | OSDE and Swiss Medical with a CUIT, Galeno without one (its invoice is refused with a pointer to the payer settings), PAMI on the list with no price (its patients are charged the private price, and the screen says why), Medifé switched off                                                                                                                        |
+| Charges        | One for every visit of the last two weeks that can be charged: pending, partly paid, paid and voided (with the reason); fees for the visits that did not happen (some paid, some forgiven, some flagged for a person to look at); the payer's part kept apart from what the patient owes                                                                               |
+| Payments       | Every method (cash, debit, credit, transfer, wallet, payment link) with voucher numbers, a card voucher split in two payments with the reason, a payment above the amount owed kept as a credit, a few refunds and one correction made after the register had closed                                                                                                   |
+| Cash registers | One per place and day: closed with the cash counted (one short, one over, each with its reason), and one open today at each desk of reception. The Córdoba branch has no reception, so the administration takes the money there                                                                                                                                        |
+| Invoices       | Facturas C issued (some for a part of a charge), invoices to OSDE and Swiss Medical over their portion of several visits, two credit notes (partial and total), a rejected invoice left so, one rejected and issued again, and one registered by hand in place of an invoice that stayed pending. The latest paid visits are left for reception to invoice (see below) |
+| Reports        | The money and cash reports add up to exactly this data (a test compares them with the tables); the operational dashboard reads the same agenda                                                                                                                                                                                                                         |
+
+Not in the seed: an invoice flagged as a prolonged outage. That flag is computed from the age of a pending invoice, and an invoice cannot be written with an old date (the database stamps it with the transaction time), so the demo shows it live, in step 5.
+
+**1. The day at the front desk.** Sign in as `recepcion@`. In Caja (menu), choose the place: the register of today is open, with the cash it should hold. Press "Cerrar caja", count (type the amount shown to close it exactly, or a different one to see that a reason is required) and confirm. The day moves to "Cajas anteriores", and a payment in cash is now refused until a register is opened again. The closed days of the last two weeks show two counts that did not match, with the reason someone wrote.
+
+**2. Charges.** Cobros lists the charges of a period (it opens on today: widen "Desde" to see the week). Open one to see its lines, its payments and, for the owner or an administrator, "Devolver" and "Anular cobro" (reception sees who can do it, and the API refuses the call). The tab "A cobrar a obras sociales" adds up what the payers owe.
+
+**3. Prices and payers.** As `administracion@`, Ajustes > Precios y obras sociales: the payers with and without a CUIT, the price history and what each plan pays. Press the CUIT button of Galeno, load a valid CUIT, and its invoices become possible.
+
+**4. An invoice.** As reception, Facturas > "Cobros por facturar": the paid visits that nothing has invoiced yet. "Facturar el cobro de ..." asks for the amount (all of it, or a part) and the invoice is issued with a CAE, a number that follows the vouchers the seed left, and a PDF that the worker builds a few seconds later ("Descargar PDF" in the detail of the voucher). The owner can issue a credit note from the same detail; reception cannot.
+
+**5. An outage of AFIP.** In the platform console (`platform.localhost:5173`), Proveedores > AFIP, put the issuer of the demonstration in "down". Invoice another charge: it stays "Todavía no se emitió" and nothing is invented. Put it back in "ok": within a minute or two the clock of the retries issues it, once, with the next number. A pending invoice older than the threshold of the organization (24 hours by default, in Ajustes > Facturación) is flagged and offers the owner to register the voucher by hand.
+
+**6. Reports.** Reportes opens the operational dashboard; its "Dinero" and "Caja" screens (the money and cash reports) have the totals, the breakdown by place, professional, payer and type (a chart and a table each), the drill-down to the records behind each figure and the export. Reception reads the places it works at and never revenue by professional; a professional reads only their own appointments.
+
+Steps 1, 4 and 5, automated and checked at 360 px:
+
+```bash
+pnpm --filter @consultorio/web exec playwright test e2e/stage4-demo.spec.ts --project=desktop
+```
+
+It looks at every screen of billing, cash, invoices and reports with this data in them (wide tables, long lists, vouchers of every kind), closes the register of the day in the second organization, issues an invoice, checks that its PDF is a real PDF, rides out an outage and checks that the invoice is issued once after it.
+
 ## Resetting the demo
 
 A demo organization can be put back to its starting content. It is the only place where the product deletes tenant data, and it is deliberately narrow:
@@ -139,7 +175,7 @@ A demo organization can be put back to its starting content. It is the only plac
 - The database function `app.demo_reset` refuses unless the organization is flagged `is_demo` (fixed when it is created) and can only be run by the operator console's database role. The API and the worker cannot call it.
 - It removes everything the organization holds, **including its audit trail**, and keeps the organization, its key and its feature flags. Other organizations are untouched and their audit chains still verify.
 - The platform trail records `demo.chain_reset` with the sequence number and hash where the removed chain ended, as proof of the cut.
-- With a bucket configured, the demo's files are removed from it and new ones are stored. The seed then fills the organization again (a few seconds, with the agenda, the consultations and the documents). Sessions end, so everyone is signed out.
+- With a bucket configured, the demo's files are removed from it and new ones are stored. The seed then fills the organization again (about ten seconds, with the agenda, the consultations, the documents, the charges and the invoices). Sessions end, so everyone is signed out.
 
 ```bash
 pnpm demo:reset                 # organization "aillu", documented password
@@ -153,5 +189,6 @@ pnpm demo:reset --rotate        # new random passwords, printed once
 
 - The seed refuses `NODE_ENV=production` with the public password and refuses any organization that is not flagged as a demo.
 - Demo organizations never reach real services: the adapter resolver (`apps/api/src/main/adapter-resolver.ts`) gives them the fake email sender, the fake WhatsApp sender, the fake video provider and the fake bot challenge, and refuses a configuration that would not. The Stage 3 seed writes rows and queues nothing.
+- The invoices of the Stage 4 seed go through an in-memory fake of AFIP and hold no certificate; the payments are rows written by the seed. A demonstration organization cannot reach a real fiscal service even if the configuration says so.
 - Demo organizations are exempt from billing.
 - All data is deterministic: the same seed gives the same content, which is what makes the tests and the screenshots stable.

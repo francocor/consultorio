@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 
 import { expect, test, type APIRequestContext, type Page } from '@playwright/test';
 
+import { acquireAfipLock } from './support/afip-lock.js';
 import { bookableProfessional, clockTime } from './support/agenda.js';
 import { apiCall } from './support/clinical.js';
 import { OPERATOR_STATE } from './support/operator.js';
@@ -118,6 +119,8 @@ test('the front desk invoices a charge, rides out an AFIP outage and the owner c
   browser,
   playwright,
 }) => {
+  // The issuer of the demonstration is one for the whole stack: no other journey may change its mode meanwhile.
+  const release = await acquireAfipLock();
   const operator = await playwright.request.newContext({ storageState: OPERATOR_STATE });
   await setAfipMode(operator, 'ok');
   try {
@@ -319,5 +322,6 @@ test('the front desk invoices a charge, rides out an AFIP outage and the owner c
   } finally {
     await setAfipMode(operator, 'ok');
     await operator.dispose();
+    release();
   }
 });

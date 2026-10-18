@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { DEMO_CONTRIBUTORS, runContributors, type DemoContributorContext } from './contributors.js';
 import { seedStage3 } from './stage3/index.js';
+import { seedStage4 } from './stage4/index.js';
 
 const context = { tenantId: 'tenant-1' } as unknown as DemoContributorContext;
 
@@ -32,7 +33,7 @@ describe('the demo contributors', () => {
     expect(after).not.toHaveBeenCalled();
   });
 
-  it('registers the Stage 3 seed, which holds the engagement data of the demo, and nothing else yet', () => {
-    expect(DEMO_CONTRIBUTORS).toEqual([seedStage3]);
+  it('registers the Stage 3 seed (engagement) and then the Stage 4 one (revenue, which reads the visits), and nothing else yet', () => {
+    expect(DEMO_CONTRIBUTORS).toEqual([seedStage3, seedStage4]);
   });
 });

@@ -1145,24 +1145,24 @@ Start: S4.03, S4.10, S4.07. Done when: money figures reproduce from payments, re
 
 Start: A, B and C merged. Done when: every Stage 4 route has a category and the money rules hold under random input. Verify: default plus the named tests. Rollback: default.
 
-- [ ] 4.60 Read-only audit of all Stage 4 routes: category present, billing writes and invoice creation 402, reads, exports, reports and PDF links allowed. [BIL-14, INV-13, RPT-12, TEN-11] Test: `route-categories.test.ts` plus an inject matrix per route.
-- [ ] 4.61 `apps/api/test/policy/money-invariants.test.ts` (fast-check): payments never exceed the patient portion without a confirmed credit, reversals never exceed the net payment, invoice lines never exceed charge lines, credit notes never exceed the invoice, expected cash equals opening plus cash in minus cash out. [BIL-06, BIL-08, INV-05, INV-07] Test: that file.
-- [ ] 4.62 Audit coverage and redaction: Stage 4 actions registered in `audit-coverage.test.ts`; log capture proves no card data, certificates or keys are logged. [BIL-15, INV-12] Test: both files.
+- [x] 4.60 Read-only audit of all Stage 4 routes: category present, billing writes and invoice creation 402, reads, exports, reports and PDF links allowed. [BIL-14, INV-13, RPT-12, TEN-11] Test: `route-categories.test.ts` plus an inject matrix per route.
+- [x] 4.61 `apps/api/test/policy/money-invariants.test.ts` (fast-check): payments never exceed the patient portion without a confirmed credit, reversals never exceed the net payment, invoice lines never exceed charge lines, credit notes never exceed the invoice, expected cash equals opening plus cash in minus cash out. [BIL-06, BIL-08, INV-05, INV-07] Test: that file.
+- [x] 4.62 Audit coverage and redaction: Stage 4 actions registered in `audit-coverage.test.ts`; log capture proves no card data, certificates or keys are logged. [BIL-15, INV-12] Test: both files.
 
 ## S4.16 Demo seed (~300) [Track D]
 
 Start: A, B and C merged. Done when: the demo shows revenue data and resets in under a minute. Verify: default plus the gap check. Rollback: default.
 
-- [ ] 4.63 `db/seed/demo/stage4/{billing,invoicing,reports}.ts`: prices and payers, charges in every state, payments of every method, a closed register with a difference and one open, invoices in every state (a pending one flagged, a rejected one, a manual one, a credit note) through the demo fake issuer; registered in `contributors.ts`. [DEM-04, DEM-02, DEM-03] Test: gap check; deterministic content.
-- [ ] 4.64 Reset timing with Stage 4 data under 60 s; report totals equal the seeded totals. [DEM-05] Test: timing and totals test.
+- [x] 4.63 `db/seed/demo/stage4/{billing,invoicing,reports}.ts`: prices and payers, charges in every state, payments of every method, a closed register with a difference and one open, invoices in every state (a pending one flagged, a rejected one, a manual one, a credit note) through the demo fake issuer; registered in `contributors.ts`. [DEM-04, DEM-02, DEM-03] Test: gap check; deterministic content.
+- [x] 4.64 Reset timing with Stage 4 data under 60 s; report totals equal the seeded totals. [DEM-05] Test: timing and totals test.
 
 ## S4.17 Stage 4 gate (~200) [Track D]
 
 Start: S4.15, S4.16. Done when: the Stage 4 demo runs locally end to end. Verify: the e2e spec plus a fresh review. Rollback: default.
 
-- [ ] 4.65 `e2e/stage4-demo.spec.ts`: reception closes the day's register and issues an invoice through the local AFIP, including an outage and its recovery. [BIL-09, INV-05, INV-09] Test: that spec.
+- [x] 4.65 `e2e/stage4-demo.spec.ts`: reception closes the day's register and issues an invoice through the local AFIP, including an outage and its recovery. [BIL-09, INV-05, INV-09] Test: that spec.
 - [ ] 4.66 Fresh-context review (`judgment-day`) of money invariants, immutability triggers, credential handling and double-issue protection; fix findings. Test: review report attached.
-- [ ] 4.67 `docs/runbooks/afip-switch-to-real.md` (what changes when the real adapter arrives), update `docs/external-dependencies.md`, re-run `sdd-init`. Test: none.
+- [x] 4.67 `docs/runbooks/afip-switch-to-real.md` (what changes when the real adapter arrives), update `docs/external-dependencies.md`, re-run `sdd-init`. Test: none.
 
 ## S4.D Deferred real-provider adapter (no gate depends on it)
 

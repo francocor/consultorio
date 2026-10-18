@@ -235,25 +235,29 @@ export function PayersSection() {
                   type="button"
                   size="sm"
                   variant="outline"
+                  aria-label={t('payers.cuit.edit', { name: payer.name })}
                   onClick={() => {
                     setEditing(payer);
                   }}
                 >
                   <Pencil aria-hidden="true" />
-                  {t('payers.cuit.edit', { name: payer.name })}
+                  {t('payers.cuit.editShort')}
                 </Button>
                 <Button
                   type="button"
                   size="sm"
                   variant="ghost"
                   loading={toggle.isPending && toggle.variables.id === payer.id}
+                  aria-label={
+                    payer.active
+                      ? t('payers.deactivate', { name: payer.name })
+                      : t('payers.activate', { name: payer.name })
+                  }
                   onClick={() => {
                     toggle.mutate(payer);
                   }}
                 >
-                  {payer.active
-                    ? t('payers.deactivate', { name: payer.name })
-                    : t('payers.activate', { name: payer.name })}
+                  {payer.active ? t('payers.off') : t('payers.on')}
                 </Button>
               </div>
             </li>

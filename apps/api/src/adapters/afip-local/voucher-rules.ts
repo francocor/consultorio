@@ -86,7 +86,8 @@ export function caeExpiresOn(issueDate: string): string {
 export function requestFingerprint(request: InvoiceRequest): string {
   const ordered = Object.fromEntries(
     Object.entries(request)
-      .filter(([, value]) => value !== undefined)
+      // The hint of the numbering is not what the authority is asked to authorize.
+      .filter(([key, value]) => value !== undefined && key !== 'lastKnownNumber')
       .sort(([a], [b]) => a.localeCompare(b)),
   );
   return createHash('sha256').update(JSON.stringify(ordered)).digest('hex');

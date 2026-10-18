@@ -2,6 +2,7 @@ import type { MessageChannel } from '@consultorio/contracts';
 import { and, eq, inArray } from 'drizzle-orm';
 
 import { message } from '../../../db/schema/notifications.js';
+import { describeFailure } from '../../../platform/db/failure-log.js';
 import type { Tx } from '../../../platform/db/tenant-context.js';
 import { selectChannels } from '../domain/channel-policy.js';
 
@@ -24,13 +25,17 @@ type OptOutListener = (tx: Tx, event: { patientId: string; now: Date }) => Promi
 let optOutListener: OptOutListener | undefined;
 let reportListenerFailure: (error: unknown) => void = defaultReport;
 
-/** One structured line on stderr, where the log shipper and the alerts read it. Ids only. */
+/**
+ * One structured line on stderr, where the log shipper and the alerts read it: the class of the
+ * error and its database code. Never the message, which can carry the statement and the values of
+ * a row (a patient's address among them).
+ */
 function defaultReport(error: unknown): void {
   process.stderr.write(
     `${JSON.stringify({
       level: 'error',
       msg: 'opt_out_listener_failed',
-      error: error instanceof Error ? error.message : 'unknown error',
+      ...describeFailure(error),
     })}
 `,
   );

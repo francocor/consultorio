@@ -320,13 +320,16 @@ export function PricesSection() {
                     type="button"
                     size="sm"
                     variant="ghost"
+                    aria-label={
+                      price.active
+                        ? t('prices.deactivate', { name: price.appointmentTypeName })
+                        : t('prices.activate', { name: price.appointmentTypeName })
+                    }
                     onClick={() => {
                       toggle.mutate({ kind: 'price', price });
                     }}
                   >
-                    {price.active
-                      ? t('prices.deactivate', { name: price.appointmentTypeName })
-                      : t('prices.activate', { name: price.appointmentTypeName })}
+                    {price.active ? t('prices.off') : t('prices.on')}
                   </Button>
                 </div>
               </li>
@@ -368,13 +371,16 @@ export function PricesSection() {
                     type="button"
                     size="sm"
                     variant="ghost"
+                    aria-label={
+                      price.active
+                        ? t('prices.deactivate', { name: price.payerName })
+                        : t('prices.activate', { name: price.payerName })
+                    }
                     onClick={() => {
                       toggle.mutate({ kind: 'payer', price });
                     }}
                   >
-                    {price.active
-                      ? t('prices.deactivate', { name: price.payerName })
-                      : t('prices.activate', { name: price.payerName })}
+                    {price.active ? t('prices.off') : t('prices.on')}
                   </Button>
                 </div>
               </li>

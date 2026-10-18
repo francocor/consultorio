@@ -123,6 +123,8 @@ Must not: edit the billing module's internals, scheduling beyond the lines above
 
 Starts when A, B and C are merged. Owns `db/seed/demo/stage4/**` and the registration in `db/seed/demo/contributors.ts` (the only edit there), `test/policy/money-invariants.test.ts` and the extensions of `route-categories.test.ts` and `audit-coverage.test.ts`, the probes in `test/security/`, `apps/web/e2e/stage4-demo.spec.ts`, `docs/runbooks/afip-switch-to-real.md`, `docs/external-dependencies.md`, migrations `pnpm db:new 4d ...` (0490 to 0499) and the removal of the `demo-coverage-exemptions/*.ts` files of the other tracks as it seeds their tables. It runs the fresh-context review (`judgment-day`) of money invariants, immutability triggers, credential handling and double-issue protection.
 
+As delivered: the read-only categories of every Stage 4 route are written in `test/policy/stage4-routes.ts` (a new route of billing, invoicing or reports fails `route-categories.test.ts` until it is listed); `test/policy/stage4-audit.ts` does the same for the audit trail; the demo seed is `db/seed/demo/stage4/` (a pure plan in `plan.ts`, the real services in `billing.ts` and `invoicing.ts`, the oracle of the totals in `reports.ts`); `test/integration/demo-coverage-exemptions/stage4.ts` lists the two tables that stay empty on purpose; and `e2e/support/afip-lock.ts` serializes the journeys that put the one demo issuer in an outage. Track D used no migration.
+
 ## Migration convention for the tracks
 
 | Track   | Command                    | Range       | Numbers in `tasks.md`         |

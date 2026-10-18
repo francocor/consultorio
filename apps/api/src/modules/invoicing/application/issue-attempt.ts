@@ -55,10 +55,10 @@ function cleanMessage(message: string): string {
 }
 
 /**
- * The number the authority is expected to have given a voucher whose answer was lost: the one after
- * the highest we know of for the same point of sale and type (our own and the registered ones).
+ * The highest number we know of for the same point of sale and type (our own vouchers and the
+ * registered ones), or 0 when there is none.
  */
-async function expectedNumberFor(tx: Tx, row: InvoiceRow): Promise<number> {
+async function highestNumberFor(tx: Tx, row: InvoiceRow): Promise<number> {
   const [found] = await tx
     .select({ highest: sql<number>`coalesce(max(${invoice.number}), 0)::int` })
     .from(invoice)
@@ -69,10 +69,19 @@ async function expectedNumberFor(tx: Tx, row: InvoiceRow): Promise<number> {
         sql`${invoice.number} is not null`,
       ),
     );
-  return (found?.highest ?? 0) + 1;
+  return found?.highest ?? 0;
+}
+
+/**
+ * The number the authority is expected to have given a voucher whose answer was lost: the one after
+ * the highest we know of.
+ */
+async function expectedNumberFor(tx: Tx, row: InvoiceRow): Promise<number> {
+  return (await highestNumberFor(tx, row)) + 1;
 }
 
 async function buildRequest(tx: Tx, row: InvoiceRow, issuerCuit: string): Promise<InvoiceRequest> {
+  const lastKnownNumber = await highestNumberFor(tx, row);
   const lines = await tx
     .select()
     .from(invoiceLine)
@@ -115,6 +124,8 @@ async function buildRequest(tx: Tx, row: InvoiceRow, issuerCuit: string): Promis
     netCents: row.netCents,
     vatCents: row.vatCents,
     exemptCents: row.exemptCents,
+    // A simulator that restarted numbers after what the organization already holds.
+    ...(lastKnownNumber > 0 ? { lastKnownNumber } : {}),
     ...(associated ? { associatedVoucher: associated } : {}),
   };
 }
