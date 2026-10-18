@@ -92,8 +92,11 @@ export function createConfirmHandler(deps: TokenHandlerDeps): TokenHandler {
       if (appointment.status === 'confirmed') {
         return { title: 'Su asistencia ya está confirmada', details: rows };
       }
-      if (!(await context.redeem())) return null;
+      // The use is spent when the change was made, not before: a change the appointment refuses
+      // leaves the link as it was. (A change may revoke the links of the appointment itself, so
+      // whether this one is still there to spend does not matter once it was made.)
       if (!(await transition(deps, context, appointment, 'confirm'))) return GONE;
+      await context.redeem();
       return { title: 'Asistencia confirmada', details: rows, message: 'Gracias. Lo esperamos.' };
     },
   };
@@ -142,8 +145,9 @@ export function createCancelHandler(deps: TokenHandlerDeps): TokenHandler {
       ) {
         return closed(rows);
       }
-      if (!(await context.redeem())) return null;
       if (!(await transition(deps, context, appointment, 'cancel'))) return GONE;
+      // The cancellation revokes the links of the appointment, this one included.
+      await context.redeem();
       return {
         title: 'Turno cancelado',
         message:

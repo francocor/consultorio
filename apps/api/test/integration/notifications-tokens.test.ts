@@ -6,7 +6,13 @@ import { actionToken } from '../../src/db/schema/action-token.js';
 import { auditEvent } from '../../src/db/schema/audit.js';
 import { channelPreference } from '../../src/db/schema/channel-preference.js';
 import { appointment, appointmentEvent } from '../../src/db/schema/scheduling.js';
+import {
+  createCancelHandler,
+  createConfirmHandler,
+} from '../../src/modules/notifications/http/token-handlers.js';
 import { createRuntimeDb, type DbHandle } from '../../src/platform/db/pool.js';
+import { createAppointmentEvents } from '../../src/platform/events/appointment-events.js';
+import { AppError } from '../../src/platform/http/problem.js';
 import { browserHeaders, buildTestApplication } from '../support/app.js';
 import {
   createNotificationsWorld,
@@ -500,5 +506,75 @@ describe('in a read-only organization', () => {
     // The refused link was not spent: it works once the organization is back.
     await notes.setTenant({ status: 'active' });
     expect((await view(scheduling.app, 'POST', r.confirm)).statusCode).toBe(200);
+  });
+});
+
+describe('a link whose action is refused keeps its use (JD-S3 B26)', () => {
+  /** A scheduling write that something refuses: the appointment events have a subscriber that says no. */
+  function refusing() {
+    const events = createAppointmentEvents();
+    events.subscribe(() => {
+      throw new AppError('conflict');
+    });
+    return { keys: scheduling.keys, events };
+  }
+
+  async function perform(
+    handler: ReturnType<typeof createConfirmHandler>,
+    r: Awaited<ReturnType<typeof reminded>>,
+  ) {
+    const redeemed: string[] = [];
+    const page = await scheduling.inTenant((tx) =>
+      handler.perform({
+        tx,
+        tenantId: scheduling.tenant.id,
+        now: notes.now(),
+        kind: 'appointment_confirm',
+        subjectId: r.appointment.id,
+        payload: { patientId: r.patientId },
+        choice: null,
+        actor: { userId: null, actingRole: null, ip: null, userAgent: null, requestId: null },
+        redeem: () => {
+          redeemed.push('spent');
+          return Promise.resolve(true);
+        },
+      }),
+    );
+    return { page, redeemed };
+  }
+
+  it('does not spend the link of a confirmation that the appointment refuses', async () => {
+    const r = await reminded();
+
+    const { page, redeemed } = await perform(createConfirmHandler(refusing()), r);
+
+    expect(page?.status).toBe(409);
+    expect(redeemed).toEqual([]);
+  });
+
+  it('does not spend the link of a cancellation that the appointment refuses', async () => {
+    const r = await reminded();
+    const handler = createCancelHandler(refusing());
+
+    const redeemed: string[] = [];
+    const page = await scheduling.inTenant((tx) =>
+      handler.perform({
+        tx,
+        tenantId: scheduling.tenant.id,
+        now: notes.now(),
+        kind: 'appointment_cancel',
+        subjectId: r.appointment.id,
+        payload: { patientId: r.patientId },
+        choice: null,
+        actor: { userId: null, actingRole: null, ip: null, userAgent: null, requestId: null },
+        redeem: () => {
+          redeemed.push('spent');
+          return Promise.resolve(true);
+        },
+      }),
+    );
+
+    expect(page?.status).toBe(409);
+    expect(redeemed).toEqual([]);
   });
 });
