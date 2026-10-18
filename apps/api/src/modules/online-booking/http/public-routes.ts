@@ -414,7 +414,12 @@ export function publicRoutes(deps: PublicRoutesDeps) {
     );
 
     const IdParams = z.strictObject({ slug: SlugParam, id: z.uuid() });
-    const submissionDeps: SubmissionDeps = { keys: deps.keys, jobs: deps.jobs, abuse: deps.abuse };
+    const submissionDeps: SubmissionDeps = {
+      keys: deps.keys,
+      portsOf: deps.portsOf,
+      jobs: deps.jobs,
+      abuse: deps.abuse,
+    };
 
     /** Turns what the use case decided into the answer: one shape for every visitor. */
     function answerFor(

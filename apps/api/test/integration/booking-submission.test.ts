@@ -203,6 +203,21 @@ describe('submitting the form', () => {
     expect((await submissionRows()).length).toBe(before);
   });
 
+  it('keeps the slot until the code expires, even when the form is sent at the end of the ten minutes of the hold (JD-S3 B6)', async () => {
+    const { visitor, hold } = await heldBy();
+    // Nine minutes in: a minute of the hold is left, and the code will live ten.
+    world.advance(9 * 60_000);
+
+    const response = await submit(visitor, hold, world.form());
+    expect(response.statusCode, response.body).toBe(200);
+
+    const [row] = await world.inTenant((tx) =>
+      tx.select().from(slotHold).where(eq(slotHold.id, hold.id)),
+    );
+    expect(row?.expiresAt.getTime()).toBeGreaterThanOrEqual(world.now().getTime() + 10 * 60_000);
+    expect(row?.status).toBe('active');
+  });
+
   it('refuses a form that fails the bot challenge, and creates nothing', async () => {
     const { visitor, hold } = await heldBy();
     const before = (await submissionRows()).length;

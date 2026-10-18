@@ -10,6 +10,7 @@ import type { Tx } from '../../../platform/db/tenant-context.js';
 import { uuidv7 } from '../../../platform/db/uuid.js';
 import { AppError } from '../../../platform/http/problem.js';
 import type { JobClient } from '../../../platform/jobs/boss.js';
+import type { SchedulingPorts } from '../../scheduling/index.js';
 import { isFutureDate, isMinor } from '../domain/age.js';
 import { CODE_SENDS_PER_HOUR, maskEmail } from '../domain/otp.js';
 
@@ -41,6 +42,8 @@ export interface SubmissionPayload {
 
 export interface SubmissionDeps {
   keys: TenantKeys;
+  /** Scheduling's view of the organization: the hold is extended through it. */
+  portsOf: (tx: Tx) => SchedulingPorts;
   jobs: JobClient | undefined;
   abuse: Abuse;
 }
@@ -217,7 +220,27 @@ export async function submitBooking(
     await deps.abuse.recordSuspicious(tx, { actor: input.actor, reason: 'code_flood', linkId });
     return { ok: false, refusal: 'rate_limited' };
   }
+  await keepHoldUntil(tx, deps, loaded, issued.expiresAt);
   return { ok: true, maskedEmail: maskEmail(form.email), codeExpiresAt: issued.expiresAt };
+}
+
+/**
+ * The slot is kept until the code expires: a visitor who sends the form in the last minute of the
+ * hold would otherwise be given a code for a slot that is gone before they can type it. Taken under
+ * the lock of the professional, like every other change of a hold, and only ever later.
+ */
+async function keepHoldUntil(
+  tx: Tx,
+  deps: SubmissionDeps,
+  loaded: LoadedHold,
+  until: Date,
+): Promise<void> {
+  if (loaded.hold.expiresAt.getTime() >= until.getTime()) return;
+  const ports = deps.portsOf(tx);
+  await ports.lockProfessional(loaded.hold.professionalId);
+  const current = await ports.findHold(loaded.hold.id, { lock: true });
+  if (current?.status !== 'active' || current.expiresAt.getTime() >= until.getTime()) return;
+  await ports.updateHold(loaded.hold.id, { expiresAt: until });
 }
 
 /**
@@ -264,5 +287,6 @@ export async function resendCode(
     await deps.abuse.recordSuspicious(tx, { actor: input.actor, reason: 'code_flood', linkId });
     return { ok: false, refusal: 'rate_limited' };
   }
+  await keepHoldUntil(tx, deps, loaded, issued.expiresAt);
   return { ok: true, maskedEmail: maskEmail(stored.email), codeExpiresAt: issued.expiresAt };
 }
