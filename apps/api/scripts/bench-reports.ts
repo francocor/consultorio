@@ -46,7 +46,7 @@ import { uuidv7 } from '../src/platform/db/uuid.js';
  *
  *   pnpm --filter @consultorio/api exec tsx scripts/bench-reports.ts                 # 50,000
  *   pnpm --filter @consultorio/api exec tsx scripts/bench-reports.ts --appointments 5000
- *   pnpm --filter @consultorio/api exec tsx scripts/bench-reports.ts --no-indexes    # without 0430
+ *   pnpm --filter @consultorio/api exec tsx scripts/bench-reports.ts --no-indexes    # without 0430 and 0431
  *
  * Needs Docker and nothing else. Prints a Markdown report (docs/perf/reports.md keeps one). The exit
  * code is 1 when a target is missed, so it can gate a release.
@@ -578,7 +578,7 @@ async function main(): Promise<void> {
     const lines = [
       `Money: ${counts?.charges ?? '?'} charges, ${counts?.payments ?? '?'} payments, ${counts?.refunds ?? '?'} refunds, ${counts?.vouchers ?? '?'} vouchers (invoices and credit notes), one register per location and day.`,
       '',
-      `Appointments: ${total ?? '?'} in the year 2025 (${month ?? '?'} in the month measured), ${String(PROFESSIONALS)} professionals, ${String(LOCATIONS)} locations. ${WITHOUT_INDEXES ? 'Migration 0430 indexes dropped.' : 'With the indexes of migration 0430.'} Postgres ${version ?? '?'}.`,
+      `Appointments: ${total ?? '?'} in the year 2025 (${month ?? '?'} in the month measured), ${String(PROFESSIONALS)} professionals, ${String(LOCATIONS)} locations. ${WITHOUT_INDEXES ? 'Migration 0430 and 0431 indexes dropped.' : 'With the indexes of migrations 0430 and 0431.'} Postgres ${version ?? '?'}.`,
       '',
       '| Query | Samples | p50 (ms) | p95 (ms) | max (ms) | Target p95 |',
       '|---|---|---|---|---|---|',

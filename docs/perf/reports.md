@@ -62,7 +62,7 @@ time) and of the history (by appointment) already carry most of the load.
 ```bash
 pnpm --filter @consultorio/api exec tsx scripts/bench-reports.ts                      # 50,000
 pnpm --filter @consultorio/api exec tsx scripts/bench-reports.ts --appointments 5000  # a quick check
-pnpm --filter @consultorio/api exec tsx scripts/bench-reports.ts --no-indexes         # without 0430
+pnpm --filter @consultorio/api exec tsx scripts/bench-reports.ts --no-indexes         # without 0430 and 0431
 ```
 
 It needs only Docker. It starts a Postgres 17, applies every migration, fills the tables as the

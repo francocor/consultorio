@@ -1162,7 +1162,7 @@ Start: S4.15, S4.16. Done when: the Stage 4 demo runs locally end to end. Verify
 
 - [x] 4.65 `e2e/stage4-demo.spec.ts`: reception closes the day's register and issues an invoice through the local AFIP, including an outage and its recovery. [BIL-09, INV-05, INV-09] Test: that spec.
 - [ ] 4.66 Fresh-context review (`judgment-day`) of money invariants, immutability triggers, credential handling and double-issue protection; fix findings. Test: review report attached.
-- [ ] 4.67 `docs/runbooks/afip-switch-to-real.md` (what changes when the real adapter arrives), update `docs/external-dependencies.md`, re-run `sdd-init`. Test: none.
+- [x] 4.67 `docs/runbooks/afip-switch-to-real.md` (what changes when the real adapter arrives), update `docs/external-dependencies.md`, re-run `sdd-init`. Test: none.
 
 ## S4.D Deferred real-provider adapter (no gate depends on it)
 
