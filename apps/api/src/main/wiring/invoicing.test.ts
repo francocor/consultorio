@@ -44,7 +44,41 @@ describe('what invoicing adds to the worker', () => {
 
     const issue = jobs?.find((job) => job.name === 'afip.issue');
     expect(issue?.category).toBe('afip_submission');
-    expect(jobs?.map((job) => job.name).sort()).toEqual(['afip.issue', 'fiscal.credential_watch']);
+  });
+
+  it('delivers an invoice as a message (cancelled in a read-only tenant) and renders its PDF only with a bucket', () => {
+    const without = contribution().jobs?.(workerContext);
+    const withBucket = invoicingWiring
+      .worker?.({
+        config: loadConfig({
+          ...env,
+          S3_BUCKET: 'consultorio-test',
+          S3_ENDPOINT: 'http://localhost:9000',
+          S3_REGION: 'us-east-1',
+          S3_ACCESS_KEY_ID: 'minio',
+          S3_SECRET_ACCESS_KEY: 'minio-secret',
+          S3_FORCE_PATH_STYLE: 'true',
+        }),
+        adapters: { forTenant: () => undefined },
+        email: createFakeEmailSender(),
+        videoJoin: createVideoJoinRegistry(),
+      })
+      .jobs?.(workerContext);
+
+    expect(without?.find((job) => job.name === 'invoice.deliver')?.category).toBe('write');
+    expect(without?.map((job) => job.name).sort()).toEqual([
+      'afip.issue',
+      'fiscal.credential_watch',
+      'invoice.deliver',
+    ]);
+    // A PDF is built from records a read-only organization may read: an export.
+    expect(withBucket?.find((job) => job.name === 'invoice.pdf')?.category).toBe('export');
+    expect(withBucket?.map((job) => job.name).sort()).toEqual([
+      'afip.issue',
+      'fiscal.credential_watch',
+      'invoice.deliver',
+      'invoice.pdf',
+    ]);
   });
 
   it('looks at every organization certificate every six hours', () => {

@@ -25,11 +25,14 @@ import { invoice as invoiceTable, type InvoiceRow } from '../../src/db/schema/in
 import type { AdapterResolver } from '../../src/main/adapter-resolver.js';
 import {
   createAfipIssueJob,
+  createInvoiceDeliverJob,
+  createInvoicePdfJob,
   runDueAttempts,
   type AttemptOutcome,
 } from '../../src/modules/invoicing/index.js';
 import type { DbHandle } from '../../src/platform/db/pool.js';
 import type { JobRunResult } from '../../src/platform/jobs/define-job.js';
+import type { EmailSender } from '../../src/platform/mail/email-sender.js';
 
 import { createBillingWorld, submissionKey, type BillingWorld } from './billing-world.js';
 import { createRecordingJobClient, runPending, type RecordingJobClient } from './jobs.js';
@@ -75,6 +78,16 @@ export interface InvoicingWorld extends BillingWorld {
   rowOf(invoiceId: string): Promise<InvoiceRow>;
   /** The `afip.issue` job as the worker would build it, to run it by hand. */
   issueJob(clock?: () => Date): ReturnType<typeof createAfipIssueJob>;
+  /** The jobs that render and deliver the document, as the worker would build them. */
+  documentJobs(options?: {
+    email?: EmailSender;
+    clock?: () => Date;
+  }): [ReturnType<typeof createInvoicePdfJob>, ReturnType<typeof createInvoiceDeliverJob>];
+  /** Runs the pending `invoice.pdf` jobs and then the `invoice.deliver` jobs they queued. */
+  runDocuments(options?: {
+    email?: EmailSender;
+    clock?: () => Date;
+  }): Promise<{ name: string; result: JobRunResult }[]>;
   /** Asks for an invoice over the charge and runs the job: the invoice is issued. */
   issueInvoiceOf(charge: ChargeDto, extra?: Partial<CreateInvoiceRequest>): Promise<InvoiceDto>;
   /** Changes the tax condition of the issuer. */
@@ -136,6 +149,21 @@ export async function createInvoicingWorld(
   const runIssue: InvoicingWorld['runIssue'] = (clock = () => new Date()) =>
     runPending(runtime.db, recorded, [createAfipIssueJob({ adapters, clock, jobs: recorded })]);
 
+  const documentJobs: InvoicingWorld['documentJobs'] = (settings = {}) => {
+    const clock = settings.clock ?? (() => new Date());
+    return [
+      createInvoicePdfJob({ storage, clock, jobs: recorded }),
+      createInvoiceDeliverJob({ email: settings.email ?? email, clock }),
+    ];
+  };
+  const runDocuments: InvoicingWorld['runDocuments'] = async (settings = {}) => {
+    const jobs = documentJobs(settings);
+    // The PDF job queues the delivery, which waits for the next round.
+    const first = await runPending(runtime.db, recorded, jobs);
+    const second = await runPending(runtime.db, recorded, jobs);
+    return [...first, ...second];
+  };
+
   const invoiceCharge: InvoicingWorld['invoiceCharge'] = async (
     charge,
     extra = {},
@@ -161,6 +189,8 @@ export async function createInvoicingWorld(
     storage,
     email,
     runIssue,
+    documentJobs,
+    runDocuments,
     issueJob: (clock = () => new Date()) => createAfipIssueJob({ adapters, clock, jobs: recorded }),
     sweep: (clock) =>
       runDueAttempts(

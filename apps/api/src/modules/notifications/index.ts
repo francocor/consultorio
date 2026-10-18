@@ -58,6 +58,9 @@ export type {
   Worklist,
   WorklistItem,
 } from './application/deps.js';
+// Invoicing (Stage 4, track C): who a notice that is not about an appointment can reach, and how.
+export { loadNoticeRecipient } from './application/notice-recipient.js';
+export type { NoticeRecipient } from './application/notice-recipient.js';
 export { REMINDER_SEND_JOB } from './application/queue.js';
 export { REMINDER_SWEEP_JOB } from './application/sweep.js';
 export { createWorklist } from './application/worklist.js';

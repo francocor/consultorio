@@ -11,10 +11,13 @@ import type { AdapterResolver } from '../../main/adapter-resolver.js';
 import type { AuthzOptions } from '../../platform/authz/guard.js';
 import type { TenantKeys } from '../../platform/crypto/tenant-keys.js';
 import type { WithTenant } from '../../platform/db/tenant-context.js';
+import type { FileResourceRegistry } from '../../platform/files/file-resources.js';
 import type { JobClient } from '../../platform/jobs/boss.js';
+import { createActionTokens } from '../../platform/tokens/index.js';
 import type { ExportRegistry } from '../tenancy/index.js';
 
 import { exportInvoicing } from './application/export-contributor.js';
+import { createInvoiceFileResource } from './application/invoice-document.js';
 import { configRoutes } from './http/config-routes.js';
 import { invoiceRoutes } from './http/invoice-routes.js';
 
@@ -26,6 +29,10 @@ export { isSimulatedIssuer } from './application/issuer.js';
 export type { SimulatedInvoiceIssuer } from './application/issuer.js';
 export { createCredentialWatchJob, CREDENTIAL_WATCH_JOB } from './jobs/credential-watch.js';
 export { createAfipIssueJob, AFIP_ISSUE_JOB } from './jobs/afip-issue.js';
+export { createInvoicePdfJob, INVOICE_PDF_JOB } from './jobs/invoice-pdf.js';
+export { createInvoiceDeliverJob, INVOICE_DELIVER_JOB } from './jobs/invoice-deliver.js';
+// The patient portal (Stage 5): the invoices addressed to one patient.
+export { listInvoicesForPatient } from './application/patient-invoices.js';
 export { runDueAttempts } from './application/due-invoices.js';
 export type { DueLog } from './application/due-invoices.js';
 export type { IssueDeps, AttemptOutcome } from './application/issue-attempt.js';
@@ -44,6 +51,8 @@ export interface InvoicingOptions {
   adapters?: AdapterResolver | undefined;
   /** Queues the submission of an invoice. Without a queue the worker's sweeper takes them up. */
   jobs?: JobClient | undefined;
+  /** Where `GET /files/:token` finds the resource of the invoice PDF links. */
+  fileResources?: FileResourceRegistry | undefined;
   clock?: () => Date;
 }
 
@@ -62,12 +71,16 @@ export function createInvoicing(options: InvoicingOptions): Invoicing {
     adapters: options.adapters,
     clock,
   });
+  const tokens = createActionTokens({ clock });
   const invoices = invoiceRoutes({
     withTenant: options.withTenant,
     adapters: options.adapters,
     jobs: options.jobs,
     clock,
+    tokens,
   });
+  // The PDFs of the invoices open through the one door of the platform, with their own rules.
+  options.fileResources?.register(createInvoiceFileResource(tokens));
   return {
     options,
     routes: (app) => {

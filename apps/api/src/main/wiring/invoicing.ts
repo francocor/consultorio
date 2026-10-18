@@ -6,16 +6,20 @@ import {
   createLocalAfipControls,
   createLocalInvoiceIssuer,
 } from '../../adapters/afip-local/index.js';
+import { createS3ObjectStorage } from '../../adapters/s3/index.js';
 import {
   CREDENTIAL_WATCH_JOB,
   createAfipIssueJob,
   createCredentialWatchJob,
+  createInvoiceDeliverJob,
+  createInvoicePdfJob,
   createInvoicing,
   runDueAttempts,
 } from '../../modules/invoicing/index.js';
 import { createRuntimeDb } from '../../platform/db/pool.js';
 import { fanOut } from '../../platform/jobs/worker.js';
 import { adapterOfSetting } from '../../platform/local-providers/dev-routes.js';
+import type { ObjectStorage } from '../../platform/storage/object-storage.js';
 import { fake } from '../adapter-resolver.js';
 import type { Config } from '../config.js';
 
@@ -82,15 +86,29 @@ export const invoicingWiring: ModuleWiring = {
       keys: context.keys,
       adapters: context.adapters,
       jobs: context.jobs,
+      fileResources: context.fileResources,
       ...(context.clock ? { clock: context.clock } : {}),
     }),
-  worker: ({ email, clock, adapters }) => {
+  worker: ({ config, email, clock, adapters }) => {
     const now = clock ?? (() => new Date());
+    // The bucket of the invoice PDFs is the one of the documents. It is opened when the first job needs it.
+    let storage: ObjectStorage | undefined;
+    const bucket = () => {
+      if (!storage && config.storage) storage = createS3ObjectStorage(config.storage);
+      return storage;
+    };
     return {
-      jobs: ({ client }) => [
-        createCredentialWatchJob({ email, clock: now }),
-        createAfipIssueJob({ adapters, clock: now, jobs: client }),
-      ],
+      jobs: ({ client }) => {
+        const found = bucket();
+        return [
+          createCredentialWatchJob({ email, clock: now }),
+          createAfipIssueJob({ adapters, clock: now, jobs: client }),
+          createInvoiceDeliverJob({ email, clock: now }),
+          // Without a bucket there is nowhere to put a PDF: the job is not registered, an invoice
+          // has no document, and the API answers "not ready" to the link.
+          ...(found ? [createInvoicePdfJob({ storage: found, clock: now, jobs: client })] : []),
+        ];
+      },
       schedules: ({ client, db, log }) => [
         {
           // The clock of the retries: a pending invoice whose next attempt is due is tried again.

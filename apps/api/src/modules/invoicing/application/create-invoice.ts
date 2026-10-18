@@ -28,6 +28,7 @@ import {
   type ChargeLineForInvoicing,
 } from '../../billing/index.js';
 import { readPatientContact } from '../../patients/index.js';
+import { readInvoiceWording } from '../../scheduling/index.js';
 import { breakdownFor, lineWording, planParts } from '../domain/invoice-amounts.js';
 
 import {
@@ -184,7 +185,17 @@ async function describeLines(
   const charges = await readChargesForInvoicing(tx, [
     ...new Set(lines.map((line) => line.chargeId)),
   ]);
-  const service = new Map(charges.map((charge) => [charge.id, charge.appointmentTypeName]));
+  // The invoice description of the appointment type, or the name of the type when it has none.
+  const wording = await readInvoiceWording(
+    tx,
+    charges.map((charge) => charge.appointmentId),
+  );
+  const service = new Map(
+    charges.map((charge) => [
+      charge.id,
+      wording.get(charge.appointmentId) ?? charge.appointmentTypeName,
+    ]),
+  );
   return new Map(
     lines.map((line) => [
       line.id,

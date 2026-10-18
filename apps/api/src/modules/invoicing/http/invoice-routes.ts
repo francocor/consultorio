@@ -2,6 +2,7 @@ import {
   CreateCreditNoteRequest,
   CreateInvoiceRequest,
   CreateManualInvoiceRequest,
+  DownloadLinkResponse,
   InvoiceDto,
   InvoiceListQuery,
   InvoiceListResponse,
@@ -14,15 +15,19 @@ import { z } from 'zod';
 import { invoice, invoiceLine } from '../../../db/schema/index.js';
 import type { Tx, WithTenant } from '../../../platform/db/tenant-context.js';
 import { AppError } from '../../../platform/http/problem.js';
+import type { ActionTokens } from '../../../platform/tokens/index.js';
 import { visibleLocationIds } from '../../access/index.js';
 import type { InvoicingActor } from '../application/common.js';
 import { createInvoice, type InvoicingDeps, type Viewer } from '../application/create-invoice.js';
 import { createCreditNote } from '../application/credit-note.js';
+import { issuePdfLink } from '../application/invoice-document.js';
 import { loadInvoice, loadInvoices, scopeCondition, scopeOf } from '../application/invoice-view.js';
 import { registerManualInvoice } from '../application/manual-invoice.js';
 
 export interface InvoiceRoutesDeps extends InvoicingDeps {
   withTenant: WithTenant;
+  /** Issues the links to the PDFs. */
+  tokens: ActionTokens;
 }
 
 const IdParams = z.strictObject({ id: z.uuid() });
@@ -158,6 +163,28 @@ export function invoiceRoutes(deps: InvoiceRoutesDeps) {
           if (!found) throw new AppError('not_found');
           return found;
         }),
+    );
+
+    // The PDF of an issued invoice: a link for this session, five minutes, one use. Asking for it is
+    // a read, so it also works when the organization is read-only.
+    typed.get(
+      '/invoices/:id/pdf-link',
+      {
+        config: { readOnly: 'read', permission: 'invoicing.issue', audits: 'none' },
+        schema: { params: IdParams, response: { 200: DownloadLinkResponse } },
+      },
+      (request) => {
+        const session = request.session;
+        if (!session) throw new AppError('unauthenticated');
+        return run(request, async (tx) =>
+          issuePdfLink(tx, {
+            invoiceId: request.params.id,
+            scope: scopeOf(await visibleLocationIds(tx, viewerOf(request))),
+            sessionId: session.sessionId,
+            tokens: deps.tokens,
+          }),
+        );
+      },
     );
 
     typed.post(

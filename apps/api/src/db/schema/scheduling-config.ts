@@ -36,6 +36,11 @@ export const appointmentType = tenantTable(
     mode: text('mode').notNull().default('in_person'),
     /** A reference resolved by billing; scheduling never reads a price. */
     priceReference: text('price_reference'),
+    /**
+     * The generic wording an invoice shows for this service ("Consulta profesional"), never
+     * anything clinical. Without one the invoice shows the name of the type (invoicing, S4.12).
+     */
+    invoiceDescription: text('invoice_description'),
     requiresApproval: boolean('requires_approval').notNull().default(false),
     color: text('color'),
     professionalIds: uuid('professional_ids')
@@ -63,6 +68,10 @@ export const appointmentType = tenantTable(
       sql`${table.bufferMinutes} >= 0 and ${table.bufferMinutes} <= 1440`,
     ),
     check('appointment_type_mode_check', sql`${table.mode} in ('in_person', 'virtual')`),
+    check(
+      'appointment_type_invoice_description_check',
+      sql`${table.invoiceDescription} is null or length(btrim(${table.invoiceDescription})) between 1 and 120`,
+    ),
     check(
       'appointment_type_color_check',
       sql`${table.color} is null or ${table.color} ~ '^#[0-9a-fA-F]{6}$'`,
