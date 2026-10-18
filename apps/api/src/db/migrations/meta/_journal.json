@@ -491,6 +491,20 @@
       "when": 1792336452028,
       "tag": "0442_local_afip",
       "breakpoints": true
+    },
+    {
+      "idx": 69,
+      "version": "7",
+      "when": 1792336849175,
+      "tag": "0444_invoices",
+      "breakpoints": true
+    },
+    {
+      "idx": 70,
+      "version": "7",
+      "when": 1792341217959,
+      "tag": "0446_appointment_type_invoice_description",
+      "breakpoints": true
     }
   ]
 }

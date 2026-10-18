@@ -57,7 +57,10 @@ export function profileDto(row: FiscalProfileRow): FiscalProfileDto {
 }
 
 /** The environment that is really used: a simulator has only the test one. */
-function effectiveEnvironment(chosen: string, simulated: boolean): PointOfSaleDto['environment'] {
+export function effectiveEnvironment(
+  chosen: string,
+  simulated: boolean,
+): PointOfSaleDto['environment'] {
   return simulated || chosen !== 'production' ? 'homologation' : 'production';
 }
 

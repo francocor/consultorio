@@ -36,6 +36,7 @@ const columns = {
   bufferMinutes: appointmentType.bufferMinutes,
   mode: appointmentType.mode,
   priceReference: appointmentType.priceReference,
+  invoiceDescription: appointmentType.invoiceDescription,
   requiresApproval: appointmentType.requiresApproval,
   color: appointmentType.color,
   professionalIds: appointmentType.professionalIds,
@@ -51,6 +52,7 @@ function toDto(row: {
   bufferMinutes: number;
   mode: string;
   priceReference: string | null;
+  invoiceDescription: string | null;
   requiresApproval: boolean;
   color: string | null;
   professionalIds: string[];
@@ -104,6 +106,7 @@ export function createAppointmentTypeService(): AppointmentTypeService {
           bufferMinutes: input.request.bufferMinutes,
           mode: input.request.mode,
           priceReference: input.request.priceReference ?? null,
+          invoiceDescription: input.request.invoiceDescription ?? null,
           requiresApproval: input.request.requiresApproval,
           color: input.request.color ?? null,
           professionalIds: input.request.professionalIds,

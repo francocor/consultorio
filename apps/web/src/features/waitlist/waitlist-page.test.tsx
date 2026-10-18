@@ -95,6 +95,7 @@ const type: AppointmentTypeDto = {
   bufferMinutes: 0,
   mode: 'in_person',
   priceReference: null,
+  invoiceDescription: null,
   requiresApproval: false,
   color: null,
   professionalIds: [],

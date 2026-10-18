@@ -35,6 +35,8 @@ export {
   readAppointmentsForCharge,
   type AppointmentForCharge,
 } from './application/charge-source.js';
+// Invoicing (Stage 4, track C): the generic wording of the service of an appointment.
+export { readInvoiceWording } from './application/invoice-wording.js';
 export { createAppointmentTypeService } from './application/appointment-types.js';
 export type { AppointmentTypeService } from './application/appointment-types.js';
 export { HOLD_EXPIRE_JOB, holdExpireJob } from './application/hold-expiry.js';
