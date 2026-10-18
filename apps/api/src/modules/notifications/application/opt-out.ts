@@ -15,6 +15,18 @@ import { UNLIMITED_QUOTA, whatsappQuotaAvailable } from './usage.js';
 
 type OptOutInput = Parameters<typeof recordOptOut>[1];
 
+/**
+ * Who is told when a patient opts out (the waitlist closes their entries). Bound by the
+ * composition root, in the transaction of the opt-out: another module's rule, run by messaging
+ * without messaging knowing the module (judgment day finding B3).
+ */
+type OptOutListener = (tx: Tx, event: { patientId: string; now: Date }) => Promise<void>;
+let optOutListener: OptOutListener | undefined;
+
+export function bindOptOutListener(listener: OptOutListener | undefined): void {
+  optOutListener = listener;
+}
+
 export interface OptOutResult {
   recorded: boolean;
   /** Queued messages of the channel that were cancelled. */
@@ -49,6 +61,12 @@ export async function optOutChannel(tx: Tx, input: OptOutInput): Promise<OptOutR
       ),
     );
   const recorded = await recordOptOut(tx, input);
+  if (recorded.recorded) {
+    await optOutListener?.(tx, {
+      patientId: input.patientId,
+      now: boundDelivery()?.clock() ?? new Date(),
+    });
+  }
   const deps = boundDelivery();
   if (!recorded.recorded || deps === undefined || queued.length === 0) {
     return { ...recorded, replaced: 0 };

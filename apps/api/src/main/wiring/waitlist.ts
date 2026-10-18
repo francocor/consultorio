@@ -1,6 +1,7 @@
 import { DEFAULT_WAITLIST_SETTINGS, WaitlistSettings } from '@consultorio/contracts';
 
 import {
+  bindOptOutListener,
   boundDelivery,
   createWhatsappOptInRequests,
   deliverWaitlistOffer,
@@ -9,6 +10,7 @@ import {
 import { createSchedulingPorts } from '../../modules/scheduling/index.js';
 import {
   WAITLIST_EXPIRE_JOB,
+  closeEntriesOfOptedOutPatient,
   createWaitlist,
   createWaitlistJobs,
 } from '../../modules/waitlist/index.js';
@@ -64,8 +66,16 @@ export const waitlistWiring: ModuleWiring = {
   name: 'waitlist',
   // A freed slot is matched by a job that the cancellation enqueues in its own transaction.
   needsJobs: true,
-  create: (context) =>
-    createWaitlist({
+  create: (context) => {
+    // A patient who opts out of a channel leaves the waitlist: messaging tells it, in the same transaction.
+    bindOptOutListener((tx, event) =>
+      closeEntriesOfOptedOutPatient(tx, {
+        patientId: event.patientId,
+        now: event.now,
+        jobs: context.jobs,
+      }).then(() => undefined),
+    );
+    return createWaitlist({
       // A WhatsApp choice on the public form is a request: the link goes to the verified address.
       whatsappOptIn: createWhatsappOptInRequests({
         tokens: createActionTokens({ clock: context.clock ?? (() => new Date()) }),
@@ -81,7 +91,8 @@ export const waitlistWiring: ModuleWiring = {
       rateLimitStore: context.rateLimitStore,
       adapters: context.adapters,
       ...(context.clock ? { clock: context.clock } : {}),
-    }),
+    });
+  },
   worker: ({ config, clock }) => {
     const now = clock ?? (() => new Date());
     const origins = createPublicOrigins(deploymentFromConfig(config), {
