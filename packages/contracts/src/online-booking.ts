@@ -292,9 +292,18 @@ export const PublicConfirmationDto = z.strictObject({
 });
 export type PublicConfirmationDto = z.infer<typeof PublicConfirmationDto>;
 
-/** The appointment behind a link, and whether the patient can still change it. */
+/**
+ * The appointment behind a link, and whether the patient can still change it. The professional and
+ * the type of visit are null when the organization uses neutral wording in its messages
+ * (`notifications.hideProfessional`, `notifications.hideAppointmentType`): a link that anybody who
+ * holds it can open says no more than the emails say.
+ */
 export const PublicManageDto = z.strictObject({
-  appointment: z.strictObject(PublicAppointmentFields),
+  appointment: z.strictObject({
+    ...PublicAppointmentFields,
+    professionalName: z.string().nullable(),
+    typeName: z.string().nullable(),
+  }),
   organizationName: z.string(),
   /** False after the deadline of the organization: the page then says to contact it. */
   canChange: z.boolean(),

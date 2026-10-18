@@ -124,6 +124,33 @@ describe('the link of a booking', () => {
     expect(response.body).not.toContain(mine.form.email);
   });
 
+  it('leaves out the professional and the type of visit when the organization uses neutral wording (JD-S3 A10)', async () => {
+    const mine = await booked();
+    const patched = await world.api.patch('/settings', world.owner, {
+      notifications: { hideProfessional: true, hideAppointmentType: true },
+    });
+    expect(patched.statusCode, patched.body).toBe(200);
+    try {
+      const view = await world.visitor().get(viewUrl(mine.token));
+      const cancelled = await cancel(world.visitor(), mine.token);
+
+      expect(view.statusCode, view.body).toBe(200);
+      expect(view.json<PublicManageDto>().appointment).toMatchObject({
+        professionalName: null,
+        typeName: null,
+        locationName: 'Centro',
+      });
+      expect(cancelled.json<PublicManageDto>().appointment).toMatchObject({
+        professionalName: null,
+        typeName: null,
+      });
+    } finally {
+      await world.api.patch('/settings', world.owner, {
+        notifications: { hideProfessional: false, hideAppointmentType: false },
+      });
+    }
+  });
+
   it('answers a guessed, a malformed and a used link in exactly the same way', async () => {
     const mine = await booked();
     await cancel(mine.visitor, mine.token);

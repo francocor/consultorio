@@ -1,7 +1,9 @@
 import {
   DEFAULT_INTEGRATION_SETTINGS,
+  DEFAULT_NOTIFICATION_SETTINGS,
   DEFAULT_ONLINE_BOOKING_SETTINGS,
   IntegrationSettings,
+  NotificationSettings,
   OnlineBookingSettings,
 } from '@consultorio/contracts';
 
@@ -12,6 +14,9 @@ export interface BookingSettings {
   booking: OnlineBookingSettings;
   /** The organization's video switch (`settings.integrations.video`). */
   videoEnabled: boolean;
+  /** Neutral wording: the professional and the type of visit are left out of what a link shows. */
+  hideProfessional: boolean;
+  hideAppointmentType: boolean;
 }
 
 /**
@@ -31,9 +36,16 @@ export async function readBookingSettings(tx: Tx): Promise<BookingSettings> {
     ...DEFAULT_INTEGRATION_SETTINGS,
     ...asObject(stored['integrations']),
   });
+  const notifications = NotificationSettings.safeParse({
+    ...DEFAULT_NOTIFICATION_SETTINGS,
+    ...asObject(stored['notifications']),
+  });
+  const wording = notifications.success ? notifications.data : DEFAULT_NOTIFICATION_SETTINGS;
   return {
     booking: booking.success ? booking.data : DEFAULT_ONLINE_BOOKING_SETTINGS,
     videoEnabled: (integrations.success ? integrations.data : DEFAULT_INTEGRATION_SETTINGS).video,
+    hideProfessional: wording.hideProfessional,
+    hideAppointmentType: wording.hideAppointmentType,
   };
 }
 
