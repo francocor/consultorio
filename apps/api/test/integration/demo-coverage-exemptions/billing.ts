@@ -9,4 +9,6 @@ export const exemptions: Record<string, string> = {
   tenant_payer: WAITING,
   price: WAITING,
   payer_plan_price: WAITING,
+  charge: WAITING,
+  charge_line: WAITING,
 };

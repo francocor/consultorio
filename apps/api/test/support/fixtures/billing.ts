@@ -1,7 +1,9 @@
 import { sql } from 'drizzle-orm';
 
 import {
+  insertAppointmentRow,
   insertLocation,
+  insertPatient,
   insertProfessional,
   returningId,
   unique,
@@ -31,8 +33,39 @@ async function insertTenantPayer(tx: Tx, tenantId: string): Promise<string> {
   );
 }
 
+async function insertCharge(
+  tx: Tx,
+  tenantId: string,
+  overrides?: Readonly<Record<string, string>>,
+): Promise<string> {
+  return returningId(
+    tx,
+    sql`INSERT INTO charge (tenant_id, appointment_id, patient_id, professional_id, location_id,
+                            tenant_payer_id, snapshot, captured_by)
+          VALUES (${tenantId},
+                  ${overrides?.['appointment_id'] ?? (await insertAppointmentRow(tx, tenantId))},
+                  ${overrides?.['patient_id'] ?? (await insertPatient(tx, tenantId))},
+                  ${overrides?.['professional_id'] ?? (await insertProfessional(tx, tenantId))},
+                  ${overrides?.['location_id'] ?? (await insertLocation(tx, tenantId))},
+                  ${overrides?.['tenant_payer_id'] ?? null},
+                  '{"source":"private"}'::jsonb, gen_random_uuid())
+          RETURNING id`,
+  );
+}
+
 export const fixtures: Record<string, TenantTableFixture> = {
   tenant_payer: { insert: insertTenantPayer },
+  charge: { insert: insertCharge },
+  charge_line: {
+    insert: async (tx, tenantId, overrides) =>
+      returningId(
+        tx,
+        sql`INSERT INTO charge_line (tenant_id, charge_id, position, kind, portion, description, amount_cents)
+              VALUES (${tenantId}, ${overrides?.['charge_id'] ?? (await insertCharge(tx, tenantId))},
+                      1, 'service', 'patient', 'Consulta', 2000000)
+              RETURNING id`,
+      ),
+  },
   price: {
     insert: async (tx, tenantId, overrides) =>
       returningId(

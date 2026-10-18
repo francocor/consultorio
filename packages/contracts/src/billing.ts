@@ -17,6 +17,25 @@ export type ChargeStatus = (typeof CHARGE_STATUSES)[number];
 export const CHARGE_LINE_PORTIONS = ['patient', 'payer'] as const;
 export type ChargeLinePortion = (typeof CHARGE_LINE_PORTIONS)[number];
 
+/**
+ * What a charge line is: the price of the service (private), the part the payer covers, the
+ * copago and the plus the patient adds, an explicit late-cancellation or no-show fee, or a line a
+ * person added by hand.
+ */
+export const CHARGE_LINE_KINDS = [
+  'service',
+  'payer_coverage',
+  'copago',
+  'plus',
+  'late_fee',
+  'manual',
+] as const;
+export type ChargeLineKind = (typeof CHARGE_LINE_KINDS)[number];
+
+/** Why a charge is flagged for a person to look at: the appointment ended without the service. */
+export const CHARGE_REVIEW_REASONS = ['no_show', 'cancelled'] as const;
+export type ChargeReviewReason = (typeof CHARGE_REVIEW_REASONS)[number];
+
 export const PAYMENT_METHODS = [
   'cash',
   'debit',
