@@ -1,5 +1,5 @@
 import type { MessageChannel } from '@consultorio/contracts';
-import { and, asc, eq, isNotNull, notLike } from 'drizzle-orm';
+import { and, desc, eq, isNotNull, notLike } from 'drizzle-orm';
 
 import { message } from '../../../db/schema/notifications.js';
 import type { Tx } from '../../../platform/db/tenant-context.js';
@@ -8,7 +8,7 @@ import { hashAddress, legacyAddressHash } from '../domain/address.js';
 import { normalizeWhatsAppNumber } from '../domain/phone.js';
 
 /** Rows looked at per run: the sweep comes back every hour, so a large log is done in a few days. */
-const BATCH = 200;
+const BATCH = 1000;
 
 /**
  * Replaces the unsalted address hashes the message log held before the platform pepper (judgment
@@ -16,8 +16,15 @@ const BATCH = 200;
  * CURRENT address: when its unsalted hash is the one stored, the row gets the keyed hash. A row
  * whose address has changed since can no longer be recognized and could never match a reply or a
  * "failed for good" check again, so its hash is dropped: nothing is lost that was still usable.
+ *
+ * The newest rows go first: the patients who were written to lately are the ones that can answer
+ * (a BAJA must find its organization), so they are the ones to move before the old log is done.
+ * Until the log is done the webhook also looks for the unsalted hash (see `whatsapp-webhook.ts`).
  */
-export async function rehashLegacyAddresses(tx: Tx): Promise<number> {
+export async function rehashLegacyAddresses(
+  tx: Tx,
+  options: { batch?: number } = {},
+): Promise<number> {
   const rows = await tx
     .select({
       id: message.id,
@@ -27,8 +34,8 @@ export async function rehashLegacyAddresses(tx: Tx): Promise<number> {
     })
     .from(message)
     .where(and(isNotNull(message.addressHash), notLike(message.addressHash, 'h2:%')))
-    .orderBy(asc(message.createdAt), asc(message.id))
-    .limit(BATCH);
+    .orderBy(desc(message.createdAt), desc(message.id))
+    .limit(options.batch ?? BATCH);
 
   const contacts = new Map<string, Awaited<ReturnType<typeof readPatientContact>>>();
   for (const row of rows) {

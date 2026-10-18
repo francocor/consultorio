@@ -13,6 +13,8 @@ import {
   loadPreferences,
   recordOptIn,
 } from '../../src/modules/notifications/application/preferences.js';
+import { legacyAddressHash } from '../../src/modules/notifications/domain/address.js';
+import { normalizeInboundNumber } from '../../src/modules/notifications/domain/phone.js';
 import type { AuditActor } from '../../src/platform/audit/writer.js';
 import { createTenantKeys } from '../../src/platform/crypto/tenant-keys.js';
 import { createRuntimeDb, type DbHandle } from '../../src/platform/db/pool.js';
@@ -300,6 +302,60 @@ describe('one number on the books of two organizations', () => {
     await reply(phone.e164, 'No más');
 
     expect(await whatsappChoice(a, patient.patientId)).toBe('opted_out');
+  });
+});
+
+describe('a BAJA in the weeks of the address-hash migration (JD-S3 R2-C4, A6)', () => {
+  /** Puts the hashes of the log back to the unsalted ones the log held before the pepper. */
+  const legacyHashes = (clinicOf: Clinic, patientId: string, phone: { e164: string }) =>
+    clinicOf.scheduling.inTenant((tx) =>
+      tx.execute(
+        sql`UPDATE message SET address_hash = ${legacyAddressHash('whatsapp', normalizeInboundNumber(phone.e164) ?? '')}
+             WHERE patient_id = ${patientId}`,
+      ),
+    );
+
+  it('still opts out the patient whose messages have not been rehashed yet', async () => {
+    const phone = nextPhone();
+    const patient = await reminded(a, phone);
+    await legacyHashes(a, patient.patientId, phone);
+
+    await reply(phone.e164, 'BAJA');
+
+    expect(await whatsappChoice(a, patient.patientId)).toBe('opted_out');
+  });
+
+  it('opts out every organization that holds the number, rehashed or not', async () => {
+    const phone = nextPhone();
+    const first = await reminded(a, phone);
+    const second = await reminded(b, phone);
+    await legacyHashes(b, second.patientId, phone);
+
+    await reply(phone.e164, 'BAJA');
+
+    expect(await whatsappChoice(a, first.patientId)).toBe('opted_out');
+    expect(await whatsappChoice(b, second.patientId)).toBe('opted_out');
+  });
+
+  it('opts out every organization that wrote to a number nobody has written to lately, not only the last (A6)', async () => {
+    const phone = nextPhone();
+    const first = await reminded(a, phone);
+    const second = await reminded(b, phone);
+    for (const [clinicOf, sent] of [
+      [a, first],
+      [b, second],
+    ] as const) {
+      await clinicOf.scheduling.inTenant((tx) =>
+        tx.execute(
+          sql`UPDATE message SET sent_at = '2031-01-01T00:00:00Z' WHERE patient_id = ${sent.patientId}`,
+        ),
+      );
+    }
+
+    await reply(phone.e164, 'BAJA');
+
+    expect(await whatsappChoice(a, first.patientId)).toBe('opted_out');
+    expect(await whatsappChoice(b, second.patientId)).toBe('opted_out');
   });
 });
 

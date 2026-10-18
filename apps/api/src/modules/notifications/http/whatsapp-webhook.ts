@@ -11,7 +11,7 @@ import {
 } from '../application/lookup.js';
 import type { WhatsAppEvent, WhatsAppSender } from '../application/ports.js';
 import { applyStatusEvent } from '../application/status-events.js';
-import { hashAddress } from '../domain/address.js';
+import { hashAddress, legacyAddressHash } from '../domain/address.js';
 import { classifyReply } from '../domain/keywords.js';
 import { normalizeInboundNumber } from '../domain/phone.js';
 
@@ -148,22 +148,32 @@ async function attribute(
   event: Extract<WhatsAppEvent, { kind: 'inbound' }>,
   from: string,
 ): Promise<Attribution> {
-  const hash = hashAddress('whatsapp', from);
+  // While the log still holds unsalted hashes (the rehash goes newest first and a batch at a time)
+  // an organization may hold the number under either; looking for both keeps a BAJA from being
+  // dropped because its organization has not been rehashed yet.
+  const hashes = [hashAddress('whatsapp', from), legacyAddressHash('whatsapp', from)];
+  const inAny = async (lookup: (hash: string) => Promise<string[]>): Promise<string[]> => {
+    const found = await Promise.all(hashes.map((hash) => lookup(hash)));
+    return [...new Set(found.flat())].slice(0, MAX_CANDIDATES);
+  };
   if (event.contextMessageId !== undefined) {
-    const quoted = await tenantsByReplyContext(deps.withTenant, event.contextMessageId, hash);
-    if (quoted.length === 1) return { tenantIds: quoted, quoted: event.contextMessageId };
+    const quotedId = event.contextMessageId;
+    const quoted = await inAny((hash) => tenantsByReplyContext(deps.withTenant, quotedId, hash));
+    if (quoted.length === 1) return { tenantIds: quoted, quoted: quotedId };
   }
   const since = new Date(deps.inbound.clock().getTime() - REPLY_WINDOW_DAYS * 86_400_000);
-  const recent = await tenantsByRecipientHash(deps.withTenant, hash, {
-    since,
-    limit: MAX_CANDIDATES,
-  });
+  const recent = await inAny((hash) =>
+    tenantsByRecipientHash(deps.withTenant, hash, { since, limit: MAX_CANDIDATES }),
+  );
   if (recent.length > 0 || classifyReply(event.text) !== 'opt_out') {
     return { tenantIds: recent, quoted: null };
   }
-  // Nobody wrote lately and the patient wants out: the last organization that wrote hears it.
+  // Nobody wrote lately and the patient wants out: every organization that ever wrote to the number
+  // hears it (up to the cap). An opt-out is the safe direction, so no time window narrows it.
   return {
-    tenantIds: await tenantsByRecipientHash(deps.withTenant, hash, { since: null, limit: 1 }),
+    tenantIds: await inAny((hash) =>
+      tenantsByRecipientHash(deps.withTenant, hash, { since: null, limit: MAX_CANDIDATES }),
+    ),
     quoted: null,
   };
 }

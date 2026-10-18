@@ -9,7 +9,7 @@ import { appointment } from '../../../db/schema/scheduling.js';
 import type { AuditActor } from '../../../platform/audit/writer.js';
 import { currentTenantId, type Tx } from '../../../platform/db/tenant-context.js';
 import { readOrganizationName } from '../../tenancy/index.js';
-import { hashAddress } from '../domain/address.js';
+import { hashAddress, legacyAddressHash } from '../domain/address.js';
 import { classifyReply } from '../domain/keywords.js';
 import { withinCancelDeadline } from '../domain/validity.js';
 
@@ -79,6 +79,8 @@ export async function processInbound(
 ): Promise<InboundResult> {
   const tenantId = await currentTenantId(tx);
   const fromHash = hashAddress('whatsapp', options.from);
+  // The log may still hold the unsalted hash of this number until the rehash has reached it.
+  const knownHashes = [fromHash, legacyAddressHash('whatsapp', options.from)];
   const [recorded] = await tx
     .insert(inboundMessage)
     .values({
@@ -105,7 +107,7 @@ export async function processInbound(
   const written = await tx
     .selectDistinct({ patientId: message.patientId })
     .from(message)
-    .where(and(eq(message.channel, 'whatsapp'), eq(message.addressHash, fromHash)));
+    .where(and(eq(message.channel, 'whatsapp'), inArray(message.addressHash, knownHashes)));
   const patientIds = written.map((row) => row.patientId);
   if (patientIds.length === 0) return finish('ignored');
 
@@ -162,7 +164,7 @@ export async function processInbound(
     .where(
       and(
         eq(message.channel, 'whatsapp'),
-        eq(message.addressHash, fromHash),
+        inArray(message.addressHash, knownHashes),
         ...(options.quotedMessageId === undefined
           ? []
           : [eq(message.providerMessageId, options.quotedMessageId)]),
