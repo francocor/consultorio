@@ -1,0 +1,6 @@
+﻿"Fecha","Paciente","Servicio","Visitas","Importe"<CRLF>
+"12/05/2031","Pérez, Juana ""la Gallega""","Consulta, control","1","1234,50"<CRLF>
+"13/05/2031","'=HYPERLINK(""http://x"")","Línea 1
+Línea 2","2","0,05"<CRLF>
+"14/05/2031","Núñez, Óscar","'+54 11","1","-90,00"<CRLF>
+"","Subtotal","","4","1144,55"<CRLF>

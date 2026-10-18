@@ -428,6 +428,34 @@
       "when": 1792283698330,
       "tag": "0397_booking_link_unconfirmed_cap",
       "breakpoints": true
+    },
+    {
+      "idx": 61,
+      "version": "7",
+      "when": 1792284522190,
+      "tag": "0410_pricing",
+      "breakpoints": true
+    },
+    {
+      "idx": 62,
+      "version": "7",
+      "when": 1792285783704,
+      "tag": "0412_charges",
+      "breakpoints": true
+    },
+    {
+      "idx": 63,
+      "version": "7",
+      "when": 1792287509687,
+      "tag": "0414_payments_cash",
+      "breakpoints": true
+    },
+    {
+      "idx": 64,
+      "version": "7",
+      "when": 1792291975404,
+      "tag": "0416_payer_cuit",
+      "breakpoints": true
     }
   ]
 }

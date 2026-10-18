@@ -96,7 +96,8 @@ beforeAll(async () => {
   TOKEN_KIND_REGISTRY.export_download.enabled = true;
   runtime = createRuntimeDb(inject('runtimeUrl'));
   h = await createDocumentsHarness(runtime, 'file-resources', {
-    wiring: [...MODULE_WIRINGS, probe],
+    // Billing registers the real resource of `export_download` (S4.05): the probe stands in for it.
+    wiring: [...MODULE_WIRINGS.filter((module) => module.name !== 'billing'), probe],
   });
   app = h.app;
 });
