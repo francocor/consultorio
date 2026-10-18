@@ -158,7 +158,9 @@ export function createLocalInvoiceIssuer(options: LocalInvoiceIssuerOptions): Lo
               eq(localAfipVoucher.type, request.type),
             ),
           );
-        const number = (last?.highest ?? 0) + 1;
+        // After what the simulator holds and after what the organization says it holds: a reset of
+        // the simulator starts its numbering again, and the vouchers of the organization stay.
+        const number = Math.max(last?.highest ?? 0, request.lastKnownNumber ?? 0) + 1;
         const [voucher] = await tx
           .insert(localAfipVoucher)
           .values({

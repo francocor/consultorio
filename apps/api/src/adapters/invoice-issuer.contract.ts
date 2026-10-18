@@ -105,6 +105,34 @@ export function describeInvoiceIssuerContract(target: InvoiceIssuerContractTarge
       expect(await numberOf(requestFor(cuit))).toBe(3);
     });
 
+    it('continues after the highest number the organization says it holds, when the simulator lost its memory', async () => {
+      const { issuer } = await target.make();
+      const cuit = nextCuit();
+
+      const first = expectIssued(
+        await issuer.issue(requestFor(cuit, { lastKnownNumber: 41 }), key()),
+      );
+      // A hint below what the issuer already holds changes nothing: it only moves numbering forward.
+      const second = expectIssued(
+        await issuer.issue(requestFor(cuit, { lastKnownNumber: 7 }), key()),
+      );
+      const third = expectIssued(await issuer.issue(requestFor(cuit), key()));
+
+      expect([first.number, second.number, third.number]).toEqual([42, 43, 44]);
+    });
+
+    it('answers the same voucher to a retry whose hint has moved, because the hint is not part of the request', async () => {
+      const { issuer } = await target.make();
+      const cuit = nextCuit();
+      const idempotencyKey = key();
+
+      const first = await issuer.issue(requestFor(cuit, { lastKnownNumber: 10 }), idempotencyKey);
+      const retry = await issuer.issue(requestFor(cuit, { lastKnownNumber: 25 }), idempotencyKey);
+
+      expect(expectIssued(first).number).toBe(11);
+      expect(retry).toEqual(first);
+    });
+
     it('rejects a buyer CUIT with a wrong check digit, with a message and no CAE', async () => {
       const { issuer } = await target.make();
       const cuit = nextCuit();

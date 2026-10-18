@@ -38,6 +38,14 @@ export interface InvoiceRequest {
   netCents?: number;
   vatCents?: number;
   exemptCents?: number;
+  /**
+   * The highest number the organization already holds for this point of sale and type (its own
+   * vouchers and the registered ones). A simulator that lost its memory (a restart, a reset)
+   * numbers after it, so a new voucher never collides with an earlier one. The real authority
+   * decides the number by itself and ignores it. It is not part of the request that an idempotency
+   * key stands for: a retry whose hint has moved gets the same voucher.
+   */
+  lastKnownNumber?: number;
   /** For a credit note: the voucher it cancels (the authority wants it associated). */
   associatedVoucher?: { type: string; pointOfSale: number; number: number };
 }

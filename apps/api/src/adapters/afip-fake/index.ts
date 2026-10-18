@@ -124,7 +124,9 @@ export function createFakeInvoiceIssuer(options: FakeInvoiceIssuerOptions = {}):
         issuerCuit: request.issuerCuit ?? '',
         pointOfSale: request.pointOfSale,
         type: request.type,
-        number: lastNumber(request) + 1,
+        // After what this process issued and after what the organization says it holds: a fake
+        // that restarted does not number a voucher that already exists.
+        number: Math.max(lastNumber(request), request.lastKnownNumber ?? 0) + 1,
       };
       const voucher: FakeVoucher = {
         ...identity,

@@ -115,6 +115,23 @@ describe('an invoice the authority authorizes', () => {
     expect(second.number).toBe((first.number ?? 0) + 1);
   });
 
+  it('continues after the vouchers the organization holds when the issuer lost its memory (a restart of the demo fake)', async () => {
+    const before = await world.issueInvoiceOf(await world.charge());
+    const held = await world.inTenant((tx) =>
+      tx.execute<{ highest: number }>(
+        sql`SELECT max(number)::int AS highest FROM invoice WHERE type = 'FC' AND point_of_sale = 1`,
+      ),
+    );
+
+    // The in-memory fake forgets its numbering, as it does when the process restarts.
+    world.issuer.reset();
+    const after = await world.issueInvoiceOf(await world.charge());
+
+    expect(held.rows[0]?.highest).toBe(before.number);
+    expect(after.status).toBe('issued');
+    expect(after.number).toBe((before.number ?? 0) + 1);
+  });
+
   it('is asked once however many times the job is delivered, even at the same moment', async () => {
     const { created } = await requested();
     const job = world.issueJob();
