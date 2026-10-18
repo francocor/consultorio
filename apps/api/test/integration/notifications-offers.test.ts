@@ -138,6 +138,45 @@ const deliver = (input: WaitlistOfferInput) =>
 const offerMessages = (patientId: string) =>
   scheduling.inTenant((tx) => tx.select().from(message).where(eq(message.patientId, patientId)));
 
+describe('an offer whose message runs after quiet hours began (CI hint of JD-S3 round 1)', () => {
+  // Buenos Aires is UTC-3: 20:50 local is 23:50Z, and 21:30 local is 00:30Z of the next day.
+  const AT_2050 = new Date('2031-05-06T23:50:00.000Z');
+  const AT_2130 = new Date('2031-05-07T00:30:00.000Z');
+  const AT_0800 = new Date('2031-05-07T11:00:00.000Z');
+
+  async function queuedAt2050(expiresAt: Date) {
+    notes.setNow(AT_2050);
+    const patientId = await notes.patient({ email: `noche${String(++mobiles)}@example.test` });
+    const result = await deliver(offerFor(patientId, { expiresAt }));
+    notes.setNow(AT_2130);
+    return { patientId, messageId: result.messageId ?? '' };
+  }
+
+  it('waits for the morning when the offer is still open then, instead of waking the patient', async () => {
+    const { messageId } = await queuedAt2050(new Date('2031-05-07T14:00:00.000Z'));
+
+    await notes.runAllJobs();
+
+    expect(notes.email.sent).toHaveLength(0);
+    expect((await notes.message(messageId)).sendAt).toEqual(AT_0800);
+    notes.setNow(AT_0800);
+    await notes.runAllJobs();
+    expect(notes.email.sent).toHaveLength(1);
+  });
+
+  it('ends the message when the offer runs out before the morning: it is not sent late', async () => {
+    const { messageId } = await queuedAt2050(new Date('2031-05-07T00:20:00.000Z'));
+
+    await notes.runAllJobs();
+
+    expect(notes.email.sent).toHaveLength(0);
+    expect(await notes.message(messageId)).toMatchObject({
+      status: 'cancelled',
+      cancelReason: 'offer_expired',
+    });
+  });
+});
+
 describe('deliverWaitlistOffer: the channel', () => {
   it('sends the offer by email to a patient with an email, and logs the message', async () => {
     const patientId = await notes.patient({ email: 'espera@example.test' });
