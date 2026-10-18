@@ -1,0 +1,4 @@
+{
+  "billing_price_duplicate": "Ya hay un precio activo para este tipo de turno, con el mismo alcance y desde esa fecha.",
+  "billing_payer_exists": "Esta obra social o prepaga ya está en la lista de la organización."
+}

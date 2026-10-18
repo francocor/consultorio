@@ -12,6 +12,7 @@ import type { WithTenant } from '../../platform/db/tenant-context.js';
 import type { ExportRegistry } from '../tenancy/index.js';
 
 import { exportBilling } from './application/export-contributor.js';
+import { pricingRoutes } from './http/pricing-routes.js';
 
 /** Registers what billing takes with an organization that leaves (the cancellation export). */
 export function registerBillingExportContributors(registry: ExportRegistry): void {
@@ -32,5 +33,13 @@ export interface Billing {
 }
 
 export function createBilling(options: BillingOptions): Billing {
-  return { options, routes: () => undefined };
+  const clock = options.clock ?? (() => new Date());
+  const pricing = pricingRoutes({ withTenant: options.withTenant, clock });
+
+  return {
+    options,
+    routes: (app) => {
+      pricing(app);
+    },
+  };
 }

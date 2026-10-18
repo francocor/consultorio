@@ -2,12 +2,14 @@ import type { BILLING_AUDIT_ACTIONS } from '@consultorio/contracts';
 
 import type { AuditScenario } from '../audit-scenarios.js';
 
+const t = (file: string): AuditScenario => ({ test: `apps/api/test/integration/${file}` });
+
 /**
  * Where the audit actions of billing are proven. Track A (billing) replaces each `pending` with the
  * integration test that names the action, in this file only.
  */
 export const BILLING_SCENARIOS: Record<(typeof BILLING_AUDIT_ACTIONS)[number], AuditScenario> = {
-  'billing.price.changed': { pending: 'S4.01 (task 4.9): price list and payer management' },
+  'billing.price.changed': t('billing-pricing-api.test.ts'),
   'billing.price.override': {
     pending: 'S4.02 (task 4.12): a charge captured with an explicit amount',
   },
