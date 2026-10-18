@@ -141,7 +141,7 @@ export function MoneyBreakdownWidget({
         {report?.byProfessional === null ? (
           <p className="text-sm text-muted-foreground">{t('money.breakdown.professionalDenied')}</p>
         ) : null}
-        <Tabs defaultValue="location">
+        <Tabs defaultValue="location" className="min-w-0">
           <TabsList aria-label={t('money.breakdown.title')}>
             {groups.map((group) => (
               <TabsTrigger key={group.id} value={group.id}>
