@@ -2113,3 +2113,51 @@ Branch `fix/stage-3-hardening`, created from `feat/stage-4-revenue` at `41bd201`
 Known limit, not changed: when the planning fails the handler rethrows, and `runJob` rolls back the whole transaction (the `job_execution` marker included) when a handler throws. The cleanups still run and are reported, but their work is undone with the rest and repeated by the retry. Making them persist would need the cleanups in a transaction of their own (a separate job, or a `runJob` that commits and then fails), which is a design change.
 
 Same class of leak, not touched (outside `sweep.ts`): `defaultReport` in `modules/notifications/application/opt-out.ts` still logs `error.message`.
+
+## Stage 4 integration 2b (track B + Stage 3 hardening)
+
+Merge of `feat/stage-4-track-4b` (tip `440349e`, wave 2: financial and cash reports, S4.14 and task 4.33) into `feat/stage-4-revenue` (tip `4f80ddf`, which has track C restamped and the Stage 3 hardening migrations `0498` and `0499`). Merge commit `7b888c5`.
+
+### Conflicts
+
+- `docs/migration-ranges.md`: both sides rewrote the Stage 4 paragraph. Kept the Stage 4 branch text (the `0498` / `0499` note) and added the track B wording (`0430` and `0431`, indexes only).
+- `apps/api/src/db/migrations/meta/_journal.json`: the last entries conflicted (`0498` / `0499` against `0431`). Resolved by keeping the Stage 4 branch entries, adding `0431` once and renumbering `idx`; then `db:restamp` (stamps raised for `0440` to `0446`, snapshots `0431` and `0440` re-chained) and `db:check` (no drift).
+- `docs/stage4-tracks.md`, this file and the track B apply-progress: merged without conflict.
+
+### Journal order (the first resolution was wrong)
+
+- The first resolution put `0431` right after `0430`. The e2e stack then failed to migrate: `0431` creates `invoice_report_idx` on `invoice`, and `0444_invoices` creates that table later in the journal.
+- `0431` is now the last journal entry, after `0499` (the order in the track B journal too). No applied entry moved, and a database that already applied `0499` picks `0431` up because its `when` is the highest. Order of the tail: `0446`, `0498`, `0499`, `0431` (`idx` 71 to 74).
+- Checked by script: 75 entries, `idx` 0 to 74 unique and contiguous, `when` strictly rising, every SQL file present, the `prevId` chain of the snapshots unbroken. `0431_snapshot.json` is `0499` with new ids (the report indexes are custom SQL, not in the Drizzle schema). `docs/migration-ranges.md` says why `0431` is last.
+
+### Fixes (three separate commits)
+
+| Commit                                                                  | Why                                                                                                                                                                                                                                                                                                                                                                                                         | Test first                                                                                                                                                                                         |
+| ----------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `fix(db): run the report money indexes after the invoices table exists` | Journal order above.                                                                                                                                                                                                                                                                                                                                                                                        | The e2e stack failed to start (the `invoice` table did not exist yet); it starts now.                                                                                                              |
+| `fix(e2e): give the stack worker the MinIO bucket ...`                  | `scripts/stack/start-stack.ts` gave the API its storage directly but `loadConfig` no `S3_*`, and the billing and invoicing worker wirings read `config.storage`, so `export.build` and `invoice.pdf` were never registered in e2e. The stack now passes `S3_BUCKET`, `S3_REGION`, `S3_ENDPOINT`, `S3_FORCE_PATH_STYLE`, `S3_ACCESS_KEY_ID` and `S3_SECRET_ACCESS_KEY` of its MinIO to `loadConfig`.         | `stage4-cash.spec.ts` step 5 requests a charges export through the API and waits for `ready`. Without the change it stayed `queued` (expected `ready`, received `queued`); with it, `ready`.      |
+| `fix(web): let the money breakdown tabs shrink ...`                     | With charges in the data, the "by location / professional / payer / type" table widened the whole page at 360 px (the `Tabs` root is a classless grid item with `min-width: auto`; `scrollWidth` 892 against 360), so the browser zoomed out and the filter button was unreachable. `className="min-w-0"` on that `Tabs`: the table scrolls inside its card.                                              | The money-report e2e tests failed (4 tests, "Aplicar filtros" never clickable) when run after the cash spec had created charges; green after the change with the data present.                   |
+
+`stage4-reports.spec.ts` export test: it stays valid with or without charges (the demonstration data has none of its own): with charges in the period it waits for "Archivo listo: N filas.", without them it expects "No hay nada para exportar". `stage4-invoicing.spec.ts` still passes.
+
+### Verification (tip after the last fix, Node v24.22.0, pnpm 10.34.7, Docker not shared)
+
+- `pnpm install --frozen-lockfile`, `pnpm typecheck`, `pnpm lint`, `pnpm format:check`: clean.
+- `pnpm test` (unit): 381 files, 4833 tests passed, 0 failed, no flake.
+- `pnpm test:integration` (full): first run 225 files passed, 1 failed, 1 skipped; 3477 tests passed, 2 failed, 4 skipped. Both failures are in `backup-restore.test.ts` ("socket hang up" against MinIO under load, and the test after it); the file passed alone (4 of 4). Recorded as a load flake: 0 failed on the final read.
+- `pnpm build`: green. `pnpm db:check`: no drift.
+- Full e2e (`E2E_WEB_PORT=4880 E2E_API_PORT=3880 E2E_MINIO_PORT=9880`, `--workers=2`): 203 passed, 0 failed, 0 flaky, 0 skipped.
+- `apps/api/scripts/bench-reports.ts` with defaults (50,000 appointments, 35,000 charges, 29,143 payments, 14,500 vouchers). Every target (p95 under 1000 ms) is met:
+
+| Query                                                                       | p95 (ms)            |
+| --------------------------------------------------------------------------- | ------------------- |
+| Operational: month whole org / year whole org / month reception / professional | 135 / 352 / 59 / 53 |
+| Operational drill-down of 50: a month / no-shows of a year                  | 15 / 20             |
+| Financial: month whole org / year whole org / month reception / professional | 98 / 604 / 52 / 28  |
+| Financial drill-down of 50: charges of a month / payments of a year / vouchers of a year | 122 / 368 / 121 |
+| Cash: month whole org / year whole org / month reception                    | 8 / 41 / 6          |
+
+The slowest target query is the financial report of a year (604 ms). The "of which" lines of the cash report are reference rows with no target (the vouchers of a year alone take 2032 ms at p95 as a stand-alone reference).
+
+- Docker: `infra/Dockerfile` built; fresh `postgres:17` with `infra/postgres/init/01-roles.sql`; `db:migrate` run twice (both: migrations applied, platform catalogs loaded; 75 migrations recorded; `charge_report_idx`, `payment_report_idx`, `payment_reversal_report_idx` and `invoice_report_idx` exist); the image started as `api` with `NODE_ENV=production`, multi-tenant, KMS `aws`, `S3_BUCKET`, `CLAMAV_HOST`, SMTP starttls and `ADDRESS_HASH_PEPPER` (32 or more characters) against that database: `GET /health` answered `{"status":"ok"}`. Containers `int2b-api` and `int2b-pg`, the network `int2b-net` and the image `int2b-api:smoke` were removed by name.
+- Incident: none. Logs are in `$TEMP/int2b-*.log`.
