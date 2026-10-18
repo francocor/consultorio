@@ -10,7 +10,7 @@ import {
 import { createSchedulingPorts } from '../../modules/scheduling/index.js';
 import {
   WAITLIST_EXPIRE_JOB,
-  closeEntriesOfOptedOutPatient,
+  closeEntriesOfUnreachablePatient,
   createWaitlist,
   createWaitlistJobs,
 } from '../../modules/waitlist/index.js';
@@ -69,7 +69,7 @@ export const waitlistWiring: ModuleWiring = {
   create: (context) => {
     // A patient who opts out of a channel leaves the waitlist: messaging tells it, in the same transaction.
     bindOptOutListener((tx, event) =>
-      closeEntriesOfOptedOutPatient(tx, {
+      closeEntriesOfUnreachablePatient(tx, {
         patientId: event.patientId,
         now: event.now,
         jobs: context.jobs,

@@ -22,9 +22,31 @@ type OptOutInput = Parameters<typeof recordOptOut>[1];
  */
 type OptOutListener = (tx: Tx, event: { patientId: string; now: Date }) => Promise<void>;
 let optOutListener: OptOutListener | undefined;
+let reportListenerFailure: (error: unknown) => void = defaultReport;
 
-export function bindOptOutListener(listener: OptOutListener | undefined): void {
+/** One structured line on stderr, where the log shipper and the alerts read it. Ids only. */
+function defaultReport(error: unknown): void {
+  process.stderr.write(
+    `${JSON.stringify({
+      level: 'error',
+      msg: 'opt_out_listener_failed',
+      error: error instanceof Error ? error.message : 'unknown error',
+    })}
+`,
+  );
+}
+
+/**
+ * Binds who is told of an opt-out. The listener runs in a savepoint of the opt-out's transaction:
+ * if it fails, only its own work is undone, the failure is reported (`onFailure`, by default an
+ * error line on stderr) and the patient's opt-out stands (judgment day round 2, finding A7).
+ */
+export function bindOptOutListener(
+  listener: OptOutListener | undefined,
+  options: { onFailure?: (error: unknown) => void } = {},
+): void {
   optOutListener = listener;
+  reportListenerFailure = options.onFailure ?? defaultReport;
 }
 
 export interface OptOutResult {
@@ -61,11 +83,14 @@ export async function optOutChannel(tx: Tx, input: OptOutInput): Promise<OptOutR
       ),
     );
   const recorded = await recordOptOut(tx, input);
-  if (recorded.recorded) {
-    await optOutListener?.(tx, {
-      patientId: input.patientId,
-      now: boundDelivery()?.clock() ?? new Date(),
-    });
+  if (recorded.recorded && optOutListener) {
+    const listener = optOutListener;
+    const now = boundDelivery()?.clock() ?? new Date();
+    try {
+      await tx.transaction((inner) => listener(inner, { patientId: input.patientId, now }));
+    } catch (error) {
+      reportListenerFailure(error);
+    }
   }
   const deps = boundDelivery();
   if (!recorded.recorded || deps === undefined || queued.length === 0) {
