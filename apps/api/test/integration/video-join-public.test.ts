@@ -8,7 +8,7 @@ import { videoSession } from '../../src/db/schema/teleconsultation.js';
 import { tenant } from '../../src/db/schema/tenant.js';
 import { createRuntimeDb, type DbHandle } from '../../src/platform/db/pool.js';
 import { createActionTokens } from '../../src/platform/tokens/index.js';
-import { hostOf } from '../support/app.js';
+import { browserHeaders, hostOf } from '../support/app.js';
 import { asTenant, createTestTenant } from '../support/tenants.js';
 import { createSpyProvider, createVideoWorld, type VideoWorld } from '../support/video-world.js';
 
@@ -410,5 +410,31 @@ describe('every link that does not work looks the same', () => {
     } finally {
       await setStatus('active');
     }
+  });
+});
+
+describe('the form parser belongs to the public join address only (JD-S3 R4-T3)', () => {
+  it('keeps answering 415 to a form posted to a staff video route', async () => {
+    const { appointment } = await readyAppointment();
+
+    const response = await world.app.inject({
+      method: 'POST',
+      url: `/appointments/${appointment.id}/video/join`,
+      remoteAddress: '10.99.0.1',
+      headers: {
+        ...browserHeaders(world.slug, world.doctor.cookie),
+        'content-type': 'application/x-www-form-urlencoded',
+      },
+      payload: '',
+    });
+
+    expect(response.statusCode, response.body).toBe(415);
+  });
+
+  it('still takes the form the join button posts', async () => {
+    const { token, startsAt } = await readyAppointment();
+    at(startsAt, 1);
+
+    expect((await enter(token)).statusCode).toBe(302);
   });
 });

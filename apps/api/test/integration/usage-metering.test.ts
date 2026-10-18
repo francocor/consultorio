@@ -606,4 +606,35 @@ describe('a place of the quota is given back when the message never goes (JD-S3 
     expect(await notes.message(r.id)).toMatchObject({ status: 'failed' });
     await expectPlaceFree();
   });
+
+  it('counts a message the provider accepted even after its place was released (JD-S3 R4-W3)', async () => {
+    const r = await reserved();
+    // The patient opts out while the send is in flight: the message is cancelled, the place released.
+    await scheduling.inTenant((tx) =>
+      recordOptOut(tx, {
+        patientId: r.patientId,
+        channel: 'whatsapp',
+        source: 'email_link',
+        actor: patientActor,
+      }),
+    );
+    expect(await held()).toBe(0);
+
+    // The provider had already accepted it: that is billable whatever the local status says.
+    const outcome = await scheduling.inTenant((tx) =>
+      recordWhatsappUsage(
+        { quota: notes.deps.quota ?? UNLIMITED_QUOTA, channels: notes.deps.channels },
+        tx,
+        {
+          messageId: r.id,
+          professionalId: scheduling.doctor.professionalId,
+          now: notes.now(),
+          tenant: { id: scheduling.tenant.id, isDemo: false },
+        },
+      ),
+    );
+
+    expect(outcome).toEqual({ counted: true });
+    expect(await held()).toBe(1);
+  });
 });

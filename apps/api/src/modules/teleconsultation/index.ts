@@ -110,7 +110,12 @@ export function createTeleconsultation(options: TeleconsultationOptions): Teleco
     },
     routes: (app) => {
       staff(app);
-      publicJoin(app);
+      // A scope of its own: the form parser of the join button must not reach the staff routes,
+      // which keep refusing a form with a 415 (judgment day round 4, finding T3).
+      void app.register((scope, _options, done) => {
+        publicJoin(scope);
+        done();
+      });
     },
   };
 }

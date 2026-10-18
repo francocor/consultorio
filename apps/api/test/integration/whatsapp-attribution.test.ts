@@ -403,6 +403,69 @@ describe('a BAJA in the weeks of the address-hash migration (JD-S3 R2-C4, A6)', 
   });
 });
 
+describe('a log that holds both kinds of hash (JD-S3 R4-T1, R4-T2)', () => {
+  const legacyHashes = (clinicOf: Clinic, patientId: string, phone: { e164: string }) =>
+    clinicOf.scheduling.inTenant((tx) =>
+      tx.execute(
+        sql`UPDATE message SET address_hash = ${legacyAddressHash('whatsapp', normalizeInboundNumber(phone.e164) ?? '')}
+             WHERE patient_id = ${patientId}`,
+      ),
+    );
+  const replyItems = async (clinicOf: Clinic) => {
+    const response = await clinicOf.scheduling.api.get(
+      '/worklist?kind=reply_to_review',
+      clinicOf.scheduling.owner,
+    );
+    return response.json<{ items: { detail: Record<string, unknown> | null }[] }>().items;
+  };
+
+  it('puts the organization that wrote last first even when its messages still hold the old hash (R4-T1)', async () => {
+    const phone = nextPhone();
+    const first = await reminded(a, phone);
+    const second = await reminded(b, phone);
+    // a (keyed hash) wrote an hour before b (still the unsalted hash): b wrote last.
+    await a.scheduling.inTenant((tx) =>
+      tx.execute(
+        sql`UPDATE message SET sent_at = '2031-05-06T11:00:00Z' WHERE patient_id = ${first.patientId}`,
+      ),
+    );
+    await legacyHashes(b, second.patientId, phone);
+    const text = 'estoy mareada desde esta manana';
+
+    await reply(phone.e164, text);
+
+    const forB = (await replyItems(b)).filter((item) => item.detail?.['text'] === text);
+    expect(forB).toHaveLength(1);
+    const forA = await replyItems(a);
+    expect(forA.some((item) => JSON.stringify(item.detail).includes('mareada'))).toBe(false);
+  });
+
+  it('does not confirm or cancel on a row that still holds the old hash: it goes to reception (R4-T2)', async () => {
+    for (const answer of ['1', '2']) {
+      const phone = nextPhone();
+      const only = await reminded(a, phone);
+      await legacyHashes(a, only.patientId, phone);
+      const before = await reviewCount(a);
+
+      const response = await reply(phone.e164, answer);
+
+      expect(response.statusCode).toBe(200);
+      expect(await statusOf(a, only.appointment.id), answer).toBe('scheduled');
+      expect(await reviewCount(a), answer).toBe(before + 1);
+    }
+  });
+
+  it('still opts the patient out through the old hash (R4-T2)', async () => {
+    const phone = nextPhone();
+    const only = await reminded(a, phone);
+    await legacyHashes(a, only.patientId, phone);
+
+    await reply(phone.e164, 'BAJA');
+
+    expect(await whatsappChoice(a, only.patientId)).toBe('opted_out');
+  });
+});
+
 describe('the deadline for cancelling by reply', () => {
   it('does not cancel by a reply after the deadline of the organization: it answers and opens an item for reception', async () => {
     const phone = nextPhone();

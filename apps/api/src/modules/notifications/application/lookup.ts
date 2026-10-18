@@ -43,20 +43,26 @@ export function tenantsByReplyContext(
 }
 
 /**
- * The organizations that wrote to a number (by its hash) over WhatsApp since `since` (null: ever),
- * the latest writer first, at most `limit`.
+ * The organizations that wrote to a number held under any of several hashes (the keyed one and the
+ * unsalted one the log used before the pepper), over WhatsApp since `since` (null: ever), the one
+ * that wrote last under ANY of them first, at most `limit`. The order is decided in the database,
+ * before the limit: merging one answer per hash would lose it.
  */
-export function tenantsByRecipientHash(
+export function tenantsByRecipientHashes(
   withTenant: WithTenant,
-  recipientHash: string,
+  recipientHashes: readonly string[],
   options: { since: Date | null; limit: number },
 ): Promise<string[]> {
   const since =
     options.since === null
       ? sql`'-infinity'::timestamptz`
       : sql`${options.since.toISOString()}::timestamptz`;
+  const hashes = sql.join(
+    recipientHashes.map((hash) => sql`${hash}::text`),
+    sql`, `,
+  );
   return tenantIds(
     withTenant,
-    sql`select tenant_id from app.whatsapp_reply_tenants(${recipientHash}::text, ${since}, ${options.limit}::integer)`,
+    sql`select tenant_id from app.whatsapp_reply_tenants_any(array[${hashes}]::text[], ${since}, ${options.limit}::integer)`,
   );
 }

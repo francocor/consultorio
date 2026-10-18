@@ -439,49 +439,56 @@
     {
       "idx": 62,
       "version": "7",
-      "when": 1792316879023,
-      "tag": "0410_pricing",
+      "when": 1792336452021,
+      "tag": "0399_reply_tenants_any_hash",
       "breakpoints": true
     },
     {
       "idx": 63,
       "version": "7",
-      "when": 1792316879024,
-      "tag": "0412_charges",
+      "when": 1792336452022,
+      "tag": "0410_pricing",
       "breakpoints": true
     },
     {
       "idx": 64,
       "version": "7",
-      "when": 1792316879025,
-      "tag": "0414_payments_cash",
+      "when": 1792336452023,
+      "tag": "0412_charges",
       "breakpoints": true
     },
     {
       "idx": 65,
       "version": "7",
-      "when": 1792316879026,
-      "tag": "0416_payer_cuit",
+      "when": 1792336452024,
+      "tag": "0414_payments_cash",
       "breakpoints": true
     },
     {
       "idx": 66,
       "version": "7",
-      "when": 1792316879027,
-      "tag": "0430_report_indexes",
+      "when": 1792336452025,
+      "tag": "0416_payer_cuit",
       "breakpoints": true
     },
     {
       "idx": 67,
       "version": "7",
-      "when": 1792316879028,
-      "tag": "0440_fiscal_config",
+      "when": 1792336452026,
+      "tag": "0430_report_indexes",
       "breakpoints": true
     },
     {
       "idx": 68,
       "version": "7",
-      "when": 1792316879029,
+      "when": 1792336452027,
+      "tag": "0440_fiscal_config",
+      "breakpoints": true
+    },
+    {
+      "idx": 69,
+      "version": "7",
+      "when": 1792336452028,
       "tag": "0442_local_afip",
       "breakpoints": true
     }

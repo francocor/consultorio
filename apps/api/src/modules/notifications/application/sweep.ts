@@ -20,6 +20,18 @@ import { releaseWhatsappUsage } from './usage.js';
 
 export const REMINDER_SWEEP_JOB = 'reminder.sweep';
 
+/** One structured line on stderr, where the log shipper and the alerts read it. Ids only. */
+function defaultReport(error: unknown): void {
+  process.stderr.write(
+    `${JSON.stringify({
+      level: 'error',
+      msg: 'reminder_sweep_housekeeping_failed',
+      error: error instanceof Error ? error.message : 'unknown error',
+    })}
+`,
+  );
+}
+
 /** How far ahead the sweep looks: longer than the longest lead time an organization can set. */
 const HORIZON_DAYS = 45;
 
@@ -58,8 +70,12 @@ const LIVE_MESSAGE = ['queued', 'sent', 'delivered', 'read'] as const;
  * It never plans an appointment that already has messages (even cancelled ones: a patient who
  * opted out is not brought back) and never sends a confirmation: that answers a booking.
  */
-export function createReminderSweepJob(deps: MessagingDeps, options: { pageSize?: number } = {}) {
+export function createReminderSweepJob(
+  deps: MessagingDeps,
+  options: { pageSize?: number; onFailure?: (error: unknown) => void } = {},
+) {
   const pageSize = options.pageSize ?? PAGE_SIZE;
+  const reportFailure = options.onFailure ?? defaultReport;
   const planner = createReminderPlanner({
     jobs: deps.jobs,
     clock: deps.clock,
@@ -243,9 +259,21 @@ export function createReminderSweepJob(deps: MessagingDeps, options: { pageSize?
       await rehashLegacyAddresses(tx);
       await closeStale(tx, deps.clock());
       await clearExpiredOfferLinks(tx, deps.clock());
-      await sealLegacyOfferUrls(tx);
-      for (const run of deps.housekeeping ?? []) await run(tx, deps.clock());
+      // The reminders come first and the cleanups after, each in a savepoint of its own: a sealer
+      // that fails undoes only its own work and is reported, and never stops the reminders
+      // (judgment day round 4, finding W1).
       await sweepAppointments(tx, tenantId, deps.clock());
+      const cleanups = [
+        (inner: Tx) => sealLegacyOfferUrls(inner),
+        ...(deps.housekeeping ?? []).map((run) => (inner: Tx) => run(inner, deps.clock())),
+      ];
+      for (const cleanup of cleanups) {
+        try {
+          await tx.transaction((inner) => cleanup(inner));
+        } catch (error) {
+          reportFailure(error);
+        }
+      }
     },
   });
 }
