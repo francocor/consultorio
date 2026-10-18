@@ -26,18 +26,30 @@ describe('action token kinds (design 4.5)', () => {
     );
   });
 
-  it('enables the account flows and the document download for now', () => {
+  it('enables the account flows and the document download, and only the kinds a capability has turned on', () => {
     const enabled = TOKEN_KINDS.filter((kind) => isEnabledKind(kind)).sort();
+    const fromStageOne = [
+      'document_download',
+      'password_reset',
+      'portal_activation',
+      'signup_verification',
+      'staff_invitation',
+    ];
+    // Each Stage 3 track turns on its own kinds and nothing else.
+    const fromStageThree = [
+      'appointment_cancel',
+      'appointment_confirm',
+      'appointment_reschedule',
+      'notification_opt_out',
+      'video_join',
+      'waitlist_offer',
+      'whatsapp_opt_in',
+    ];
 
-    expect(enabled).toEqual(
-      [
-        'document_download',
-        'password_reset',
-        'portal_activation',
-        'signup_verification',
-        'staff_invitation',
-      ].sort(),
-    );
+    expect(enabled).toEqual(expect.arrayContaining(fromStageOne));
+    expect(
+      enabled.filter((kind) => !fromStageOne.includes(kind) && !fromStageThree.includes(kind)),
+    ).toEqual([]);
   });
 
   it('gives a password reset 30 minutes and a single use', () => {
@@ -53,6 +65,18 @@ describe('action token kinds (design 4.5)', () => {
       expect(TOKEN_KIND_REGISTRY[kind].maxUses).toBe(1);
       expect(TOKEN_KIND_REGISTRY[kind].ttlMs).toBeLessThanOrEqual(7 * 24 * HOUR);
     }
+  });
+
+  it('lets a video join link live as long as the longest reminder lead time needs', () => {
+    // Reminders go out up to 14 days ahead (the contracts cap), and the link stays known 12 hours
+    // after the join window, which closes an hour after the end of the appointment.
+    const longestLead = 14 * 24 * HOUR;
+    const afterTheStart = 12 * HOUR + 8 * HOUR + HOUR;
+
+    expect(TOKEN_KIND_REGISTRY.video_join.ttlMs).toBe(15 * 24 * HOUR);
+    expect(TOKEN_KIND_REGISTRY.video_join.ttlMs).toBeGreaterThanOrEqual(
+      longestLead + afterTheStart,
+    );
   });
 
   it('binds a document download to a session, for five minutes, once', () => {

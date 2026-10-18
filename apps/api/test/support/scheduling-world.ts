@@ -7,6 +7,7 @@ import { expect } from 'vitest';
 
 import { createLocalKeyManagement } from '../../src/adapters/local-kek/index.js';
 import { appointment } from '../../src/db/schema/scheduling.js';
+import type { ApplicationOptions } from '../../src/main/application.js';
 import { createTenantKeys, type TenantKeys } from '../../src/platform/crypto/tenant-keys.js';
 import type { DbHandle } from '../../src/platform/db/pool.js';
 import type { Tx } from '../../src/platform/db/tenant-context.js';
@@ -93,16 +94,28 @@ export interface SchedulingHttpWorld {
 
 export async function createSchedulingHttpWorld(
   runtime: DbHandle,
-  options: { slug: string; now?: Date },
+  options: {
+    slug: string;
+    now?: Date;
+    /** Shared by several organizations of one test that one application serves (default: its own). */
+    keys?: TenantKeys;
+    app?: Partial<ApplicationOptions>;
+  },
 ): Promise<SchedulingHttpWorld> {
   let current = options.now ?? new Date('2031-05-05T12:00:00.000Z');
   const tenant = await createTestTenant(runtime, { slug: options.slug });
   // Only scheduling runs on the moving clock: sessions keep the real one, so they do not expire.
-  const keys = createTenantKeys({
-    kms: createLocalKeyManagement(randomBytes(32).toString('base64')),
-  });
+  const keys =
+    options.keys ??
+    createTenantKeys({
+      kms: createLocalKeyManagement(randomBytes(32).toString('base64')),
+    });
   await asTenant(runtime, tenant.id, (tx) => keys.ensureTenantKey(tx));
-  const app = buildTestApplication(runtime, { schedulingClock: () => current, keys });
+  const app = buildTestApplication(runtime, {
+    schedulingClock: () => current,
+    keys,
+    ...options.app,
+  });
   const api = clientFor(app, options.slug);
 
   const signIn = async (user: TestUser): Promise<Member> => ({

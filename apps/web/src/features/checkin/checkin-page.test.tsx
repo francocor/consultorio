@@ -65,7 +65,7 @@ function open(routes: Record<string, FetchHandler | Response> = {}, me = RECEPTI
 }
 
 function withoutNames(item: CalendarEntryDto) {
-  const names = new Set(['patientName', 'typeName', 'typeColor']);
+  const names = new Set(['patientName', 'typeName', 'typeColor', 'mode']);
   return Object.fromEntries(Object.entries(item).filter(([key]) => !names.has(key)));
 }
 

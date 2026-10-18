@@ -155,3 +155,21 @@ export const OperatorHolidayListResponse = z.strictObject({
   holidays: z.array(OperatorHolidayDto),
 });
 export type OperatorHolidayListResponse = z.infer<typeof OperatorHolidayListResponse>;
+
+/**
+ * The provider console of development and demo deployments (`LOCAL_PROVIDERS_CONSOLE`). It lists
+ * each external provider, which adapter serves customers (a local simulator, the real provider or
+ * nothing) and the mode the simulator is in (such as an outage), if it has one.
+ */
+export const DEV_PROVIDER_ADAPTERS = ['local', 'real', 'off'] as const;
+
+export const DevProviderDto = z.strictObject({
+  id: z.string().regex(/^[a-z][a-z0-9-]*$/),
+  label: z.string().min(1).max(60),
+  adapter: z.enum(DEV_PROVIDER_ADAPTERS),
+  mode: z.string().max(40).nullable(),
+});
+export type DevProviderDto = z.infer<typeof DevProviderDto>;
+
+export const DevProvidersResponse = z.strictObject({ providers: z.array(DevProviderDto) });
+export type DevProvidersResponse = z.infer<typeof DevProvidersResponse>;

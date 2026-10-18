@@ -94,3 +94,47 @@ describe('audit metadata schema', () => {
     expect(AuditMetadata.safeParse(many).success).toBe(false);
   });
 });
+
+describe('Stage 3 audit actions', () => {
+  const stage3 = [
+    'notification.optout.recorded',
+    'notification.optin.recorded',
+    'notification.resend',
+    'notification.integration.changed',
+    'booking.link.enabled',
+    'booking.link.disabled',
+    'booking.link.regenerated',
+    'booking.online.created',
+    'booking.suspicious',
+    'waitlist.entry.created',
+    'waitlist.entry.updated',
+    'waitlist.entry.closed',
+    'waitlist.offer.created',
+    'waitlist.offer.accepted',
+    'waitlist.offer.declined',
+    'waitlist.offer.expired',
+    'waitlist.priority.overridden',
+    'video.link.created',
+    'video.link.opened',
+    'video.link.revoked',
+    'video.link.joined',
+    'video.link.manual_attached',
+  ];
+
+  it('are all catalogued, once each', () => {
+    for (const action of stage3) {
+      expect(isAuditAction(action), action).toBe(true);
+      expect(
+        AUDIT_ACTIONS.filter((known) => known === action),
+        action,
+      ).toHaveLength(1);
+    }
+  });
+
+  it('still reject the clinical and secret keys a message or a link could tempt someone to log', () => {
+    for (const key of ['body', 'text', 'token', 'otp', 'content']) {
+      expect(AuditMetadata.safeParse({ channel: 'whatsapp', [key]: 'x' }).success, key).toBe(false);
+    }
+    expect(AuditMetadata.safeParse({ channel: 'whatsapp', status: 'sent' }).success).toBe(true);
+  });
+});

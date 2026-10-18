@@ -29,6 +29,7 @@ import { dataProcessingConsent } from '../../schema/privacy.js';
 import { professional, professionalHours } from '../../schema/staff.js';
 import { location, tenant } from '../../schema/tenant.js';
 
+import { runContributors } from './contributors.js';
 import { DEMO_ACCOUNTS, DEMO_PASSWORD } from './credentials.js';
 import { buildDemoDataset, type DemoPatient, type DemoStaff } from './dataset.js';
 import { buildDemoSchedule, type DemoAppointment } from './schedule.js';
@@ -421,7 +422,7 @@ export async function seedDemoTenant(
 
   // 7. The Stage 2 story of the day: consultations opened from appointments, signed and amended, and
   // the documents that came with them, all scanned.
-  await seedStage2({
+  const stageContext = {
     tenantId,
     now,
     withTenant: deps.withTenant,
@@ -432,7 +433,10 @@ export async function seedDemoTenant(
     people,
     professionalIds,
     appointments,
-  });
+  };
+  await seedStage2(stageContext);
+  // What the later stages add (messaging, booking, waitlist, video ...): see contributors.ts.
+  await runContributors(stageContext);
 
   // 8. The demo organization is already set up: it opens on its agenda, with no setup wizard and no
   // first-run checklist on its pages (a fresh organization created by the operator shows both).

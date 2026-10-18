@@ -1,3 +1,4 @@
+import { DEFAULT_SETTINGS_SECTIONS } from '@consultorio/contracts';
 import { screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -15,6 +16,7 @@ const settings = (overrides: Record<string, unknown> = {}) => ({
   sharedTemplates: [],
   require2fa: false,
   quietHours: { start: '21:00', end: '08:00' },
+  ...DEFAULT_SETTINGS_SECTIONS,
   ...overrides,
 });
 

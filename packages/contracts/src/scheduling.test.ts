@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
   APPOINTMENT_STATUSES,
   BookAppointmentRequest,
+  CalendarEntryDto,
   CalendarResponse,
   CancelAppointmentRequest,
   CheckInRequest,
@@ -239,5 +240,37 @@ describe('CalendarResponse', () => {
     expect(CalendarResponse.safeParse({ ...empty, truncated: true }).success).toBe(true);
     expect(CalendarResponse.safeParse(empty).success).toBe(false);
     expect(CalendarResponse.safeParse({ ...empty, truncated: 'yes' }).success).toBe(false);
+  });
+});
+
+describe('CalendarEntryDto', () => {
+  const entry = {
+    id: ID,
+    patientId: ID,
+    professionalId: ID,
+    locationId: ID,
+    appointmentTypeId: ID,
+    startsAt: '2031-05-12T13:00:00.000Z',
+    endsAt: '2031-05-12T13:30:00.000Z',
+    bufferMinutes: 0,
+    status: 'scheduled',
+    source: 'staff',
+    bookedBy: null,
+    identityConfirmed: true,
+    identityConfirmation: null,
+    outOfHours: false,
+    seriesId: null,
+    seriesIndex: null,
+    version: 1,
+    patientName: 'Gómez, Valentina',
+    typeName: 'Consulta',
+    typeColor: null,
+  };
+
+  it('says whether the appointment is in person or virtual, and nothing else about the mode', () => {
+    expect(CalendarEntryDto.parse({ ...entry, mode: 'virtual' }).mode).toBe('virtual');
+    expect(CalendarEntryDto.parse({ ...entry, mode: 'in_person' }).mode).toBe('in_person');
+    expect(CalendarEntryDto.safeParse(entry).success).toBe(false);
+    expect(CalendarEntryDto.safeParse({ ...entry, mode: 'hybrid' }).success).toBe(false);
   });
 });

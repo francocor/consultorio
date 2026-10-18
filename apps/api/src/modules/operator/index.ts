@@ -49,6 +49,8 @@ export interface OperatorOptions {
   loginRateLimit?: { max: number; timeWindow: number };
   /** The privileged reset of a demo organization (the demo module provides it, S1.36). */
   demoReset?: DemoResetPort;
+  /** Routes that belong inside the console, behind its session (the provider console). */
+  extensions?: readonly ((app: FastifyInstance) => void)[];
   clock?: () => Date;
   slugSuffix?: () => string;
 }
@@ -90,6 +92,7 @@ export function createOperatorConsole(options: OperatorOptions): OperatorConsole
       origins: options.origins,
       secureLinks: options.secureLinks,
       loginRateLimit: options.loginRateLimit ?? { max: 10, timeWindow: 60_000 },
+      ...(options.extensions ? { extensions: options.extensions } : {}),
     }),
     admin: createOperatorAdmin({ run, hasher: options.hasher, secrets: options.secrets }),
   };

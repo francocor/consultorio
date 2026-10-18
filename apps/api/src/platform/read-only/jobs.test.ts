@@ -1,8 +1,9 @@
 import { describe, expect, it } from 'vitest';
 
 import { AppError } from '../http/problem.js';
+import { QUEUES } from '../jobs/queues.js';
 
-import { assertTenantWritable, jobMayRun } from './jobs.js';
+import { JOB_CATEGORIES, assertTenantWritable, jobCategoryOf, jobMayRun } from './jobs.js';
 
 const SINCE = new Date('2026-10-01T12:00:00Z');
 const BEFORE = new Date('2026-10-01T11:59:59Z');
@@ -68,5 +69,42 @@ describe('assertTenantWritable', () => {
     expect(() => {
       assertTenantWritable({ category: 'write' }, frozen, AFTER);
     }).toThrow(/tenant_read_only/);
+  });
+});
+
+describe('job classification (every queue declares one category)', () => {
+  const STAGE_3_QUEUES = [
+    'reminder.plan',
+    'reminder.send',
+    'reminder.sweep',
+    'otp.send',
+    'booking.purge',
+    'tokens.purge',
+    'waitlist.match',
+    'waitlist.offer',
+    'waitlist.expire',
+    'video.link.create',
+  ];
+
+  it('classifies every queue the installer creates, and nothing else', () => {
+    expect(Object.keys(JOB_CATEGORIES).sort()).toEqual(QUEUES.map((queue) => queue.name).sort());
+  });
+
+  it('keeps the audit trail sealing in a read-only tenant and cancels the Stage 3 messaging jobs', () => {
+    expect(jobCategoryOf('audit.seal')).toBe('audit_write');
+    for (const queue of STAGE_3_QUEUES) {
+      expect(jobCategoryOf(queue), queue).toBe('write');
+      expect(jobMayRun({ category: jobCategoryOf(queue) }, frozen, AFTER), queue).toEqual({
+        run: false,
+        reason: 'tenant_read_only',
+      });
+      expect(jobMayRun({ category: jobCategoryOf(queue) }, active, AFTER), queue).toEqual({
+        run: true,
+      });
+    }
+  });
+
+  it('refuses a queue nobody classified instead of guessing a category', () => {
+    expect(() => jobCategoryOf('made.up.queue')).toThrow(/made.up.queue/);
   });
 });

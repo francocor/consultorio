@@ -1,4 +1,5 @@
 import type { CalendarEntryDto } from '@consultorio/contracts';
+import { Video } from 'lucide-react';
 import type { ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
 
@@ -48,13 +49,21 @@ export function FlowRow({
               <Icon aria-hidden="true" />
               {statusLabel(t, entry.status)}
             </Badge>
+            {entry.mode === 'virtual' ? (
+              <Badge tone="info">
+                <Video aria-hidden="true" />
+                {t('event.virtual')}
+              </Badge>
+            ) : null}
             {entry.identityConfirmed ? null : (
               <Badge tone="warning">{t('event.identityPending')}</Badge>
             )}
           </span>
         </span>
       </button>
-      {action ? <div className="flex items-center gap-2 p-2 sm:pr-3">{action}</div> : null}
+      {action ? (
+        <div className="flex items-center gap-2 p-2 empty:hidden sm:pr-3">{action}</div>
+      ) : null}
     </li>
   );
 }

@@ -1,6 +1,10 @@
 import { z } from 'zod';
 
+import { DEFAULT_NOTIFICATION_SETTINGS, NotificationSettings } from './notifications.js';
+import { DEFAULT_ONLINE_BOOKING_SETTINGS, OnlineBookingSettings } from './online-booking.js';
 import { GRANTABLE, STAFF_ROLES } from './roles.js';
+import { DEFAULT_TELECONSULTATION_SETTINGS, TeleconsultationSettings } from './teleconsultation.js';
+import { DEFAULT_WAITLIST_SETTINGS, WaitlistSettings } from './waitlist.js';
 
 /**
  * Contracts of the access module: grants, role changes, member locations, organization settings
@@ -136,6 +140,41 @@ export type QuietHours = z.infer<typeof QuietHours>;
 /** Reminders and waitlist offers are not sent between these times, in the location's zone. */
 export const DEFAULT_QUIET_HOURS: QuietHours = { start: '21:00', end: '08:00' };
 
+/**
+ * The `integrations` section: which optional channels the organization uses. Switching one off
+ * leaves the manual fallback (email only, a manual video link).
+ */
+export const IntegrationSettings = z.strictObject({
+  whatsapp: z.boolean(),
+  video: z.boolean(),
+});
+export type IntegrationSettings = z.infer<typeof IntegrationSettings>;
+
+export const DEFAULT_INTEGRATION_SETTINGS: IntegrationSettings = { whatsapp: true, video: true };
+
+/**
+ * The sections of the organization settings that capability modules own, next to the core ones.
+ * Each is stored under its own key of `tenant.settings` and registered by its module
+ * (`platform/settings-sections.ts`); a section is added here and nowhere else.
+ */
+export const SETTINGS_SECTION_KEYS = [
+  'notifications',
+  'onlineBooking',
+  'waitlist',
+  'teleconsultation',
+  'integrations',
+] as const;
+export type SettingsSectionKey = (typeof SETTINGS_SECTION_KEYS)[number];
+
+/** The defaults of every section: what an organization that never set one has. */
+export const DEFAULT_SETTINGS_SECTIONS = {
+  notifications: DEFAULT_NOTIFICATION_SETTINGS,
+  onlineBooking: DEFAULT_ONLINE_BOOKING_SETTINGS,
+  waitlist: DEFAULT_WAITLIST_SETTINGS,
+  teleconsultation: DEFAULT_TELECONSULTATION_SETTINGS,
+  integrations: DEFAULT_INTEGRATION_SETTINGS,
+} as const;
+
 export const SettingsDto = z.strictObject({
   /** One switch for what reception may know about clinical items without reading them. */
   receptionSeesClinicalMetadata: z.boolean(),
@@ -143,8 +182,16 @@ export const SettingsDto = z.strictObject({
   sharedTemplates: z.array(z.enum(CLINICAL_TEMPLATE_KINDS)),
   require2fa: z.boolean(),
   quietHours: QuietHours,
+  notifications: NotificationSettings,
+  onlineBooking: OnlineBookingSettings,
+  waitlist: WaitlistSettings,
+  teleconsultation: TeleconsultationSettings,
+  integrations: IntegrationSettings,
 });
 export type SettingsDto = z.infer<typeof SettingsDto>;
+
+/** A partial change of one section: only the fields sent change, and at least one is sent. */
+const nonEmpty = (patch: object) => Object.keys(patch).length > 0;
 
 export const UpdateSettingsRequest = z
   .strictObject({
@@ -158,6 +205,13 @@ export const UpdateSettingsRequest = z
     confirmPsychologySharing: z.boolean().optional(),
     require2fa: z.boolean().optional(),
     quietHours: QuietHours.optional(),
+    notifications: NotificationSettings.partial().refine(nonEmpty, 'nothing to change').optional(),
+    onlineBooking: OnlineBookingSettings.partial().refine(nonEmpty, 'nothing to change').optional(),
+    waitlist: WaitlistSettings.partial().refine(nonEmpty, 'nothing to change').optional(),
+    teleconsultation: TeleconsultationSettings.partial()
+      .refine(nonEmpty, 'nothing to change')
+      .optional(),
+    integrations: IntegrationSettings.partial().refine(nonEmpty, 'nothing to change').optional(),
   })
   .refine(
     (body) => Object.keys(body).some((key) => key !== 'confirmPsychologySharing'),

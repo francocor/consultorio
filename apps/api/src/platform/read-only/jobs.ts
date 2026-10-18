@@ -10,6 +10,38 @@ export interface JobDescriptor {
   category: RouteCategory;
 }
 
+/**
+ * The category of every queue of the application: what a job does when its tenant is read-only.
+ * The installer creates a queue only if it is listed in `jobs/queues.ts`, and a test checks that
+ * the two lists name the same queues, so a job cannot ship without a decision. Reminders, offers,
+ * codes and room creation are `write`: in a read-only tenant they end cancelled and are never
+ * replayed after recovery. The audit sealer keeps running (`audit_write`).
+ */
+export const JOB_CATEGORIES: Readonly<Record<string, RouteCategory>> = {
+  'audit.seal': 'audit_write',
+  'audit.verify': 'audit_write',
+  'hold.expire': 'write',
+  'document.scan': 'audit_write',
+  'document.cleanup': 'write',
+  'reminder.plan': 'write',
+  'reminder.send': 'write',
+  'reminder.sweep': 'write',
+  'otp.send': 'write',
+  'booking.purge': 'write',
+  'tokens.purge': 'write',
+  'waitlist.match': 'write',
+  'waitlist.offer': 'write',
+  'waitlist.expire': 'write',
+  'video.link.create': 'write',
+};
+
+/** The category of a queue. A queue nobody classified is refused, not guessed. */
+export function jobCategoryOf(queue: string): RouteCategory {
+  const category = JOB_CATEGORIES[queue];
+  if (category === undefined) throw new Error(`The queue "${queue}" has no read-only category.`);
+  return category;
+}
+
 export interface TenantState {
   status: 'active' | 'read_only' | 'cancelled';
   readOnlySince: Date | null;

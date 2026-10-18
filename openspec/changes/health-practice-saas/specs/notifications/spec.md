@@ -289,3 +289,37 @@ Opt-outs, opt-ins, staff-recorded opt-outs, manual resends and integration switc
 - GIVEN an admin in organization A
 - WHEN they request the message log of an appointment in organization B
 - THEN the system responds as not found
+
+---
+
+### Requirement: WhatsApp opt-in from a public form
+
+A WhatsApp opt-in entered on a public form (online booking or waitlist join) for a phone number nobody has verified MUST stay pending: the form records no opt-in. The system MUST send the patient a single-use `whatsapp_opt_in` link at the email address the visitor verified, and the opt-in MUST exist only after the patient follows it. Until then the messages of that patient MUST go by email. The link MUST exist for every submission that ticked WhatsApp, whoever the typed document belongs to (a new patient, a record on file, a booking that could not stand on the record with its document, an entry that was refused), and the email that carries it MUST be the same in every case: its absence would tell the visitor that the document was on file. The token belongs to the submission and remembers whether that submission registered the patient; following it MUST record the opt-in only when it did. In any other case it MUST show the same page and write nothing on the record, and reception MUST get an identity review of the booking. A BAJA MUST revoke the pending `whatsapp_opt_in` links of that patient, so that following one later does not opt them back in. Declared limitation: the link proves that the visitor controls the EMAIL address, not that the typed phone number is theirs; the number stays unverified. The same rule MUST hold for staff: a request to accept WhatsApp is an email, so it MUST be refused for a patient who opted out of email.
+
+#### Scenario: Pending until the link
+- GIVEN a visitor who ticked WhatsApp on the booking form and verified their email
+- WHEN the booking is confirmed
+- THEN no opt-in is recorded and the confirmation email carries the link to accept WhatsApp
+- AND the reminders go by email
+
+#### Scenario: Accepting records the opt-in
+- GIVEN the link of the confirmation
+- WHEN the patient follows it and accepts
+- THEN the opt-in is recorded from the patient's email link and WhatsApp may be used from then on
+
+#### Scenario: Record that already existed
+- GIVEN a visitor who typed the document of a patient on file and ticked WhatsApp
+- WHEN the booking is confirmed
+- THEN the confirmation email carries a link exactly like the one of a new patient
+- AND nothing is written on that record, neither on confirming nor when the link is followed, and reception gets an identity review
+
+#### Scenario: BAJA revokes a pending link
+- GIVEN a patient with a link to accept WhatsApp that was not followed
+- WHEN the patient opts out of WhatsApp
+- THEN following the link afterwards records nothing
+
+#### Scenario: Replies attributed to one organization
+- GIVEN a number that two organizations wrote to
+- WHEN the patient replies "2" without quoting any message
+- THEN neither cancels anything and each organization's reception sees the reply
+- AND a reply that quotes a message of one organization acts only in that one

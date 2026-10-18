@@ -32,6 +32,7 @@ describe('loadConfig', () => {
     const config = loadConfig({
       ...validEnv,
       NODE_ENV: 'production',
+      ADDRESS_HASH_PEPPER: 'placeholder-pepper-0123456789-abcdefghij',
       DEPLOYMENT_MODE: 'single',
       SINGLE_TENANT_SLUG: 'centro',
       PUBLIC_URL: 'https://agenda.centro.example',

@@ -123,6 +123,7 @@ export function entry(overrides: Partial<CalendarEntryDto> = {}): CalendarEntryD
     patientName: 'Gómez, Valentina',
     typeName: 'Control',
     typeColor: '#1d4ed8',
+    mode: 'in_person',
     ...overrides,
   };
 }

@@ -9,6 +9,7 @@ import type { AuthzOptions } from '../../platform/authz/guard.js';
 import type { WithTenant } from '../../platform/db/tenant-context.js';
 import type { PublicOrigins } from '../../platform/http/public-origin.js';
 import type { EmailSender } from '../../platform/mail/email-sender.js';
+import type { SettingsSectionRegistry } from '../../platform/settings-sections.js';
 import type { ExportRegistry } from '../tenancy/index.js';
 
 import { exportAccess } from './application/export-contributor.js';
@@ -50,6 +51,8 @@ export interface AccessOptions {
   grants?: Grants;
   /** Time zone of a new location without one, from the country of the organization. */
   defaultTimeZone: (country: string) => string;
+  /** The sections of the organization settings that the capability modules registered. */
+  settingsSections: SettingsSectionRegistry;
   /** Tells the owners when an admin adds a professional (decision D19). */
   email: EmailSender;
   /** Where the emailed links point. From configuration, never from the request. */
@@ -75,7 +78,7 @@ export function createAccess(options: AccessOptions): Access {
 
   const settings = settingsRoutes({
     withTenant: options.withTenant,
-    settings: createSettingsService(),
+    settings: createSettingsService({ sections: options.settingsSections }),
   });
 
   const places = locationRoutes({

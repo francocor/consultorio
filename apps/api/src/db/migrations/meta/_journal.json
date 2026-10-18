@@ -309,6 +309,139 @@
       "when": 1792239653141,
       "tag": "0043_document_rescan_attempts",
       "breakpoints": true
+    },
+    {
+      "idx": 44,
+      "version": "7",
+      "when": 1792245273482,
+      "tag": "0320_notifications_core",
+      "breakpoints": true
+    },
+    {
+      "idx": 45,
+      "version": "7",
+      "when": 1792246641823,
+      "tag": "0321_channel_preference",
+      "breakpoints": true
+    },
+    {
+      "idx": 46,
+      "version": "7",
+      "when": 1792247468600,
+      "tag": "0322_local_whatsapp",
+      "breakpoints": true
+    },
+    {
+      "idx": 47,
+      "version": "7",
+      "when": 1792249322563,
+      "tag": "0323_whatsapp_usage",
+      "breakpoints": true
+    },
+    {
+      "idx": 48,
+      "version": "7",
+      "when": 1792249322564,
+      "tag": "0340_online_booking_links",
+      "breakpoints": true
+    },
+    {
+      "idx": 49,
+      "version": "7",
+      "when": 1792249322565,
+      "tag": "0341_booking_submission",
+      "breakpoints": true
+    },
+    {
+      "idx": 50,
+      "version": "7",
+      "when": 1792249322566,
+      "tag": "0342_public_hold",
+      "breakpoints": true
+    },
+    {
+      "idx": 51,
+      "version": "7",
+      "when": 1792249322567,
+      "tag": "0370_video_session",
+      "breakpoints": true
+    },
+    {
+      "idx": 52,
+      "version": "7",
+      "when": 1792260338493,
+      "tag": "0360_waitlist",
+      "breakpoints": true
+    },
+    {
+      "idx": 53,
+      "version": "7",
+      "when": 1792260521586,
+      "tag": "0390_message_offer",
+      "breakpoints": true
+    },
+    {
+      "idx": 54,
+      "version": "7",
+      "when": 1792269103791,
+      "tag": "0391_video_link_followup",
+      "breakpoints": true
+    },
+    {
+      "idx": 55,
+      "version": "7",
+      "when": 1792279787360,
+      "tag": "0392_message_lookup_definer",
+      "breakpoints": true
+    },
+    {
+      "idx": 56,
+      "version": "7",
+      "when": 1792280387377,
+      "tag": "0393_message_checks_not_valid",
+      "breakpoints": true
+    },
+    {
+      "idx": 57,
+      "version": "7",
+      "when": 1792281692803,
+      "tag": "0394_video_manual_link_enc",
+      "breakpoints": true
+    },
+    {
+      "idx": 58,
+      "version": "7",
+      "when": 1792282079009,
+      "tag": "0395_message_offer_url_enc",
+      "breakpoints": true
+    },
+    {
+      "idx": 59,
+      "version": "7",
+      "when": 1792282488314,
+      "tag": "0396_whatsapp_usage_reservation",
+      "breakpoints": true
+    },
+    {
+      "idx": 60,
+      "version": "7",
+      "when": 1792283698330,
+      "tag": "0397_booking_link_unconfirmed_cap",
+      "breakpoints": true
+    },
+    {
+      "idx": 61,
+      "version": "7",
+      "when": 1792316879022,
+      "tag": "0398_usage_confirmed_backfill",
+      "breakpoints": true
+    },
+    {
+      "idx": 62,
+      "version": "7",
+      "when": 1792336452021,
+      "tag": "0399_reply_tenants_any_hash",
+      "breakpoints": true
     }
   ]
 }

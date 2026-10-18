@@ -1,11 +1,49 @@
 import {
+  DEFAULT_INTEGRATION_SETTINGS,
+  DEFAULT_NOTIFICATION_SETTINGS,
+  DEFAULT_ONLINE_BOOKING_SETTINGS,
   DEFAULT_QUIET_HOURS,
   DEFAULT_SHARED_TEMPLATES,
+  DEFAULT_TELECONSULTATION_SETTINGS,
+  DEFAULT_WAITLIST_SETTINGS,
+  IntegrationSettings,
+  NotificationSettings,
+  OnlineBookingSettings,
+  TeleconsultationSettings,
+  WaitlistSettings,
   type SettingsDto,
 } from '@consultorio/contracts';
 import { describe, expect, it } from 'vitest';
 
+import type { SettingsSection } from '../../../platform/settings-sections.js';
+
 import { planSettingsUpdate, readSettings } from './settings.js';
+
+/** The five sections the modules register (see `main/wiring`). */
+const SECTIONS: readonly SettingsSection[] = [
+  {
+    key: 'notifications',
+    schema: NotificationSettings,
+    defaults: DEFAULT_NOTIFICATION_SETTINGS,
+  },
+  {
+    key: 'onlineBooking',
+    schema: OnlineBookingSettings,
+    defaults: DEFAULT_ONLINE_BOOKING_SETTINGS,
+  },
+  { key: 'waitlist', schema: WaitlistSettings, defaults: DEFAULT_WAITLIST_SETTINGS },
+  {
+    key: 'teleconsultation',
+    schema: TeleconsultationSettings,
+    defaults: DEFAULT_TELECONSULTATION_SETTINGS,
+  },
+  {
+    key: 'integrations',
+    schema: IntegrationSettings,
+    defaults: DEFAULT_INTEGRATION_SETTINGS,
+    fieldAudits: { whatsapp: 'notification.integration.changed' },
+  },
+];
 
 const defaults: SettingsDto = {
   receptionSeesClinicalMetadata: false,
@@ -13,16 +51,25 @@ const defaults: SettingsDto = {
   sharedTemplates: [],
   require2fa: false,
   quietHours: DEFAULT_QUIET_HOURS,
+  notifications: DEFAULT_NOTIFICATION_SETTINGS,
+  onlineBooking: DEFAULT_ONLINE_BOOKING_SETTINGS,
+  waitlist: DEFAULT_WAITLIST_SETTINGS,
+  teleconsultation: DEFAULT_TELECONSULTATION_SETTINGS,
+  integrations: DEFAULT_INTEGRATION_SETTINGS,
 };
+
+const read = (stored: Record<string, unknown>) => readSettings(stored, SECTIONS);
+const planFor = (current: SettingsDto, patch: Parameters<typeof planSettingsUpdate>[1]) =>
+  planSettingsUpdate(current, patch, SECTIONS);
 
 describe('readSettings', () => {
   it('gives every setting its safe default for an organization that never set one', () => {
-    expect(readSettings({})).toEqual(defaults);
+    expect(read({})).toEqual(defaults);
   });
 
   it('reads the stored keys', () => {
     expect(
-      readSettings({
+      read({
         reception_sees_clinical_metadata: true,
         clinicalSharing: true,
         sharedTemplates: ['general', 'psychology'],
@@ -30,6 +77,7 @@ describe('readSettings', () => {
         quiet_hours: { start: '22:00', end: '07:30' },
       }),
     ).toEqual({
+      ...defaults,
       receptionSeesClinicalMetadata: true,
       clinicalSharing: true,
       sharedTemplates: ['general', 'psychology'],
@@ -40,7 +88,7 @@ describe('readSettings', () => {
 
   it('treats a value of the wrong type as the safe default: "off", never "on"', () => {
     expect(
-      readSettings({
+      read({
         reception_sees_clinical_metadata: 'yes',
         clinicalSharing: 1,
         sharedTemplates: 'general',
@@ -51,15 +99,15 @@ describe('readSettings', () => {
   });
 
   it('ignores unknown templates in the stored list', () => {
-    expect(readSettings({ sharedTemplates: ['general', 'cardiology', 7] }).sharedTemplates).toEqual(
-      ['general'],
-    );
+    expect(read({ sharedTemplates: ['general', 'cardiology', 7] }).sharedTemplates).toEqual([
+      'general',
+    ]);
   });
 });
 
 describe('planSettingsUpdate', () => {
   it('seeds the shared scope with every template except psychology when sharing is first enabled', () => {
-    const plan = planSettingsUpdate(defaults, { clinicalSharing: true });
+    const plan = planFor(defaults, { clinicalSharing: true });
 
     expect(plan).toMatchObject({ ok: true, stored: { clinicalSharing: true } });
     if (!plan.ok) throw new Error('unexpected');
@@ -78,7 +126,7 @@ describe('planSettingsUpdate', () => {
   it('keeps the scope the owner already configured when sharing is switched back on', () => {
     const current = { ...defaults, sharedTemplates: ['general' as const] };
 
-    const plan = planSettingsUpdate(current, { clinicalSharing: true });
+    const plan = planFor(current, { clinicalSharing: true });
 
     if (!plan.ok) throw new Error('unexpected');
     expect(plan.stored['sharedTemplates']).toBeUndefined();
@@ -90,13 +138,13 @@ describe('planSettingsUpdate', () => {
   it('needs the explicit confirmation to add psychology', () => {
     const current = { ...defaults, clinicalSharing: true, sharedTemplates: ['general' as const] };
 
-    expect(planSettingsUpdate(current, { sharedTemplates: ['general', 'psychology'] })).toEqual({
+    expect(planFor(current, { sharedTemplates: ['general', 'psychology'] })).toEqual({
       ok: false,
       path: 'sharedTemplates',
       i18nKey: 'settings.psychology_confirmation_required',
     });
     expect(
-      planSettingsUpdate(current, {
+      planFor(current, {
         sharedTemplates: ['general', 'psychology'],
         confirmPsychologySharing: true,
       }),
@@ -108,7 +156,7 @@ describe('planSettingsUpdate', () => {
 
   it('needs the confirmation even when sharing is enabled in the same request', () => {
     expect(
-      planSettingsUpdate(defaults, { clinicalSharing: true, sharedTemplates: ['psychology'] }),
+      planFor(defaults, { clinicalSharing: true, sharedTemplates: ['psychology'] }),
     ).toMatchObject({ ok: false });
   });
 
@@ -119,11 +167,11 @@ describe('planSettingsUpdate', () => {
       sharedTemplates: ['general' as const, 'psychology' as const],
     };
 
-    expect(planSettingsUpdate(current, { sharedTemplates: ['general'] })).toMatchObject({
+    expect(planFor(current, { sharedTemplates: ['general'] })).toMatchObject({
       ok: true,
       events: [{ kind: 'sharing', added: [], removed: ['psychology'] }],
     });
-    expect(planSettingsUpdate(current, { sharedTemplates: ['general', 'psychology'] })).toEqual({
+    expect(planFor(current, { sharedTemplates: ['general', 'psychology'] })).toEqual({
       ok: true,
       stored: {},
       events: [],
@@ -131,7 +179,7 @@ describe('planSettingsUpdate', () => {
   });
 
   it('plans one event per changed setting and none for a value that did not change', () => {
-    const plan = planSettingsUpdate(defaults, {
+    const plan = planFor(defaults, {
       receptionSeesClinicalMetadata: true,
       require2fa: false,
       quietHours: { start: '22:00', end: '07:00' },
@@ -151,8 +199,118 @@ describe('planSettingsUpdate', () => {
   });
 
   it('stores require_2fa under the key the sign-in already reads', () => {
-    const plan = planSettingsUpdate(defaults, { require2fa: true });
+    const plan = planFor(defaults, { require2fa: true });
 
     expect(plan).toMatchObject({ ok: true, stored: { require_2fa: true } });
+  });
+});
+
+describe('settings sections', () => {
+  it('reads each section from its own key and fills what is missing with the defaults', () => {
+    const settings = read({
+      waitlist: { offerWindowMinutes: 45 },
+      notifications: { reminderLeadHours: [48, 2], hideProfessional: true },
+    });
+
+    expect(settings.waitlist).toEqual({ ...DEFAULT_WAITLIST_SETTINGS, offerWindowMinutes: 45 });
+    expect(settings.notifications).toEqual({
+      reminderLeadHours: [48, 2],
+      hideProfessional: true,
+      hideAppointmentType: false,
+    });
+    expect(settings.onlineBooking).toEqual(DEFAULT_ONLINE_BOOKING_SETTINGS);
+  });
+
+  it('treats a damaged section as its defaults, never as something half valid', () => {
+    const settings = read({
+      waitlist: { maxActiveEntries: 'many' },
+      notifications: 'on',
+      integrations: { whatsapp: 'yes', video: false },
+      teleconsultation: [15],
+    });
+
+    expect(settings.waitlist).toEqual(DEFAULT_WAITLIST_SETTINGS);
+    expect(settings.notifications).toEqual(DEFAULT_NOTIFICATION_SETTINGS);
+    expect(settings.integrations).toEqual(DEFAULT_INTEGRATION_SETTINGS);
+    expect(settings.teleconsultation).toEqual(DEFAULT_TELECONSULTATION_SETTINGS);
+  });
+
+  it('stores a changed section whole under its key and plans one event naming the fields', () => {
+    const result = planFor(defaults, { waitlist: { offerWindowMinutes: 20, maxActiveEntries: 5 } });
+
+    expect(result).toEqual({
+      ok: true,
+      stored: { waitlist: { ...DEFAULT_WAITLIST_SETTINGS, offerWindowMinutes: 20 } },
+      events: [
+        {
+          kind: 'section',
+          section: 'waitlist',
+          changedFields: ['offerWindowMinutes'],
+          fieldAudits: [],
+        },
+      ],
+    });
+  });
+
+  it('plans nothing for a section value that did not change', () => {
+    expect(planFor(defaults, { notifications: { reminderLeadHours: [24] } })).toEqual({
+      ok: true,
+      stored: {},
+      events: [],
+    });
+  });
+
+  it('keeps the fields a partial change does not mention', () => {
+    const current = {
+      ...defaults,
+      onlineBooking: { ...DEFAULT_ONLINE_BOOKING_SETTINGS, dailyCap: 30 },
+    };
+
+    const result = planFor(current, { onlineBooking: { requireApproval: true } });
+
+    expect(result).toMatchObject({
+      ok: true,
+      stored: { onlineBooking: { dailyCap: 30, requireApproval: true, horizonDays: 60 } },
+    });
+  });
+
+  it('adds the specific audit of a field that has one, next to the generic section event', () => {
+    const result = planFor(defaults, { integrations: { whatsapp: false, video: true } });
+
+    expect(result).toEqual({
+      ok: true,
+      stored: { integrations: { whatsapp: false, video: true } },
+      events: [
+        {
+          kind: 'section',
+          section: 'integrations',
+          changedFields: ['whatsapp'],
+          fieldAudits: [
+            { action: 'notification.integration.changed', field: 'whatsapp', enabled: false },
+          ],
+        },
+      ],
+    });
+  });
+
+  it('refuses a value the whole section would not accept once merged', () => {
+    const stricter: readonly SettingsSection[] = [
+      {
+        key: 'waitlist',
+        schema: WaitlistSettings.refine(
+          (value) => value.offerWindowMinutes <= value.minOfferLeadMinutes,
+          'the offer cannot outlast the lead time',
+        ),
+        defaults: DEFAULT_WAITLIST_SETTINGS,
+      },
+    ];
+
+    expect(
+      planSettingsUpdate(defaults, { waitlist: { offerWindowMinutes: 90 } }, stricter),
+    ).toEqual({
+      ok: false,
+      path: 'waitlist',
+      i18nKey: 'settings.section_value_invalid',
+    });
   });
 });

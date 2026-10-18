@@ -2,6 +2,8 @@ import { QueryClient } from '@tanstack/react-query';
 
 import { createApiClient, isApiError, type ApiClient } from '../shared/lib/api-client.js';
 
+import { defaultRegistry, type AppRegistry } from './registry.js';
+
 export const SESSION_QUERY_KEY = ['session'] as const;
 
 /** Signals the whole shell reacts to: they come from the API, never from a guess. */
@@ -50,6 +52,8 @@ function createStatusStore(initial: AppStatus): StatusStore {
 }
 
 export interface AppServices {
+  /** What features contribute: routes, navigation, settings tabs and slots. */
+  registry: AppRegistry;
   api: ApiClient;
   queryClient: QueryClient;
   status: StatusStore;
@@ -62,6 +66,8 @@ export interface AppServices {
 }
 
 export interface AppServicesOptions {
+  /** Replaces what the features contribute (tests mount fixture features). */
+  registry?: AppRegistry;
   fetch?: typeof fetch;
   isOnline?: () => boolean;
   /** Whether a failed query is tried again. Tests turn retries off so failures show at once. */
@@ -108,12 +114,18 @@ export function createAppServices(options: AppServicesOptions = {}): AppServices
       status.set({ enrollmentRequired: true });
     },
     onUnauthorized: () => {
+      // Only a session that is still held can end. After sign-out the cache is empty, and a request
+      // that was still in flight answers 401: that is not a session expiring, and it must not send
+      // the person back to sign-in with an "expired" notice. The same goes for a second 401 of a
+      // session that already ended.
+      if (!queryClient.getQueryData(SESSION_QUERY_KEY)) return;
       queryClient.setQueryData(SESSION_QUERY_KEY, null);
       sessionEnded();
     },
   });
 
   return {
+    registry: options.registry ?? defaultRegistry(),
     api,
     queryClient,
     status,

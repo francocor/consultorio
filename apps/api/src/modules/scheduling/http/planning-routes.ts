@@ -13,6 +13,7 @@ import type { AuthzOptions } from '../../../platform/authz/guard.js';
 import { refuseRequest } from '../../../platform/authz/refuse.js';
 import type { TenantKeys } from '../../../platform/crypto/tenant-keys.js';
 import type { WithTenant } from '../../../platform/db/tenant-context.js';
+import type { AppointmentEvents } from '../../../platform/events/appointment-events.js';
 import { conflictWith } from '../../../platform/http/problem.js';
 import { AccessRefused } from '../../access/index.js';
 import { availability } from '../application/availability.js';
@@ -33,6 +34,8 @@ export interface PlanningRoutesDeps {
   withTenant: WithTenant;
   auditDeny: AuthzOptions['auditDeny'];
   keys: TenantKeys;
+  /** Where the appointment events go (reminders, the waitlist, video links subscribe). */
+  events?: AppointmentEvents;
   clock: () => Date;
 }
 
@@ -58,13 +61,16 @@ export function planningRoutes(deps: PlanningRoutesDeps) {
           });
         }
         return deps.withTenant(context, async (tx) => {
-          const free = await availability(createSchedulingPorts(tx, { keys: deps.keys }), {
-            query: request.query,
-            now: deps.clock(),
-            visibleLocations: (await locationAccessOf(tx, actor)).forProfessional(
-              request.query.professionalId,
-            ),
-          });
+          const free = await availability(
+            createSchedulingPorts(tx, { keys: deps.keys, events: deps.events }),
+            {
+              query: request.query,
+              now: deps.clock(),
+              visibleLocations: (await locationAccessOf(tx, actor)).forProfessional(
+                request.query.professionalId,
+              ),
+            },
+          );
           // Free time in a colleague's calendar is part of that calendar: looking is audited.
           await auditDelegatedView(tx, {
             actor,
@@ -94,7 +100,7 @@ export function planningRoutes(deps: PlanningRoutesDeps) {
         const { actor, audit, book, context } = requestActor(request);
         try {
           const result = await deps.withTenant(context, async (tx) =>
-            bookSeries(createSchedulingPorts(tx, { keys: deps.keys }), {
+            bookSeries(createSchedulingPorts(tx, { keys: deps.keys, events: deps.events }), {
               request: request.body,
               actor: await scopedActor(tx, actor, book),
               auditActor: audit,

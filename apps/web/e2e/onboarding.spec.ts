@@ -4,6 +4,7 @@ import { OPERATOR_STATE } from './support/operator.js';
 import {
   WEB_PORT,
   axeViolations,
+  settleToasts,
   emailTo,
   horizontalOverflow,
   linkIn,
@@ -49,12 +50,8 @@ async function signIn(page: Page, slug: string, email: string, password: string)
 
 /** The screen fits a 360 px phone and passes axe in a real browser (contrast included). */
 async function expectFitsAndAccessible(page: Page) {
-  // A confirmation toast fades in; axe reads the colors mid-fade, so let it settle first.
-  await page.waitForFunction(() =>
-    [...document.querySelectorAll('[data-sonner-toast]')].every(
-      (toast) => getComputedStyle(toast).opacity === '1',
-    ),
-  );
+  // A confirmation toast slides and fades in; axe reads the colors mid-transition, so let it settle first.
+  await settleToasts(page);
   expect(await horizontalOverflow(page)).toBeLessThanOrEqual(0);
   expect(await axeViolations(page)).toEqual([]);
 }

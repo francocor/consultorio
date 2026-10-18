@@ -11,6 +11,7 @@ import type { ReactElement } from 'react';
 
 import { createI18n } from '../../app/i18n.js';
 import { AppProviders } from '../../app/providers.js';
+import type { AppRegistry } from '../../app/registry.js';
 import {
   createAppRouter,
   createOperatorRouter,
@@ -29,6 +30,8 @@ export interface RenderAppOptions {
   path?: string;
   /** Render the platform operator console instead of an organization's app. */
   platform?: boolean;
+  /** Replaces what the features contribute (fixture features). */
+  registry?: AppRegistry;
   /** Extra API routes, keyed "METHOD /api/path". */
   routes?: Record<string, FetchHandler | Response>;
 }
@@ -73,6 +76,7 @@ function setup(options: RenderAppOptions) {
   const requests: string[] = [];
   const missingKeys: string[] = [];
   const services = createAppServices({
+    ...(options.registry ? { registry: options.registry } : {}),
     fetch: createRecordingFetch(defaultRoutes(options), requests),
     isOnline: () => true,
     retry: () => false,

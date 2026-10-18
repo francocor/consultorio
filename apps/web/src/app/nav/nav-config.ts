@@ -17,6 +17,8 @@ import {
   type LucideIcon,
 } from 'lucide-react';
 
+import type { ContributedNavItem, NavLayout } from '../registry.js';
+
 /**
  * The navigation, derived from what the API says the user can do. Hiding an entry is only a
  * convenience: every route repeats the check (`RequirePermission`) and the API enforces it.
@@ -49,10 +51,11 @@ export type NavId =
   | 'settings';
 
 export interface NavItem {
-  id: NavId;
+  /** One of the shell's `NavId`s, or the id of an entry a feature contributes. */
+  id: string;
   to: string;
-  /** Key in the `shell` catalog. */
-  labelKey: `nav.${NavId}`;
+  /** Key in the `shell` catalog (`nav.home`), or with its own namespace for a contributed entry. */
+  labelKey: string;
   icon: LucideIcon;
   /** The stage in which the screen ships. */
   stage: number;
@@ -168,10 +171,10 @@ export const NAV_ITEMS: Record<NavId, NavItem> = {
   },
 };
 
-type Layout = 'professional' | 'reception' | 'admin';
+type Layout = NavLayout;
 
 /** The order of each role's area (design, section 8). */
-const LAYOUTS: Record<Layout, readonly NavId[]> = {
+const LAYOUTS: Record<Layout, readonly string[]> = {
   professional: ['today', 'calendar', 'patients', 'drafts', 'prescriptions'],
   reception: ['calendar', 'check-in', 'worklist', 'patients', 'cash'],
   admin: ['calendar', 'worklist', 'patients', 'staff', 'reports', 'billing', 'audit', 'settings'],
@@ -190,27 +193,60 @@ export interface NavOptions {
   permissions: readonly Permission[];
   roles: readonly Role[];
   stage?: number;
+  /** The entries features contribute through their `nav.ts` (the registry's `navItems`). */
+  contributed?: readonly ContributedNavItem[];
+}
+
+/** The entries of a layout with the contributed ones placed after the entry they name. */
+function layoutWith(layout: Layout, contributed: readonly ContributedNavItem[]): string[] {
+  const ids = [...LAYOUTS[layout]];
+  for (const item of contributed) {
+    for (const placement of item.placements) {
+      if (placement.layout !== layout) continue;
+      const at = placement.after === undefined ? -1 : ids.indexOf(placement.after);
+      ids.splice(at === -1 ? ids.length : at + 1, 0, item.id);
+    }
+  }
+  return ids;
 }
 
 /** The entries this user sees, in order: home first, then the areas of each of their roles. */
-export function buildNav({ permissions, roles, stage = ENABLED_STAGE }: NavOptions): NavItem[] {
+export function buildNav({
+  permissions,
+  roles,
+  stage = ENABLED_STAGE,
+  contributed = [],
+}: NavOptions): NavItem[] {
   const layouts = new Set(roles.flatMap((role) => LAYOUT_OF_ROLE[role] ?? []));
-  const ids = ['home', ...LAYOUT_ORDER.filter((l) => layouts.has(l)).flatMap((l) => LAYOUTS[l])];
+  const ids = [
+    'home',
+    ...LAYOUT_ORDER.filter((l) => layouts.has(l)).flatMap((l) => layoutWith(l, contributed)),
+  ];
   const granted = new Set<Permission>(permissions);
+  const known = new Map<string, NavItem>([
+    ...Object.entries(NAV_ITEMS),
+    // A contributed entry has no stage: it exists only when its feature does.
+    ...contributed.map((item): [string, NavItem] => [item.id, { ...item, stage: 0 }]),
+  ]);
 
-  const seen = new Set<NavId>();
+  const seen = new Set<string>();
   const items: NavItem[] = [];
-  for (const id of ids as NavId[]) {
+  for (const id of ids) {
     if (seen.has(id)) continue;
     seen.add(id);
-    const item = NAV_ITEMS[id];
+    const item = known.get(id);
+    if (!item) continue;
     if (item.stage > stage) continue;
-    if (stage <= ENABLED_STAGE && NOT_BUILT_YET.has(id)) continue;
+    if (stage <= ENABLED_STAGE && isNavId(id) && NOT_BUILT_YET.has(id)) continue;
     if (item.anyOf.length > 0 && !item.anyOf.some((permission) => granted.has(permission)))
       continue;
     items.push(item);
   }
   return items;
+}
+
+function isNavId(id: string): id is NavId {
+  return id in NAV_ITEMS;
 }
 
 /** The phone's bottom bar holds at most five entries: with more, four plus "More". */

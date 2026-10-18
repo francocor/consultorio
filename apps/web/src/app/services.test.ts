@@ -61,6 +61,34 @@ describe('app services: global reactions to the API', () => {
     expect(navigate).toHaveBeenCalledTimes(1);
   });
 
+  it('ignores a late 401 after the session was cleared on sign-out (JD-S3 R4-CI1)', async () => {
+    const { services } = servicesWith({ '/api/patients': problem(401, 'unauthenticated') });
+    const navigate = vi.fn();
+    services.onSessionEnded(navigate);
+    services.queryClient.setQueryData(['session'], { user: { id: 'u1' } });
+
+    // The person signs out: the cache is emptied, and a request that was in flight answers 401.
+    services.clearSession();
+    await services.api.get('/patients').catch(() => undefined);
+
+    expect(navigate).not.toHaveBeenCalled();
+    expect(services.queryClient.getQueryData(['session'])).toBeUndefined();
+  });
+
+  it('ignores a second 401 once the session already ended (JD-S3 R4-CI1)', async () => {
+    const { services } = servicesWith({ '/api/patients': problem(401, 'unauthenticated') });
+    const navigate = vi.fn();
+    services.onSessionEnded(navigate);
+    services.queryClient.setQueryData(['session'], { user: { id: 'u1' } });
+
+    await Promise.all([
+      services.api.get('/patients').catch(() => undefined),
+      services.api.get('/patients').catch(() => undefined),
+    ]);
+
+    expect(navigate).toHaveBeenCalledTimes(1);
+  });
+
   it('follows the connectivity of the device', () => {
     const { services } = servicesWith({});
     const target = new EventTarget();

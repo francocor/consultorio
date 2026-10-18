@@ -31,8 +31,18 @@ export function registerPatientsExportContributors(registry: ExportRegistry): vo
 }
 
 export { hasDataProcessingConsent } from './application/consent.js';
+// Online booking (track B, S3.09): match a patient by document and register one from a verified booking.
+export {
+  createOnlinePatient,
+  findOnlineRecordOfItsOwn,
+  findPatientByDocument,
+} from './application/online-registry.js';
+export type { NewOnlinePatient, OnlinePatientMatch } from './application/online-registry.js';
 export { isTreating } from './application/write-access.js';
 export type { DocumentRules } from './application/patients.js';
+// Track A (messaging): how to reach a patient, without the rest of the demographics.
+export { readPatientContact, readPatientContacts } from './application/contact.js';
+export type { PatientContact } from './application/contact.js';
 
 export interface PatientsOptions {
   withTenant: WithTenant;

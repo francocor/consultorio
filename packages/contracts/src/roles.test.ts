@@ -180,3 +180,39 @@ describe('owner and admin bring professionals in (decision D19, revised 2026-10-
     expect(canChangeRoles(['owner'], ['reception'], [])).toBe(false);
   });
 });
+
+describe('Stage 3 permissions (patient engagement)', () => {
+  const holders = (permission: Permission) =>
+    ROLES.filter((role) => ROLE_PERMISSIONS[role].includes(permission));
+
+  it('gives messaging settings to owner and admin, and the message log also to reception', () => {
+    expect(holders('notifications.manage')).toEqual(['owner', 'admin']);
+    expect(holders('notifications.log.read')).toEqual(['owner', 'admin', 'reception']);
+  });
+
+  it('gives online booking links to owner and admin only', () => {
+    expect(holders('booking.manage')).toEqual(['owner', 'admin']);
+  });
+
+  it('lets the front desk and the professionals run the waitlist, but nobody else', () => {
+    expect(holders('waitlist.manage')).toEqual(['owner', 'admin', 'professional', 'reception']);
+  });
+
+  it('lets only professionals join a video consultation as a participant', () => {
+    expect(holders('teleconsultation.join')).toEqual(['professional']);
+  });
+
+  it('adds none of them to the grantable list or to the clinical group', () => {
+    for (const permission of [
+      'notifications.manage',
+      'notifications.log.read',
+      'booking.manage',
+      'waitlist.manage',
+      'teleconsultation.join',
+    ] as const) {
+      expect(GRANTABLE).not.toContain(permission);
+      expect(isClinicalPermission(permission)).toBe(false);
+    }
+    expect(GRANTABLE.length).toBe(7);
+  });
+});

@@ -46,7 +46,7 @@ const DAY = [
 
 /** What the API answers with: the appointment, without the names the feed adds. */
 function withoutNames(item: CalendarEntryDto) {
-  const names = new Set(['patientName', 'typeName', 'typeColor']);
+  const names = new Set(['patientName', 'typeName', 'typeColor', 'mode']);
   return Object.fromEntries(Object.entries(item).filter(([key]) => !names.has(key)));
 }
 
@@ -135,6 +135,52 @@ describe("a professional's day", () => {
     expect(within(upcoming).getByText('Próxima, Elena')).toBeInTheDocument();
     expect(screen.queryByText('Cancelada, Fabiana')).not.toBeInTheDocument();
     expect(screen.getByText('Atendida, Ana')).toBeInTheDocument();
+  });
+
+  it('marks a video visit and puts the join button beside it when the API lets this professional in', async () => {
+    setViewport(360);
+    const virtual = entry({
+      id: '0190a000-0000-7000-8000-00000000e001',
+      status: 'confirmed',
+      startsAt: '2026-10-17T16:00:00.000Z',
+      endsAt: '2026-10-17T16:30:00.000Z',
+      patientName: 'Remota, Rita',
+      mode: 'virtual',
+    });
+    const inPerson = visit('confirmed', '2026-10-17T17:30:00.000Z', 'Presencial, Pedro');
+    open({
+      items: [virtual, inPerson],
+      routes: {
+        [`GET /api/appointments/${virtual.id}/video`]: jsonResponse({
+          virtual: true,
+          status: 'ready',
+          pendingReason: null,
+          hasLink: true,
+          manual: false,
+          patientOpenedLink: false,
+          firstOpenedAt: null,
+          integrationEnabled: true,
+          window: { opensAt: '2026-10-17T15:45:00.000Z', closesAt: '2026-10-17T17:30:00.000Z' },
+          canJoin: true,
+          canAttachManualLink: true,
+          noShowAllowedFrom: null,
+        }),
+      },
+    });
+
+    const upcoming = await screen.findByRole('region', { name: 'Por llegar' });
+    const rows = within(upcoming).getAllByRole('listitem');
+
+    expect(await within(rows[0] as HTMLElement).findByText('Virtual')).toBeInTheDocument();
+    expect(
+      await within(rows[0] as HTMLElement).findByRole('button', {
+        name: 'Entrar a la videoconsulta',
+      }),
+    ).toBeInTheDocument();
+    expect(within(rows[1] as HTMLElement).queryByText('Virtual')).not.toBeInTheDocument();
+    expect(
+      within(rows[1] as HTMLElement).queryByRole('button', { name: 'Entrar a la videoconsulta' }),
+    ).not.toBeInTheDocument();
   });
 
   it('counts the day in words at the top', async () => {

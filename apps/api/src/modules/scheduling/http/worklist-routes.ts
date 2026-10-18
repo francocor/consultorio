@@ -13,6 +13,7 @@ import type { AuthzOptions } from '../../../platform/authz/guard.js';
 import { refuseRequest } from '../../../platform/authz/refuse.js';
 import type { TenantKeys } from '../../../platform/crypto/tenant-keys.js';
 import type { WithTenant } from '../../../platform/db/tenant-context.js';
+import type { AppointmentEvents } from '../../../platform/events/appointment-events.js';
 import { AppError } from '../../../platform/http/problem.js';
 import { AccessRefused } from '../../access/index.js';
 import { createSchedulingPorts } from '../application/drizzle-ports.js';
@@ -25,6 +26,8 @@ export interface WorklistRoutesDeps {
   withTenant: WithTenant;
   auditDeny: AuthzOptions['auditDeny'];
   keys: TenantKeys;
+  /** Where the appointment events go (reminders, the waitlist, video links subscribe). */
+  events?: AppointmentEvents;
   worklist: WorklistService;
 }
 
@@ -85,12 +88,15 @@ export function worklistRoutes(deps: WorklistRoutesDeps) {
             if (item.kind !== 'identity_review' || item.subjectType !== 'appointment') {
               throw new AppError('conflict');
             }
-            return confirmIdentity(createSchedulingPorts(tx, { keys: deps.keys }), {
-              appointmentId: item.subjectId,
-              actor: await scopedActor(tx, actor, book),
-              auditActor: audit,
-              expectedVersion: request.body.expectedVersion,
-            });
+            return confirmIdentity(
+              createSchedulingPorts(tx, { keys: deps.keys, events: deps.events }),
+              {
+                appointmentId: item.subjectId,
+                actor: await scopedActor(tx, actor, book),
+                auditActor: audit,
+                expectedVersion: request.body.expectedVersion,
+              },
+            );
           });
         } catch (error) {
           if (error instanceof AccessRefused) {

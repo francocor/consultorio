@@ -30,6 +30,13 @@ const ALLOWED: Record<string, readonly string[]> = {
   // and give reception the metadata of clinical documents when the organization allows it.
   'app.document_probe(uuid)': ['app_rw'],
   'app.reception_clinical_documents(uuid)': ['app_rw'],
+  // The WhatsApp webhook finds the organization of an event from our own record of what we sent
+  // (runtime role). They return tenant ids and nothing else (judgment day finding C10).
+  'app.message_tenants_by_provider_id(text)': ['app_rw'],
+  'app.whatsapp_reply_tenants(text,timestamp with time zone,integer)': ['app_rw'],
+  'app.whatsapp_reply_context_tenants(text,text)': ['app_rw'],
+  // The same, for a number held under several hashes at once (judgment day round 4, finding T1).
+  'app.whatsapp_reply_tenants_any(text[],timestamp with time zone,integer)': ['app_rw'],
   // Called only by triggers, never directly.
   'app.care_adjust(uuid,uuid,uuid,integer,integer)': [],
   'app.care_assignment_sync()': [],

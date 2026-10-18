@@ -56,6 +56,17 @@ describe('security headers', () => {
     expect(response.headers['x-content-type-options']).toBe('nosniff');
   });
 
+  it('a page whose form posts back to itself may allow the referrer to its own origin (the token pages)', async () => {
+    // With `no-referrer`, Chrome sends `Origin: null` on a form POST, which the origin check refuses.
+    const app = Fastify();
+    registerSecurityHeaders(app, { secure: false });
+    app.get('/page', (_request, reply) => reply.header('referrer-policy', 'same-origin').send('x'));
+
+    const response = await app.inject({ method: 'GET', url: '/page' });
+
+    expect(response.headers['referrer-policy']).toBe('same-origin');
+  });
+
   it('also covers errors and unknown paths', async () => {
     const app = Fastify();
     registerSecurityHeaders(app, { secure: false });

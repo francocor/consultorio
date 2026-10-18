@@ -9,6 +9,7 @@ import {
   consentTextFor,
   ensureDemoTenant,
   seedDemoTenant,
+  useServerAddressPepper,
 } from '../src/db/seed/demo/index.js';
 import { seedPlatformCatalogs } from '../src/db/seed/platform.js';
 import { loadConfig } from '../src/main/config.js';
@@ -34,6 +35,8 @@ async function main(): Promise<void> {
   const slug = values.slug;
 
   const config = loadConfig();
+  // The message log of the demo is hashed with the pepper the server runs with.
+  useServerAddressPepper(config);
   if (config.nodeEnv === 'production') {
     throw new DemoSeedError('The demo seed never runs in production.');
   }

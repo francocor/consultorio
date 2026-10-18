@@ -6,6 +6,7 @@ import {
   DEMO_ACCOUNTS,
   DemoSeedError,
   consentTextFor,
+  useServerAddressPepper,
   resetDemoTenant,
 } from '../src/db/seed/demo/index.js';
 import { loadConfig } from '../src/main/config.js';
@@ -32,6 +33,8 @@ async function main(): Promise<void> {
     options: { slug: { type: 'string', default: 'aillu' }, rotate: { type: 'boolean' } },
   });
   const config = loadConfig();
+  // The demo is seeded again: its message log is hashed with the pepper the server runs with.
+  useServerAddressPepper(config);
   if (!config.operatorDatabaseUrl) {
     throw new DemoSeedError('OPERATOR_DATABASE_URL is required (see .env.example).');
   }

@@ -62,6 +62,7 @@ jobs:
             -e AWS_KMS_KEY_ID=alias/smoke-test \
             -e SMTP_HOST=smtp.smoke.test \
             -e SMTP_SECURITY=starttls \
+            -e ADDRESS_HASH_PEPPER=smoke-test-pepper-0123456789-abcdefghij \
             consultorio-api:ci api
           for attempt in $(seq 1 20); do
             if curl -fsS http://127.0.0.1:3000/health; then exit 0; fi

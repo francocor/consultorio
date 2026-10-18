@@ -25,6 +25,7 @@
   "status.cancelled": "Cancelado",
   "event.identityPending": "Identidad sin confirmar",
   "event.outOfHours": "Fuera de horario",
+  "event.virtual": "Virtual",
   "title": "Agenda",
   "description": "Los turnos de la organización por día, semana o mes.",
   "calendar.regionDay": "Agenda del {{period}}",

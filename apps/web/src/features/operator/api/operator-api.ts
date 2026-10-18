@@ -1,5 +1,6 @@
 import {
   CreateTenantResponse,
+  DevProvidersResponse,
   OperatorHolidayDto,
   OperatorHolidayListResponse,
   DemoResetResponse,
@@ -18,6 +19,7 @@ export const operatorKeys = {
   tenants: ['operator', 'tenants'] as const,
   holidaysAll: ['operator', 'holidays'] as const,
   holidays: (country: string, year: number) => ['operator', 'holidays', country, year] as const,
+  devProviders: ['operator', 'dev-providers'] as const,
 };
 
 /** The platform operator API. Only the platform host answers it. */
@@ -46,6 +48,9 @@ export function operatorApi(api: ApiClient) {
     addHoliday: (body: AddHolidayRequest) =>
       api.post('/operator/holidays', { body, schema: OperatorHolidayDto }),
     removeHoliday: (id: string) => api.delete(`/operator/holidays/${id}`),
+    /** Only deployments with LOCAL_PROVIDERS_CONSOLE answer; every other one is a 404. */
+    devProviders: async () =>
+      (await api.get('/operator/dev/providers', { schema: DevProvidersResponse })).providers,
     demoReset: (tenantId: string) =>
       api.post(`/operator/tenants/${tenantId}/demo-reset`, { schema: DemoResetResponse }),
   };

@@ -1,3 +1,6 @@
+import type { WhatsAppSender } from '../modules/notifications/application/ports.js';
+import type { VideoLinkProvider } from '../modules/teleconsultation/application/ports.js';
+import type { BotChallenge } from '../platform/bot-challenge/bot-challenge.js';
 import type { KeyManagement } from '../platform/crypto/key-management.js';
 import type { EmailMessage, EmailSender } from '../platform/mail/email-sender.js';
 import type { ObjectStorage } from '../platform/storage/object-storage.js';
@@ -16,6 +19,12 @@ export interface AdapterPorts {
   email: EmailSender;
   objectStorage: ObjectStorage;
   keyManagement: KeyManagement;
+  /** WhatsApp messages (Stage 3): the Meta Cloud API, a local simulator, an in-memory fake. */
+  whatsapp: WhatsAppSender;
+  /** Video rooms of teleconsultations (Stage 3). */
+  videoLink: VideoLinkProvider;
+  /** The bot challenge of the public forms (Stage 3). */
+  botChallenge: BotChallenge;
 }
 export type AdapterPort = keyof AdapterPorts;
 
@@ -24,6 +33,9 @@ export const ADAPTER_PORTS = [
   'email',
   'objectStorage',
   'keyManagement',
+  'whatsapp',
+  'videoLink',
+  'botChallenge',
 ] as const satisfies readonly AdapterPort[];
 
 export interface Marked<A> {
@@ -48,6 +60,31 @@ export type AdapterRegistry = {
     demo: Marked<AdapterPorts[P]>;
   };
 };
+
+/**
+ * Joins the slots that the composition root and each module register into one registry. Every
+ * port must be registered exactly once: a port nobody registered, or one that two modules both
+ * claim, stops the application at startup instead of failing at the first request.
+ */
+export function assembleAdapterRegistry(
+  parts: readonly Partial<AdapterRegistry>[],
+): AdapterRegistry {
+  const slots = new Map<AdapterPort, AdapterRegistry[AdapterPort]>();
+  for (const part of parts) {
+    for (const port of ADAPTER_PORTS) {
+      const slot = part[port];
+      if (slot === undefined) continue;
+      if (slots.has(port)) throw new Error(`The "${port}" adapter is registered twice.`);
+      slots.set(port, slot);
+    }
+  }
+  const missing = ADAPTER_PORTS.filter((port) => !slots.has(port));
+  if (missing.length > 0) {
+    throw new Error(`No adapter is registered for: ${missing.join(', ')}.`);
+  }
+  // Every port is present, which the checks above just proved; the map cannot say so by type.
+  return Object.fromEntries(slots) as unknown as AdapterRegistry;
+}
 
 export interface TenantRef {
   id: string;

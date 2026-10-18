@@ -61,6 +61,12 @@ export interface OperatorRoutesDeps {
   secureLinks: boolean;
   /** Sign-in attempts per client address and minute. */
   loginRateLimit: { max: number; timeWindow: number };
+  /**
+   * Routes of other parts of the platform that belong in the console (the provider console). They
+   * are registered inside it, after its guard, so they answer only on the platform host and behind
+   * the operator session; each one declares `config.operatorAuth` like the console's own.
+   */
+  extensions?: readonly ((app: FastifyInstance) => void)[];
 }
 
 const SAFE_METHODS = new Set(['GET', 'HEAD', 'OPTIONS']);
@@ -316,5 +322,7 @@ export function operatorRoutes(deps: OperatorRoutesDeps) {
       (request) =>
         deps.support.overview(request.params.tenantId, operatorOf(request), metaOf(request)),
     );
+
+    for (const extension of deps.extensions ?? []) extension(app);
   };
 }
