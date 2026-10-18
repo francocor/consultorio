@@ -6,7 +6,7 @@ import type {
 import { eq } from 'drizzle-orm';
 import { z } from 'zod';
 
-import { videoSession } from '../../../db/schema/teleconsultation.js';
+import { videoSession, type VideoSessionRow } from '../../../db/schema/teleconsultation.js';
 import type { AdapterResolver } from '../../../main/adapter-resolver.js';
 import type { Tx } from '../../../platform/db/tenant-context.js';
 import type {
@@ -136,7 +136,38 @@ async function renewSession(
     return;
   }
   if (session.status === 'closed') return;
+  await restartSession(tx, deps, policy, session, cause);
+}
 
+/**
+ * An appointment that was cancelled, marked a no-show or marked attended was put back among the
+ * appointments to come (a correction of its status): its session was closed, and it would stay
+ * closed for good, with no way to get a link. It gets a new room, like a moved appointment.
+ */
+async function reviveSession(
+  tx: Tx,
+  deps: SessionDeps,
+  policy: VideoPolicy,
+  appointmentId: string,
+): Promise<void> {
+  const session = await loadSession(tx, appointmentId);
+  if (!session) {
+    const facts = await loadAppointmentFacts(tx, appointmentId);
+    if (facts?.virtual) await openSession(tx, deps, policy, appointmentId);
+    return;
+  }
+  if (session.status !== 'closed') return;
+  await restartSession(tx, deps, policy, session, 'revived');
+}
+
+async function restartSession(
+  tx: Tx,
+  deps: SessionDeps,
+  policy: VideoPolicy,
+  session: VideoSessionRow,
+  cause: 'rescheduled' | 'reassigned' | 'patient_changed' | 'revived',
+): Promise<void> {
+  const appointmentId = session.appointmentId;
   const revoked = await deps.tokens.revokeForSubject(tx, 'video_join', appointmentId);
   const start = planStart(deps, policy);
   await writeVideoRoom(tx, appointmentId, start.room);
@@ -196,9 +227,16 @@ async function onStatusChanged(
   tx: Tx,
   deps: SessionDeps,
   appointment: AppointmentFacts,
+  fromStatus: AppointmentStatus,
 ): Promise<void> {
   const reason = CLOSING_STATUS[appointment.status];
-  if (reason === undefined) return;
+  if (reason === undefined) {
+    // A terminal status corrected to one that is not: the session closed with it must open again.
+    if (fromStatus === 'cancelled' || CLOSING_STATUS[fromStatus] !== undefined) {
+      await reviveSession(tx, deps, await readVideoPolicy(tx), appointment.appointmentId);
+    }
+    return;
+  }
   const session = await loadSession(tx, appointment.appointmentId);
   if (!session) return;
   if (reason === 'no_show') {
@@ -242,7 +280,7 @@ export function createSessionSubscriber(deps: SessionDeps) {
         await closeSession(tx, deps, event.appointment.appointmentId, 'cancelled');
         return;
       case 'status_changed':
-        await onStatusChanged(tx, deps, event.appointment);
+        await onStatusChanged(tx, deps, event.appointment, event.fromStatus);
         return;
       case 'slot_freed':
         return;
