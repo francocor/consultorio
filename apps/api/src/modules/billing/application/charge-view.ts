@@ -7,6 +7,7 @@ import {
   money,
   type ChargeDto,
   type ChargeLineDto,
+  type PaymentDto,
 } from '@consultorio/contracts';
 import { and, asc, desc, eq, inArray, or, sql, type SQL } from 'drizzle-orm';
 
@@ -21,7 +22,7 @@ import { location } from '../../../db/schema/tenant.js';
 import type { Tx } from '../../../platform/db/tenant-context.js';
 import { invoicingPositionOf, summarizeCharge } from '../domain/charge-status.js';
 
-import { paidNetByCharge } from './payment-totals.js';
+import { paidNetByCharge, paymentsByCharge } from './payment-totals.js';
 import type { BillingScope } from './scope.js';
 
 function oneOf<T extends string>(values: readonly T[], value: string): T {
@@ -88,6 +89,7 @@ type ChargeView = Awaited<ReturnType<typeof chargeQuery>>[number];
 function toChargeDto(
   view: ChargeView,
   lines: readonly ChargeLineRow[],
+  payments: PaymentDto[],
   paidNetCents: number,
 ): ChargeDto {
   const { row } = view;
@@ -114,6 +116,7 @@ function toChargeDto(
     voidReason: row.voidReason,
     voidedAt: row.voidedAt?.toISOString() ?? null,
     lines: lines.map(toLineDto),
+    payments,
     totalCents: money(summary.totalCents),
     patientCents: money(summary.patientCents),
     payerCents: money(summary.payerCents),
@@ -145,18 +148,20 @@ export async function loadCharges(
   if (views.length === 0) return [];
 
   const ids = views.map((view) => view.row.id);
-  const [lineRows, paid] = await Promise.all([
+  const [lineRows, paid, payments] = await Promise.all([
     tx
       .select()
       .from(chargeLine)
       .where(inArray(chargeLine.chargeId, ids))
       .orderBy(asc(chargeLine.chargeId), asc(chargeLine.position)),
     paidNetByCharge(tx, ids),
+    paymentsByCharge(tx, ids),
   ]);
   return views.map((view) =>
     toChargeDto(
       view,
       lineRows.filter((line) => line.chargeId === view.row.id),
+      payments.get(view.row.id) ?? [],
       paid.get(view.row.id) ?? 0,
     ),
   );

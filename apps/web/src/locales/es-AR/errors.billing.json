@@ -7,5 +7,13 @@
   "charge_price_exists": "Hay un precio cargado para este turno: no se puede ingresar otro importe a mano.",
   "charge_voided": "El cobro está anulado y ya no se puede modificar.",
   "charge_has_payments": "El cobro tiene pagos registrados. Primero hay que devolverlos.",
-  "charge_has_invoice": "El cobro tiene una factura emitida. Primero hay que emitir una nota de crédito."
+  "charge_has_invoice": "El cobro tiene una factura emitida. Primero hay que emitir una nota de crédito.",
+  "payment_overpayment": "El pago supera lo que el paciente debe. Confirme el saldo a favor o ingrese un importe menor.",
+  "payment_voucher_duplicate": "Ese número de comprobante ya fue registrado. Para repetirlo hay que indicar un motivo.",
+  "idempotency_key_reused": "Este envío ya se usó para otro pago. Vuelva a cargar el pago desde el principio.",
+  "cash_register_required": "No hay una caja abierta en esta sede. Abra la caja para registrar pagos en efectivo.",
+  "payment_refund_exceeds": "La devolución supera lo que queda del pago.",
+  "cash_register_open": "Ya hay una caja abierta en esta sede.",
+  "cash_register_closed": "La caja está cerrada y no admite más movimientos.",
+  "cash_difference_reason_required": "Lo contado no coincide con lo esperado. Indique el motivo de la diferencia."
 }

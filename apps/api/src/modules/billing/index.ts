@@ -15,7 +15,9 @@ import type { ExportRegistry } from '../tenancy/index.js';
 
 import { exportBilling } from './application/export-contributor.js';
 import { flagChargeForReview } from './application/flag-charge.js';
+import { cashRoutes } from './http/cash-routes.js';
 import { chargeRoutes } from './http/charge-routes.js';
+import { paymentRoutes } from './http/payment-routes.js';
 import { pricingRoutes } from './http/pricing-routes.js';
 
 /** Registers what billing takes with an organization that leaves (the cancellation export). */
@@ -45,6 +47,8 @@ export function createBilling(options: BillingOptions): Billing {
   const invoices = options.invoices ?? invoiceLookup;
   const pricing = pricingRoutes({ withTenant: options.withTenant, clock });
   const charges = chargeRoutes({ withTenant: options.withTenant, clock, invoices });
+  const payments = paymentRoutes({ withTenant: options.withTenant, clock });
+  const cash = cashRoutes({ withTenant: options.withTenant, clock });
 
   // Synchronous and in the transaction of the scheduling change (see the event bus).
   options.events?.subscribe((tx, event) => flagChargeForReview(tx, event));
@@ -54,6 +58,8 @@ export function createBilling(options: BillingOptions): Billing {
     routes: (app) => {
       pricing(app);
       charges(app);
+      payments(app);
+      cash(app);
     },
   };
 }

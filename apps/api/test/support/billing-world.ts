@@ -1,4 +1,5 @@
-import type { AppointmentDto } from '@consultorio/contracts';
+import type { AppointmentDto, CashSessionDto, ChargeDto } from '@consultorio/contracts';
+import type { LightMyRequestResponse } from 'fastify';
 import pg from 'pg';
 import { expect, inject } from 'vitest';
 
@@ -9,6 +10,7 @@ import {
   type Doctor,
   type SchedulingHttpWorld,
 } from './scheduling-world.js';
+import type { TestSession } from './session.js';
 
 /** What state an appointment is taken to before a charge is captured for it. */
 export type AppointmentStage =
@@ -41,6 +43,27 @@ export interface BillingWorld extends SchedulingHttpWorld {
   ): Promise<{ payerPlanId: string }>;
   /** Owner creates a price for the Consulta type (or `typeId`) and expects 201. */
   setPrice(amountCents: number, extra?: Record<string, unknown>): Promise<{ id: string }>;
+  /** Reception captures the charge of a new checked-in appointment (a price must exist). */
+  charge(options?: { patientId?: string }): Promise<ChargeDto>;
+  /** Opens the register of a location (Centro by default) and expects 201. */
+  openRegister(options?: {
+    locationId?: string;
+    openingCents?: number;
+    by?: TestSession;
+  }): Promise<CashSessionDto>;
+  /** Records a payment of the charge (with a new key unless `idempotencyKey` is given). */
+  pay(
+    chargeId: string,
+    body: { method: string; amountCents: number } & Record<string, unknown>,
+    by?: TestSession,
+  ): Promise<LightMyRequestResponse>;
+}
+
+let keys = 0;
+/** A key for a submission, unique across the tests of the process. */
+export function submissionKey(): string {
+  keys += 1;
+  return `0190a000-0000-7000-8000-${String(keys).padStart(12, '0')}`;
 }
 
 const TIMES = ['09:00', '09:30', '10:00', '10:30', '11:00', '11:30', '12:00', '12:30'] as const;
@@ -140,10 +163,37 @@ export async function createBillingWorld(
     return { payerPlanId };
   };
 
+  const charge: BillingWorld['charge'] = async (settings = {}) => {
+    const created = await appointment(settings.patientId ? { patientId: settings.patientId } : {});
+    const response = await base.api.post('/billing/charges', base.reception, {
+      appointmentId: created.id,
+    });
+    expect(response.statusCode, response.body).toBe(201);
+    return response.json<ChargeDto>();
+  };
+
+  const openRegister: BillingWorld['openRegister'] = async (settings = {}) => {
+    const response = await base.api.post('/billing/cash/sessions', settings.by ?? base.reception, {
+      locationId: settings.locationId ?? base.centro,
+      openingCents: settings.openingCents ?? 0,
+    });
+    expect(response.statusCode, response.body).toBe(201);
+    return response.json<CashSessionDto>();
+  };
+
+  const pay: BillingWorld['pay'] = (chargeId, body, by = base.reception) =>
+    base.api.post(`/billing/charges/${chargeId}/payments`, by, {
+      idempotencyKey: submissionKey(),
+      ...body,
+    });
+
   return {
     ...base,
     catalogPayer,
     cover,
+    charge,
+    openRegister,
+    pay,
     appointment,
     setPrice: async (amountCents, extra = {}) => {
       const response = await base.api.post('/billing/prices', base.owner, {

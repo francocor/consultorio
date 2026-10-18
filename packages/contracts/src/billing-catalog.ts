@@ -28,6 +28,25 @@ export const BILLING_ERRORS = {
   charge_has_payments: { status: 409, i18nKey: 'errors.charge_has_payments' },
   // Void refused: an electronic invoice was issued, a credit note has to cover it first.
   charge_has_invoice: { status: 409, i18nKey: 'errors.charge_has_invoice' },
+  // The payment is above what the patient owes and nobody confirmed the credit balance.
+  payment_overpayment: { status: 409, i18nKey: 'errors.payment_overpayment' },
+  // The voucher or transfer number was already recorded; repeating it needs a reason.
+  payment_voucher_duplicate: { status: 409, i18nKey: 'errors.payment_voucher_duplicate' },
+  // The same submission key was used for a different payment.
+  idempotency_key_reused: { status: 409, i18nKey: 'errors.idempotency_key_reused' },
+  // Cash needs the open register of the location, and there is none.
+  cash_register_required: { status: 409, i18nKey: 'errors.cash_register_required' },
+  // A refund cannot take back more than what is left of the payment.
+  payment_refund_exceeds: { status: 409, i18nKey: 'errors.payment_refund_exceeds' },
+  // A register is already open at the location.
+  cash_register_open: { status: 409, i18nKey: 'errors.cash_register_open' },
+  // The register is closed: it takes no entries and cannot be closed again.
+  cash_register_closed: { status: 409, i18nKey: 'errors.cash_register_closed' },
+  // Counted and expected cash differ and no reason was given.
+  cash_difference_reason_required: {
+    status: 422,
+    i18nKey: 'errors.cash_difference_reason_required',
+  },
 } as const satisfies Record<string, { status: number; i18nKey: string }>;
 
 /**

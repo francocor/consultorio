@@ -359,6 +359,87 @@ export const ChargeSnapshotDto = z.strictObject({
 });
 export type ChargeSnapshotDto = z.infer<typeof ChargeSnapshotDto>;
 
+// Payments ------------------------------------------------------------------------------------
+
+/**
+ * A voucher or transfer number. A value that is only a card number (13 to 19 digits, with spaces or
+ * dashes) is refused: the product never stores a card number (billing-payments, "Audit and privacy").
+ */
+const CARD_NUMBER_LOOKALIKE = /^(\d[ -]?){12,18}\d$/;
+export const ExternalRef = z
+  .string()
+  .trim()
+  .min(1)
+  .max(64)
+  .refine((value) => !CARD_NUMBER_LOOKALIKE.test(value), { message: 'looks like a card number' });
+
+/** Made by the client for each submission, so a retry of the same one cannot be recorded twice. */
+const IdempotencyKey = z.uuid();
+
+export const PaymentReversalDto = z.strictObject({
+  id: z.uuid(),
+  kind: z.enum(PAYMENT_REVERSAL_KINDS),
+  amountCents: Cents,
+  reason: z.string(),
+  reversedBy: z.uuid(),
+  reversedAt: z.iso.datetime(),
+  cashSessionId: z.uuid().nullable(),
+});
+export type PaymentReversalDto = z.infer<typeof PaymentReversalDto>;
+
+export const PaymentDto = z.strictObject({
+  id: z.uuid(),
+  chargeId: z.uuid(),
+  method: z.enum(PAYMENT_METHODS),
+  amountCents: Cents,
+  /** The part above what the patient owed that a person confirmed as a credit balance. */
+  creditCents: Cents,
+  paidAt: z.iso.datetime(),
+  recordedBy: z.uuid(),
+  externalRef: z.string().nullable(),
+  /** The reason a repeated voucher number was accepted; null for a normal payment. */
+  overrideReason: z.string().nullable(),
+  cashSessionId: z.uuid().nullable(),
+  /** The payment this entry replaces, when it was made by a correction. */
+  correctsPaymentId: z.uuid().nullable(),
+  /** What refunds and corrections took back, and what is left. */
+  reversedCents: Cents,
+  netCents: Cents,
+  reversals: z.array(PaymentReversalDto),
+});
+export type PaymentDto = z.infer<typeof PaymentDto>;
+
+export const RecordPaymentRequest = z.strictObject({
+  method: z.enum(PAYMENT_METHODS),
+  amountCents: PositiveMoney,
+  idempotencyKey: IdempotencyKey,
+  externalRef: ExternalRef.optional(),
+  /** Needed to accept a voucher number that was already recorded; audited. */
+  overrideReason: ReasonText.optional(),
+  /** Confirms that what exceeds the amount owed is kept as a credit balance. */
+  confirmCredit: z.boolean().optional(),
+});
+export type RecordPaymentRequest = z.infer<typeof RecordPaymentRequest>;
+
+export const RefundPaymentRequest = z.strictObject({
+  amountCents: PositiveMoney,
+  reason: ReasonText,
+  idempotencyKey: IdempotencyKey,
+});
+export type RefundPaymentRequest = z.infer<typeof RefundPaymentRequest>;
+
+/** Replaces a payment that was recorded wrong: a reversal of what is left of it and a new entry. */
+export const CorrectPaymentRequest = z.strictObject({
+  amountCents: PositiveMoney,
+  reason: ReasonText,
+  idempotencyKey: IdempotencyKey,
+  method: z.enum(PAYMENT_METHODS).optional(),
+  externalRef: ExternalRef.optional(),
+  overrideReason: ReasonText.optional(),
+  confirmCredit: z.boolean().optional(),
+});
+export type CorrectPaymentRequest = z.infer<typeof CorrectPaymentRequest>;
+
 /** Where invoicing stands, derived from the lines; it is not a state of the charge. */
 export const CHARGE_INVOICING_POSITIONS = ['not_invoiced', 'partly_invoiced', 'invoiced'] as const;
 export type ChargeInvoicingPosition = (typeof CHARGE_INVOICING_POSITIONS)[number];
@@ -390,6 +471,7 @@ export const ChargeDto = z.strictObject({
   voidReason: z.string().nullable(),
   voidedAt: z.iso.datetime().nullable(),
   lines: z.array(ChargeLineDto),
+  payments: z.array(PaymentDto),
   /** Everything the charge adds up to, what the patient owes and what the payer owes. */
   totalCents: Cents,
   patientCents: Cents,
@@ -414,3 +496,135 @@ export type ChargeListResponse = z.infer<typeof ChargeListResponse>;
 /** An appointment that already has a charge answers with it (the 409 of a double capture). */
 export const ChargeExistsExtension = z.object({ existingChargeId: z.uuid() });
 export type ChargeExistsExtension = z.infer<typeof ChargeExistsExtension>;
+
+/** What a payment, a refund or a correction answers: the entry and the charge as it stands now. */
+export const PaymentResultResponse = z.strictObject({
+  payment: PaymentDto,
+  charge: ChargeDto,
+  /** True when the client had already sent this submission and nothing new was recorded. */
+  replayed: z.boolean(),
+});
+export type PaymentResultResponse = z.infer<typeof PaymentResultResponse>;
+
+// Receivables ---------------------------------------------------------------------------------
+
+export const ReceivableQuery = z.strictObject({
+  from: IsoDay.optional(),
+  to: IsoDay.optional(),
+  tenantPayerId: z.uuid().optional(),
+});
+export type ReceivableQuery = z.infer<typeof ReceivableQuery>;
+
+export const ReceivableItemDto = z.strictObject({
+  chargeId: z.uuid(),
+  patientName: z.string(),
+  startsAt: z.iso.datetime(),
+  appointmentTypeName: z.string(),
+  amountCents: Cents,
+});
+export type ReceivableItemDto = z.infer<typeof ReceivableItemDto>;
+
+/** What one payer owes the organization, from the payer lines of the charges that are not voided. */
+export const ReceivableGroupDto = z.strictObject({
+  tenantPayerId: z.uuid(),
+  payerName: z.string(),
+  totalCents: Cents,
+  items: z.array(ReceivableItemDto),
+});
+export type ReceivableGroupDto = z.infer<typeof ReceivableGroupDto>;
+
+export const ReceivablesResponse = z.strictObject({
+  groups: z.array(ReceivableGroupDto),
+  totalCents: Cents,
+});
+export type ReceivablesResponse = z.infer<typeof ReceivablesResponse>;
+
+// Cash register -------------------------------------------------------------------------------
+
+export const CashOpenRequest = z.strictObject({
+  locationId: z.uuid(),
+  openingCents: PartMoney,
+});
+export type CashOpenRequest = z.infer<typeof CashOpenRequest>;
+
+export const CashCloseRequest = z.strictObject({
+  countedCents: PartMoney,
+  /** Needed when what was counted is not what was expected. */
+  differenceReason: ReasonText.optional(),
+});
+export type CashCloseRequest = z.infer<typeof CashCloseRequest>;
+
+export const CashSessionListQuery = z.strictObject({
+  locationId: z.uuid().optional(),
+  status: z.enum(CASH_SESSION_STATUSES).optional(),
+  from: IsoDay.optional(),
+  to: IsoDay.optional(),
+});
+export type CashSessionListQuery = z.infer<typeof CashSessionListQuery>;
+
+export const CashCurrentQuery = z.strictObject({ locationId: z.uuid() });
+export type CashCurrentQuery = z.infer<typeof CashCurrentQuery>;
+
+/** The daily summary of one method: what came in, what went back, and the net. */
+export const CashMethodTotalDto = z.strictObject({
+  method: z.enum(PAYMENT_METHODS),
+  count: z.int().min(0),
+  paymentsCents: Cents,
+  refundsCents: Cents,
+  netCents: Cents,
+});
+export type CashMethodTotalDto = z.infer<typeof CashMethodTotalDto>;
+
+export const CashSessionDto = z.strictObject({
+  id: z.uuid(),
+  locationId: z.uuid(),
+  locationName: z.string(),
+  status: z.enum(CASH_SESSION_STATUSES),
+  openedAt: z.iso.datetime(),
+  openedBy: z.uuid(),
+  openingCents: Cents,
+  closedAt: z.iso.datetime().nullable(),
+  closedBy: z.uuid().nullable(),
+  /** The cash that should be in the drawer: opening cash plus cash taken minus cash given back. */
+  expectedCents: Cents,
+  countedCents: Cents.nullable(),
+  differenceCents: Cents.nullable(),
+  differenceReason: z.string().nullable(),
+  cashInCents: Cents,
+  cashOutCents: Cents,
+  byMethod: z.array(CashMethodTotalDto),
+});
+export type CashSessionDto = z.infer<typeof CashSessionDto>;
+
+export const CASH_ENTRY_KINDS = ['payment', 'refund', 'correction'] as const;
+export type CashEntryKind = (typeof CASH_ENTRY_KINDS)[number];
+
+/** One line of the register: a payment taken, or money given back. */
+export const CashEntryDto = z.strictObject({
+  kind: z.enum(CASH_ENTRY_KINDS),
+  id: z.uuid(),
+  paymentId: z.uuid(),
+  chargeId: z.uuid(),
+  patientName: z.string(),
+  method: z.enum(PAYMENT_METHODS),
+  amountCents: Cents,
+  reason: z.string().nullable(),
+  at: z.iso.datetime(),
+});
+export type CashEntryDto = z.infer<typeof CashEntryDto>;
+
+export const CashSessionListResponse = z.strictObject({ sessions: z.array(CashSessionDto) });
+export type CashSessionListResponse = z.infer<typeof CashSessionListResponse>;
+
+export const CashSessionDetailResponse = z.strictObject({
+  session: CashSessionDto,
+  entries: z.array(CashEntryDto),
+});
+export type CashSessionDetailResponse = z.infer<typeof CashSessionDetailResponse>;
+
+export const CashCurrentResponse = z.strictObject({ session: CashSessionDto.nullable() });
+export type CashCurrentResponse = z.infer<typeof CashCurrentResponse>;
+
+/** A register is already open at the place: the 409 of a second opening points at it. */
+export const CashRegisterOpenExtension = z.object({ existingSessionId: z.uuid() });
+export type CashRegisterOpenExtension = z.infer<typeof CashRegisterOpenExtension>;

@@ -209,6 +209,7 @@ describe('what a charge shows', () => {
       'patientName',
       'payerCents',
       'payerName',
+      'payments',
       'planName',
       'professionalId',
       'professionalName',
