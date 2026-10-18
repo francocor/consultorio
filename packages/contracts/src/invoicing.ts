@@ -169,6 +169,28 @@ export const FiscalConfigResponse = z.strictObject({
 });
 export type FiscalConfigResponse = z.infer<typeof FiscalConfigResponse>;
 
+/**
+ * What the person who issues invoices needs to know to fill in the form, without the fiscal
+ * configuration (which only the owner and the admin read): the voucher type the rules give for each
+ * kind of recipient, so the screen shows it and never offers a choice beyond it, and the points of
+ * sale that can be used.
+ */
+export const InvoicingOptionsDto = z.strictObject({
+  taxCondition: z.enum(TAX_CONDITIONS).nullable(),
+  /** One entry per recipient condition; empty while there is no fiscal profile. */
+  types: z.array(
+    z.strictObject({
+      recipient: z.enum(RECIPIENT_TAX_CONDITIONS),
+      type: z.enum(INVOICE_TYPES),
+    }),
+  ),
+  /** The active ones, with the environment that is really used. */
+  pointsOfSale: z.array(
+    z.strictObject({ number: z.int(), environment: z.enum(FISCAL_ENVIRONMENTS) }),
+  ),
+});
+export type InvoicingOptionsDto = z.infer<typeof InvoicingOptionsDto>;
+
 // Provider console: the AFIP simulator (S4.09) -----------------------------------------------------
 
 export const AfipSimulatorModeRequest = z.strictObject({ mode: z.enum(AFIP_SIMULATOR_MODES) });

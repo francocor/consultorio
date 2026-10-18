@@ -3,6 +3,7 @@ import {
   CredentialSummaryDto,
   FiscalConfigResponse,
   FiscalProfileDto,
+  InvoicingOptionsDto,
   InvoicingReadinessDto,
   PointOfSaleDto,
   PutCredentialRequest,
@@ -25,6 +26,7 @@ import {
   type FiscalActor,
   type FiscalDeps,
 } from '../application/fiscal-config.js';
+import { invoicingOptions } from '../application/options.js';
 import { invoicingReadiness } from '../application/readiness.js';
 
 export interface ConfigRoutesDeps extends FiscalDeps {
@@ -75,6 +77,16 @@ export function configRoutes(deps: ConfigRoutesDeps) {
         schema: { response: { 200: InvoicingReadinessDto } },
       },
       (request) => run(request, (tx) => invoicingReadiness(tx, deps)),
+    );
+
+    // What the form of an invoice needs, for whoever issues invoices (reception included).
+    typed.get(
+      '/invoicing/options',
+      {
+        config: { readOnly: 'read', permission: 'invoicing.issue' },
+        schema: { response: { 200: InvoicingOptionsDto } },
+      },
+      (request) => run(request, (tx) => invoicingOptions(tx, deps)),
     );
 
     typed.put(

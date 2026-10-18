@@ -33,6 +33,11 @@ export { createInvoicePdfJob, INVOICE_PDF_JOB } from './jobs/invoice-pdf.js';
 export { createInvoiceDeliverJob, INVOICE_DELIVER_JOB } from './jobs/invoice-deliver.js';
 // The patient portal (Stage 5): the invoices addressed to one patient.
 export { listInvoicesForPatient } from './application/patient-invoices.js';
+// Reports (S4.14): the lines of the issued and registered vouchers of a period, and how to add them up.
+export { readInvoicedLines } from './application/invoiced-lines.js';
+export type { InvoicedLinesFilter } from './application/invoiced-lines.js';
+export { PRIVATE_PAYER_KEY, summarizeInvoiced } from './domain/invoiced-summary.js';
+export type { InvoicedGroup, InvoicedGroupBy, InvoicedLine } from './domain/invoiced-summary.js';
 export { runDueAttempts } from './application/due-invoices.js';
 export type { DueLog } from './application/due-invoices.js';
 export type { IssueDeps, AttemptOutcome } from './application/issue-attempt.js';
