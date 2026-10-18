@@ -86,7 +86,8 @@ export async function processInbound(
 ): Promise<InboundResult> {
   const tenantId = await currentTenantId(tx);
   const fromHash = hashAddress('whatsapp', options.from);
-  // The log may still hold the unsalted hash of this number until the rehash has reached it.
+  // The log may still hold the unsalted hash of this number until the rehash has reached it. It is
+  // used to find who the reply is about and for an opt-out, never to confirm or cancel (below).
   const knownHashes = [fromHash, legacyAddressHash('whatsapp', options.from)];
   const [recorded] = await tx
     .insert(inboundMessage)
@@ -174,7 +175,10 @@ export async function processInbound(
     .where(
       and(
         eq(message.channel, 'whatsapp'),
-        inArray(message.addressHash, knownHashes),
+        // Only the keyed hash: the rehash is what checks that the number still belongs to the patient,
+        // so a row it has not reached cannot confirm or cancel an appointment (judgment day round 4,
+        // finding T2). The reply goes to reception instead.
+        eq(message.addressHash, fromHash),
         ...(options.quotedMessageId === undefined
           ? []
           : [eq(message.providerMessageId, options.quotedMessageId)]),
