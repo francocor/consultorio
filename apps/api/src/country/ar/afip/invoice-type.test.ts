@@ -1,3 +1,4 @@
+import { AR_VALIDATION_MESSAGES_ES_AR, type Result } from '@consultorio/contracts';
 import { describe, expect, it } from 'vitest';
 
 import {
@@ -244,5 +245,56 @@ describe('recipient data per type (e-invoicing-afip, "Recipient identification")
         },
       }),
     ).toMatchObject({ ok: true });
+  });
+});
+
+describe('the messages of every failure of the rules (e-invoicing-afip, "Language")', () => {
+  const keyOf = (result: Result<unknown>): string => {
+    if (result.ok) throw new Error('expected a refusal');
+    return result.error.i18nKey;
+  };
+  const small = 100_000;
+
+  // One refusal for each key the rules can return, reached through the real functions.
+  const refusals = [
+    keyOf(
+      resolveInvoiceType({ issuer: 'monotributo', recipient: 'consumidor_final', requested: 'FA' }),
+    ),
+    keyOf(creditNoteTypeFor('NCC')),
+    keyOf(
+      checkRecipient({
+        type: 'FA',
+        totalCents: small,
+        recipient: { taxCondition: 'consumidor_final' },
+      }),
+    ),
+    keyOf(
+      checkRecipient({
+        type: 'FA',
+        totalCents: small,
+        recipient: { taxCondition: 'responsable_inscripto' },
+      }),
+    ),
+    keyOf(
+      checkRecipient({
+        type: 'FB',
+        totalCents: IDENTIFICATION_THRESHOLD_CENTS,
+        recipient: { taxCondition: 'consumidor_final' },
+      }),
+    ),
+  ];
+
+  it('reaches five distinct invoice keys', () => {
+    expect(new Set(refusals).size).toBe(5);
+    for (const key of refusals) expect(key).toMatch(/^country\.ar\.invoice\./);
+  });
+
+  it('has an es-AR text for each of them, with AFIP wording and no raw key', () => {
+    for (const key of refusals) {
+      const text = (AR_VALIDATION_MESSAGES_ES_AR as Record<string, string | undefined>)[key];
+      expect(text, key).toBeDefined();
+      expect(text?.length, key).toBeGreaterThan(15);
+      expect(text, key).not.toMatch(/country\.ar|invoice\./);
+    }
   });
 });
