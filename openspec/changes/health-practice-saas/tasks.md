@@ -1078,7 +1078,7 @@ Start: S4.00 and Stage 3 data. Done when: the operational numbers match their so
 Start: S4.06, S4.00 web seams. Done when: owner, professional and reception each see their own dashboard at 360 px. Verify: default plus `e2e/stage4-reports.spec.ts`. Rollback: default.
 
 - [x] 4.32 `features/reports/*`: filter bar that shows the applied filters, a `ReportWidget` container with independent loading, empty, error and retry states, operational widgets, Recharts lazy-loaded with `React.lazy`, each chart with a table alternative and non-color encodings, no horizontal page scroll at 360 px; `locales/es-AR/reports.json`. [RPT-08, RPT-09, RPT-04] Test: component tests including one failing widget; axe.
-- [ ] 4.33 Export buttons (CSV, xlsx, PDF) through task 4.24 with filters and timestamp; read-only banner never blocks reads or exports. [RPT-10, RPT-12] Test: component tests; scope test (professional export has only their rows).
+- [x] 4.33 Export buttons (CSV, xlsx, PDF) through task 4.24 with filters and timestamp; read-only banner never blocks reads or exports. [RPT-10, RPT-12] Test: component tests; scope test (professional export has only their rows).
 - [x] 4.34 `e2e/stage4-reports.spec.ts`: owner dashboard, professional own figures, reception operations and cash only, revenue by professional denied for reception, no horizontal scroll at 360 px. [RPT-06, RPT-08] Test: that spec.
 
 ## S4.08 Fiscal configuration and credentials (~450) [Track C]
@@ -1137,9 +1137,9 @@ Start: S4.11, S4.04. Done when: reception issues an invoice from a charge and th
 
 Start: S4.03, S4.10, S4.07. Done when: money figures reproduce from payments, refunds and credit notes. Verify: default plus `financial-report.test.ts`. Rollback: default.
 
-- [ ] 4.57 `application/financial.ts`: charged (voided excluded and shown apart), collected, outstanding and payer receivables grouped by period, location, professional, payer and type; refunds and credit notes as reductions; reads invoices only through `invoicing/index.ts`. [RPT-02] Test: invoices 100000 with a credit note of 20000 give net 80000; voided charge excluded; drill-down sums.
-- [ ] 4.58 `application/cash-report.ts`: per location and day opening, payments by method, refunds, expected, counted, difference and reason from closed and open registers. [RPT-03] Test: day with a 1000 ARS difference shows its reason.
-- [ ] 4.59 `features/reports/financial/*` widgets and export, server-side scope (professional own revenue, reception cash of its locations, revenue by professional denied). [RPT-02, RPT-03, RPT-06, RPT-10] Test: component tests; role matrix extension of the Playwright spec.
+- [x] 4.57 `application/financial.ts`: charged (voided excluded and shown apart), collected, outstanding and payer receivables grouped by period, location, professional, payer and type; refunds and credit notes as reductions; reads invoices only through `invoicing/index.ts`. [RPT-02] Test: invoices 100000 with a credit note of 20000 give net 80000; voided charge excluded; drill-down sums.
+- [x] 4.58 `application/cash-report.ts`: per location and day opening, payments by method, refunds, expected, counted, difference and reason from closed and open registers. [RPT-03] Test: day with a 1000 ARS difference shows its reason.
+- [x] 4.59 `features/reports/financial/*` widgets and export, server-side scope (professional own revenue, reception cash of its locations, revenue by professional denied). [RPT-02, RPT-03, RPT-06, RPT-10] Test: component tests; role matrix extension of the Playwright spec.
 
 ## S4.15 Read-only, money invariants and audit coverage (~300) [Track D]
 
