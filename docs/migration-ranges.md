@@ -63,6 +63,10 @@ The gaps (`0380 - 0389`, `0470 - 0489`, `0580 - 0589`, `0680 - 0689`) are reserv
 
 Migrations stay forward-only and expand-only. One migration per slice; the number to use is the one in `tasks.md`.
 
+### Constraints on tables with many rows
+
+Drizzle applies every pending migration in **one transaction**, so a `VALIDATE CONSTRAINT` written inside a migration keeps the ACCESS EXCLUSIVE lock of the `ADD CONSTRAINT` before it until the whole run ends, and writers wait for the scan. A migration that adds a CHECK or a foreign key to a table that may be large states it `NOT VALID` and does not validate it. `runMigrations` (also behind `db:migrate`) validates every constraint still `NOT VALID` right after the migrator, one statement at a time and outside that transaction, with a lock that lets reads and writes go on (`apps/api/test/integration/migrate-validation.test.ts` proves it with the real runner). Migration 0393 predates this rule and validates inside the transaction; it is harmless where `message` is still small and is not edited because it may already be applied.
+
 ## After a merge or a rebase
 
 When the journal lists migrations of different tracks, run:
