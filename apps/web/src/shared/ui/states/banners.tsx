@@ -1,4 +1,4 @@
-import { Lock, ShieldCheck, WifiOff } from 'lucide-react';
+import { FlaskConical, Lock, ShieldCheck, WifiOff } from 'lucide-react';
 import type { ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
 
@@ -38,6 +38,30 @@ export function ReadOnlyBanner({ className }: { className?: string }) {
       <div>
         <p className="font-medium">{t('state.readOnly.title')}</p>
         <p>{t('state.readOnly.description')}</p>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * The invoices of this organization come from a simulator (a demo, or a deployment that runs the
+ * local AFIP issuer): they are test documents with no fiscal validity. Pure display; the screens
+ * that show money and invoices mount it through `SimulatedBillingNotice`, which knows when.
+ */
+export function SimulatedBillingBanner({ className }: { className?: string }) {
+  const { t } = useTranslation();
+  return (
+    <div
+      role="status"
+      className={cn(
+        'flex items-start gap-3 rounded-lg border border-warning/40 bg-warning-soft px-4 py-3 text-sm text-warning-soft-foreground',
+        className,
+      )}
+    >
+      <FlaskConical className="mt-0.5 size-4 shrink-0" aria-hidden="true" />
+      <div>
+        <p className="font-medium">{t('state.simulatedBilling.title')}</p>
+        <p>{t('state.simulatedBilling.description')}</p>
       </div>
     </div>
   );

@@ -2,7 +2,7 @@ import { effectivePermissions, ROLE_PERMISSIONS, type Role } from '@consultorio/
 import { Users } from 'lucide-react';
 import { describe, expect, it } from 'vitest';
 
-import type { ContributedNavItem } from '../registry.js';
+import { collectNav, type ContributedNavItem } from '../registry.js';
 
 import { buildNav, splitForMobile, ENABLED_STAGE } from './nav-config.js';
 
@@ -65,7 +65,7 @@ describe('navigation at the stage that ships (Stage 2, screens built so far)', (
     expect(idsFor(['patient'])).toEqual(['home']);
   });
 
-  it('a grant adds nothing that needs a different permission (cash needs its stage)', () => {
+  it('a grant adds a permission, not an entry: the revenue screens come from their own features', () => {
     expect(idsFor(['reception'], ENABLED_STAGE, ['cash.operate'])).toEqual([
       'home',
       'calendar',
@@ -88,25 +88,23 @@ describe('navigation once every stage has shipped', () => {
     ]);
   });
 
-  it('reception layout: calendar, check-in, worklist, patients, cash', () => {
+  it('reception layout: calendar, check-in, worklist, patients (cash and reports are contributed)', () => {
     expect(idsFor(['reception'], 6)).toEqual([
       'home',
       'calendar',
       'check-in',
       'worklist',
       'patients',
-      'cash',
     ]);
   });
 
-  it('owner layout adds reports and billing, billing only for the owner', () => {
+  it('owner layout adds the subscription, only for the owner', () => {
     expect(idsFor(['owner'], 6)).toEqual([
       'home',
       'calendar',
       'worklist',
       'patients',
       'staff',
-      'reports',
       'billing',
       'audit',
       'settings',
@@ -135,13 +133,11 @@ describe('every entry names a permission the role catalog really has', () => {
         'audit',
         'billing',
         'calendar',
-        'cash',
         'check-in',
         'drafts',
         'home',
         'patients',
         'prescriptions',
-        'reports',
         'settings',
         'staff',
         'today',
@@ -241,5 +237,108 @@ describe('entries that features contribute (nav.ts)', () => {
 
     expect(items.find((item) => item.id === 'waitlist')?.labelKey).toBe('waitlist:nav.title');
     expect(items.find((item) => item.id === 'calendar')?.labelKey).toBe('nav.calendar');
+  });
+});
+
+describe('the revenue screens (Stage 4) contribute their own entries', () => {
+  // The placements `docs/stage4-tracks.md` gives the tracks, in the order the build finds the
+  // `nav.ts` files (by path: billing, cash, invoicing, reports).
+  const entry = (
+    id: string,
+    anyOf: ContributedNavItem['anyOf'],
+    placements: ContributedNavItem['placements'],
+  ): ContributedNavItem => ({
+    id,
+    to: `/${id}`,
+    labelKey: `${id}:nav`,
+    icon: Users,
+    anyOf,
+    placements,
+  });
+  const revenue = [
+    entry(
+      'charges',
+      ['payments.read'],
+      [
+        { layout: 'reception', after: 'check-in' },
+        { layout: 'admin', after: 'patients' },
+        { layout: 'professional' },
+      ],
+    ),
+    entry('cash', ['cash.operate'], [{ layout: 'reception', after: 'patients' }]),
+    entry(
+      'invoices',
+      ['invoicing.issue'],
+      [{ layout: 'reception' }, { layout: 'admin', after: 'charges' }],
+    ),
+    entry(
+      'reports',
+      ['reports.read'],
+      [{ layout: 'admin', after: 'staff' }, { layout: 'reception' }, { layout: 'professional' }],
+    ),
+  ];
+  const idsFor4 = (roles: readonly Role[]) =>
+    buildNav({
+      permissions: effectivePermissions(roles, []),
+      roles,
+      contributed: revenue,
+    }).map((item) => item.id);
+
+  it('frees the ids of the cash register and the reports, which the shell used to hold', () => {
+    const everything = buildNav({
+      permissions: effectivePermissions(['owner', 'reception', 'professional'], []),
+      roles: ['owner', 'reception', 'professional'],
+      stage: 6,
+    }).map((item) => item.id);
+
+    expect(everything).not.toContain('cash');
+    expect(everything).not.toContain('reports');
+    expect(() => collectNav({ a: { default: { items: revenue } } })).not.toThrow();
+  });
+
+  it('reception: charges after check-in, then the cash register, the invoices and the reports', () => {
+    expect(idsFor4(['reception'])).toEqual([
+      'home',
+      'calendar',
+      'check-in',
+      'charges',
+      'worklist',
+      'patients',
+      'cash',
+      'invoices',
+      'reports',
+    ]);
+  });
+
+  it('a professional sees the charges and reports of their own appointments, and no cash or invoices', () => {
+    expect(idsFor4(['professional'])).toEqual([
+      'home',
+      'today',
+      'calendar',
+      'patients',
+      'charges',
+      'reports',
+    ]);
+  });
+
+  it('owner and admin see charges, invoices and reports, and no cash register of their own', () => {
+    for (const role of ['owner', 'admin'] as const) {
+      expect(idsFor4([role]), role).toEqual([
+        'home',
+        'calendar',
+        'worklist',
+        'patients',
+        'charges',
+        'invoices',
+        'staff',
+        'reports',
+        'audit',
+        'settings',
+      ]);
+    }
+  });
+
+  it('a patient sees none of it', () => {
+    expect(idsFor4(['patient'])).toEqual(['home']);
   });
 });

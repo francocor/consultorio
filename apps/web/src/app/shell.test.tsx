@@ -170,7 +170,7 @@ describe('BottomNav', () => {
     NAV_ITEMS.staff,
     NAV_ITEMS.audit,
     NAV_ITEMS.settings,
-    NAV_ITEMS.reports,
+    NAV_ITEMS.worklist,
     NAV_ITEMS.billing,
   ];
 
@@ -184,7 +184,7 @@ describe('BottomNav', () => {
     await user.click(nav.getByRole('button', { name: 'Más' }));
     const sheet = await screen.findByRole('dialog', { name: 'Más secciones' });
     expect(within(sheet).getByRole('link', { name: 'Configuración' })).toBeInTheDocument();
-    expect(within(sheet).getByRole('link', { name: 'Informes' })).toBeInTheDocument();
+    expect(within(sheet).getByRole('link', { name: 'Pendientes' })).toBeInTheDocument();
     expect(within(sheet).getByRole('link', { name: 'Facturación' })).toBeInTheDocument();
   });
 

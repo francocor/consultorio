@@ -46,6 +46,8 @@
   "state.readOnly.title": "Organización en modo de solo lectura",
   "state.readOnly.description": "Puede consultar la información, pero no crear ni modificar datos. Para volver a la edición, regularice la suscripción desde Facturación.",
   "state.readOnly.disabledReason": "No disponible en modo de solo lectura.",
+  "state.simulatedBilling.title": "Facturación de prueba",
+  "state.simulatedBilling.description": "Las facturas de esta organización las emite un simulador: son documentos de prueba, sin validez fiscal, y no se informan a ARCA.",
   "state.twoFactor.title": "Active la verificación en dos pasos",
   "state.twoFactor.description": "Su rol requiere un segundo factor para proteger los datos de los pacientes. Hasta que lo active, solo puede acceder a esta configuración.",
   "state.twoFactor.action": "Activar ahora",

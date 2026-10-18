@@ -73,7 +73,7 @@ describe('Settings > Mensajes', () => {
           hideProfessional: true,
           hideAppointmentType: false,
         },
-        integrations: { whatsapp: false, video: true },
+        integrations: { whatsapp: false, video: true, einvoicing: false },
       }),
     );
 

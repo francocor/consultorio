@@ -34,6 +34,7 @@
     "@oslojs/otp": "^1.1.0",
     "@react-pdf/renderer": "^4.9.0",
     "drizzle-orm": "^0.45.4",
+    "exceljs": "^4.4.0",
     "fastify": "^5.12.7",
     "fastify-type-provider-zod": "^7.0.0",
     "luxon": "^3.7.2",
@@ -41,6 +42,7 @@
     "pg": "^8.23.1",
     "pg-boss": "^12.38.0",
     "pino": "^10.4.0",
+    "qrcode": "^1.5.4",
     "react": "^19.3.1",
     "sharp": "^0.35.5",
     "zod": "^4.6.7"
@@ -53,6 +55,7 @@
     "@types/node": "^24",
     "@types/nodemailer": "^8.0.2",
     "@types/pg": "^8.23.1",
+    "@types/qrcode": "^1.5.6",
     "@types/react": "^19.3.0",
     "drizzle-kit": "^0.31.11",
     "esbuild": "^0.28.2",

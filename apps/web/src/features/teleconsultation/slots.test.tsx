@@ -105,7 +105,9 @@ function openAs(roles: Parameters<typeof meFor>[0]) {
           maxActiveEntries: 5,
         },
         teleconsultation: { joinOpensMinutes: 15, noShowAfterMinutes: 15 },
-        integrations: { whatsapp: true, video: true },
+        integrations: { whatsapp: true, video: true, einvoicing: false },
+        billing: { lateFeeEnabled: false, lateFeeAmount: 0 },
+        invoicing: { outageThresholdHours: 24 },
       }),
     },
   });
