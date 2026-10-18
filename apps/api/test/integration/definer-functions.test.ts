@@ -35,6 +35,8 @@ const ALLOWED: Record<string, readonly string[]> = {
   'app.message_tenants_by_provider_id(text)': ['app_rw'],
   'app.whatsapp_reply_tenants(text,timestamp with time zone,integer)': ['app_rw'],
   'app.whatsapp_reply_context_tenants(text,text)': ['app_rw'],
+  // The same, for a number held under several hashes at once (judgment day round 4, finding T1).
+  'app.whatsapp_reply_tenants_any(text[],timestamp with time zone,integer)': ['app_rw'],
   // Called only by triggers, never directly.
   'app.care_adjust(uuid,uuid,uuid,integer,integer)': [],
   'app.care_assignment_sync()': [],
