@@ -1,11 +1,16 @@
 import { eq, sql } from 'drizzle-orm';
-import { afterAll, beforeAll, beforeEach, describe, expect, inject, it } from 'vitest';
+import pg from 'pg';
+import { afterAll, beforeAll, beforeEach, describe, expect, inject, it, vi } from 'vitest';
 
 import { message } from '../../src/db/schema/notifications.js';
 import { worklistItem } from '../../src/db/schema/worklist.js';
 import { rehashLegacyAddresses } from '../../src/modules/notifications/application/address-rehash.js';
-import { createReminderSweepJob } from '../../src/modules/notifications/application/sweep.js';
+import {
+  createReminderSweepJob,
+  type SweepFailure,
+} from '../../src/modules/notifications/application/sweep.js';
 import { hashAddress, legacyAddressHash } from '../../src/modules/notifications/domain/address.js';
+import { describeFailure } from '../../src/platform/db/failure-log.js';
 import { createRuntimeDb, type DbHandle } from '../../src/platform/db/pool.js';
 import { runJob } from '../../src/platform/jobs/define-job.js';
 import {
@@ -43,6 +48,17 @@ beforeEach(async () => {
   });
   expect(response.statusCode, response.body).toBe(200);
 });
+
+/** The delivery of one sweep job of the organization. */
+function sweepInput() {
+  return {
+    id: crypto.randomUUID(),
+    name: 'reminder.sweep',
+    data: { tenantId: scheduling.tenant.id },
+    enqueuedAt: notes.now(),
+    retryCount: 0,
+  };
+}
 
 /** Runs the sweep of the organization once, the way the worker's hourly tick would. */
 async function sweep() {
@@ -361,38 +377,141 @@ describe('reminder.sweep: housekeeping of other modules (JD-S3 R2-C7)', () => {
     expect(calls).toEqual([notes.now()]);
   });
 
-  it('plans the reminders even when a step throws (JD-S3 R4-W1), reports it, and still runs the next one', async () => {
+  it('plans the reminders even when a cleanup throws a real SQL error (JD-S3 R4-W1), reports it, and still runs the next one', async () => {
     const { appointment } = await bookedFor({ email: 'sealer@example.test' });
-    const failures: unknown[] = [];
+    const failures: SweepFailure[] = [];
     const calls: string[] = [];
     const definition = createReminderSweepJob(
       {
         ...notes.deps,
         housekeeping: [
-          () => Promise.reject(new Error('sealer exploded')),
-          () => {
+          // A real error of the database: it aborts the transaction unless the cleanup has a savepoint.
+          async (tx) => {
+            await tx.execute(sql`select 1 / 0`);
+          },
+          async (tx) => {
+            await tx.execute(sql`select 1`);
             calls.push('after');
-            return Promise.resolve();
           },
         ],
       },
-      { onFailure: (error) => failures.push(error) },
+      { onFailure: (failure) => failures.push(failure) },
     );
 
-    const outcome = await runJob(runtime.db, definition, {
-      id: crypto.randomUUID(),
-      name: 'reminder.sweep',
-      data: { tenantId: scheduling.tenant.id },
-      enqueuedAt: notes.now(),
-      retryCount: 0,
-    });
+    const outcome = await runJob(runtime.db, definition, sweepInput());
 
     expect(outcome).toEqual({ status: 'completed' });
     expect(failures).toHaveLength(1);
-    expect((failures[0] as Error).message).toBe('sealer exploded');
+    expect(failures[0]).toMatchObject({ step: 'housekeeping_1', tenantId: scheduling.tenant.id });
+    expect(describeFailure(failures[0]?.error).code).toBe('22012');
     expect(calls).toEqual(['after']);
     const rows = await notes.messagesOf(appointment.id);
     expect(rows).toHaveLength(1);
     expect(rows[0]).toMatchObject({ kind: 'reminder', channel: 'email', status: 'queued' });
+  });
+
+  it('does not let a failing built-in cleanup stop the planning or the next cleanups (JD-S3 follow-up)', async () => {
+    const { appointment } = await bookedFor({ email: 'planned@example.test' });
+    const { patientId, appointment: stale } = await bookedFor({ email: 'stale@example.test' });
+    const staleId = await notes.queue({
+      kind: 'reminder',
+      patientId,
+      appointmentId: stale.id,
+      plannedStartsAt: new Date(stale.startsAt),
+      appointmentVersion: stale.version,
+      dedupeKey: `sweep:${stale.id}:stale-guard:email`,
+      sendAt: new Date(notes.now().getTime() - 3 * 3_600_000),
+    });
+    const failures: SweepFailure[] = [];
+    // closeStale sets cancel_reason = 'tenant_read_only': make that update fail with a real SQL error.
+    const owner = new pg.Client({ connectionString: inject('ownerUrl') });
+    await owner.connect();
+    await owner.query(
+      `CREATE FUNCTION public.test_sweep_close_stale_boom() RETURNS trigger LANGUAGE plpgsql
+         AS $$ BEGIN PERFORM 1 / 0; RETURN NEW; END $$`,
+    );
+    await owner.query(
+      `CREATE TRIGGER test_sweep_close_stale_boom BEFORE UPDATE ON message
+         FOR EACH ROW WHEN (NEW.cancel_reason = 'tenant_read_only')
+         EXECUTE FUNCTION public.test_sweep_close_stale_boom()`,
+    );
+    try {
+      const definition = createReminderSweepJob(
+        { ...notes.deps },
+        { onFailure: (failure) => failures.push(failure) },
+      );
+
+      expect(await runJob(runtime.db, definition, sweepInput())).toEqual({ status: 'completed' });
+    } finally {
+      await owner.query('DROP TRIGGER test_sweep_close_stale_boom ON message');
+      await owner.query('DROP FUNCTION public.test_sweep_close_stale_boom()');
+      await owner.end();
+    }
+
+    expect(failures.map((failure) => failure.step)).toEqual(['close_stale']);
+    expect(describeFailure(failures[0]?.error).code).toBe('22012');
+    expect((await notes.message(staleId)).status).toBe('queued');
+    expect(await notes.messagesOf(appointment.id)).toHaveLength(1);
+  });
+
+  it('runs the cleanups even when the planning fails, and then rejects so the job is marked failed (JD-S3 follow-up)', async () => {
+    // A patient nobody can remind: the sweep asks the worklist, which fails with a real SQL error.
+    await bookedFor({ email: null, phone: null });
+    const failures: SweepFailure[] = [];
+    const calls: string[] = [];
+    const definition = createReminderSweepJob(
+      {
+        ...notes.deps,
+        worklist: {
+          ...notes.deps.worklist,
+          open: async (tx) => {
+            await tx.execute(sql`select 1 / 0`);
+          },
+        },
+        housekeeping: [
+          async (tx) => {
+            // Usable: the failed planning was undone up to its own savepoint, not the transaction.
+            await tx.execute(sql`select 1`);
+            calls.push('cleanup');
+          },
+        ],
+      },
+      { onFailure: (failure) => failures.push(failure) },
+    );
+
+    await expect(runJob(runtime.db, definition, sweepInput())).rejects.toThrow();
+
+    expect(calls).toEqual(['cleanup']);
+    expect(failures).toEqual([]);
+  });
+
+  it('reports a failing cleanup on stderr with the step, the tenant, the class and the code, never the message (JD-S3 follow-up)', async () => {
+    const write = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
+    try {
+      const definition = createReminderSweepJob({
+        ...notes.deps,
+        housekeeping: [
+          () =>
+            Promise.reject(Object.assign(new Error('row 600123456 exploded'), { code: '23505' })),
+        ],
+      });
+
+      await runJob(runtime.db, definition, sweepInput());
+
+      const lines = write.mock.calls.map(([chunk]) => String(chunk));
+      const line = lines.find((entry) => entry.includes('reminder_sweep_housekeeping_failed'));
+      expect(line).toBeDefined();
+      expect(JSON.parse(line ?? '')).toEqual({
+        level: 'error',
+        msg: 'reminder_sweep_housekeeping_failed',
+        step: 'housekeeping_1',
+        tenantId: scheduling.tenant.id,
+        name: 'Error',
+        code: '23505',
+      });
+      expect(line).not.toContain('600123456');
+    } finally {
+      write.mockRestore();
+    }
   });
 });

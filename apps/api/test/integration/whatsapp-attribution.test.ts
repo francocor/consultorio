@@ -1,6 +1,7 @@
 import { randomBytes } from 'node:crypto';
 
 import { and, eq, sql } from 'drizzle-orm';
+import pg from 'pg';
 import { afterAll, beforeAll, beforeEach, describe, expect, inject, it } from 'vitest';
 
 import { createLocalKeyManagement } from '../../src/adapters/local-kek/index.js';
@@ -507,5 +508,36 @@ describe('finding the organization of a reply', () => {
     });
 
     expect(seen).toBe(0);
+  });
+
+  it('has a partial index on the address hash of WhatsApp messages, so the webhook lookup does not scan the log (JD-S3 follow-up)', async () => {
+    const owner = new pg.Client({ connectionString: inject('ownerUrl') });
+    await owner.connect();
+    try {
+      const found = await owner.query<{ indexdef: string }>(
+        `SELECT indexdef FROM pg_indexes
+          WHERE schemaname = 'public' AND indexname = 'message_whatsapp_address_hash_idx'`,
+      );
+      expect(found.rows).toHaveLength(1);
+      expect(found.rows[0]?.indexdef).toMatch(/\(address_hash\)/);
+      expect(found.rows[0]?.indexdef).toMatch(/WHERE .*channel.*whatsapp/);
+
+      // The query the definer function runs, planned with a sequential scan ruled out: on a log this
+      // small the planner would never choose the index by cost, so this checks it CAN serve the lookup.
+      await owner.query('BEGIN');
+      await owner.query('SET LOCAL enable_seqscan = off');
+      const plan = await owner.query<{ 'QUERY PLAN': string }>(
+        `EXPLAIN SELECT m.tenant_id FROM public.message m
+          WHERE m.channel = 'whatsapp' AND m.address_hash = ANY (ARRAY['a', 'b']::text[])
+            AND coalesce(m.sent_at, m.created_at) >= now() - interval '7 days'
+          GROUP BY m.tenant_id`,
+      );
+      await owner.query('ROLLBACK');
+      expect(plan.rows.map((row) => row['QUERY PLAN']).join('\n')).toContain(
+        'message_whatsapp_address_hash_idx',
+      );
+    } finally {
+      await owner.end();
+    }
   });
 });
