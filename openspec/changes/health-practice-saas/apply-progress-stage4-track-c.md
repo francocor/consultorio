@@ -111,3 +111,122 @@ Node v24.22.0, pnpm 10.34.7, Docker shared with other agents and projects; ports
 | `test:e2e` (`vite build`, ports 3740/4740/9740, `--workers=3`) | **185 passed** (the seam's number; this wave adds no e2e: the invoicing spec belongs to S4.13) |
 
 CI, Lighthouse and the real ARCA adapter were not run. No `.env` file was read or written. No certificate or key fixture looks real: every test certificate is generated on the spot by `src/testing/dev-afip-certificate.ts` (subject "DEV ONLY").
+
+---
+
+# Wave 2: S4.10 to S4.13 (tasks 4.43 to 4.56)
+
+Branch `feat/stage-4-track-4c`, based on the Stage 4 integration tip `aba4fa2` (local merge `1341e5d`). Strict TDD mode, artifact store `openspec`. Ports 3820, 4820, 9820 for the end to end run.
+
+## Status of the tasks
+
+All of 4.43 to 4.56 are `[x]` in `tasks.md`. Task 4.54 was left partial by wave 1 (settings); its second half (invoice screens, states, the prolonged-outage flag and the manual entry dialog) is in this wave.
+
+| Slice | Tasks | What |
+| ----- | ----- | ---- |
+| S4.10 | 4.43 to 4.46 | Tables, immutability, `invoiced_cents` balance, create invoice, credit notes, rejected attempts, real `invoiceLookup` |
+| S4.11 | 4.47 to 4.50 | The `afip.issue` job, the retry clock, outage visibility, manual entry, read-only rules |
+| S4.12 | 4.51 to 4.53 | PDF with the AFIP QR, delivery by email, `invoice_pdf` token kind, `listInvoicesForPatient` |
+| S4.13 | 4.54 (second half), 4.55, 4.56 | Screens, drawer panel, nav entry `invoices`, credit note dialog, `e2e/stage4-invoicing.spec.ts` |
+
+## Commits (oldest first)
+
+| Commit | What |
+| ------ | ---- |
+| `2fd5ded` | Invoice tables, immutability triggers, `invoiced_cents` balance (migration 0444) |
+| `aab6b8e` | es-AR texts for the `country.ar.invoice.*` failure keys |
+| `1f70e36` | Create invoice, credit notes, rejected attempts, real `invoiceLookup` |
+| `514cd6b` | Issue job, retry clock, outage handling, manual entry, read-only rules |
+| `3329000` | Invoice PDF with QR, email delivery, PDF links, invoices of a patient |
+| `3f9db75` | Read functions for the reports and the options of the invoice form |
+| `ae1f4ca` | The provider console drives the demo fake issuer |
+| `24f0efd` | Invoicing screens, issue dialog, credit notes, the invoices of a charge |
+| `d874efd` | `stage4-invoicing.spec.ts` at 360 px (and the card fix it found) |
+| `9a1e5c0` | The console shows a mode only for the simulator that serves customers |
+
+## Migrations
+
+- `0444_invoices.sql`: `invoice`, `invoice_line`, `invoice_document`; the triggers `guard_invoice`, `guard_invoice_insert`, `guard_invoice_line_insert`, `refuse_invoice_line_update`, `guard_invoice_document`; `app.refresh_invoiced` (the only writer of `charge_line.invoiced_cents`, `GRANT EXECUTE` to `app_rw`). The foreign key from `invoice_line` to `charge_line` sits inside the `NO FORCE` / `FORCE` lift of `charge_line`, as the task required.
+- `0446_appointment_type_invoice_description.sql`: nullable `appointment_type.invoice_description` (1 to 120 characters) so an invoice line can carry the wording of the service.
+
+`db:restamp` and `db:check` were run first (nothing to restamp) and at the end ("No migration drift").
+
+## Design as built
+
+- **Retries are not self-requeued jobs.** A job that is enqueued again gets a new `createdOn`, and the read-only gate (`jobMayRun` / `assertTenantWritable`) judges a job by `enqueuedAt` against `read_only_since`: a retry would be cancelled in a read-only organization. The retry clock is the `runDueAttempts` sweep (every 30 seconds) over `invoice.next_attempt_at` (1 minute doubling to 6 hours), judged by the `created_at` of the invoice. A request made before the read-only date keeps being submitted.
+- **One attempt per invoice at a time** (advisory lock). Lock order: charge lines by id, then the invoice row.
+- **Unknown outcome**: before any new send the module probes `findIssued(expected number)`; then `issue()` with the same idempotency key (the port promises idempotency). A timeout after authorization yields exactly one voucher (tested with the simulator mode `timeout_after_authorize`).
+- A pending invoice also counts as "standing over" a charge, so a charge cannot be voided while an invoice for it is pending.
+- Manual entry (owner and admin only) may `replacesInvoiceId`: the pending invoice is closed as rejected so it is never issued as well.
+- Credit notes: pending ones count against the cumulative limit; `invoiced_cents` drops only when the note is issued. The void route always answers 409 (an issued invoice is never voided; the way back is a credit note).
+- Invoices are sent by email only (never WhatsApp); a payer invoice is not emailed.
+
+## Read functions exported for the reports (S4.14)
+
+From `modules/invoicing/index.ts`:
+
+- `readInvoicedLines(tx, { from, to })` returns `InvoicedLine[]`: one row per invoice line of an issued or manual voucher with `locationId`, `professionalId`, `payerId` and `payerName` (or none for a private payment), `patientId`, `issueDate`, `type`, `kind` and a signed `netCents` (credit notes are negative).
+- `summarizeInvoiced(rows, groupBy)` with `groupBy` in `total | day | month | location | professional | payer | type` returns `InvoicedGroup[]` (`key`, `label`, `invoicedCents`, `creditedCents`, `netCents`, `documents`). The private payer is `PRIVATE_PAYER_KEY` (`'private'`). Only issued and manual vouchers count.
+- Also: `listInvoicesForPatient` (audits `patient.read`), `invoiceLookup` (the real lookup behind the void rule of track A), `runDueAttempts`, `invoicingReadiness`.
+
+## TDD cycle evidence
+
+| Task | Tests | RED | GREEN | Notes |
+| ---- | ----- | --- | ----- | ----- |
+| 4.43 | `invoice-invariants.test.ts` (DB level: immutability, cumulative limit, line rules, FORCE RLS), isolation suite with the `invoice` fixture | tables missing | passed | RED first. Two bugs found by the tests: a pending row could carry only a CAE (CHECK split in two equalities), and a plpgsql `CASE` inside an `IF` |
+| 4.44 | `invoice-create.test.ts` (including a fast-check concurrency property), `invoice-amounts.test.ts` | functions missing | passed | The application code was written before the HTTP level tests; RED was seen at behavior level (domain and DB tests) |
+| 4.45, 4.46 | `credit-note.test.ts`, `invoice-rejection.test.ts`, extended `invoice-type.test.ts` | module missing | passed | Same remark as 4.44 for the HTTP level |
+| 4.47, 4.48, 4.50 | `afip-issue-job.test.ts`, `retry-schedule.test.ts`, `billing-read-only` extensions | job missing | passed | RED first for the job and the schedule |
+| 4.49 | `invoice-manual.test.ts` | route missing | passed | Contracts and domain tests written together with the code |
+| 4.51 | `invoice-qr.test.ts`, `render-invoice.test.ts`, `invoice-render.test.ts` | module missing | passed | |
+| 4.52 | `invoice-email.test.ts`, `invoice-render.test.ts`, `kinds.test.ts`, `public-tokens.test.ts` | token kind off | passed | `invoice_pdf` enabled with its `ELSEWHERE` line |
+| 4.53 | `invoice-patient-list.test.ts` | function missing | passed | |
+| reads | `invoiced-summary.test.ts`, `invoice-reads.test.ts`, `invoicing-options.test.ts`, `appointment-type-invoice-description.test.ts` | functions missing | passed | |
+| 4.54 to 4.56 (web) | `invoice-display.test.ts`, `submission-key.test.ts`, `invoices-page.test.tsx`, `issue-invoice.test.tsx`, `invoice-detail.test.tsx`, `charge-invoices-panel.test.tsx` (113 tests for the feature folder, with axe) | feature missing | passed | |
+| 4.56 | `e2e/stage4-invoicing.spec.ts` | the first full run failed on the width of the page (41 px) with a credit note in the list | passed (2 of 2 with the operator setup) | The button "Ver detalle de Nota de crédito C 0001-0000000N" did not wrap: the visible label is now "Ver detalle" with the full accessible name in `aria-label`, and the grids use `grid-cols-1` |
+
+Honest note: for 4.44 to 4.46 and 4.47 the application code was written before the HTTP level tests; the failing run that was seen is at behavior level (domain and database tests). The invariants test (4.43) and the later items had RED first.
+
+## Deviations from the tasks and the design
+
+1. **Sweeper instead of re-enqueued retries** (see "Design as built"): required by the read-only rule. The job `afip.issue` is enqueued once per request.
+2. **`loadNoticeRecipient`** added to the notifications `index.ts` and **`readInvoiceWording`** to the scheduling `index.ts` (invoice email recipient and the line wording). Both are read-only exports.
+3. **Migration 0446 and the field `invoiceDescription`** on the appointment type (DTO, create, update). Four web fixtures and two raw JSON responses in `onboarding/wizard.test.tsx` gained `invoiceDescription: null`.
+4. **The es-AR texts of the failure keys** live in `packages/contracts/src/country/ar/messages.ts` (deviation 12 of wave 1 left that open).
+5. **`GET /invoicing/options`** was added (types by recipient condition and active points of sale) so the issue dialog shows the type the rules give without duplicating them in the web.
+6. **A pending invoice also blocks voiding a charge.**
+7. **The provider console drives the demo fake** (one fake per configuration, held in a `WeakMap`): without it the end to end journey could not put the demonstration organizations in an outage, since they never use the local simulator. `status().mode` stays `null` when the simulator does not serve customers.
+8. **`readInvoicedLines` has a flat read model**; grouping is done by `summarizeInvoiced` in memory over the requested period.
+9. **The PDF snapshot of the issuer data is taken at render time** (the job renders from the invoice and the fiscal profile of that moment).
+10. **A manual number that collides with an AFIP-issued number** leaves the manual invoice pending with a clear error, never issued.
+11. **`listInvoicesForPatient` audits with `patient.read`.**
+12. **Manual invoices get no PDF and no email** (the owner has the original document); payer invoices are not emailed.
+13. **The `/files/:token` door** serves the invoice PDF with the `invoice_pdf` kind (session bound, 5 minutes, one use).
+
+## Risks and follow-ups
+
+- The end to end stack has no S3 configuration, so the `invoice.pdf` job is not registered there: the journey shows "El PDF se está preparando." and the PDF download is covered by integration tests only (`invoice-render.test.ts`), not in the browser.
+- Exempt issuers get Factura C and health services are treated as exempt from VAT for A and B: assumption to confirm with an accountant before production.
+- The real WSAA and WSFEv1 adapter (4.68, 4.69) is untouched: with `AFIP_PROVIDER=afip` nothing is issued for customers.
+- The retry clock runs every 30 seconds with a first wait of one minute: a recovery shows up between one and two minutes later. The end to end spec waits for it (about two minutes total).
+- The `invoiced_cents` column has exactly one writer (`app.refresh_invoiced`); a future write path must go through the invoice tables.
+- Known load flakes: `src/platform/pdf/render.test.ts` (first load, 5 s) and `check-migration-drift` under a busy machine. Both pass alone.
+- Shared Docker daemon: an end to end start failed twice with a container port problem while the previous run containers were still going down; the containers of this track were removed by id.
+
+## Verification (wave 2)
+
+Node v24.22.0, pnpm 10.34.7, ports 3820, 4820, 9820. Code tip before this progress commit: `9a1e5c0`.
+
+| Command | Result |
+| --- | --- |
+| `corepack pnpm install --frozen-lockfile` | exit 0 |
+| `corepack pnpm typecheck` | exit 0 |
+| `corepack pnpm lint` / `format:check` | exit 0 / exit 0 |
+| `corepack pnpm test` | 375 files, 4,765 tests: 4,763 passed; 2 failed: `render.test.ts` (known first-load timeout, passes alone 12 of 12) and `wiring.test.ts` (a real regression of mine: the console status showed `ok` instead of `null`; fixed in `9a1e5c0`, `src/main/wiring` 40 of 40) |
+| Targeted `test:integration` (invoicing, credit notes, AFIP job, fiscal config, console, void, read-only, demo coverage, no-delete, notifications, scheduling config, `test/policy`, `test/security`) | 40 files, 603 tests passed |
+| Isolation suite (`test/tenancy`), `migration-lanes`, `tenancy-schema` | 4 files, 362 tests passed |
+| `corepack pnpm build` | exit 0; the invoicing page, the drawer panel and the settings are lazy chunks (`InvoicesPage` 16.5 kB, `ChargeInvoicesPanel` 2.7 kB); the entry chunk is 383.67 kB |
+| `corepack pnpm db:check` | No migration drift |
+| `e2e/stage4-invoicing.spec.ts` (`vite build`, desktop project, `--workers=2`) | 2 passed (operator setup and the journey) |
+
+The full integration suite and the full end to end suite were not run (the integrator runs them alone). CI, Lighthouse and the real ARCA adapter were not run. No `.env` file was read or written.
