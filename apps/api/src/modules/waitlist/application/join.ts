@@ -97,8 +97,17 @@ export interface JoinDeps {
 
 /** What the waitlist asks of the notifications module about WhatsApp. */
 export interface WhatsappOptInPort {
-  /** Inside the transaction of the join: prepares the link and returns its token. */
-  request(tx: Tx, input: { patientId: string; at: Date }): Promise<{ token: string }>;
+  /**
+   * Inside the transaction of the join: prepares the link of this submission and returns its token.
+   * It is asked for every join that ticked WhatsApp, whatever became of it (a new patient, one on
+   * file, a record that cannot wait, an entry that was refused): the email must not tell the visitor
+   * which. `created` says whether this join registered the patient; only then does following the
+   * link opt in.
+   */
+  request(
+    tx: Tx,
+    input: { submissionId: string; patientId: string | null; created: boolean; at: Date },
+  ): Promise<{ token: string }>;
   /** After the join is committed: emails the link to the address the visitor verified. */
   send(input: {
     tenant: { id: string; slug: string; isDemo: boolean };
@@ -381,12 +390,11 @@ async function verifyCode(
 
 /**
  * What registering a new person costs over attaching the entry to an existing patient, in statements
- * sent to Postgres, and what ticking WhatsApp adds: the existing-patient branch sends this many
- * reads so the work behind the answer does not tell the two apart (see `evenOut`; pinned by
- * `test/security/public-nondisclosure.test.ts`).
+ * sent to Postgres: the existing-patient branch sends this many reads so the work behind the answer
+ * does not tell the two apart (see `evenOut`; pinned by `test/security/public-nondisclosure.test.ts`).
+ * Ticking WhatsApp adds the same to every branch: each one asks for the link of the submission.
  */
 export const JOIN_NEW_PERSON_EXTRA_STATEMENTS = 7;
-export const JOIN_WHATSAPP_OPT_IN_EXTRA_STATEMENTS = 3;
 
 export type ConfirmOutcome =
   | { ok: true; expiresAt: Date; whatsappOptIn?: PendingWhatsappOptIn }
@@ -435,7 +443,8 @@ export async function confirmJoin(
   const expiresAt = new Date(input.now.getTime() + config.waitlist.entryExpiryDays * 86_400_000);
 
   const match = await findPatientByDocument(tx, payload.document);
-  let whatsappOptIn: PendingWhatsappOptIn | undefined;
+  /** The patient this join registered, when the entry was accepted. */
+  const registered: { patientId: string | null } = { patientId: null };
   // A deactivated record cannot wait for a turn, and the visitor is not told why.
   if (match?.status !== 'inactive') {
     try {
@@ -478,24 +487,8 @@ export async function confirmJoin(
             identityUnconfirmed: match !== null,
           },
         });
-        if (payload.channels.includes('whatsapp') && deps.whatsappOptIn) {
-          if (created) {
-            const requested = await deps.whatsappOptIn.request(inner, {
-              patientId: created.id,
-              at: input.now,
-            });
-            whatsappOptIn = {
-              to: stored.email,
-              patientName: payload.givenNames,
-              organizationName: await readOrganizationName(inner),
-              token: requested.token,
-            };
-          } else {
-            // The choice of somebody else's record is not written, but the work looks the same.
-            await evenOut(inner, JOIN_WHATSAPP_OPT_IN_EXTRA_STATEMENTS);
-          }
-        }
         if (!created) await evenOut(inner, JOIN_NEW_PERSON_EXTRA_STATEMENTS);
+        registered.patientId = created?.id ?? null;
       });
     } catch (error) {
       const refused =
@@ -506,9 +499,28 @@ export async function confirmJoin(
         if (error instanceof AppError) return { ok: false, refusal: 'not_found' };
         throw error;
       }
-      // The savepoint was rolled back with the request: there is no link to send.
-      whatsappOptIn = undefined;
+      // The savepoint was rolled back with the request: nobody was registered.
+      registered.patientId = null;
     }
+  }
+
+  // The link to accept WhatsApp, for every join that asked for it, whatever became of it: a new
+  // person, a patient on file, a record that cannot wait or an entry that was refused. The email
+  // that carries it must not tell the visitor which one it was (judgment day round 2, finding A1).
+  let whatsappOptIn: PendingWhatsappOptIn | undefined;
+  if (payload.channels.includes('whatsapp') && deps.whatsappOptIn) {
+    const requested = await deps.whatsappOptIn.request(tx, {
+      submissionId: stored.id,
+      patientId: registered.patientId,
+      created: registered.patientId !== null,
+      at: input.now,
+    });
+    whatsappOptIn = {
+      to: stored.email,
+      patientName: payload.givenNames,
+      organizationName: await readOrganizationName(tx),
+      token: requested.token,
+    };
   }
 
   // What stays of the form: the consent it was made under. The rest was only needed to join.

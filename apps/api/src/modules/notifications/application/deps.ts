@@ -29,7 +29,10 @@ export interface Channels {
 
 /** What messaging asks of the reception worklist (the queue itself belongs to scheduling). */
 export interface WorklistItem {
-  kind: Extract<WorklistKind, 'reminder_not_sent' | 'reminder_not_delivered' | 'reply_to_review'>;
+  kind: Extract<
+    WorklistKind,
+    'reminder_not_sent' | 'reminder_not_delivered' | 'reply_to_review' | 'identity_review'
+  >;
   subjectType: WorklistSubjectType;
   subjectId: string;
   locationId: string | null;

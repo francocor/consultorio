@@ -377,7 +377,7 @@ describe('proving the address', () => {
     expect(second.json()).toEqual(first.json());
   });
 
-  it('only requests WhatsApp for a patient it registered: the link goes to the verified address and nothing is recorded (JD-S3 D22)', async () => {
+  it('requests WhatsApp for a patient it registered: the link goes to the verified address and nothing is recorded (JD-S3 D22)', async () => {
     world.email.clear();
     const { body, visitor, id, code } = await requested(form({ channels: ['email', 'whatsapp'] }));
     await confirm(visitor, id, code);
@@ -400,7 +400,7 @@ describe('proving the address', () => {
     expect(preferences).toEqual([]);
   });
 
-  it('asks nothing for WhatsApp on a record that was already there', async () => {
+  it('sends the same link for a record that was already there, and records nothing on it (JD-S3 R2-A1)', async () => {
     const document = '31999777';
     await world.inTenant((tx) =>
       tx.execute(
@@ -418,7 +418,20 @@ describe('proving the address', () => {
     await confirm(known.visitor, known.id, known.code);
     await world.app.background.idle();
 
-    expect(world.email.sent.slice(before)).toEqual([]);
+    // The email carries the link whoever the document belongs to: its absence would say the
+    // document was on file.
+    const sent = world.email.sent.slice(before).filter((mail) => mail.to === known.body.email);
+    expect(sent.map((mail) => mail.text.includes('/public/t/'))).toEqual([true]);
+    const preferences = await world.inTenant(
+      async (tx) =>
+        (
+          await tx.execute(
+            sql`SELECT c.* FROM channel_preference c JOIN patient p ON p.id = c.patient_id
+                  WHERE p.national_id = ${document}`,
+          )
+        ).rows,
+    );
+    expect(preferences).toEqual([]);
   });
 
   it('records the WhatsApp choice on the entry, and reaches nobody on WhatsApp by itself', async () => {

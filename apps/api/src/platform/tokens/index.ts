@@ -68,6 +68,12 @@ export interface ActionTokens {
   ): Promise<Pick<RedeemedToken, 'subjectId' | 'payload'> | null>;
   /** Cancels the outstanding tokens of a kind for a subject (a newer reset replaces older ones). */
   revokeForSubject(tx: Tx, kind: TokenKind, subjectId: string): Promise<number>;
+  /**
+   * Cancels the outstanding tokens of a kind whose payload names a value in one field (a link that
+   * is about a submission but carries the patient it is for). The field is a fixed word of the code,
+   * never input.
+   */
+  revokeForPayload(tx: Tx, kind: TokenKind, field: 'patientId', value: string): Promise<number>;
 }
 
 /** How long a token is kept after it expired, for whoever looks into what happened to a link. */
@@ -175,6 +181,22 @@ export function createActionTokens(options: { clock?: () => Date } = {}): Action
           ),
         );
       return row ?? null;
+    },
+
+    async revokeForPayload(tx, kind, field, value) {
+      const rows = await tx
+        .update(actionToken)
+        .set({ revokedAt: clock() })
+        .where(
+          and(
+            eq(actionToken.kind, kind),
+            sql`${actionToken.payload} ->> ${field} = ${value}`,
+            isNull(actionToken.revokedAt),
+            sql`${actionToken.uses} < ${actionToken.maxUses}`,
+          ),
+        )
+        .returning({ id: actionToken.id });
+      return rows.length;
     },
 
     async revokeForSubject(tx, kind, subjectId) {
