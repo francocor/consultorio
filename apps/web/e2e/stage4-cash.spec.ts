@@ -115,10 +115,12 @@ test('the front desk charges, takes a partial payment and closes the cash regist
   });
   expect(patient.status, JSON.stringify(patient.body)).toBe(201);
 
-  const offset = Math.floor(Math.random() * Math.max(1, target.slots.length - 1));
-  let slot = target.slots[offset];
+  // The later half of the free times: the first ones are the ones the other specs of the suite take.
+  const later = target.slots.slice(Math.floor(target.slots.length / 2));
+  const offset = Math.floor(Math.random() * later.length);
+  let slot = later[offset];
   let booked: { status: number; body: { id?: string } } | undefined;
-  for (const candidate of [...target.slots.slice(offset), ...target.slots.slice(0, offset)]) {
+  for (const candidate of [...later.slice(offset), ...later.slice(0, offset)]) {
     booked = await apiCall<{ id?: string }>(page, 'POST', '/appointments', {
       patientId: patient.body.patient.id,
       professionalId: target.professionalId,
