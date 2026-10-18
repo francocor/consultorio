@@ -4,7 +4,7 @@
  * interpreted, so a patient cannot be signed up, moved or cancelled by a sentence the system
  * guessed at.
  *
- * - `BAJA` or `STOP` opt the patient out of WhatsApp.
+ * - `BAJA`, `STOP`, `PARAR` or `NO MAS` (accents and spacing aside) opt the patient out of WhatsApp.
  * - `1` confirms the appointment of the reminder; `2` cancels it.
  * - Anything else, including "SI", changes nothing and goes to reception. "SI" never opts in:
  *   a WhatsApp message cannot create an opt-in.
@@ -12,7 +12,7 @@
 
 export type ReplyKind = 'opt_out' | 'confirm' | 'cancel' | 'other';
 
-const OPT_OUT_KEYWORDS: ReadonlySet<string> = new Set(['BAJA', 'STOP']);
+const OPT_OUT_KEYWORDS: ReadonlySet<string> = new Set(['BAJA', 'STOP', 'PARAR', 'NO MAS']);
 
 /** The reply without the marks people put around a word: spaces, quotes, ! ? . and the Spanish ¡ ¿. */
 function stripped(text: string): string {
@@ -20,6 +20,7 @@ function stripped(text: string): string {
     .normalize('NFD')
     .replace(/\p{M}/gu, '')
     .replace(/^[\s"'“”‘’¡¿.!?,;:*_-]+|[\s"'“”‘’¡¿.!?,;:*_-]+$/gu, '')
+    .replace(/\s+/gu, ' ')
     .toUpperCase();
 }
 

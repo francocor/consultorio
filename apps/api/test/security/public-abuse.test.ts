@@ -198,7 +198,8 @@ describe('the bounds on slots and forms', () => {
           'content-type': 'application/json',
         },
         remoteAddress: ip,
-        payload: { ...world.form(), challengeProof: await holder.solve() },
+        // The puzzle is bound to the address that asked for it: the one the form arrives from.
+        payload: { ...world.form(), challengeProof: await world.visitor({ ip }).solve() },
       });
       statuses.push(response.statusCode);
     }
@@ -403,7 +404,7 @@ describe('fields the forms do not have', () => {
   });
 
   it('takes the organization from the host and from nothing the visitor writes', async () => {
-    const visitor = world.visitor();
+    const visitor = world.visitor({ ip: '10.99.3.1' });
     const body = await holdBody(visitor);
 
     const response = await world.app.inject({

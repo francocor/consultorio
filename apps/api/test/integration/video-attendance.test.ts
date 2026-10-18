@@ -4,6 +4,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, inject, it } from 'v
 
 import { auditEvent } from '../../src/db/schema/audit.js';
 import { appointment as appointmentTable } from '../../src/db/schema/scheduling.js';
+import { VideoProviderUnavailableError } from '../../src/modules/teleconsultation/application/ports.js';
 import { createRuntimeDb, type DbHandle } from '../../src/platform/db/pool.js';
 import { createActionTokens } from '../../src/platform/tokens/index.js';
 import { hostOf } from '../support/app.js';
@@ -74,11 +75,16 @@ async function issueToken(created: AppointmentDto) {
   return issued.token;
 }
 
+/** The button of the page behind the address: the patient enters the call. */
 const openLink = (token: string) =>
   world.app.inject({
-    method: 'GET',
+    method: 'POST',
     url: `/public/v/${token}`,
-    headers: { host: hostOf(world.slug), 'user-agent': 'vitest-patient' },
+    headers: {
+      host: hostOf(world.slug),
+      origin: `https://${hostOf(world.slug)}`,
+      'user-agent': 'vitest-patient',
+    },
   });
 
 describe('virtual appointment attendance', () => {
@@ -146,6 +152,60 @@ describe('virtual appointment attendance', () => {
     const after = await openLink(token);
     expect(after.statusCode).toBe(404);
     expect(after.headers['location']).toBeUndefined();
+  });
+});
+
+describe('an appointment put back among the appointments to come (JD-S3 C4)', () => {
+  it('gets a new room after a cancellation was corrected, and a manual link can be attached again', async () => {
+    const created = await ready(-60);
+    const token = await issueToken(created);
+    const cancelled = await world.act(created, 'cancel', world.reception, {
+      cancelledBy: 'patient',
+      reasonCode: 'patient_request',
+    });
+    expect(cancelled.statusCode, cancelled.body).toBe(200);
+    expect(await world.sessionOf(created.id)).toMatchObject({ status: 'closed' });
+
+    const revived = await world.act(created, 'correct', world.reception, {
+      toStatus: 'scheduled',
+      reasonCode: 'entered_by_mistake',
+    });
+    expect(revived.statusCode, revived.body).toBe(200);
+
+    expect(await world.sessionOf(created.id)).toMatchObject({
+      status: 'link_pending',
+      closeReason: null,
+    });
+    const pending = await summaryOf(created);
+    expect(pending).toMatchObject({ status: 'link_pending', canAttachManualLink: true });
+    await world.runVideoJobs();
+    expect(await world.sessionOf(created.id)).toMatchObject({ status: 'ready' });
+    // The address the patient had before the cancellation stays dead: the room is a new one.
+    expect((await openLink(token)).statusCode).toBe(404);
+  });
+
+  it('gets a link again after a no-show was corrected, by hand when the provider is down', async () => {
+    const created = await ready(40);
+    const noShow = await world.act(created, 'no-show', world.reception, {});
+    expect(noShow.statusCode, noShow.body).toBe(200);
+    expect(await world.sessionOf(created.id)).toMatchObject({ status: 'closed' });
+    world.provider.failWith(new VideoProviderUnavailableError());
+
+    const revived = await world.act(created, 'correct', world.reception, {
+      toStatus: 'scheduled',
+      reasonCode: 'entered_by_mistake',
+    });
+    expect(revived.statusCode, revived.body).toBe(200);
+    await world.runVideoJobs();
+    const attached = await world.api.put(
+      `/appointments/${created.id}/video/manual-link`,
+      world.reception,
+      { url: 'https://zoom.us/j/123456789' },
+    );
+
+    expect(attached.statusCode, attached.body).toBe(200);
+    expect(await world.sessionOf(created.id)).toMatchObject({ status: 'ready' });
+    world.provider.failWith(null);
   });
 });
 

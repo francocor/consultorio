@@ -322,6 +322,9 @@ describe('accepting an offer', () => {
 
   it('produces exactly one appointment when reception and the patient take the slot at once', async () => {
     for (let round = 0; round < 4; round += 1) {
+      // Each round starts from nothing: an entry that reception's win leaves active would be older
+      // than the one of the next round and take the next slot, and no offer would exist for it.
+      await world.reset();
       const { token, weeks, booked, entry } = await delivered();
       const body = await world.bookingBody(weeks, '10:00');
 

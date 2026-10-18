@@ -131,7 +131,12 @@ export function createSchedulingPorts(
         })
         .from(professional)
         .where(eq(professional.id, id))
-        .for('update');
+        // NO KEY UPDATE: two bookings of one professional still wait for each other, but a row that
+        // only points at the professional (a place in the WhatsApp quota, an appointment being
+        // inserted) is not held up by the lock. With FOR UPDATE the preparation of a message (which
+        // holds the message, then inserts such a row) and a change of the agenda (which holds the
+        // professional, then cancels the messages) waited for each other (judgment day round 2, B5).
+        .for('no key update');
       return row ? { ...row, status: row.status === 'active' ? 'active' : 'inactive' } : null;
     },
 

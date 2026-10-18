@@ -22,6 +22,7 @@ export const PROVIDER_ENV_VARIABLES = [
   'VIDEO_LOCAL_BASE_URL',
   'ALLOW_LOCAL_PROVIDERS',
   'LOCAL_PROVIDERS_CONSOLE',
+  'ADDRESS_HASH_PEPPER',
 ] as const;
 
 /** A lowercase host name: what a manual video link may point at. */
@@ -29,6 +30,7 @@ const HOSTNAME =
   /^(?=.{1,253}$)[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)*$/;
 
 const MIN_APP_SECRET_LENGTH = 16;
+const MIN_PEPPER_LENGTH = 32;
 
 /** The Jitsi server of the local video provider: https, no credentials, no query or fragment. */
 function isServerAddress(value: string): boolean {
@@ -73,6 +75,11 @@ const providerEnv = z.object({
     .string()
     .refine(isServerAddress, { message: 'must be an https address with no credentials or query' })
     .optional(),
+  /**
+   * Keys the hash of the addresses in the message log (HMAC-SHA256), the same for the whole
+   * platform. Required in production; development has a public default that protects nothing.
+   */
+  ADDRESS_HASH_PEPPER: z.string().min(MIN_PEPPER_LENGTH).optional(),
   ALLOW_LOCAL_PROVIDERS: booleanFlag.default(false),
   LOCAL_PROVIDERS_CONSOLE: booleanFlag.default(false),
 });
@@ -80,6 +87,8 @@ const providerEnv = z.object({
 export interface ProviderConfig extends ProviderSelection {
   /** Set when `WHATSAPP_APP_SECRET` is. Required for the real provider. */
   readonly whatsappAppSecret?: string;
+  /** Keys the address hashes of the message log; set in production, optional elsewhere. */
+  readonly addressHashPepper?: string;
   readonly videoAllowedDomains: readonly string[];
   /** The Jitsi server the local video provider builds addresses on; unset means the public one. */
   readonly videoLocalBaseUrl?: string;
@@ -131,6 +140,12 @@ export function readProviderConfig(
       message: 'is required when WHATSAPP_PROVIDER is meta (the webhook is signed with it)',
     });
   }
+  if (production && value.ADDRESS_HASH_PEPPER === undefined) {
+    problems.push({
+      path: 'ADDRESS_HASH_PEPPER',
+      message: `is required in production (at least ${String(MIN_PEPPER_LENGTH)} characters, secret): it keys the hash of the addresses in the message log`,
+    });
+  }
   if (problems.length > 0) return { problems };
 
   return {
@@ -139,6 +154,9 @@ export function readProviderConfig(
       ...(value.WHATSAPP_APP_SECRET === undefined
         ? {}
         : { whatsappAppSecret: value.WHATSAPP_APP_SECRET }),
+      ...(value.ADDRESS_HASH_PEPPER === undefined
+        ? {}
+        : { addressHashPepper: value.ADDRESS_HASH_PEPPER }),
       videoAllowedDomains: value.VIDEO_ALLOWED_DOMAINS,
       ...(value.VIDEO_LOCAL_BASE_URL === undefined
         ? {}

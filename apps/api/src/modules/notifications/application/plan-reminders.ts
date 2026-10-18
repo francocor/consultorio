@@ -15,6 +15,7 @@ import type { MessagingDeps, TenantRef } from './deps.js';
 import { dedupeKeyFor, queueMessage } from './queue.js';
 import { loadRecipient } from './recipients.js';
 import { loadMessagingSettings } from './settings.js';
+import { releaseWhatsappUsage } from './usage.js';
 
 /**
  * Keeps the reminder queue of an appointment right, from the appointment events and nothing else:
@@ -44,6 +45,11 @@ const FINISHED: ReadonlySet<string> = new Set(['checked_in', 'in_progress', 'att
 export interface PlanOptions {
   /** False for a plan made long after the booking: it queues reminders still ahead, never a confirmation. */
   confirm?: boolean;
+  /**
+   * The appointment was just approved by reception. An online booking that waited for approval was
+   * told "we will confirm it and tell you", so it is confirmed now whatever the lead times say.
+   */
+  approved?: boolean;
 }
 
 export interface ReminderPlanner {
@@ -57,10 +63,16 @@ async function cancelQueued(
   appointmentId: string,
   reason: 'appointment_cancelled' | 'appointment_changed' | 'appointment_over',
 ): Promise<void> {
-  await tx
+  const cancelled = await tx
     .update(message)
     .set({ status: 'cancelled', cancelReason: reason })
-    .where(and(eq(message.appointmentId, appointmentId), eq(message.status, 'queued')));
+    .where(and(eq(message.appointmentId, appointmentId), eq(message.status, 'queued')))
+    .returning({ id: message.id, channel: message.channel });
+  // A WhatsApp message that does not go gives its place in the quota back.
+  await releaseWhatsappUsage(
+    tx,
+    cancelled.filter((row) => row.channel === 'whatsapp').map((row) => row.id),
+  );
 }
 
 export function createReminderPlanner(deps: PlannerDeps): ReminderPlanner {
@@ -110,7 +122,8 @@ export function createReminderPlanner(deps: PlannerDeps): ReminderPlanner {
 
     // A booking the patient made online was already confirmed by the booking confirmation, which
     // goes to the address they verified: a second confirmation would be a duplicate.
-    const confirmWanted = options.confirm !== false && appointment.source !== 'online';
+    const confirmWanted =
+      options.confirm !== false && (appointment.source !== 'online' || options.approved === true);
     const reminderChannel = channelFor('reminder');
     const anyReminderWanted = result.reminders.length > 0 || (confirmWanted && result.confirmNow);
     for (const reminder of result.reminders) {
@@ -128,7 +141,11 @@ export function createReminderPlanner(deps: PlannerDeps): ReminderPlanner {
     }
 
     const confirmationChannel = channelFor('confirmation');
-    if (confirmWanted && result.confirmNow && confirmationChannel !== undefined) {
+    if (
+      confirmWanted &&
+      (result.confirmNow || (options.approved === true && appointment.source === 'online')) &&
+      confirmationChannel !== undefined
+    ) {
       await queueMessage(deps, tx, {
         ...common,
         kind: 'confirmation',
@@ -170,8 +187,11 @@ export function createReminderPlanner(deps: PlannerDeps): ReminderPlanner {
           if (FINISHED.has(event.appointment.status)) {
             await cancelQueued(tx, event.appointment.appointmentId, 'appointment_over');
           } else if (REMINDING.has(event.appointment.status) && !REMINDING.has(event.fromStatus)) {
-            // Approved, or put back after a correction: the reminders start from here.
-            await plan(tx, event.appointment);
+            // Approved, or put back after a correction: the reminders start from here, and a
+            // booking that waited for approval is told that it was approved.
+            await plan(tx, event.appointment, {
+              approved: event.fromStatus === 'pending_approval',
+            });
           }
           return;
         case 'slot_freed':

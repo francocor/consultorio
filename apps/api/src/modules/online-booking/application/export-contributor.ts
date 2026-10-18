@@ -18,6 +18,7 @@ export const exportOnlineBooking: ExportContributor = async ({ tx }) => {
       enabled: bookingLink.enabled,
       locationIds: bookingLink.locationIds,
       typeIds: bookingLink.typeIds,
+      maxUnconfirmedAppointments: bookingLink.maxUnconfirmedAppointments,
       regeneratedAt: bookingLink.regeneratedAt,
       createdAt: bookingLink.createdAt,
     })

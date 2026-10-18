@@ -292,6 +292,24 @@ describe('the WhatsApp opt-in by email', () => {
     expect(mailbox.sent).toEqual([]);
   });
 
+  it('is refused for a patient who opted out of email, and sends nothing (JD-S3 A7)', async () => {
+    const patientId = await notes.patient({ email: 'optin@example.test', phone: '1144445555' });
+    await scheduling.inTenant((tx) =>
+      recordOptOut(tx, { patientId, channel: 'email', source: 'email_link', actor: patientActor }),
+    );
+    mailbox.clear();
+
+    const response = await scheduling.api.post(
+      `/patients/${patientId}/whatsapp-opt-in-request`,
+      scheduling.reception,
+      {},
+    );
+
+    expect(response.statusCode).toBe(409);
+    expect(response.json<{ code: string }>().code).toBe('channel_opted_out');
+    expect(mailbox.sent).toEqual([]);
+  });
+
   it('replaces an older link with the newer one', async () => {
     const patientId = await notes.patient({ email: 'optin@example.test', phone: '1144445555' });
     const first = await requestLink(patientId);

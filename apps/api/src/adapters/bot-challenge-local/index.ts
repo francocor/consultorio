@@ -4,6 +4,7 @@ import type {
   BotChallenge,
   BotChallengeToken,
 } from '../../platform/bot-challenge/bot-challenge.js';
+import { clientKeyOf } from '../../platform/http/rate-limit.js';
 
 /** How long a puzzle can be solved after it was issued. */
 export const LOCAL_CHALLENGE_LIFETIME_MS = 5 * 60_000;
@@ -15,6 +16,8 @@ export const DEFAULT_DIFFICULTY = 16;
 const MAX_FAILURES = 30;
 const FAILURE_WINDOW_MS = 60_000;
 const MAX_TRACKED = 20_000;
+/** Expired entries are swept at most this often, unless the memory is full. */
+const SWEEP_EVERY_MS = 10_000;
 
 const ALGORITHM = 'sha256-leading-zero-bits';
 
@@ -26,6 +29,8 @@ export interface LocalBotChallengeOptions {
   secret?: Buffer;
   difficulty?: number;
   now?: () => number;
+  /** Most solved puzzles (and addresses with failures) remembered at once. */
+  capacity?: number;
 }
 
 export interface LocalBotChallenge extends BotChallenge {
@@ -46,9 +51,21 @@ export function leadingZeroBits(bytes: Uint8Array): number {
   return bits;
 }
 
-function sign(secret: Buffer, id: string, difficulty: number, expiresAt: number): string {
+/**
+ * The signature covers the client the puzzle was issued to, so a proof cannot be carried elsewhere.
+ * The client is the key the rate limiter uses (`clientKeyOf`: an IPv6 /64, an IPv4 address), not
+ * the raw address: a phone that rotates its IPv6 privacy address while the visitor fills in the
+ * form is the same subscriber, and must not have its proof refused.
+ */
+function sign(
+  secret: Buffer,
+  id: string,
+  difficulty: number,
+  expiresAt: number,
+  ip: string,
+): string {
   return createHmac('sha256', secret)
-    .update(`${id}.${String(difficulty)}.${String(expiresAt)}`)
+    .update(`${id}.${String(difficulty)}.${String(expiresAt)}.${ip}`)
     .digest('base64url');
 }
 
@@ -110,33 +127,35 @@ export function solveProofOfWork(token: BotChallengeToken): string {
  * before. It makes a script pay for every form it submits; it does not tell people from patient
  * machines, which is what Cloudflare Turnstile will add behind the same port.
  *
+ * A puzzle is issued to one client (see `clientKeyOf`) and solves only from it.
  * Used puzzles live in memory until they would have expired anyway, so a replay is refused for as
- * long as it could have been valid. State is per process (see `secret`).
+ * long as it could have been valid. A live entry is never dropped to make room: when the memory is
+ * full, new proofs are refused until some expire, which is the safe way to fail.
+ *
+ * State is per process: with several API instances a solved puzzle could be replayed once on each
+ * of them, and the address block of wrong proofs counts per instance. That is acceptable for the
+ * simulator this is (production refuses it unless `ALLOW_LOCAL_PROVIDERS` says otherwise); a shared
+ * store, or Cloudflare Turnstile behind the same port, removes the limit.
  */
 export function createLocalBotChallenge(options: LocalBotChallengeOptions = {}): LocalBotChallenge {
   const secret = options.secret ?? randomBytes(32);
   const difficulty = options.difficulty ?? DEFAULT_DIFFICULTY;
   const now = options.now ?? Date.now;
+  const capacity = options.capacity ?? MAX_TRACKED;
   const used = new Map<string, number>();
   const failures = new Map<string, { count: number; since: number }>();
+  let sweptAt = Number.NEGATIVE_INFINITY;
 
-  function prune(at: number): void {
+  /** Drops what expired, wherever it sits (the map is in the order proofs came, not expired). */
+  function prune(at: number, force = false): void {
+    const full = used.size >= capacity || failures.size >= capacity;
+    if (!force && !full && at - sweptAt < SWEEP_EVERY_MS) return;
+    sweptAt = at;
     for (const [id, expiresAt] of used) {
-      if (expiresAt > at) break;
-      used.delete(id);
-    }
-    while (used.size > MAX_TRACKED) {
-      const oldest = used.keys().next().value;
-      if (oldest === undefined) break;
-      used.delete(oldest);
+      if (expiresAt <= at) used.delete(id);
     }
     for (const [ip, state] of failures) {
       if (state.since + FAILURE_WINDOW_MS <= at) failures.delete(ip);
-    }
-    while (failures.size > MAX_TRACKED) {
-      const oldest = failures.keys().next().value;
-      if (oldest === undefined) break;
-      failures.delete(oldest);
     }
   }
 
@@ -150,11 +169,11 @@ export function createLocalBotChallenge(options: LocalBotChallengeOptions = {}):
   function fail(ip: string, at: number): false {
     const state = failures.get(ip);
     if (state && state.since + FAILURE_WINDOW_MS > at) state.count += 1;
-    else failures.set(ip, { count: 1, since: at });
+    else if (state || failures.size < capacity) failures.set(ip, { count: 1, since: at });
     return false;
   }
 
-  function check(proof: string, at: number): boolean {
+  function check(proof: string, ip: string, at: number): boolean {
     const parts = proof.split('.');
     if (parts.length !== 5 || proof.length > 512) return false;
     const [id = '', rawDifficulty = '', rawExpiry = '', signature = '', nonce = ''] = parts;
@@ -164,13 +183,14 @@ export function createLocalBotChallenge(options: LocalBotChallengeOptions = {}):
       return false;
     }
     // The signature covers the difficulty: a client cannot ask for an easier puzzle.
-    if (!sameText(signature, sign(secret, id, claimed, expiresAt))) return false;
+    if (!sameText(signature, sign(secret, id, claimed, expiresAt, ip))) return false;
     if (claimed < difficulty || expiresAt <= at || used.has(id)) return false;
     return leadingZeroBits(hashOf(id, nonce)) >= claimed;
   }
 
   return {
-    issue() {
+    issue(address) {
+      const ip = clientKeyOf(address);
       const at = now();
       const id = randomBytes(16).toString('base64url');
       const expiresAt = at + LOCAL_CHALLENGE_LIFETIME_MS;
@@ -181,17 +201,20 @@ export function createLocalBotChallenge(options: LocalBotChallengeOptions = {}):
           id,
           difficulty,
           expiresAt,
-          signature: sign(secret, id, difficulty, expiresAt),
+          signature: sign(secret, id, difficulty, expiresAt, ip),
         },
       };
       return Promise.resolve(token);
     },
 
-    verify(proof, ip) {
+    verify(proof, address) {
+      const ip = clientKeyOf(address);
       const at = now();
       prune(at);
       if (blocked(ip, at)) return Promise.resolve(false);
-      if (!check(proof, at)) return Promise.resolve(fail(ip, at));
+      if (!check(proof, ip, at)) return Promise.resolve(fail(ip, at));
+      // Nowhere to remember that it was spent: accepting it would allow a replay, so it is refused.
+      if (used.size >= capacity) return Promise.resolve(false);
       // Spent from here on, whatever happens to the form that carried it.
       const id = proof.split('.')[0] ?? '';
       used.set(id, Number(proof.split('.')[2]));
@@ -199,7 +222,7 @@ export function createLocalBotChallenge(options: LocalBotChallengeOptions = {}):
     },
 
     usedCount: () => {
-      prune(now());
+      prune(now(), true);
       return used.size;
     },
   };

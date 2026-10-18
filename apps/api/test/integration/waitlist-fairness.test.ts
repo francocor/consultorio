@@ -378,4 +378,50 @@ describe('what is kept for the reports', () => {
       1000;
     expect(seconds).toBe(7 * 60);
   });
+
+  it('closes the entries of a patient who opts out through the channels of the patient, without anybody calling the waitlist (JD-S3 B3)', async () => {
+    const patientId = await world.patient();
+    await world.advance(MINUTE);
+    const entry = await world.join(patientId);
+
+    const response = await world.api.post(
+      `/patients/${patientId}/channels/email/opt-out`,
+      world.owner,
+      {},
+    );
+
+    expect(response.statusCode, response.body).toBe(200);
+    expect(await world.entryRow(entry.id)).toMatchObject({
+      status: 'closed',
+      close_reason: 'patient_opted_out',
+    });
+  });
+});
+
+describe('opting out of one channel (JD-S3 R2-B7)', () => {
+  const optOut = (patientId: string, channel: 'email' | 'whatsapp') =>
+    world.api.post(`/patients/${patientId}/channels/${channel}/opt-out`, world.owner, {});
+
+  it('keeps the entries of a patient who still has a channel for offers, and closes them when none is left', async () => {
+    const patientId = await world.patient();
+    const optedIn = await world.api.post(
+      `/patients/${patientId}/channels/whatsapp/opt-in`,
+      world.owner,
+      {},
+    );
+    expect(optedIn.statusCode, optedIn.body).toBe(200);
+    await world.advance(MINUTE);
+    const entry = await world.join(patientId);
+
+    // WhatsApp goes, email stays: offers still reach the patient by email.
+    expect((await optOut(patientId, 'whatsapp')).statusCode).toBe(200);
+    expect(await world.entryRow(entry.id)).toMatchObject({ status: 'active' });
+
+    // Nothing is left: the entry closes.
+    expect((await optOut(patientId, 'email')).statusCode).toBe(200);
+    expect(await world.entryRow(entry.id)).toMatchObject({
+      status: 'closed',
+      close_reason: 'patient_opted_out',
+    });
+  });
 });

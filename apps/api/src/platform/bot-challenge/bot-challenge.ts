@@ -11,8 +11,8 @@ export interface BotChallengeToken {
 }
 
 export interface BotChallenge {
-  /** A fresh challenge for one form submission. */
-  issue(): Promise<BotChallengeToken>;
+  /** A fresh challenge for one form submission, for the address that asks for it. */
+  issue(ip: string): Promise<BotChallengeToken>;
   /** True when the proof solves a challenge this adapter issued, once. `ip` binds the proof. */
   verify(proof: string, ip: string): Promise<boolean>;
 }

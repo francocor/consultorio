@@ -58,7 +58,7 @@ export const TOKEN_KIND_REGISTRY: Record<TokenKind, KindSpec> = {
   document_download: { ttlMs: 5 * MINUTE, maxUses: 1, sessionBound: true, enabled: true },
   // The files of Stage 4 open through the same door as a document (`/files/:token`): the billing
   // track turns on the export link, the invoicing track the invoice PDF link.
-  export_download: { ttlMs: 5 * MINUTE, maxUses: 1, sessionBound: true, enabled: false },
+  export_download: { ttlMs: 5 * MINUTE, maxUses: 1, sessionBound: true, enabled: true },
   invoice_pdf: { ttlMs: 5 * MINUTE, maxUses: 1, sessionBound: true, enabled: false },
   archive_release: { ttlMs: 72 * HOUR, maxUses: 1, sessionBound: false, enabled: false },
 };

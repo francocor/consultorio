@@ -23,6 +23,7 @@ const slotFor = (overrides: Record<string, string> = {}) => {
 
 const PRODUCTION = {
   NODE_ENV: 'production',
+  ADDRESS_HASH_PEPPER: 'placeholder-pepper-0123456789-abcdefghij',
   KMS_PROVIDER: 'aws',
   AWS_REGION: 'sa-east-1',
   AWS_KMS_KEY_ID: 'alias/consultorio',

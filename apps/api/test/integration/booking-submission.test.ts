@@ -9,6 +9,7 @@ import { appointment, slotHold } from '../../src/db/schema/scheduling.js';
 import { verifyCode } from '../../src/modules/online-booking/application/otp.js';
 import { createRuntimeDb, type DbHandle } from '../../src/platform/db/pool.js';
 import { createBookingWorld, type BookingWorld, type Visitor } from '../support/booking-world.js';
+import { shapeOf } from '../support/security.js';
 
 let runtime: DbHandle;
 let world: BookingWorld;
@@ -200,6 +201,21 @@ describe('submitting the form', () => {
     expect(response.statusCode, response.body).toBe(400);
     expect(response.json<Problem>().errors?.map((error) => error.path)).toContain(path);
     expect((await submissionRows()).length).toBe(before);
+  });
+
+  it('keeps the slot until the code expires, even when the form is sent at the end of the ten minutes of the hold (JD-S3 B6)', async () => {
+    const { visitor, hold } = await heldBy();
+    // Nine minutes in: a minute of the hold is left, and the code will live ten.
+    world.advance(9 * 60_000);
+
+    const response = await submit(visitor, hold, world.form());
+    expect(response.statusCode, response.body).toBe(200);
+
+    const [row] = await world.inTenant((tx) =>
+      tx.select().from(slotHold).where(eq(slotHold.id, hold.id)),
+    );
+    expect(row?.expiresAt.getTime()).toBeGreaterThanOrEqual(world.now().getTime() + 10 * 60_000);
+    expect(row?.status).toBe('active');
   });
 
   it('refuses a form that fails the bot challenge, and creates nothing', async () => {
@@ -413,7 +429,7 @@ describe('limits on the codes', () => {
 });
 
 describe('abuse protection', () => {
-  it('refuses a contact that already holds three future online appointments, with the contact-us answer', async () => {
+  it('does not answer differently before the code for a document that already holds three future online appointments (JD-S3 C2)', async () => {
     const document = { type: 'dni' as const, number: '29000111' };
     const patientId = await world.inTenant(async (tx) => {
       const result = await tx.execute<{ id: string }>(
@@ -437,23 +453,25 @@ describe('abuse protection', () => {
     );
     const { visitor, hold } = await heldBy();
 
-    const refused = await submit(visitor, hold, world.form({ document }));
+    const known = await submit(visitor, hold, world.form({ document }));
     const elsewhere = await submit(
       visitor,
       hold,
       world.form({ document: { type: 'dni', number: '29000222' } }),
     );
 
-    expect(refused.statusCode).toBe(409);
-    expect(refused.json<Problem>().code).toBe('booking_limit_reached');
+    // A visitor who has proved nothing yet learns nothing about the document: the same answer, and
+    // nothing flagged. The limits are applied after the code, on the address that was verified.
+    expect(known.statusCode).toBe(200);
     expect(elsewhere.statusCode).toBe(200);
+    expect(shapeOf(known)).toBe(shapeOf(elsewhere));
     const flagged = await world.inTenant((tx) =>
       tx
         .select({ metadata: auditEvent.metadata })
         .from(auditEvent)
         .where(eq(auditEvent.action, 'booking.suspicious')),
     );
-    expect(flagged.some((entry) => entry.metadata['reason'] === 'hoarding')).toBe(true);
+    expect(flagged.some((entry) => entry.metadata['reason'] === 'hoarding')).toBe(false);
   });
 
   it('limits the forms one address may send in an hour', async () => {
@@ -468,6 +486,37 @@ describe('abuse protection', () => {
     expect(last).toBe(429);
     expect(world.metrics.get('booking_suspicious_total', { reason: 'rate_limit' })).toBeGreaterThan(
       0,
+    );
+  });
+
+  it('writes what looked suspicious without who did it, and once per link and reason in a window (JD-S3 A6)', async () => {
+    const { visitor, hold } = await heldBy(
+      world.visitor({ ip: '10.88.0.2', userAgent: 'flood-agent' }),
+    );
+    for (let attempt = 0; attempt < 25; attempt += 1) {
+      await submit(visitor, hold, world.form());
+    }
+
+    const rows = await world.inTenant((tx) =>
+      tx
+        .select({
+          ip: auditEvent.ip,
+          userAgent: auditEvent.userAgent,
+          metadata: auditEvent.metadata,
+        })
+        .from(auditEvent)
+        .where(eq(auditEvent.action, 'booking.suspicious')),
+    );
+
+    // This file already provoked the limit once (the test before): a flood writes one entry.
+    expect(rows.filter((row) => row.metadata['reason'] === 'rate_limit')).toHaveLength(1);
+    for (const row of rows) {
+      expect(row.ip).toBeNull();
+      expect(row.userAgent).toBeNull();
+    }
+    // The metric still counts every one of them.
+    expect(world.metrics.get('booking_suspicious_total', { reason: 'rate_limit' })).toBeGreaterThan(
+      1,
     );
   });
 

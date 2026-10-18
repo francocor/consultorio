@@ -48,9 +48,17 @@ describe('action token kinds (design 4.5)', () => {
       'whatsapp_opt_in',
     ];
 
+    // Billing (Stage 4, track A) turned the export link on; the invoice PDF waits for track C.
+    const fromStageFour = ['export_download'];
+
     expect(enabled).toEqual(expect.arrayContaining(fromStageOne));
     expect(
-      enabled.filter((kind) => !fromStageOne.includes(kind) && !fromStageThree.includes(kind)),
+      enabled.filter(
+        (kind) =>
+          !fromStageOne.includes(kind) &&
+          !fromStageThree.includes(kind) &&
+          !fromStageFour.includes(kind),
+      ),
     ).toEqual([]);
   });
 
@@ -89,16 +97,17 @@ describe('action token kinds (design 4.5)', () => {
     });
   });
 
-  it('binds an export download and an invoice PDF to a session like a document, but starts them off', () => {
+  it('binds an export download and an invoice PDF to a session like a document; each track turns its own on', () => {
     for (const kind of ['export_download', 'invoice_pdf'] as const) {
       expect(TOKEN_KIND_REGISTRY[kind], kind).toMatchObject({
         ttlMs: 5 * MINUTE,
         maxUses: 1,
         sessionBound: true,
-        // The track that builds the file turns its own kind on.
-        enabled: false,
       });
     }
+    // Billing (S4.05) turned the export link on; the invoice PDF waits for the invoicing track.
+    expect(TOKEN_KIND_REGISTRY.export_download.enabled).toBe(true);
+    expect(TOKEN_KIND_REGISTRY.invoice_pdf.enabled).toBe(false);
   });
 
   it('gives every kind a positive lifetime and use count', () => {

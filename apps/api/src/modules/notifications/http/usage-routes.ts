@@ -7,8 +7,8 @@ import { membership } from '../../../db/schema/identity.js';
 import { professional } from '../../../db/schema/staff.js';
 import type { Tx, WithTenant } from '../../../platform/db/tenant-context.js';
 import { AppError } from '../../../platform/http/problem.js';
-import { usageCount, type QuotaPolicy } from '../application/usage.js';
-import { periodOf, usageState } from '../domain/usage.js';
+import { organizationPeriod, usageCount, type QuotaPolicy } from '../application/usage.js';
+import { usageState } from '../domain/usage.js';
 
 export interface UsageRoutesDeps {
   withTenant: WithTenant;
@@ -18,7 +18,7 @@ export interface UsageRoutesDeps {
 
 /** The WhatsApp messages of the month per professional, with the state of their quota. */
 export async function usageReport(tx: Tx, quota: QuotaPolicy, now: Date): Promise<UsageResponse> {
-  const period = periodOf(now);
+  const period = await organizationPeriod(tx, now);
   const professionals = await tx
     .select({ id: professional.id, name: membership.displayName })
     .from(professional)

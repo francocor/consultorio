@@ -89,8 +89,14 @@ describe('cookie configuration', () => {
 
   it('is secure by default in production', () => {
     expect(
-      loadConfig({ ...multi, NODE_ENV: 'production', KMS_PROVIDER: 'aws', ...aws, ...mail })
-        .cookieSecure,
+      loadConfig({
+        ...multi,
+        NODE_ENV: 'production',
+        ADDRESS_HASH_PEPPER: 'placeholder-pepper-0123456789-abcdefghij',
+        KMS_PROVIDER: 'aws',
+        ...aws,
+        ...mail,
+      }).cookieSecure,
     ).toBe(true);
   });
 
@@ -99,6 +105,7 @@ describe('cookie configuration', () => {
       loadConfig({
         ...multi,
         NODE_ENV: 'production',
+        ADDRESS_HASH_PEPPER: 'placeholder-pepper-0123456789-abcdefghij',
         KMS_PROVIDER: 'aws',
         ...aws,
         COOKIE_SECURE: 'false',
@@ -112,7 +119,14 @@ describe('cookie configuration', () => {
 });
 
 describe('proxy configuration (security review finding 2)', () => {
-  const production = { ...multi, NODE_ENV: 'production', KMS_PROVIDER: 'aws', ...aws, ...mail };
+  const production = {
+    ...multi,
+    NODE_ENV: 'production',
+    ADDRESS_HASH_PEPPER: 'placeholder-pepper-0123456789-abcdefghij',
+    KMS_PROVIDER: 'aws',
+    ...aws,
+    ...mail,
+  };
 
   it('does not trust proxies by default in development', () => {
     expect(loadConfig(multi).trustProxy).toBe(false);
@@ -176,6 +190,7 @@ describe('public URL configuration (security review finding 1)', () => {
       loadConfig({
         ...single,
         NODE_ENV: 'production',
+        ADDRESS_HASH_PEPPER: 'placeholder-pepper-0123456789-abcdefghij',
         KMS_PROVIDER: 'aws',
         ...aws,
         ...mail,
@@ -230,7 +245,13 @@ describe('key management configuration', () => {
   });
 
   it('refuses the local KEK in production (the key would sit next to the data)', () => {
-    expect(() => loadConfig({ ...multi, NODE_ENV: 'production' })).toThrow(/KMS_PROVIDER/);
+    expect(() =>
+      loadConfig({
+        ...multi,
+        NODE_ENV: 'production',
+        ADDRESS_HASH_PEPPER: 'placeholder-pepper-0123456789-abcdefghij',
+      }),
+    ).toThrow(/KMS_PROVIDER/);
   });
 
   it('never prints the KEK in a startup error', () => {

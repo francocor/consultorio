@@ -13,6 +13,7 @@ export const reportsWiring: ModuleWiring = {
     createReports({
       withTenant: context.withTenant,
       auditDeny: context.auditDeny,
+      keys: context.keys,
       ...(context.clock ? { clock: context.clock } : {}),
     }),
 };

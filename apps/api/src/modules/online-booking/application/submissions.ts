@@ -10,10 +10,11 @@ import type { Tx } from '../../../platform/db/tenant-context.js';
 import { uuidv7 } from '../../../platform/db/uuid.js';
 import { AppError } from '../../../platform/http/problem.js';
 import type { JobClient } from '../../../platform/jobs/boss.js';
+import type { SchedulingPorts } from '../../scheduling/index.js';
 import { isFutureDate, isMinor } from '../domain/age.js';
 import { CODE_SENDS_PER_HOUR, maskEmail } from '../domain/otp.js';
 
-import { ABUSE_LIMITS, bookingsInLastDay, futureOnlineAppointments, type Abuse } from './abuse.js';
+import type { Abuse } from './abuse.js';
 import { countryRulesFor } from './country-rules.js';
 import { issueChallenge, sendsInLastHour } from './otp.js';
 import {
@@ -41,6 +42,8 @@ export interface SubmissionPayload {
 
 export interface SubmissionDeps {
   keys: TenantKeys;
+  /** Scheduling's view of the organization: the hold is extended through it. */
+  portsOf: (tx: Tx) => SchedulingPorts;
   jobs: JobClient | undefined;
   abuse: Abuse;
 }
@@ -51,8 +54,7 @@ export type SubmitOutcome =
   | { ok: false; refusal: 'not_found' }
   /** The ten minutes passed, or staff took the slot. */
   | { ok: false; refusal: 'expired' }
-  | { ok: false; refusal: 'rate_limited' }
-  | { ok: false; refusal: 'limit_reached' };
+  | { ok: false; refusal: 'rate_limited' };
 
 export interface SubmitInput {
   tenant: { id: string; country: string; slug: string; isDemo: boolean };
@@ -112,7 +114,7 @@ function fieldError(path: string, i18nKey: string) {
  * the address in the form and to no other. The form for a hold replaces the one before it.
  *
  * The answer is the same whether or not the document belongs to a patient: this function never reads
- * the patients.
+ * the patients or the appointments.
  */
 export async function submitBooking(
   tx: Tx,
@@ -152,19 +154,10 @@ export async function submitBooking(
   }
   if (errors.length > 0 || !document.ok) throw new AppError('validation_failed', errors);
 
-  // One contact cannot hoard the agenda: future online appointments and bookings per day.
-  const future = await futureOnlineAppointments(tx, {
-    email: form.email,
-    document: document.value,
-    now: input.now,
-  });
-  if (
-    future >= ABUSE_LIMITS.futureAppointmentsPerContact ||
-    (await bookingsInLastDay(tx, form.email, input.now)) >= ABUSE_LIMITS.bookingsPerContactPerDay
-  ) {
-    await deps.abuse.recordSuspicious(tx, { actor: input.actor, reason: 'hoarding', linkId });
-    return { ok: false, refusal: 'limit_reached' };
-  }
+  // What a contact already holds (appointments per address and per document) is NOT looked at
+  // here: this answer reaches somebody who has proved nothing, and a refusal for a document would
+  // tell them that it has appointments. The limits are applied when the code is accepted, on the
+  // address that was verified (`confirmBooking`).
 
   // Three codes an hour to one address, however it got there.
   if ((await sendsInLastHour(tx, form.email, input.now)) >= CODE_SENDS_PER_HOUR) {
@@ -227,7 +220,27 @@ export async function submitBooking(
     await deps.abuse.recordSuspicious(tx, { actor: input.actor, reason: 'code_flood', linkId });
     return { ok: false, refusal: 'rate_limited' };
   }
+  await keepHoldUntil(tx, deps, loaded, issued.expiresAt);
   return { ok: true, maskedEmail: maskEmail(form.email), codeExpiresAt: issued.expiresAt };
+}
+
+/**
+ * The slot is kept until the code expires: a visitor who sends the form in the last minute of the
+ * hold would otherwise be given a code for a slot that is gone before they can type it. Taken under
+ * the lock of the professional, like every other change of a hold, and only ever later.
+ */
+async function keepHoldUntil(
+  tx: Tx,
+  deps: SubmissionDeps,
+  loaded: LoadedHold,
+  until: Date,
+): Promise<void> {
+  if (loaded.hold.expiresAt.getTime() >= until.getTime()) return;
+  const ports = deps.portsOf(tx);
+  await ports.lockProfessional(loaded.hold.professionalId);
+  const current = await ports.findHold(loaded.hold.id, { lock: true });
+  if (current?.status !== 'active' || current.expiresAt.getTime() >= until.getTime()) return;
+  await ports.updateHold(loaded.hold.id, { expiresAt: until });
 }
 
 /**
@@ -274,5 +287,6 @@ export async function resendCode(
     await deps.abuse.recordSuspicious(tx, { actor: input.actor, reason: 'code_flood', linkId });
     return { ok: false, refusal: 'rate_limited' };
   }
+  await keepHoldUntil(tx, deps, loaded, issued.expiresAt);
   return { ok: true, maskedEmail: maskEmail(stored.email), codeExpiresAt: issued.expiresAt };
 }

@@ -11,6 +11,7 @@ import type { FastifyInstance } from 'fastify';
 
 import type { AdapterResolver } from '../../main/adapter-resolver.js';
 import type { AuthzOptions } from '../../platform/authz/guard.js';
+import type { TenantKeys } from '../../platform/crypto/tenant-keys.js';
 import { SYSTEM_USER_ID, type WithTenant } from '../../platform/db/tenant-context.js';
 import type { AppointmentEvents } from '../../platform/events/appointment-events.js';
 import type { PublicOrigins } from '../../platform/http/public-origin.js';
@@ -31,6 +32,7 @@ export type { VideoJoinAddress, VideoJoinUrlResolver } from './application/join-
 export { createJoinUrlResolver } from './application/join-address.js';
 export { devVideoRoutes, type DevVideoControls } from './http/dev-routes.js';
 export { createVideoLinkCreateJob };
+export { sealLegacyManualLinks } from './application/legacy-links.js';
 export { VIDEO_LINK_CREATE_JOB } from './application/video-sessions.js';
 export type { LinkReadyNotifier } from './application/video-sessions.js';
 
@@ -41,6 +43,8 @@ export function registerTeleconsultationExportContributors(registry: ExportRegis
 
 export interface TeleconsultationOptions {
   withTenant: WithTenant;
+  /** Encrypts the manual links people attach. */
+  keys: TenantKeys;
   auditDeny: AuthzOptions['auditDeny'];
   /** The appointment event bus: the module follows the appointment through it. */
   events: AppointmentEvents;
@@ -79,12 +83,14 @@ export function createTeleconsultation(options: TeleconsultationOptions): Teleco
 
   const publicJoin = publicJoinRoutes({
     withTenant: options.withTenant,
+    keys: options.keys,
     tokens,
     adapters: options.adapters,
     clock,
   });
   const staff = videoRoutes({
     withTenant: options.withTenant,
+    keys: options.keys,
     auditDeny: options.auditDeny,
     adapters: options.adapters,
     clock,

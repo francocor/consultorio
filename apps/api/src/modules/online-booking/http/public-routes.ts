@@ -178,7 +178,7 @@ export function publicRoutes(deps: PublicRoutesDeps) {
       },
       async (request, reply) => {
         void reply.header('cache-control', 'no-store');
-        return challengeOf(tenantOf(request)).issue();
+        return challengeOf(tenantOf(request)).issue(request.ip);
       },
     );
 
@@ -414,7 +414,12 @@ export function publicRoutes(deps: PublicRoutesDeps) {
     );
 
     const IdParams = z.strictObject({ slug: SlugParam, id: z.uuid() });
-    const submissionDeps: SubmissionDeps = { keys: deps.keys, jobs: deps.jobs, abuse: deps.abuse };
+    const submissionDeps: SubmissionDeps = {
+      keys: deps.keys,
+      portsOf: deps.portsOf,
+      jobs: deps.jobs,
+      abuse: deps.abuse,
+    };
 
     /** Turns what the use case decided into the answer: one shape for every visitor. */
     function answerFor(
@@ -435,8 +440,6 @@ export function publicRoutes(deps: PublicRoutesDeps) {
           return conflictCode(request, reply, 'slot_no_longer_available');
         case 'rate_limited':
           throw new AppError('rate_limited');
-        case 'limit_reached':
-          throw new AppError('booking_limit_reached');
       }
     }
 

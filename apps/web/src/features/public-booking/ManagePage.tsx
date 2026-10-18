@@ -143,9 +143,11 @@ export function ManagePage({ token }: { token: string }) {
           <DetailRow icon={MapPin} label={t('booking:done.where')}>
             {appointment.locationName}
           </DetailRow>
-          <DetailRow icon={UserRound} label={t('booking:done.who')}>
-            {appointment.professionalName}
-          </DetailRow>
+          {appointment.professionalName === null ? null : (
+            <DetailRow icon={UserRound} label={t('booking:done.who')}>
+              {appointment.professionalName}
+            </DetailRow>
+          )}
         </dl>
         <p className="font-medium">{t(`booking:manage.status.${appointment.status}`)}</p>
       </div>

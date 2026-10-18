@@ -154,9 +154,9 @@ describe('the reminder of a virtual appointment', () => {
     // Still valid at the start of the window, two weeks later.
     video.setVideoNow(new Date(start - 10 * 60_000));
     const opened = await video.app.inject({
-      method: 'GET',
+      method: 'POST',
       url: joinPath ?? '',
-      headers: { host: hostOf(video.slug) },
+      headers: { host: hostOf(video.slug), origin: `https://${hostOf(video.slug)}` },
     });
     expect(opened.statusCode).toBe(302);
   });

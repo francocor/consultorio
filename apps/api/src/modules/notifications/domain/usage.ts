@@ -1,13 +1,19 @@
 import { USAGE_WARNING_PERCENT, type UsageState } from '@consultorio/contracts';
+import { DateTime } from 'luxon';
 
 /**
  * The monthly WhatsApp quota of a professional (decision D6; spec "Quotas, usage and integration
  * switches"). Pure: counts and a limit in, a state and the thresholds out.
  */
 
-/** The calendar month of an instant, UTC, as `YYYY-MM`: what usage is grouped and billed by. */
-export function periodOf(instant: Date): string {
-  return instant.toISOString().slice(0, 7);
+/**
+ * The calendar month of an instant as `YYYY-MM`: what usage is grouped and billed by. It is the
+ * month of the organization, not of Greenwich: a message accepted at 22:00 of the last day of May
+ * in Buenos Aires belongs to May. Without a zone it is UTC.
+ */
+export function periodOf(instant: Date, timeZone = 'UTC'): string {
+  const zoned = DateTime.fromJSDate(instant, { zone: timeZone });
+  return zoned.isValid ? zoned.toFormat('yyyy-MM') : instant.toISOString().slice(0, 7);
 }
 
 export function usageState(count: number, limit: number | null): UsageState {

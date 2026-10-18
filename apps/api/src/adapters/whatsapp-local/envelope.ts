@@ -32,6 +32,7 @@ const InboundEvent = z.object({
   from: z.string().min(1),
   text: z.string(),
   occurredAt: z.coerce.date(),
+  contextMessageId: z.string().min(1).optional(),
 });
 
 export function signBody(secret: string, rawBody: Buffer | string): string {
@@ -67,6 +68,8 @@ export function parseEnvelope(body: unknown): readonly WhatsAppEvent[] {
       return [errorCode === undefined ? rest : { ...rest, errorCode }];
     }
     const inbound = InboundEvent.safeParse(candidate);
-    return inbound.success ? [inbound.data] : [];
+    if (!inbound.success) return [];
+    const { contextMessageId, ...rest } = inbound.data;
+    return [contextMessageId === undefined ? rest : { ...rest, contextMessageId }];
   });
 }

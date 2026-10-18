@@ -1,7 +1,9 @@
-import { and, eq, sql } from 'drizzle-orm';
+import { and, asc, eq, inArray, isNotNull, isNull, ne, or, sql } from 'drizzle-orm';
 
 import { membership, userAccount } from '../../../db/schema/identity.js';
+import { message } from '../../../db/schema/notifications.js';
 import { professional } from '../../../db/schema/staff.js';
+import { location } from '../../../db/schema/tenant.js';
 import { whatsappUsageAlert, whatsappUsageEvent } from '../../../db/schema/usage-event.js';
 import type { Tx } from '../../../platform/db/tenant-context.js';
 import { readOrganizationName } from '../../tenancy/index.js';
@@ -33,14 +35,56 @@ export const UNLIMITED_QUOTA: QuotaPolicy = {
   limitFor: () => Promise.resolve({ limit: null, overageAllowed: true }),
 };
 
-export async function usageCount(tx: Tx, professionalId: string, period: string): Promise<number> {
+/**
+ * The time zone the months of the organization are counted in: the one of its first location. An
+ * organization with no location yet counts in UTC.
+ */
+export async function organizationTimeZone(tx: Tx): Promise<string> {
+  const [row] = await tx
+    .select({ timeZone: location.timeZone })
+    .from(location)
+    .orderBy(asc(location.createdAt), asc(location.id))
+    .limit(1);
+  return row?.timeZone ?? 'UTC';
+}
+
+/** The month of an instant for this organization (see `organizationTimeZone`). */
+export async function organizationPeriod(tx: Tx, instant: Date): Promise<string> {
+  return periodOf(instant, await organizationTimeZone(tx));
+}
+
+/**
+ * The messages that take a place of the quota: confirmed (the provider accepted them), or reserved
+ * and still waiting to go. A reservation whose message ended without going (cancelled, failed) does
+ * not count, whichever path ended it: the count does not depend on every such path remembering to
+ * release (judgment day round 2, finding R2-C2). `excludeMessageId` leaves one message's own
+ * place out, for the question "may THIS message go".
+ */
+export async function usageCount(
+  tx: Tx,
+  professionalId: string,
+  period: string,
+  excludeMessageId?: string,
+): Promise<number> {
   const [row] = await tx
     .select({ count: sql<number>`count(*)::int` })
     .from(whatsappUsageEvent)
+    .innerJoin(
+      message,
+      and(
+        eq(message.tenantId, whatsappUsageEvent.tenantId),
+        eq(message.id, whatsappUsageEvent.messageId),
+      ),
+    )
     .where(
       and(
         eq(whatsappUsageEvent.professionalId, professionalId),
         eq(whatsappUsageEvent.period, period),
+        isNull(whatsappUsageEvent.releasedAt),
+        or(isNotNull(whatsappUsageEvent.confirmedAt), eq(message.status, 'queued')),
+        excludeMessageId === undefined
+          ? undefined
+          : ne(whatsappUsageEvent.messageId, excludeMessageId),
       ),
     );
   return row?.count ?? 0;
@@ -48,18 +92,88 @@ export async function usageCount(tx: Tx, professionalId: string, period: string)
 
 /**
  * Whether one more WhatsApp message may go out for this professional now: there is no quota, the
- * plan allows overage, or the month's count is still under the limit.
+ * plan allows overage, or the month's count is still under the limit. `ownMessageId` is the message
+ * asking, when it may already hold a place.
  */
 export async function whatsappQuotaAvailable(
   quota: QuotaPolicy,
   tx: Tx,
   professionalId: string,
   now: Date,
+  ownMessageId?: string,
 ): Promise<boolean> {
-  const period = periodOf(now);
+  const period = await organizationPeriod(tx, now);
   const { limit, overageAllowed } = await quota.limitFor(tx, professionalId, period);
   if (limit === null || overageAllowed) return true;
-  return (await usageCount(tx, professionalId, period)) < limit;
+  // A message that already holds a place (a retry) does not compete with itself for the last one.
+  return (await usageCount(tx, professionalId, period, ownMessageId)) < limit;
+}
+
+/**
+ * Takes a place of the quota for a message that is about to go over WhatsApp. Looking at the count
+ * and writing the row are one step under a lock per professional and month, so two messages that
+ * are prepared at the same moment cannot both take the last place (the check in
+ * `whatsappQuotaAvailable` only chooses the channel; this is the one that decides). Asking again
+ * for the same message returns the place it already has.
+ */
+export async function reserveWhatsappUsage(
+  quota: QuotaPolicy,
+  tx: Tx,
+  input: { messageId: string; professionalId: string; now: Date },
+): Promise<'reserved' | 'exhausted'> {
+  const period = await organizationPeriod(tx, input.now);
+  const { limit, overageAllowed } = await quota.limitFor(tx, input.professionalId, period);
+  if (limit !== null && !overageAllowed) {
+    await tx.execute(
+      sql`select pg_advisory_xact_lock(hashtextextended(${`whatsapp-quota:${input.professionalId}:${period}`}, 0))`,
+    );
+    const [mine] = await tx
+      .select({ id: whatsappUsageEvent.id })
+      .from(whatsappUsageEvent)
+      .where(
+        and(
+          eq(whatsappUsageEvent.messageId, input.messageId),
+          isNull(whatsappUsageEvent.releasedAt),
+        ),
+      );
+    if (mine) return 'reserved';
+    if ((await usageCount(tx, input.professionalId, period)) >= limit) return 'exhausted';
+  }
+  await tx
+    .insert(whatsappUsageEvent)
+    .values({
+      tenantId: sql`current_setting('app.tenant_id')::uuid`,
+      messageId: input.messageId,
+      professionalId: input.professionalId,
+      countedAt: input.now,
+      period,
+    })
+    .onConflictDoNothing();
+  return 'reserved';
+}
+
+/**
+ * Gives the place back: the messages did not go over WhatsApp. Nothing happens for one that had
+ * none. A place the provider already accepted stays counted unless `includeConfirmed` says the
+ * provider later reported the message undelivered.
+ */
+export async function releaseWhatsappUsage(
+  tx: Tx,
+  messageIds: string | readonly string[],
+  options: { includeConfirmed?: boolean } = {},
+): Promise<void> {
+  const ids = typeof messageIds === 'string' ? [messageIds] : messageIds;
+  if (ids.length === 0) return;
+  await tx
+    .update(whatsappUsageEvent)
+    .set({ releasedAt: sql`now()` })
+    .where(
+      and(
+        inArray(whatsappUsageEvent.messageId, [...ids]),
+        options.includeConfirmed ? undefined : isNull(whatsappUsageEvent.confirmedAt),
+        isNull(whatsappUsageEvent.releasedAt),
+      ),
+    );
 }
 
 async function ownerEmails(tx: Tx): Promise<string[]> {
@@ -95,19 +209,31 @@ export async function recordWhatsappUsage(
   tx: Tx,
   input: { messageId: string; professionalId: string; now: Date; tenant: TenantRef },
 ): Promise<{ counted: boolean }> {
-  const period = periodOf(input.now);
-  const [inserted] = await tx
+  // The place was reserved when the message was prepared; one that was not (a caller that never
+  // prepared) is taken now.
+  await tx
     .insert(whatsappUsageEvent)
     .values({
       tenantId: sql`current_setting('app.tenant_id')::uuid`,
       messageId: input.messageId,
       professionalId: input.professionalId,
       countedAt: input.now,
-      period,
+      period: await organizationPeriod(tx, input.now),
     })
-    .onConflictDoNothing()
-    .returning({ id: whatsappUsageEvent.id });
-  if (!inserted) return { counted: false };
+    .onConflictDoNothing();
+  // Confirming is what counts "once": only the first acceptance finds it unconfirmed.
+  const [confirmed] = await tx
+    .update(whatsappUsageEvent)
+    .set({ confirmedAt: input.now })
+    .where(
+      and(
+        eq(whatsappUsageEvent.messageId, input.messageId),
+        isNull(whatsappUsageEvent.confirmedAt),
+      ),
+    )
+    .returning({ id: whatsappUsageEvent.id, period: whatsappUsageEvent.period });
+  if (!confirmed) return { counted: false };
+  const period = confirmed.period;
 
   const { limit } = await deps.quota.limitFor(tx, input.professionalId, period);
   const count = await usageCount(tx, input.professionalId, period);

@@ -1,5 +1,6 @@
 import type { WorklistKind, WorklistSubjectType } from '@consultorio/contracts';
 
+import type { TenantKeys } from '../../../platform/crypto/tenant-keys.js';
 import type { Tx, WithTenant } from '../../../platform/db/tenant-context.js';
 import type { PublicOrigins } from '../../../platform/http/public-origin.js';
 import type { JobClient } from '../../../platform/jobs/boss.js';
@@ -28,7 +29,10 @@ export interface Channels {
 
 /** What messaging asks of the reception worklist (the queue itself belongs to scheduling). */
 export interface WorklistItem {
-  kind: Extract<WorklistKind, 'reminder_not_sent' | 'reminder_not_delivered' | 'reply_to_review'>;
+  kind: Extract<
+    WorklistKind,
+    'reminder_not_sent' | 'reminder_not_delivered' | 'reply_to_review' | 'identity_review'
+  >;
   subjectType: WorklistSubjectType;
   subjectId: string;
   locationId: string | null;
@@ -57,6 +61,13 @@ export interface MessagingDeps {
   origins: PublicOrigins;
   tokens: ActionTokens;
   worklist: Worklist;
+  /**
+   * Housekeeping other modules ask the hourly sweep to do for an organization (the composition root
+   * plugs them in; the modules never import each other). Each one runs in the sweep's transaction.
+   */
+  housekeeping?: readonly ((tx: Tx, now: Date) => Promise<void>)[];
+  /** Encrypts what messaging keeps that is a capability (the address of an offer). */
+  keys: TenantKeys;
   /** The plan's WhatsApp quota. Absent: no quota, everything is allowed and counted. */
   quota?: QuotaPolicy;
   /**

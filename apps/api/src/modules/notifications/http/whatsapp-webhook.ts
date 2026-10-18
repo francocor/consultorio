@@ -4,11 +4,16 @@ import { SYSTEM_USER_ID, type WithTenant } from '../../../platform/db/tenant-con
 import { AppError } from '../../../platform/http/problem.js';
 import type { MessagingDeps } from '../application/deps.js';
 import { processInbound, type InboundDeps } from '../application/inbound.js';
-import { tenantsByProviderMessageId, tenantsByRecipientHash } from '../application/lookup.js';
-import type { WhatsAppSender } from '../application/ports.js';
+import {
+  tenantsByProviderMessageId,
+  tenantsByRecipientHash,
+  tenantsByReplyContext,
+} from '../application/lookup.js';
+import type { WhatsAppEvent, WhatsAppSender } from '../application/ports.js';
 import { applyStatusEvent } from '../application/status-events.js';
-import { hashAddress } from '../domain/address.js';
-import { normalizeWhatsAppNumber } from '../domain/phone.js';
+import { hashAddress, legacyAddressHash } from '../domain/address.js';
+import { classifyReply } from '../domain/keywords.js';
+import { normalizeInboundNumber } from '../domain/phone.js';
 
 /**
  * `POST /webhooks/whatsapp`: delivery receipts and replies from the WhatsApp provider (spec
@@ -22,9 +27,18 @@ import { normalizeWhatsAppNumber } from '../domain/phone.js';
  * - A replayed event is applied once (the id of the provider's event is unique).
  * - Events about messages we never sent, and replies from numbers we never wrote to, are dropped:
  *   no record, no patient, no appointment.
+ * - A reply names no organization, and one number can be on the books of several. It is attributed
+ *   to ONE: the organization of the message it quotes (when it quotes one that went to that number),
+ *   else the one that wrote to the number within the last week. When several did, "1" and "2" go
+ *   to every candidate as a reply to read, and only BAJA acts, in each of them, naming each one.
  * - It answers in a read-only organization too (it is a webhook, not a user action); what a reply
  *   may do there is decided by `processInbound`.
  */
+
+/** A reply is about the organizations that wrote to the number within this many days. */
+const REPLY_WINDOW_DAYS = 7;
+/** More organizations than this writing to one number in a week is not a case worth serving. */
+const MAX_CANDIDATES = 5;
 
 export interface WhatsAppWebhookDeps {
   withTenant: WithTenant;
@@ -91,15 +105,27 @@ export function whatsappWebhookRoutes(deps: WhatsAppWebhookDeps) {
               }
               continue;
             }
-            const from = normalizeWhatsAppNumber(event.from);
-            if (from === null) continue;
-            const tenantIds = await tenantsByRecipientHash(
-              deps.withTenant,
-              hashAddress('whatsapp', from),
-            );
-            for (const tenantId of tenantIds) {
+            const from = normalizeInboundNumber(event.from);
+            if (from === null) {
+              // Nobody can be found from text that is not a number. A BAJA must not vanish without a trace.
+              if (classifyReply(event.text) === 'opt_out') {
+                request.log.warn(
+                  { eventId: event.eventId },
+                  'opt-out from a sender that is not a number',
+                );
+              }
+              continue;
+            }
+            const attribution = await attribute(deps, event, from);
+            for (const [index, tenantId] of attribution.tenantIds.entries()) {
               const outcome = await deps.withTenant({ tenantId, userId: SYSTEM_USER_ID }, (tx) =>
-                processInbound(deps.inbound, tx, event, { from }),
+                processInbound(deps.inbound, tx, event, {
+                  from,
+                  ambiguous: attribution.tenantIds.length > 1,
+                  // The organization that wrote last comes first.
+                  primary: index === 0,
+                  ...(attribution.quoted ? { quotedMessageId: attribution.quoted } : {}),
+                }),
               );
               if (outcome !== 'duplicate') applied += 1;
             }
@@ -109,5 +135,47 @@ export function whatsappWebhookRoutes(deps: WhatsAppWebhookDeps) {
       );
       done();
     });
+  };
+}
+
+interface Attribution {
+  /** The organizations the reply is about, the one that wrote last first. */
+  tenantIds: string[];
+  /** The provider id of the quoted message, when the quote is what attributed the reply. */
+  quoted: string | null;
+}
+
+async function attribute(
+  deps: WhatsAppWebhookDeps,
+  event: Extract<WhatsAppEvent, { kind: 'inbound' }>,
+  from: string,
+): Promise<Attribution> {
+  // While the log still holds unsalted hashes (the rehash goes newest first and a batch at a time)
+  // an organization may hold the number under either; looking for both keeps a BAJA from being
+  // dropped because its organization has not been rehashed yet.
+  const hashes = [hashAddress('whatsapp', from), legacyAddressHash('whatsapp', from)];
+  const inAny = async (lookup: (hash: string) => Promise<string[]>): Promise<string[]> => {
+    const found = await Promise.all(hashes.map((hash) => lookup(hash)));
+    return [...new Set(found.flat())].slice(0, MAX_CANDIDATES);
+  };
+  if (event.contextMessageId !== undefined) {
+    const quotedId = event.contextMessageId;
+    const quoted = await inAny((hash) => tenantsByReplyContext(deps.withTenant, quotedId, hash));
+    if (quoted.length === 1) return { tenantIds: quoted, quoted: quotedId };
+  }
+  const since = new Date(deps.inbound.clock().getTime() - REPLY_WINDOW_DAYS * 86_400_000);
+  const recent = await inAny((hash) =>
+    tenantsByRecipientHash(deps.withTenant, hash, { since, limit: MAX_CANDIDATES }),
+  );
+  if (recent.length > 0 || classifyReply(event.text) !== 'opt_out') {
+    return { tenantIds: recent, quoted: null };
+  }
+  // Nobody wrote lately and the patient wants out: every organization that ever wrote to the number
+  // hears it (up to the cap). An opt-out is the safe direction, so no time window narrows it.
+  return {
+    tenantIds: await inAny((hash) =>
+      tenantsByRecipientHash(deps.withTenant, hash, { since: null, limit: MAX_CANDIDATES }),
+    ),
+    quoted: null,
   };
 }

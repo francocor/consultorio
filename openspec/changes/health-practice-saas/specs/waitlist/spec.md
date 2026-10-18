@@ -138,10 +138,11 @@ Offers MUST NOT be sent through a channel on which the patient has opted out. An
 - AND reception sees the slot with the matching entries
 
 #### Scenario: Patient stops waitlist messages
-- GIVEN a patient with two active entries
+- GIVEN a patient with two active entries and no other channel for offers than WhatsApp
 - WHEN the patient replies "BAJA" to an offer
-- THEN both entries stop receiving automated offers
+- THEN both entries stop receiving automated offers (they close as "patient opted out")
 - AND the opt-out is recorded as in `notifications`
+- AND a patient who still has another channel keeps their entries, and their offers go through it
 
 ---
 
@@ -189,3 +190,37 @@ Every offer, acceptance, decline, expiry, priority override and manual change MU
 - GIVEN 12 slots were filled through offers in a month
 - WHEN the report is requested
 - THEN the waitlist count of recovered slots is 12
+
+---
+
+### Requirement: Self-join cannot forge consent
+
+A public join MUST NOT record the agreement to receive offers on a record that already had the typed document: the entry is created for reception to call (reason "no offers opt-in"), because the visitor proved an email address, not who the document belongs to. For a patient the join registers, the agreement of the form MAY be recorded, and a WhatsApp choice MUST be only a request (see notifications, "WhatsApp opt-in from a public form"). A patient who opts out of a channel MUST leave the waitlist only when no channel is left through which an offer could reach them (an email address that was not refused, or a WhatsApp number with a recorded opt-in): then their entries close with reason "patient opted out" and their offers end. A patient who opts out of one channel and keeps another stays on the list, and their offers go through the one that is left (see "Opt-out and consent in offers"). The opt-out is applied in the transaction of the opt-out, but a failure of the waitlist MUST NOT undo the patient's opt-out: it is reported and the opt-out stands. Staff MUST see only the entries of the places they work at and, for a professional, of the calendars they may work in; an entry outside that scope answers not found. An online booking cancelled within thirty minutes of being made MUST NOT start a match, and a slot MUST get at most five offers.
+
+#### Scenario: Self-join with a document on file
+- GIVEN a patient on file with document D
+- WHEN a visitor verifies an email and joins the waitlist with document D
+- THEN the entry exists as manual contact only, with no offers agreement recorded
+- AND the record of the patient is unchanged
+
+#### Scenario: Opt-out leaves the list
+- GIVEN a patient with two entries and an open offer, whose only channel for offers is email
+- WHEN the patient opts out of email
+- THEN both entries close as "patient opted out" and the offer ends
+
+#### Scenario: Opt-out of one channel keeps the list
+- GIVEN a patient with an entry, an email that was not refused and a recorded WhatsApp opt-in
+- WHEN the patient opts out of WhatsApp
+- THEN the entry stays active
+- AND the next offer goes by email only
+- WHEN the patient then opts out of email
+- THEN the entry closes as "patient opted out"
+
+#### Scenario: Scope
+- GIVEN reception assigned to one place and an entry for another
+- WHEN reception lists the waitlist
+- THEN the entry is not in the list and its detail answers not found
+
+#### Scenario: Book and cancel at once
+- GIVEN an online booking cancelled ten minutes after it was made
+- THEN no match is queued and nobody on the waitlist is offered the slot
