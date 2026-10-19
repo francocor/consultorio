@@ -603,6 +603,13 @@
       "when": 1792400034990,
       "tag": "0482_authority_last_at_mark",
       "breakpoints": true
+    },
+    {
+      "idx": 86,
+      "version": "7",
+      "when": 1792406513066,
+      "tag": "0483_manual_credit_note_invoiced",
+      "breakpoints": true
     }
   ]
 }

@@ -1,7 +1,12 @@
-import type { CreateManualInvoiceRequest, FieldError, InvoiceDto } from '@consultorio/contracts';
+import {
+  CREDIT_NOTE_TYPES,
+  type CreateManualInvoiceRequest,
+  type FieldError,
+  type InvoiceDto,
+} from '@consultorio/contracts';
 import { and, asc, eq, sql } from 'drizzle-orm';
 
-import { fiscalProfile, invoice, invoiceLine } from '../../../db/schema/index.js';
+import { fiscalProfile, invoice, invoiceLine, type InvoiceRow } from '../../../db/schema/index.js';
 import { audit } from '../../../platform/audit/writer.js';
 import type { Tx } from '../../../platform/db/tenant-context.js';
 import { AppError } from '../../../platform/http/problem.js';
@@ -21,7 +26,7 @@ import {
   type Viewer,
 } from './create-invoice.js';
 import { loadInvoice } from './invoice-view.js';
-import { snapshotOfProfile } from './issuer-snapshot.js';
+import { snapshotOfProfile, type IssuerSnapshot } from './issuer-snapshot.js';
 import { loadOrganization } from './settings.js';
 import { recordStrayVoucher } from './stray-vouchers.js';
 
@@ -38,6 +43,14 @@ const validation = (path: string, i18nKey: string): AppError =>
 /** What a pending invoice that a manual voucher stands in for says about itself afterwards. */
 const REPLACED_MESSAGE =
   'Reemplazada por un comprobante registrado manualmente (emitido fuera del sistema).';
+
+/** A line of a voucher as it is written: what it covers of a charge line. */
+interface CoveredLine {
+  chargeLineId: string;
+  chargeId: string;
+  description: string;
+  amountCents: number;
+}
 
 interface Replacement {
   id: string;
@@ -69,8 +82,10 @@ async function readReplacement(tx: Tx, id: string): Promise<Replacement> {
  *   outcome lasts as long as the outage, and the fallback exists exactly for that. The replacement
  *   is audited as `invoice.replaced_unresolved` and a person is told to look for the voucher in ARCA
  *   (JD-S4 R2-2).
- * - It must be the same invoice (JD-S4 R2-6): not a credit note, of the same voucher type and the
- *   same total, covering lines the voucher covers, for the same recipient and the same document.
+ * - It must be the same invoice (JD-S4 R2-6): of the same voucher type and the same total, covering
+ *   lines the voucher covers, for the same recipient and the same document. A credit note is replaced
+ *   only by a credit note, and only one that was parked for a person: the same type, cancelling the
+ *   same voucher, for the same total (JD-S4 R5-B-W2).
  * - It leaves the worklist: the item that asked a person to look at it is resolved (JD-S4 B-S1).
  */
 async function closeReplaced(
@@ -79,8 +94,13 @@ async function closeReplaced(
   input: RegisterManualInput,
   target: Replacement,
   requestedIds: readonly string[],
-  manual: { type: string; totalCents: number; recipient: Recipient },
-): Promise<void> {
+  manual: {
+    type: string;
+    totalCents: number;
+    recipient: Recipient;
+    associatedVoucher: { type: string; pointOfSale: number; number: number } | undefined;
+  },
+): Promise<InvoiceRow> {
   const taken = await tx.execute<{ locked: boolean }>(
     sql`select pg_try_advisory_xact_lock(hashtextextended(${'afip-invoice|' + target.id}, 0)) as locked`,
   );
@@ -106,13 +126,18 @@ async function closeReplaced(
     recipient.kind === 'payer' ||
     (pending.recipientDocType === (recipient.document?.type ?? null) &&
       pending.recipientDocNumber === (recipient.document?.number ?? null));
+  const isNote = pending.creditNoteOfId !== null;
+  // The recipient of a credit note is the one of the invoice it cancels: it is the parked note that says
+  // which, not what was typed.
   const sameRecipient =
     pending.recipientKind === recipient.kind &&
     pending.patientId === recipient.patientId &&
     pending.tenantPayerId === recipient.tenantPayerId &&
-    sameDocument;
+    (isNote || sameDocument);
   if (
-    pending.creditNoteOfId !== null ||
+    isNote !== CREDIT_NOTE_TYPES.some((type) => type === manual.type) ||
+    (isNote && pending.deliveryState !== 'needs_attention') ||
+    !(await cancelsTheSameVoucher(tx, pending, manual.associatedVoucher)) ||
     pending.type !== manual.type ||
     pending.totalCents !== manual.totalCents ||
     target.lineIds.some((id) => !covered.has(id)) ||
@@ -150,7 +175,7 @@ async function closeReplaced(
     resolution: 'replaced_by_manual',
     actor: input.actor,
   });
-  if (!unknownOutcome) return;
+  if (!unknownOutcome) return pending;
   const unresolved = {
     type: pending.type,
     pointOfSale: pending.pointOfSale,
@@ -185,6 +210,30 @@ async function closeReplaced(
     subjectId: pending.id,
     detail: { reason: 'replaced_unresolved', ...unresolved },
   });
+  return pending;
+}
+
+/**
+ * Whether the voucher a manual credit note says it cancels is the one the parked note cancels. An
+ * invoice has none and says none.
+ */
+async function cancelsTheSameVoucher(
+  tx: Tx,
+  pending: InvoiceRow,
+  associated: { type: string; pointOfSale: number; number: number } | undefined,
+): Promise<boolean> {
+  if (pending.creditNoteOfId === null) return associated === undefined;
+  if (associated === undefined) return false;
+  const [original] = await tx
+    .select({ type: invoice.type, pointOfSale: invoice.pointOfSale, number: invoice.number })
+    .from(invoice)
+    .where(eq(invoice.id, pending.creditNoteOfId));
+  return (
+    original !== undefined &&
+    original.type === associated.type &&
+    original.pointOfSale === associated.pointOfSale &&
+    original.number === associated.number
+  );
 }
 
 /**
@@ -207,6 +256,18 @@ export async function registerManualInvoice(
   const requestedIds = request.lines.map((line) => line.chargeLineId);
   if (new Set(requestedIds).size !== requestedIds.length) {
     throw validation('lines', 'validation.duplicate');
+  }
+  // A credit note made by hand takes the place of one that was parked, and says which voucher it
+  // cancels; an invoice does not (JD-S4 R5-B-W2).
+  const isNote = CREDIT_NOTE_TYPES.some((type) => type === request.type);
+  if (isNote && !request.replacesInvoiceId) {
+    throw validation('replacesInvoiceId', 'invoicing.manual.credit_note_replaces');
+  }
+  if (isNote && !request.associatedVoucher) {
+    throw validation('associatedVoucher', 'invoicing.manual.associated_required');
+  }
+  if (!isNote && request.associatedVoucher) {
+    throw validation('associatedVoucher', 'invoicing.manual.associated_only_for_notes');
   }
   // The invoice this one replaces is read first, without a lock, only to know its lines: they are
   // locked together with the ones of the request, in the order of their ids, like every other writer.
@@ -240,7 +301,7 @@ export async function registerManualInvoice(
   // type must be one the issuer could have made (when the fiscal profile is known). The total is the
   // one of the request here; it is checked against the lines below.
   const [profile] = await tx.select().from(fiscalProfile);
-  if (profile) {
+  if (profile && !isNote) {
     const typed = pack.invoiceRules.resolveInvoiceType({
       issuer: profile.taxCondition as 'monotributo' | 'responsable_inscripto' | 'exento',
       recipient: recipient.taxCondition,
@@ -248,43 +309,95 @@ export async function registerManualInvoice(
     });
     if (!typed.ok) throw validation('type', typed.error.i18nKey);
   }
-  const checked = pack.invoiceRules.checkRecipient({
-    type: request.type,
-    totalCents: request.totalCents,
-    recipient: {
-      taxCondition: recipient.taxCondition,
-      ...(recipient.name ? { name: recipient.name } : {}),
-      ...(recipient.document ? { document: recipient.document } : {}),
-    },
-  });
-  if (!checked.ok) throw validation('recipient', checked.error.i18nKey);
-  const normalized: Recipient = {
-    ...recipient,
-    taxCondition: checked.value.taxCondition,
-    name: checked.value.name ?? recipient.name,
-    document: checked.value.document ?? null,
-  };
+  // A credit note takes the recipient of the note it replaces (the one of the invoice it cancels): the
+  // rules of an invoice about the recipient do not apply to it.
+  const checked = isNote
+    ? undefined
+    : pack.invoiceRules.checkRecipient({
+        type: request.type,
+        totalCents: request.totalCents,
+        recipient: {
+          taxCondition: recipient.taxCondition,
+          ...(recipient.name ? { name: recipient.name } : {}),
+          ...(recipient.document ? { document: recipient.document } : {}),
+        },
+      });
+  if (checked && !checked.ok) throw validation('recipient', checked.error.i18nKey);
+  const normalized: Recipient = checked?.ok
+    ? {
+        ...recipient,
+        taxCondition: checked.value.taxCondition,
+        name: checked.value.name ?? recipient.name,
+        document: checked.value.document ?? null,
+      }
+    : recipient;
 
   // The pending invoice this one replaces gives its lines back first. Only one that no attempt is
   // working on, whose outcome is not in doubt (or whose doubt the owner or an admin accepts), and
   // that is the same invoice: the same type, total, lines and recipient (JD-S4 R1-C3, R2-2, R2-6).
-  if (target) {
-    await closeReplaced(tx, deps, input, target, requestedIds, {
-      type: request.type,
-      totalCents: request.totalCents,
-      recipient: normalized,
-    });
-  }
+  const replaced = target
+    ? await closeReplaced(tx, deps, input, target, requestedIds, {
+        type: request.type,
+        totalCents: request.totalCents,
+        recipient: normalized,
+        associatedVoucher: request.associatedVoucher,
+      })
+    : undefined;
 
-  // Lines of the invoice that were freed above are read again by the plan.
-  const fresh = await lockLines(tx, requestedIds, input.viewer);
-  const plan = planParts(fresh, request.lines);
-  if (!plan.ok) {
-    if (plan.reason === 'over_invoiced') throw new AppError('invoice_line_over_invoiced');
-    throw validation('lines', 'validation.duplicate');
-  }
-  if (plan.totalCents !== request.totalCents) {
-    throw validation('totalCents', 'invoicing.manual.total_mismatch');
+  // What the voucher covers. An invoice: the plan of the lines asked for (the lines of the invoice it
+  // replaces were freed above, so they are read again). A credit note: exactly what the note it replaces
+  // covered, cancelling the same invoice for the same reason.
+  const covered: CoveredLine[] = [];
+  let totalCents = request.totalCents;
+  let locationIds: string[];
+  let issuer: IssuerSnapshot | null;
+  let creditNote: { originalId: string; reason: string } | undefined;
+  if (isNote) {
+    if (!replaced?.creditNoteOfId || replaced.reason === null) {
+      throw new Error('a credit note is only registered in place of a credit note');
+    }
+    const lines = await tx
+      .select()
+      .from(invoiceLine)
+      .where(eq(invoiceLine.invoiceId, replaced.id))
+      .orderBy(asc(invoiceLine.position));
+    covered.push(
+      ...lines.map((line) => ({
+        chargeLineId: line.chargeLineId,
+        chargeId: line.chargeId,
+        description: line.description,
+        amountCents: line.amountCents,
+      })),
+    );
+    locationIds = replaced.locationIds;
+    issuer = replaced.issuerSnapshot;
+    creditNote = { originalId: replaced.creditNoteOfId, reason: replaced.reason };
+  } else {
+    const fresh = await lockLines(tx, requestedIds, input.viewer);
+    const plan = planParts(fresh, request.lines);
+    if (!plan.ok) {
+      if (plan.reason === 'over_invoiced') throw new AppError('invoice_line_over_invoiced');
+      throw validation('lines', 'validation.duplicate');
+    }
+    if (plan.totalCents !== request.totalCents) {
+      throw validation('totalCents', 'invoicing.manual.total_mismatch');
+    }
+    totalCents = plan.totalCents;
+    const service = new Map(fresh.map((line) => [line.id, line]));
+    covered.push(
+      ...plan.parts.map((part) => {
+        const line = service.get(part.chargeLineId);
+        if (!line) throw new Error('a planned part has no line');
+        return {
+          chargeLineId: line.id,
+          chargeId: line.chargeId,
+          description: lineWording({ kind: line.kind, serviceName: '' }),
+          amountCents: part.amountCents,
+        };
+      }),
+    );
+    locationIds = [...new Set(fresh.map((line) => line.locationId))].sort();
+    issuer = profile ? snapshotOfProfile(profile) : null;
   }
 
   const [taken] = await tx
@@ -299,7 +412,6 @@ export async function registerManualInvoice(
     );
   if (taken) throw new AppError('invoice_number_taken');
 
-  const service = new Map(fresh.map((line) => [line.id, line]));
   const row = await insertInvoice(tx, deps, {
     actor: input.actor,
     values: {
@@ -313,9 +425,10 @@ export async function registerManualInvoice(
       key: request.idempotencyKey,
       requestHash,
       recipient: normalized,
-      totalCents: plan.totalCents,
-      locationIds: [...new Set(fresh.map((line) => line.locationId))].sort(),
-      issuer: profile ? snapshotOfProfile(profile) : null,
+      totalCents,
+      locationIds,
+      issuer,
+      ...(creditNote ? { creditNote } : {}),
       manual: {
         number: request.number,
         cae: request.cae,
@@ -323,20 +436,7 @@ export async function registerManualInvoice(
       },
     },
   });
-  await insertInvoiceLines(
-    tx,
-    row.id,
-    plan.parts.map((part) => {
-      const line = service.get(part.chargeLineId);
-      if (!line) throw new Error('a planned part has no line');
-      return {
-        chargeLineId: line.id,
-        chargeId: line.chargeId,
-        description: lineWording({ kind: line.kind, serviceName: '' }),
-        amountCents: part.amountCents,
-      };
-    }),
-  );
+  await insertInvoiceLines(tx, row.id, covered);
 
   await audit(tx, {
     action: 'invoice.manual',
@@ -349,7 +449,7 @@ export async function registerManualInvoice(
       type: request.type,
       pointOfSale: request.pointOfSale,
       number: request.number,
-      totalCents: plan.totalCents,
+      totalCents,
       ...(request.replacesInvoiceId ? { replacedInvoiceId: request.replacesInvoiceId } : {}),
     },
   });

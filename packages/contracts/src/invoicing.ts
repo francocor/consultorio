@@ -306,7 +306,11 @@ export type CreateCreditNoteRequest = z.infer<typeof CreateCreditNoteRequest>;
 /** An invoice issued outside the system (the AFIP web tool), registered by the owner or an admin. */
 export const CreateManualInvoiceRequest = z.strictObject({
   idempotencyKey: SubmissionKey,
-  type: z.enum(INVOICE_ONLY_TYPES),
+  /**
+   * An invoice type, or a credit note type: a credit note made outside the system is registered only in
+   * place of one that was parked for a person (`replacesInvoiceId`, with `associatedVoucher`).
+   */
+  type: z.enum(INVOICE_TYPES),
   pointOfSale: PointOfSaleNumber,
   number: z.int().min(1).max(99_999_999),
   /** The 14 digits of the CAE. */
@@ -320,6 +324,17 @@ export const CreateManualInvoiceRequest = z.strictObject({
    * outage). It is closed as rejected, so it is never issued as well, and its lines are used here.
    */
   replacesInvoiceId: z.uuid().optional(),
+  /**
+   * For a credit note: the voucher it cancels (type, point of sale and number). It must be the voucher
+   * the parked credit note cancels. Absent for an invoice.
+   */
+  associatedVoucher: z
+    .strictObject({
+      type: z.enum(INVOICE_ONLY_TYPES),
+      pointOfSale: PointOfSaleNumber,
+      number: z.int().min(1).max(99_999_999),
+    })
+    .optional(),
   /**
    * The owner or admin knows that the invoice `replacesInvoiceId` names was sent to the authority and
    * that nobody knows whether it was issued (a lost answer), and registers this voucher in its place

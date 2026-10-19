@@ -30,7 +30,7 @@ export const invoiceLookup: InvoiceLookup = {
               FROM invoice_line il
               JOIN invoice i ON i.tenant_id = il.tenant_id AND i.id = il.invoice_id
              WHERE il.charge_id = ${chargeId}
-               AND CASE WHEN i.type IN ('NCA', 'NCB', 'NCC') THEN i.status = 'issued'
+               AND CASE WHEN i.type IN ('NCA', 'NCB', 'NCC') THEN i.status IN ('issued', 'manual')
                         ELSE i.status IN ('pending', 'issued', 'manual') END
              GROUP BY il.charge_line_id
             HAVING sum(CASE WHEN i.type IN ('NCA', 'NCB', 'NCC') THEN -il.amount_cents
