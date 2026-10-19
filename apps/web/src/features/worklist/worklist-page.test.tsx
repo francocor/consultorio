@@ -91,6 +91,17 @@ const WAITLIST = item({
   actions: ['resolve', 'dismiss'],
 });
 
+const SHARED_BAJA = item({
+  id: ITEM(5),
+  kind: 'reply_to_review',
+  subjectType: 'inbound_message',
+  subjectId: ITEM(50),
+  locationId: null,
+  appointment: null,
+  detail: { reason: 'email_optout_unconfirmed', patientIds: [IDS.patientGomez, IDS.patientRios] },
+  actions: ['resolve', 'dismiss'],
+});
+
 const OPEN_ITEMS = [IDENTITY, APPROVAL, REMINDER, WAITLIST];
 
 interface OpenOptions {
@@ -154,6 +165,19 @@ describe('the worklist', () => {
     expect(approval.getByText('Pendiente de aprobación')).toBeInTheDocument();
     expect(
       (await card('Contacto manual de lista de espera')).getByText('Toda la organización'),
+    ).toBeInTheDocument();
+    expect(app.missingKeys).toEqual([]);
+  });
+
+  it('says what reception has to confirm when a BAJA came from a number shared by several patients (B7)', async () => {
+    const app = open({ items: [SHARED_BAJA] });
+
+    const reply = await card('Respuesta por revisar');
+
+    expect(
+      reply.getByText(
+        'Alguien escribió BAJA desde un número que comparten varios pacientes y no se pudo saber quién. WhatsApp quedó dado de baja para todos ellos; confirme con quién corresponde si también hay que dar de baja el email.',
+      ),
     ).toBeInTheDocument();
     expect(app.missingKeys).toEqual([]);
   });

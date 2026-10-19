@@ -234,6 +234,7 @@
   "worklist.kind.reminder_not_delivered": "Recordatorio no entregado",
   "worklist.kind.reply_to_review": "Respuesta por revisar",
   "worklist.kind.waitlist_manual_contact": "Contacto manual de lista de espera",
+  "worklist.replyReason.email_optout_unconfirmed": "Alguien escribió BAJA desde un número que comparten varios pacientes y no se pudo saber quién. WhatsApp quedó dado de baja para todos ellos; confirme con quién corresponde si también hay que dar de baja el email.",
   "worklist.empty.open": "No hay pendientes. Todo está al día.",
   "worklist.empty.resolved": "Todavía no hay pendientes resueltos.",
   "worklist.empty.dismissed": "Todavía no hay pendientes descartados.",
