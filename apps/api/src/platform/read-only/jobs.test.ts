@@ -137,6 +137,15 @@ describe('job classification (every queue declares one category)', () => {
     expect(jobCategoryOf('portal.majority_review')).toBe('patient_protective');
   });
 
+  it('sends the sign-in code of the portal in a read-only tenant: signing in is authentication', () => {
+    expect(jobCategoryOf('portal.code_send')).toBe('auth');
+    expect(jobMayRun({ category: jobCategoryOf('portal.code_send') }, frozen, AFTER)).toEqual({
+      run: true,
+    });
+    // The code of the public booking is a plain write: its pages are closed in a read-only tenant.
+    expect(jobMayRun({ category: jobCategoryOf('otp.send') }, frozen, AFTER).run).toBe(false);
+  });
+
   it('runs the Stage 5 jobs of the allowlisted categories in a read-only tenant, and cancels the others', () => {
     for (const queue of ['erx.reconcile', 'portal.majority_review']) {
       expect(jobMayRun({ category: jobCategoryOf(queue) }, frozen, AFTER).run, queue).toBe(true);

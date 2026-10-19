@@ -84,4 +84,8 @@ export const QUEUES: readonly QueueDefinition[] = [
     name: 'portal.majority_review',
     options: { retryLimit: 1, retryDelay: 300, expireInSeconds: 900 },
   },
+  // Emails the sign-in code of the patient portal (track B, S5.07). It is not `otp.send`: signing in
+  // to the portal is authentication, which a read-only organization keeps, while the code of the
+  // public booking is a plain write that ends cancelled there.
+  { name: 'portal.code_send', options: { retryLimit: 3, retryDelay: 15, expireInSeconds: 120 } },
 ];
