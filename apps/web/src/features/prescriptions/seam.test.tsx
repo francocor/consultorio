@@ -9,17 +9,24 @@ import { renderApp } from '../../shared/test/render-app.js';
 import { jsonResponse } from '../../shared/test/render.js';
 
 import slots from './slots.js';
+import { capability } from './test-fixtures.js';
 
 const PATIENT = '0190a000-0000-7000-8000-0000000000c1';
 const boot = bootFor('Centro Médico Aillu');
-const routes = { 'GET /api/worklist/count': () => jsonResponse({ open: 0 }) };
+const routes = {
+  'GET /api/worklist/count': () => jsonResponse({ open: 0 }),
+  'GET /api/prescriptions/capability': () => jsonResponse(capability()),
+  'GET /api/prescriptions': () => jsonResponse({ prescriptions: [] }),
+  [`GET /api/patients/${PATIENT}/prescriptions`]: () => jsonResponse({ prescriptions: [] }),
+};
 
-describe('the prescriptions seam (route, navigation entry and patient tab: stubs of Stage 5)', () => {
+describe('the prescriptions feature (route, navigation entry, settings tab and patient tab)', () => {
   it('opens /prescriptions for a professional, in the signed-in shell', async () => {
     renderApp({ me: meFor(['professional']), boot, path: '/prescriptions', routes });
 
     expect(await screen.findByRole('heading', { level: 1, name: 'Recetas' })).toBeInTheDocument();
     expect(screen.getAllByRole('navigation').length).toBeGreaterThan(0);
+    expect(await screen.findByText('Todavía no hay recetas')).toBeInTheDocument();
   });
 
   it.each([['reception'], ['owner'], ['admin']] as const)(
@@ -80,12 +87,13 @@ describe('the prescriptions seam (route, navigation entry and patient tab: stubs
         routes,
       });
 
-    it('shows a professional where the prescriptions of the patient will be', async () => {
+    it('shows a professional the prescriptions of the patient and the way to issue another', async () => {
       openAs('professional');
 
       expect(
-        await screen.findByText('Las recetas de este paciente aparecerán aquí.'),
+        await screen.findByRole('heading', { name: 'Recetas del paciente' }),
       ).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: 'Emitir receta' })).toBeEnabled();
     });
 
     it('shows reception nothing: the piece is not mounted without the permission', async () => {
@@ -93,7 +101,7 @@ describe('the prescriptions seam (route, navigation entry and patient tab: stubs
 
       await screen.findAllByRole('navigation');
       expect(
-        screen.queryByText('Las recetas de este paciente aparecerán aquí.'),
+        screen.queryByRole('heading', { name: 'Recetas del paciente' }),
       ).not.toBeInTheDocument();
     });
   });
