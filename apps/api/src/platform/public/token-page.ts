@@ -20,6 +20,11 @@ export interface TokenPageModel {
   action?: { label: string; value?: string };
   /** A second choice beside the action. Shown only together with an action. */
   secondaryAction?: { label: string; value: string };
+  /**
+   * A way on to another page, for a page that only informs ("your access is active", with the way to
+   * the portal). A plain link, not a form: it is followed with GET and nothing is posted.
+   */
+  link?: { label: string; href: string };
 }
 
 const HTML_ESCAPES: Record<string, string> = {
@@ -46,6 +51,8 @@ button { min-height: 44px; padding: 0.6rem 1.2rem; border: 0; border-radius: 6px
 button:focus-visible { outline: 3px solid #1d4ed8; outline-offset: 2px; }
 form { display: flex; flex-wrap: wrap; gap: 0.75rem; }
 button.secondary { background: #ffffff; color: #0f766e; border: 2px solid #0f766e; }
+a.button { display: inline-block; box-sizing: border-box; min-height: 44px; padding: 0.6rem 1.2rem; border-radius: 6px; background: #0f766e; color: #ffffff; text-decoration: none; }
+a.button:focus-visible { outline: 3px solid #1d4ed8; outline-offset: 2px; }
 `;
 
 /**
@@ -84,6 +91,13 @@ export function renderTokenPage(model: TokenPageModel): string {
               ]),
         ];
   const action = buttons.length === 0 ? '' : `<form method="post">\n${buttons.join('\n')}\n</form>`;
+  if (model.link !== undefined && !/^https?:\/\/[^\s"'<>]+$/i.test(model.link.href)) {
+    throw new Error('The link of a page must be an http(s) address');
+  }
+  const link =
+    model.link === undefined
+      ? ''
+      : `<p><a class="button" href="${escapeHtml(model.link.href)}">${escapeHtml(model.link.label)}</a></p>`;
 
   return `<!doctype html>
 <html lang="es-AR">
@@ -98,7 +112,7 @@ export function renderTokenPage(model: TokenPageModel): string {
 <main>
 <p class="organization">${organization}</p>
 <h1>${title}</h1>
-${[details, message, action].filter((part) => part !== '').join('\n')}
+${[details, message, action, link].filter((part) => part !== '').join('\n')}
 </main>
 </body>
 </html>

@@ -128,4 +128,28 @@ describe('renderTokenPage', () => {
 
     expect(PAGE_CONTENT_SECURITY_POLICY).toContain(`'sha256-${hash}'`);
   });
+  it('can end with a link to another page of the organization, and only a web link', () => {
+    const html = renderTokenPage({
+      organizationName: 'Centro Médico Aillu',
+      title: 'Su acceso está activo',
+      link: { label: 'Ir al portal', href: 'https://aillu.consultorio.test/portal' },
+    });
+
+    expect(html).toContain(
+      '<a class="button" href="https://aillu.consultorio.test/portal">Ir al portal</a>',
+    );
+    expect(html).not.toContain('<form');
+    expect(() =>
+      renderTokenPage({
+        organizationName: 'Centro Médico Aillu',
+        title: 'x',
+        link: { label: 'x', href: 'javascript:alert(1)' },
+      }),
+    ).toThrow(/http/);
+  });
+
+  it('keeps the style under the hash of the policy when the link style is part of it', () => {
+    expect(renderTokenPage({ organizationName: 'x', title: 'y' })).toContain('a.button');
+    expect(PAGE_CONTENT_SECURITY_POLICY).toMatch(/style-src 'sha256-[A-Za-z0-9+/=]+'/);
+  });
 });

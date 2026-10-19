@@ -48,6 +48,8 @@ export const JOB_CATEGORIES: Readonly<Record<string, RouteCategory>> = {
   'erx.reconcile': 'webhook',
   'consent.expire': 'write',
   'portal.majority_review': 'patient_protective',
+  // The code to sign in to the portal: authentication stays open in a read-only organization.
+  'portal.code_send': 'auth',
 };
 
 /** The category of a queue. A queue nobody classified is refused, not guessed. */

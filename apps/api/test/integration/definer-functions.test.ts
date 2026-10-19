@@ -32,6 +32,11 @@ const ALLOWED: Record<string, readonly string[]> = {
   // and give reception the metadata of clinical documents when the organization allows it.
   'app.document_probe(uuid)': ['app_rw'],
   'app.reception_clinical_documents(uuid)': ['app_rw'],
+  // The patient portal reads the documents shared with the patient of its own session, which the
+  // RESTRICTIVE policies of `document` would hide (clinical ones). No parameter names a patient or a
+  // link: they answer for the link and the identity the request validated (runtime role).
+  'app.portal_shared_documents()': ['app_rw'],
+  'app.portal_shared_document(uuid)': ['app_rw'],
   // The WhatsApp webhook finds the organization of an event from our own record of what we sent
   // (runtime role). They return tenant ids and nothing else (judgment day finding C10).
   'app.message_tenants_by_provider_id(text)': ['app_rw'],

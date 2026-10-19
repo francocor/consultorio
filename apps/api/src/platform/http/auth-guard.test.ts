@@ -6,9 +6,12 @@ import { stubAuthz } from '../../testing/authz.js';
 import { testTenancy } from '../../testing/tenancy.js';
 
 import {
+  PORTAL_ROUTE_PREFIX,
   PUBLIC_ROUTE_PREFIXES,
+  findMisplacedPortalRoutes,
   isAllowedPublicPath,
   type AuthenticatedSession,
+  type RouteAuth,
 } from './auth-guard.js';
 import { sessionCookieName } from './session-cookie.js';
 
@@ -169,5 +172,98 @@ describe('the public allowlist (design 4.5)', () => {
 
   it('lists the prefixes in one place', () => {
     expect(PUBLIC_ROUTE_PREFIXES).toContain('/auth/');
+  });
+});
+
+describe('the routes of the patient portal (a door of their own)', () => {
+  it('lives under /portal/ and nowhere else', () => {
+    expect(PORTAL_ROUTE_PREFIX).toBe('/portal/');
+  });
+
+  it('lets a portal route through the staff guard without asking for a staff session', async () => {
+    const { app, calls } = server();
+    app.get(
+      '/portal/who',
+      { config: { readOnly: 'read', auth: 'portal', portalPermission: 'portal.self.read' } },
+      () => ({ reached: true }),
+    );
+
+    // Even a good staff cookie is not what this route reads: the portal guard has its own.
+    const response = await app.inject({ url: '/portal/who', headers: { cookie: COOKIE } });
+
+    expect(response.statusCode).toBe(200);
+    expect(calls).toEqual([]);
+    await app.close();
+  });
+
+  it('refuses at boot a portal route outside /portal/', () => {
+    const { app } = server();
+
+    expect(() =>
+      app.get(
+        '/patients/portal',
+        { config: { readOnly: 'read', auth: 'portal', portalPermission: 'portal.self.read' } },
+        () => ({}),
+      ),
+    ).toThrow(/\/patients\/portal/);
+  });
+
+  it('refuses at boot a route under /portal/ that is public, a staff route or a self-service one', () => {
+    const { app } = server();
+
+    expect(() =>
+      app.get('/portal/open', { config: { readOnly: 'read', auth: 'public' } }, () => ({})),
+    ).toThrow(/\/portal\/open/);
+    expect(() =>
+      app.get(
+        '/portal/staff',
+        { config: { readOnly: 'read', permission: 'patients.read' } },
+        () => ({}),
+      ),
+    ).toThrow(/\/portal\/staff/);
+  });
+
+  it('refuses at boot a portal route with no permission of the portal actor, or with a staff one', () => {
+    const { app } = server();
+
+    expect(() =>
+      app.get('/portal/nothing', { config: { readOnly: 'read', auth: 'portal' } }, () => ({})),
+    ).toThrow(/portalPermission/);
+    expect(() =>
+      app.get(
+        '/portal/manage',
+        { config: { readOnly: 'read', auth: 'portal', portalPermission: 'portal.manage' } },
+        () => ({}),
+      ),
+    ).toThrow(/portal actor/);
+    expect(() =>
+      app.get(
+        '/portal/both',
+        {
+          config: {
+            readOnly: 'read',
+            auth: 'portal',
+            portalPermission: 'portal.self.read',
+            permission: 'patients.read',
+          },
+        },
+        () => ({}),
+      ),
+    ).toThrow(/both/);
+  });
+
+  it('finds the routes that are on the wrong side of the line (the check proves itself)', () => {
+    const routes = new Map<string, RouteAuth>([
+      ['GET /portal/me', 'portal'],
+      ['GET /patients', 'session'],
+      ['GET /patients/portal', 'portal'],
+      ['GET /portal/leaked', 'session'],
+      ['GET /public/t/:token', 'public'],
+    ]);
+
+    expect(findMisplacedPortalRoutes(routes)).toEqual([
+      'GET /patients/portal',
+      'GET /portal/leaked',
+    ]);
   });
 });

@@ -42,7 +42,13 @@ const STAGE_4_QUEUES = [
   'export.build',
 ];
 
-const STAGE_5_QUEUES = ['erx.submit', 'erx.reconcile', 'consent.expire', 'portal.majority_review'];
+const STAGE_5_QUEUES = [
+  'erx.submit',
+  'erx.reconcile',
+  'consent.expire',
+  'portal.majority_review',
+  'portal.code_send',
+];
 
 describe('the queues the installer creates', () => {
   it('creates every queue of the application, the Stage 3, 4 and 5 ones included', async () => {

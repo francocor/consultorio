@@ -610,6 +610,20 @@
       "when": 1792386974916,
       "tag": "0532_local_erx",
       "breakpoints": true
+    },
+    {
+      "idx": 87,
+      "version": "7",
+      "when": 1792386974917,
+      "tag": "0550_portal_identity",
+      "breakpoints": true
+    },
+    {
+      "idx": 88,
+      "version": "7",
+      "when": 1792386974918,
+      "tag": "0552_document_share",
+      "breakpoints": true
     }
   ]
 }
