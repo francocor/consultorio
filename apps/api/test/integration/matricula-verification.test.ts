@@ -78,7 +78,7 @@ async function settleStrangers(): Promise<void> {
        set local session_replication_role = replica;
        update professional
           set matricula_status = 'verified', verified_by_operator = gen_random_uuid(), verified_at = now()
-        where matricula_status = 'unverified';
+        where matricula_status = 'unverified' and matricula is not null;
        COMMIT;`,
     );
   } finally {
