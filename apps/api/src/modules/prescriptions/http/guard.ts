@@ -6,6 +6,7 @@ import { refuseRequest } from '../../../platform/authz/refuse.js';
 import type { Tx, WithTenant } from '../../../platform/db/tenant-context.js';
 import { AppError } from '../../../platform/http/problem.js';
 import { AccessRefused } from '../../access/index.js';
+import type { RunAs } from '../application/corrections.js';
 import { PrescriptionConflict, PrescriptionDenied } from '../application/errors.js';
 import type { Caller } from '../application/issue.js';
 
@@ -28,31 +29,36 @@ export interface Subject {
 }
 
 /**
- * Runs a request as the professional: a transaction whose settings carry the professional, so the
- * database policies see who is reading and writing. A refusal decided by a service becomes the
- * uniform 403, and a state that does not allow the request becomes its own code (409); both write
- * their deny entry on a separate connection, so the rollback of the request cannot erase it.
+ * Runs a request as the professional, in as many short transactions as it needs. Each step is a
+ * transaction whose settings carry the professional, so the database policies see who is reading and
+ * writing; nothing is held between two steps, so a request that waits for the provider in the middle
+ * holds no connection (JD-S5 R2-12). A refusal decided by a service, in any step or between them,
+ * becomes the uniform 403, and a state that does not allow the request becomes its own code (409);
+ * both write their deny entry on a separate connection, so the rollback of the request cannot erase
+ * it.
  */
-export async function runAsProfessional<T>(
+export async function runPhasedAsProfessional<T>(
   deps: PrescriptionRoutesDeps,
   request: FastifyRequest,
   subject: Subject,
-  fn: (tx: Tx, caller: Caller) => Promise<T>,
+  fn: (run: RunAs, caller: Caller) => Promise<T>,
 ): Promise<T> {
   const actor = clinicalActor(request);
   const caller: Caller = {
     actor: { ...request.auditActor, userId: actor.userId },
     professionalId: actor.professionalId,
   };
-  try {
-    return await deps.withTenant(
+  const run: RunAs = (work) =>
+    deps.withTenant(
       {
         tenantId: actor.tenantId,
         userId: actor.userId,
         actingProfessionalId: actor.professionalId,
       },
-      (tx) => fn(tx, caller),
+      work,
     );
+  try {
+    return await fn(run, caller);
   } catch (error) {
     if (error instanceof PrescriptionDenied) {
       return refuseRequest(deps.auditDeny, request, {
@@ -80,4 +86,16 @@ export async function runAsProfessional<T>(
     }
     throw error;
   }
+}
+
+/** Runs a request as the professional, in one transaction. */
+export function runAsProfessional<T>(
+  deps: PrescriptionRoutesDeps,
+  request: FastifyRequest,
+  subject: Subject,
+  fn: (tx: Tx, caller: Caller) => Promise<T>,
+): Promise<T> {
+  return runPhasedAsProfessional(deps, request, subject, (run, caller) =>
+    run((tx) => fn(tx, caller)),
+  );
 }

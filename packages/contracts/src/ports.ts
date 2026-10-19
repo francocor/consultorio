@@ -126,19 +126,33 @@ export type PrescriptionCancelResult =
  * organizations keeps their prescriptions apart without being told who asks.
  */
 export interface PrescriptionProvider {
-  /** Issues one prescription. Calling twice with the same key never produces two prescriptions. */
-  issue(request: PrescriptionRequest, idempotencyKey: string): Promise<PrescriptionResult>;
+  /**
+   * Issues one prescription. Calling twice with the same key never produces two prescriptions, not
+   * even when the second call arrives while the first is still being processed.
+   *
+   * Every method takes an optional `signal`: the caller aborts it when it stops waiting (the call
+   * took too long). An adapter MUST pass it to its transport and give up the request when it fires,
+   * so a request nobody waits for does not stay in flight. An aborted call can still have been
+   * processed by the provider: the caller treats it as an unknown outcome and asks `findByKey`.
+   */
+  issue(
+    request: PrescriptionRequest,
+    idempotencyKey: string,
+    signal?: AbortSignal,
+  ): Promise<PrescriptionResult>;
   /** Cancels an issued prescription with a reason. Calling twice with the same key answers the same. */
   cancel(
     externalId: string,
     reason: string,
     idempotencyKey: string,
+    signal?: AbortSignal,
   ): Promise<PrescriptionCancelResult>;
   /**
    * The prescription the provider issued for a key, or null when it never issued one. A retry
-   * calls it first, so an answer that was lost does not become a second prescription.
+   * calls it first, so an answer that was lost does not become a second prescription. A
+   * `rejected` answer is final: the provider refused that key for good.
    */
-  findByKey(idempotencyKey: string): Promise<PrescriptionResult | null>;
+  findByKey(idempotencyKey: string, signal?: AbortSignal): Promise<PrescriptionResult | null>;
   /** Where a prescription stands at the provider (issued, cancelled, dispensed, expired). */
-  status(externalId: string): Promise<PrescriptionStatusResult>;
+  status(externalId: string, signal?: AbortSignal): Promise<PrescriptionStatusResult>;
 }

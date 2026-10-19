@@ -25,6 +25,12 @@ export interface PrescriptionProviderContractTarget {
     provider: PrescriptionProvider;
     setMode: (mode: ErxSimulatorMode) => Promise<void>;
     advance: (externalId: string, to: 'dispensed' | 'expired') => Promise<void>;
+    /**
+     * Only for a provider that can be slowed down (the fake): holds the next calls to `issue` until
+     * `release()` and says when a call is waiting. The suite then proves that a second call with the
+     * same key, made while the first one is in flight, never creates a second prescription.
+     */
+    hold?: () => { release(): void; entered: Promise<void> };
   }>;
 }
 
@@ -185,6 +191,51 @@ export function describePrescriptionProviderContract(
       expect(expectIssued(await provider.findByKey(idempotencyKey)).externalId).toBe(
         issued.externalId,
       );
+    });
+
+    it('never creates two prescriptions for a key that is issued twice at the same time', async () => {
+      const { provider } = await target.make();
+      const idempotencyKey = key();
+
+      const [first, second] = await Promise.all([
+        provider.issue(requestFor(), idempotencyKey),
+        provider.issue(requestFor(), idempotencyKey),
+      ]);
+
+      expect(expectIssued(second).externalId).toBe(expectIssued(first).externalId);
+      expect(expectIssued(await provider.findByKey(idempotencyKey)).externalId).toBe(
+        expectIssued(first).externalId,
+      );
+    });
+
+    it('never creates two prescriptions while the first call for a key is still in flight', async () => {
+      const { provider, hold } = await target.make();
+      if (!hold) return;
+      const idempotencyKey = key();
+      const slow = hold();
+
+      const first = provider.issue(requestFor(), idempotencyKey);
+      await slow.entered;
+      // The first call is in flight: the retry of an impatient caller arrives now.
+      const second = provider.issue(requestFor(), idempotencyKey);
+      slow.release();
+
+      const [a, b] = await Promise.all([first, second]);
+      expect(expectIssued(b).externalId).toBe(expectIssued(a).externalId);
+      expect(expectIssued(await provider.findByKey(idempotencyKey)).externalId).toBe(
+        expectIssued(a).externalId,
+      );
+    });
+
+    it('gives up a call whose signal was aborted before it started, and issues nothing', async () => {
+      const { provider } = await target.make();
+      const idempotencyKey = key();
+
+      await expect(
+        provider.issue(requestFor(), idempotencyKey, AbortSignal.abort()),
+      ).rejects.toBeDefined();
+
+      expect(await provider.findByKey(idempotencyKey)).toBeNull();
     });
 
     it('can lose the answer after it issued: the retry finds one prescription, never two', async () => {

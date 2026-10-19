@@ -9,5 +9,7 @@
   "portal_cancel_deadline_passed": "Ya no se puede cancelar desde el portal porque falta muy poco para el turno. Comuníquese con la organización.",
   "portal_appointment_unavailable": "Este turno ya no admite esa acción. Actualice la pantalla para ver cómo está ahora.",
   "portal_representation_requires_minor": "Un representante solo puede acceder por una persona menor de edad. Una persona adulta autoriza a su representante desde su propio acceso al portal; la organización no puede crear ni restablecer ese vínculo.",
-  "portal_minor_requires_representative": "Una persona menor de edad accede al portal solo a través de un representante cuya identidad la organización verificó. Invite al representante en lugar de a la propia persona."
+  "portal_minor_requires_representative": "Una persona menor de edad accede al portal solo a través de un representante cuya identidad la organización verificó. Invite al representante en lugar de a la propia persona.",
+  "portal_recent_identity_change": "El correo o la fecha de nacimiento de este paciente se modificaron hace menos de 7 días. Hasta entonces, solo el titular o un administrador puede invitarlo al portal o darle acceso a un representante.",
+  "portal_owner_or_admin_required": "Este paciente no tiene un correo registrado a quién avisar del acceso de un representante. Solo el titular o un administrador puede dar ese acceso."
 }

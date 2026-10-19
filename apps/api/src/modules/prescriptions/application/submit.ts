@@ -19,9 +19,11 @@ import {
 } from '../domain/prescription.js';
 
 import {
+  DEFAULT_IN_FLIGHT_PIN_MS,
   SYSTEM_ACTOR,
   UNIQUE_VIOLATION,
   UNREACHABLE,
+  callWithin,
   constraintOf,
   sqlState,
   withinTime,
@@ -31,6 +33,7 @@ import {
 import { connectedProvider } from './connection.js';
 import { storeDocument } from './document.js';
 import { ERX_SUBMIT_JOB } from './job-names.js';
+import { leaseIsLive, pinnedInFlight, releaseLease, takeLease } from './lease.js';
 import { findPrescription, lockPrescription, openContent } from './read-model.js';
 
 /**
@@ -53,8 +56,11 @@ type Issued = Extract<PrescriptionResult, { status: 'issued' }>;
 type Verdict =
   | { kind: 'issued'; result: Issued; settled: ProviderPrescriptionState }
   | { kind: 'rejected'; message: string }
-  /** `unknown`: the request may have been answered. Otherwise the provider said it issued nothing. */
-  | { kind: 'retry'; unknown: boolean }
+  /**
+   * `unknown`: the request may have been answered. Otherwise the provider said it issued nothing.
+   * `timedOut`: the caller stopped waiting for a request that may still be running there.
+   */
+  | { kind: 'retry'; unknown: boolean; timedOut: boolean }
   /** A prescription the provider holds that cannot be recorded for this one, or a missing verification. */
   | { kind: 'attention'; reason: AttentionReason; externalId?: string };
 
@@ -66,13 +72,6 @@ export interface SubmitOptions {
 }
 
 /**
- * How long an attempt that holds no connection owns the row. Longer than the longest wait for the
- * provider (a call, the question before it, and the writes around them), shorter than the wait of a
- * person; a crashed attempt leaves a lease that simply runs out.
- */
-const LEASE_MS = 120_000;
-
-/**
  * Writes down, BEFORE the provider is called, that it may answer this prescription: the row is
  * marked `awaiting_reconciliation` and `provider_contacted_at` is set (it is never cleared, so a
  * prescription parked later is still asked about before it is cancelled or registered by hand). If
@@ -80,7 +79,8 @@ const LEASE_MS = 120_000;
  * provider for the key before it sends anything. Only a definite answer clears the state.
  *
  * It answers whether the row was marked: a prescription somebody cancelled in the meantime is not
- * (the update touches only a row that still waits), and then NOTHING is sent (JD-S5 R1-S5-3).
+ * (the update touches only a row that still waits, also when it was marked before), and then NOTHING
+ * is sent (JD-S5 R1-S5-3, R2-6).
  *
  * Where the mark is written: in the transaction given (`inTransaction`: the attempt of a request,
  * which holds no connection across the call and commits the mark before it), or, for an attempt that
@@ -95,9 +95,8 @@ async function markIntent(
   row: PrescriptionRow,
   step: { now: Date; inTransaction: boolean },
 ): Promise<boolean> {
-  if (row.deliveryState === 'awaiting_reconciliation' && row.providerContactedAt !== null) {
-    return true;
-  }
+  // No shortcut for a row that is marked already: the update below is what checks, in the database,
+  // that the prescription still waits (JD-S5 R2-6).
   const write = (target: Tx) =>
     target
       .update(prescription)
@@ -123,10 +122,14 @@ async function callProvider(
   key: string,
 ): Promise<Verdict> {
   // The same key always gets the same prescription, so asking again after a lost answer finds it.
-  const result = await withinTime(deps, () => provider.issue(request, key), UNREACHABLE);
+  const { value: result, timedOut } = await callWithin(
+    deps,
+    (signal) => provider.issue(request, key, signal),
+    UNREACHABLE,
+  );
   if (result.status === 'issued') return { kind: 'issued', result, settled: 'issued' };
   if (result.status === 'rejected') return { kind: 'rejected', message: result.message };
-  return { kind: 'retry', unknown: result.outcomeUnknown };
+  return { kind: 'retry', unknown: result.outcomeUnknown, timedOut };
 }
 
 /** What the provider says about the key of a prescription, before anything is sent. */
@@ -152,14 +155,19 @@ async function askAboutKey(
   provider: PrescriptionProvider,
   row: PrescriptionRow,
 ): Promise<Facts> {
-  const found = await withinTime(deps, () => provider.findByKey(row.idempotencyKey), UNREACHABLE);
+  const found = await withinTime(
+    deps,
+    (signal) => provider.findByKey(row.idempotencyKey, signal),
+    UNREACHABLE,
+  );
   if (found === null) return { kind: 'none' };
   if (found.status === 'retryable') return { kind: 'retry' };
+  // A `rejected` answer to the question about a key is final: the provider refused that key for good.
   if (found.status === 'rejected') return { kind: 'rejected', message: found.message };
 
   const status: PrescriptionStatusResult = await withinTime(
     deps,
-    () => provider.status(found.externalId),
+    (signal) => provider.status(found.externalId, signal),
     { status: 'retryable', message: 'unreachable' },
   );
   if (status.status === 'retryable') return { kind: 'retry' };
@@ -185,7 +193,7 @@ async function conclude(
     case 'none':
       return { kind: 'send' };
     case 'retry':
-      return { kind: 'retry', unknown: true };
+      return { kind: 'retry', unknown: true, timedOut: false };
     case 'rejected':
       return { kind: 'rejected', message: facts.message };
     case 'attention':
@@ -235,10 +243,17 @@ async function defer(
     now: Date;
     reason: 'unavailable' | 'provider_not_connected';
     tenantId: string;
+    /** The call that failed timed out and may still be running at the provider (JD-S5 R2-3). */
+    inFlight?: boolean;
   },
 ): Promise<void> {
   const attempts = row.attempts + 1;
-  const delay = nextAttemptDelayMs(attempts);
+  // A request that may still be running at the provider is not asked about before it can be done.
+  const pin = deps.inFlightPinMs ?? DEFAULT_IN_FLIGHT_PIN_MS;
+  const delay =
+    step.inFlight === true
+      ? Math.max(nextAttemptDelayMs(attempts), pin)
+      : nextAttemptDelayMs(attempts);
   await tx
     .update(prescription)
     .set({
@@ -246,6 +261,9 @@ async function defer(
       lastAttemptAt: step.now,
       nextAttemptAt: new Date(step.now.getTime() + delay),
       deliveryState: step.awaiting ? 'awaiting_reconciliation' : 'retrying',
+      ...(step.inFlight === true
+        ? { providerInFlightUntil: new Date(step.now.getTime() + pin) }
+        : {}),
     })
     .where(eq(prescription.id, row.id));
   await audit(tx, {
@@ -326,6 +344,8 @@ interface Plan {
   /** The provider may have been asked about this prescription before: ask it about the key first. */
   ask: boolean;
   now: Date;
+  /** The lease this attempt took (an attempt that holds no connection); only it can release it. */
+  leaseToken: string | null;
 }
 
 type Begun = { done: SubmitOutcome } | { plan: Plan };
@@ -357,6 +377,8 @@ async function begin(
 
   const row = await findPrescription(tx, prescriptionId);
   if (row?.status !== 'pending_submission') return { done: 'skipped' };
+  // A call that timed out may still be running at the provider: not even a person can send again yet.
+  if (pinnedInFlight(row, now)) return { done: 'skipped' };
   if (!options.force) {
     if (row.deliveryState === 'needs_attention') return { done: 'skipped' };
     if (row.nextAttemptAt !== null && row.nextAttemptAt.getTime() > now.getTime()) {
@@ -364,9 +386,7 @@ async function begin(
     }
   }
   // Another attempt is waiting for the provider without a connection: it owns the row.
-  if (row.attemptLeaseUntil !== null && row.attemptLeaseUntil.getTime() > now.getTime()) {
-    return { done: 'skipped' };
-  }
+  if (leaseIsLive(row, now)) return { done: 'skipped' };
 
   const { provider, organization } = await connectedProvider(tx, deps);
   // A read-only or cancelled organization submits nothing (issuing is a write).
@@ -408,12 +428,7 @@ async function begin(
     };
   }
 
-  if (mode === 'lease') {
-    await tx
-      .update(prescription)
-      .set({ attemptLeaseUntil: new Date(now.getTime() + LEASE_MS) })
-      .where(eq(prescription.id, row.id));
-  }
+  const leaseToken = mode === 'lease' ? await takeLease(tx, row.id, now) : null;
   return {
     plan: {
       row,
@@ -426,6 +441,7 @@ async function begin(
         row.lastAttemptAt !== null ||
         row.providerContactedAt !== null,
       now,
+      leaseToken,
     },
   };
 }
@@ -445,21 +461,21 @@ async function settle(
   step: { releaseLease: boolean },
 ): Promise<SubmitOutcome> {
   const { row, organization, now } = plan;
-  if (step.releaseLease) {
-    await tx
-      .update(prescription)
-      .set({ attemptLeaseUntil: null })
-      .where(eq(prescription.id, row.id));
+  // Only the lease of THIS attempt is released: one that overran and finds another attempt in charge
+  // leaves that attempt's lease alone (JD-S5 R2-7).
+  if (step.releaseLease && plan.leaseToken !== null) {
+    await releaseLease(tx, row.id, plan.leaseToken);
   }
 
   if (verdict.kind === 'retry') {
-    const { unknown } = verdict;
+    const { unknown, timedOut } = verdict;
     const wrote = await lockedWrite(tx, row, () =>
       defer(tx, deps, row, {
         awaiting: unknown,
         now,
         reason: 'unavailable',
         tenantId: organization.id,
+        inFlight: timedOut,
       }),
     );
     return wrote ? 'retry' : 'skipped';
@@ -542,6 +558,10 @@ async function settle(
     throw error;
   }
   if (!wrote) {
+    // Another attempt (one that took the row over) recorded this very prescription first: nothing is
+    // lost and nothing is orphaned.
+    const current = await findPrescription(tx, row.id);
+    if (current?.externalId === result.externalId) return 'skipped';
     // The provider issued a prescription that no longer waits: somebody closed it while the request
     // was in flight. It exists and nothing records it: say so loudly.
     await audit(tx, {
@@ -640,13 +660,10 @@ export async function attemptSubmitDetached(
 ): Promise<SubmitOutcome> {
   const as = <T>(work: (tx: Tx) => Promise<T>) =>
     deps.withTenant({ tenantId, userId: SYSTEM_USER_ID }, work);
-  const release = () =>
-    as((tx) =>
-      tx
-        .update(prescription)
-        .set({ attemptLeaseUntil: null })
-        .where(eq(prescription.id, prescriptionId)),
-    ).then(() => undefined);
+  const release = (token: string | null) =>
+    token === null
+      ? Promise.resolve()
+      : as((tx) => releaseLease(tx, prescriptionId, token)).then(() => undefined);
 
   const begun = await as((tx) => begin(tx, deps, prescriptionId, options, 'lease'));
   if ('done' in begun) return begun.done;
@@ -665,7 +682,7 @@ export async function attemptSubmitDetached(
         markIntent(tx, deps, plan.organization, plan.row, { now: plan.now, inTransaction: true }),
       );
       if (!marked) {
-        await release();
+        await release(plan.leaseToken);
         return 'skipped';
       }
       verdict = await callProvider(
@@ -678,7 +695,7 @@ export async function attemptSubmitDetached(
     const decided = verdict;
     return await as((tx) => settle(tx, deps, plan, decided, options, { releaseLease: true }));
   } catch (error) {
-    await release().catch(() => undefined);
+    await release(plan.leaseToken).catch(() => undefined);
     throw error;
   }
 }

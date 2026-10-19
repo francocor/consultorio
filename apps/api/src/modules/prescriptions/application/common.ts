@@ -55,6 +55,12 @@ export interface PrescriptionDeps {
   timeZone?: string | undefined;
   /** How long a call to the provider is waited for before its outcome counts as unknown (20 s). */
   providerTimeoutMs?: number | undefined;
+  /**
+   * How long a call that timed out is assumed to be still running at the provider (10 min). It must
+   * not be shorter than the longest the provider takes to process a request plus the socket timeout
+   * of its adapter.
+   */
+  inFlightPinMs?: number | undefined;
   log?: AttemptLog | undefined;
 }
 
@@ -69,32 +75,62 @@ export const UNREACHABLE: PrescriptionResult = {
 export const DEFAULT_PROVIDER_TIMEOUT_MS = 20_000;
 
 /**
- * A call to the provider that cannot hang whoever makes it (JD-S5 R1-B-T10): when the provider does
- * not answer in time, or the call fails, the answer is `fallback`, which says "unreachable, outcome
- * unknown" and is handled like a lost answer (the next attempt asks for the key first).
+ * How long a request that timed out is assumed to be still running at the provider (JD-S5 R2-3):
+ * the worst a provider takes to process a request plus the socket timeout, with room. Until then
+ * the prescription is neither sent again nor cancelled nor registered by hand.
  */
-export async function withinTime<T>(
+export const DEFAULT_IN_FLIGHT_PIN_MS = 10 * 60_000;
+
+/** The answer of a call to the provider and whether the caller gave up waiting for it. */
+export interface Timed<T> {
+  value: T;
+  /** The call did not come back in time: it may still be running at the provider. */
+  timedOut: boolean;
+}
+
+/**
+ * A call to the provider that cannot hang whoever makes it (JD-S5 R1-B-T10): when the provider does
+ * not answer in time, or the call fails, the value is `fallback`, which says "unreachable, outcome
+ * unknown" and is handled like a lost answer (the next attempt asks for the key first).
+ *
+ * The call receives an `AbortSignal` that fires when the time is up, and adapters give the request
+ * up with it. A transport that cannot be cancelled keeps running anyway, which is why a timeout is
+ * reported (`timedOut`): the caller must not assume that nothing is in flight (JD-S5 R2-3).
+ */
+export async function callWithin<T>(
   deps: Pick<PrescriptionDeps, 'providerTimeoutMs'>,
-  call: () => Promise<T>,
+  call: (signal: AbortSignal) => Promise<T>,
   fallback: T,
-): Promise<T> {
+): Promise<Timed<T>> {
   const limit = deps.providerTimeoutMs ?? DEFAULT_PROVIDER_TIMEOUT_MS;
+  const controller = new AbortController();
   let timer: NodeJS.Timeout | undefined;
-  const late = new Promise<T>((resolve) => {
+  const late = new Promise<Timed<T>>((resolve) => {
     timer = setTimeout(() => {
-      resolve(fallback);
+      controller.abort();
+      resolve({ value: fallback, timedOut: true });
     }, limit);
   });
   try {
     return await Promise.race([
       Promise.resolve()
-        .then(call)
-        .catch(() => fallback),
+        .then(() => call(controller.signal))
+        .then((value): Timed<T> => ({ value, timedOut: false }))
+        .catch((): Timed<T> => ({ value: fallback, timedOut: false })),
       late,
     ]);
   } finally {
     clearTimeout(timer);
   }
+}
+
+/** `callWithin` for the callers that only need the answer. */
+export async function withinTime<T>(
+  deps: Pick<PrescriptionDeps, 'providerTimeoutMs'>,
+  call: (signal: AbortSignal) => Promise<T>,
+  fallback: T,
+): Promise<T> {
+  return (await callWithin(deps, call, fallback)).value;
 }
 
 export interface Organization extends TenantRef {

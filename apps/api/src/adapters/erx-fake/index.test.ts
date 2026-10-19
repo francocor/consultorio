@@ -19,6 +19,7 @@ describePrescriptionProviderContract({
         provider.advance(externalId, to);
         return Promise.resolve();
       },
+      hold: () => provider.hold({ ignoreSignal: true }),
     });
   },
 });
@@ -89,5 +90,33 @@ describe('the in-memory prescription provider (task 5.1)', () => {
     provider.advance(issued.externalId, 'dispensed');
 
     expect(await provider.status(issued.externalId)).toMatchObject({ state: 'cancelled' });
+  });
+
+  it('a held call gives up when its signal fires and issues nothing', async () => {
+    const provider = createFakePrescriptionProvider();
+    const slow = provider.hold();
+    const controller = new AbortController();
+
+    const call = provider.issue(request(), 'key-held', controller.signal);
+    await slow.entered;
+    controller.abort();
+
+    await expect(call).rejects.toMatchObject({ name: 'AbortError' });
+    slow.release();
+    expect(await provider.findByKey('key-held')).toBeNull();
+  });
+
+  it('a held call that ignores its signal is processed once it is released (a request nobody waits for)', async () => {
+    const provider = createFakePrescriptionProvider();
+    const slow = provider.hold({ ignoreSignal: true });
+    const controller = new AbortController();
+
+    const call = provider.issue(request(), 'key-ignored', controller.signal);
+    await slow.entered;
+    expect(await provider.findByKey('key-ignored')).toBeNull();
+    slow.release();
+
+    expect((await call).status).toBe('issued');
+    expect((await provider.findByKey('key-ignored'))?.status).toBe('issued');
   });
 });

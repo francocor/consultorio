@@ -39,6 +39,18 @@ export const PORTAL_ERRORS = {
     status: 409,
     i18nKey: 'errors.portal_minor_requires_representative',
   },
+  // The e-mail or the birth date of the patient's record changed in the last seven days (JD-S5 R2-2):
+  // reception cannot give anybody access to that patient until the week is over; an owner or an
+  // administrator can.
+  portal_recent_identity_change: {
+    status: 409,
+    i18nKey: 'errors.portal_recent_identity_change',
+  },
+  // A representative for a minor whose record has no e-mail to tell: only an owner or an administrator.
+  portal_owner_or_admin_required: {
+    status: 409,
+    i18nKey: 'errors.portal_owner_or_admin_required',
+  },
 } as const satisfies Record<string, { status: number; i18nKey: string }>;
 
 /**
@@ -56,6 +68,7 @@ export const PORTAL_AUDIT_ACTIONS = [
   'portal.profile.changed',
   'portal.denied',
   // A notice sent by email about a change to the access (a representative was given access to a
-  // record, the address of an account was changed). The entry names the kind, never the address.
+  // record, the address of an account was changed, the e-mail or the birth date of a record was
+  // changed). The entry names the kind, never the address.
   'portal.notice.sent',
 ] as const;

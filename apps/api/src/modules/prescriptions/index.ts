@@ -66,6 +66,10 @@ export interface PrescriptionsOptions {
   catalog?: GenericNameCatalog | undefined;
   log?: AttemptLog | undefined;
   clock?: () => Date;
+  /** How long a call to the provider is waited for (20 s). A test shortens it. */
+  providerTimeoutMs?: number | undefined;
+  /** How long a call that timed out is assumed to be still running at the provider (10 min). */
+  inFlightPinMs?: number | undefined;
 }
 
 export interface Prescriptions {
@@ -89,6 +93,8 @@ export function createPrescriptions(options: PrescriptionsOptions): Prescription
     withTenant: options.withTenant,
     storage: options.storage,
     log: options.log,
+    providerTimeoutMs: options.providerTimeoutMs,
+    inFlightPinMs: options.inFlightPinMs,
   };
   const tokens = createActionTokens({ clock });
   const prescriptions = prescriptionRoutes({

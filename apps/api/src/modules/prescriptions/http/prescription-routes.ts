@@ -19,7 +19,7 @@ import { AppError } from '../../../platform/http/problem.js';
 import type { ActionTokens } from '../../../platform/tokens/index.js';
 import type { PrescriptionDeps } from '../application/common.js';
 import { capabilityOf } from '../application/connection.js';
-import { cancelPrescription, registerManually } from '../application/corrections.js';
+import { cancelPrescriptionPhased, registerManuallyPhased } from '../application/corrections.js';
 import { issueDocumentLink } from '../application/document.js';
 import { PrescriptionDenied } from '../application/errors.js';
 import { correctPrescription, createPrescription } from '../application/issue.js';
@@ -32,7 +32,11 @@ import {
 } from '../application/reads.js';
 import { attemptSubmitDetached } from '../application/submit.js';
 
-import { runAsProfessional, type PrescriptionRoutesDeps } from './guard.js';
+import {
+  runAsProfessional,
+  runPhasedAsProfessional,
+  type PrescriptionRoutesDeps,
+} from './guard.js';
 
 /** Searches the generic names a prescription is written with (the typeahead of the form). */
 export interface GenericNameCatalog {
@@ -208,8 +212,9 @@ export function prescriptionRoutes(deps: PrescriptionHttpDeps) {
       },
       async (request) => {
         const subject = { resourceType: 'prescription', resourceId: request.params.id };
-        const outcome = await runAsProfessional(deps, request, subject, (tx, caller) =>
-          cancelPrescription(tx, services, caller, {
+        // The provider is asked between two short transactions: no connection is held meanwhile.
+        const outcome = await runPhasedAsProfessional(deps, request, subject, (run, caller) =>
+          cancelPrescriptionPhased(run, services, caller, {
             prescriptionId: request.params.id,
             request: request.body,
           }),
@@ -237,8 +242,8 @@ export function prescriptionRoutes(deps: PrescriptionHttpDeps) {
       },
       async (request) => {
         const subject = { resourceType: 'prescription', resourceId: request.params.id };
-        await runAsProfessional(deps, request, subject, (tx, caller) =>
-          registerManually(tx, services, caller, {
+        await runPhasedAsProfessional(deps, request, subject, (run, caller) =>
+          registerManuallyPhased(run, services, caller, {
             prescriptionId: request.params.id,
             request: request.body,
           }),

@@ -619,17 +619,16 @@ describe('JD-S5 R1: the guard of the table after the first review', () => {
   it('lets a colleague who treats the patient record the document once, and nothing else (S5-1)', async () => {
     const id = await asAuthor((tx) => insertPending(tx));
     await issue(id);
+    const prefix = `t/${a.id}/prescriptions`;
 
     await asTreating((tx) =>
-      tx.execute(
-        sql`UPDATE prescription SET document_key = 't/x/prescriptions/a.pdf' WHERE id = ${id}`,
-      ),
+      tx.execute(sql`UPDATE prescription SET document_key = ${prefix + '/a.pdf'} WHERE id = ${id}`),
     );
 
     await expect(
       asTreating((tx) =>
         tx.execute(
-          sql`UPDATE prescription SET document_key = 't/x/prescriptions/b.pdf' WHERE id = ${id}`,
+          sql`UPDATE prescription SET document_key = ${prefix + '/b.pdf'} WHERE id = ${id}`,
         ),
       ),
     ).rejects.toMatchObject({ cause: { code: '42501' } });
@@ -643,7 +642,48 @@ describe('JD-S5 R1: the guard of the table after the first review', () => {
         sql`SELECT document_key FROM prescription WHERE id = ${id}`,
       ),
     );
-    expect(stored.rows[0]?.document_key).toBe('t/x/prescriptions/a.pdf');
+    expect(stored.rows[0]?.document_key).toBe(`${prefix}/a.pdf`);
+  });
+
+  it('records a document only for an issued prescription, under the prefix of its own organization (R2-9)', async () => {
+    const pending = await asAuthor((tx) => insertPending(tx));
+    const issued = await asAuthor((tx) => insertPending(tx));
+    await issue(issued);
+
+    // Not issued yet: it has no document to record.
+    await expect(
+      asTreating((tx) =>
+        tx.execute(
+          sql`UPDATE prescription SET document_key = ${`t/${a.id}/prescriptions/p.pdf`} WHERE id = ${pending}`,
+        ),
+      ),
+    ).rejects.toMatchObject({ cause: { code: '42501' } });
+    // Issued, but a key that points anywhere else (another organization, another folder, nothing).
+    for (const key of [
+      `t/${b.id}/prescriptions/x.pdf`,
+      `t/${a.id}/docs/x.pdf`,
+      't/x/prescriptions/x.pdf',
+      '../../etc/passwd',
+    ]) {
+      await expect(
+        asTreating((tx) =>
+          tx.execute(sql`UPDATE prescription SET document_key = ${key} WHERE id = ${issued}`),
+        ),
+      ).rejects.toMatchObject({ cause: { code: '42501' } });
+    }
+    const stored = await asAuthor((tx) =>
+      tx.execute<{ document_key: string | null }>(
+        sql`SELECT document_key FROM prescription WHERE id = ${issued}`,
+      ),
+    );
+    expect(stored.rows[0]?.document_key).toBeNull();
+  });
+
+  it('has the check of the submission version validated (R2-11)', async () => {
+    const result = await owner.query<{ convalidated: boolean }>(
+      `SELECT convalidated FROM pg_constraint WHERE conname = 'prescription_submission_version_check'`,
+    );
+    expect(result.rows).toEqual([{ convalidated: true }]);
   });
 
   it('is not the system for a transaction marked as the portal (S5-2)', async () => {

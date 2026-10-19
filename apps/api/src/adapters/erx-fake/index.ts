@@ -49,6 +49,35 @@ export interface FakePrescriptionProvider extends PrescriptionProvider {
   prescriptions(): readonly FakePrescription[];
   /** Forgets every prescription and goes back to the `ok` mode. */
   reset(): void;
+  /**
+   * Holds the next calls to `issue` until `release()` (a provider that is slow). By default a held
+   * call gives up when its `signal` fires, like an adapter that honours it; with `ignoreSignal` it
+   * keeps going and is processed after `release()`, like a transport that cannot be cancelled.
+   */
+  hold(options?: { ignoreSignal?: boolean }): FakeHold;
+}
+
+export interface FakeHold {
+  release(): void;
+  /** Resolves once a call to `issue` is waiting. */
+  entered: Promise<void>;
+}
+
+const abortError = () => new DOMException('The call was aborted.', 'AbortError');
+
+/** Waits for the gate, or rejects when the signal fires first. */
+function waitFor(gate: Promise<void>, signal: AbortSignal): Promise<void> {
+  if (signal.aborted) return Promise.reject(abortError());
+  return new Promise<void>((resolve, reject) => {
+    const onAbort = () => {
+      reject(abortError());
+    };
+    signal.addEventListener('abort', onAbort, { once: true });
+    void gate.then(() => {
+      signal.removeEventListener('abort', onAbort);
+      resolve();
+    });
+  });
 }
 
 type Issued = Extract<PrescriptionResult, { status: 'issued' }>;
@@ -62,6 +91,7 @@ export function createFakePrescriptionProvider(): FakePrescriptionProvider {
   let prescriptions: FakePrescription[] = [];
   let requests = new Map<string, Stored>();
   let cancellations = new Map<string, PrescriptionCancelResult>();
+  let held: { gate: Promise<void>; ignoreSignal: boolean; enter: () => void } | null = null;
 
   const down = (): { status: 'retryable'; message: string } => ({
     status: 'retryable',
@@ -74,7 +104,7 @@ export function createFakePrescriptionProvider(): FakePrescriptionProvider {
     documentUrl: documentUrlFor(prescription.externalId),
   });
 
-  return {
+  const inner: Omit<FakePrescriptionProvider, 'hold'> = {
     simulated: true,
     mode: () => mode,
     setMode(next) {
@@ -90,6 +120,7 @@ export function createFakePrescriptionProvider(): FakePrescriptionProvider {
       prescriptions = [];
       requests = new Map();
       cancellations = new Map();
+      held = null;
     },
 
     issue(request: PrescriptionRequest, idempotencyKey: string): Promise<PrescriptionResult> {
@@ -175,6 +206,39 @@ export function createFakePrescriptionProvider(): FakePrescriptionProvider {
         state: found.state,
         ...(found.cancelReason === undefined ? {} : { cancelReason: found.cancelReason }),
       });
+    },
+  };
+
+  return {
+    ...inner,
+    hold(options = {}) {
+      let release!: () => void;
+      let enter!: () => void;
+      const gate = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      const entered = new Promise<void>((resolve) => {
+        enter = resolve;
+      });
+      held = { gate, ignoreSignal: options.ignoreSignal === true, enter };
+      return {
+        release() {
+          held = null;
+          release();
+        },
+        entered,
+      };
+    },
+    async issue(request, idempotencyKey, signal) {
+      let honour = true;
+      if (held) {
+        const { gate, ignoreSignal, enter } = held;
+        enter();
+        honour = !ignoreSignal;
+        await (ignoreSignal || !signal ? gate : waitFor(gate, signal));
+      }
+      if (honour && signal?.aborted) throw abortError();
+      return inner.issue(request, idempotencyKey);
     },
   };
 }

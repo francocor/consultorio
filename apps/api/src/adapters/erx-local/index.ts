@@ -171,7 +171,12 @@ export function createLocalPrescriptionProvider(
       return expected.length === received.length && timingSafeEqual(expected, received);
     },
 
-    async issue(request: PrescriptionRequest, idempotencyKey: string): Promise<PrescriptionResult> {
+    async issue(
+      request: PrescriptionRequest,
+      idempotencyKey: string,
+      signal?: AbortSignal,
+    ): Promise<PrescriptionResult> {
+      signal?.throwIfAborted();
       const control = await readControl(db);
       if (control.mode === 'down') return down();
 
@@ -179,6 +184,8 @@ export function createLocalPrescriptionProvider(
       const fingerprint = requestFingerprint(request);
       return db.transaction(async (tx): Promise<PrescriptionResult> => {
         await keyLock(tx, epoch, idempotencyKey);
+        // Nobody waits any more: leave nothing behind (the transaction rolls back).
+        signal?.throwIfAborted();
         const [known] = await tx
           .select()
           .from(localErxRequest)
@@ -238,7 +245,8 @@ export function createLocalPrescriptionProvider(
       });
     },
 
-    async cancel(externalId, reason, idempotencyKey): Promise<PrescriptionCancelResult> {
+    async cancel(externalId, reason, idempotencyKey, signal): Promise<PrescriptionCancelResult> {
+      signal?.throwIfAborted();
       const control = await readControl(db);
       if (control.mode === 'down') return down();
 
@@ -246,6 +254,7 @@ export function createLocalPrescriptionProvider(
       const fingerprint = cancelFingerprint(externalId, reason);
       return db.transaction(async (tx): Promise<PrescriptionCancelResult> => {
         await keyLock(tx, epoch, idempotencyKey);
+        signal?.throwIfAborted();
         const [known] = await tx
           .select()
           .from(localErxRequest)
@@ -302,7 +311,8 @@ export function createLocalPrescriptionProvider(
       });
     },
 
-    async findByKey(idempotencyKey): Promise<PrescriptionResult | null> {
+    async findByKey(idempotencyKey, signal): Promise<PrescriptionResult | null> {
+      signal?.throwIfAborted();
       const control = await readControl(db);
       if (control.mode === 'down') return down();
       const [found] = await db
@@ -317,7 +327,8 @@ export function createLocalPrescriptionProvider(
       return found ? issuedResult(found) : null;
     },
 
-    async status(externalId): Promise<PrescriptionStatusResult> {
+    async status(externalId, signal): Promise<PrescriptionStatusResult> {
+      signal?.throwIfAborted();
       const control = await readControl(db);
       if (control.mode === 'down') return { status: 'retryable', message: SERVICE_DOWN_MESSAGE };
       const [found] = await db
