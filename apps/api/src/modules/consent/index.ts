@@ -2,10 +2,8 @@
  * Public API of the consent module (informed consent: versioned templates, requests, signatures and
  * revocations). Other modules and the composition root import from here only.
  *
- * This is the seam skeleton of Stage 5: the module is wired and registered, and does nothing yet.
- * The consent track (Track A2, S5.02, S5.03 and S5.11) adds files under this folder and edits this
- * one. It exports `listConsentsForPatient` (task 5.10) for the portal and for the patient record,
- * which is the only way another module reads a consent.
+ * Track A2 (S5.02, S5.03 and S5.11). It exports `listConsentsForPatient` (task 5.10) for the portal
+ * and for the patient record, which is the only way another module reads a consent.
  */
 import type { FastifyInstance } from 'fastify';
 
@@ -16,6 +14,8 @@ import type { JobClient } from '../../platform/jobs/boss.js';
 import type { ExportRegistry } from '../tenancy/index.js';
 
 import { exportConsentTemplates, exportSignedConsents } from './application/export-contributor.js';
+import { createTemplateService } from './application/templates.js';
+import { templateRoutes } from './http/template-routes.js';
 
 /**
  * Registers what consent takes with an organization that leaves: the templates for the owner, and
@@ -46,5 +46,14 @@ export interface Consent {
 }
 
 export function createConsent(options: ConsentOptions): Consent {
-  return { options, routes: () => undefined };
+  const clock = options.clock ?? (() => new Date());
+  const common = { withTenant: options.withTenant, auditDeny: options.auditDeny };
+  const templates = templateRoutes({ ...common, templates: createTemplateService({ clock }) });
+
+  return {
+    options,
+    routes: (app) => {
+      templates(app);
+    },
+  };
 }

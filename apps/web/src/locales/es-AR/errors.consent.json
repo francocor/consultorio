@@ -1,1 +1,6 @@
-{}
+{
+  "consent_template_retired": "La plantilla está retirada: ya no admite cambios ni se ofrece para nuevas firmas.",
+  "consent_template_not_draft": "Solo se puede publicar una plantilla que está en borrador. Para cambiar una ya publicada, edítela.",
+  "consent_appointment_type_unknown": "El tipo de turno elegido no existe en la organización.",
+  "consent_starter_unknown": "La plantilla de ejemplo elegida no existe."
+}

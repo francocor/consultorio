@@ -1,4 +1,8 @@
-import { CONSENT_TEMPLATE_STATUSES } from '@consultorio/contracts';
+import {
+  CONSENT_BODY_MAX_LENGTH,
+  CONSENT_TEMPLATE_STATUSES,
+  CONSENT_TITLE_MAX_LENGTH,
+} from '@consultorio/contracts';
 import { sql } from 'drizzle-orm';
 import {
   check,
@@ -18,10 +22,6 @@ const list = (values: readonly string[]) => sql.raw(values.map((v) => `'${v}'`).
 
 /** Specialties are lower-case identifiers, the same shape as the template kinds of clinical notes. */
 const SPECIALTY_PATTERN = '^[a-z][a-z_]{0,39}$';
-
-/** Longest title and body of a template. The API enforces the same limits. */
-export const CONSENT_TITLE_MAX_LENGTH = 160;
-export const CONSENT_BODY_MAX_LENGTH = 20_000;
 
 /**
  * A consent template of the organization (informed-consent, "Consent template authoring"): the
