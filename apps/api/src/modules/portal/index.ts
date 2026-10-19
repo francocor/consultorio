@@ -66,6 +66,8 @@ export type {
 } from './application/ports.js';
 export { adaptConsentModule } from './application/consent-adapter.js';
 export type { ConsentModulePortal } from './application/consent-adapter.js';
+export { adaptPrescriptionModule } from './application/prescription-adapter.js';
+export type { PrescriptionModulePortal } from './application/prescription-adapter.js';
 export type { PortalSubject } from './application/subject.js';
 
 /** Registers what the portal takes with an organization that leaves: identities and links. */
