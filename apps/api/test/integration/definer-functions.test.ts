@@ -26,6 +26,8 @@ const ALLOWED: Record<string, readonly string[]> = {
   'app.active_support_grant_id(uuid)': ['app_operator'],
   'app.tenant_is_unclaimed(uuid)': ['app_operator'],
   'app.demo_reset(uuid)': ['app_operator'],
+  // Matricula verification: the name of one professional of the transaction's organization.
+  'app.operator_professional_name(uuid)': ['app_operator'],
   // Documents: tell a clinical document the caller may not read from one that does not exist,
   // and give reception the metadata of clinical documents when the organization allows it.
   'app.document_probe(uuid)': ['app_rw'],

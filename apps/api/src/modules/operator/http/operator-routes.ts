@@ -3,11 +3,17 @@ import {
   CreateTenantRequest,
   CreateTenantResponse,
   DemoResetResponse,
+  MatriculaNoteRequest,
+  MatriculaQueueQuery,
+  MatriculaQueueResponse,
+  MatriculaUnverifyRequest,
+  MatriculaVerifyRequest,
   OperatorDto,
   OperatorHolidayDto,
   OperatorHolidayListResponse,
   OperatorHolidayQuery,
   OperatorLoginRequest,
+  OperatorMatriculaDto,
   OperatorTenantListResponse,
   ResendOwnerInvitationRequest,
   ResendOwnerInvitationResponse,
@@ -30,6 +36,7 @@ import {
 } from '../application/auth.js';
 import type { OperatorIdentity } from '../application/context.js';
 import type { OperatorHolidays } from '../application/holidays.js';
+import type { OperatorMatricula } from '../application/matricula.js';
 import type { OperatorSupport } from '../application/support.js';
 import type { OperatorTenants, OwnerInvitation } from '../application/tenants.js';
 
@@ -54,6 +61,7 @@ export interface OperatorRoutesDeps {
   tenants: OperatorTenants;
   support: OperatorSupport;
   holidays: OperatorHolidays;
+  matricula: OperatorMatricula;
   email: EmailSender;
   /** Where an organization's emailed links point (the console is on the platform host). */
   origins: PublicOrigins;
@@ -75,6 +83,7 @@ const DAY_MS = 86_400_000;
 const INVITATION_PATH = '/accept-invitation';
 
 const TenantParams = z.strictObject({ tenantId: z.uuid() });
+const ProfessionalParams = z.strictObject({ tenantId: z.uuid(), id: z.uuid() });
 
 function hostOfOrigin(origin: string): string | null {
   try {
@@ -311,6 +320,74 @@ export function operatorRoutes(deps: OperatorRoutesDeps) {
         await deps.holidays.remove(request.params.id, operatorOf(request), metaOf(request));
         return reply.code(204).send();
       },
+    );
+
+    typed.get(
+      '/operator/matricula-queue',
+      {
+        config: { readOnly: 'read', auth: 'public', operatorAuth: 'session' },
+        schema: { querystring: MatriculaQueueQuery, response: { 200: MatriculaQueueResponse } },
+      },
+      async (request) => ({ items: await deps.matricula.queue(request.query.status) }),
+    );
+
+    typed.post(
+      '/operator/tenants/:tenantId/professionals/:id/matricula/verify',
+      {
+        config: { readOnly: 'write', auth: 'public', operatorAuth: 'session' },
+        schema: {
+          params: ProfessionalParams,
+          body: MatriculaVerifyRequest,
+          response: { 200: OperatorMatriculaDto },
+        },
+      },
+      (request) =>
+        deps.matricula.verify(
+          request.params.tenantId,
+          request.params.id,
+          request.body,
+          operatorOf(request),
+          metaOf(request),
+        ),
+    );
+
+    typed.post(
+      '/operator/tenants/:tenantId/professionals/:id/matricula/unverify',
+      {
+        config: { readOnly: 'write', auth: 'public', operatorAuth: 'session' },
+        schema: {
+          params: ProfessionalParams,
+          body: MatriculaUnverifyRequest,
+          response: { 200: OperatorMatriculaDto },
+        },
+      },
+      (request) =>
+        deps.matricula.unverify(
+          request.params.tenantId,
+          request.params.id,
+          request.body,
+          operatorOf(request),
+          metaOf(request),
+        ),
+    );
+
+    typed.put(
+      '/operator/tenants/:tenantId/professionals/:id/matricula/note',
+      {
+        config: { readOnly: 'write', auth: 'public', operatorAuth: 'session' },
+        schema: {
+          params: ProfessionalParams,
+          body: MatriculaNoteRequest,
+          response: { 200: OperatorMatriculaDto },
+        },
+      },
+      (request) =>
+        deps.matricula.saveNote(
+          request.params.tenantId,
+          request.params.id,
+          request.body,
+          operatorOf(request),
+        ),
     );
 
     typed.get(

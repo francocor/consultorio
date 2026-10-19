@@ -1207,9 +1207,9 @@ Start: Stage 4 gate merged. Done when: the three module skeletons are wired, the
 
 Start: S5.00. Done when: only the operator can verify, and editing the number resets it. Verify: default plus `matricula-verification.test.ts`. Rollback: default.
 
-- [ ] 5.5 `modules/operator/application/matricula.ts` and routes `POST /operator/tenants/:tenantId/professionals/:id/matricula/verify|unverify` on the platform host: sets `matricula_status` through the operator context the Stage 1 trigger already requires, writes a platform audit event, exposes only name, jurisdiction, number and tenant (no clinical data). [STF-04, TEN-07] Test: owner and professional cannot verify (trigger); operator verification audited; `app_operator` still cannot select clinical tables.
-- [ ] 5.6 `GET /operator/matricula-queue` (recorded and unverified, by tenant) with an operator note field (text only); editing the number resets the state to unverified (task 1.69 behavior re-asserted) so prescribing closes again. [STF-04, ERX-01] Test: edit resets; queue lists only unverified.
-- [ ] 5.7 `features/operator/matricula/*` operator screen and the "verificada" badge in the staff profile; Playwright as operator. [STF-04] Test: component tests; that spec.
+- [x] 5.5 `modules/operator/application/matricula.ts` and routes `POST /operator/tenants/:tenantId/professionals/:id/matricula/verify|unverify` on the platform host: sets `matricula_status` through the operator context the Stage 1 trigger already requires, writes a platform audit event, exposes only name, jurisdiction, number and tenant (no clinical data). [STF-04, TEN-07] Test: owner and professional cannot verify (trigger); operator verification audited; `app_operator` still cannot select clinical tables.
+- [x] 5.6 `GET /operator/matricula-queue` (recorded and unverified, by tenant) with an operator note field (text only); editing the number resets the state to unverified (task 1.69 behavior re-asserted) so prescribing closes again. [STF-04, ERX-01] Test: edit resets; queue lists only unverified.
+- [x] 5.7 `features/operator/matricula/*` operator screen and the "verificada" badge in the staff profile; Playwright as operator. [STF-04] Test: component tests; that spec.
 
 ## S5.02 Consent templates (~400) [Track A2]
 
