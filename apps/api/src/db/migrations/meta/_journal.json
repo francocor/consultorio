@@ -596,6 +596,20 @@
       "when": 1792386974914,
       "tag": "0512_consent_signing",
       "breakpoints": true
+    },
+    {
+      "idx": 85,
+      "version": "7",
+      "when": 1792386974915,
+      "tag": "0530_prescriptions",
+      "breakpoints": true
+    },
+    {
+      "idx": 86,
+      "version": "7",
+      "when": 1792386974916,
+      "tag": "0532_local_erx",
+      "breakpoints": true
     }
   ]
 }

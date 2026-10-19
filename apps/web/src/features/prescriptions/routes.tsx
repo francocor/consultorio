@@ -7,11 +7,17 @@ import type { FeatureRoute } from '../../app/registry.js';
 const LazyPrescriptions = lazy(() =>
   import('./PrescriptionsPage.js').then((module) => ({ default: module.PrescriptionsPage })),
 );
+const LazyConnectionSettings = lazy(() =>
+  import('./settings/ConnectionSettingsPage.js').then((module) => ({
+    default: module.ConnectionSettingsPage,
+  })),
+);
 
 /**
- * The professional's prescriptions (`/prescriptions`, in the signed-in shell). The navigation entry
+ * The professional's prescriptions (`/prescriptions`, in the signed-in shell) and Settings > Recetas
+ * electronicas, behind `tenant.settings.manage` (owner and admin). The navigation entry
  * `prescriptions` belongs to the shell (`app/nav/nav-config.ts`); this feature contributes the
- * screen behind it. Seam stub of Stage 5: the e-Rx track (A3, S5.05) builds the real screen.
+ * screens behind it. Both load when they are opened, so the entry chunk holds none of them.
  */
 const routes: readonly FeatureRoute[] = [
   {
@@ -21,6 +27,15 @@ const routes: readonly FeatureRoute[] = [
         getParentRoute: () => parent,
         path: '/prescriptions',
         component: guardedScreen(['clinical.prescription.read'], LazyPrescriptions),
+      }),
+  },
+  {
+    mount: 'settings',
+    create: (parent) =>
+      createRoute({
+        getParentRoute: () => parent,
+        path: '/prescriptions',
+        component: guardedScreen(['tenant.settings.manage'], LazyConnectionSettings),
       }),
   },
 ];

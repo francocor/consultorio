@@ -4,7 +4,7 @@ import { dirname } from 'node:path';
 
 import { CreateBucketCommand, S3Client } from '@aws-sdk/client-s3';
 import { PostgreSqlContainer } from '@testcontainers/postgresql';
-import { eq } from 'drizzle-orm';
+import { eq, sql } from 'drizzle-orm';
 import pino from 'pino';
 import { GenericContainer, Wait } from 'testcontainers';
 
@@ -239,6 +239,21 @@ export async function startStack(options: StackOptions): Promise<Stack> {
       displayName: OPERATOR.displayName,
       password: OPERATOR.password,
     });
+
+    // One professional of each demo organization has a matricula the platform operator verified, like
+    // an organization that went through the operator's queue: the cardiologist. Only e-prescription
+    // reads the verification, so the journey of a prescription has someone who may prescribe while
+    // the other professionals stay unverified (and are refused). Done as the operator, the only role
+    // the database lets verify.
+    for (const tenantId of [aillu.id, norte.id]) {
+      await createWithTenant(operatorDb.db)({ tenantId, userId: SYSTEM_USER_ID }, (tx) =>
+        tx.execute(
+          sql`UPDATE professional
+                 SET matricula_status = 'verified', verified_by_operator = ${operator.id}, verified_at = now()
+               WHERE matricula = '41258' AND matricula_jurisdiction = 'AR-C'`,
+        ),
+      );
+    }
 
     const jobsBoss = createBoss(runtimeUrl, 'api');
     await jobsBoss.start();

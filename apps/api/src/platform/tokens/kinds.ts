@@ -18,6 +18,7 @@ export const TOKEN_KINDS = [
   'document_download',
   'export_download',
   'invoice_pdf',
+  'prescription_pdf',
   'archive_release',
 ] as const;
 export type TokenKind = (typeof TOKEN_KINDS)[number];
@@ -60,6 +61,9 @@ export const TOKEN_KIND_REGISTRY: Record<TokenKind, KindSpec> = {
   // track turns on the export link, the invoicing track the invoice PDF link.
   export_download: { ttlMs: 5 * MINUTE, maxUses: 1, sessionBound: true, enabled: true },
   invoice_pdf: { ttlMs: 5 * MINUTE, maxUses: 1, sessionBound: true, enabled: true },
+  // Stage 5: the PDF of a prescription, for the staff who may read it. Its own kind, not a document
+  // link: it opens a clinical file the documents module does not own (e-prescription track).
+  prescription_pdf: { ttlMs: 5 * MINUTE, maxUses: 1, sessionBound: true, enabled: true },
   archive_release: { ttlMs: 72 * HOUR, maxUses: 1, sessionBound: false, enabled: false },
 };
 

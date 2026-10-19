@@ -39,6 +39,9 @@ export { createHoursService } from './application/hours.js';
 export type { HoursService } from './application/hours.js';
 export { findHoursProblems, formatClock, parseClock, zoneOffsetMinutes } from './domain/hours.js';
 export type { HoursEntry } from './domain/hours.js';
+// E-prescription (Stage 5): who writes the prescription and whether the platform verified them.
+export { readPrescriberProfile } from './application/prescriber.js';
+export type { PrescriberProfile } from './application/prescriber.js';
 
 export interface StaffOptions {
   withTenant: WithTenant;

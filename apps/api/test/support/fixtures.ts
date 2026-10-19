@@ -31,6 +31,8 @@ export const CLINICAL_TABLES: ReadonlySet<string> = new Set([
   'addendum',
   // No content, but only a professional reads it (JD-S2 S7).
   'clinical_footprint',
+  // Stage 5: a prescription never follows the sharing scope (D17); its fixture is in fixtures/prescriptions.ts.
+  'prescription',
 ]);
 
 /** Row id -> professional who authored it, for the clinical fixtures below. */

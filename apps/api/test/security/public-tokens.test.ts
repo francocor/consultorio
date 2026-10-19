@@ -42,6 +42,7 @@ const ELSEWHERE: Partial<Record<TokenKind, string>> = {
   document_download: 'test/integration/documents-download.test.ts (`/files/:token`, session bound)',
   export_download: 'test/integration/billing-exports.test.ts (`/files/:token`, session bound)',
   invoice_pdf: 'test/integration/invoice-render.test.ts (`/files/:token`, session bound)',
+  prescription_pdf: 'test/integration/prescription-access.test.ts (`/files/:token`, session bound)',
   staff_invitation: 'test/integration/invitation-accept.test.ts (the invitation page of the app)',
   password_reset: 'test/integration/auth-routes.test.ts (the recovery routes)',
   signup_verification: 'test/integration/onboarding-api.test.ts (the signup verification)',

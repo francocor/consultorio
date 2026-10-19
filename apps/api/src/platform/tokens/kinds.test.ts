@@ -19,6 +19,7 @@ describe('action token kinds (design 4.5)', () => {
         'notification_opt_out',
         'password_reset',
         'portal_activation',
+        'prescription_pdf',
         'signup_verification',
         'staff_invitation',
         'video_join',
@@ -51,13 +52,17 @@ describe('action token kinds (design 4.5)', () => {
     // Stage 4 turned on the export link (billing, track A) and the invoice PDF link (invoicing, track C).
     const fromStageFour = ['export_download', 'invoice_pdf'];
 
+    // Stage 5 turned on the PDF link of a prescription (e-prescription track).
+    const fromStageFive = ['prescription_pdf'];
+
     expect(enabled).toEqual(expect.arrayContaining(fromStageOne));
     expect(
       enabled.filter(
         (kind) =>
           !fromStageOne.includes(kind) &&
           !fromStageThree.includes(kind) &&
-          !fromStageFour.includes(kind),
+          !fromStageFour.includes(kind) &&
+          !fromStageFive.includes(kind),
       ),
     ).toEqual([]);
   });
@@ -98,7 +103,7 @@ describe('action token kinds (design 4.5)', () => {
   });
 
   it('binds an export download and an invoice PDF to a session like a document; each track turns its own on', () => {
-    for (const kind of ['export_download', 'invoice_pdf'] as const) {
+    for (const kind of ['export_download', 'invoice_pdf', 'prescription_pdf'] as const) {
       expect(TOKEN_KIND_REGISTRY[kind], kind).toMatchObject({
         ttlMs: 5 * MINUTE,
         maxUses: 1,
@@ -108,6 +113,8 @@ describe('action token kinds (design 4.5)', () => {
     // Billing (S4.05) turned the export link on, invoicing (S4.12) the invoice PDF link.
     expect(TOKEN_KIND_REGISTRY.export_download.enabled).toBe(true);
     expect(TOKEN_KIND_REGISTRY.invoice_pdf.enabled).toBe(true);
+    // E-prescription (S5.04) turned on the prescription PDF link.
+    expect(TOKEN_KIND_REGISTRY.prescription_pdf.enabled).toBe(true);
   });
 
   it('gives every kind a positive lifetime and use count', () => {

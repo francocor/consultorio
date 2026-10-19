@@ -38,6 +38,13 @@ const ALLOWED: Record<string, readonly string[]> = {
   'app.whatsapp_reply_context_tenants(text,text)': ['app_rw'],
   // The same, for a number held under several hashes at once (judgment day round 4, finding T1).
   'app.whatsapp_reply_tenants_any(text[],timestamp with time zone,integer)': ['app_rw'],
+  // E-prescription (Stage 5): a notice from the provider carries no organization, so the webhook
+  // finds it from our record of the identifier (ids only); reception learns that a prescription
+  // exists when the organization allows it (id, status, day: no content).
+  'app.erx_prescription_by_external_id(text)': ['app_rw'],
+  'app.reception_prescription_existence(uuid)': ['app_rw'],
+  // Tells a prescription the caller may not read from one that does not exist (the trail names who asked).
+  'app.prescription_probe(uuid)': ['app_rw'],
   // Called only by triggers, never directly.
   'app.care_adjust(uuid,uuid,uuid,integer,integer)': [],
   'app.care_assignment_sync()': [],
