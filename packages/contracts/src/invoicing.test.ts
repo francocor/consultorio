@@ -197,6 +197,9 @@ describe('invoice requests (S4.10)', () => {
     expect(fields).not.toContain('attempts');
     expect(fields).toContain('ageMinutes');
     expect(fields).toContain('outageFlag');
+    // What it shows instead of the progress: who holds a pending invoice back, and whom it holds.
+    expect(fields).toContain('heldBy');
+    expect(fields).toContain('blocksSeries');
   });
 });
 

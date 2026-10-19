@@ -305,3 +305,49 @@ export const invoiceDocument = tenantTable(
 );
 
 export type InvoiceDocumentRow = typeof invoiceDocument.$inferSelect;
+
+/**
+ * A number of a series that the authority may hold a voucher under, and that no invoice records
+ * (JD-S4 R3-3): the number an invoice expected when it was replaced by a manual voucher without
+ * knowing whether it had been issued, and the number of a voucher that arrived for an invoice somebody
+ * had already closed. A voucher exists there that is NOT the voucher of any invoice that asks later,
+ * so a lookup never adopts it and the next number expected is counted after it. Written once, never
+ * changed or removed (the invoice that closed cannot carry it: a closed invoice is closed to any write).
+ */
+export const invoiceStrayVoucher = tenantTable(
+  'invoice_stray_voucher',
+  {
+    invoiceId: uuid('invoice_id').notNull(),
+    pointOfSale: integer('point_of_sale').notNull(),
+    type: text('type').notNull(),
+    number: bigint('number', { mode: 'number' }).notNull(),
+    /** `replaced_unresolved` or `orphaned`. */
+    reason: text('reason').notNull(),
+  },
+  (table) => [
+    foreignKey({
+      name: 'invoice_stray_voucher_tenant_id_fkey',
+      columns: [table.tenantId],
+      foreignColumns: [tenant.id],
+    }),
+    foreignKey({
+      name: 'invoice_stray_voucher_invoice_fkey',
+      columns: [table.tenantId, table.invoiceId],
+      foreignColumns: [invoice.tenantId, invoice.id],
+    }),
+    check('invoice_stray_voucher_number_check', sql`${table.number} > 0`),
+    check(
+      'invoice_stray_voucher_reason_check',
+      sql`${table.reason} in ('replaced_unresolved', 'orphaned')`,
+    ),
+    uniqueIndex('invoice_stray_voucher_number_key').on(
+      table.tenantId,
+      table.pointOfSale,
+      table.type,
+      table.number,
+    ),
+    index('invoice_stray_voucher_invoice_idx').on(table.tenantId, table.invoiceId),
+  ],
+);
+
+export type InvoiceStrayVoucherRow = typeof invoiceStrayVoucher.$inferSelect;

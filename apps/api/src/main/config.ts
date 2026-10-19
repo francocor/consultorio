@@ -38,6 +38,13 @@ const envSchema = z
     NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
     DATABASE_URL: z.url({ protocol: /^postgres(ql)?$/ }),
     /**
+     * The most connections the runtime pool opens (default 10). An attempt to issue an invoice holds
+     * one for the whole call to the authority and asks for a second one for its mark, so the pool is
+     * sized for the attempts the worker runs at once (docs/runbooks/afip-switch-to-real.md). At least
+     * 2, so one attempt can always get both.
+     */
+    DB_POOL_MAX: z.coerce.number().int().min(2).max(100).default(10),
+    /**
      * The login of the platform operator console (role `app_operator`). Without it the console
      * does not exist: every `/operator/*` path answers 404. Multi-tenant mode only.
      */
@@ -257,6 +264,8 @@ export interface MailConfig {
 export interface Config {
   readonly nodeEnv: 'development' | 'test' | 'production';
   readonly databaseUrl: string;
+  /** The most connections of the runtime pool (`DB_POOL_MAX`). */
+  readonly dbPoolMax: number;
   /** Set when the operator console is enabled (multi-tenant mode and OPERATOR_DATABASE_URL). */
   readonly operatorDatabaseUrl?: string;
   /** Set for the worker: the `audit_sealer` login that seals and verifies the audit trails. */
@@ -348,6 +357,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   return {
     nodeEnv: value.NODE_ENV,
     databaseUrl: value.DATABASE_URL,
+    dbPoolMax: value.DB_POOL_MAX,
     ...(value.AUDIT_SEALER_DATABASE_URL === undefined
       ? {}
       : { auditSealerDatabaseUrl: value.AUDIT_SEALER_DATABASE_URL }),

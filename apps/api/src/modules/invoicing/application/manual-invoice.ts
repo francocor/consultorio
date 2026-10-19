@@ -23,6 +23,7 @@ import {
 import { loadInvoice } from './invoice-view.js';
 import { snapshotOfProfile } from './issuer-snapshot.js';
 import { loadOrganization } from './settings.js';
+import { recordStrayVoucher } from './stray-vouchers.js';
 
 export interface RegisterManualInput {
   request: CreateManualInvoiceRequest;
@@ -87,18 +88,29 @@ async function closeReplaced(
   const [pending] = await tx.select().from(invoice).where(eq(invoice.id, target.id)).for('update');
   if (!pending) throw new AppError('not_found');
   if (pending.status !== 'pending') throw new AppError('conflict');
-  const unknownOutcome = pending.deliveryState === 'awaiting_reconciliation';
+  // The outcome is in doubt while the request may have been answered, and also for an invoice that was
+  // parked with that doubt still open (it keeps the number it expected; JD-S4 R3-4).
+  const unknownOutcome =
+    pending.deliveryState === 'awaiting_reconciliation' ||
+    (pending.deliveryState === 'needs_attention' && pending.expectedNumber !== null);
   if (unknownOutcome && input.request.acknowledgeUnknownOutcome !== true) {
     throw new AppError('invoice_awaiting_reconciliation');
   }
   const covered = new Set(requestedIds);
   const { recipient } = manual;
+  // The document of a patient is the one the person typed, so it must be the one the invoice carries.
+  // The document of a payer is read from the payer when the voucher is registered, and the payer may
+  // have been corrected since the invoice was requested: the payer is the same, so the invoice stays
+  // replaceable (JD-S4 R3-B-T1).
+  const sameDocument =
+    recipient.kind === 'payer' ||
+    (pending.recipientDocType === (recipient.document?.type ?? null) &&
+      pending.recipientDocNumber === (recipient.document?.number ?? null));
   const sameRecipient =
     pending.recipientKind === recipient.kind &&
     pending.patientId === recipient.patientId &&
     pending.tenantPayerId === recipient.tenantPayerId &&
-    pending.recipientDocType === (recipient.document?.type ?? null) &&
-    pending.recipientDocNumber === (recipient.document?.number ?? null);
+    sameDocument;
   if (
     pending.creditNoteOfId !== null ||
     pending.type !== manual.type ||
@@ -142,6 +154,18 @@ async function closeReplaced(
     pointOfSale: pending.pointOfSale,
     expectedNumber: pending.expectedNumber,
   };
+  // A voucher may sit at that number, and it is not the voucher of any invoice that asks later: the
+  // number is remembered, so a lookup never adopts it and the next number expected is counted after it
+  // (JD-S4 R3-3).
+  if (pending.expectedNumber !== null) {
+    await recordStrayVoucher(
+      tx,
+      pending.id,
+      pending,
+      pending.expectedNumber,
+      'replaced_unresolved',
+    );
+  }
   await audit(tx, {
     action: 'invoice.replaced_unresolved',
     outcome: 'allow',

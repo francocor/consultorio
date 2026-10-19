@@ -1,11 +1,14 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  MAX_AWAITING_BACKOFF_MS,
   MAX_BACKOFF_MS,
   MIN_BACKOFF_MS,
   ageInMinutes,
+  awaitingBackoffMs,
   backoffMs,
   isOutageFlagged,
+  isStalled,
 } from './retry-schedule.js';
 
 const MINUTE = 60_000;
@@ -60,5 +63,30 @@ describe('the age of a pending invoice and the prolonged-outage flag', () => {
     expect(isOutageFlagged('issued', 100 * 60, 24)).toBe(false);
     expect(isOutageFlagged('rejected', 100 * 60, 24)).toBe(false);
     expect(isOutageFlagged('manual', 100 * 60, 24)).toBe(false);
+  });
+});
+
+describe('the backoff of an invoice that waits for reconciliation (JD-S4 R3-1)', () => {
+  it('follows the ordinary schedule up to five minutes and never waits longer', () => {
+    expect([1, 2, 3, 4, 5].map((attempts) => awaitingBackoffMs(attempts) / MINUTE)).toEqual([
+      1, 2, 4, 5, 5,
+    ]);
+    expect(awaitingBackoffMs(500)).toBe(MAX_AWAITING_BACKOFF_MS);
+    expect(MAX_AWAITING_BACKOFF_MS).toBe(5 * MINUTE);
+  });
+});
+
+describe('when an invoice that waits for reconciliation counts as stalled (JD-S4 R3-2)', () => {
+  const created = new Date('2031-05-20T10:00:00Z');
+  const at = (minutes: number) => new Date(created.getTime() + minutes * MINUTE);
+
+  it('is stalled after six attempts', () => {
+    expect(isStalled({ attempts: 5, createdAt: created, now: at(10) })).toBe(false);
+    expect(isStalled({ attempts: 6, createdAt: created, now: at(10) })).toBe(true);
+  });
+
+  it('is stalled after two hours, whatever the number of attempts', () => {
+    expect(isStalled({ attempts: 1, createdAt: created, now: at(119) })).toBe(false);
+    expect(isStalled({ attempts: 1, createdAt: created, now: at(120) })).toBe(true);
   });
 });

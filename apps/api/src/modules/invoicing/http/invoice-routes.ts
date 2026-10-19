@@ -138,6 +138,7 @@ export function invoiceRoutes(deps: InvoiceRoutesDeps) {
           ];
           const loaded = await loadInvoices(tx, deps.clock, [and(...conditions)], {
             ...(query.limit ? { limit: query.limit } : {}),
+            scope,
             // The pending ones that waited longest come first.
             order: query.status === 'pending' ? 'oldest' : 'newest',
           });

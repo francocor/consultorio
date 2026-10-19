@@ -1,9 +1,11 @@
-import type { ChargeDto, InvoiceDto, Problem } from '@consultorio/contracts';
+import type { ChargeDto, InvoiceDto, Problem, TenantPayerDto } from '@consultorio/contracts';
 import { and, desc, eq } from 'drizzle-orm';
 import type { LightMyRequestResponse } from 'fastify';
 import { afterAll, beforeAll, describe, expect, inject, it, vi } from 'vitest';
 
+import { nextCuit } from '../../src/adapters/invoice-issuer.contract.js';
 import { auditEvent } from '../../src/db/schema/audit.js';
+import { tenantPayer } from '../../src/db/schema/billing-pricing.js';
 import { worklistItem } from '../../src/db/schema/worklist.js';
 import { createRuntimeDb, type DbHandle } from '../../src/platform/db/pool.js';
 import { submissionKey } from '../support/billing-world.js';
@@ -17,10 +19,27 @@ import { createInvoicingWorld, type InvoicingWorld } from '../support/invoicing-
 
 let runtime: DbHandle;
 let world: InvoicingWorld;
+let osde: TenantPayerDto;
+let osdeCatalogId: string;
 
 beforeAll(async () => {
   runtime = createRuntimeDb(inject('runtimeUrl'));
   world = await createInvoicingWorld(runtime, { slug: 'invoice-replacement' });
+  osdeCatalogId = await world.catalogPayer('invoice-replacement-osde', 'OSDE Reemplazos');
+  osde = (
+    await world.api.post('/billing/payers', world.owner, {
+      payerId: osdeCatalogId,
+      cuit: '30-70857833-5',
+    })
+  ).json<TenantPayerDto>();
+  await world.api.post('/billing/payer-prices', world.owner, {
+    tenantPayerId: osde.id,
+    appointmentTypeId: world.consulta,
+    payerAmountCents: 1_500_000,
+    copagoCents: 300_000,
+    plusCents: 0,
+    effectiveFrom: '2031-01-01',
+  });
 });
 
 afterAll(async () => {
@@ -162,6 +181,43 @@ describe('what a manual voucher may replace (JD-S4 R2-6)', () => {
 
     expect(response.statusCode, response.body).toBe(201);
     expect((await world.rowOf(created.id)).status).toBe('rejected');
+  });
+});
+
+describe('the recipient of an invoice to a payer whose CUIT was corrected meanwhile (JD-S4 R3-B-T1)', () => {
+  it('still replaces the invoice: the payer is the same, only its document moved', async () => {
+    world.issuer.setMode('ok');
+    await world.runIssue();
+    const patientId = await world.freshPatient();
+    await world.cover(patientId, { payerId: osdeCatalogId });
+    const charge = await world.charge({ patientId });
+    const payerLines = (await world.linesOf(charge.id)).filter((line) => line.portion === 'payer');
+    const requestedInvoice = await world.invoice({
+      lines: payerLines.map((line) => ({ chargeLineId: line.id })),
+      recipient: { kind: 'payer' },
+    });
+    expect(requestedInvoice.statusCode, requestedInvoice.body).toBe(202);
+    const created = requestedInvoice.json<InvoiceDto>();
+    // The CUIT of the payer was wrong and is corrected after the invoice was requested.
+    await world.inTenant((tx) =>
+      tx.update(tenantPayer).set({ cuit: nextCuit() }).where(eq(tenantPayer.id, osde.id)),
+    );
+
+    try {
+      const response = await manual({
+        ...(await replaceBody(charge, created.id)),
+        totalCents: payerLines.reduce((sum, line) => sum + line.amountCents, 0),
+        lines: payerLines.map((line) => ({ chargeLineId: line.id })),
+        recipient: { kind: 'payer' },
+      });
+
+      expect(response.statusCode, response.body).toBe(201);
+      expect((await world.rowOf(created.id)).status).toBe('rejected');
+    } finally {
+      await world.inTenant((tx) =>
+        tx.update(tenantPayer).set({ cuit: '30708578335' }).where(eq(tenantPayer.id, osde.id)),
+      );
+    }
   });
 });
 

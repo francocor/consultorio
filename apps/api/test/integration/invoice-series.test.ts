@@ -75,7 +75,7 @@ async function drain() {
 }
 
 describe('two invoices of one series with the same total on the same day (JD-S4 R2-1)', () => {
-  it('lets none adopt the voucher of the other when both answers are lost, and issues each service once', async () => {
+  it('holds the second invoice back while the answer of the first is lost, and issues each service once with its own voucher', async () => {
     await drain();
     const first = await create();
     const second = await create();
@@ -90,13 +90,19 @@ describe('two invoices of one series with the same total on the same day (JD-S4 
     expect(await world.rowOf(first.created.id)).toMatchObject({
       deliveryState: 'awaiting_reconciliation',
     });
-    // And the answer for the second one would be lost too.
-    world.issuer.setMode('timeout_after_authorize');
-    await runIssueWith(
-      second.created.id,
-      world.issueDeps(() => new Date(t0)),
-    );
-    // The second one is due before the first, so it is the second that reconciles first.
+    // The second one is not sent while the first may have been answered: it cannot lose an answer.
+    const issue = vi.spyOn(world.issuer, 'issue');
+    try {
+      await runIssueWith(
+        second.created.id,
+        world.issueDeps(() => new Date(t0)),
+      );
+      expect(issue).not.toHaveBeenCalled();
+    } finally {
+      issue.mockRestore();
+    }
+    expect(vouchersOf(second.created.id)).toHaveLength(0);
+    // The second one is due now.
     await world.inTenant((tx) =>
       tx
         .update(invoiceTable)
@@ -404,7 +410,8 @@ describe('the mark written before the call (JD-S4 R2-3)', () => {
     expect((await world.rowOf(created.id)).status).toBe('rejected');
   });
 
-  it('gives up the attempt instead of hanging when the mark waits for a row lock, and goes on once it is free', async () => {
+  /** Runs an attempt whose mark has to wait for a row that somebody else keeps locked. */
+  async function attemptWhileLocked(markLockTimeoutMs: number) {
     await drain();
     const { created } = await create();
     const t0 = Date.now();
@@ -421,23 +428,46 @@ describe('the mark written before the call (JD-S4 R2-3)', () => {
     });
     await held.opened;
     const issue = vi.spyOn(world.issuer, 'issue');
+    const errors: Record<string, unknown>[] = [];
     const started = Date.now();
+    let outcome: unknown;
+    let called: number;
 
     try {
-      const outcome = await runIssueWith(created.id, {
+      outcome = await runIssueWith(created.id, {
         ...world.issueDeps(() => new Date(t0)),
-        markLockTimeoutMs: 300,
+        markLockTimeoutMs,
+        log: { error: (object) => errors.push(object) },
       });
-
-      // It does not wait for the lock for ever: the mark gives up and the sweeper tries again.
-      expect(Date.now() - started).toBeLessThan(15_000);
-      expect(outcome).toEqual({ status: 'completed' });
-      expect(issue).not.toHaveBeenCalled();
+      called = issue.mock.calls.length;
     } finally {
       release.open();
       await holding;
       issue.mockRestore();
     }
+    return { created, t0, outcome, called, errors, waited: Date.now() - started };
+  }
+
+  it('gives up the attempt instead of hanging when the mark waits for a row lock, says so, and goes on once it is free', async () => {
+    const { created, t0, outcome, called, errors, waited } = await attemptWhileLocked(300);
+
+    // It does not wait for the lock for ever: the mark gives up and the sweeper tries again.
+    expect(waited).toBeLessThan(15_000);
+    expect(outcome).toEqual({ status: 'completed' });
+    expect(called).toBe(0);
+    // A lock that is kept is not silent (JD-S4 R3-A-W4).
+    expect(errors).toEqual([expect.objectContaining({ invoiceId: created.id })]);
+    const again = await world.sweep(after(t0, 1));
+
+    expect(again).toContainEqual({ invoiceId: created.id, outcome: 'issued' });
+  }, 40_000);
+
+  it('treats a timeout of zero as the shortest one, not as no timeout at all (JD-S4 R3-B-S4)', async () => {
+    const { created, t0, outcome, called, waited } = await attemptWhileLocked(0);
+
+    expect(waited).toBeLessThan(15_000);
+    expect(outcome).toEqual({ status: 'completed' });
+    expect(called).toBe(0);
     const again = await world.sweep(after(t0, 1));
 
     expect(again).toContainEqual({ invoiceId: created.id, outcome: 'issued' });
@@ -445,10 +475,15 @@ describe('the mark written before the call (JD-S4 R2-3)', () => {
 
   it('opens the pools of the application with a timeout to get a connection, so a full pool fails instead of hanging', () => {
     const handle = createRuntimeDb(inject('runtimeUrl'));
+    const sized = createRuntimeDb(inject('runtimeUrl'), { max: 4 });
     try {
       expect(handle.pool.options.connectionTimeoutMillis).toBe(10_000);
+      // Ten connections unless the configuration says otherwise (`DB_POOL_MAX`).
+      expect(handle.pool.options.max).toBe(10);
+      expect(sized.pool.options.max).toBe(4);
     } finally {
       void handle.close();
+      void sized.close();
     }
   });
 });

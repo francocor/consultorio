@@ -19,6 +19,9 @@ export interface DbHandle {
  */
 export const CONNECTION_TIMEOUT_MS = 10_000;
 
+/** The most connections the runtime pool opens unless the configuration says otherwise (`DB_POOL_MAX`). */
+export const DEFAULT_RUNTIME_POOL_MAX = 10;
+
 function open(connectionString: string, max: number): DbHandle {
   const pool = new Pool({ connectionString, max, connectionTimeoutMillis: CONNECTION_TIMEOUT_MS });
   // An idle client error must not crash the process; the next query reports the failure.
@@ -30,8 +33,8 @@ function open(connectionString: string, max: number): DbHandle {
  * Runtime pool: connects as `app_rw`, which owns no table and cannot bypass row level security.
  * Every query must go through `withTenant`.
  */
-export function createRuntimeDb(databaseUrl: string): DbHandle {
-  return open(databaseUrl, 10);
+export function createRuntimeDb(databaseUrl: string, options: { max?: number } = {}): DbHandle {
+  return open(databaseUrl, options.max ?? DEFAULT_RUNTIME_POOL_MAX);
 }
 
 /**

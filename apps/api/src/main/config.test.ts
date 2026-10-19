@@ -28,6 +28,14 @@ describe('loadConfig', () => {
     });
   });
 
+  it('sizes the pool of the runtime connection with DB_POOL_MAX, ten connections by default (JD-S4 R3-A-W5)', () => {
+    expect(loadConfig(validEnv).dbPoolMax).toBe(10);
+    expect(loadConfig({ ...validEnv, DB_POOL_MAX: '25' }).dbPoolMax).toBe(25);
+    for (const bad of ['0', '1', '-4', '2.5', 'many', '1000']) {
+      expect(() => loadConfig({ ...validEnv, DB_POOL_MAX: bad }), bad).toThrow(/DB_POOL_MAX/);
+    }
+  });
+
   it('accepts explicit values', () => {
     const config = loadConfig({
       ...validEnv,

@@ -392,6 +392,14 @@ export const InvoiceDto = z.strictObject({
   ageMinutes: z.int().nullable(),
   /** Pending only: it waited longer than the threshold of the organization (a prolonged outage). */
   outageFlag: z.boolean(),
+  /**
+   * Pending only: the invoice of the same series (point of sale and type) that holds this one back,
+   * because the request to the authority may have been answered and nothing of the series is sent
+   * until that is settled. Null when nothing holds it.
+   */
+  heldBy: z.strictObject({ id: z.uuid(), requestedAt: z.iso.datetime() }).nullable(),
+  /** How many invoices of the series wait for this one to be settled (zero for most). */
+  blocksSeries: z.int().min(0),
   hasPdf: z.boolean(),
   createdAt: z.iso.datetime(),
   issuedAt: z.iso.datetime().nullable(),

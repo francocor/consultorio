@@ -61,6 +61,8 @@ export const TRACK_RANGES: Readonly<Record<string, Range & { label: string }>> =
   '4a': { start: 410, end: 429, label: 'Stage 4, A billing' },
   '4b': { start: 430, end: 439, label: 'Stage 4, B reports' },
   '4c': { start: 440, end: 469, label: 'Stage 4, C invoicing' },
+  // The gap 0480 - 0489 was reserved; 0490 - 0499 of 4d are full, so judgment day follow-ups go here.
+  '4jd': { start: 480, end: 489, label: 'Stage 4, judgment day follow-ups' },
   '4d': { start: 490, end: 499, label: 'Stage 4, D integration' },
   '5seam': { start: 500, end: 504, label: 'Stage 5 seams' },
   '5a1': { start: 505, end: 509, label: 'Stage 5, A1 verification' },
