@@ -17,7 +17,12 @@ import {
 import type { patient } from '../../src/db/schema/patients.js';
 import { MODULE_WIRINGS } from '../../src/main/wiring/index.js';
 import { createPortalWiring, type PortalPorts } from '../../src/main/wiring/portal.js';
-import { createPortalCodeSendJob } from '../../src/modules/portal/index.js';
+import {
+  createPortalCodeSendJob,
+  createPortalNoticeJob,
+  createPortalNoticeSweepJob,
+} from '../../src/modules/portal/index.js';
+import { runJob } from '../../src/platform/jobs/define-job.js';
 
 import {
   createBookingWorld,
@@ -50,6 +55,8 @@ export interface PortalWorld extends BookingWorld {
     body?: Record<string, unknown>,
     by?: TestSession,
   ): Promise<PortalIdentityDto>;
+  /** The pass that tells the address a record had that its e-mail or birth date changed (every minute in production). */
+  sweepNotices(): Promise<void>;
   /** The path of the link in the last email sent to `address` (`/public/t/<token>`). */
   activationPathSentTo(address: string): string;
   /** Follows an activation link as a visitor: shows the page, then presses its button. */
@@ -130,6 +137,8 @@ export async function createPortalWorld(
   const jobDefinitions = [
     ...base.jobDefinitions,
     createPortalCodeSendJob({ email: base.email, clock: () => base.now() }),
+    createPortalNoticeJob({ email: base.email }),
+    createPortalNoticeSweepJob({ email: base.email, clock: () => base.now() }),
   ];
   const patientWith: PortalWorld['patientWith'] = (values = {}) => {
     patients += 1;
@@ -144,8 +153,13 @@ export async function createPortalWorld(
     });
   };
 
-  const invite: PortalWorld['invite'] = (patientId, body = {}, by = base.reception) =>
-    base.api.post(`/patients/${patientId}/portal-invitation`, by, body);
+  // Reception invites the patient; a representative for a minor is invited by an administrator unless a
+  // test says otherwise: a record without an e-mail has nobody to tell, and that is for them (R2-2).
+  const invite: PortalWorld['invite'] = (
+    patientId,
+    body = {},
+    by = body['email'] === undefined ? base.reception : base.admin,
+  ) => base.api.post(`/patients/${patientId}/portal-invitation`, by, body);
 
   const inviteOk: PortalWorld['inviteOk'] = async (patientId, body, by) => {
     const response = await invite(patientId, body, by);
@@ -182,6 +196,17 @@ export async function createPortalWorld(
     ...base,
     jobDefinitions,
     runJobs: () => runPending(runtime.db, base.jobs, jobDefinitions),
+    sweepNotices: async () => {
+      const sweep = jobDefinitions.find((definition) => definition.name === 'portal.notice_sweep');
+      if (!sweep) throw new Error('the sweep of notices is not part of the world');
+      await runJob(runtime.db, sweep, {
+        id: randomUUID(),
+        name: sweep.name,
+        data: { tenantId: base.tenant.id },
+        enqueuedAt: new Date(),
+        retryCount: 0,
+      });
+    },
     storage,
     documentFor: async (patientId, documentOptions = {}) => {
       const id = randomUUID();

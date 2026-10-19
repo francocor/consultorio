@@ -131,6 +131,8 @@ describe('A-C1: staff cannot give anybody the record of an adult', () => {
     );
 
     expect(response.statusCode, response.body).toBe(201);
+    // The notice is queued with the change and a worker sends it (JD-S5 R2-2).
+    await world.runJobs();
     const notice = world.email.lastTo(recordEmail);
     expect(notice).toBeDefined();
     expect(notice?.subject).toContain('representante');
@@ -161,6 +163,7 @@ describe('A-C1: staff cannot give anybody the record of an adult', () => {
     );
 
     expect(response.statusCode, response.body).toBe(201);
+    await world.runJobs();
     expect(world.email.lastTo(recordEmail)?.subject).toContain('representante');
   });
 
@@ -197,6 +200,7 @@ describe('A-C1: staff cannot give anybody the record of an adult', () => {
 
       expect(response.statusCode, response.body).toBe(200);
       expect(response.json<{ identity: PortalIdentityDto }>().identity.email).toBe(moved);
+      await world.runJobs();
       const notice = world.email.lastTo(parentEmail);
       expect(notice?.subject).toContain('correo');
       expect(notice?.text).not.toMatch(/https?:/);

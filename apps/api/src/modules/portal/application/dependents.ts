@@ -15,6 +15,7 @@ import {
   type StaffAuditActor,
 } from './identities.js';
 import { organizationToday } from './link-access.js';
+import { assertMayGiveAccess } from './staff-gate.js';
 import type { PortalSubject } from './subject.js';
 
 /** The system as the author of what the daily review does: no user, no role, no address. */
@@ -198,7 +199,12 @@ export async function revokeByAdult(
 export async function reverifyLink(
   tx: Tx,
   deps: Pick<IdentityDeps, 'clock' | 'majorityAge'>,
-  input: { actor: StaffAuditActor; linkId: string; verificationNote: string },
+  input: {
+    actor: StaffAuditActor;
+    ownerOrAdmin: boolean;
+    linkId: string;
+    verificationNote: string;
+  },
 ): Promise<string> {
   const [link] = await tx
     .select()
@@ -213,6 +219,13 @@ export async function reverifyLink(
   if (!patient) throw new AppError('not_found');
   const standing = await majorityStanding(tx, deps, patient.birthDate);
   if (!standing.minor) throw new AppError('portal_representation_requires_minor');
+  // Restoring a representative is giving access again: the same gate as the first time (JD-S5 R2-2).
+  const gate = await assertMayGiveAccess(tx, {
+    patientId: patient.id,
+    ownerOrAdmin: input.ownerOrAdmin,
+    representative: true,
+    recordEmail: patient.email,
+  });
   await tx
     .update(portalLink)
     .set({
@@ -229,7 +242,11 @@ export async function reverifyLink(
     resourceType: 'portal_identity',
     resourceId: link.portalIdentityId,
     patientId: link.patientId,
-    metadata: { relationship: 'representative', via: 'staff_reverification' },
+    metadata: {
+      relationship: 'representative',
+      via: 'staff_reverification',
+      ...(gate.afterRecordChange ? { afterRecordChange: true } : {}),
+    },
   });
   return link.portalIdentityId;
 }

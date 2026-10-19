@@ -91,7 +91,7 @@ describe('whose record is shown', () => {
       verificationNote: note,
     });
     await world.activate(world.activationPathSentTo(parentEmail));
-    await world.api.post(`/portal-identities/${invited.id}/links`, world.reception, {
+    await world.api.post(`/portal-identities/${invited.id}/links`, world.admin, {
       patientId: child2,
       relation: 'mother',
       verificationNote: note,

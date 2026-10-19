@@ -5,6 +5,8 @@ import {
   createMajorityReviewJob,
   createPortal,
   createPortalCodeSendJob,
+  createPortalNoticeJob,
+  createPortalNoticeSweepJob,
   type PortalConsentPort,
   type PortalPrescriptionPort,
 } from '../../modules/portal/index.js';
@@ -19,6 +21,9 @@ import type { ModuleWiring, WiringContext } from './types.js';
 
 /** The review of the dependents who reached the age of majority runs once a day. */
 const MAJORITY_REVIEW_EVERY_MS = 24 * 3_600_000;
+
+/** The notices of a changed record are delivered every minute (JD-S5 R2-2). */
+const NOTICE_SWEEP_EVERY_MS = 60_000;
 
 /**
  * What the portal needs from the modules that are built in parallel: a port per module, from
@@ -78,10 +83,18 @@ export function createPortalWiring(source: PortalPortsSource = {}): ModuleWiring
       // The tenant-routed sender: a demo organization's codes never reach the real provider.
       const email = createTenantRoutedEmail(context.adapters);
       return {
-        jobs: () => [createPortalCodeSendJob({ email, ...clock })],
-        // Once a day, for every organization: the dependents who turned 18 stop being represented.
+        jobs: () => [
+          createPortalCodeSendJob({ email, ...clock }),
+          createPortalNoticeJob({ email }),
+        ],
         tenantJobs: [
+          // Once a day, for every organization: the dependents who turned 18 stop being represented.
           { definition: createMajorityReviewJob(clock), everyMs: MAJORITY_REVIEW_EVERY_MS },
+          // Every minute: tells the address a record had that its e-mail or birth date changed.
+          {
+            definition: createPortalNoticeSweepJob({ email, ...clock }),
+            everyMs: NOTICE_SWEEP_EVERY_MS,
+          },
         ],
       };
     },

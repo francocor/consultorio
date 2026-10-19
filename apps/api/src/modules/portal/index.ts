@@ -45,6 +45,12 @@ import { sessionRoutes } from './http/session-routes.js';
 import { staffRoutes } from './http/staff-routes.js';
 
 export { createPortalCodeSendJob } from './application/code-job.js';
+export {
+  createPortalNoticeJob,
+  createPortalNoticeSweepJob,
+  PORTAL_NOTICE_JOB,
+  PORTAL_NOTICE_SWEEP_JOB,
+} from './application/notice-job.js';
 export { createMajorityReviewJob, MAJORITY_REVIEW_JOB } from './application/majority-job.js';
 // The notices of the portal, rendered. The consent module sends "you have a document to sign" with
 // `renderPortalNoticeEmail({ kind: 'consent_request' })`: email only, no title, a link to the portal.
@@ -144,6 +150,8 @@ export function createPortal(options: PortalOptions): Portal {
 
   const staff = staffRoutes({
     withTenant: options.withTenant,
+    auditDeny: options.auditDeny,
+    jobs: options.jobs,
     identities,
     email: options.email,
     origins: options.origins,

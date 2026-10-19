@@ -88,4 +88,11 @@ export const QUEUES: readonly QueueDefinition[] = [
   // to the portal is authentication, which a read-only organization keeps, while the code of the
   // public booking is a plain write that ends cancelled there.
   { name: 'portal.code_send', options: { retryLimit: 3, retryDelay: 15, expireInSeconds: 120 } },
+  // Emails a warning about a change to the access of the portal that the staff made (an account moved
+  // to another address, a representative given access to a minor). Queued in the transaction of the
+  // change (JD-S5 R2-2). A person is protected whatever the state of the subscription.
+  { name: 'portal.notice_send', options: { retryLimit: 5, retryDelay: 60, expireInSeconds: 120 } },
+  // Every minute, per organization: tells the address a record HAD that its e-mail or birth date was
+  // changed (the change is written by the database, in the transaction of the update).
+  { name: 'portal.notice_sweep', options: { retryLimit: 1, retryDelay: 60, expireInSeconds: 300 } },
 ];

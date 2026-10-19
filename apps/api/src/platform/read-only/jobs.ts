@@ -50,6 +50,9 @@ export const JOB_CATEGORIES: Readonly<Record<string, RouteCategory>> = {
   'portal.majority_review': 'patient_protective',
   // The code to sign in to the portal: authentication stays open in a read-only organization.
   'portal.code_send': 'auth',
+  // The warnings about a change to the access of a person protect that person (JD-S5 R2-2).
+  'portal.notice_send': 'patient_protective',
+  'portal.notice_sweep': 'patient_protective',
 };
 
 /** The category of a queue. A queue nobody classified is refused, not guessed. */

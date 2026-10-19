@@ -180,7 +180,7 @@ describe('a link to a shared document', () => {
       verificationNote: note,
     });
     await world.activate(world.activationPathSentTo(parentEmail));
-    await world.api.post(`/portal-identities/${invited.id}/links`, world.reception, {
+    await world.api.post(`/portal-identities/${invited.id}/links`, world.admin, {
       patientId: second,
       relation: 'mother',
       verificationNote: note,

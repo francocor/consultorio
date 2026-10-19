@@ -21,6 +21,7 @@ import { checkCode, openChallenge, type PortalCodePurpose } from './codes.js';
 import { normalizeDocument } from './country.js';
 import { liveSelfLink, majorityStanding, patientAuditActor } from './identities.js';
 import type { PortalSessions } from './sessions.js';
+import { hasRecentRecordChange } from './staff-gate.js';
 
 export interface SignInDeps {
   sessions: PortalSessions;
@@ -67,6 +68,10 @@ async function registrationCandidate(
   if (match?.status !== 'active') return null;
   if (match.email === null || match.email.trim().toLowerCase() !== input.email) return null;
   if (await liveSelfLink(tx, match.id)) return null;
+  // The e-mail or the birth date of the record changed this week: whoever changed them could be the
+  // one registering with the new address. An owner or an administrator invites the patient instead
+  // (JD-S5 R2-2). Said like any other mismatch: the visitor learns nothing.
+  if (await hasRecentRecordChange(tx, match.id)) return null;
   // A minor is reached only through a representative the organization verified: were the guardian
   // to register with the child's document and the address on their record, the guardian would
   // become the child's `self` and nothing would review the majority (JD-S5 R1-S5-6). Said like any

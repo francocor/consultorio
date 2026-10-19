@@ -43,6 +43,18 @@ async function insertLink(
 }
 
 export const fixtures: Record<string, TenantTableFixture> = {
+  // A change to the e-mail of a record (JD-S5 R2-2); the isolation suite points the patient at
+  // another organization's row to prove the composite foreign key refuses it.
+  patient_record_change: {
+    insert: async (tx, tenantId, overrides) =>
+      returningId(
+        tx,
+        sql`INSERT INTO patient_record_change (tenant_id, patient_id, email_changed, birth_date_changed)
+              VALUES (${tenantId}, ${overrides?.['patient_id'] ?? (await insertPatient(tx, tenantId))},
+                      true, false)
+              RETURNING id`,
+      ),
+  },
   portal_identity: { insert: insertIdentity },
   portal_link: { insert: insertLink },
   portal_session: {

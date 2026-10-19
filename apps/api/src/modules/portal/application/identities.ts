@@ -23,6 +23,7 @@ import { majorityReviewDate } from '../domain/majority.js';
 
 import { dayInZone, timeZoneOfCountry } from './country.js';
 import type { PortalSessions } from './sessions.js';
+import { assertMayGiveAccess } from './staff-gate.js';
 
 const UNIQUE_VIOLATION = '23505';
 
@@ -162,6 +163,12 @@ export async function listPortalOfPatient(
 
 export interface InvitationInput {
   actor: StaffAuditActor;
+  /**
+   * The member of the staff is an owner or an administrator. Reception may not give access to a
+   * patient whose e-mail or birth date changed in the last seven days, nor a representative to a
+   * patient whose record has no e-mail to tell (JD-S5 R2-2).
+   */
+  ownerOrAdmin: boolean;
   patientId: string;
   /** Present when the invited person is the representative of the patient, not the patient. */
   representative?: { email: string; relation: PortalRelation; verificationNote: string };
@@ -237,6 +244,13 @@ export async function prepareInvitation(
   const { minor } = await majorityStanding(tx, deps, patient.birthDate);
   if (input.representative && !minor) throw new AppError('portal_representation_requires_minor');
   if (!input.representative && minor) throw new AppError('portal_minor_requires_representative');
+  // The facts the portal trusts were edited a moment ago, or there is nobody to tell: not reception.
+  const gate = await assertMayGiveAccess(tx, {
+    patientId: patient.id,
+    ownerOrAdmin: input.ownerOrAdmin,
+    representative: input.representative !== undefined,
+    recordEmail: patient.email,
+  });
 
   let email: string;
   if (input.representative) {
@@ -308,6 +322,7 @@ export async function prepareInvitation(
       metadata: {
         status: 'invited',
         relationship: input.representative ? 'representative' : 'self',
+        ...(gate.afterRecordChange ? { afterRecordChange: true } : {}),
       },
     });
   }
@@ -417,6 +432,7 @@ export async function linkDependent(
   deps: IdentityDeps,
   input: {
     actor: StaffAuditActor;
+    ownerOrAdmin: boolean;
     country: string;
     identityId: string;
     patientId: string;
@@ -437,6 +453,12 @@ export async function linkDependent(
   // Only for a minor: an adult authorizes a representative from their own account (JD-S5 R1-A-C1).
   const standing = await majorityStanding(tx, deps, patient.birthDate);
   if (!standing.minor) throw new AppError('portal_representation_requires_minor');
+  const gate = await assertMayGiveAccess(tx, {
+    patientId: patient.id,
+    ownerOrAdmin: input.ownerOrAdmin,
+    representative: true,
+    recordEmail: patient.email,
+  });
 
   try {
     await tx.transaction((inner) =>
@@ -462,7 +484,12 @@ export async function linkDependent(
     resourceType: 'portal_identity',
     resourceId: identity.id,
     patientId: patient.id,
-    metadata: { relationship: 'representative', relation: input.relation, via: 'staff' },
+    metadata: {
+      relationship: 'representative',
+      relation: input.relation,
+      via: 'staff',
+      ...(gate.afterRecordChange ? { afterRecordChange: true } : {}),
+    },
   });
   const recordEmail = patient.email?.trim().toLowerCase() ?? '';
   return {

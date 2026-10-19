@@ -175,39 +175,59 @@ export function renderPortalNoticeEmail(input: PortalNoticeEmailInput): Rendered
   return { subject, text, html };
 }
 
-export type PortalSecurityNoticeKind = 'email_changed' | 'representative_added';
+export type PortalSecurityNoticeKind = 'email_changed' | 'representative_added' | 'record_changed';
 
 export interface PortalSecurityNoticeEmailInput {
   organizationName: string;
   kind: PortalSecurityNoticeKind;
+  /** For `record_changed`: what changed in the record (the e-mail, the birth date, or both). */
+  fields?: { email: boolean; birthDate: boolean };
+}
+
+/** What the record says changed, as the notice names it. */
+function changedFacts(fields: { email: boolean; birthDate: boolean } | undefined): string {
+  if (fields?.email && fields.birthDate) return 'datos de contacto y de nacimiento';
+  if (fields?.birthDate) return 'datos de nacimiento';
+  return 'datos de contacto';
 }
 
 /**
- * The notice that a change to the access of the portal was made by the organization (JD-S5
- * R1-A-C1): the address of an account was changed (it goes to the OLD address) or a representative
- * was given access to a record (it goes to the address on the record of the patient). It carries no
- * link, no code and no name: it is only a warning, so that nobody has the access changed without
- * the person it concerns being able to find out.
+ * The notice that a change to the access of the portal, or to the facts it trusts, was made by the
+ * organization (JD-S5 R1-A-C1, R2-2): the address of an account was changed (it goes to the OLD
+ * address), a representative was given access to a record (it goes to the address on the record of
+ * the patient), or the e-mail or the birth date of a record was changed (it goes to the address the
+ * record HAD). It carries no link, no code and no name, and it never says the new value: it is only a
+ * warning, so that nobody has the access changed without the person it concerns being able to find
+ * out.
  */
 export function renderPortalSecurityNoticeEmail(
   input: PortalSecurityNoticeEmailInput,
 ): RenderedEmail {
   const organization = input.organizationName;
-  const changed = input.kind === 'email_changed';
-  const subject = changed
-    ? `Cambió el correo de acceso a su portal de pacientes de ${organization}`
-    : `Se dio acceso al portal de pacientes de ${organization} a un representante`;
-  const line = changed
-    ? `El correo con el que se ingresa a su portal de pacientes de ${organization} fue cambiado por el personal de la organización. Desde ahora los códigos de acceso se envían al nuevo correo, no a este.`
-    : `${organization} dio acceso a su portal de pacientes a un representante legal, para ver la información de una persona menor de edad cuya ficha tiene este correo.`;
+  let heading: string;
+  let subject: string;
+  let line: string;
+  switch (input.kind) {
+    case 'email_changed':
+      heading = 'Cambió el correo de acceso';
+      subject = `Cambió el correo de acceso a su portal de pacientes de ${organization}`;
+      line = `El correo con el que se ingresa a su portal de pacientes de ${organization} fue cambiado por el personal de la organización. Desde ahora los códigos de acceso se envían al nuevo correo, no a este.`;
+      break;
+    case 'representative_added':
+      heading = 'Se dio acceso a un representante';
+      subject = `Se dio acceso al portal de pacientes de ${organization} a un representante`;
+      line = `${organization} dio acceso a su portal de pacientes a un representante legal, para ver la información de una persona menor de edad cuya ficha tiene este correo.`;
+      break;
+    case 'record_changed':
+      heading = 'Se modificaron datos de su ficha';
+      subject = `Se modificaron datos de su ficha en ${organization}`;
+      line = `Se modificaron ${changedFacts(input.fields)} en su ficha de ${organization}. El cambio lo hizo el personal de la organización y este correo es el que figuraba en la ficha antes del cambio.`;
+      break;
+  }
   const advice = 'Si usted no lo esperaba, comuníquese con la organización.';
   const footer = 'Este mensaje no incluye ningún enlace ni datos de la ficha.';
   const text = [line, '', advice, '', footer].join('\n');
-  const html = layout(
-    changed ? 'Cambió el correo de acceso' : 'Se dio acceso a un representante',
-    [escapeHtml(line), escapeHtml(advice)],
-    footer,
-  );
+  const html = layout(heading, [escapeHtml(line), escapeHtml(advice)], footer);
   return { subject, text, html };
 }
 

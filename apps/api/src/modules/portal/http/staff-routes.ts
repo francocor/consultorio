@@ -10,10 +10,11 @@ import type { FastifyInstance, FastifyRequest } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 
-import { audit as writeAudit } from '../../../platform/audit/writer.js';
-import type { WithTenant } from '../../../platform/db/tenant-context.js';
+import type { AuthzOptions } from '../../../platform/authz/guard.js';
+import type { Tx, WithTenant } from '../../../platform/db/tenant-context.js';
 import { AppError } from '../../../platform/http/problem.js';
 import type { PublicOrigins } from '../../../platform/http/public-origin.js';
+import type { JobClient } from '../../../platform/jobs/boss.js';
 import type { EmailSender } from '../../../platform/mail/email-sender.js';
 import { readOrganizationName } from '../../tenancy/index.js';
 import { reverifyLink } from '../application/dependents.js';
@@ -29,17 +30,18 @@ import {
   type IdentityDeps,
   type StaffAuditActor,
 } from '../application/identities.js';
-import {
-  renderPortalInvitationEmail,
-  renderPortalSecurityNoticeEmail,
-  type PortalSecurityNoticeKind,
-} from '../application/mail.js';
+import { renderPortalInvitationEmail } from '../application/mail.js';
+import { PORTAL_NOTICE_JOB } from '../application/notice-job.js';
+import { PortalStaffRefused } from '../application/staff-gate.js';
 
 export interface StaffRoutesDeps {
   withTenant: WithTenant;
+  auditDeny: AuthzOptions['auditDeny'];
   identities: IdentityDeps;
   email: EmailSender;
   origins: PublicOrigins;
+  /** Queues the notices in the transaction of the change. Absent: the deployment has no queue. */
+  jobs?: JobClient | undefined;
 }
 
 const PatientParams = z.strictObject({ id: z.uuid() });
@@ -58,8 +60,14 @@ const INVITATION_DAYS = 7;
  *
  * A change that gives somebody access (a representative for a minor) or moves an account to another
  * mailbox sends a notice with no link to the address that would otherwise never find out, and the
- * trail records that it did (JD-S5 R1-A-C1). A notice that cannot be sent is logged and does not
- * undo the change; the missing entry of the trail is what shows it.
+ * trail records that it did (JD-S5 R1-A-C1). The notice is queued in the transaction of the change
+ * (an outbox: both exist or neither does) and a worker sends it (JD-S5 R2-2); the entry of the trail
+ * is written when it is sent, so its absence is what shows a notice that did not go out.
+ *
+ * What gives somebody access to a patient is for an owner or an administrator for seven days after
+ * the e-mail or the birth date of the record changed, and always for a representative of a patient
+ * whose record has no e-mail to tell (JD-S5 R2-2): the answer is `portal_recent_identity_change` or
+ * `portal_owner_or_admin_required`, and the refusal is in the trail.
  */
 export function staffRoutes(deps: StaffRoutesDeps) {
   return (app: FastifyInstance): void => {
@@ -80,45 +88,69 @@ export function staffRoutes(deps: StaffRoutesDeps) {
       return host.tenant;
     }
 
-    /** Tells an address about a change to the access, and writes in the trail that it did. */
-    async function notify(
+    /** An owner or an administrator may do what reception may not (JD-S5 R2-2). */
+    function ownerOrAdminOf(actor: NonNullable<FastifyRequest['actor']>): boolean {
+      return actor.roles.includes('owner') || actor.roles.includes('admin');
+    }
+
+    /**
+     * Runs the change; when the gate of the staff refuses it, writes the refusal in the trail on a
+     * connection of its own (the transaction of the change rolled back) and answers with its code.
+     */
+    async function gated<T>(request: FastifyRequest, work: () => Promise<T>): Promise<T> {
+      try {
+        return await work();
+      } catch (error) {
+        if (!(error instanceof PortalStaffRefused)) throw error;
+        const actor = request.actor;
+        if (actor) {
+          await deps
+            .auditDeny(actor.tenantId, {
+              action: 'access.denied',
+              actor: request.auditActor,
+              resourceType: 'patient',
+              resourceId: error.patientId,
+              patientId: error.patientId,
+              reason: error.code,
+              metadata: {},
+            })
+            .catch(() => undefined);
+        }
+        throw new AppError(error.code);
+      }
+    }
+
+    /**
+     * Queues the notice of a change to the access in the transaction that made it. Without a queue
+     * nothing can be promised: the change stands and the log says no notice was queued.
+     */
+    async function queueNotice(
+      tx: Tx,
       request: FastifyRequest,
       input: {
-        kind: PortalSecurityNoticeKind;
+        kind: 'email_changed' | 'representative_added';
         to: string;
         resourceId: string;
         patientId?: string;
       },
     ): Promise<void> {
       const { actor, audit } = staffOf(request);
-      const tenant = tenantOfRequest(request);
-      try {
-        const organizationName = await deps.withTenant(
-          { tenantId: actor.tenantId, userId: actor.userId },
-          (tx) => readOrganizationName(tx),
-        );
-        await deps.email.send({
-          to: input.to,
-          tenant: { id: tenant.id, isDemo: tenant.isDemo },
-          ...renderPortalSecurityNoticeEmail({ organizationName, kind: input.kind }),
-        });
-        await deps.withTenant({ tenantId: actor.tenantId, userId: actor.userId }, (tx) =>
-          writeAudit(tx, {
-            action: 'portal.notice.sent',
-            outcome: 'allow',
-            actor: audit,
-            resourceType: 'portal_identity',
-            resourceId: input.resourceId,
-            ...(input.patientId === undefined ? {} : { patientId: input.patientId }),
-            metadata: { kind: input.kind },
-          }),
-        );
-      } catch (error) {
+      if (!deps.jobs) {
         request.log.error(
-          { kind: input.kind, code: error instanceof Error ? error.name : 'unknown' },
-          'a notice about a change to the portal access could not be sent',
+          { kind: input.kind },
+          'a notice about a change to the portal access could not be queued: no queue',
         );
+        return;
       }
+      await deps.jobs.enqueue(tx, PORTAL_NOTICE_JOB, {
+        tenantId: actor.tenantId,
+        kind: input.kind,
+        to: input.to,
+        resourceId: input.resourceId,
+        ...(input.patientId === undefined ? {} : { patientId: input.patientId }),
+        actorUserId: actor.userId,
+        actingRole: audit.actingRole,
+      });
     }
 
     typed.get(
@@ -162,15 +194,25 @@ export function staffRoutes(deps: StaffRoutesDeps) {
                 relation: request.body.relation,
                 verificationNote: request.body.verificationNote,
               };
-        const prepared = await deps.withTenant(
-          { tenantId: actor.tenantId, userId: actor.userId },
-          async (tx) => ({
-            ...(await prepareInvitation(tx, deps.identities, {
+        const prepared = await gated(request, () =>
+          deps.withTenant({ tenantId: actor.tenantId, userId: actor.userId }, async (tx) => {
+            const made = await prepareInvitation(tx, deps.identities, {
               actor: audit,
+              ownerOrAdmin: ownerOrAdminOf(actor),
               patientId: request.params.id,
               ...(representative ? { representative } : {}),
-            })),
-            organizationName: await readOrganizationName(tx),
+            });
+            // A representative is given access to a minor's record: the address on that record is
+            // told, in the same transaction.
+            if (representative && made.recordEmail !== null) {
+              await queueNotice(tx, request, {
+                kind: 'representative_added',
+                to: made.recordEmail,
+                resourceId: made.identity.id,
+                patientId: request.params.id,
+              });
+            }
+            return { ...made, organizationName: await readOrganizationName(tx) };
           }),
         );
         // The link goes by email only, after the invitation is safely stored. The answer never
@@ -184,15 +226,6 @@ export function staffRoutes(deps: StaffRoutesDeps) {
             expiresInDays: INVITATION_DAYS,
           }),
         });
-        // A representative is given access to a minor's record: the address on that record is told.
-        if (representative && prepared.recordEmail !== null) {
-          await notify(request, {
-            kind: 'representative_added',
-            to: prepared.recordEmail,
-            resourceId: prepared.identity.id,
-            patientId: request.params.id,
-          });
-        }
         return reply.code(201).send({ identity: prepared.identity });
       },
     );
@@ -214,26 +247,28 @@ export function staffRoutes(deps: StaffRoutesDeps) {
       async (request, reply) => {
         const { actor, audit } = staffOf(request);
         const tenant = tenantOfRequest(request);
-        const linked = await deps.withTenant(
-          { tenantId: actor.tenantId, userId: actor.userId },
-          (tx) =>
-            linkDependent(tx, deps.identities, {
+        const linked = await gated(request, () =>
+          deps.withTenant({ tenantId: actor.tenantId, userId: actor.userId }, async (tx) => {
+            const made = await linkDependent(tx, deps.identities, {
               actor: audit,
+              ownerOrAdmin: ownerOrAdminOf(actor),
               country: tenant.country,
               identityId: request.params.id,
               patientId: request.body.patientId,
               relation: request.body.relation,
               verificationNote: request.body.verificationNote,
-            }),
+            });
+            if (made.recordEmail !== null) {
+              await queueNotice(tx, request, {
+                kind: 'representative_added',
+                to: made.recordEmail,
+                resourceId: request.params.id,
+                patientId: request.body.patientId,
+              });
+            }
+            return made;
+          }),
         );
-        if (linked.recordEmail !== null) {
-          await notify(request, {
-            kind: 'representative_added',
-            to: linked.recordEmail,
-            resourceId: request.params.id,
-            patientId: request.body.patientId,
-          });
-        }
         return reply.code(201).send({ identity: linked.identity });
       },
     );
@@ -306,16 +341,16 @@ export function staffRoutes(deps: StaffRoutesDeps) {
       },
       async (request) => {
         const { actor, audit } = staffOf(request);
-        const identity = await deps.withTenant(
-          { tenantId: actor.tenantId, userId: actor.userId },
-          async (tx) => {
+        const identity = await gated(request, () =>
+          deps.withTenant({ tenantId: actor.tenantId, userId: actor.userId }, async (tx) => {
             const identityId = await reverifyLink(tx, deps.identities, {
               actor: audit,
+              ownerOrAdmin: ownerOrAdminOf(actor),
               linkId: request.params.id,
               verificationNote: request.body.verificationNote,
             });
             return identityDto(tx, identityId);
-          },
+          }),
         );
         return { identity };
       },
@@ -340,21 +375,24 @@ export function staffRoutes(deps: StaffRoutesDeps) {
         const { actor, audit } = staffOf(request);
         const changed = await deps.withTenant(
           { tenantId: actor.tenantId, userId: actor.userId },
-          (tx) =>
-            changeIdentityEmail(tx, deps.identities, {
+          async (tx) => {
+            const made = await changeIdentityEmail(tx, deps.identities, {
               actor: audit,
               identityId: request.params.id,
               email: request.body.email,
-            }),
+            });
+            // The mailbox that held the account is told, without a link (it cannot be used to
+            // answer), and the notice is queued with the change, not after it.
+            if (made.previousEmail !== null) {
+              await queueNotice(tx, request, {
+                kind: 'email_changed',
+                to: made.previousEmail,
+                resourceId: request.params.id,
+              });
+            }
+            return made;
+          },
         );
-        // The mailbox that held the account is told, without a link: it cannot be used to answer.
-        if (changed.previousEmail !== null) {
-          await notify(request, {
-            kind: 'email_changed',
-            to: changed.previousEmail,
-            resourceId: request.params.id,
-          });
-        }
         return { identity: changed.identity };
       },
     );

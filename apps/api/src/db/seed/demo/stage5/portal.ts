@@ -65,6 +65,7 @@ export async function seedPortalAccess(
   const self = await context.withTenant(contextOf(context, people.reception), async (tx) => {
     const prepared = await prepareInvitation(tx, deps, {
       actor: reception,
+      ownerOrAdmin: true,
       patientId: patients.valentina.id,
     });
     const outcome = await activateInvitation(tx, deps, {
@@ -91,6 +92,8 @@ export async function seedPortalAccess(
   const mother = await context.withTenant(contextOf(context, people.reception), async (tx) => {
     const prepared = await prepareInvitation(tx, deps, {
       actor: reception,
+      // The seed writes the story as the organization does: the gate of the staff is for requests.
+      ownerOrAdmin: true,
       patientId: patients.ian.id,
       representative,
     });

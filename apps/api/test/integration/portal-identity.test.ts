@@ -248,7 +248,7 @@ describe('a parent with two children', () => {
     expect((await world.activate(world.activationPathSentTo(parentEmail))).done.statusCode).toBe(
       200,
     );
-    const linked = await world.api.post(`/portal-identities/${invited.id}/links`, world.reception, {
+    const linked = await world.api.post(`/portal-identities/${invited.id}/links`, world.admin, {
       patientId: child2,
       relation: 'mother',
       verificationNote: note,
@@ -283,11 +283,11 @@ describe('a parent with two children', () => {
     });
     await world.activate(world.activationPathSentTo(email));
 
-    const noNote = await world.api.post(`/portal-identities/${invited.id}/links`, world.reception, {
+    const noNote = await world.api.post(`/portal-identities/${invited.id}/links`, world.admin, {
       patientId: sibling,
       relation: 'father',
     });
-    const twice = await world.api.post(`/portal-identities/${invited.id}/links`, world.reception, {
+    const twice = await world.api.post(`/portal-identities/${invited.id}/links`, world.admin, {
       patientId: child,
       relation: 'father',
       verificationNote: 'Verificado en persona con la partida de nacimiento.',
@@ -482,7 +482,7 @@ describe('ending access', () => {
       verificationNote: note,
     });
     await world.activate(world.activationPathSentTo(email));
-    const both = await world.api.post(`/portal-identities/${invited.id}/links`, world.reception, {
+    const both = await world.api.post(`/portal-identities/${invited.id}/links`, world.admin, {
       patientId: child2,
       relation: 'mother',
       verificationNote: note,

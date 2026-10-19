@@ -4,6 +4,7 @@ import {
   renderPortalCodeEmail,
   renderPortalInvitationEmail,
   renderPortalNoticeEmail,
+  renderPortalSecurityNoticeEmail,
 } from './mail.js';
 
 /** Words that would tell a stranger reading the inbox what the visit or the file is about. */
@@ -103,4 +104,27 @@ describe('the emails of the portal', () => {
       }),
     ).toThrow(/http/);
   });
+
+  it.each([
+    [{ email: true, birthDate: false }, 'datos de contacto', 'nacimiento'],
+    [{ email: false, birthDate: true }, 'datos de nacimiento', 'contacto'],
+    [{ email: true, birthDate: true }, 'datos de contacto y de nacimiento', 'nada'],
+  ] as const)(
+    'tells the address of a record that its data changed (%j), with no link and no value (JD-S5 R2-2)',
+    (fields, said, notSaid) => {
+      const mail = renderPortalSecurityNoticeEmail({
+        organizationName: ORGANIZATION,
+        kind: 'record_changed',
+        fields,
+      });
+
+      expect(mail.subject).toBe(`Se modificaron datos de su ficha en ${ORGANIZATION}`);
+      expect(mail.text).toContain(`Se modificaron ${said} en su ficha de ${ORGANIZATION}`);
+      if (notSaid !== 'nada') expect(mail.text).not.toContain(notSaid);
+      for (const part of [mail.subject, mail.text, mail.html]) {
+        expect(part).not.toMatch(/https?:/);
+        expect(part).not.toMatch(CLINICAL_WORDS);
+      }
+    },
+  );
 });
