@@ -35,7 +35,7 @@ export const ENABLED_STAGE = 2;
  * Entries of the enabled stage whose screens are not built yet. They stay out of the navigation
  * (no dead links) and leave this list as their slices land.
  */
-const NOT_BUILT_YET: ReadonlySet<NavId> = new Set(['drafts', 'prescriptions']);
+const NOT_BUILT_YET: ReadonlySet<NavId> = new Set(['drafts']);
 
 export type NavId =
   | 'home'

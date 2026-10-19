@@ -1,0 +1,7 @@
+{
+  "title": "Consentimientos",
+  "nav": "Consentimientos",
+  "stub.description": "Aquí podrá administrar las plantillas de consentimiento informado.",
+  "patientTab": "Consentimientos",
+  "patientTab.stub": "Los consentimientos de este paciente aparecerán aquí."
+}

@@ -1,0 +1,6 @@
+{
+  "title": "Recetas",
+  "stub.description": "Aquí podrá emitir y consultar las recetas electrónicas de sus pacientes.",
+  "patientTab": "Recetas",
+  "patientTab.stub": "Las recetas de este paciente aparecerán aquí."
+}
