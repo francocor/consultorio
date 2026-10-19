@@ -32,13 +32,28 @@ You do not write these again; the real adapter plugs into them.
   get, in a commit of its own on a connection of its own (`markIntent`); only a definite answer
   (issued, rejected, or "nothing was issued") clears the mark. If the process dies after the authority
   answered, or the outcome is unknown, the next attempt finds the mark and asks `findIssued` for that
-  number BEFORE it sends anything: a voucher whose type, point of sale, number, total and date match
-  the invoice is adopted and `issue` is not called; one that does not match parks the invoice for a
-  person; no answer means nothing is sent. The transaction of the job stays open across the call (it
-  holds only the advisory lock of the invoice, no row lock): the mark is what survives a crash, and
+  number BEFORE it sends anything: a voucher whose type, point of sale, number, total, date, issuer
+  CUIT, recipient document and (for a credit note) associated voucher match the invoice is adopted
+  and `issue` is not called; one that does not match parks the invoice for a person; no answer, or an
+  answer that refuses the question, means nothing is sent. The transaction of the job stays open
+  across the call (it holds only advisory locks, no row lock): the mark is what survives a crash, and
   it is committed before the call, not at its end. A voucher is never issued twice: this is the part
   to review most closely against the real service, because ARCA has no idempotency key of its own
   (see "Design points" below).
+- **One invoice of a series at a time (JD-S4 R2-1).** The number an invoice is expected to get is the
+  one after the highest the organization holds, so two invoices sent together would expect the same
+  one and could take each other's voucher for their own (same total, same day, same recipient is
+  common: a clinic with a fixed fee). Issuance is serialized per series (organization, point of sale,
+  voucher type): an attempt takes the advisory lock `afip-attempt-series|<tenant>|<point of sale>|<type>`
+  right after the lock of its invoice and keeps it to the end of its transaction, which spans the
+  call; whoever does not get it answers `skipped` and the sweeper tries again. On top of that, while
+  one invoice of the series is `awaiting_reconciliation` (its answer may have been lost) no other
+  invoice of the series is sent (the older one that waits goes first): they are put back one minute
+  and tried again after the first one was adopted, parked or replaced. A long outage therefore holds
+  the whole series, which is the point: the authority numbers by itself and nothing can be sent until
+  the unknown one is settled. When the number an invoice was expecting turns out to be the voucher
+  of another invoice of ours, the attempt asks about the numbers that follow (up to five) and judges
+  each one the same way before it sends: it sends only when the authority holds nothing there.
 - **Who the issuer is.** The invoice keeps the issuer (CUIT, business name, tax condition, address,
   start of the activity) as it was when it was requested (`invoice.issuer_snapshot`). The request to
   the authority, its fingerprint and the PDF use that snapshot, so editing the fiscal profile while an
@@ -134,8 +149,31 @@ loaded.
 
 - **No idempotency key at ARCA.** `issue` called twice must not issue twice. After a timeout the
   adapter has to ask `FECompUltimoAutorizado` and `FECompConsultar` before it sends `FECAESolicitar`
-  again, and answer the voucher it finds when its data (type, point of sale, number, total, date)
-  matches the request. The module already calls `findIssued` first; the adapter makes it true.
+  again, and answer the voucher it finds when its data matches the request. The module already calls
+  `findIssued` first; the adapter makes it true.
+- **What `findIssued` must say (JD-S4 R2-1).** The lookup the real adapter provides returns, besides
+  the number, the CAE and its expiry, ALL of: `totalCents` (`ImpTotal`), `issueDate` (`CbteFch`),
+  `issuerCuit` (the CUIT of the credential the adapter asked with: `FECompConsultar` does not repeat
+  it, so the adapter answers the CUIT it authenticated as), `buyerDocument` (`DocTipo` and `DocNro`
+  as `{ type: 'cuit' | 'dni', number }`, or `null` when the voucher has none: 99/0) and
+  `associatedVoucher` (`CbtesAsoc`: type, point of sale and number of the voucher a credit note
+  cancels, or `null`). The module adopts a voucher it did not just request only when every one of them
+  matches its invoice; a field the adapter leaves out (`undefined`) counts as a MISMATCH and parks the
+  invoice instead of adopting. Two invoices with the same fee on the same day differ only in these.
+  The adapter must also answer a refused or failed lookup with `retryable` or `rejected`, never with
+  `null`: `null` means "nothing is issued at that number" and is the only answer that lets the module
+  send. A `rejected` lookup (bad token, wrong environment) is treated as "cannot tell": nothing is
+  sent and the mark stays. `adapters/invoice-issuer.contract.ts` states all of this and the real
+  adapter must pass it.
+- **Serialization is per series, and it is the module's.** The adapter does not need a lock of its
+  own for numbering, but it must not assume parallel `issue` calls for one point of sale and type: the
+  module sends one at a time per series (see "One invoice of a series at a time").
+- **The CUIT of the credential is the CUIT of the invoice.** The request names the CUIT the invoice
+  was requested with (`issuer_snapshot`); the credential of the real adapter follows the live fiscal
+  profile. If the organization changed its CUIT, an invoice that waits is parked (`needs_attention`,
+  worklist reason `issuer_mismatch`) and a credit note over an older invoice is refused
+  (`invoice_issuer_mismatch`) instead of signing for one CUIT and naming another. Retried invoices
+  take the live issuer, so they are not affected.
 - **Numbers are the authority's.** A manual voucher (made in ARCA's web tool during an outage) takes a
   number in the same series. The module registers it as `manual` and refuses a collision. When the
   authority answers an invoice with a number (or a CAE) that is already one of ours, the invoice is
@@ -154,6 +192,26 @@ loaded.
   In practice it cannot happen through the product: a manual entry that replaces an invoice takes the
   advisory lock of the attempts (`conflict` if an attempt holds it), and refuses an invoice that is
   `awaiting_reconciliation` (`invoice_awaiting_reconciliation`) until the authority is asked.
+- **A manual voucher in place of an invoice whose outcome is unknown (JD-S4 R2-2).** During a real
+  outage every attempt ends in an unknown outcome (a timeout), the mark stays, and the invoice cannot
+  be reconciled until the service is back. The fallback that exists for that case would then be
+  closed. The owner or an admin can register the manual voucher anyway with
+  `acknowledgeUnknownOutcome: true` (the web dialog shows the warning and a confirmation box after
+  the server answered `invoice_awaiting_reconciliation`). The replacement writes
+  `invoice.replaced_unresolved` (type, point of sale, expected number), closes the invoice as
+  rejected and opens an `invoice_attention` item (reason `replaced_unresolved`) asking a person to
+  look in ARCA for a voucher at that number: if it exists the organization holds two vouchers for one
+  service and one is cancelled with a credit note in ARCA. The product does not look for it by itself
+  afterwards (a closed invoice has no mark). An attempt that finds the mark after a definite "down"
+  (the authority was asked, held nothing, and then refused the request for certain) clears it, and
+  the replacement then needs no acknowledgement. A manual voucher may replace only the same invoice:
+  not a credit note, the same voucher type, total, lines, recipient and recipient document
+  (`invoice_replacement_mismatch`).
+- **The connection of the mark.** The mark is committed on a second connection while the attempt
+  holds its own, so the runtime pool is opened with a connection timeout (10 seconds) and the mark
+  gives up after a lock timeout (`markLockTimeoutMs`, 5 seconds): a pool full of attempts fails and
+  the sweeper retries, it does not wait on itself. Size the pool for the number of attempts the worker
+  runs at once plus one connection each.
 - **Rate limits and timeouts.** Keep a timeout shorter than the job lock so a hung call becomes an
   unknown outcome, not a stuck job.
 
@@ -180,7 +238,16 @@ loaded.
   `local_afip_voucher` and `local_afip_request` stand in for the tax authority, which is outside
   every organization; they carry a `tenant_ref` (an opaque reference, not a foreign key) that keeps
   the series apart, and nothing reads them in production (the guard refuses the simulator there).
-  Do not grant them to a role that serves requests of an organization.
+  Do not grant them to a role that serves requests of an organization. The console lists the
+  vouchers of every organization, each with its `tenantRef`, or only one organization's with
+  `?tenantRef=<organization id>`.
+- **Simulator rows from before migration 0494 and 0497 are incomplete (simulator only).** The
+  `local_afip_*` rows written before 0494 have `tenant_ref = ''`, so an invoice of a deployment that
+  was still in flight when 0494 arrived is looked up under another reference and could be issued once
+  more by the simulator; and the vouchers from before 0497 have no buyer document nor associated
+  voucher (their lookup says "no document" and "not a credit note"). Neither exists in production
+  (the guard refuses the simulator there). Drain the pending invoices before a deploy that crosses
+  those migrations, or reset the simulator from the console.
 
 ## Rollback
 
