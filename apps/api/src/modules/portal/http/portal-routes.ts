@@ -3,6 +3,7 @@ import {
   PortalAppointmentsResponse,
   PortalDocumentsResponse,
   PortalMeResponse,
+  PortalRepresentativesResponse,
   PortalSubjectRequest,
 } from '@consultorio/contracts';
 import type { FastifyInstance, FastifyRequest } from 'fastify';
@@ -21,7 +22,9 @@ import {
   readAppointments,
   type AppointmentDeps,
 } from '../application/appointments.js';
+import { authorizeByAdult, listRepresentatives, revokeByAdult } from '../application/dependents.js';
 import { listSharedDocuments } from '../application/document-shares.js';
+import type { IdentityDeps } from '../application/identities.js';
 import type { PortalSessions } from '../application/sessions.js';
 import {
   readMe,
@@ -36,6 +39,8 @@ export interface PortalRoutesDeps {
   sessions: PortalSessions;
   auditDeny: AuthzOptions['auditDeny'];
   appointments: AppointmentDeps;
+  /** What ending a link needs: the sessions of the representative end with it. */
+  identities: IdentityDeps;
   /** What the portal can show today (a part with no module behind it shows its empty state). */
   capabilities: () => PortalMeResponse['capabilities'];
 }
@@ -178,6 +183,79 @@ export function portalRoutes(deps: PortalRoutesDeps) {
           });
           return { documents };
         });
+      },
+    );
+
+    // Dependents ----------------------------------------------------------------------------------
+
+    typed.get(
+      '/portal/representatives',
+      {
+        config: { readOnly: 'read', auth: 'portal', portalPermission: 'portal.self.read' },
+        schema: { querystring: NoQuery, response: { 200: PortalRepresentativesResponse } },
+      },
+      async (request) => {
+        const { actor } = portalCaller(request);
+        return deps.withPortalSubject(actor, async (tx, subject) => ({
+          representatives: await listRepresentatives(tx, subject),
+        }));
+      },
+    );
+
+    const decide = async (request: FastifyRequest, action: 'authorize' | 'revoke') => {
+      const { actor } = portalCaller(request);
+      const { id } = request.params as { id: string };
+      const outcome = await deps.withPortalSubject(actor, async (tx, subject) => ({
+        subject,
+        result:
+          action === 'authorize'
+            ? await authorizeByAdult(tx, { subject, linkId: id, actor: request.auditActor })
+            : await revokeByAdult(tx, deps.identities, {
+                subject,
+                linkId: id,
+                actor: request.auditActor,
+              }),
+      }));
+      if (outcome.result === 'unknown') {
+        await refuseUnknown(deps.auditDeny, request, {
+          subject: outcome.subject,
+          resourceType: 'portal_link',
+          resourceId: id,
+        });
+      }
+    };
+
+    typed.post(
+      '/portal/links/:id/authorize',
+      {
+        config: {
+          readOnly: 'write',
+          auth: 'portal',
+          portalPermission: 'portal.profile.write',
+          audits: ['portal.identity.linked', 'portal.denied'],
+        },
+        schema: { params: IdParams, body: z.strictObject({}).optional() },
+      },
+      async (request, reply) => {
+        await decide(request, 'authorize');
+        return reply.code(204).send();
+      },
+    );
+
+    typed.post(
+      '/portal/links/:id/revoke',
+      {
+        config: {
+          readOnly: 'write',
+          auth: 'portal',
+          portalPermission: 'portal.profile.write',
+          audits: ['portal.identity.deactivated', 'portal.denied'],
+        },
+        schema: { params: IdParams, body: z.strictObject({}).optional() },
+      },
+      async (request, reply) => {
+        await decide(request, 'revoke');
+        return reply.code(204).send();
       },
     );
 

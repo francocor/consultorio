@@ -1,4 +1,4 @@
-import type { PortalInvoicesResponse } from '@consultorio/contracts';
+import type { PortalDownloadLinkResponse, PortalInvoicesResponse } from '@consultorio/contracts';
 import { and, desc, eq } from 'drizzle-orm';
 import { afterAll, beforeAll, describe, expect, inject, it } from 'vitest';
 
@@ -95,5 +95,42 @@ describe('the invoices of the patient', () => {
       resourceType: 'invoice',
     });
     expect(row?.metadata).toMatchObject({ scope: 'invoices', count: 1 });
+  });
+});
+
+describe('the PDF of an invoice', () => {
+  it("is downloaded through a link of the portal, and only the patient's own invoice has one", async () => {
+    await world.runIssue();
+    const mine = await world.charge();
+    const theirs = await world.charge();
+    const own = await world.issueInvoiceOf(mine);
+    const other = await world.issueInvoiceOf(theirs);
+    await world.runDocuments();
+    const session = await openPortalSession(world, mine.patientId);
+
+    const link = await session.post(`/portal/invoices/${own.id}/download-link`);
+    expect(link.statusCode, link.body).toBe(200);
+    const file = await session.get(link.json<PortalDownloadLinkResponse>().url);
+
+    expect(file.statusCode, file.body).toBe(200);
+    expect(file.headers['content-type']).toBe('application/pdf');
+    expect(file.rawPayload.subarray(0, 4).toString()).toBe('%PDF');
+    expect(String(file.headers['content-disposition'])).toMatch(
+      /^attachment; filename="factura-[a-c]-\d{4}-\d{8}\.pdf"/,
+    );
+    // The invoice of another patient answers as if it did not exist.
+    const foreign = await session.post(`/portal/invoices/${other.id}/download-link`);
+    expect(foreign.statusCode).toBe(404);
+  });
+
+  it('is not given before the document exists', async () => {
+    await world.runIssue();
+    const charge = await world.charge();
+    const invoice = await world.issueInvoiceOf(charge);
+    const session = await openPortalSession(world, charge.patientId);
+    // The PDF is rendered by a job that has not run for this invoice yet.
+    const response = await session.post(`/portal/invoices/${invoice.id}/download-link`);
+
+    expect(response.statusCode).toBe(404);
   });
 });

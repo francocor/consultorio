@@ -1,4 +1,5 @@
 import {
+  AuthorizePortalLinkRequest,
   ChangePortalEmailRequest,
   CreatePortalLinkRequest,
   PatientPortalResponse,
@@ -14,9 +15,11 @@ import { AppError } from '../../../platform/http/problem.js';
 import type { PublicOrigins } from '../../../platform/http/public-origin.js';
 import type { EmailSender } from '../../../platform/mail/email-sender.js';
 import { readOrganizationName } from '../../tenancy/index.js';
+import { reverifyLink } from '../application/dependents.js';
 import {
   changeIdentityEmail,
   deactivateIdentity,
+  identityDto,
   linkDependent,
   listPortalOfPatient,
   prepareInvitation,
@@ -212,6 +215,37 @@ export function staffRoutes(deps: StaffRoutesDeps) {
         const identity = await deps.withTenant(
           { tenantId: actor.tenantId, userId: actor.userId },
           (tx) => revokeLink(tx, deps.identities, { actor: audit, linkId: request.params.id }),
+        );
+        return { identity };
+      },
+    );
+
+    typed.post(
+      '/portal-links/:id/authorize',
+      {
+        config: {
+          readOnly: 'write',
+          permission: 'portal.manage',
+          audits: ['portal.identity.linked'],
+        },
+        schema: {
+          params: IdParams,
+          body: AuthorizePortalLinkRequest,
+          response: { 200: PortalIdentityResponse },
+        },
+      },
+      async (request) => {
+        const { actor, audit } = staffOf(request);
+        const identity = await deps.withTenant(
+          { tenantId: actor.tenantId, userId: actor.userId },
+          async (tx) => {
+            const identityId = await reverifyLink(tx, {
+              actor: audit,
+              linkId: request.params.id,
+              verificationNote: request.body.verificationNote,
+            });
+            return identityDto(tx, identityId);
+          },
         );
         return { identity };
       },

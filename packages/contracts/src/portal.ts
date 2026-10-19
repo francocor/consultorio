@@ -254,6 +254,39 @@ export const DocumentPortalShareResponse = z.strictObject({
 });
 export type DocumentPortalShareResponse = z.infer<typeof DocumentPortalShareResponse>;
 
+// Dependents ---------------------------------------------------------------------------------------
+
+/** Somebody who represents the patient, as the patient (now an adult) sees them. */
+export const PortalRepresentativeDto = z.strictObject({
+  id: Id,
+  relation: z.enum(PORTAL_RELATIONS),
+  /** `suspended` is a representative whose link waits for the adult to authorize it. */
+  status: z.enum(['active', 'suspended']),
+  /** The first letter and the domain, so the patient can tell who it is. */
+  maskedEmail: z.string(),
+  majorityReviewOn: z.iso.date().nullable(),
+});
+export type PortalRepresentativeDto = z.infer<typeof PortalRepresentativeDto>;
+
+export const PortalRepresentativesResponse = z.strictObject({
+  representatives: z.array(PortalRepresentativeDto),
+});
+export type PortalRepresentativesResponse = z.infer<typeof PortalRepresentativesResponse>;
+
+/** The organization authorizes a suspended representative again after verifying them. */
+export const AuthorizePortalLinkRequest = z.strictObject({ verificationNote: VerificationNote });
+export type AuthorizePortalLinkRequest = z.infer<typeof AuthorizePortalLinkRequest>;
+
+// Downloads ----------------------------------------------------------------------------------------
+
+/** A link to one file, for this session only: five minutes, one use. */
+export const PortalDownloadLinkResponse = z.strictObject({
+  /** An address of the portal (`/portal/files/<token>`), never of the storage. */
+  url: z.string(),
+  expiresAt: Instant,
+});
+export type PortalDownloadLinkResponse = z.infer<typeof PortalDownloadLinkResponse>;
+
 // Invoices and receipts ---------------------------------------------------------------------------
 
 /**
@@ -466,4 +499,6 @@ export const PORTAL_RESPONSE_SCHEMAS = {
   PortalProfileResponse,
   PortalRequestResponse,
   PortalSessionsResponse,
+  PortalRepresentativesResponse,
+  PortalDownloadLinkResponse,
 } as const;

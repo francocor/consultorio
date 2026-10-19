@@ -15,7 +15,7 @@ export const PORTAL_SCENARIOS: Record<(typeof PORTAL_AUDIT_ACTIONS)[number], Aud
   'portal.signin.success': t('portal-signin.test.ts'),
   'portal.signin.failure': t('portal-signin.test.ts'),
   'portal.read': t('portal-documents.test.ts'),
-  'portal.download': { pending: 'S5.09 (task 5.35): a session-bound download' },
+  'portal.download': t('portal-downloads.test.ts'),
   'portal.profile.changed': t('portal-sections.test.ts'),
   'portal.denied': t('portal-isolation.test.ts'),
 };

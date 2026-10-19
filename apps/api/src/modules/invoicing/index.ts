@@ -33,6 +33,9 @@ export { createInvoicePdfJob, INVOICE_PDF_JOB } from './jobs/invoice-pdf.js';
 export { createInvoiceDeliverJob, INVOICE_DELIVER_JOB } from './jobs/invoice-deliver.js';
 // The patient portal (Stage 5): the invoices addressed to one patient.
 export { listInvoicesForPatient } from './application/patient-invoices.js';
+// ... and the PDF of one of them, for the download of the portal (task 5.35).
+export { findInvoiceFileForPatient } from './application/patient-invoice-file.js';
+export type { PatientInvoiceFile } from './application/patient-invoice-file.js';
 // Reports (S4.14): the lines of the issued and registered vouchers of a period, and how to add them up.
 export { readInvoicedLines } from './application/invoiced-lines.js';
 export type { InvoicedLinesFilter } from './application/invoiced-lines.js';

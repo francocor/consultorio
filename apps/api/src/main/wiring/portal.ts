@@ -1,4 +1,5 @@
 import {
+  createMajorityReviewJob,
   createPortal,
   createPortalCodeSendJob,
   type PortalConsentPort,
@@ -19,6 +20,9 @@ import type { ModuleWiring } from './types.js';
  * below, for example `createPortalWiring({ consent: createPortalConsentPort(...), prescriptions:
  * createPortalPrescriptionPort(...) })`. Nothing else of the portal changes.
  */
+/** The review of the dependents who reached the age of majority runs once a day. */
+const MAJORITY_REVIEW_EVERY_MS = 24 * 3_600_000;
+
 export interface PortalPorts {
   consent?: PortalConsentPort | undefined;
   prescriptions?: PortalPrescriptionPort | undefined;
@@ -39,11 +43,14 @@ export function createPortalWiring(ports: PortalPorts = {}): ModuleWiring {
     // process holds a queue client.
     needsJobs: true,
     worker: (context) => {
+      const clock = context.clock ? { clock: context.clock } : {};
       // The tenant-routed sender: a demo organization's codes never reach the real provider.
       const email = createTenantRoutedEmail(context.adapters);
       return {
-        jobs: () => [
-          createPortalCodeSendJob({ email, ...(context.clock ? { clock: context.clock } : {}) }),
+        jobs: () => [createPortalCodeSendJob({ email, ...clock })],
+        // Once a day, for every organization: the dependents who turned 18 stop being represented.
+        tenantJobs: [
+          { definition: createMajorityReviewJob(clock), everyMs: MAJORITY_REVIEW_EVERY_MS },
         ],
       };
     },
@@ -60,6 +67,7 @@ export function createPortalWiring(ports: PortalPorts = {}): ModuleWiring {
         portalFileResources: context.portalFileResources,
         appointmentEvents: context.appointmentEvents,
         videoJoin: context.videoJoin.resolver,
+        storage: context.storage,
         consent: ports.consent,
         prescriptions: ports.prescriptions,
         ...(context.clock ? { clock: context.clock } : {}),

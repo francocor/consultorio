@@ -101,7 +101,7 @@ function toRelation(value: string | null): PortalRelation | null {
     : null;
 }
 
-async function identityDto(tx: Tx, id: string): Promise<PortalIdentityDto> {
+export async function identityDto(tx: Tx, id: string): Promise<PortalIdentityDto> {
   const rows = await tx.select().from(portalIdentity).where(eq(portalIdentity.id, id));
   const [dto] = await toDtos(tx, rows);
   if (!dto) throw new AppError('not_found');

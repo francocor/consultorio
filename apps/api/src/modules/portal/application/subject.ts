@@ -58,6 +58,18 @@ export async function resolveSubject(tx: Tx, actor: PortalActor): Promise<Portal
   };
 }
 
+/**
+ * Tells the database whose request this is, for the functions that read what a policy hides from a
+ * patient's session (the documents shared with them). They answer only for this link and this
+ * identity; with nothing bound they answer nothing.
+ */
+export async function bindSubject(tx: Tx, subject: PortalSubject): Promise<void> {
+  await tx.execute(
+    sql`select set_config('app.portal_link_id', ${subject.linkId}, true),
+               set_config('app.portal_identity_id', ${subject.identityId}, true)`,
+  );
+}
+
 export type WithPortalSubject = <T>(
   actor: PortalActor,
   work: (tx: Tx, subject: PortalSubject) => Promise<T>,
@@ -73,12 +85,7 @@ export function createWithPortalSubject(withTenant: WithTenant): WithPortalSubje
   return (actor, work) =>
     withTenant({ tenantId: actor.tenantId, userId: SYSTEM_USER_ID }, async (tx) => {
       const subject = await resolveSubject(tx, actor);
-      // The functions of the database that read what a policy hides from a patient's session
-      // (the documents shared with them) answer only for this link and this identity.
-      await tx.execute(
-        sql`select set_config('app.portal_link_id', ${subject.linkId}, true),
-                   set_config('app.portal_identity_id', ${subject.identityId}, true)`,
-      );
+      await bindSubject(tx, subject);
       return work(tx, subject);
     });
 }

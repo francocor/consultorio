@@ -21,6 +21,7 @@ import type { RateLimitStore } from '../../platform/http/rate-limit.js';
 import type { JobClient } from '../../platform/jobs/boss.js';
 import type { EmailSender } from '../../platform/mail/email-sender.js';
 import { registerTokenHandler } from '../../platform/public/token-router.js';
+import type { ObjectStorage } from '../../platform/storage/object-storage.js';
 import { createActionTokens } from '../../platform/tokens/index.js';
 import type { VideoJoinRegistry } from '../notifications/index.js';
 import type { ExportRegistry } from '../tenancy/index.js';
@@ -28,6 +29,7 @@ import type { ExportRegistry } from '../tenancy/index.js';
 import { createActivationHandler } from './application/activation-handler.js';
 import { PORTAL_CODE_JOB } from './application/codes.js';
 import { majorityAgeOf } from './application/country.js';
+import { createPortalFileResource } from './application/downloads.js';
 import { exportPortal } from './application/export-contributor.js';
 import type { IdentityDeps } from './application/identities.js';
 import type { PortalConsentPort, PortalPrescriptionPort } from './application/ports.js';
@@ -35,6 +37,7 @@ import { createPortalSessions } from './application/sessions.js';
 import type { SignInDeps } from './application/sign-in.js';
 import { createWithPortalSubject } from './application/subject.js';
 import { documentRoutes } from './http/document-routes.js';
+import { downloadRoutes } from './http/download-routes.js';
 import { portalRoutes } from './http/portal-routes.js';
 import { publicRoutes } from './http/public-routes.js';
 import { sectionRoutes } from './http/section-routes.js';
@@ -42,6 +45,16 @@ import { sessionRoutes } from './http/session-routes.js';
 import { staffRoutes } from './http/staff-routes.js';
 
 export { createPortalCodeSendJob } from './application/code-job.js';
+export { createMajorityReviewJob, MAJORITY_REVIEW_JOB } from './application/majority-job.js';
+// The notices of the portal, rendered. The consent module sends "you have a document to sign" with
+// `renderPortalNoticeEmail({ kind: 'consent_request' })`: email only, no title, a link to the portal.
+export {
+  renderPortalCodeEmail,
+  renderPortalInvitationEmail,
+  renderPortalNoticeEmail,
+  renderPortalRequestNoticeEmail,
+} from './application/mail.js';
+export type { PortalNoticeKind } from './application/mail.js';
 export { PORTAL_CODE_JOB };
 export type {
   PortalCall,
@@ -78,6 +91,8 @@ export interface PortalOptions {
   appointmentEvents?: AppointmentEvents | undefined;
   /** The address of a video appointment, from teleconsultation (through notifications' registry). */
   videoJoin?: VideoJoinRegistry['resolver'] | undefined;
+  /** Where the files are. Absent when no bucket is configured: the downloads answer "unavailable". */
+  storage?: ObjectStorage | undefined;
   /**
    * The consent module's door for the portal: list, read the text, sign, revoke and the signed
    * document. Absent until the integrator wires it (`main/wiring/portal.ts`): the section is then an
@@ -145,6 +160,7 @@ export function createPortal(options: PortalOptions): Portal {
     withPortalSubject,
     sessions: identities.sessions,
     auditDeny: options.auditDeny,
+    identities,
     appointments: {
       keys: options.keys,
       events: options.appointmentEvents,
@@ -155,6 +171,18 @@ export function createPortal(options: PortalOptions): Portal {
       consents: options.consent !== undefined,
       prescriptions: options.prescriptions !== undefined,
     }),
+  });
+  // The portal's door to files: ONE resource for the kind `document_download`, which dispatches on
+  // what the link was issued for (a shared document, an invoice, a prescription, a consent).
+  const downloads = { tokens, consent: options.consent, prescriptions: options.prescriptions };
+  options.portalFileResources.register(createPortalFileResource(downloads));
+  const files = downloadRoutes({
+    withTenant: options.withTenant,
+    withPortalSubject,
+    auditDeny: options.auditDeny,
+    downloads,
+    registry: options.portalFileResources,
+    storage: options.storage,
   });
   const sections = sectionRoutes({
     withPortalSubject,
@@ -199,6 +227,7 @@ export function createPortal(options: PortalOptions): Portal {
       sessions(app);
       portal(app);
       sections(app);
+      files(app);
     },
   };
 }
