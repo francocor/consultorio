@@ -2222,3 +2222,79 @@ Suspect items:
 - Kept green: `boot.test.ts`, the determinism of the demonstration and the money-invariants tests (all inside the runs above). The Lighthouse budget is a CI job and was not run here; the web changes only add one icon to the worklist screen and strings to the catalogs, no import in the entry chunk.
 - Incident: none. Logs are in `$TEMP/jd4r1-*.log`.
 
+
+## Stage 5 seam: S5.00 (tasks 5.1 to 5.4)
+
+Branch `feat/stage-5-compliance-portal`, started from the tip of `feat/stage-4-revenue` (`7abca49`, the final Judgment Day round of Stage 4) so that Stage 5 can move in parallel; the Stage 4 fixes are merged into it later. Mode: automatic, strict TDD, work-unit commits. Worktree `consultorio-wt-s5`. The seam registers every shared Stage 5 piece once so that the tracks (A1 matricula, A2 consent, A3 e-Rx, B portal, C integration) only add files. The per-track boundaries, the ports and read functions each one consumes and exports, and the gotchas are in `docs/stage5-tracks.md`; the migration numbers are in `docs/migration-ranges.md`. The seam has no tables and adds no migration.
+
+### Commits (in order)
+
+| Task    | Commit    | What                                                                                                                                                                                                                           |
+| ------- | --------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| 5.2     | `dbb8af8` | Eight permissions (`clinical.prescription.write`, `clinical.consent.read` professional only; `consent.template.manage`, `consent.request`, `portal.manage`; six portal actor ones), 23 audit actions, `operator.matricula.*` platform actions, `consent`/`prescriptions`/`portal` contract files with `-catalog.ts`, audit scenario files, es-AR labels, and `can()` limited to `PORTAL_ACTOR_PERMISSIONS` |
+| 5.1     | `02325bd` | `PrescriptionProvider` gains `cancel`, `findByKey`, `status`; `adapters/erx-fake/` (in memory, modes, `advance`) with the shared rules; `adapters/prescription-provider.contract.ts` (12 tests, run on the fake)                 |
+| 5.1     | `e08921d` | `ERX_PROVIDER` (`local\|off`), `ERX_WEBHOOK_SECRET`, the production guard, `BootPayload.localProviders.erx`, `docs/dev-setup.md`                                                                                                |
+| 5.2     | `4d4f9e8` | The error catalogs of the skeleton tests typed for the tracks                                                                                                                                                                  |
+| 5.3     | `81a6c43` | Queues `erx.submit`, `erx.reconcile`, `consent.expire`, `portal.majority_review` and their read-only categories                                                                                                                  |
+| 5.3     | `1a4ae43` | `PortalActor` (tenant, identity, selected link), `isPortalActor`, `can()` for it (default deny)                                                                                                                                 |
+| 5.3     | `6dd388c` | `FileResourceRegistry` generic over who redeems, so the portal has a door of its own                                                                                                                                           |
+| 5.1/5.3 | `2225d3a` | `prescriptionProvider` in the adapter resolver; three module skeletons and wirings; export contributors; `portalFileResources` in the wiring context; five empty schema files pre-exported; `test/support/adapters.ts`            |
+| 5.4     | `7826fdc` | `RouteMount` `'portal'`, `app/PortalShell.tsx`, the portal route moved to `features/portal/routes.tsx`                                                                                                                          |
+| 5.4     | `0fcb005` | `features/prescriptions` and `features/consent` stubs (routes, nav, patient tabs), locale files, `prescriptions` back in the navigation                                                                                          |
+| docs    | this unit | `docs/stage5-tracks.md`, Stage 5 paragraph in `docs/migration-ranges.md`, tasks 5.1 to 5.4 marked, this section                                                                                                                  |
+
+### Migration convention for the Stage 5 tracks
+
+The ranges were already in `scripts/migration-journal.ts` and `docs/migration-ranges.md` (`5seam` 0500-0504, `5a1` 0505-0509, `5a2` 0510-0529, `5a3` 0530-0549, `5b` 0550-0579, `5c` 0590-0599; 0580-0589 reserved), so no tool change was needed. The seam has no tables. Tracks run `pnpm db:new 5a1|5a2|5a3|5b|5c <name>` (with `--number` for the numbers `tasks.md` names: A2 0510, 0512; A3 0530, 0532; B 0550, 0552; C 0590), then `pnpm db:restamp` and `pnpm db:check` after every merge. The journal is out of number order on purpose (0431 sits after 0499, the 0490s after it): `db:restamp` and `db:check` were run at the tip and report "Stamps: already rising", "Snapshots: already chained", "No migration drift".
+
+### Extra seam work (not listed as tasks, or listed under other slices)
+
+1. **`can()` no longer treats the `portal.` prefix as the portal actor's.** The old check allowed any `portal.*` permission to a patient-kind actor. `portal.manage` (staff: invite, link, deactivate accounts) starts with that prefix, so without the change a portal session would have held it. The rule is now the closed list `PORTAL_ACTOR_PERMISSIONS`; `roles.ts` exports it and `ROLE_PERMISSIONS.patient` is that list. The RED run of the new tests showed the hole (`portal.manage` allowed).
+2. **The portal's door to files.** Task 5.35 has the portal redeem downloads through "the `/files/:token` registry resolvers", but the registry takes a staff `Actor`, holds one resource per kind (`document_download` belongs to documents) and its route is a staff route (`permission: 'patients.read'`). The registry is now generic over who redeems and the wiring context carries a second registry, `portalFileResources`, for `FileResource<PortalActor>`. Track B writes the route and registers ONE `document_download` resource that dispatches on the token's `resourceType` to the read functions of each module. The staff registry and route are unchanged.
+3. **`ERX_WEBHOOK_SECRET`** (task 5.19 needs it in `config.providers`; `main/config-providers.ts` is a seam-only file), and **`BootPayload.localProviders.erx`** (optional boolean, so the five invoicing tests and the web fixtures that build `{ afip }` keep compiling) for the "simulated" notice on prescription screens.
+4. **`operator.matricula.verified|unverified` live in `PLATFORM_AUDIT_ACTIONS`** (`operator.ts`), not in the tenant `AUDIT_ACTIONS`: task 5.2 lists them among the audit actions, but task 5.5 says "a platform audit event" and the operator console writes the platform trail. The tenant trail already has `matricula.verified`.
+5. **Forbidden audit metadata keys** gained `items`, `medication`, `medications`, `signature`, `evidence` (a prescription's lines and a consent's signature are clinical or personal content).
+6. **Shell navigation:** `prescriptions` was already a shell entry hidden by `NOT_BUILT_YET`; it is now shown (route `/prescriptions` behind `clinical.prescription.read`). Consent contributes `consents` through `nav.ts`.
+7. **Pre-exported schema files** `consent`, `prescriptions`, `local-erx`, `portal`, `demo-outbox`, and **one demo `FakePrescriptionProvider` per configuration** (`demoPrescriptionProviderOf(config)`) shared by the registry and the console, as for AFIP.
+
+### TDD cycle evidence
+
+| Task    | Tests                                                                                                                                                                                              | RED                                                                                 | GREEN  | Notes                                                                                                                                       |
+| ------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------- | ------ | ------------------------------------------------------------------------------------------------------------------------------------------- |
+| 5.2     | `roles.test.ts` (Stage 5 describe, 14), `audit-actions.test.ts` (Stage 5, 3), `consent`/`portal`/`prescriptions`/`operator.test.ts`, `errors.test.ts`, `can.test.ts` (patient actor)               | 15 failed (7 files)                                                                 | passed | `can.test.ts` failed first on `portal.manage` allowed for the patient actor; the skeleton tests loop over empty catalogs on purpose (they bind when a track adds a code) |
+| 5.1     | `erx-fake/index.test.ts` (6) + `prescription-provider.contract.ts` (12)                                                                                                                             | module missing                                                                      | passed | contract written first; triangulated by outage, lost answer, key reuse, dispensed and expired                                                |
+| 5.1     | `guard.test.ts` (matrix with `erx`), `config-providers.test.ts` (4 new), `branding-boot.test.ts` (integration)                                                                                      | 10 failed                                                                           | passed |                                                                                                                                             |
+| 5.3     | `jobs.test.ts` (2 new), `job-queues.test.ts` (integration, 4 queues)                                                                                                                                | unclassified queue                                                                  | passed | `erx.reconcile` and `portal.majority_review` stay open in a read-only tenant                                                                 |
+| 5.3     | `can.test.ts` (portal actor, 7)                                                                                                                                                                     | 6 failed                                                                            | passed |                                                                                                                                             |
+| 5.3     | `file-resources.test.ts` (4 new)                                                                                                                                                                    | typed only: the runtime was already per instance                                    | passed | a typecheck RED; the behavior tests lock the isolation of the two doors                                                                       |
+| 5.1/5.3 | `adapter-resolver.test.ts`, `wiring.test.ts` (modules, ports, console entry, file registries), `schema-index.test.ts`, `export-contributor.test.ts` x2, `export-registry.test.ts`                 | 6 failed                                                                            | passed |                                                                                                                                             |
+| 5.4     | `registry-router.test.tsx` (2 new), `nav-config.test.ts`, `seam.test.tsx` x3 (prescriptions 9, consent 12, portal 2)                                                                                | portal route not found; seams missing                                               | passed | the unit runner caches the transform of `registry.ts`: new glob files were invisible until `node_modules/.vitest-cache` was removed (a gotcha for the tracks, in the doc) |
+
+### Deviations from the tasks and the design
+
+1. **Stub pages, tabs and a nav entry exist (task 5.4 asks for them), unlike the Stage 4 seam.** The Stage 4 seam left nav, slots and routes to the tracks to avoid dead links; 5.4 names them as seam work, so each stub shows a short "will appear here" text and is replaced by its track. The locale files are not empty: they hold the five or so keys the stubs reference (`portal.json` and the three `errors.*.json` are empty).
+2. **`shell: 'portal'` is `mount: 'portal'`** in the route registry, with `app/PortalShell.tsx` (branded header with the portal's name, no staff navigation). The `/portal` page moved from `router.tsx` to `features/portal/routes.tsx`.
+3. **The port is the Stage 1 `PrescriptionProvider` of `packages/contracts/src/ports.ts`** (as for `InvoiceIssuer`), extended: `PrescriptionResult.retryable` now carries `outcomeUnknown`, and `findByKey` returns the issued result or null. The key is global (no tenant reference in the request, unlike the invoice), so the server derives it from the organization and the prescription.
+4. **No settings section, token kind or `local-erx` migration** was pre-declared: `portal_activation` and `document_download` already exist and are enabled; the tables belong to the tracks.
+5. **The matricula note and the demo outbox have no pre-created table**; `5a1` is empty unless the operator note needs one.
+
+### Risks and follow-ups
+
+- `apply-progress.md` and `main/wiring/types.ts` / `platform/files/file-resources.ts` can conflict when the Stage 4 fixes are merged (both branches append a section to this file; keep both).
+- Track B declares an exception in `platform/http/auth-guard.ts` (how an authenticated `/portal/*` route is declared: today a route is `public` under an allowed prefix, or has a staff permission). The policy tests of public routes will need to know it.
+- A staff download link for a prescription PDF would need a new file token kind (a seam change); `tasks.md` only has the portal download.
+- Lighthouse, CI, the e2e suite and Docker builds were not run for this unit (no e2e was added: the stubs are covered by component tests).
+
+### Verification (tip before this progress commit, Node v24.22.0, pnpm 10.34.7, Docker running and shared with the Stage 4 fix agent)
+
+| Command | Result |
+| --- | --- |
+| `corepack pnpm install --frozen-lockfile` | exit 0 |
+| `corepack pnpm typecheck` | exit 0 (contracts, api, web) |
+| `corepack pnpm lint` / `format:check` | exit 0 |
+| `corepack pnpm test` | **393 files, 5,017 tests passed, 1 skipped** (`boot.test.ts`, the Lighthouse budget test, `route-categories`, `audit-coverage` and the money invariants inside) |
+| targeted `test:integration` files (roles, tenancy schema and isolation, definer functions, no-delete privileges, provider console, admin denied, file resources, documents download and export, migration lanes, stage 3 export, wiring, queues, boot payload, worker, security, demo seed and reset, demo coverage and Stage 3/4 demos) | **30 files, 638 tests passed** |
+| `corepack pnpm build` | exit 0 (the entry chunk gained nothing: the new pages are lazy chunks) |
+| `corepack pnpm db:check` / `db:restamp` | No migration drift; stamps already rising; snapshots already chained |
+
+The full integration and e2e suites were not run (the Stage 4 fix agent owns the shared Docker). No `.env` file was read or written. Logs are in `$TEMP/s5seam-*.log`.
