@@ -624,6 +624,13 @@
       "when": 1792386974918,
       "tag": "0552_document_share",
       "breakpoints": true
+    },
+    {
+      "idx": 89,
+      "version": "7",
+      "when": 1792406348377,
+      "tag": "0590_demo_outbox",
+      "breakpoints": true
     }
   ]
 }

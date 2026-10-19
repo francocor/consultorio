@@ -220,12 +220,13 @@ describe('the simulator console entries of the modules', () => {
         : [],
     );
 
-  it('lists WhatsApp, the bot challenge, video, AFIP and the prescription provider, each with the adapter that serves customers', async () => {
+  it('lists WhatsApp, the bot challenge, video, AFIP, the prescription provider and the email of the demo, each with the adapter that serves customers', async () => {
     const entries = entriesFor();
 
     expect(entries.map((entry) => entry.id).sort()).toEqual([
       'afip',
       'bot-challenge',
+      'demo-outbox',
       'erx',
       'video',
       'whatsapp',
