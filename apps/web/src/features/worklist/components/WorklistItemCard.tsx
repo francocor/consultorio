@@ -47,6 +47,7 @@ const INVOICE_REASONS = new Set([
   'orphaned_voucher',
   'replaced_unresolved',
   'issuer_mismatch',
+  'voucher_ambiguous',
   'outcome_unknown',
 ]);
 
@@ -59,10 +60,7 @@ function invoiceAttentionText(
   if (typeof reason !== 'string' || !INVOICE_REASONS.has(reason)) {
     return t('scheduling:worklist.invoiceAttention.generic');
   }
-  const held = detail?.['held'];
-  const text = t(`scheduling:worklist.invoiceAttention.${reason}`, {
-    count: typeof held === 'number' ? held : 0,
-  });
+  const text = t(`scheduling:worklist.invoiceAttention.${reason}`);
   // A parked invoice whose request may have been answered says so: the voucher may already exist.
   return detail?.['outcomeUnknown'] === true && reason !== 'outcome_unknown'
     ? `${text} ${t('scheduling:worklist.invoiceAttention.outcomeUnknownNote')}`

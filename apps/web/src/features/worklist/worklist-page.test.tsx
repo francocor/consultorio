@@ -260,15 +260,38 @@ describe('an invoice that needs a person (JD-S4 R1-C3, C8)', () => {
     expect(app.missingKeys).toEqual([]);
   });
 
-  it('says that a series waits for an invoice whose outcome is unknown, with how many wait (JD-S4 R3-2)', async () => {
-    open({
+  it('says that a series waits for an invoice whose outcome is unknown, without a count that would go stale (JD-S4 R3-2, R4-4)', async () => {
+    // An item opened by an older version carries the count it had when it opened: it is not shown.
+    const app = open({
       items: [{ ...INVOICE, detail: { reason: 'outcome_unknown', held: 3, pointOfSale: 1 } }],
     });
 
     const found = await card('Factura para revisar');
 
     expect(found.getByText(/No se sabe si ARCA emitió esta factura/)).toBeInTheDocument();
-    expect(found.getByText(/3 facturas esperan detrás/)).toBeInTheDocument();
+    expect(
+      found.getByText(/las demás facturas de la misma serie esperan detrás/),
+    ).toBeInTheDocument();
+    expect(found.queryByText(/3 facturas/)).not.toBeInTheDocument();
+    expect(app.missingKeys).toEqual([]);
+  });
+
+  it('says that a voucher cannot be told from this invoice, that nothing was sent, and that the outcome is unknown (JD-S4 R4-1)', async () => {
+    const app = open({
+      items: [
+        {
+          ...INVOICE,
+          detail: { reason: 'voucher_ambiguous', outcomeUnknown: true, number: 12, cae: null },
+        },
+      ],
+    });
+
+    const found = await card('Factura para revisar');
+
+    expect(found.getByText(/no se puede distinguir cuál es/)).toBeInTheDocument();
+    expect(found.getByText(/no se envió nada/)).toBeInTheDocument();
+    expect(found.getByText(/ARCA puede haber emitido esta factura/)).toBeInTheDocument();
+    expect(app.missingKeys).toEqual([]);
   });
 
   it('does not promise that a parked invoice goes on by itself, and warns when its outcome is unknown (JD-S4 R3-4)', async () => {
