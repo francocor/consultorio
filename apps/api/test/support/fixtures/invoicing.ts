@@ -114,6 +114,19 @@ export const fixtures: Record<string, TenantTableFixture> = {
       );
     },
   },
+  invoice_stray_voucher: {
+    // The number is unique per series: a random one, so any number of rows can exist.
+    insert: async (tx, tenantId, overrides) =>
+      returningId(
+        tx,
+        sql`INSERT INTO invoice_stray_voucher
+              (tenant_id, invoice_id, point_of_sale, type, number, reason)
+              VALUES (${tenantId},
+                      ${overrides?.['invoice_id'] ?? (await insertInvoice(tx, tenantId))},
+                      1, 'FC', ${1 + Math.floor(Math.random() * 90_000_000)}, 'replaced_unresolved')
+              RETURNING id`,
+      ),
+  },
   invoice_document: {
     insert: async (tx, tenantId, overrides) =>
       returningId(
