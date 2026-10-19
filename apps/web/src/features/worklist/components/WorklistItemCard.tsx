@@ -34,7 +34,7 @@ import { calendarApi } from '../../calendar/api/calendar-api.js';
 import { ErrorNotice } from '../../calendar/components/drawer/ErrorNotice.js';
 import { STATUS_PRESENTATION, statusLabel } from '../../calendar/domain/calendar-events.js';
 import { worklistApi, worklistKeys } from '../api/worklist-api.js';
-import { identityDifferences } from '../domain/worklist-items.js';
+import { identityDifferences, replyReason } from '../domain/worklist-items.js';
 
 import { ConfirmIdentityDialog } from './ConfirmIdentityDialog.js';
 import { DetachPatientDialog } from './DetachPatientDialog.js';
@@ -120,6 +120,7 @@ export function WorklistItemCard({
   const KindIcon = KIND_ICONS[item.kind];
   const appointment = item.appointment;
   const differences = identityDifferences(item.detail);
+  const reason = replyReason(item.detail);
 
   const refresh = async () => {
     await queryClient.invalidateQueries({ queryKey: worklistKeys.all });
@@ -196,6 +197,8 @@ export function WorklistItemCard({
       <p className="text-sm text-muted-foreground">
         {location?.name ?? t('scheduling:worklist.wholeOrganization')}
       </p>
+
+      {reason ? <p className="text-sm">{t(`scheduling:worklist.replyReason.${reason}`)}</p> : null}
 
       {differences.length > 0 ? (
         <TableContainer aria-label={t('scheduling:worklist.differences.region')}>

@@ -1,7 +1,7 @@
 import { WORKLIST_KINDS, type WorklistItemDto } from '@consultorio/contracts';
 import { describe, expect, it } from 'vitest';
 
-import { countByKind, filterItems, identityDifferences } from './worklist-items.js';
+import { countByKind, filterItems, identityDifferences, replyReason } from './worklist-items.js';
 
 const ID = (n: number) => `0190a000-0000-7000-8000-${String(n).padStart(12, '0')}`;
 
@@ -44,6 +44,22 @@ describe('identityDifferences', () => {
     expect(identityDifferences({})).toEqual([]);
     expect(identityDifferences({ differences: 'many' })).toEqual([]);
     expect(identityDifferences({ differences: [{ field: 7 }] })).toEqual([]);
+  });
+});
+
+describe('replyReason', () => {
+  it('reads why a reply was left for reception, when it is a reason the screen knows', () => {
+    expect(replyReason({ reason: 'email_optout_unconfirmed', patientIds: [] })).toBe(
+      'email_optout_unconfirmed',
+    );
+  });
+
+  it('shows nothing for no reason, or one it does not know', () => {
+    expect(replyReason(null)).toBeNull();
+    expect(replyReason({})).toBeNull();
+    expect(replyReason({ reason: 'something_new' })).toBeNull();
+    expect(replyReason({ reason: 'several_organizations' })).toBeNull();
+    expect(replyReason({ reason: 7 })).toBeNull();
   });
 });
 

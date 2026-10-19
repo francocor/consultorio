@@ -6,6 +6,7 @@ import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 
 import { useApi } from '../../../app/providers.js';
+import { SlotOutlet } from '../../../app/slots.js';
 import { formatAge, formatCalendarDay } from '../../../shared/lib/format.js';
 import { describeError } from '../../../shared/lib/translate.js';
 import {
@@ -90,6 +91,7 @@ export function PatientHeader({
               {patient.consentStatus === 'revoked' ? (
                 <StatusBadge status="warning">{t('patients:consent.revoked')}</StatusBadge>
               ) : null}
+              <SlotOutlet slot="patient-header" patientId={patient.id} />
             </div>
           </div>
         </div>

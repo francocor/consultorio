@@ -306,7 +306,8 @@ describe('a link acts once', () => {
         .from(channelPreference)
         .where(eq(channelPreference.patientId, set.patientId)),
     );
-    expect(rows).toEqual([{ state: 'opted_out' }]);
+    // One press records the opt-out of both channels (B7), once each.
+    expect(rows).toEqual([{ state: 'opted_out' }, { state: 'opted_out' }]);
   });
 
   it('does not let the link of one patient act on another: the subject is part of the token', async () => {

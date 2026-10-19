@@ -1,5 +1,3 @@
-import type { MessageChannel } from '@consultorio/contracts';
-
 import type {
   TokenContext,
   TokenHandler,
@@ -8,7 +6,7 @@ import type {
 import { readPatientContact } from '../../patients/index.js';
 import { loadAppointment, type AppointmentContext } from '../application/context.js';
 import type { Worklist } from '../application/deps.js';
-import { optOutChannel } from '../application/opt-out.js';
+import { optOutPatient } from '../application/opt-out.js';
 import { actForPatient, type PatientActionDeps } from '../application/patient-actions.js';
 import { recordOptIn } from '../application/preferences.js';
 import { loadMessagingSettings } from '../application/settings.js';
@@ -158,36 +156,34 @@ export function createCancelHandler(deps: TokenHandlerDeps): TokenHandler {
   };
 }
 
-function channelOf(payload: Record<string, unknown>): MessageChannel {
-  return payload['channel'] === 'whatsapp' ? 'whatsapp' : 'email';
-}
-
-const CHANNEL_NAME: Record<MessageChannel, string> = { email: 'email', whatsapp: 'WhatsApp' };
-
+/**
+ * The unsubscribe link of the email footer (owner decision B7): it opts the patient out of ALL
+ * channels, and the page says so. The payload of links already sent may still name a channel (they
+ * keep working); it no longer changes what the link does.
+ */
 export function createOptOutHandler(): TokenHandler {
   return {
     allowedWhenReadOnly: true,
     audits: ['notification.optout.recorded'],
-    describe(context) {
-      const channel = CHANNEL_NAME[channelOf(context.payload)];
+    describe() {
       return Promise.resolve({
-        title: `Dejar de recibir mensajes por ${channel}`,
-        message: `No volverá a recibir recordatorios ni avisos de turnos por ${channel}. Si cambia de opinión, avise en la recepción.`,
+        title: 'Dejar de recibir mensajes',
+        message:
+          'No volverá a recibir mensajes de esta organización por ningún canal (email ni WhatsApp): ni recordatorios, ni avisos de turnos, ni ofertas de la lista de espera. Si cambia de opinión, avise en la recepción.',
         action: { label: 'Dejar de recibir mensajes' },
       });
     },
     async perform(context) {
-      const channel = channelOf(context.payload);
       if (!(await context.redeem())) return null;
-      await optOutChannel(context.tx, {
+      await optOutPatient(context.tx, {
         patientId: context.subjectId,
-        channel,
         source: 'email_link',
         actor: context.actor,
       });
       return {
         title: 'Listo: no recibirá más mensajes',
-        message: `Dejamos de enviarle mensajes por ${CHANNEL_NAME[channel]}. Si cambia de opinión, avise en la recepción.`,
+        message:
+          'Dejamos de enviarle mensajes por todos los canales, email y WhatsApp. Si cambia de opinión, avise en la recepción.',
       };
     },
   };

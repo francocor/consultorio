@@ -202,7 +202,7 @@ describe('the manual resend', () => {
 
     expect(
       await screen.findByText(
-        'El paciente dio de baja este canal. Solo el paciente puede volver a activarlo.',
+        'El paciente dio de baja este canal. Si él lo pidió, recepción puede volver a activarlo desde los canales del paciente.',
       ),
     ).toBeInTheDocument();
   });

@@ -149,6 +149,8 @@ function appointmentEmailParts(
   }
 }
 
-export const OPT_OUT_SENTENCE = 'Para dejar de recibir recordatorios por email, use este enlace:';
-export const OPT_OUT_LABEL = 'Dejar de recibir recordatorios';
+/** The link opts the patient out of every channel (owner decision B7), and the sentence says so. */
+export const OPT_OUT_SENTENCE =
+  'Para dejar de recibir mensajes de esta organización por todos los canales (email y WhatsApp), use este enlace:';
+export const OPT_OUT_LABEL = 'Dejar de recibir mensajes';
 export const FALLBACK_LINK_NOTE = 'Si el botón no funciona, copie el enlace en su navegador.';

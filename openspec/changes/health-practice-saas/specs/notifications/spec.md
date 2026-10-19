@@ -13,7 +13,7 @@ Stage 3. Covers appointment reminders and confirmations over email and WhatsApp,
 | Consent | Reminders are service communication: no data-processing consent needed beyond the channel opt-out. WhatsApp needs an explicit opt-in. Waitlist offers need an explicit opt-in. |
 | Quiet hours | Default 21:00-08:00 location time; reminders and waitlist offers are deferred, never dropped silently |
 | Content | Never clinical (no diagnosis, no specialty-revealing detail beyond what the organization allows) |
-| Opt-out | Per patient and per channel, effective immediately, never overridden by staff |
+| Opt-out | Per patient, effective immediately, and for EVERY channel: opting out on one channel opts out of all of them (owner decision B7, 2026-10-18). Reception can open a channel again, one at a time, when the patient asks in person, with an audit entry. |
 | Failure | Bounded retries, then fallback channel, then a reception worklist item (the worklist is defined in `scheduling`) |
 | Message statuses | queued, sent, delivered, read (where reported), failed, cancelled; a cancelled message records its reason (for example "tenant read-only", "demo tenant", "opted out") |
 | Language | es-AR message templates |
@@ -117,19 +117,53 @@ Reminders MUST offer the patient a way to confirm or cancel the appointment. Con
 
 ### Requirement: Opt-out and consent
 
-The system MUST honor an opt-out per patient and per channel. A patient MUST be able to opt out by replying with a keyword on WhatsApp (for example STOP or BAJA), through a link in each email, or by asking reception, who SHALL record it. An opt-out MUST take effect immediately: any message queued but unsent on that channel MUST be cancelled. Opt-out MUST apply to every automated message on that channel, including reminders, confirmations and waitlist offers. The opt-out MUST record the time, source and (when applicable) the staff member. Staff MUST NOT be able to re-enable a channel that the patient opted out of; only the patient can opt back in, and the opt-in MUST be recorded. Reminders and confirmations are service communications and MUST NOT require the data-processing consent of `patients`; the only gate for email is the absence of an opt-out. WhatsApp MUST NOT be used for a patient without an explicit, recorded WhatsApp opt-in, which is independent of the data-processing consent. The WhatsApp opt-in MAY be captured only in these ways: by the patient on the online booking form (`online-booking`); by the patient following a single-purpose opt-in link sent to them **by email**; or by reception recording an opt-in the patient gave in person. A WhatsApp message or reply MUST NOT create an opt-in (WhatsApp keywords can only opt out). Each opt-in MUST record time, source and, when staff recorded it, the staff member. The opt-out link in each email MUST be a single-purpose token link for that patient and channel. Waitlist offers (`waitlist`) additionally require the patient's explicit opt-in to waitlist offers, on any channel.
+The system MUST honor an opt-out per patient, and an opt-out on any channel MUST be an opt-out of every channel (owner decision B7). A patient MUST be able to opt out by replying with a keyword on WhatsApp (for example STOP or BAJA), through a link in each email, or by asking reception, who SHALL record it; whichever of these the patient uses, email AND WhatsApp are opted out. An opt-out MUST take effect immediately: every message queued but unsent for the patient on any channel (reminders, confirmations, waitlist offers and video follow-ups) MUST be cancelled with the reason "opted out" and nothing MUST take its place on another channel; every waitlist entry of the patient MUST be closed (`waitlist`). Opt-out MUST apply to every automated message, including reminders, confirmations and waitlist offers. The opt-out MUST record the time, source and (when applicable) the staff member, once for each channel; a channel that was already opted out (for example by an opt-out of one channel recorded before this rule) keeps its first time and source. Reception MUST be able to open a channel again for a patient who opted out, one channel at a time, when the patient asks for it in person (the patient MAY also opt in again by the booking form or by their own email link); that opt-in MUST be recorded with the staff member and MUST be audited as reopening a channel the patient had closed. The reply to a WhatsApp opt-out and the page of the unsubscribe link MUST say that the patient will receive no more messages from the organization on any channel. A WhatsApp keyword written from a number that several patients of the organization were written to on (a family with one phone) MUST close WhatsApp for every patient on that number, but the full opt-out above (email, every pending message, every waitlist entry, the pending WhatsApp-accept links) MUST apply only to the patient the reply belongs to: first the patient of the message the reply quotes (the reply context of the provider), otherwise the patient written to last on that number. When no patient can be told (two patients were written to within five minutes of each other, or nothing was ever sent), nobody MUST lose email: WhatsApp is closed for all of them and reception MUST get a worklist item saying that the email opt-out needs confirming. For the other patients on the number the queued WhatsApp reminders and confirmations MUST be cancelled and replaced by email when they have a usable email (the fallback of decision D10, kept for this case only), their waitlist entries MUST close only when no channel is left, and their record MUST show WhatsApp as closed but not "Sin avisos". The reply sent to a shared number MUST say that the organization will send no more WhatsApp messages to that number, and either that the person who replied will not receive emails either or that reception will confirm it. A keyword from a number written to one patient only, the unsubscribe link and an opt-out recorded by reception MUST always be a full opt-out of that patient. Reminders and confirmations are service communications and MUST NOT require the data-processing consent of `patients`; the only gate for email is the absence of an opt-out. WhatsApp MUST NOT be used for a patient without an explicit, recorded WhatsApp opt-in, which is independent of the data-processing consent. The WhatsApp opt-in MAY be captured only in these ways: by the patient on the online booking form (`online-booking`); by the patient following a single-purpose opt-in link sent to them **by email**; or by reception recording an opt-in the patient gave in person. A WhatsApp message or reply MUST NOT create an opt-in (WhatsApp keywords can only opt out). Each opt-in MUST record time, source and, when staff recorded it, the staff member. The opt-out link in each email MUST be a single-purpose token link for that patient; pressing it opts the patient out of every channel, whichever channel the email was sent on. A patient who opted out and in whom no channel has been opened again MUST be shown to staff as "Sin avisos", on the patient record (header and channels) and wherever the channels of a patient are listed. Waitlist offers (`waitlist`) additionally require the patient's explicit opt-in to waitlist offers, on any channel.
 
 #### Scenario: Opt out by WhatsApp keyword
-- GIVEN a patient with a pending reminder on WhatsApp
+- GIVEN a patient with a pending reminder on WhatsApp and another on email
 - WHEN the patient replies "BAJA"
-- THEN the patient is marked opted-out for WhatsApp with time and source
-- AND the pending reminder is cancelled
-- AND the patient receives a single acknowledgment
+- THEN the patient is marked opted-out for WhatsApp AND for email, with time and source
+- AND both pending reminders are cancelled and no reminder takes their place
+- AND the patient receives a single acknowledgment that says no more messages will come on any channel
 
-#### Scenario: Staff cannot re-enable
-- GIVEN a patient opted out of email
-- WHEN a reception user tries to switch email reminders back on
-- THEN the system refuses and explains that only the patient can opt in
+#### Scenario: BAJA from a number shared by a family, quoting a message
+- GIVEN two patients with different emails who share one WhatsApp number, each with a pending reminder on WhatsApp, and the second was written to later
+- WHEN someone writes "BAJA" quoting the message sent to the first
+- THEN the first patient is opted out of email and WhatsApp, with everything queued cancelled
+- AND the second patient is opted out of WhatsApp only: the pending WhatsApp reminder is cancelled and an email reminder for the same appointment takes its place
+- AND the second patient's record does not show "Sin avisos"
+- AND the reply says that no more WhatsApp messages will go to that number and that the person who replied gets no emails either
+
+#### Scenario: BAJA from a shared number without a quote
+- GIVEN the same two patients and no quoted message
+- WHEN someone writes "BAJA"
+- THEN the patient written to last gets the full opt-out and the other one WhatsApp only
+
+#### Scenario: BAJA from a shared number that cannot be attributed
+- GIVEN two patients on one number who were written to a few seconds apart
+- WHEN someone writes "BAJA" without quoting anything
+- THEN WhatsApp is closed for both and nobody loses email
+- AND reception gets a worklist item saying the email opt-out needs confirming
+- AND the reply says that reception will confirm the email
+
+#### Scenario: Opt out by the email link also stops WhatsApp
+- GIVEN a patient with a recorded WhatsApp opt-in and a pending reminder on WhatsApp
+- WHEN the patient presses the unsubscribe link of an email
+- THEN the patient is opted out of email and of WhatsApp
+- AND the pending reminder is cancelled
+- AND the page says that the patient will receive no more messages on any channel
+
+#### Scenario: Opt out recorded by reception
+- GIVEN a patient who tells reception they want no more messages
+- WHEN reception records the opt-out from the patient record
+- THEN both channels are opted out with source "staff" and the staff member, each audited
+- AND the record shows "Sin avisos"
+
+#### Scenario: Reception opens a channel again
+- GIVEN a patient opted out of every channel who asks reception to receive emails again
+- WHEN reception switches email back on from the patient record, after confirming
+- THEN an email opt-in is recorded with source "staff" and the staff member, and the audit entry says it reopened a channel
+- AND WhatsApp stays opted out and "Sin avisos" is no longer shown
 
 #### Scenario: No opt-in for WhatsApp
 - GIVEN a patient with a phone number but no recorded WhatsApp opt-in
@@ -161,6 +195,16 @@ The system MUST honor an opt-out per patient and per channel. A patient MUST be 
 - WHEN an appointment is booked
 - THEN no automated message is sent
 - AND the appointment is shown to reception as "no automated reminders"
+
+### Requirement: Messages that still reach a patient who opted out
+
+An opt-out stops everything the organization sends on its own initiative. The only messages that MUST still go out to a patient who opted out are those the person requests at that very moment through a public flow, to the address they just typed, and the answer to the opt-out itself. The list is explicit and closed: (1) the one-time code of an online booking and of a waitlist join, sent to the email just typed; (2) the confirmation of an online booking, sent to the verified email, with the single-purpose link to manage the booking (and, when the form asked for WhatsApp, the link to accept it: the double opt-in of decision D22 is kept as designed); (3) the email of a waitlist join that carries the link to accept WhatsApp; (4) the acknowledgment of a WhatsApp opt-out. Every other message to a patient (reminders, confirmations of staff-made appointments, waitlist offers, video follow-ups, invoices, consent requests, portal and subscription notices) MUST follow the opt-out. The booking confirmation MUST NOT depend on the opt-outs of the matched record, because an answer that depended on them would tell the visitor that the document is on file.
+
+#### Scenario: Booking code to an opted-out patient
+- GIVEN a patient opted out of every channel
+- WHEN a visitor books online with the document of that patient and verifies an email
+- THEN the code is sent to the email just typed and the confirmation to the verified email, like for any other visitor
+- AND the reminders of that appointment are not sent
 
 ---
 
@@ -294,7 +338,7 @@ Opt-outs, opt-ins, staff-recorded opt-outs, manual resends and integration switc
 
 ### Requirement: WhatsApp opt-in from a public form
 
-A WhatsApp opt-in entered on a public form (online booking or waitlist join) for a phone number nobody has verified MUST stay pending: the form records no opt-in. The system MUST send the patient a single-use `whatsapp_opt_in` link at the email address the visitor verified, and the opt-in MUST exist only after the patient follows it. Until then the messages of that patient MUST go by email. The link MUST exist for every submission that ticked WhatsApp, whoever the typed document belongs to (a new patient, a record on file, a booking that could not stand on the record with its document, an entry that was refused), and the email that carries it MUST be the same in every case: its absence would tell the visitor that the document was on file. The token belongs to the submission and remembers whether that submission registered the patient; following it MUST record the opt-in only when it did. In any other case it MUST show the same page and write nothing on the record, and reception MUST get an identity review of the booking. A BAJA MUST revoke the pending `whatsapp_opt_in` links of that patient, so that following one later does not opt them back in. Declared limitation: the link proves that the visitor controls the EMAIL address, not that the typed phone number is theirs; the number stays unverified. The same rule MUST hold for staff: a request to accept WhatsApp is an email, so it MUST be refused for a patient who opted out of email.
+A WhatsApp opt-in entered on a public form (online booking or waitlist join) for a phone number nobody has verified MUST stay pending: the form records no opt-in. The system MUST send the patient a single-use `whatsapp_opt_in` link at the email address the visitor verified, and the opt-in MUST exist only after the patient follows it. Until then the messages of that patient MUST go by email. The link MUST exist for every submission that ticked WhatsApp, whoever the typed document belongs to (a new patient, a record on file, a booking that could not stand on the record with its document, an entry that was refused), and the email that carries it MUST be the same in every case: its absence would tell the visitor that the document was on file. The token belongs to the submission and remembers whether that submission registered the patient; following it MUST record the opt-in only when it did. In any other case it MUST show the same page and write nothing on the record, and reception MUST get an identity review of the booking. An opt-out on any channel (a BAJA, the unsubscribe link or reception) MUST revoke the pending `whatsapp_opt_in` links of that patient, even when WhatsApp was already opted out and the link was asked for afterwards, so that following one later does not opt them back in. Declared limitation: the link proves that the visitor controls the EMAIL address, not that the typed phone number is theirs; the number stays unverified. The same rule MUST hold for staff: a request to accept WhatsApp is an email, so it MUST be refused for a patient who opted out of email.
 
 #### Scenario: Pending until the link
 - GIVEN a visitor who ticked WhatsApp on the booking form and verified their email
@@ -315,7 +359,7 @@ A WhatsApp opt-in entered on a public form (online booking or waitlist join) for
 
 #### Scenario: BAJA revokes a pending link
 - GIVEN a patient with a link to accept WhatsApp that was not followed
-- WHEN the patient opts out of WhatsApp
+- WHEN the patient opts out on any channel (for example by replying "BAJA")
 - THEN following the link afterwards records nothing
 
 #### Scenario: Replies attributed to one organization

@@ -1,8 +1,4 @@
-import {
-  ChannelParams,
-  PatientChannelsResponse,
-  type MessageChannel,
-} from '@consultorio/contracts';
+import { ChannelParams, PatientChannelsResponse } from '@consultorio/contracts';
 import type { FastifyInstance, FastifyRequest } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
@@ -15,13 +11,8 @@ import { TOKEN_KIND_REGISTRY, type ActionTokens } from '../../../platform/tokens
 import { readPatientContact } from '../../patients/index.js';
 import { readOrganizationName } from '../../tenancy/index.js';
 import { TOKEN_PATH } from '../application/links.js';
-import { optOutChannel } from '../application/opt-out.js';
-import {
-  describeChannel,
-  loadPreferences,
-  OptInRefused,
-  recordOptIn,
-} from '../application/preferences.js';
+import { optOutPatient } from '../application/opt-out.js';
+import { describeChannel, loadPreferences, recordOptIn } from '../application/preferences.js';
 import { renderOptInRequestEmail } from '../assets/es-AR/opt-in-email.js';
 import { firstNameOf } from '../domain/content.js';
 import { normalizeWhatsAppNumber } from '../domain/phone.js';
@@ -29,8 +20,9 @@ import { normalizeWhatsAppNumber } from '../domain/phone.js';
 /**
  * What reception does about the channels of a patient (spec "Opt-out and consent"): see what the
  * patient chose, record an opt-in or an opt-out the patient gave in person, and send the patient a
- * link by email to accept WhatsApp. Staff can switch a channel OFF for a patient; only the patient
- * can switch one back on after opting out.
+ * link by email to accept WhatsApp. Owner decision B7: an opt-out is for every channel at once,
+ * and reception can switch a channel back on, one at a time, when the patient asks in person (the
+ * change is audited).
  */
 
 export interface ChannelRoutesDeps {
@@ -58,6 +50,9 @@ async function channelsOf(tx: Tx, patientId: string): Promise<PatientChannelsRes
   return {
     email: stateOf(email, 'default'),
     whatsapp: stateOf(whatsapp, 'none'),
+    // "Sin avisos": the patient opted out of email and WhatsApp is not accepted, so no message
+    // of the organization can reach them (until reception or the patient opens a channel again).
+    noMessages: email.state === 'opted_out' && whatsapp.state !== 'opted_in',
     hasEmail: (contact.email?.trim() ?? '') !== '',
     hasMobile: contact.phone !== null && normalizeWhatsAppNumber(contact.phone) !== null,
   };
@@ -103,47 +98,39 @@ export function channelRoutes(deps: ChannelRoutesDeps) {
           if (channel === 'whatsapp' && !current.hasMobile) {
             throw new AppError('patient_without_phone');
           }
-          try {
-            if (channel === 'email') {
-              // Email works until the patient opts out: there is nothing for staff to switch on,
-              // and a channel the patient switched off stays off.
-              if ((await loadPreferences(tx, id)).email === 'opted_out') throw new OptInRefused();
-            } else {
-              await recordOptIn(tx, {
-                patientId: id,
-                channel,
-                source: 'staff',
-                recordedBy: userId,
-                actor: audit,
-              });
-            }
-          } catch (error) {
-            if (error instanceof OptInRefused) throw new AppError('channel_opted_out');
-            throw error;
+          // Email works until the patient opts out: with no opt-out there is nothing to switch on.
+          if (channel === 'email' && (await loadPreferences(tx, id)).email !== 'opted_out') {
+            return current;
           }
+          await recordOptIn(tx, {
+            patientId: id,
+            channel,
+            source: 'staff',
+            recordedBy: userId,
+            actor: audit,
+          });
           return channelsOf(tx, id);
         });
       },
     );
 
     typed.post(
-      '/patients/:id/channels/:channel/opt-out',
+      '/patients/:id/opt-out',
       {
         config: {
           readOnly: 'write',
           permission: 'patients.write',
           audits: ['notification.optout.recorded'],
         },
-        schema: { params: ChannelParams, body: NoBody, response: { 200: PatientChannelsResponse } },
+        schema: { params: PatientParams, body: NoBody, response: { 200: PatientChannelsResponse } },
       },
       (request) => {
         const { userId, tenantId, audit } = actorOf(request);
-        const { id, channel } = request.params;
+        const { id } = request.params;
         return deps.withTenant({ tenantId, userId }, async (tx) => {
           await channelsOf(tx, id);
-          await optOutChannel(tx, {
+          await optOutPatient(tx, {
             patientId: id,
-            channel: channel satisfies MessageChannel,
             source: 'staff',
             recordedBy: userId,
             actor: audit,

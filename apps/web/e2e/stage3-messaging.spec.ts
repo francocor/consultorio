@@ -26,8 +26,9 @@ import {
  * 3. the owner resends the reminder from the appointment: it arrives in Mailpit (with the links)
  *    and on the phone of the local WhatsApp simulator, in the provider console;
  * 4. the patient confirms with the link, with no account, and the appointment is confirmed;
- * 5. the patient replies BAJA on the simulator: the pending WhatsApp reminders are cancelled and
- *    the record says so, and only the patient can switch the channel back on.
+ * 5. the patient replies BAJA on the simulator: that opts them out of every channel (owner
+ *    decision B7), the pending reminders are cancelled, the record says "Sin avisos", and reception
+ *    can switch a channel back on, asking first, when the patient requests it.
  *
  * The organization and the patient are unique to each run. Axe runs on every new screen.
  */
@@ -310,22 +311,26 @@ test('the owner resends a reminder, the patient confirms and then opts out of Wh
   ).toHaveCount(2);
   await expectFitsAndAccessible(page);
 
-  // The record says the patient left WhatsApp, and only the patient can come back.
+  // The record says "Sin avisos": the patient left every channel.
   await page.goto(orgUrl(slug, '/patients'));
   await page
     .getByRole('link', { name: new RegExp(family) })
     .first()
     .click();
+  await expect(page.getByText('Sin avisos').first()).toBeVisible();
   await page.getByRole('tab', { name: 'Mensajes' }).click();
   const channel = page.getByRole('region', { name: 'WhatsApp' });
+  const emailChannel = page.getByRole('region', { name: 'Email' });
   await expect(channel.getByText('Dado de baja')).toBeVisible();
-  await expect(
-    channel.getByRole('button', { name: 'Registrar que acepta WhatsApp (en persona)' }),
-  ).toBeDisabled();
-  await expect(
-    channel.getByText(
-      'El paciente dio de baja este canal. Solo el paciente puede volver a activarlo.',
-    ),
-  ).toBeVisible();
+  await expect(emailChannel.getByText('Dado de baja')).toBeVisible();
+  await expectFitsAndAccessible(page);
+
+  // Reception switches email back on when the patient asks, and the dialog asks first.
+  await emailChannel.getByRole('button', { name: 'Volver a activar el canal' }).click();
+  const reopen = page.getByRole('alertdialog');
+  await expect(reopen.getByText('¿Volver a activar Email?')).toBeVisible();
+  await reopen.getByRole('button', { name: 'Volver a activar' }).click();
+  await expect(emailChannel.getByText('Aceptado')).toBeVisible();
+  await expect(page.getByText('Sin avisos')).toHaveCount(0);
   await expectFitsAndAccessible(page);
 });

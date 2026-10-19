@@ -69,6 +69,7 @@ describe('the channels of a patient', () => {
     expect(await channels(complete)).toEqual({
       email: { state: 'default', source: null, recordedAt: null },
       whatsapp: { state: 'none', source: null, recordedAt: null },
+      noMessages: false,
       hasEmail: true,
       hasMobile: true,
     });
@@ -92,7 +93,7 @@ describe('the channels of a patient', () => {
       scheduling.reception,
     );
     const optOut = await scheduling.api.post(
-      `/patients/${foreign}/channels/email/opt-out`,
+      `/patients/${foreign}/opt-out`,
       scheduling.reception,
       {},
     );
@@ -150,8 +151,8 @@ describe('recording a choice in person', () => {
     expect(response.json<{ code: string }>().code).toBe('patient_without_phone');
   });
 
-  it('records an opt-out the patient gave in person, and cancels what was queued on that channel', async () => {
-    const patientId = await notes.patient({ email: 'baja@example.test' });
+  it('records an opt-out the patient gave in person for every channel, and cancels what was queued (B7)', async () => {
+    const patientId = await notes.patient({ email: 'baja@example.test', phone: '1144445555' });
     const booked = await notes.book(patientId, 40, '09:00');
     const queued = await notes.queue({
       kind: 'reminder',
@@ -163,15 +164,16 @@ describe('recording a choice in person', () => {
     });
 
     const response = await scheduling.api.post(
-      `/patients/${patientId}/channels/email/opt-out`,
+      `/patients/${patientId}/opt-out`,
       scheduling.reception,
       {},
     );
 
     expect(response.statusCode, response.body).toBe(200);
-    expect(response.json<PatientChannelsResponse>().email).toMatchObject({
-      state: 'opted_out',
-      source: 'staff',
+    expect(response.json<PatientChannelsResponse>()).toMatchObject({
+      email: { state: 'opted_out', source: 'staff' },
+      whatsapp: { state: 'opted_out', source: 'staff' },
+      noMessages: true,
     });
     expect(await notes.message(queued)).toMatchObject({
       status: 'cancelled',
@@ -179,38 +181,78 @@ describe('recording a choice in person', () => {
     });
   });
 
-  it('refuses to switch back on a channel the patient switched off, and says why', async () => {
-    const patientId = await notes.patient({ email: 'no@example.test', phone: '1144445555' });
+  it('switches a channel back on, one at a time, for a patient who opted out; "Sin avisos" ends with the first (B7)', async () => {
+    const patientId = await notes.patient({ email: 'vuelve@example.test', phone: '1144445555' });
+    await scheduling.api.post(`/patients/${patientId}/opt-out`, scheduling.reception, {});
+
+    const email = await scheduling.api.post(
+      `/patients/${patientId}/channels/email/opt-in`,
+      scheduling.reception,
+      {},
+    );
+
+    expect(email.statusCode, email.body).toBe(200);
+    expect(email.json<PatientChannelsResponse>()).toMatchObject({
+      email: { state: 'opted_in', source: 'staff' },
+      whatsapp: { state: 'opted_out' },
+      noMessages: false,
+    });
+    const whatsapp = await scheduling.api.post(
+      `/patients/${patientId}/channels/whatsapp/opt-in`,
+      scheduling.reception,
+      {},
+    );
+    expect(whatsapp.json<PatientChannelsResponse>().whatsapp).toMatchObject({
+      state: 'opted_in',
+      source: 'staff',
+    });
+    const audits = await scheduling.inTenant((tx) =>
+      tx
+        .select({ metadata: auditEvent.metadata, actor: auditEvent.actorUserId })
+        .from(auditEvent)
+        .where(
+          and(
+            eq(auditEvent.patientId, patientId),
+            eq(auditEvent.action, 'notification.optin.recorded'),
+          ),
+        ),
+    );
+    expect(audits).toHaveLength(2);
+    expect(audits.map((row) => row.metadata)).toEqual(
+      expect.arrayContaining([
+        { channel: 'email', source: 'staff', reopened: true },
+        { channel: 'whatsapp', source: 'staff', reopened: true },
+      ]),
+    );
+    expect(audits.every((row) => row.actor === scheduling.reception.user.id)).toBe(true);
+  });
+
+  it('shows "Sin avisos" for an old opt-out of email alone when WhatsApp was never accepted', async () => {
+    const patientId = await notes.patient({ email: 'viejo@example.test', phone: '1144445555' });
     await scheduling.inTenant((tx) =>
-      recordOptOut(tx, {
-        patientId,
-        channel: 'whatsapp',
-        source: 'whatsapp_keyword',
-        actor: patientActor,
-      }),
+      recordOptOut(tx, { patientId, channel: 'email', source: 'email_link', actor: patientActor }),
+    );
+
+    expect((await channels(patientId)).noMessages).toBe(true);
+  });
+
+  it('does not show "Sin avisos" while WhatsApp is accepted, even with email opted out', async () => {
+    const patientId = await notes.patient({ email: 'wa@example.test', phone: '1144445555' });
+    await scheduling.api.post(
+      `/patients/${patientId}/channels/whatsapp/opt-in`,
+      scheduling.reception,
+      {},
     );
     await scheduling.inTenant((tx) =>
       recordOptOut(tx, { patientId, channel: 'email', source: 'email_link', actor: patientActor }),
     );
 
-    for (const channel of ['whatsapp', 'email']) {
-      const response = await scheduling.api.post(
-        `/patients/${patientId}/channels/${channel}/opt-in`,
-        scheduling.reception,
-        {},
-      );
-      expect(response.statusCode, channel).toBe(409);
-      expect(response.json<{ code: string }>().code, channel).toBe('channel_opted_out');
-    }
-    expect(await channels(patientId)).toMatchObject({
-      email: { state: 'opted_out' },
-      whatsapp: { state: 'opted_out' },
-    });
+    expect((await channels(patientId)).noMessages).toBe(false);
   });
 
   it('is not found for a patient who is not in the organization', async () => {
     const response = await scheduling.api.post(
-      `/patients/${crypto.randomUUID()}/channels/email/opt-out`,
+      `/patients/${crypto.randomUUID()}/opt-out`,
       scheduling.reception,
       {},
     );
@@ -221,11 +263,7 @@ describe('recording a choice in person', () => {
   it('needs a signed-in user', async () => {
     const patientId = await notes.patient();
 
-    const response = await scheduling.api.post(
-      `/patients/${patientId}/channels/email/opt-out`,
-      null,
-      {},
-    );
+    const response = await scheduling.api.post(`/patients/${patientId}/opt-out`, null, {});
 
     expect(response.statusCode).toBe(401);
   });

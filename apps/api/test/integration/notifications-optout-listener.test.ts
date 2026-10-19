@@ -4,7 +4,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, inject, it, vi } from
 import { channelPreference } from '../../src/db/schema/channel-preference.js';
 import {
   bindOptOutListener,
-  optOutChannel,
+  optOutPatient,
 } from '../../src/modules/notifications/application/opt-out.js';
 import { createRuntimeDb, type DbHandle } from '../../src/platform/db/pool.js';
 import {
@@ -58,14 +58,15 @@ describe('a listener of the opt-out that fails', () => {
     );
 
     const result = await scheduling.inTenant((tx) =>
-      optOutChannel(tx, { patientId, channel: 'email', source: 'email_link', actor }),
+      optOutPatient(tx, { patientId, source: 'email_link', actor }),
     );
 
     expect(result.recorded).toBe(true);
     const choices = await scheduling.inTenant((tx) =>
       tx.select().from(channelPreference).where(eq(channelPreference.patientId, patientId)),
     );
-    expect(choices.map((choice) => choice.state)).toEqual(['opted_out']);
+    // Every channel is recorded (owner decision B7), and the listener is told once afterwards.
+    expect(choices.map((choice) => choice.state)).toEqual(['opted_out', 'opted_out']);
     expect(failures).toHaveLength(1);
   });
 
@@ -82,7 +83,7 @@ describe('a listener of the opt-out that fails', () => {
       );
 
       await scheduling.inTenant((tx) =>
-        optOutChannel(tx, { patientId, channel: 'email', source: 'email_link', actor }),
+        optOutPatient(tx, { patientId, source: 'email_link', actor }),
       );
 
       const lines = write.mock.calls.map(([chunk]) => String(chunk));
@@ -110,7 +111,7 @@ describe('a listener of the opt-out that fails', () => {
     });
 
     await scheduling.inTenant((tx) =>
-      optOutChannel(tx, { patientId, channel: 'email', source: 'email_link', actor }),
+      optOutPatient(tx, { patientId, source: 'email_link', actor }),
     );
 
     expect(told).toEqual([patientId]);

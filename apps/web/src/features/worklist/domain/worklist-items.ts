@@ -20,6 +20,18 @@ export function identityDifferences(
   return parsed.success ? parsed.data : [];
 }
 
+/** Why a reply was left for reception, when the screen has words for it. */
+export const REPLY_REASONS = [
+  /** A BAJA from a number several patients share, and nobody could tell whose it was. */
+  'email_optout_unconfirmed',
+] as const;
+export type ReplyReason = (typeof REPLY_REASONS)[number];
+
+export function replyReason(detail: Record<string, unknown> | null): ReplyReason | null {
+  const reason = detail?.['reason'];
+  return REPLY_REASONS.find((known) => known === reason) ?? null;
+}
+
 /** How many items there are of each of the six kinds (the kinds with none count as zero). */
 export function countByKind(items: readonly WorklistItemDto[]): Record<WorklistKind, number> {
   const counts = Object.fromEntries(WORKLIST_KINDS.map((kind) => [kind, 0])) as Record<
