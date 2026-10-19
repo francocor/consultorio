@@ -1,47 +1,42 @@
 import { sql } from 'drizzle-orm';
 
-import { returningId, unique, type TenantTableFixture } from '../fixture-helpers.js';
+import {
+  insertConsentRequest,
+  insertConsentRevocation,
+  insertConsentSignature,
+  insertConsentTemplate,
+  insertConsentTemplateVersion,
+} from '../consent-rows.js';
+import { insertProfessional, type TenantTableFixture } from '../fixture-helpers.js';
 
 /**
  * Fixtures of the tables of consent (track A2): one valid row per table, for the generated
  * isolation suite. The overrides replace a foreign key with an id of another organization.
  */
 
-type Tx = Parameters<TenantTableFixture['insert']>[0];
-
-const HASH = 'a'.repeat(64);
-
-export async function insertConsentTemplate(
-  tx: Tx,
-  tenantId: string,
-  overrides?: Readonly<Record<string, string>>,
-): Promise<string> {
-  return returningId(
-    tx,
-    sql`INSERT INTO consent_template (tenant_id, title, draft_body, appointment_type_id, created_by)
-          VALUES (${tenantId}, ${unique('Extraccion')}, 'Texto del consentimiento.',
-                  ${overrides?.['appointment_type_id'] ?? null}, gen_random_uuid())
-          RETURNING id`,
-  );
-}
-
-export async function insertConsentTemplateVersion(
-  tx: Tx,
-  tenantId: string,
-  overrides?: Readonly<Record<string, string>>,
-): Promise<string> {
-  return returningId(
-    tx,
-    sql`INSERT INTO consent_template_version
-          (tenant_id, template_id, version_number, title, body, content_hash, published_by)
-          VALUES (${tenantId},
-                  ${overrides?.['template_id'] ?? (await insertConsentTemplate(tx, tenantId))},
-                  1, ${unique('Extraccion')}, 'Texto del consentimiento.', ${HASH}, gen_random_uuid())
-          RETURNING id`,
-  );
-}
-
 export const fixtures: Record<string, TenantTableFixture> = {
   consent_template: { insert: insertConsentTemplate },
   consent_template_version: { insert: insertConsentTemplateVersion },
+  consent_request: {
+    insert: (tx, tenantId, overrides) => insertConsentRequest(tx, tenantId, overrides),
+  },
+  consent_signature: {
+    // A signature is read by a health professional only (the SELECT policy of migration 0512), so
+    // the generic suite reads it as a professional who treats the patient, like the clinical tables.
+    // The registry lives in `fixtures.ts`, which imports this file: it is reached lazily to avoid a
+    // cycle at load time.
+    async insert(tx, tenantId, overrides) {
+      const registry = await import('../fixtures.js');
+      (registry.CLINICAL_TABLES as Set<string>).add('consent_signature');
+      const signed = await insertConsentSignature(tx, tenantId, overrides);
+      const professionalId = await insertProfessional(tx, tenantId);
+      await tx.execute(
+        sql`INSERT INTO care_assignment (tenant_id, patient_id, professional_id, assigned_by)
+              VALUES (${tenantId}, ${signed.patientId}, ${professionalId}, gen_random_uuid())`,
+      );
+      registry.CLINICAL_AUTHORS.set(signed.id, professionalId);
+      return signed.id;
+    },
+  },
+  consent_revocation: { insert: insertConsentRevocation },
 };

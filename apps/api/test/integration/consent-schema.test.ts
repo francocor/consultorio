@@ -4,10 +4,7 @@ import { afterAll, beforeAll, describe, expect, inject, it } from 'vitest';
 
 import { createRuntimeDb, type DbHandle } from '../../src/platform/db/pool.js';
 import type { Tx } from '../../src/platform/db/tenant-context.js';
-import {
-  insertConsentTemplate,
-  insertConsentTemplateVersion,
-} from '../support/fixtures/consent.js';
+import { insertConsentTemplate, insertConsentTemplateVersion } from '../support/consent-rows.js';
 import { asTenant, createTestTenant, type TestTenant } from '../support/tenants.js';
 
 /**
