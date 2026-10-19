@@ -49,6 +49,8 @@ const INVOICE_REASONS = new Set([
   'issuer_mismatch',
   'voucher_ambiguous',
   'outcome_unknown',
+  'authority_refuses_lookup',
+  'voucher_taken_by_other',
 ]);
 
 /** Why an invoice needs a person, in words (the reason travels in the administrative detail). */
@@ -60,7 +62,9 @@ function invoiceAttentionText(
   if (typeof reason !== 'string' || !INVOICE_REASONS.has(reason)) {
     return t('scheduling:worklist.invoiceAttention.generic');
   }
-  const text = t(`scheduling:worklist.invoiceAttention.${reason}`);
+  // Some texts name the number of the voucher (the one of another invoice, for instance).
+  const number = typeof detail?.['number'] === 'number' ? detail['number'] : undefined;
+  const text = t(`scheduling:worklist.invoiceAttention.${reason}`, { number });
   // A parked invoice whose request may have been answered says so: the voucher may already exist.
   const withNote =
     detail?.['outcomeUnknown'] === true && reason !== 'outcome_unknown'
@@ -76,6 +80,16 @@ function invoiceAttentionText(
   const to = detail?.['candidatesTo'];
   if (Number.isInteger(from) && Number.isInteger(to)) {
     return `${withNote} ${t('scheduling:worklist.invoiceAttention.candidatesRangeNote', { from, to })}`;
+  }
+  // A range with no end yet: the invoice was replaced before anybody could ask where the authority is.
+  if (Number.isInteger(from)) {
+    return `${withNote} ${t('scheduling:worklist.invoiceAttention.candidatesOpenNote', { from })}`;
+  }
+  // The numbering of the authority went back: the two numbers, not a range that is empty.
+  const lastNow = detail?.['lastNow'];
+  const lastAtMark = detail?.['lastAtMark'];
+  if (Number.isInteger(lastNow) && Number.isInteger(lastAtMark)) {
+    return `${withNote} ${t('scheduling:worklist.invoiceAttention.numberingWentBackNote', { now: lastNow, atMark: lastAtMark })}`;
   }
   return withNote;
 }

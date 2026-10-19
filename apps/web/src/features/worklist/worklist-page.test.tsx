@@ -331,6 +331,76 @@ describe('an invoice that needs a person (JD-S4 R1-C3, C8)', () => {
     expect(ranged.missingKeys).toEqual([]);
   });
 
+  it('says where to look when the range has no end yet, and what happened when the numbering went back (JD-S4 R6)', async () => {
+    const open_ended = open({
+      items: [
+        {
+          ...INVOICE,
+          detail: { reason: 'replaced_unresolved', expectedNumber: 31, candidatesFrom: 31 },
+        },
+      ],
+    });
+    const first = await card('Factura para revisar');
+    expect(
+      first.getByText(/Números para revisar en ARCA: del 31 en adelante./),
+    ).toBeInTheDocument();
+    expect(open_ended.missingKeys).toEqual([]);
+  });
+
+  it('says that the numbering of ARCA went back, with the two numbers, instead of an empty range (JD-S4 R6)', async () => {
+    const app = open({
+      items: [
+        {
+          ...INVOICE,
+          detail: {
+            reason: 'voucher_ambiguous',
+            outcomeUnknown: true,
+            lastNow: 12,
+            lastAtMark: 500,
+          },
+        },
+      ],
+    });
+
+    const found = await card('Factura para revisar');
+
+    expect(
+      found.getByText(/ARCA informa como último número el 12, y tenía el 500 cuando se envió/),
+    ).toBeInTheDocument();
+    expect(found.queryByText(/del 501 al 500/)).not.toBeInTheDocument();
+    expect(app.missingKeys).toEqual([]);
+  });
+
+  it('says that ARCA refuses the lookup and that the invoice is not sent meanwhile (JD-S4 R6)', async () => {
+    const app = open({
+      items: [{ ...INVOICE, detail: { reason: 'authority_refuses_lookup', outcomeUnknown: true } }],
+    });
+
+    const found = await card('Factura para revisar');
+
+    expect(found.getByText(/ARCA rechaza la consulta/)).toBeInTheDocument();
+    expect(found.getByText(/no se envió nada/)).toBeInTheDocument();
+    expect(app.missingKeys).toEqual([]);
+  });
+
+  it('tells an invoice that is still parked that the voucher at its number belongs to another invoice (JD-S4 R6)', async () => {
+    const app = open({
+      items: [
+        {
+          ...INVOICE,
+          detail: { reason: 'voucher_taken_by_other', outcomeUnknown: true, number: 12 },
+        },
+      ],
+    });
+
+    const found = await card('Factura para revisar');
+
+    expect(
+      found.getByText(/El comprobante 12 de ARCA pertenece a otra factura/),
+    ).toBeInTheDocument();
+    expect(app.missingKeys).toEqual([]);
+  });
+
   it('does not promise that a parked invoice goes on by itself, and warns when its outcome is unknown (JD-S4 R3-4)', async () => {
     open({
       items: [
