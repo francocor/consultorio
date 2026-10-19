@@ -12,7 +12,7 @@ import { usePageTitle } from '../../app/use-page-title.js';
 import { locationsApi, LOCATIONS_QUERY_KEY } from '../../shared/api/locations-api.js';
 import { formatDateTime, formatMoney } from '../../shared/lib/format.js';
 import { Alert, AlertDescription } from '../../shared/ui/alert.js';
-import { Button } from '../../shared/ui/button.js';
+import { Button, WRAPPING_LABEL } from '../../shared/ui/button.js';
 import {
   Dialog,
   DialogContent,
@@ -27,6 +27,7 @@ import { PageHeader } from '../../shared/ui/page-header.js';
 import { EmptyState } from '../../shared/ui/states/empty-state.js';
 import { ErrorState } from '../../shared/ui/states/error-state.js';
 import { ListSkeleton } from '../../shared/ui/states/loading-skeleton.js';
+import { TableContainer } from '../../shared/ui/table.js';
 import { toast } from '../../shared/ui/toaster.js';
 import { billingApi, billingKeys, ErrorAlert } from '../billing/index.js';
 
@@ -98,8 +99,8 @@ function OpenRegister({ location, disabled }: { location: LocationDto; disabled:
 function SessionSummary({ session }: { session: CashSessionDto }) {
   const { t } = useTranslation('cash');
   return (
-    <div className="grid gap-4">
-      <dl className="grid gap-1 text-sm">
+    <div className="grid grid-cols-1 gap-4">
+      <dl className="grid grid-cols-1 gap-1 text-sm">
         <div className="flex justify-between gap-4">
           <dt className="text-muted-foreground">{t('summary.opening')}</dt>
           <dd className="tabular-nums">{formatMoney(session.openingCents)}</dd>
@@ -130,45 +131,51 @@ function SessionSummary({ session }: { session: CashSessionDto }) {
         ) : null}
       </dl>
       {session.differenceReason ? (
-        <p className="text-sm text-muted-foreground">
+        <p className="break-words text-sm text-muted-foreground">
           {t('summary.reason', { reason: session.differenceReason })}
         </p>
       ) : null}
 
       {session.byMethod.length > 0 ? (
-        <table className="w-full text-sm">
-          <caption className="pb-1 text-left font-medium">{t('summary.byMethod')}</caption>
-          <thead>
-            <tr className="text-left text-muted-foreground">
-              <th scope="col" className="py-1 font-normal">
-                {t('summary.method')}
-              </th>
-              <th scope="col" className="py-1 text-right font-normal">
-                {t('summary.payments')}
-              </th>
-              <th scope="col" className="py-1 text-right font-normal">
-                {t('summary.refunds')}
-              </th>
-              <th scope="col" className="py-1 text-right font-normal">
-                {t('summary.net')}
-              </th>
-            </tr>
-          </thead>
-          <tbody>
-            {session.byMethod.map((row) => (
-              <tr key={row.method} className="border-t">
-                <th scope="row" className="py-1 text-left font-normal">
-                  {t(`method.${row.method}`)}
+        <TableContainer aria-label={t('summary.byMethod')} className="border-0 bg-transparent">
+          <table className="w-full text-sm">
+            <caption className="pb-1 text-left font-medium">{t('summary.byMethod')}</caption>
+            <thead>
+              <tr className="text-left text-muted-foreground">
+                <th scope="col" className="py-1 pr-3 font-normal">
+                  {t('summary.method')}
                 </th>
-                <td className="py-1 text-right tabular-nums">{formatMoney(row.paymentsCents)}</td>
-                <td className="py-1 text-right tabular-nums">{formatMoney(row.refundsCents)}</td>
-                <td className="py-1 text-right tabular-nums font-medium">
-                  {formatMoney(row.netCents)}
-                </td>
+                <th scope="col" className="whitespace-nowrap py-1 pl-3 text-right font-normal">
+                  {t('summary.payments')}
+                </th>
+                <th scope="col" className="whitespace-nowrap py-1 pl-3 text-right font-normal">
+                  {t('summary.refunds')}
+                </th>
+                <th scope="col" className="whitespace-nowrap py-1 pl-3 text-right font-normal">
+                  {t('summary.net')}
+                </th>
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {session.byMethod.map((row) => (
+                <tr key={row.method} className="border-t">
+                  <th scope="row" className="py-1 pr-3 text-left font-normal">
+                    {t(`method.${row.method}`)}
+                  </th>
+                  <td className="whitespace-nowrap py-1 pl-3 text-right tabular-nums">
+                    {formatMoney(row.paymentsCents)}
+                  </td>
+                  <td className="whitespace-nowrap py-1 pl-3 text-right tabular-nums">
+                    {formatMoney(row.refundsCents)}
+                  </td>
+                  <td className="whitespace-nowrap py-1 pl-3 text-right tabular-nums font-medium">
+                    {formatMoney(row.netCents)}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </TableContainer>
       ) : (
         <p className="text-sm text-muted-foreground">{t('summary.noMovements')}</p>
       )}
@@ -196,9 +203,9 @@ function SessionDetail({ id, canCorrect }: { id: string; canCorrect: boolean }) 
     );
   }
   return (
-    <div className="grid gap-4">
+    <div className="grid grid-cols-1 gap-4">
       <SessionSummary session={detail.data.session} />
-      <section aria-labelledby={`entries-${id}`} className="grid gap-2">
+      <section aria-labelledby={`entries-${id}`} className="grid grid-cols-1 gap-2">
         <h3 id={`entries-${id}`} className="text-sm font-semibold">
           {t('entries.title')}
         </h3>
@@ -303,11 +310,11 @@ function Cash() {
       {open ? (
         <section
           aria-labelledby="open-register"
-          className="grid gap-4 rounded-lg border bg-card p-4"
+          className="grid grid-cols-1 gap-4 rounded-lg border bg-card p-4"
         >
           <div className="flex flex-wrap items-start justify-between gap-3">
-            <div>
-              <h2 id="open-register" className="font-display text-lg font-semibold">
+            <div className="min-w-0">
+              <h2 id="open-register" className="break-words font-display text-lg font-semibold">
                 {t('cash:open.title', { location: open.locationName })}
               </h2>
               <p className="text-sm text-muted-foreground">
@@ -331,17 +338,17 @@ function Cash() {
       ) : null}
 
       {location && history.data && history.data.sessions.length > 0 ? (
-        <section aria-labelledby="history-title" className="grid gap-2">
+        <section aria-labelledby="history-title" className="grid grid-cols-1 gap-2">
           <h2 id="history-title" className="font-display text-lg font-semibold">
             {t('cash:history.title')}
           </h2>
-          <ul className="grid gap-2">
+          <ul className="grid grid-cols-1 gap-2">
             {history.data.sessions.map((session) => (
               <li
                 key={session.id}
                 className="flex flex-wrap items-center justify-between gap-3 rounded-lg border bg-card p-3 text-sm"
               >
-                <span>
+                <span className="min-w-0 break-words">
                   {formatDateTime(session.openedAt)} · {t('cash:history.counted')}{' '}
                   <span className="tabular-nums">
                     {formatMoney(session.countedCents ?? money(0))}
@@ -354,6 +361,7 @@ function Cash() {
                   type="button"
                   size="sm"
                   variant="outline"
+                  className={WRAPPING_LABEL}
                   onClick={() => {
                     setViewing(session.id);
                   }}

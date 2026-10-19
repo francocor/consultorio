@@ -14,7 +14,7 @@ import { useApi } from '../../../app/providers.js';
 import { downloadBlob } from '../../../shared/lib/download.js';
 import { formatDate } from '../../../shared/lib/format.js';
 import { Alert, AlertDescription } from '../../../shared/ui/alert.js';
-import { Button } from '../../../shared/ui/button.js';
+import { Button, WRAPPING_LABEL } from '../../../shared/ui/button.js';
 import { Select } from '../../../shared/ui/input.js';
 import { Label } from '../../../shared/ui/label.js';
 import { billingApi, billingKeys } from '../api/billing-api.js';
@@ -80,6 +80,7 @@ function ExportStatus({ id }: { id: string }) {
       <div>
         <Button
           type="button"
+          className={WRAPPING_LABEL}
           loading={download.isPending}
           onClick={() => {
             download.mutate(entry);

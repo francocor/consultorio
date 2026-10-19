@@ -115,7 +115,7 @@ export function SummaryWidget({
       empty={report?.totalAppointments === 0}
     >
       {report ? (
-        <div className="grid gap-4">
+        <div className="grid grid-cols-1 gap-4">
           <dl className="grid grid-cols-1 gap-3 min-[420px]:grid-cols-2 lg:grid-cols-3">
             {tiles.map((tile) => (
               <div key={tile.id} className="grid min-w-0 content-start gap-1 rounded-lg border p-3">

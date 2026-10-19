@@ -6,7 +6,7 @@ import { useTranslation } from 'react-i18next';
 import { useApi } from '../../../app/providers.js';
 import { hasAnyPermission, useMe } from '../../../app/session.js';
 import { formatMoney, formatTime } from '../../../shared/lib/format.js';
-import { Button } from '../../../shared/ui/button.js';
+import { Button, WRAPPING_LABEL } from '../../../shared/ui/button.js';
 import { billingApi, CorrectPaymentDialog } from '../../billing/index.js';
 
 /** Loads the payment behind an entry and offers the correction dialog for it. */
@@ -43,23 +43,26 @@ export function EntriesList({
   }
   return (
     <>
-      <ul aria-label={t('entries.caption')} className="grid gap-1 rounded-md border bg-card">
+      <ul
+        aria-label={t('entries.caption')}
+        className="grid grid-cols-1 gap-1 rounded-md border bg-card"
+      >
         {entries.map((entry) => (
           <li
             key={`${entry.kind}-${entry.id}`}
             className="flex flex-wrap items-center justify-between gap-2 border-b px-3 py-2 text-sm last:border-b-0"
           >
-            <span className="min-w-0">
+            <span className="min-w-0 max-w-full">
               <span className="block truncate">
                 {t(`entries.kind.${entry.kind}`)} · {entry.patientName}
               </span>
-              <span className="text-xs text-muted-foreground">
+              <span className="block break-words text-xs text-muted-foreground">
                 {formatTime(entry.at)} · {t(`method.${entry.method}`)}
                 {entry.reason ? ` · ${entry.reason}` : ''}
               </span>
             </span>
-            <span className="flex items-center gap-2">
-              <span className="tabular-nums font-medium">
+            <span className="flex max-w-full flex-wrap items-center gap-2">
+              <span className="whitespace-nowrap tabular-nums font-medium">
                 {entry.kind === 'payment' ? '' : '-'}
                 {formatMoney(entry.amountCents)}
               </span>
@@ -68,6 +71,7 @@ export function EntriesList({
                   type="button"
                   size="sm"
                   variant="ghost"
+                  className={WRAPPING_LABEL}
                   onClick={() => {
                     setCorrecting(entry);
                   }}

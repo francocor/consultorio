@@ -12,7 +12,7 @@ import { useTranslation } from 'react-i18next';
 import { useApi } from '../../../app/providers.js';
 import { downloadBlob } from '../../../shared/lib/download.js';
 import { Alert, AlertDescription } from '../../../shared/ui/alert.js';
-import { Button } from '../../../shared/ui/button.js';
+import { Button, WRAPPING_LABEL } from '../../../shared/ui/button.js';
 import {
   Card,
   CardContent,
@@ -87,6 +87,7 @@ function ExportStatus({ id }: { id: string }) {
       <div>
         <Button
           type="button"
+          className={WRAPPING_LABEL}
           loading={download.isPending}
           onClick={() => {
             download.mutate(entry);

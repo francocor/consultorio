@@ -33,6 +33,13 @@ export const buttonVariants = cva(
   },
 );
 
+/**
+ * For a button whose label carries a name or a file name from the data (`Ver cobro de <patient>`):
+ * the label wraps inside the button instead of keeping one line, so a long name never makes the
+ * page wider than a phone.
+ */
+export const WRAPPING_LABEL = 'h-auto max-w-full whitespace-normal break-words py-2 text-left';
+
 export interface ButtonProps extends ComponentProps<'button'>, VariantProps<typeof buttonVariants> {
   /** Renders the child element (a link) with the look of a button. */
   asChild?: boolean;

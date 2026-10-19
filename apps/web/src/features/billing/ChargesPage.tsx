@@ -10,7 +10,7 @@ import { hasAnyPermission, useMe } from '../../app/session.js';
 import { SimulatedBillingNotice } from '../../app/SimulatedBillingNotice.js';
 import { usePageTitle } from '../../app/use-page-title.js';
 import { DEFAULT_TIME_ZONE, formatMoney, formatTime } from '../../shared/lib/format.js';
-import { Button } from '../../shared/ui/button.js';
+import { Button, WRAPPING_LABEL } from '../../shared/ui/button.js';
 import { Checkbox } from '../../shared/ui/checkbox.js';
 import {
   Dialog,
@@ -46,7 +46,7 @@ export function ChargesPage() {
 function ChargeCard({ charge, onOpen }: { charge: ChargeDto; onOpen: () => void }) {
   const { t } = useTranslation('billing');
   return (
-    <li className="grid gap-2 rounded-lg border bg-card p-4">
+    <li className="grid grid-cols-1 gap-2 rounded-lg border bg-card p-4">
       <div className="flex flex-wrap items-start justify-between gap-2">
         <div className="min-w-0">
           <p className="truncate font-medium">{charge.patientName}</p>
@@ -69,7 +69,13 @@ function ChargeCard({ charge, onOpen }: { charge: ChargeDto; onOpen: () => void 
         <p className="text-sm font-medium text-warning-soft-foreground">{t('list.needsReview')}</p>
       ) : null}
       <div>
-        <Button type="button" size="sm" variant="outline" onClick={onOpen}>
+        <Button
+          type="button"
+          size="sm"
+          variant="outline"
+          className={WRAPPING_LABEL}
+          onClick={onOpen}
+        >
           {t('list.open', { patient: charge.patientName })}
         </Button>
       </div>
@@ -186,7 +192,7 @@ function Charges() {
           <TabsTrigger value="exports">{t('billing:tabs.exports')}</TabsTrigger>
         </TabsList>
 
-        <TabsContent value="charges" className="grid gap-3 pt-4">
+        <TabsContent value="charges" className="grid grid-cols-1 gap-3 pt-4">
           {valid && list.isPending ? <ListSkeleton rows={3} /> : null}
           {list.isError ? (
             <ErrorState
@@ -204,7 +210,7 @@ function Charges() {
             />
           ) : null}
           {charges.length > 0 ? (
-            <ul aria-label={t('billing:list.caption')} className="grid gap-3">
+            <ul aria-label={t('billing:list.caption')} className="grid grid-cols-1 gap-3">
               {charges.map((charge) => (
                 <ChargeCard
                   key={charge.id}

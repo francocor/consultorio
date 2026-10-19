@@ -8,7 +8,7 @@ import { useTranslation } from 'react-i18next';
 import { useApi } from '../../../app/providers.js';
 import { hasAnyPermission, useMe } from '../../../app/session.js';
 import { DEFAULT_TIME_ZONE, formatMoney, formatTime } from '../../../shared/lib/format.js';
-import { Button } from '../../../shared/ui/button.js';
+import { Button, WRAPPING_LABEL } from '../../../shared/ui/button.js';
 import { Input } from '../../../shared/ui/input.js';
 import { Label } from '../../../shared/ui/label.js';
 import { EmptyState } from '../../../shared/ui/states/empty-state.js';
@@ -25,12 +25,6 @@ function day(daysFromToday: number): string {
   const moment = new Date(Date.now() + daysFromToday * 86_400_000);
   return moment.toLocaleDateString('en-CA', { timeZone: DEFAULT_TIME_ZONE });
 }
-
-/**
- * The name of the patient is part of the label of the button, and a long name must wrap inside the
- * button instead of making the whole page wider than a phone.
- */
-const WRAP = 'h-auto max-w-full whitespace-normal py-2 text-left';
 
 /**
  * The charges of a period that still have something to invoice, each with the action to do it: the
@@ -131,7 +125,7 @@ export function ChargesToInvoice({ readOnly }: { readOnly: boolean }) {
                     <Button
                       type="button"
                       size="sm"
-                      className={WRAP}
+                      className={WRAPPING_LABEL}
                       onClick={() => {
                         setIssuing(charge);
                       }}
@@ -144,7 +138,7 @@ export function ChargesToInvoice({ readOnly }: { readOnly: boolean }) {
                       type="button"
                       size="sm"
                       variant="outline"
-                      className={WRAP}
+                      className={WRAPPING_LABEL}
                       onClick={() => {
                         setRegistering(charge);
                       }}
