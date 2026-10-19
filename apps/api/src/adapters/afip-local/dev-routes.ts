@@ -1,5 +1,6 @@
 import {
   AfipSimulatorModeRequest,
+  AfipSimulatorStateQuery,
   AfipSimulatorStateResponse,
   type AfipSimulatorStateResponse as State,
 } from '@consultorio/contracts';
@@ -36,8 +37,8 @@ export function afipDevRoutes(deps: AfipDevRoutesDeps) {
       audits: 'none',
     } as const;
 
-    async function state(): Promise<State> {
-      const vouchers = await controls.vouchers(VOUCHERS_SHOWN);
+    async function state(tenantRef?: string): Promise<State> {
+      const vouchers = await controls.vouchers(VOUCHERS_SHOWN, tenantRef);
       return {
         mode: await controls.mode(),
         vouchers: vouchers.map((voucher) => ({
@@ -49,8 +50,14 @@ export function afipDevRoutes(deps: AfipDevRoutesDeps) {
 
     typed.get(
       `${base}/state`,
-      { config: read, schema: { response: { 200: AfipSimulatorStateResponse } } },
-      state,
+      {
+        config: read,
+        schema: {
+          querystring: AfipSimulatorStateQuery,
+          response: { 200: AfipSimulatorStateResponse },
+        },
+      },
+      (request) => state(request.query.tenantRef),
     );
 
     typed.put(

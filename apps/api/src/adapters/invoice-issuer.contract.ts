@@ -1,6 +1,8 @@
 import type { AfipSimulatorMode, InvoiceIssuer, InvoiceRequest } from '@consultorio/contracts';
 import { describe, expect, it } from 'vitest';
 
+import { voucherMatches } from '../modules/invoicing/domain/voucher-match.js';
+
 /**
  * The contract of the `InvoiceIssuer` port (design section 6, "one shared suite per port"). The
  * in-memory fake, the local AFIP simulator and, later, the WSAA/WSFEv1 adapter must all pass it:
@@ -105,31 +107,84 @@ export function describeInvoiceIssuerContract(target: InvoiceIssuerContractTarge
       expect(await numberOf(requestFor(cuit))).toBe(3);
     });
 
-    it('continues after the highest number the organization says it holds, when the simulator lost its memory', async () => {
+    it('issues exactly the number a request is pinned to when it is the next one of the series (JD-S4 R6-1)', async () => {
       const { issuer } = await target.make();
       const cuit = nextCuit();
 
       const first = expectIssued(
-        await issuer.issue(requestFor(cuit, { lastKnownNumber: 41 }), key()),
+        await issuer.issue(requestFor(cuit, { expectedNumber: 1 }), key()),
       );
-      // A hint below what the issuer already holds changes nothing: it only moves numbering forward.
       const second = expectIssued(
-        await issuer.issue(requestFor(cuit, { lastKnownNumber: 7 }), key()),
+        await issuer.issue(requestFor(cuit, { expectedNumber: 2 }), key()),
       );
+      // A request that is not pinned takes the next number, as before.
       const third = expectIssued(await issuer.issue(requestFor(cuit), key()));
 
-      expect([first.number, second.number, third.number]).toEqual([42, 43, 44]);
+      expect([first.number, second.number, third.number]).toEqual([1, 2, 3]);
     });
 
-    it('answers the same voucher to a retry whose hint has moved, because the hint is not part of the request', async () => {
+    it('refuses, definitely and issuing nothing, a request pinned to a number that is not the next one (JD-S4 R6-1)', async () => {
+      const { issuer } = await target.make();
+      const cuit = nextCuit();
+      const last = () => issuer.lastAuthorized({ issuerCuit: cuit, pointOfSale: 1, type: 'FC' });
+      const at = (number: number) =>
+        issuer.findIssued({ issuerCuit: cuit, pointOfSale: 1, type: 'FC', number });
+
+      // Above the next number: a gap is never created.
+      const above = await issuer.issue(requestFor(cuit, { expectedNumber: 5 }), key());
+      expect(above).toMatchObject({
+        status: 'not_next',
+        message: expect.stringMatching(/10016/) as string,
+      });
+      expect(await last()).toEqual({ status: 'ok', number: 0 });
+      expect(await at(1)).toBeNull();
+      expect(await at(5)).toBeNull();
+
+      // The refusal consumed no number and remembered no key: the next number is still free.
+      expectIssued(await issuer.issue(requestFor(cuit, { expectedNumber: 1 }), key()));
+      // At or below the last one: the number is taken.
+      const taken = await issuer.issue(requestFor(cuit, { expectedNumber: 1 }), key());
+      expect(taken).toMatchObject({ status: 'not_next' });
+      expect(await last()).toEqual({ status: 'ok', number: 1 });
+    });
+
+    it('declares that it honours the pin, which the cases around this one hold it to (JD-S4 R7-2)', async () => {
+      const { issuer } = await target.make();
+
+      // The core trusts a declared pin: the lookup after an unknown outcome asks about that one number.
+      expect(issuer.honoursPin).toBe(true);
+    });
+
+    it('does not issue a second voucher for a late duplicate of a pinned request (JD-S4 R6-1)', async () => {
+      const { issuer } = await target.make();
+      const cuit = nextCuit();
+      const pinned = requestFor(cuit, { expectedNumber: 1 });
+
+      // The real authority does not take our key: the same request arrives twice, with other keys.
+      const first = expectIssued(await issuer.issue(pinned, key()));
+      const duplicate = await issuer.issue(pinned, key());
+
+      expect(first.number).toBe(1);
+      expect(duplicate).toMatchObject({ status: 'not_next' });
+      expect(await issuer.lastAuthorized({ issuerCuit: cuit, pointOfSale: 1, type: 'FC' })).toEqual(
+        {
+          status: 'ok',
+          number: 1,
+        },
+      );
+    });
+
+    it('answers the same voucher to a retry of a pinned request with the same key, whatever the pin says now (JD-S4 R6-1)', async () => {
       const { issuer } = await target.make();
       const cuit = nextCuit();
       const idempotencyKey = key();
 
-      const first = await issuer.issue(requestFor(cuit, { lastKnownNumber: 10 }), idempotencyKey);
-      const retry = await issuer.issue(requestFor(cuit, { lastKnownNumber: 25 }), idempotencyKey);
+      const first = await issuer.issue(requestFor(cuit, { expectedNumber: 1 }), idempotencyKey);
+      // The pin is not part of the request that a key stands for: after a lost answer the caller asks
+      // again and gets the voucher that exists, not a refusal.
+      const retry = await issuer.issue(requestFor(cuit, { expectedNumber: 2 }), idempotencyKey);
 
-      expect(expectIssued(first).number).toBe(11);
+      expect(expectIssued(first).number).toBe(1);
       expect(retry).toEqual(first);
     });
 
@@ -281,6 +336,24 @@ export function describeInvoiceIssuerContract(target: InvoiceIssuerContractTarge
       });
     });
 
+    it('numbers without gaps: every number up to the last voucher is found, and the number after it is not (JD-S4 R4-1)', async () => {
+      // The invoicing module relies on it: when nothing is at a number, nothing is above it either, so a
+      // request that finds the number after the last one empty may be sent without issuing twice.
+      const { issuer } = await target.make();
+      const cuit = nextCuit();
+      for (let issued = 0; issued < 3; issued += 1) {
+        expectIssued(await issuer.issue(requestFor(cuit), key()));
+      }
+      const at = (number: number) =>
+        issuer.findIssued({ issuerCuit: cuit, pointOfSale: 1, type: 'FC', number });
+
+      expect(await at(1)).toMatchObject({ status: 'issued', number: 1 });
+      expect(await at(2)).toMatchObject({ status: 'issued', number: 2 });
+      expect(await at(3)).toMatchObject({ status: 'issued', number: 3 });
+      expect(await at(4)).toBeNull();
+      expect(await at(5)).toBeNull();
+    });
+
     it('says what it holds for a voucher it finds: the total and the date, so a caller can compare them', async () => {
       const { issuer } = await target.make();
       const cuit = nextCuit();
@@ -303,6 +376,50 @@ export function describeInvoiceIssuerContract(target: InvoiceIssuerContractTarge
         totalCents: 3_300_000,
         issueDate: '2026-10-16',
       });
+    });
+
+    it('says who issued a voucher it finds and whom it is addressed to, so two vouchers with the same total and date can be told apart (JD-S4 R2-1)', async () => {
+      const { issuer } = await target.make();
+      const cuit = nextCuit();
+      const buyer = { type: 'dni' as const, number: '30123456' };
+      expectIssued(
+        await issuer.issue(requestFor(cuit, { type: 'FB', buyerDocument: buyer }), key()),
+      );
+      expectIssued(await issuer.issue(requestFor(cuit, { type: 'FB' }), key()));
+      const lookup = (number: number) =>
+        issuer.findIssued({ issuerCuit: cuit, pointOfSale: 1, type: 'FB', number });
+
+      expect(await lookup(1)).toMatchObject({
+        status: 'issued',
+        issuerCuit: cuit,
+        buyerDocument: buyer,
+        associatedVoucher: null,
+      });
+      // A voucher with no buyer document says so: `null`, not an absent field.
+      expect(await lookup(2)).toMatchObject({
+        status: 'issued',
+        issuerCuit: cuit,
+        buyerDocument: null,
+        associatedVoucher: null,
+      });
+    });
+
+    it('says the voucher a credit note cancels when it finds the note (JD-S4 R2-1)', async () => {
+      const { issuer } = await target.make();
+      const cuit = nextCuit();
+      const cancelled = { type: 'FC', pointOfSale: 1, number: 7 };
+      expectIssued(
+        await issuer.issue(requestFor(cuit, { type: 'NCC', associatedVoucher: cancelled }), key()),
+      );
+
+      const found = await issuer.findIssued({
+        issuerCuit: cuit,
+        pointOfSale: 1,
+        type: 'NCC',
+        number: 1,
+      });
+
+      expect(found).toMatchObject({ status: 'issued', associatedVoucher: cancelled });
     });
 
     it('keeps the series, the answers and the lookups of two organizations apart even when they name the same CUIT', async () => {
@@ -330,6 +447,171 @@ export function describeInvoiceIssuerContract(target: InvoiceIssuerContractTarge
       expect(await lookup('organization-b', 2)).toMatchObject({ number: 2 });
       expect(await lookup('organization-c', 1)).toBeNull();
     });
+
+    it('says the last number it authorized in a series: the highest issued, and 0 for an empty series (JD-S4 R5-1)', async () => {
+      const { issuer } = await target.make();
+      const cuit = nextCuit();
+      const last = (ref: Partial<Parameters<InvoiceIssuer['lastAuthorized']>[0]> = {}) =>
+        issuer.lastAuthorized({ issuerCuit: cuit, pointOfSale: 1, type: 'FC', ...ref });
+
+      // An empty series is an answer (0), not a failure.
+      expect(await last()).toEqual({ status: 'ok', number: 0 });
+      expectIssued(await issuer.issue(requestFor(cuit), key()));
+      expectIssued(await issuer.issue(requestFor(cuit), key()));
+      expect(await last()).toEqual({ status: 'ok', number: 2 });
+      // A pinned request moves it by one.
+      expectIssued(await issuer.issue(requestFor(cuit, { expectedNumber: 3 }), key()));
+      expect(await last()).toEqual({ status: 'ok', number: 3 });
+    });
+
+    it('does not count the vouchers of another series, issuer or organization in the last number (JD-S4 R5-1)', async () => {
+      const { issuer } = await target.make();
+      const cuit = nextCuit();
+      expectIssued(await issuer.issue(requestFor(cuit, { tenantRef: 'organization-a' }), key()));
+      expectIssued(await issuer.issue(requestFor(cuit, { tenantRef: 'organization-a' }), key()));
+      expectIssued(
+        await issuer.issue(
+          requestFor(cuit, { pointOfSale: 2, tenantRef: 'organization-a' }),
+          key(),
+        ),
+      );
+      expectIssued(
+        await issuer.issue(requestFor(cuit, { type: 'NCC', tenantRef: 'organization-a' }), key()),
+      );
+      expectIssued(await issuer.issue(requestFor(cuit, { tenantRef: 'organization-b' }), key()));
+      const last = (ref: Partial<Parameters<InvoiceIssuer['lastAuthorized']>[0]>) =>
+        issuer.lastAuthorized({ issuerCuit: cuit, pointOfSale: 1, type: 'FC', ...ref });
+
+      expect(await last({ tenantRef: 'organization-a' })).toEqual({ status: 'ok', number: 2 });
+      expect(await last({ tenantRef: 'organization-b' })).toEqual({ status: 'ok', number: 1 });
+      expect(await last({ tenantRef: 'organization-a', pointOfSale: 2 })).toEqual({
+        status: 'ok',
+        number: 1,
+      });
+      expect(await last({ tenantRef: 'organization-a', type: 'NCC' })).toEqual({
+        status: 'ok',
+        number: 1,
+      });
+      expect(await last({ tenantRef: 'organization-a', type: 'NCA' })).toEqual({
+        status: 'ok',
+        number: 0,
+      });
+      expect(await last({ tenantRef: 'organization-c' })).toEqual({ status: 'ok', number: 0 });
+      expect(await last({ issuerCuit: nextCuit(), tenantRef: 'organization-a' })).toEqual({
+        status: 'ok',
+        number: 0,
+      });
+    });
+
+    it('does not answer the last number in an outage, and never answers 0 for it (JD-S4 R5-1)', async () => {
+      const { issuer, setMode } = await target.make();
+      const cuit = nextCuit();
+      expectIssued(await issuer.issue(requestFor(cuit), key()));
+      await setMode('down');
+
+      const down = await issuer.lastAuthorized({ issuerCuit: cuit, pointOfSale: 1, type: 'FC' });
+      await setMode('ok');
+
+      expect(down).toMatchObject({ status: 'retryable', outcomeUnknown: false });
+      expect(down).not.toHaveProperty('number');
+    });
+
+    it('finds a voucher that says what the request said, so the facts of a request match the voucher found (round trip, JD-S4 R5-1)', async () => {
+      const { issuer } = await target.make();
+      const cuit = nextCuit();
+      const buyer = { type: 'dni' as const, number: '30123456' };
+      const request = requestFor(cuit, {
+        type: 'FB',
+        totalCents: 1_210_000,
+        netCents: 1_000_000,
+        vatCents: 210_000,
+        buyerDocument: buyer,
+      });
+      const credit = requestFor(cuit, {
+        type: 'NCC',
+        associatedVoucher: { type: 'FC', pointOfSale: 1, number: 7 },
+      });
+      expectIssued(await issuer.issue(request, key()));
+      expectIssued(await issuer.issue(credit, key()));
+      const facts = (asked: InvoiceRequest) => ({
+        issuerCuit: asked.issuerCuit ?? '',
+        totalCents: asked.totalCents,
+        issueDate: asked.issueDate,
+        buyerDocument: asked.buyerDocument ?? null,
+        associatedVoucher: asked.associatedVoucher ?? null,
+      });
+
+      const found = await issuer.findIssued({
+        issuerCuit: cuit,
+        pointOfSale: 1,
+        type: 'FB',
+        number: 1,
+      });
+      const foundCredit = await issuer.findIssued({
+        issuerCuit: cuit,
+        pointOfSale: 1,
+        type: 'NCC',
+        number: 1,
+      });
+
+      // A voucher that does not match its own request would make a caller look past its own voucher.
+      if (found?.status !== 'issued' || foundCredit?.status !== 'issued') {
+        throw new Error('the vouchers were not found');
+      }
+      expect(voucherMatches(found, facts(request))).toBe(true);
+      expect(voucherMatches(foundCredit, facts(credit))).toBe(true);
+      expect(voucherMatches(found, facts(credit))).toBe(false);
+    });
+
+    it.each([
+      ['an anonymous buyer (consumidor final)', { type: 'FC' }],
+      [
+        'a buyer with a DNI',
+        { type: 'FB', buyerDocument: { type: 'dni' as const, number: '30123456' } },
+      ],
+      [
+        'a buyer with a CUIT',
+        { type: 'FA', buyerDocument: { type: 'cuit' as const, number: '30712345671' } },
+      ],
+      [
+        'a credit note that cancels a voucher',
+        { type: 'NCC', associatedVoucher: { type: 'FC', pointOfSale: 1, number: 7 } },
+      ],
+    ] satisfies [string, Partial<InvoiceRequest>][])(
+      'finds the voucher of %s saying exactly what the request said: the issuer, the buyer and the association, so the caller never takes its own voucher for a foreign one (JD-S4 R6-6)',
+      async (_name, overrides) => {
+        const { issuer } = await target.make();
+        const cuit = nextCuit();
+        const request = requestFor(cuit, overrides);
+        expectIssued(await issuer.issue(request, key()));
+
+        const found = await issuer.findIssued({
+          issuerCuit: cuit,
+          pointOfSale: 1,
+          type: request.type,
+          number: 1,
+        });
+
+        if (found?.status !== 'issued') throw new Error('the voucher was not found');
+        // Every field is stated (nothing is left for the caller to guess), and every one is the same.
+        expect(found).toMatchObject({
+          issuerCuit: cuit,
+          totalCents: request.totalCents,
+          issueDate: request.issueDate,
+          buyerDocument: request.buyerDocument ?? null,
+          associatedVoucher: request.associatedVoucher ?? null,
+        });
+        expect(
+          voucherMatches(found, {
+            issuerCuit: cuit,
+            totalCents: request.totalCents,
+            issueDate: request.issueDate,
+            buyerDocument: request.buyerDocument ?? null,
+            associatedVoucher: request.associatedVoucher ?? null,
+          }),
+        ).toBe(true);
+      },
+    );
 
     it('refuses a key that is reused for a different request', async () => {
       const { issuer } = await target.make();

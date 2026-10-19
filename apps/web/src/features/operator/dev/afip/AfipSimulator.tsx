@@ -121,6 +121,7 @@ export function AfipSimulator() {
               <TableCaption>{t('dev.vouchers.caption')}</TableCaption>
               <TableHeader>
                 <TableRow>
+                  <TableHead>{t('dev.vouchers.col.organization')}</TableHead>
                   <TableHead>{t('dev.vouchers.col.issuer')}</TableHead>
                   <TableHead>{t('dev.vouchers.col.pointOfSale')}</TableHead>
                   <TableHead>{t('dev.vouchers.col.type')}</TableHead>
@@ -133,6 +134,9 @@ export function AfipSimulator() {
               <TableBody>
                 {vouchers.map((voucher) => (
                   <TableRow key={voucher.id}>
+                    <TableCell className="tabular">
+                      {voucher.tenantRef === '' ? '—' : voucher.tenantRef.slice(0, 8)}
+                    </TableCell>
                     <TableCell className="tabular">{voucher.issuerCuit}</TableCell>
                     <TableCell className="tabular">{voucher.pointOfSale}</TableCell>
                     <TableCell>{voucher.type}</TableCell>

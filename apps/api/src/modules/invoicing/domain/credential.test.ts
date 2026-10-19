@@ -31,6 +31,27 @@ describe('reading an uploaded credential', () => {
     if (parsed.ok) expect(parsed.value.fingerprint).toMatch(/^[0-9a-f]{64}$/);
   });
 
+  it('reads a certificate whose random serial number starts with a zero byte (JD-S4 R2, flaky key check)', () => {
+    // A serial of 16 random bytes starts with 0x00 once in 256 and, with a low second byte, must be
+    // written without its leading zero (DER is minimal): the certificate was unreadable now and then.
+    for (const serial of [
+      Buffer.from('00010203040506070809101112131415', 'hex'),
+      Buffer.from('00000000000000000000000000000001', 'hex'),
+      Buffer.from('0080000000000000000000000000000f', 'hex'),
+    ]) {
+      const made = generateDevCertificate({ cuit: CUIT, now: NOW, algorithm: 'ec', serial });
+
+      expect(
+        parseCredential({
+          certificate: made.certificate,
+          privateKey: made.privateKey,
+          expectedCuit: CUIT,
+          now: NOW,
+        }),
+      ).toMatchObject({ ok: true });
+    }
+  });
+
   it('gives the same fingerprint for the same certificate and another for another', () => {
     const one = dev();
     const other = dev();

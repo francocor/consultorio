@@ -8,7 +8,7 @@ import { useTranslation } from 'react-i18next';
 import { useApi } from '../../../app/providers.js';
 import { hasAnyPermission, useMe } from '../../../app/session.js';
 import { DEFAULT_TIME_ZONE, formatMoney, formatTime } from '../../../shared/lib/format.js';
-import { Button } from '../../../shared/ui/button.js';
+import { Button, WRAPPING_LABEL } from '../../../shared/ui/button.js';
 import { Input } from '../../../shared/ui/input.js';
 import { Label } from '../../../shared/ui/label.js';
 import { EmptyState } from '../../../shared/ui/states/empty-state.js';
@@ -125,6 +125,7 @@ export function ChargesToInvoice({ readOnly }: { readOnly: boolean }) {
                     <Button
                       type="button"
                       size="sm"
+                      className={WRAPPING_LABEL}
                       onClick={() => {
                         setIssuing(charge);
                       }}
@@ -137,6 +138,7 @@ export function ChargesToInvoice({ readOnly }: { readOnly: boolean }) {
                       type="button"
                       size="sm"
                       variant="outline"
+                      className={WRAPPING_LABEL}
                       onClick={() => {
                         setRegistering(charge);
                       }}

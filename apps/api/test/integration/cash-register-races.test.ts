@@ -5,7 +5,7 @@ import { afterAll, beforeAll, describe, expect, inject, it } from 'vitest';
 import { createRuntimeDb, type DbHandle } from '../../src/platform/db/pool.js';
 import type { Tx } from '../../src/platform/db/tenant-context.js';
 import { createBillingWorld, submissionKey, type BillingWorld } from '../support/billing-world.js';
-import { gate, waitForLockWaiters } from '../support/lock-waits.js';
+import { backendPid, gate, waitForLockWaiters } from '../support/lock-waits.js';
 import { signInAs, TEST_PASSWORD } from '../support/session.js';
 import { asTenant } from '../support/tenants.js';
 import { createTestProfessional } from '../support/users.js';
@@ -13,7 +13,11 @@ import { createTestProfessional } from '../support/users.js';
 /**
  * Judgment day, Stage 4, round 1: findings C1, C11 and B-T4. The close of a register, a payment and
  * a refund meet on two connections: the entry must either be in the total the register closed with,
- * or be refused. These are real two connection tests; each one fails on the code before the fix.
+ * or be refused. These are real two connection tests. Each one fails on the code before the fix
+ * EXCEPT the one that says it is a regression guard (a payment that is already written when the close
+ * starts): the foreign key of the payment already made the close wait for it, so it passed before
+ * round 1 and only guards that behaviour (JD-S4 R2-7). "waitForLockWaiters" names the transaction
+ * the test holds, so a waiter that waits for anything else does not make a test move on.
  */
 
 let runtime: DbHandle;
@@ -31,7 +35,11 @@ afterAll(async () => {
 });
 
 /** What a close writes, straight to the table: the row is locked, then moved to `closed`. */
-async function closeRegisterAndHold(registerId: string, release: Promise<void>, held: () => void) {
+async function closeRegisterAndHold(
+  registerId: string,
+  release: Promise<void>,
+  held: (pid: number) => void,
+) {
   await asTenant(runtime, world.tenant.id, async (tx) => {
     await tx.execute(sql`SELECT id FROM cash_session WHERE id = ${registerId} FOR UPDATE`);
     await tx.execute(
@@ -40,7 +48,7 @@ async function closeRegisterAndHold(registerId: string, release: Promise<void>, 
                  expected_cents = 0, counted_cents = 0, difference_cents = 0
            WHERE id = ${registerId}`,
     );
-    held();
+    held(await backendPid(tx));
     await release;
   });
 }
@@ -58,13 +66,13 @@ describe('a payment and the close of the register (JD-S4 R1-C1)', () => {
   it('refuses the cash of a payment that meets the close, instead of recording it in the closed register', async () => {
     const register = await world.openRegister({ openingCents: 0 });
     const charge = await world.charge();
-    const held = gate();
+    const held = gate<number>();
     const release = gate();
 
     const closing = closeRegisterAndHold(register.id, release.opened, held.open);
-    await held.opened;
+    const holder = await held.opened;
     const paying = world.pay(charge.id, { method: 'cash', amountCents: 500_000 });
-    await waitForLockWaiters();
+    await waitForLockWaiters(holder);
     release.open();
     await closing;
     const response = await paying;
@@ -80,23 +88,23 @@ describe('a payment and the close of the register (JD-S4 R1-C1)', () => {
     expect(inClosed.rows[0]?.n).toBe(0);
   });
 
-  it('keeps a payment that beat the close inside the total the register closes with', async () => {
+  it('keeps a payment that beat the close inside the total the register closes with (regression guard: it passed before the fix too)', async () => {
     const register = await world.openRegister({ openingCents: 0 });
     const charge = await world.charge();
-    const held = gate();
+    const held = gate<number>();
     const release = gate();
 
     // The payment is written first and held; the close then has to wait for it.
     const writing = asTenant(runtime, world.tenant.id, async (tx) => {
       await insertCashPayment(tx, { chargeId: charge.id, registerId: register.id });
-      held.open();
+      held.open(await backendPid(tx));
       await release.opened;
     });
-    await held.opened;
+    const holder = await held.opened;
     const closing = world.api.post(`/billing/cash/sessions/${register.id}/close`, world.reception, {
       countedCents: 100_000,
     });
-    await waitForLockWaiters();
+    await waitForLockWaiters(holder);
     release.open();
     await writing;
     const closed = await closing;
@@ -108,11 +116,11 @@ describe('a payment and the close of the register (JD-S4 R1-C1)', () => {
   it('refuses at the database a cash payment written while the register closes', async () => {
     const register = await world.openRegister({ openingCents: 0 });
     const charge = await world.charge();
-    const held = gate();
+    const held = gate<number>();
     const release = gate();
 
     const closing = closeRegisterAndHold(register.id, release.opened, held.open);
-    await held.opened;
+    const holder = await held.opened;
     // Straight into the table, as code that already read the register as open would.
     const writing = asTenant(runtime, world.tenant.id, (tx) =>
       insertCashPayment(tx, { chargeId: charge.id, registerId: register.id }),
@@ -120,7 +128,7 @@ describe('a payment and the close of the register (JD-S4 R1-C1)', () => {
       () => 'written',
       (error: unknown) => (error as { cause?: { message?: string } }).cause?.message ?? 'refused',
     );
-    await waitForLockWaiters();
+    await waitForLockWaiters(holder);
     release.open();
     await closing;
 
@@ -132,11 +140,11 @@ describe('a payment and the close of the register (JD-S4 R1-C1)', () => {
     const charge = await world.charge();
     const paid = await world.pay(charge.id, { method: 'cash', amountCents: 300_000 });
     const paymentId = paid.json<PaymentResultResponse>().payment.id;
-    const held = gate();
+    const held = gate<number>();
     const release = gate();
 
     const closing = closeRegisterAndHold(register.id, release.opened, held.open);
-    await held.opened;
+    const holder = await held.opened;
     const writing = asTenant(runtime, world.tenant.id, (tx) =>
       tx.execute(
         sql`INSERT INTO payment_reversal (tenant_id, payment_id, charge_id, location_id,
@@ -150,7 +158,7 @@ describe('a payment and the close of the register (JD-S4 R1-C1)', () => {
       () => 'written',
       (error: unknown) => (error as { cause?: { message?: string } }).cause?.message ?? 'refused',
     );
-    await waitForLockWaiters();
+    await waitForLockWaiters(holder);
     release.open();
     await closing;
 
@@ -208,22 +216,22 @@ describe('the reversals of a payment (JD-S4 R1-C11)', () => {
   it('makes two reversals that race for the same payment wait, so together they never exceed it', async () => {
     const { charge, paymentId } = await cashPayment();
     const registerId = await openRegisterId();
-    const held = gate();
+    const held = gate<number>();
     const release = gate();
 
     const first = asTenant(runtime, world.tenant.id, async (tx) => {
       await reversal(tx, { paymentId, chargeId: charge.id, registerId, cents: 600_000 });
-      held.open();
+      held.open(await backendPid(tx));
       await release.opened;
     });
-    await held.opened;
+    const holder = await held.opened;
     const second = asTenant(runtime, world.tenant.id, (tx) =>
       reversal(tx, { paymentId, chargeId: charge.id, registerId, cents: 600_000 }),
     ).then(
       () => 'written',
       (error: unknown) => (error as { cause?: { message?: string } }).cause?.message ?? 'refused',
     );
-    await waitForLockWaiters();
+    await waitForLockWaiters(holder);
     release.open();
     await first;
 
@@ -236,7 +244,7 @@ describe('a unique violation on a payment (JD-S4 R1-C10)', () => {
     const first = await world.charge();
     const second = await world.charge();
     const key = submissionKey();
-    const held = gate();
+    const held = gate<number>();
     const release = gate();
 
     // Another submission with the same key wrote its payment and has not committed yet.
@@ -247,16 +255,16 @@ describe('a unique violation on a payment (JD-S4 R1-C10)', () => {
               VALUES (${world.tenant.id}, ${first.id}, ${world.centro}, 'debit', 100000,
                       ${world.reception.user.id}, ${key}, 'other')`,
       );
-      held.open();
+      held.open(await backendPid(tx));
       await release.opened;
     });
-    await held.opened;
+    const holder = await held.opened;
     const paying = world.pay(second.id, {
       method: 'debit',
       amountCents: 200_000,
       idempotencyKey: key,
     });
-    await waitForLockWaiters();
+    await waitForLockWaiters(holder);
     release.open();
     await writing;
     const response = await paying;

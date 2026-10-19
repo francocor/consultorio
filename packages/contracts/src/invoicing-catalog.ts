@@ -47,6 +47,9 @@ export const INVOICING_ERRORS = {
   },
   // The voucher that replaces a pending invoice must cover its lines and be for its recipient.
   invoice_replacement_mismatch: { status: 409, i18nKey: 'errors.invoice_replacement_mismatch' },
+  // The issuer an invoice was requested with is not the one the certificate of the organization is
+  // for (the CUIT changed): nothing is signed for one CUIT and sent for another (JD-S4 R2-B-T5).
+  invoice_issuer_mismatch: { status: 409, i18nKey: 'errors.invoice_issuer_mismatch' },
   // A CAE belongs to one voucher of the organization.
   invoice_cae_taken: { status: 409, i18nKey: 'errors.invoice_cae_taken' },
   // The environment of a point of sale does not change once invoices went through it: the numbers
@@ -65,6 +68,8 @@ export const INVOICING_AUDIT_ACTIONS = [
   'invoice.attempted',
   'invoice.needs_attention',
   'invoice.voucher_orphaned',
+  'invoice.voucher_adopted',
+  'invoice.replaced_unresolved',
   'invoicing.config.changed',
   'invoicing.credential.changed',
 ] as const;

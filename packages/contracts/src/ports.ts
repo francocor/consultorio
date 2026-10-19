@@ -21,6 +21,30 @@ export interface InvoiceRef {
   tenantRef?: string;
 }
 
+/** A series of the authority: numbering is per issuer, point of sale and voucher type. */
+export interface InvoiceSeriesRef {
+  /** CUIT of the issuer (11 digits). */
+  issuerCuit?: string;
+  pointOfSale: number;
+  /** Voucher type, for example "FA", "FB", "NCA". */
+  type: string;
+  /** The AFIP environment of the point of sale; an adapter that has only one ignores it. */
+  environment?: 'homologation' | 'production';
+  /** See `InvoiceRef.tenantRef`. */
+  tenantRef?: string;
+}
+
+/**
+ * What the authority answers about the last voucher of a series (FECompUltimoAutorizado in the real
+ * one). `ok` carries the number of the last voucher it authorized, and 0 for a series that is empty:
+ * the empty series is an answer, never an error. A lookup that fails is `retryable` (the number is not
+ * known) or `rejected` (a refused question: a token, an environment); neither is ever turned into 0.
+ */
+export type LastAuthorizedResult =
+  | { status: 'ok'; number: number }
+  | { status: 'rejected'; message: string }
+  | { status: 'retryable'; message: string; outcomeUnknown: boolean };
+
 export interface InvoiceRequest {
   /** CUIT of the issuer (11 digits). The adapter serves every organization, so the request names it. */
   issuerCuit?: string;
@@ -47,13 +71,16 @@ export interface InvoiceRequest {
   vatCents?: number;
   exemptCents?: number;
   /**
-   * The highest number the organization already holds for this point of sale and type (its own
-   * vouchers and the registered ones). A simulator that lost its memory (a restart, a reset)
-   * numbers after it, so a new voucher never collides with an earlier one. The real authority
-   * decides the number by itself and ignores it. It is not part of the request that an idempotency
-   * key stands for: a retry whose hint has moved gets the same voucher.
+   * The number this request is for: the one after the last voucher the authority had authorized in
+   * the series when the caller asked (`lastAuthorized`). The issuer MUST issue exactly this number, or
+   * refuse with `not_next` and issue nothing (FECAESolicitar carries it as `CbteDesde`/`CbteHasta`,
+   * and error 10016 says that it is not the next one). It is what makes a request that is still in
+   * flight harmless when the caller, believing it lost, sends again: only one of the two can take the
+   * number, the other is refused (JD-S4 R6-1). It is not part of the request that an idempotency key
+   * stands for: a retry whose pin has moved gets the same voucher. A request without it takes the next
+   * number.
    */
-  lastKnownNumber?: number;
+  expectedNumber?: number;
   /** For a credit note: the voucher it cancels (the authority wants it associated). */
   associatedVoucher?: { type: string; pointOfSale: number; number: number };
 }
@@ -70,15 +97,58 @@ export type IssueResult =
        */
       totalCents?: number;
       issueDate?: string;
+      /**
+       * Also what a lookup says (JD-S4 R2-1): who issued the voucher, whom it is addressed to and, for
+       * a credit note, the voucher it cancels. Two invoices of one series can have the same total and
+       * the same date; these tell their vouchers apart. A field the lookup does not state counts as a
+       * mismatch for the caller, never as a match.
+       */
+      issuerCuit?: string;
+      /** The document of the buyer; `null` when the voucher has none. */
+      buyerDocument?: { type: 'cuit' | 'dni'; number: string } | null;
+      /** The voucher a credit note cancels (`cbteAsoc`); `null` when it is not a credit note. */
+      associatedVoucher?: { type: string; pointOfSale: number; number: number } | null;
     }
   | { status: 'rejected'; message: string }
+  /**
+   * The request was refused because `expectedNumber` is not the next number of the series (ARCA error
+   * 10016). A definite answer: THIS request issued nothing. It says that the last number of the
+   * authority is not the one the caller asked with (another voucher took the number, possibly the
+   * voucher of an earlier request of the same invoice that was answered late), so the caller asks the
+   * authority for its last number again and looks at the numbers in between before it sends anything
+   * (JD-S4 R6-1).
+   */
+  | { status: 'not_next'; message: string }
+  /**
+   * `outcomeUnknown: false` is a CLAIM by the adapter that the request provably did not reach the authority
+   * (a connection refused, a token that could not be obtained): the caller then forgets the request and may
+   * send a new one. A timeout, a reset after the request left, or a 5xx is `outcomeUnknown: true`: the
+   * authority may have processed it (JD-S4 R7, suspect B-T5).
+   */
   | { status: 'retryable'; message: string; outcomeUnknown: boolean };
 
 export interface InvoiceIssuer {
+  /**
+   * Whether the issuer HONOURS the number a request is pinned to (`InvoiceRequest.expectedNumber`): it
+   * issues exactly that number or refuses with `not_next` and issues nothing. An issuer that says so is
+   * trusted by the caller: a request of an invoice can only produce the voucher at its pin, so the
+   * lookup that follows an unknown outcome asks about that one number and never adopts a look-alike
+   * that sits elsewhere (JD-S4 R7-2). The real adapter MUST set it to `true` only if the authority
+   * carries the pin (FECAESolicitar `CbteDesde`/`CbteHasta`); absent or `false` means "not trusted": the
+   * lookup then examines the whole window of numbers (docs/runbooks/afip-switch-to-real.md).
+   */
+  readonly honoursPin?: boolean;
   /** Issues one voucher. Calling twice with the same key never produces two vouchers. */
   issue(request: InvoiceRequest, idempotencyKey: string): Promise<IssueResult>;
   /** Looks up a voucher at the authority, to reconcile a retry whose outcome is unknown. */
   findIssued(ref: InvoiceRef): Promise<IssueResult | null>;
+  /**
+   * The number of the last voucher the authority authorized in a series, whoever issued it (this
+   * system, another tool of the same issuer, a person on the website of the authority). It is the
+   * authority's own count, so the caller does not have to infer it from the vouchers it recorded
+   * (JD-S4 R5-1). A series without vouchers answers `ok` with 0.
+   */
+  lastAuthorized(ref: InvoiceSeriesRef): Promise<LastAuthorizedResult>;
 }
 
 export interface PrescriptionRequest {

@@ -147,3 +147,8 @@ As delivered: the read-only categories of every Stage 4 route are written in `te
 6. Money is `Money` end to end: integer cents in the database (`bigint` or `integer` columns named `*_cents`), in the API and in the browser. Percentages go through `applyBasisPoints`, splits through `allocateProportional`. Text for people comes from `formatMoney`; text typed by people goes through `parseMoney` or `MoneyInput`.
 7. A download is never a new route: register a `FileResource` and let `/files/:token` serve it.
 8. Anything a simulator produces says so: `SimulatedBillingNotice` on the screens, the `watermark` option of `renderPdf` on documents.
+
+## Notes left by the judgment days of Stage 4
+
+- **The export contributors read whole tables.** `exportInvoicing` and the billing contributor read every row of their tables for the organization that leaves, in one go. That is fine at the size of Stage 4. When Stage 6 (retention, `6c`) decides what an organization keeps and for how long, the contributors need paging (or a cursor) and the retention rule, so that an export of an old organization does not load years of invoices into memory.
+- **Invoices are issued one at a time per series** (organization, point of sale, voucher type), and a series with an invoice whose answer may have been lost sends nothing until that one is settled (`docs/runbooks/afip-switch-to-real.md`, "One invoice of a series at a time").

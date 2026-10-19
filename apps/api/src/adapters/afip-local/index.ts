@@ -3,7 +3,9 @@ import type {
   InvoiceIssuer,
   InvoiceRef,
   InvoiceRequest,
+  InvoiceSeriesRef,
   IssueResult,
+  LastAuthorizedResult,
 } from '@consultorio/contracts';
 import { and, desc, eq, sql } from 'drizzle-orm';
 
@@ -18,11 +20,13 @@ import type { Db } from '../../platform/db/pool.js';
 import {
   DEFAULT_SLOW_MS,
   KEY_REUSED_MESSAGE,
+  NOT_NEXT_MESSAGE,
   SERVICE_DOWN_MESSAGE,
   SIMULATED_REJECTION_MESSAGE,
   TIMEOUT_MESSAGE,
   caeExpiresOn,
   caeFor,
+  isNextNumber,
   rejectionFor,
   requestFingerprint,
 } from './voucher-rules.js';
@@ -41,13 +45,17 @@ import {
  * - it refuses what AFIP refuses (bad buyer CUIT, a total that is not the sum of its parts, a
  *   Factura A with no CUIT) with a message in AFIP's style, and a rejection consumes no number;
  * - the CAE has 14 digits and ends 10 days after the date of the voucher;
- * - `findIssued` reconciles: it answers with the voucher of a number, if there is one;
+ * - `findIssued` reconciles: it answers with the voucher of a number, if there is one, and
+ *   `lastAuthorized` says the last number of a series (0 when it is empty);
+ * - a request pinned to a number (`expectedNumber`) is served only when that is the next number of its
+ *   series; otherwise it is refused with `not_next` and nothing is issued (JD-S4 R6-1);
  * - modes: `ok`, `down` (retryable, nothing issued), `slow` (answers late), `timeout_after_authorize`
  *   (authorizes, then answers "unknown outcome"; fires once) and `reject_next` (fires once).
  */
 
 export interface LocalInvoiceIssuer extends InvoiceIssuer {
   readonly simulated: true;
+  readonly honoursPin: true;
 }
 
 export interface LocalInvoiceIssuerOptions {
@@ -73,6 +81,22 @@ const issuedResult = (voucher: LocalAfipVoucherRow): Decided => ({
   caeExpiresOn: voucher.caeExpiresOn,
   totalCents: voucher.totalCents,
   issueDate: voucher.issueDate,
+  issuerCuit: voucher.issuerCuit,
+  buyerDocument:
+    voucher.buyerDocType !== null && voucher.buyerDocNumber !== null
+      ? {
+          type: voucher.buyerDocType === 'dni' ? ('dni' as const) : ('cuit' as const),
+          number: voucher.buyerDocNumber,
+        }
+      : null,
+  associatedVoucher:
+    voucher.assocType !== null && voucher.assocPointOfSale !== null && voucher.assocNumber !== null
+      ? {
+          type: voucher.assocType,
+          pointOfSale: voucher.assocPointOfSale,
+          number: voucher.assocNumber,
+        }
+      : null,
 });
 
 const lock = (name: string) => sql`select pg_advisory_xact_lock(hashtextextended(${name}, 0))`;
@@ -93,6 +117,7 @@ export function createLocalInvoiceIssuer(options: LocalInvoiceIssuerOptions): Lo
 
   return {
     simulated: true,
+    honoursPin: true,
 
     async issue(request: InvoiceRequest, idempotencyKey: string): Promise<IssueResult> {
       const control = await readControl(db);
@@ -166,9 +191,14 @@ export function createLocalInvoiceIssuer(options: LocalInvoiceIssuerOptions): Lo
               eq(localAfipVoucher.type, request.type),
             ),
           );
-        // After what the simulator holds and after what the organization says it holds: a reset of
-        // the simulator starts its numbering again, and the vouchers of the organization stay.
-        const number = Math.max(last?.highest ?? 0, request.lastKnownNumber ?? 0) + 1;
+        const lastNumber = last?.highest ?? 0;
+        // A request pinned to a number is served only if it is the next one of the series, as the
+        // authority does (ARCA error 10016): nothing is issued and nothing is remembered under the key
+        // (JD-S4 R6-1). The series is locked, so no other request can take the number in between.
+        if (!isNextNumber(request, lastNumber)) {
+          return { status: 'not_next', message: NOT_NEXT_MESSAGE };
+        }
+        const number = lastNumber + 1;
         const [voucher] = await tx
           .insert(localAfipVoucher)
           .values({
@@ -188,6 +218,11 @@ export function createLocalInvoiceIssuer(options: LocalInvoiceIssuerOptions): Lo
             caeExpiresOn: caeExpiresOn(request.issueDate),
             issueDate: request.issueDate,
             totalCents: request.totalCents,
+            buyerDocType: request.buyerDocument?.type ?? null,
+            buyerDocNumber: request.buyerDocument?.number ?? null,
+            assocType: request.associatedVoucher?.type ?? null,
+            assocPointOfSale: request.associatedVoucher?.pointOfSale ?? null,
+            assocNumber: request.associatedVoucher?.number ?? null,
             idempotencyKey,
           })
           .returning();
@@ -232,11 +267,33 @@ export function createLocalInvoiceIssuer(options: LocalInvoiceIssuerOptions): Lo
         );
       return voucher ? issuedResult(voucher) : null;
     },
+
+    async lastAuthorized(series: InvoiceSeriesRef): Promise<LastAuthorizedResult> {
+      const control = await readControl(db);
+      if (control.mode === 'down') {
+        return { status: 'retryable', message: SERVICE_DOWN_MESSAGE, outcomeUnknown: false };
+      }
+      // The same scope as the numbering of `issue`: epoch, organization, issuer, point of sale, type.
+      const [last] = await db
+        .select({ highest: sql<number>`coalesce(max(${localAfipVoucher.number}), 0)::int` })
+        .from(localAfipVoucher)
+        .where(
+          and(
+            eq(localAfipVoucher.epoch, control.epoch),
+            eq(localAfipVoucher.tenantRef, series.tenantRef ?? ''),
+            eq(localAfipVoucher.issuerCuit, series.issuerCuit ?? ''),
+            eq(localAfipVoucher.pointOfSale, series.pointOfSale),
+            eq(localAfipVoucher.type, series.type),
+          ),
+        );
+      return { status: 'ok', number: last?.highest ?? 0 };
+    },
   };
 }
 
 export interface LocalAfipVoucherDto {
   id: string;
+  tenantRef: string;
   issuerCuit: string;
   pointOfSale: number;
   type: string;
@@ -252,8 +309,11 @@ export interface LocalAfipVoucherDto {
 export interface LocalAfipControls {
   mode(): Promise<AfipSimulatorMode>;
   setMode(mode: AfipSimulatorMode): Promise<void>;
-  /** The newest vouchers of the current epoch first. */
-  vouchers(limit: number): Promise<LocalAfipVoucherDto[]>;
+  /**
+   * The newest vouchers of the current epoch first: every organization's, or only the ones of the
+   * organization `tenantRef` names (JD-S4 R2-B-S5).
+   */
+  vouchers(limit: number, tenantRef?: string): Promise<LocalAfipVoucherDto[]>;
   /** Starts numbering again and puts the mode back to `ok`. Nothing is deleted. */
   reset(): Promise<void>;
 }
@@ -267,16 +327,21 @@ export function createLocalAfipControls(db: Db): LocalAfipControls {
       await readControl(db);
       await db.update(localAfipControl).set({ mode }).where(eq(localAfipControl.id, 1));
     },
-    async vouchers(limit) {
+    async vouchers(limit, tenantRef) {
       const { epoch } = await readControl(db);
       const rows = await db
         .select()
         .from(localAfipVoucher)
-        .where(eq(localAfipVoucher.epoch, epoch))
+        .where(
+          tenantRef === undefined
+            ? eq(localAfipVoucher.epoch, epoch)
+            : and(eq(localAfipVoucher.epoch, epoch), eq(localAfipVoucher.tenantRef, tenantRef)),
+        )
         .orderBy(desc(localAfipVoucher.createdAt), desc(localAfipVoucher.number))
         .limit(limit);
       return rows.map((row) => ({
         id: row.id,
+        tenantRef: row.tenantRef,
         issuerCuit: row.issuerCuit,
         pointOfSale: row.pointOfSale,
         type: row.type,

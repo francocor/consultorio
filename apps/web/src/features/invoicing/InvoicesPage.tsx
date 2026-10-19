@@ -163,6 +163,7 @@ function Invoices() {
                   onOpen={() => {
                     setOpenId(invoice.id);
                   }}
+                  onOpenInvoice={setOpenId}
                 />
               ))}
             </ul>
@@ -184,6 +185,7 @@ function Invoices() {
           onClose={() => {
             setOpenId(null);
           }}
+          onOpenInvoice={setOpenId}
         />
       ) : null}
     </div>

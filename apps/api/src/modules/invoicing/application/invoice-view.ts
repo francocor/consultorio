@@ -7,7 +7,7 @@ import {
   invoiceKindOf,
   type InvoiceDto,
 } from '@consultorio/contracts';
-import { and, asc, desc, eq, inArray, sql, type SQL } from 'drizzle-orm';
+import { and, asc, desc, eq, inArray, or, sql, type SQL } from 'drizzle-orm';
 
 import {
   invoice,
@@ -18,6 +18,7 @@ import {
 } from '../../../db/schema/index.js';
 import type { Tx } from '../../../platform/db/tenant-context.js';
 import { ageInMinutes, isOutageFlagged } from '../domain/retry-schedule.js';
+import { blockerOf, heldCount } from '../domain/series-hold.js';
 
 import { loadOrganization } from './settings.js';
 
@@ -54,7 +55,16 @@ export interface ViewFacts {
   /** The cents that the credit notes of each invoice take back (pending and issued ones). */
   credited: ReadonlyMap<string, number>;
   withPdf: ReadonlySet<string>;
+  /** For a pending invoice: who holds it back, and how many it holds back itself. */
+  holds: ReadonlyMap<string, SeriesHold>;
 }
+
+export interface SeriesHold {
+  heldBy: { id: string; requestedAt: string } | null;
+  blocksSeries: number;
+}
+
+const NO_HOLD: SeriesHold = { heldBy: null, blocksSeries: 0 };
 
 export function toInvoiceDto(
   row: InvoiceRow,
@@ -104,6 +114,8 @@ export function toInvoiceDto(
     creditedCents: facts.credited.get(row.id) ?? 0,
     ageMinutes: age,
     outageFlag: age !== null && isOutageFlagged(status, age, facts.thresholdHours),
+    heldBy: (facts.holds.get(row.id) ?? NO_HOLD).heldBy,
+    blocksSeries: (facts.holds.get(row.id) ?? NO_HOLD).blocksSeries,
     hasPdf: facts.withPdf.has(row.id),
     createdAt: row.createdAt.toISOString(),
     issuedAt: row.issuedAt?.toISOString() ?? null,
@@ -129,6 +141,81 @@ export interface LoadOptions {
   limit?: number;
   /** Pending invoices are read oldest first (the one that waited longest is the one to look at). */
   order?: 'newest' | 'oldest';
+  /**
+   * What the reader may see. The invoice that holds another one back is named only when it is inside
+   * the scope; without a scope it is never named.
+   */
+  scope?: InvoiceScope;
+}
+
+/**
+ * For the pending invoices among `rows`: who holds each one back and how many each one holds back.
+ * The series of an invoice is its point of sale and voucher type; an invoice that waits for a person
+ * (`needs_attention`) is neither held nor holding.
+ */
+async function seriesHolds(
+  tx: Tx,
+  rows: readonly InvoiceRow[],
+  scope: InvoiceScope | undefined,
+): Promise<Map<string, SeriesHold>> {
+  const holds = new Map<string, SeriesHold>();
+  const open = rows.filter(
+    (row) => row.status === 'pending' && row.deliveryState !== 'needs_attention',
+  );
+  if (open.length === 0) return holds;
+  const pairs = [
+    ...new Map(open.map((row) => [`${String(row.pointOfSale)}|${row.type}`, row])).values(),
+  ];
+  const members = await tx
+    .select({
+      id: invoice.id,
+      pointOfSale: invoice.pointOfSale,
+      type: invoice.type,
+      deliveryState: invoice.deliveryState,
+      createdAt: invoice.createdAt,
+      locationIds: invoice.locationIds,
+    })
+    .from(invoice)
+    .where(
+      and(
+        eq(invoice.status, 'pending'),
+        sql`${invoice.deliveryState} <> 'needs_attention'`,
+        or(
+          ...pairs.map((row) =>
+            and(eq(invoice.pointOfSale, row.pointOfSale), eq(invoice.type, row.type)),
+          ),
+        ),
+      ),
+    );
+  const visible = (locations: readonly string[]) =>
+    scope !== undefined &&
+    (scope.kind === 'all' || locations.some((id) => scope.locationIds.includes(id)));
+  for (const row of open) {
+    const series = members
+      .filter((member) => member.pointOfSale === row.pointOfSale && member.type === row.type)
+      .map((member) => ({
+        id: member.id,
+        awaiting: member.deliveryState === 'awaiting_reconciliation',
+        visible: visible(member.locationIds),
+      }));
+    const blocker = blockerOf(
+      { id: row.id, awaiting: row.deliveryState === 'awaiting_reconciliation' },
+      series,
+    );
+    const named = blocker ? members.find((member) => member.id === blocker.id) : undefined;
+    holds.set(row.id, {
+      heldBy:
+        named && visible(named.locationIds)
+          ? { id: named.id, requestedAt: named.createdAt.toISOString() }
+          : null,
+      // Only what the reader may see is counted: the pending invoices of other locations stay unknown.
+      blocksSeries:
+        row.deliveryState === 'awaiting_reconciliation'
+          ? heldCount(row.id, series, (held) => held.visible)
+          : 0,
+    });
+  }
+  return holds;
 }
 
 /** Loads invoices with their lines, what their credit notes took and whether they have a PDF. */
@@ -178,6 +265,7 @@ export async function loadInvoices(
       ),
     ),
     withPdf: new Set(documents.map((document) => document.invoiceId)),
+    holds: await seriesHolds(tx, rows, options.scope),
   };
   return {
     invoices: rows.map((row) => toInvoiceDto(row, lines, facts)),
@@ -194,6 +282,7 @@ export async function loadInvoice(
 ): Promise<InvoiceDto | null> {
   const { invoices } = await loadInvoices(tx, clock, [eq(invoice.id, id), scopeCondition(scope)], {
     limit: 1,
+    scope,
   });
   return invoices[0] ?? null;
 }

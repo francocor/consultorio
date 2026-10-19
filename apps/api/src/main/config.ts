@@ -1,5 +1,7 @@
 import { z } from 'zod';
 
+import { JOB_LOCAL_CONCURRENCY } from '../platform/jobs/concurrency.js';
+
 import { readProviderConfig, type ProviderConfig } from './config-providers.js';
 import { readScannerConfig, type ScannerConfig } from './config-scanner.js';
 import { parseTrustProxy, type TrustProxySetting } from './trust-proxy.js';
@@ -11,6 +13,12 @@ const HOSTNAME =
 /** 2 to 63 characters, lowercase letters, digits and inner hyphens: safe as a DNS label. */
 const TENANT_SLUG = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])$/;
 const KEK_BYTES = 32;
+/**
+ * The smallest runtime pool: an attempt to issue an invoice holds two connections (the transaction
+ * that spans the call to the authority and the one of its mark), the worker runs
+ * `JOB_LOCAL_CONCURRENCY` of them at once, and two more serve the sweeper and the other jobs.
+ */
+export const MIN_DB_POOL_MAX = 2 * JOB_LOCAL_CONCURRENCY + 2;
 /** `name@host` or `Display Name <name@host>`. */
 const MAIL_FROM_PATTERN = /^(?:[^<>\r\n]+ <[^\s<>@]+@[^\s<>@]+>|[^\s<>@]+@[^\s<>@]+)$/;
 
@@ -37,6 +45,21 @@ const envSchema = z
   .object({
     NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
     DATABASE_URL: z.url({ protocol: /^postgres(ql)?$/ }),
+    /**
+     * The most connections the runtime pool opens (default 10). An attempt to issue an invoice holds
+     * one for the whole call to the authority and asks for a second one for its mark, so the pool is
+     * sized for the attempts the worker runs at once (docs/runbooks/afip-switch-to-real.md). At least
+     * `MIN_DB_POOL_MAX`: with fewer, two attempts each hold one connection and wait for the other's
+     * (JD-S4 R4-B-T5).
+     */
+    DB_POOL_MAX: z.coerce
+      .number()
+      .int()
+      .min(MIN_DB_POOL_MAX, {
+        message: `must be at least ${String(MIN_DB_POOL_MAX)}: each of the ${String(JOB_LOCAL_CONCURRENCY)} attempts to issue an invoice that run at once holds 2 connections, and 2 more serve the sweeper and the other jobs`,
+      })
+      .max(100)
+      .default(10),
     /**
      * The login of the platform operator console (role `app_operator`). Without it the console
      * does not exist: every `/operator/*` path answers 404. Multi-tenant mode only.
@@ -257,6 +280,8 @@ export interface MailConfig {
 export interface Config {
   readonly nodeEnv: 'development' | 'test' | 'production';
   readonly databaseUrl: string;
+  /** The most connections of the runtime pool (`DB_POOL_MAX`). */
+  readonly dbPoolMax: number;
   /** Set when the operator console is enabled (multi-tenant mode and OPERATOR_DATABASE_URL). */
   readonly operatorDatabaseUrl?: string;
   /** Set for the worker: the `audit_sealer` login that seals and verifies the audit trails. */
@@ -348,6 +373,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   return {
     nodeEnv: value.NODE_ENV,
     databaseUrl: value.DATABASE_URL,
+    dbPoolMax: value.DB_POOL_MAX,
     ...(value.AUDIT_SEALER_DATABASE_URL === undefined
       ? {}
       : { auditSealerDatabaseUrl: value.AUDIT_SEALER_DATABASE_URL }),

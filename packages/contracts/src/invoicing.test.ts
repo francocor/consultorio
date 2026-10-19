@@ -71,6 +71,8 @@ describe('invoicing catalogues', () => {
       'invoice.attempted',
       'invoice.needs_attention',
       'invoice.voucher_orphaned',
+      'invoice.voucher_adopted',
+      'invoice.replaced_unresolved',
       'invoicing.config.changed',
       'invoicing.credential.changed',
     ]);
@@ -94,6 +96,7 @@ describe('invoicing catalogues', () => {
       'invoice_pdf_not_ready',
       'invoice_awaiting_reconciliation',
       'invoice_replacement_mismatch',
+      'invoice_issuer_mismatch',
       'invoice_cae_taken',
       'point_of_sale_has_invoices',
     ]);
@@ -162,7 +165,7 @@ describe('invoice requests (S4.10)', () => {
     );
   });
 
-  it('needs the 14 digits of a CAE for a manual invoice, and no credit note types', () => {
+  it('needs the 14 digits of a CAE for a manual invoice, and says the voucher a credit note cancels', () => {
     const manual = {
       idempotencyKey: key,
       type: 'FC',
@@ -176,10 +179,21 @@ describe('invoice requests (S4.10)', () => {
     };
 
     expect(CreateManualInvoiceRequest.safeParse(manual).success).toBe(true);
+    // A credit note made by hand replaces a parked one and names the voucher it cancels (JD-S4 R5-B-W2).
+    expect(
+      CreateManualInvoiceRequest.safeParse({
+        ...manual,
+        type: 'NCC',
+        replacesInvoiceId: lineId,
+        associatedVoucher: { type: 'FC', pointOfSale: 1, number: 3 },
+      }).success,
+    ).toBe(true);
     for (const bad of [
       { ...manual, cae: '1234' },
       { ...manual, cae: '7012345678901A' },
-      { ...manual, type: 'NCC' },
+      { ...manual, type: 'XX' },
+      // The voucher a credit note cancels is an invoice, not another credit note.
+      { ...manual, associatedVoucher: { type: 'NCC', pointOfSale: 1, number: 3 } },
       { ...manual, number: 0 },
       { ...manual, issueDate: '01/03/2031' },
       { ...manual, totalCents: 0 },
@@ -195,6 +209,9 @@ describe('invoice requests (S4.10)', () => {
     expect(fields).not.toContain('attempts');
     expect(fields).toContain('ageMinutes');
     expect(fields).toContain('outageFlag');
+    // What it shows instead of the progress: who holds a pending invoice back, and whom it holds.
+    expect(fields).toContain('heldBy');
+    expect(fields).toContain('blocksSeries');
   });
 });
 

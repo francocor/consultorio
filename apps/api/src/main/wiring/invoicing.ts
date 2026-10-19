@@ -1,6 +1,10 @@
 import { DEFAULT_INVOICING_SETTINGS, InvoicingSettings } from '@consultorio/contracts';
 
-import { createFakeInvoiceIssuer, type FakeInvoiceIssuer } from '../../adapters/afip-fake/index.js';
+import {
+  createFakeInvoiceIssuer,
+  type FakeInvoiceIssuer,
+  type HeldNumbers,
+} from '../../adapters/afip-fake/index.js';
 import { afipDevRoutes } from '../../adapters/afip-local/dev-routes.js';
 import {
   createLocalAfipControls,
@@ -15,11 +19,13 @@ import {
   createInvoiceDeliverJob,
   createInvoicePdfJob,
   createInvoicing,
+  highestNumberRecorded,
   runDueAttempts,
 } from '../../modules/invoicing/index.js';
 import { createWorklistService } from '../../modules/scheduling/index.js';
 import { createTenantKeys } from '../../platform/crypto/tenant-keys.js';
-import { createRuntimeDb } from '../../platform/db/pool.js';
+import { createRuntimeDb, type Db } from '../../platform/db/pool.js';
+import { SYSTEM_USER_ID, createWithTenant } from '../../platform/db/tenant-context.js';
 import { fanOut } from '../../platform/jobs/worker.js';
 import { adapterOfSetting } from '../../platform/local-providers/dev-routes.js';
 import type { ObjectStorage } from '../../platform/storage/object-storage.js';
@@ -52,6 +58,22 @@ function demoIssuerOf(config: Config): FakeInvoiceIssuer {
 }
 
 /**
+ * What the organizations hold that the in-memory fake of the demo no longer remembers after a restart of
+ * the process: the highest number their invoices record for a point of sale and type. The fake numbers
+ * after it, so a voucher it issues never collides with one that exists (the real authority is asked for
+ * its own count and needs none of this).
+ */
+export function invoiceNumbersHeldBy(db: Db): HeldNumbers {
+  const withTenant = createWithTenant(db);
+  return ({ tenantRef, pointOfSale, type }) =>
+    tenantRef === ''
+      ? Promise.resolve(0)
+      : withTenant({ tenantId: tenantRef, userId: SYSTEM_USER_ID }, (tx) =>
+          highestNumberRecorded(tx, { pointOfSale, type }),
+        );
+}
+
+/**
  * What the console drives: the local simulator that serves customers (when it runs) and the fake of
  * the demo organizations, always, so a demo can show an outage too. The mode shown is the
  * simulator's when there is one; the vouchers listed are the simulator's (the fake keeps its own in
@@ -67,7 +89,8 @@ function composedControls(
       demo.setMode(mode);
       await local?.setMode(mode);
     },
-    vouchers: (limit) => (local ? local.vouchers(limit) : Promise.resolve([])),
+    vouchers: (limit, tenantRef) =>
+      local ? local.vouchers(limit, tenantRef) : Promise.resolve([]),
     async reset() {
       demo.reset();
       await local?.reset();
@@ -96,12 +119,17 @@ export const invoicingWiring: ModuleWiring = {
   // the process, so it is registered as a fake); the WSAA/WSFEv1 adapter is the deferred slice
   // S4.D, so with `afip` or `off` nothing is issued for customers. Demo organizations always get
   // the in-memory fake.
-  adapters: ({ config, db }) => ({
-    invoiceIssuer: {
-      real: usesSimulator(config) ? fake(createLocalInvoiceIssuer({ db })) : undefined,
-      demo: fake(demoIssuerOf(config)),
-    },
-  }),
+  adapters: ({ config, db }) => {
+    // The fake of the demo lives in memory: after a restart it learns from the invoices what to number after.
+    const demo = demoIssuerOf(config);
+    demo.rememberFrom(invoiceNumbersHeldBy(db));
+    return {
+      invoiceIssuer: {
+        real: usesSimulator(config) ? fake(createLocalInvoiceIssuer({ db })) : undefined,
+        demo: fake(demo),
+      },
+    };
+  },
   devProviders: ({ config }) => {
     const local = usesSimulator(config);
     // The simulator keeps its state in Postgres; the console reads it through a connection of its own.
@@ -134,6 +162,7 @@ export const invoicingWiring: ModuleWiring = {
       keys: context.keys,
       adapters: context.adapters,
       jobs: context.jobs,
+      worklist: context.worklist,
       fileResources: context.fileResources,
       ...(context.clock ? { clock: context.clock } : {}),
     }),

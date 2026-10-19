@@ -78,7 +78,10 @@ export interface InvoicingWorld extends BillingWorld {
    * One pass of the sweeper of the worker (the clock of the retries) over THIS organization only:
    * the database is shared with other test files.
    */
-  sweep(clock: () => Date): Promise<{ invoiceId: string; outcome: AttemptOutcome }[]>;
+  sweep(
+    clock: () => Date,
+    extra?: Partial<IssueDeps>,
+  ): Promise<{ invoiceId: string; outcome: AttemptOutcome }[]>;
   /** The invoice row as the database holds it, retry bookkeeping included. */
   rowOf(invoiceId: string): Promise<InvoiceRow>;
   /** The `afip.issue` job as the worker would build it, to run it by hand. */
@@ -213,10 +216,10 @@ export async function createInvoicingWorld(
     runDocuments,
     issueDeps,
     issueJob: (clock = () => new Date()) => createAfipIssueJob(issueDeps(clock)),
-    sweep: (clock) =>
+    sweep: (clock, extra = {}) =>
       runDueAttempts(
         runtime.db,
-        issueDeps(clock),
+        { ...issueDeps(clock), ...extra },
         { error: () => undefined },
         { tenantIds: [world.tenant.id] },
       ),

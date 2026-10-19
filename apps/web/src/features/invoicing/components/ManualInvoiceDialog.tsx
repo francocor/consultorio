@@ -10,8 +10,11 @@ import { useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 
 import { useApi } from '../../../app/providers.js';
+import { isApiError } from '../../../shared/lib/api-client.js';
 import { DEFAULT_TIME_ZONE, formatMoney } from '../../../shared/lib/format.js';
+import { Alert, AlertDescription, AlertTitle } from '../../../shared/ui/alert.js';
 import { Button } from '../../../shared/ui/button.js';
+import { Checkbox } from '../../../shared/ui/checkbox.js';
 import {
   Dialog,
   DialogContent,
@@ -76,6 +79,10 @@ export function ManualInvoiceDialog({
   const [issueDate, setIssueDate] = useState(today());
   const [caeExpiresOn, setCaeExpiresOn] = useState('');
   const [recipient, setRecipient] = useState<RecipientState>(initial ?? EMPTY_RECIPIENT);
+  // The invoice this one replaces was sent to ARCA and nobody knows if it was issued: the server
+  // says so (409), and then the person has to accept that outcome before the voucher is registered.
+  const [outcomeUnknown, setOutcomeUnknown] = useState(false);
+  const [acknowledged, setAcknowledged] = useState(false);
 
   const total = lines.reduce((sum, line) => sum + line.amountCents, 0);
   const posNumber = Number(pointOfSale);
@@ -102,6 +109,7 @@ export function ManualInvoiceDialog({
             cae,
             issueDate,
             replacesInvoiceId ?? null,
+            acknowledged,
           ]),
         ),
         type,
@@ -131,8 +139,14 @@ export function ManualInvoiceDialog({
             : {}),
         },
         ...(replacesInvoiceId ? { replacesInvoiceId } : {}),
+        ...(outcomeUnknown && acknowledged ? { acknowledgeUnknownOutcome: true } : {}),
       };
       return invoicingApi(api).registerManual(body);
+    },
+    onError: (error) => {
+      if (isApiError(error) && error.code === 'invoice_awaiting_reconciliation') {
+        setOutcomeUnknown(true);
+      }
     },
     onSuccess: async () => {
       keys.done();
@@ -268,12 +282,34 @@ export function ManualInvoiceDialog({
             type={type}
           />
 
+          {outcomeUnknown ? (
+            <Alert tone="warning">
+              <AlertTitle>{t('invoicing:manual.unknownOutcome.title')}</AlertTitle>
+              <AlertDescription>{t('invoicing:manual.unknownOutcome.body')}</AlertDescription>
+              <div className="mt-2 flex items-start gap-2">
+                <Checkbox
+                  id="manual-acknowledge"
+                  checked={acknowledged}
+                  onCheckedChange={(next) => {
+                    setAcknowledged(next === true);
+                  }}
+                />
+                <Label htmlFor="manual-acknowledge" className="font-normal">
+                  {t('invoicing:manual.unknownOutcome.confirm')}
+                </Label>
+              </div>
+            </Alert>
+          ) : null}
           <ErrorAlert error={register.error} />
           <DialogFooter>
             <Button type="button" variant="outline" onClick={onClose}>
               {t('common:action.cancel')}
             </Button>
-            <Button type="submit" loading={register.isPending} disabled={!valid}>
+            <Button
+              type="submit"
+              loading={register.isPending}
+              disabled={!valid || (outcomeUnknown && !acknowledged)}
+            >
               {t('invoicing:manual.submit')}
             </Button>
           </DialogFooter>

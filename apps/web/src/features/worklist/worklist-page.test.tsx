@@ -91,6 +91,17 @@ const WAITLIST = item({
   actions: ['resolve', 'dismiss'],
 });
 
+const SHARED_BAJA = item({
+  id: ITEM(5),
+  kind: 'reply_to_review',
+  subjectType: 'inbound_message',
+  subjectId: ITEM(50),
+  locationId: null,
+  appointment: null,
+  detail: { reason: 'email_optout_unconfirmed', patientIds: [IDS.patientGomez, IDS.patientRios] },
+  actions: ['resolve', 'dismiss'],
+});
+
 const OPEN_ITEMS = [IDENTITY, APPROVAL, REMINDER, WAITLIST];
 
 interface OpenOptions {
@@ -154,6 +165,19 @@ describe('the worklist', () => {
     expect(approval.getByText('Pendiente de aprobación')).toBeInTheDocument();
     expect(
       (await card('Contacto manual de lista de espera')).getByText('Toda la organización'),
+    ).toBeInTheDocument();
+    expect(app.missingKeys).toEqual([]);
+  });
+
+  it('says what reception has to confirm when a BAJA came from a number shared by several patients (B7)', async () => {
+    const app = open({ items: [SHARED_BAJA] });
+
+    const reply = await card('Respuesta por revisar');
+
+    expect(
+      reply.getByText(
+        'Alguien escribió BAJA desde un número que comparten varios pacientes y no se pudo saber quién. WhatsApp quedó dado de baja para todos ellos; confirme con quién corresponde si también hay que dar de baja el email.',
+      ),
     ).toBeInTheDocument();
     expect(app.missingKeys).toEqual([]);
   });
@@ -258,6 +282,196 @@ describe('an invoice that needs a person (JD-S4 R1-C3, C8)', () => {
     expect(found.getByRole('link', { name: 'Ver facturas' })).toHaveAttribute('href', '/invoices');
     expect(found.queryByText('Sin turno asociado.')).not.toBeInTheDocument();
     expect(app.missingKeys).toEqual([]);
+  });
+
+  it('says that a series waits for an invoice whose outcome is unknown, without a count that would go stale (JD-S4 R3-2, R4-4)', async () => {
+    // An item opened by an older version carries the count it had when it opened: it is not shown.
+    const app = open({
+      items: [{ ...INVOICE, detail: { reason: 'outcome_unknown', held: 3, pointOfSale: 1 } }],
+    });
+
+    const found = await card('Factura para revisar');
+
+    expect(found.getByText(/No se sabe si ARCA emitió esta factura/)).toBeInTheDocument();
+    // An invoice that holds nothing back gets the item too (JD-S4 R7-1): the text does not claim that
+    // others wait.
+    expect(
+      found.getByText(/Si hay otras facturas de la misma serie, esperan detrás/),
+    ).toBeInTheDocument();
+    expect(found.queryByText(/3 facturas/)).not.toBeInTheDocument();
+    expect(app.missingKeys).toEqual([]);
+  });
+
+  it('says that ARCA keeps refusing the number although its numbering did not move, and that the date may be the cause (JD-S4 R7-1)', async () => {
+    const app = open({
+      items: [
+        { ...INVOICE, detail: { reason: 'authority_refuses_number', outcomeUnknown: false } },
+      ],
+    });
+
+    const found = await card('Factura para revisar');
+
+    expect(found.getByText(/ARCA rechaza el número de esta factura/)).toBeInTheDocument();
+    expect(found.getByText(/Revise la fecha del comprobante/)).toBeInTheDocument();
+    expect(found.getByText(/no se envió más/)).toBeInTheDocument();
+    expect(app.missingKeys).toEqual([]);
+  });
+
+  it('says that ARCA issued the voucher with another number than the one asked for (JD-S4 R7 B-S2)', async () => {
+    const app = open({
+      items: [{ ...INVOICE, detail: { reason: 'pin_not_honoured', number: 15 } }],
+    });
+
+    const found = await card('Factura para revisar');
+
+    expect(
+      found.getByText(/ARCA emitió el comprobante 15 con un número distinto del que se le pidió/),
+    ).toBeInTheDocument();
+    expect(app.missingKeys).toEqual([]);
+  });
+
+  it('says that a voucher cannot be told from this invoice, that nothing was sent, and that the outcome is unknown (JD-S4 R4-1)', async () => {
+    const app = open({
+      items: [
+        {
+          ...INVOICE,
+          detail: { reason: 'voucher_ambiguous', outcomeUnknown: true, number: 12, cae: null },
+        },
+      ],
+    });
+
+    const found = await card('Factura para revisar');
+
+    expect(found.getByText(/no se puede distinguir cuál es/)).toBeInTheDocument();
+    expect(found.getByText(/no se envió nada/)).toBeInTheDocument();
+    expect(found.getByText(/ARCA puede haber emitido esta factura/)).toBeInTheDocument();
+    expect(app.missingKeys).toEqual([]);
+  });
+
+  it('names the numbers in doubt, or the range when it is too wide to list (JD-S4 R5-A-F4)', async () => {
+    const listed = open({
+      items: [
+        {
+          ...INVOICE,
+          detail: { reason: 'voucher_ambiguous', outcomeUnknown: true, candidates: [12, 14] },
+        },
+      ],
+    });
+
+    const found = await card('Factura para revisar');
+
+    expect(found.getByText(/Números para revisar en ARCA: 12, 14\./)).toBeInTheDocument();
+    expect(listed.missingKeys).toEqual([]);
+  });
+
+  it('names the range of numbers in doubt when it is too wide to list (JD-S4 R5-A-F4)', async () => {
+    const ranged = open({
+      items: [
+        {
+          ...INVOICE,
+          detail: {
+            reason: 'voucher_ambiguous',
+            outcomeUnknown: true,
+            candidatesFrom: 30,
+            candidatesTo: 80,
+          },
+        },
+      ],
+    });
+
+    const found = await card('Factura para revisar');
+
+    expect(found.getByText(/Números para revisar en ARCA: del 30 al 80\./)).toBeInTheDocument();
+    expect(ranged.missingKeys).toEqual([]);
+  });
+
+  it('says where to look when the range has no end yet, and what happened when the numbering went back (JD-S4 R6)', async () => {
+    const open_ended = open({
+      items: [
+        {
+          ...INVOICE,
+          detail: { reason: 'replaced_unresolved', expectedNumber: 31, candidatesFrom: 31 },
+        },
+      ],
+    });
+    const first = await card('Factura para revisar');
+    expect(
+      first.getByText(/Números para revisar en ARCA: del 31 en adelante./),
+    ).toBeInTheDocument();
+    expect(open_ended.missingKeys).toEqual([]);
+  });
+
+  it('says that the numbering of ARCA went back, with the two numbers, instead of an empty range (JD-S4 R6)', async () => {
+    const app = open({
+      items: [
+        {
+          ...INVOICE,
+          detail: {
+            reason: 'voucher_ambiguous',
+            outcomeUnknown: true,
+            lastNow: 12,
+            lastAtMark: 500,
+          },
+        },
+      ],
+    });
+
+    const found = await card('Factura para revisar');
+
+    expect(
+      found.getByText(/ARCA informa como último número el 12, y tenía el 500 cuando se envió/),
+    ).toBeInTheDocument();
+    expect(found.queryByText(/del 501 al 500/)).not.toBeInTheDocument();
+    expect(app.missingKeys).toEqual([]);
+  });
+
+  it('says that ARCA refuses the lookup and that the invoice is not sent meanwhile (JD-S4 R6)', async () => {
+    const app = open({
+      items: [{ ...INVOICE, detail: { reason: 'authority_refuses_lookup', outcomeUnknown: true } }],
+    });
+
+    const found = await card('Factura para revisar');
+
+    expect(found.getByText(/ARCA rechaza la consulta/)).toBeInTheDocument();
+    expect(found.getByText(/no se envió nada/)).toBeInTheDocument();
+    expect(app.missingKeys).toEqual([]);
+  });
+
+  it('tells an invoice that is still parked that the voucher at its number belongs to another invoice (JD-S4 R6)', async () => {
+    const app = open({
+      items: [
+        {
+          ...INVOICE,
+          detail: { reason: 'voucher_taken_by_other', outcomeUnknown: true, number: 12 },
+        },
+      ],
+    });
+
+    const found = await card('Factura para revisar');
+
+    expect(
+      found.getByText(/El comprobante 12 de ARCA pertenece a otra factura/),
+    ).toBeInTheDocument();
+    // An item written before round 7 carries `outcomeUnknown`: the note would contradict it.
+    expect(
+      found.queryByText(/ARCA puede haber emitido esta factura antes/),
+    ).not.toBeInTheDocument();
+    expect(app.missingKeys).toEqual([]);
+  });
+
+  it('does not promise that a parked invoice goes on by itself, and warns when its outcome is unknown (JD-S4 R3-4)', async () => {
+    open({
+      items: [
+        { ...INVOICE, detail: { reason: 'issuer_mismatch', outcomeUnknown: true, number: null } },
+      ],
+    });
+
+    const found = await card('Factura para revisar');
+
+    expect(found.getByText(/no se reintenta sola/)).toBeInTheDocument();
+    expect(found.getByText(/registre a mano el comprobante/)).toBeInTheDocument();
+    expect(found.getByText(/ARCA puede haber emitido esta factura/)).toBeInTheDocument();
+    expect(found.queryByText(/Cargue el certificado/)).not.toBeInTheDocument();
   });
 
   it('falls back to a plain sentence for a reason it does not know', async () => {

@@ -66,8 +66,9 @@ import {
  * written. The flag is shown live: the provider console puts the issuer in an outage and the
  * threshold of the organization decides when a waiting invoice is flagged.
  *
- * The numbers continue after the vouchers the organization holds, so the fake that serves the demo
- * (which numbers from its own memory) never collides with them (see `lastKnownNumber`).
+ * The numbers continue after the vouchers the organization holds: the fake that serves the demo in the
+ * running application learns them from the invoices when it starts (`rememberFrom`), and asks for the
+ * number it expects like any issuer (`expectedNumber`).
  */
 
 /** The hour of the day at which the vouchers of a day are issued. */
@@ -83,6 +84,12 @@ interface Run {
   stats: { issued: InvoiceDto[] };
   /** The places reception works at; the administration takes the rest. */
   receptionPlaces: readonly string[] | 'all';
+  /**
+   * The highest number of a voucher registered by hand, per point of sale and type. The authority counts
+   * the vouchers made on its website; the fake that stands in for it learns them from here, so the next
+   * voucher it issues does not take a number the organization already holds.
+   */
+  byHand: Map<string, number>;
 }
 
 const ONE_PESO = 100;
@@ -109,10 +116,15 @@ export async function seedInvoicing(
     deps: { adapters, clock: () => clock.at },
     clock,
     stats: { issued: [] },
+    byHand: new Map(),
     receptionPlaces: await context.withTenant(contextOf(context, people.owner), (tx) =>
       visibleLocationIds(tx, viewerOf(people.reception)),
     ),
   };
+
+  issuer.rememberFrom(({ pointOfSale, type }) =>
+    Promise.resolve(run.byHand.get(`${String(pointOfSale)}|${type}`) ?? 0),
+  );
 
   await setUpFiscalIdentity(run);
 
@@ -309,6 +321,7 @@ async function registerByHand(
       )
     ).rows;
     const number = (highest?.highest ?? 0) + 1;
+    run.byHand.set('1|FC', number);
     // The authority was down when the invoice was requested: it stayed pending.
     run.issuer.setMode('down');
     const waiting = await createInvoice(tx, run.deps, {

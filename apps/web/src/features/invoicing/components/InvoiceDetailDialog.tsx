@@ -41,9 +41,12 @@ export function AgeText({ minutes }: { minutes: number }) {
 export function PendingNote({
   invoice,
   thresholdHours,
+  onOpenInvoice,
 }: {
-  invoice: Pick<InvoiceDto, 'ageMinutes' | 'outageFlag'>;
+  invoice: Pick<InvoiceDto, 'ageMinutes' | 'outageFlag' | 'heldBy' | 'blocksSeries'>;
   thresholdHours: number;
+  /** Opens another invoice of the list (the one that holds this one back). */
+  onOpenInvoice?: ((id: string) => void) | undefined;
 }) {
   const { t } = useTranslation('invoicing');
   return (
@@ -57,6 +60,29 @@ export function PendingNote({
           </>
         )}
       </p>
+      {invoice.heldBy ? (
+        <p className="text-muted-foreground">
+          {t('pending.heldBy', { when: formatDateTime(invoice.heldBy.requestedAt) })}
+          {onOpenInvoice ? (
+            <>
+              {' '}
+              <Button
+                type="button"
+                variant="link"
+                className="inline h-auto align-baseline"
+                onClick={() => {
+                  if (invoice.heldBy) onOpenInvoice(invoice.heldBy.id);
+                }}
+              >
+                {t('pending.heldByLink')}
+              </Button>
+            </>
+          ) : null}
+        </p>
+      ) : null}
+      {invoice.blocksSeries > 0 ? (
+        <p className="font-medium">{t('pending.blocks', { count: invoice.blocksSeries })}</p>
+      ) : null}
       {invoice.outageFlag ? (
         <p className="font-medium text-danger-soft-foreground">
           {t('outage.hint', { hours: thresholdHours })}
@@ -88,11 +114,13 @@ export function InvoiceDetailDialog({
   readOnly,
   thresholdHours,
   onClose,
+  onOpenInvoice,
 }: {
   invoice: InvoiceDto;
   readOnly: boolean;
   thresholdHours: number;
   onClose: () => void;
+  onOpenInvoice?: ((id: string) => void) | undefined;
 }) {
   const { t } = useTranslation(['invoicing', 'common']);
   const api = useApi();
@@ -155,7 +183,11 @@ export function InvoiceDetailDialog({
           </div>
 
           {invoice.status === 'pending' ? (
-            <PendingNote invoice={invoice} thresholdHours={thresholdHours} />
+            <PendingNote
+              invoice={invoice}
+              thresholdHours={thresholdHours}
+              onOpenInvoice={onOpenInvoice}
+            />
           ) : null}
           {invoice.status === 'rejected' && invoice.rejectionMessage ? (
             <Alert tone="danger">

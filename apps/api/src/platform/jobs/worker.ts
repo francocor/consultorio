@@ -13,6 +13,8 @@ import { createDailyTicker, createTicker, type Ticker } from './ticker.js';
 
 export interface WorkerOptions {
   databaseUrl: string;
+  /** The most connections of the runtime pool (default 10). */
+  dbPoolMax?: number;
   /**
    * The `audit_sealer` login. Only the worker holds it: sealing and verifying the audit trails
    * happens on this connection, never on the one the API uses.
@@ -93,7 +95,10 @@ export async function fanOut(
  */
 export async function startWorker(options: WorkerOptions): Promise<Worker> {
   const metrics = options.metrics ?? createMetrics();
-  const handle = createRuntimeDb(options.databaseUrl);
+  const handle = createRuntimeDb(
+    options.databaseUrl,
+    options.dbPoolMax === undefined ? {} : { max: options.dbPoolMax },
+  );
   const sealerHandle = createSealerDb(options.sealerDatabaseUrl);
   const boss = createBoss(options.databaseUrl, 'worker');
   const client = createJobClient(boss);

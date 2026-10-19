@@ -57,7 +57,7 @@ describe('renderMessage for email', () => {
         'Si no puede asistir, puede cancelar el turno desde este enlace:',
         'https://aillu.example.test/public/t/CANCEL',
         '',
-        'Para dejar de recibir recordatorios por email, use este enlace:',
+        'Para dejar de recibir mensajes de esta organización por todos los canales (email y WhatsApp), use este enlace:',
         'https://aillu.example.test/public/t/OPTOUT',
       ].join('\n'),
     );

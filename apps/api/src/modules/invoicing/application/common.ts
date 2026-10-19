@@ -1,9 +1,49 @@
 import { createHash } from 'node:crypto';
 
+import type { WorklistKind, WorklistSubjectType } from '@consultorio/contracts';
 import { sql } from 'drizzle-orm';
 import { DateTime } from 'luxon';
 
 import type { AuditActor } from '../../../platform/audit/writer.js';
+import type { Tx } from '../../../platform/db/tenant-context.js';
+
+/**
+ * What invoicing asks of the reception worklist (the queue itself belongs to scheduling): to put an
+ * invoice that needs a person on it, and to take it off when the invoice is settled.
+ */
+export interface InvoiceWorklist {
+  openItem(
+    tx: Tx,
+    input: {
+      kind: WorklistKind;
+      subjectType: WorklistSubjectType;
+      subjectId: string;
+      detail?: Record<string, unknown> | undefined;
+    },
+  ): Promise<unknown>;
+  closeBySubject(
+    tx: Tx,
+    input: {
+      kind: WorklistKind;
+      subjectType: WorklistSubjectType;
+      subjectId: string;
+      status: 'resolved' | 'dismissed';
+      resolution: string;
+      actor: AuditActor & { userId: string };
+    },
+  ): Promise<void>;
+  /** Whether an item of a kind about a subject exists in a status (opened at `since` or later). */
+  hasItem(
+    tx: Tx,
+    input: {
+      kind: WorklistKind;
+      subjectType: WorklistSubjectType;
+      subjectId: string;
+      status: 'open' | 'resolved' | 'dismissed';
+      since?: Date | undefined;
+    },
+  ): Promise<boolean>;
+}
 
 /** Who acts, for the audit entry and for the columns that remember the author. */
 export type InvoicingActor = AuditActor & { userId: string };
@@ -13,6 +53,8 @@ export const CURRENT_TENANT = sql`current_setting('app.tenant_id')::uuid`;
 
 export const UNIQUE_VIOLATION = '23505';
 export const CHECK_VIOLATION = '23514';
+/** `lock_timeout` ran out: another transaction holds the row we need. */
+export const LOCK_NOT_AVAILABLE = '55P03';
 
 /** The SQLSTATE a driver error carries, if it is one. */
 export function sqlState(error: unknown): string | undefined {

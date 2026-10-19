@@ -1,7 +1,7 @@
 import type { CreateCreditNoteRequest, InvoiceDto, InvoiceType } from '@consultorio/contracts';
 import { asc, eq, sql } from 'drizzle-orm';
 
-import { invoice, invoiceLine, pointOfSale } from '../../../db/schema/index.js';
+import { fiscalCredential, invoice, invoiceLine, pointOfSale } from '../../../db/schema/index.js';
 import { audit } from '../../../platform/audit/writer.js';
 import type { Tx } from '../../../platform/db/tenant-context.js';
 import { AppError } from '../../../platform/http/problem.js';
@@ -42,8 +42,9 @@ export interface CreateCreditNoteInput {
  * limit, rejected ones do not. The original invoice is not touched. Only once the note is ISSUED
  * does the amount invoiced of the charge lines go down (the database does it).
  *
- * The charge lines of the invoice are locked first, in the order of their ids, so two notes over
- * the same invoice (and an invoice being created over the same lines) wait for each other.
+ * The charges of the invoice are locked first (shared) and then its charge lines, in the order of
+ * their ids, so two notes over the same invoice (and an invoice being created over the same lines)
+ * wait for each other, and a void of the charge does not meet them in the opposite order.
  */
 export async function createCreditNote(
   tx: Tx,
@@ -65,7 +66,9 @@ export async function createCreditNote(
   await readChargeLines(
     tx,
     originalLines.map((line) => line.chargeLineId),
-    { lock: true },
+    // The charges first (shared), then the lines: the order of the writers of invoices and of the void
+    // of a charge, so the note and a void never wait for each other in a circle (JD-S4 R2-5).
+    { lock: true, lockCharges: true },
   );
 
   const requestHash = hashOf({
@@ -109,6 +112,19 @@ export async function createCreditNote(
   const simulated = isSimulatedIssuer(
     issuerFor(deps.adapters, { id: organization.id, isDemo: organization.isDemo }),
   );
+  // The note is issued by the one who issued the invoice it cancels. With a real authority the
+  // credential is the one of the live fiscal profile: if the CUIT changed since, the request would be
+  // signed for one CUIT and name another (JD-S4 R2-B-T5).
+  const issuer = original.issuerSnapshot ?? (await currentIssuer(tx));
+  if (!simulated && issuer) {
+    const [credential] = await tx
+      .select({ subjectCuit: fiscalCredential.subjectCuit })
+      .from(fiscalCredential)
+      .where(eq(fiscalCredential.active, true));
+    if (credential && credential.subjectCuit !== issuer.cuit) {
+      throw new AppError('invoice_issuer_mismatch');
+    }
+  }
 
   const recipient: Recipient = {
     kind: original.recipientKind === 'payer' ? 'payer' : 'patient',
@@ -143,7 +159,7 @@ export async function createCreditNote(
         totalCents: noteCents,
         locationIds: original.locationIds,
         // The note is issued by the one who issued the invoice it cancels.
-        issuer: original.issuerSnapshot ?? (await currentIssuer(tx)),
+        issuer,
         creditNote: { originalId: original.id, reason: input.request.reason },
       },
     });

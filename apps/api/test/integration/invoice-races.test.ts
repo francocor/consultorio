@@ -10,7 +10,7 @@ import { createRuntimeDb, type DbHandle } from '../../src/platform/db/pool.js';
 import type { Tx } from '../../src/platform/db/tenant-context.js';
 import { submissionKey } from '../support/billing-world.js';
 import { createInvoicingWorld, type InvoicingWorld } from '../support/invoicing-world.js';
-import { gate, waitForLockWaiters } from '../support/lock-waits.js';
+import { backendPid, gate, waitForLockWaiters } from '../support/lock-waits.js';
 
 /**
  * Judgment day, Stage 4, round 1: findings C2, C6 and the idempotency half of C10 for invoices. Two
@@ -41,7 +41,7 @@ const owner = () => ({
 const viewer = () => ({ roles: ['owner' as const], membershipId: world.owner.membershipId });
 
 /** Voids a charge in a transaction of its own and keeps it open until `release`. */
-async function voidAndHold(chargeId: string, release: Promise<void>, held: () => void) {
+async function voidAndHold(chargeId: string, release: Promise<void>, held: (pid: number) => void) {
   await world.inTenant(async (tx) => {
     await voidCharge(tx, {
       chargeId,
@@ -50,13 +50,17 @@ async function voidAndHold(chargeId: string, release: Promise<void>, held: () =>
       viewer: { ...viewer(), professionalId: null },
       invoices: invoiceLookup,
     });
-    held();
+    held(await backendPid(tx));
     await release;
   });
 }
 
 /** Creates an invoice over the charge in a transaction of its own and keeps it open until `release`. */
-async function createAndHold(charge: ChargeDto, release: Promise<void>, held: () => void) {
+async function createAndHold(
+  charge: ChargeDto,
+  release: Promise<void>,
+  held: (pid: number) => void,
+) {
   const lines = (await world.chargeOf(charge.id)).lines.filter(
     (line) => line.portion === 'patient',
   );
@@ -76,7 +80,7 @@ async function createAndHold(charge: ChargeDto, release: Promise<void>, held: ()
         tenantId: world.tenant.id,
       },
     );
-    held();
+    held(await backendPid(tx));
     await release;
   });
 }
@@ -92,13 +96,13 @@ const invoicesOf = (chargeId: string) =>
 describe('voiding a charge and invoicing it at the same time (JD-S4 R1-C2)', () => {
   it('refuses the invoice of a charge whose void is in progress, instead of invoicing a voided charge', async () => {
     const charge = await world.charge();
-    const held = gate();
+    const held = gate<number>();
     const release = gate();
 
     const voiding = voidAndHold(charge.id, release.opened, held.open);
-    await held.opened;
+    const holder = await held.opened;
     const invoicing = world.invoiceCharge(charge);
-    await waitForLockWaiters();
+    await waitForLockWaiters(holder);
     release.open();
     await voiding;
     const response = await invoicing;
@@ -110,15 +114,15 @@ describe('voiding a charge and invoicing it at the same time (JD-S4 R1-C2)', () 
 
   it('refuses the void of a charge whose invoice is in progress, instead of voiding an invoiced charge', async () => {
     const charge = await world.charge();
-    const held = gate();
+    const held = gate<number>();
     const release = gate();
 
     const invoicing = createAndHold(charge, release.opened, held.open);
-    await held.opened;
+    const holder = await held.opened;
     const voiding = world.api.post(`/billing/charges/${charge.id}/void`, world.owner, {
       reason: 'Cargado por error',
     });
-    await waitForLockWaiters();
+    await waitForLockWaiters(holder);
     release.open();
     await invoicing;
     const response = await voiding;
@@ -191,7 +195,7 @@ describe('two invoices that cover the same charge line (JD-S4 R1-C6)', () => {
   it('adds up what both cover, however their transactions interleave (no lost update)', async () => {
     const charge = await world.charge();
     const [line] = (await world.chargeOf(charge.id)).lines;
-    const held = gate();
+    const held = gate<number>();
     const release = gate();
     const cover = (tx: Tx, invoiceId: string, cents: number) =>
       tx.execute(
@@ -202,14 +206,14 @@ describe('two invoices that cover the same charge line (JD-S4 R1-C6)', () => {
 
     const first = world.inTenant(async (tx) => {
       await cover(tx, await rawInvoice(tx, { status: 'pending', totalCents: 600_000 }), 600_000);
-      held.open();
+      held.open(await backendPid(tx));
       await release.opened;
     });
-    await held.opened;
+    const holder = await held.opened;
     const second = world.inTenant(async (tx) => {
       await cover(tx, await rawInvoice(tx, { status: 'pending', totalCents: 400_000 }), 400_000);
     });
-    await waitForLockWaiters();
+    await waitForLockWaiters(holder);
     release.open();
     await Promise.all([first, second]);
 
@@ -220,7 +224,7 @@ describe('two invoices that cover the same charge line (JD-S4 R1-C6)', () => {
 describe('two credit notes of the same invoice (JD-S4 R1-C6)', () => {
   it('make the second wait for the first, so together they never exceed the invoice', async () => {
     const issued = await world.issueInvoiceOf(await world.charge());
-    const held = gate();
+    const held = gate<number>();
     const release = gate();
 
     const first = world.inTenant(async (tx) => {
@@ -230,10 +234,10 @@ describe('two credit notes of the same invoice (JD-S4 R1-C6)', () => {
         creditNoteOf: issued.id,
         type: 'NCC',
       });
-      held.open();
+      held.open(await backendPid(tx));
       await release.opened;
     });
-    await held.opened;
+    const holder = await held.opened;
     const second = world
       .inTenant((tx) =>
         rawInvoice(tx, {
@@ -247,7 +251,7 @@ describe('two credit notes of the same invoice (JD-S4 R1-C6)', () => {
         () => 'written',
         (error: unknown) => (error as { cause?: { message?: string } }).cause?.message ?? 'refused',
       );
-    await waitForLockWaiters();
+    await waitForLockWaiters(holder);
     release.open();
     await first;
 
@@ -260,7 +264,7 @@ describe('two submissions with the same idempotency key (JD-S4 R1-C10)', () => {
     const first = await world.charge();
     const second = await world.charge();
     const key = submissionKey();
-    const held = gate();
+    const held = gate<number>();
     const release = gate();
 
     const writing = world.inTenant(async (tx) => {
@@ -274,12 +278,12 @@ describe('two submissions with the same idempotency key (JD-S4 R1-C10)', () => {
                       'consumidor_final', 100000, 100000, ARRAY[${world.centro}]::uuid[],
                       ${world.owner.user.id})`,
       );
-      held.open();
+      held.open(await backendPid(tx));
       await release.opened;
     });
-    await held.opened;
+    const holder = await held.opened;
     const asking = world.invoiceCharge(second, { idempotencyKey: key });
-    await waitForLockWaiters();
+    await waitForLockWaiters(holder);
     release.open();
     await writing;
     const response = await asking;

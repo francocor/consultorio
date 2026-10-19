@@ -109,6 +109,41 @@ export const invoice = tenantTable(
     lastAttemptAt: timestamp('last_attempt_at', { withTimezone: true }),
     /** After an unknown outcome: the number the authority is expected to have given. */
     expectedNumber: bigint('expected_number', { mode: 'number' }),
+    /**
+     * When the invoice began to wait for reconciliation (its request may have been answered). Set by
+     * the first mark of the episode, kept by the later attempts and cleared when the wait ends. A stalled
+     * series is measured from here, not from the creation of the invoice or from the number of
+     * attempts, which the probes that other invoices bring forward also count (JD-S4 R4-B-S1).
+     */
+    awaitingSince: timestamp('awaiting_since', { withTimezone: true }),
+    /**
+     * The last number the AUTHORITY had authorized in the series when the invoice was marked (its own
+     * answer, not an inference from our rows). The voucher of a request that may have been answered is
+     * above it, so reconciling looks at the numbers after it, up to the authority's last number now.
+     * The first mark of a wait fixes it; the later marks keep it. Null for an invoice marked before the
+     * column existed (JD-S4 R5-1).
+     */
+    authorityLastAtMark: bigint('authority_last_at_mark', { mode: 'number' }),
+    /**
+     * When the last request of the wait was sent: written by the mark, BEFORE the authority is called,
+     * so a crash between the mark and the call leaves it set as if the request had gone. "Nothing was
+     * issued for this invoice" is believed only after `SETTLE` has passed since then, because a request
+     * the caller gave up on may still be being processed (JD-S4 R6-1). Cleared with the wait.
+     */
+    lastSentAt: timestamp('last_sent_at', { withTimezone: true }),
+    /**
+     * How many times in a row the authority answered "no voucher" at a number at or below its own last
+     * one. A lookup may lag behind an authorization for a moment, so the invoice waits for a few rounds
+     * before it is parked for a person (JD-S4 R6-A-S1). Zero outside a wait.
+     */
+    lookupMisses: integer('lookup_misses').notNull().default(0),
+    /**
+     * How many requests in a row the authority refused with `not_next` while its last number did not move
+     * (ARCA error 10016 also covers a date earlier than the last voucher, which no wait cures). After a
+     * few of them the invoice is parked with its own reason instead of being sent for ever (JD-S4 R7-1).
+     * Kept while the invoice waits between two sends; zero otherwise.
+     */
+    refusedNotNext: integer('refused_not_next').notNull().default(0),
     issuedAt: timestamp('issued_at', { withTimezone: true }),
     /** The issuer as the fiscal profile said at the time of the request; never changes. */
     issuerSnapshot: jsonb('issuer_snapshot').$type<IssuerSnapshot>(),
@@ -192,6 +227,12 @@ export const invoice = tenantTable(
     check(
       'invoice_attempts_check',
       sql`${table.attempts} >= 0 and (${table.expectedNumber} is null or ${table.expectedNumber} > 0)`,
+    ),
+    check('invoice_lookup_misses_check', sql`${table.lookupMisses} >= 0`),
+    check('invoice_refused_not_next_check', sql`${table.refusedNotNext} >= 0`),
+    check(
+      'invoice_authority_last_check',
+      sql`${table.authorityLastAtMark} is null or ${table.authorityLastAtMark} >= 0`,
     ),
     uniqueIndex('invoice_idempotency_key').on(table.tenantId, table.idempotencyKey),
     uniqueIndex('invoice_number_key')
@@ -305,3 +346,55 @@ export const invoiceDocument = tenantTable(
 );
 
 export type InvoiceDocumentRow = typeof invoiceDocument.$inferSelect;
+
+/**
+ * A number of a series that the authority may hold a voucher under, and that no invoice records
+ * (JD-S4 R3-3): the number an invoice expected when it was replaced by a manual voucher without
+ * knowing whether it had been issued, and the number of a voucher that arrived for an invoice somebody
+ * had already closed. A voucher exists there that is NOT the voucher of any invoice that asks later,
+ * so a lookup never adopts it and the next number expected is counted after it. Written once, never
+ * changed or removed (the invoice that closed cannot carry it: a closed invoice is closed to any write).
+ */
+export const invoiceStrayVoucher = tenantTable(
+  'invoice_stray_voucher',
+  {
+    invoiceId: uuid('invoice_id').notNull(),
+    pointOfSale: integer('point_of_sale').notNull(),
+    type: text('type').notNull(),
+    number: bigint('number', { mode: 'number' }).notNull(),
+    /**
+     * Why the number is remembered. `orphaned` (a voucher arrived for a closed invoice) and `unmatched`
+     * (a voucher found or issued that no invoice can record) are vouchers that certainly exist;
+     * `replaced_unresolved` and `parked_unknown` are numbers where one MAY exist (an invoice replaced or
+     * parked without knowing whether it was issued): unconfirmed until an invoice of the series records
+     * a higher number (JD-S4 R4-1, R4-3).
+     */
+    reason: text('reason').notNull(),
+  },
+  (table) => [
+    foreignKey({
+      name: 'invoice_stray_voucher_tenant_id_fkey',
+      columns: [table.tenantId],
+      foreignColumns: [tenant.id],
+    }),
+    foreignKey({
+      name: 'invoice_stray_voucher_invoice_fkey',
+      columns: [table.tenantId, table.invoiceId],
+      foreignColumns: [invoice.tenantId, invoice.id],
+    }),
+    check('invoice_stray_voucher_number_check', sql`${table.number} > 0`),
+    check(
+      'invoice_stray_voucher_reason_check',
+      sql`${table.reason} in ('replaced_unresolved', 'orphaned', 'unmatched', 'parked_unknown')`,
+    ),
+    uniqueIndex('invoice_stray_voucher_number_key').on(
+      table.tenantId,
+      table.pointOfSale,
+      table.type,
+      table.number,
+    ),
+    index('invoice_stray_voucher_invoice_idx').on(table.tenantId, table.invoiceId),
+  ],
+);
+
+export type InvoiceStrayVoucherRow = typeof invoiceStrayVoucher.$inferSelect;

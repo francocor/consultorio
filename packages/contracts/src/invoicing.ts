@@ -209,6 +209,8 @@ export type AfipSimulatorModeRequest = z.infer<typeof AfipSimulatorModeRequest>;
 /** A voucher the simulator authorized, as the console lists it. */
 export const AfipSimulatorVoucherDto = z.strictObject({
   id: z.uuid(),
+  /** The organization the voucher belongs to (`''`: it predates the reference). */
+  tenantRef: z.string(),
   issuerCuit: z.string(),
   pointOfSale: z.int(),
   type: z.string(),
@@ -220,6 +222,10 @@ export const AfipSimulatorVoucherDto = z.strictObject({
   createdAt: z.iso.datetime(),
 });
 export type AfipSimulatorVoucherDto = z.infer<typeof AfipSimulatorVoucherDto>;
+
+/** The console lists every organization's vouchers, or the ones of one of them. */
+export const AfipSimulatorStateQuery = z.strictObject({ tenantRef: z.uuid().optional() });
+export type AfipSimulatorStateQuery = z.infer<typeof AfipSimulatorStateQuery>;
 
 export const AfipSimulatorStateResponse = z.strictObject({
   mode: z.enum(AFIP_SIMULATOR_MODES),
@@ -300,7 +306,11 @@ export type CreateCreditNoteRequest = z.infer<typeof CreateCreditNoteRequest>;
 /** An invoice issued outside the system (the AFIP web tool), registered by the owner or an admin. */
 export const CreateManualInvoiceRequest = z.strictObject({
   idempotencyKey: SubmissionKey,
-  type: z.enum(INVOICE_ONLY_TYPES),
+  /**
+   * An invoice type, or a credit note type: a credit note made outside the system is registered only in
+   * place of one that was parked for a person (`replacesInvoiceId`, with `associatedVoucher`).
+   */
+  type: z.enum(INVOICE_TYPES),
   pointOfSale: PointOfSaleNumber,
   number: z.int().min(1).max(99_999_999),
   /** The 14 digits of the CAE. */
@@ -314,6 +324,25 @@ export const CreateManualInvoiceRequest = z.strictObject({
    * outage). It is closed as rejected, so it is never issued as well, and its lines are used here.
    */
   replacesInvoiceId: z.uuid().optional(),
+  /**
+   * For a credit note: the voucher it cancels (type, point of sale and number). It must be the voucher
+   * the parked credit note cancels. Absent for an invoice.
+   */
+  associatedVoucher: z
+    .strictObject({
+      type: z.enum(INVOICE_ONLY_TYPES),
+      pointOfSale: PointOfSaleNumber,
+      number: z.int().min(1).max(99_999_999),
+    })
+    .optional(),
+  /**
+   * The owner or admin knows that the invoice `replacesInvoiceId` names was sent to the authority and
+   * that nobody knows whether it was issued (a lost answer), and registers this voucher in its place
+   * anyway. Without it that replacement is refused. If the invoice turns out to have been issued, the
+   * organization holds two vouchers for one service: the replacement is audited and a person is told to
+   * look for the voucher in ARCA (JD-S4 R2-2).
+   */
+  acknowledgeUnknownOutcome: z.boolean().optional(),
   lines: InvoiceLinesInput,
   recipient: InvoiceRecipientInput,
 });
@@ -378,6 +407,14 @@ export const InvoiceDto = z.strictObject({
   ageMinutes: z.int().nullable(),
   /** Pending only: it waited longer than the threshold of the organization (a prolonged outage). */
   outageFlag: z.boolean(),
+  /**
+   * Pending only: the invoice of the same series (point of sale and type) that holds this one back,
+   * because the request to the authority may have been answered and nothing of the series is sent
+   * until that is settled. Null when nothing holds it.
+   */
+  heldBy: z.strictObject({ id: z.uuid(), requestedAt: z.iso.datetime() }).nullable(),
+  /** How many invoices of the series wait for this one to be settled (zero for most). */
+  blocksSeries: z.int().min(0),
   hasPdf: z.boolean(),
   createdAt: z.iso.datetime(),
   issuedAt: z.iso.datetime().nullable(),

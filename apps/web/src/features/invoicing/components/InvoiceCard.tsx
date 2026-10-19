@@ -14,10 +14,13 @@ export function InvoiceCard({
   invoice,
   thresholdHours,
   onOpen,
+  onOpenInvoice,
 }: {
   invoice: InvoiceDto;
   thresholdHours: number;
   onOpen: () => void;
+  /** Opens another invoice of the list (the one that holds a pending invoice back). */
+  onOpenInvoice?: ((id: string) => void) | undefined;
 }) {
   const { t } = useTranslation('invoicing');
   const number = voucherNumber(invoice.pointOfSale, invoice.number);
@@ -41,7 +44,11 @@ export function InvoiceCard({
         <span className="tabular-nums font-semibold">{formatMoney(money(invoice.totalCents))}</span>
       </div>
       {invoice.status === 'pending' ? (
-        <PendingNote invoice={invoice} thresholdHours={thresholdHours} />
+        <PendingNote
+          invoice={invoice}
+          thresholdHours={thresholdHours}
+          onOpenInvoice={onOpenInvoice}
+        />
       ) : null}
       {invoice.status === 'rejected' && invoice.rejectionMessage ? (
         <p className="text-sm text-danger-soft-foreground">

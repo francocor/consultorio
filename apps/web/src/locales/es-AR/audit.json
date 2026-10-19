@@ -191,6 +191,8 @@
   "action.invoice.attempted": "Intento de emisión de factura sin resultado",
   "action.invoice.needs_attention": "Factura que requiere revisión",
   "action.invoice.voucher_orphaned": "Comprobante emitido por ARCA sin factura que lo registre",
+  "action.invoice.voucher_adopted": "Comprobante de ARCA adoptado por una factura, en un número que se había recordado para otra",
+  "action.invoice.replaced_unresolved": "Factura reemplazada por un comprobante manual sin saber si ARCA la había emitido",
   "action.invoicing.config.changed": "Configuración de facturación modificada",
   "action.invoicing.credential.changed": "Certificado de facturación modificado",
   "action.report.accessed": "Reporte consultado con datos de pacientes",

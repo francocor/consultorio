@@ -8298,6 +8298,38 @@
           "primaryKey": false,
           "notNull": false
         },
+        "awaiting_since": {
+          "name": "awaiting_since",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "authority_last_at_mark": {
+          "name": "authority_last_at_mark",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "last_sent_at": {
+          "name": "last_sent_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "lookup_misses": {
+          "name": "lookup_misses",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
+        },
+        "refused_not_next": {
+          "name": "refused_not_next",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
+        },
         "issued_at": {
           "name": "issued_at",
           "type": "timestamp with time zone",
@@ -8659,6 +8691,18 @@
         "invoice_attempts_check": {
           "name": "invoice_attempts_check",
           "value": "\"invoice\".\"attempts\" >= 0 and (\"invoice\".\"expected_number\" is null or \"invoice\".\"expected_number\" > 0)"
+        },
+        "invoice_lookup_misses_check": {
+          "name": "invoice_lookup_misses_check",
+          "value": "\"invoice\".\"lookup_misses\" >= 0"
+        },
+        "invoice_refused_not_next_check": {
+          "name": "invoice_refused_not_next_check",
+          "value": "\"invoice\".\"refused_not_next\" >= 0"
+        },
+        "invoice_authority_last_check": {
+          "name": "invoice_authority_last_check",
+          "value": "\"invoice\".\"authority_last_at_mark\" is null or \"invoice\".\"authority_last_at_mark\" >= 0"
         }
       },
       "isRLSEnabled": false
@@ -9037,6 +9081,178 @@
       },
       "isRLSEnabled": false
     },
+    "public.invoice_stray_voucher": {
+      "name": "invoice_stray_voucher",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "app.uuid_v7()"
+        },
+        "tenant_id": {
+          "name": "tenant_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "invoice_id": {
+          "name": "invoice_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "point_of_sale": {
+          "name": "point_of_sale",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "type": {
+          "name": "type",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "number": {
+          "name": "number",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "reason": {
+          "name": "reason",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        }
+      },
+      "indexes": {
+        "invoice_stray_voucher_number_key": {
+          "name": "invoice_stray_voucher_number_key",
+          "columns": [
+            {
+              "expression": "tenant_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "point_of_sale",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "type",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "number",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "invoice_stray_voucher_invoice_idx": {
+          "name": "invoice_stray_voucher_invoice_idx",
+          "columns": [
+            {
+              "expression": "tenant_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "invoice_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "invoice_stray_voucher_tenant_id_fkey": {
+          "name": "invoice_stray_voucher_tenant_id_fkey",
+          "tableFrom": "invoice_stray_voucher",
+          "tableTo": "tenant",
+          "columnsFrom": [
+            "tenant_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "invoice_stray_voucher_invoice_fkey": {
+          "name": "invoice_stray_voucher_invoice_fkey",
+          "tableFrom": "invoice_stray_voucher",
+          "tableTo": "invoice",
+          "columnsFrom": [
+            "tenant_id",
+            "invoice_id"
+          ],
+          "columnsTo": [
+            "tenant_id",
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "invoice_stray_voucher_tenant_id_id_key": {
+          "name": "invoice_stray_voucher_tenant_id_id_key",
+          "nullsNotDistinct": false,
+          "columns": [
+            "tenant_id",
+            "id"
+          ]
+        }
+      },
+      "policies": {},
+      "checkConstraints": {
+        "invoice_stray_voucher_number_check": {
+          "name": "invoice_stray_voucher_number_check",
+          "value": "\"invoice_stray_voucher\".\"number\" > 0"
+        },
+        "invoice_stray_voucher_reason_check": {
+          "name": "invoice_stray_voucher_reason_check",
+          "value": "\"invoice_stray_voucher\".\"reason\" in ('replaced_unresolved', 'orphaned', 'unmatched', 'parked_unknown')"
+        }
+      },
+      "isRLSEnabled": false
+    },
     "public.job_execution": {
       "name": "job_execution",
       "schema": "",
@@ -9356,6 +9572,36 @@
           "type": "bigint",
           "primaryKey": false,
           "notNull": true
+        },
+        "buyer_doc_type": {
+          "name": "buyer_doc_type",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "buyer_doc_number": {
+          "name": "buyer_doc_number",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "assoc_type": {
+          "name": "assoc_type",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "assoc_point_of_sale": {
+          "name": "assoc_point_of_sale",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "assoc_number": {
+          "name": "assoc_number",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
         },
         "idempotency_key": {
           "name": "idempotency_key",

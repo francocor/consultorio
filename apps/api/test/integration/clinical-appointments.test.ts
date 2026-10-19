@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 
 import { Problem, type NoteDto } from '@consultorio/contracts';
-import { and, eq, sql } from 'drizzle-orm';
+import { and, asc, eq, sql } from 'drizzle-orm';
 import { afterAll, beforeAll, describe, expect, inject, it } from 'vitest';
 
 import { auditEvent } from '../../src/db/schema/audit.js';
@@ -73,7 +73,8 @@ async function denials(patientId: string) {
     tx
       .select()
       .from(auditEvent)
-      .where(and(eq(auditEvent.action, 'access.denied'), eq(auditEvent.patientId, patientId))),
+      .where(and(eq(auditEvent.action, 'access.denied'), eq(auditEvent.patientId, patientId)))
+      .orderBy(asc(auditEvent.occurredAt), asc(auditEvent.id)),
   );
 }
 

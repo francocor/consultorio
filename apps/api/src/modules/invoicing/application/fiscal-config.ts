@@ -26,6 +26,7 @@ import type { Tx } from '../../../platform/db/tenant-context.js';
 import { AppError } from '../../../platform/http/problem.js';
 import { credentialState } from '../domain/credential.js';
 
+import { CHECK_VIOLATION, sqlState } from './common.js';
 import { packFor } from './country-rules.js';
 import { isSimulatedIssuer, issuerFor } from './issuer.js';
 import { invoicingReadiness } from './readiness.js';
@@ -274,11 +275,19 @@ export async function updatePointOfSale(
     if (used) throw new AppError('point_of_sale_has_invoices');
   }
 
+  // The check above reads without a lock: an invoice being created at this moment is invisible to it.
+  // The database settles it (a trigger waits for that invoice and refuses), JD-S4 R2-4.
   const [updated] = await tx
     .update(pointOfSale)
     .set(patch)
     .where(eq(pointOfSale.id, current.id))
-    .returning();
+    .returning()
+    .catch((error: unknown) => {
+      if (patch.environment !== undefined && sqlState(error) === CHECK_VIOLATION) {
+        throw new AppError('point_of_sale_has_invoices');
+      }
+      throw error;
+    });
   if (!updated) throw new AppError('internal_error');
 
   await audit(tx, {

@@ -168,6 +168,43 @@ describe('the list of invoices', () => {
     expect(screen.queryByRole('alert')).not.toBeInTheDocument();
   });
 
+  it('says which invoice holds a pending one back, and opens that invoice from there (JD-S4 R3-2)', async () => {
+    const blockerId = '0190a000-0000-7000-8000-0000000000b8';
+    const heldId = '0190a000-0000-7000-8000-0000000000b9';
+    open({
+      invoices: [
+        pending(180, {
+          id: blockerId,
+          blocksSeries: 2,
+          recipient: { ...invoice().recipient, name: 'Marta Gómez' },
+        }),
+        pending(5, {
+          id: heldId,
+          heldBy: { id: blockerId, requestedAt: '2031-05-20T10:00:00.000Z' },
+        }),
+      ],
+    });
+
+    const held = await cardOf(/Lucía Fernández/);
+    const blocker = await cardOf(/Marta Gómez/);
+
+    expect(held).toHaveTextContent('Espera a otra factura de su serie');
+    expect(held).toHaveTextContent('para no emitir dos comprobantes');
+    expect(blocker).toHaveTextContent('2 facturas esperan detrás');
+    expect(blocker).toHaveTextContent('Busque el comprobante en ARCA');
+    await userEvent.click(within(held).getByRole('button', { name: 'Ver esa factura' }));
+    const dialog = await screen.findByRole('dialog');
+    expect(dialog).toHaveTextContent('Marta Gómez');
+  });
+
+  it('does not talk about holds for a pending invoice nothing holds', async () => {
+    open({ invoices: [pending(5)] });
+
+    const card = await cardOf(/Pendiente/);
+
+    expect(card.textContent).not.toMatch(/espera a otra|esperan detrás|espera detrás/i);
+  });
+
   it('asks the server for the state that was chosen', async () => {
     open({ invoices: [invoice(), pending(5, { id: '0190a000-0000-7000-8000-0000000000b2' })] });
     await cardOf(/Lucía Fernández/);

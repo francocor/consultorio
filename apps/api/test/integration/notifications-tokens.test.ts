@@ -389,16 +389,18 @@ describe('cancelling', () => {
 });
 
 describe('opting out', () => {
-  it('records the opt-out of the channel in the link, for that patient only, and audits it', async () => {
+  it('opts the patient out of every channel (B7), for that patient only, and audits each', async () => {
     const r = await reminded();
     const other = await reminded();
 
     const page = await view(scheduling.app, 'GET', r.optOut);
     const done = await view(scheduling.app, 'POST', r.optOut);
 
-    expect(page.body).toContain('Dejar de recibir mensajes por email');
+    expect(page.body).toContain('Dejar de recibir mensajes');
+    expect(page.body).toContain('por ningún canal');
     expect(done.statusCode).toBe(200);
     expect(done.body).toContain('no recibirá más mensajes');
+    expect(done.body).toContain('todos los canales');
     const rows = await scheduling.inTenant((tx) =>
       tx
         .select({
@@ -407,9 +409,13 @@ describe('opting out', () => {
           source: channelPreference.source,
         })
         .from(channelPreference)
-        .where(sql`${channelPreference.patientId} in (${r.patientId}, ${other.patientId})`),
+        .where(sql`${channelPreference.patientId} in (${r.patientId}, ${other.patientId})`)
+        .orderBy(channelPreference.channel),
     );
-    expect(rows).toEqual([{ patientId: r.patientId, channel: 'email', source: 'email_link' }]);
+    expect(rows).toEqual([
+      { patientId: r.patientId, channel: 'email', source: 'email_link' },
+      { patientId: r.patientId, channel: 'whatsapp', source: 'email_link' },
+    ]);
     const audits = await scheduling.inTenant((tx) =>
       tx
         .select({ metadata: auditEvent.metadata })
@@ -421,11 +427,17 @@ describe('opting out', () => {
           ),
         ),
     );
-    expect(audits).toEqual([{ metadata: { channel: 'email', source: 'email_link' } }]);
+    expect(audits).toHaveLength(2);
+    expect(audits).toEqual(
+      expect.arrayContaining([
+        { metadata: { channel: 'email', source: 'email_link' } },
+        { metadata: { channel: 'whatsapp', source: 'email_link' } },
+      ]),
+    );
     expect((await view(scheduling.app, 'POST', r.optOut)).statusCode).toBe(404);
   });
 
-  it('cancels what was still queued for that patient on that channel', async () => {
+  it('cancels what was still queued for that patient', async () => {
     const r = await reminded();
     const next = await notes.queue({
       kind: 'reminder',

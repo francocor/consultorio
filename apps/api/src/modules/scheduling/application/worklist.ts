@@ -6,7 +6,7 @@ import type {
   WorklistResponse,
   WorklistSubjectType,
 } from '@consultorio/contracts';
-import { and, asc, count, eq, inArray, isNull, or, sql, type SQL } from 'drizzle-orm';
+import { and, asc, count, eq, gte, inArray, isNull, or, sql, type SQL } from 'drizzle-orm';
 
 import { patient } from '../../../db/schema/patients.js';
 import { appointment } from '../../../db/schema/scheduling.js';
@@ -49,6 +49,21 @@ export interface CloseItemInput {
 export interface WorklistService {
   /** Opens an item. Idempotent: an open item of the same kind and subject is returned as it is. */
   openItem(tx: Tx, input: OpenItemInput): Promise<{ id: string; created: boolean }>;
+  /**
+   * Whether an item of a kind about a subject exists in the given status (and, when `since` is given,
+   * was opened at that moment or later). For a capability that must not open the same thing again
+   * (JD-S4 R4-A-W3).
+   */
+  hasItem(
+    tx: Tx,
+    input: {
+      kind: WorklistKind;
+      subjectType: WorklistSubjectType;
+      subjectId: string;
+      status: 'open' | 'resolved' | 'dismissed';
+      since?: Date | undefined;
+    },
+  ): Promise<boolean>;
   /** The items the viewer may see: their locations plus the ones of the whole organization. */
   list(tx: Tx, viewer: LocationViewer, query: WorklistQuery): Promise<WorklistResponse>;
   /** One item the viewer may see, or not found. */
@@ -209,6 +224,23 @@ export function createWorklistService(deps: { keys: TenantKeys }): WorklistServi
         );
       if (!existing) throw new Error('worklist item neither inserted nor found');
       return { id: existing.id, created: false };
+    },
+
+    async hasItem(tx, input) {
+      const [found] = await tx
+        .select({ id: worklistItem.id })
+        .from(worklistItem)
+        .where(
+          and(
+            eq(worklistItem.kind, input.kind),
+            eq(worklistItem.subjectType, input.subjectType),
+            eq(worklistItem.subjectId, input.subjectId),
+            eq(worklistItem.status, input.status),
+            ...(input.since ? [gte(worklistItem.createdAt, input.since)] : []),
+          ),
+        )
+        .limit(1);
+      return found !== undefined;
     },
 
     async list(tx, viewer, query) {

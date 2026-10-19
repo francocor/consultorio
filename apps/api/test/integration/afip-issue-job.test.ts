@@ -9,6 +9,7 @@ import { afterAll, beforeAll, describe, expect, inject, it, vi } from 'vitest';
 import { auditEvent } from '../../src/db/schema/audit.js';
 import { fiscalCredential } from '../../src/db/schema/index.js';
 import { tenant as tenantTable } from '../../src/db/schema/tenant.js';
+import { invoiceNumbersHeldBy } from '../../src/main/wiring/invoicing.js';
 import { issuerKeyOf } from '../../src/modules/invoicing/application/issue-attempt.js';
 import { createRuntimeDb, type DbHandle } from '../../src/platform/db/pool.js';
 import { runJob } from '../../src/platform/jobs/define-job.js';
@@ -127,13 +128,16 @@ describe('an invoice the authority authorizes', () => {
       ),
     );
 
-    // The in-memory fake forgets its numbering, as it does when the process restarts.
+    // The in-memory fake forgets its numbering, as it does when the process restarts; the wiring of the
+    // demo tells it where to learn what the organization holds.
+    world.issuer.rememberFrom(invoiceNumbersHeldBy(runtime.db));
     world.issuer.reset();
     const after = await world.issueInvoiceOf(await world.charge());
 
     expect(held.rows[0]?.highest).toBe(before.number);
     expect(after.status).toBe('issued');
     expect(after.number).toBe((before.number ?? 0) + 1);
+    world.issuer.rememberFrom(undefined);
   });
 
   it('is asked once however many times the job is delivered, even at the same moment', async () => {

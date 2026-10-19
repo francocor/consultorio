@@ -24,6 +24,8 @@ export interface DevCertificateOptions {
   ageDays?: number;
   /** `rsa` (2048 bits, like AFIP's) or `ec` (P-256, much faster, for tests). Defaults to `rsa`. */
   algorithm?: 'rsa' | 'ec';
+  /** The serial number as bytes, to test an edge of its encoding. Defaults to 16 random bytes. */
+  serial?: Buffer;
 }
 
 export interface DevCertificate {
@@ -68,8 +70,13 @@ function oid(dotted: string): Buffer {
 }
 
 function integer(bytes: Buffer): Buffer {
-  // Positive: a leading zero keeps the high bit from reading as a sign.
-  const padded = (bytes[0] ?? 0) & 0x80 ? Buffer.concat([Buffer.from([0]), bytes]) : bytes;
+  // DER integers are minimal: leading zero bytes are dropped (one byte stays), and then a leading
+  // zero is added back only when the high bit would read as a sign. A serial that began with a zero
+  // byte used to be written as it was, and the parser refused that certificate now and then.
+  let start = 0;
+  while (start < bytes.length - 1 && bytes[start] === 0) start += 1;
+  const minimal = bytes.subarray(start);
+  const padded = (minimal[0] ?? 0) & 0x80 ? Buffer.concat([Buffer.from([0]), minimal]) : minimal;
   return tlv(0x02, padded);
 }
 
@@ -133,7 +140,7 @@ export function generateDevCertificate(options: DevCertificateOptions): DevCerti
 
   const toBeSigned = sequence(
     tlv(0xa0, integer(Buffer.from([2]))), // version 3
-    integer(randomBytes(16)),
+    integer(options.serial ?? randomBytes(16)),
     signatureAlgorithm,
     name, // issuer: self-signed
     sequence(time(notBefore), time(notAfter)),

@@ -82,3 +82,36 @@ describe('the WhatsApp text of the follow-up with the video link', () => {
     expect(body).not.toContain('Responda 2');
   });
 });
+
+describe('the acknowledgment of a BAJA (owner decision B7)', () => {
+  it('names the organization and says no more messages will come on any channel', () => {
+    const body = whatsappBody('optout_ack', vars);
+
+    expect(body).toContain(
+      'Centro Médico Aillu no le enviará más mensajes por WhatsApp ni por email',
+    );
+    expect(body).toContain('avise en la recepción');
+  });
+});
+
+describe('the acknowledgment of a BAJA from a number shared by several patients (B7)', () => {
+  it('says WhatsApp stops for the number and that the person who replied gets no email either', () => {
+    const body = whatsappBody('optout_ack_shared', vars);
+
+    expect(body).toContain(
+      'Centro Médico Aillu no enviará más mensajes por WhatsApp a este número',
+    );
+    expect(body).toContain('A quien respondió tampoco le enviará mensajes por email');
+    expect(body).not.toContain('confirmará');
+  });
+
+  it('says reception will confirm the email when it could not tell who replied', () => {
+    const body = whatsappBody('optout_ack_shared', { ...vars, emailPending: 'yes' });
+
+    expect(body).toContain('no enviará más mensajes por WhatsApp a este número');
+    expect(body).toContain(
+      'La recepción confirmará si también corresponde dejar de enviar mensajes por email',
+    );
+    expect(body).not.toContain('tampoco le enviará mensajes por email');
+  });
+});

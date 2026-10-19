@@ -137,7 +137,7 @@ export function MoneyBreakdownWidget({
       empty={isEmptyMoney(report)}
       emptyState={<EmptyMoney />}
     >
-      <div className="grid gap-3">
+      <div className="grid grid-cols-1 gap-3">
         {report?.byProfessional === null ? (
           <p className="text-sm text-muted-foreground">{t('money.breakdown.professionalDenied')}</p>
         ) : null}

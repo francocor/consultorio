@@ -22,7 +22,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '../../../../shared/ui/alert-dialog.js';
-import { Alert, AlertDescription } from '../../../../shared/ui/alert.js';
+import { Alert, AlertDescription, AlertTitle } from '../../../../shared/ui/alert.js';
 import { Badge, type BadgeTone } from '../../../../shared/ui/badge.js';
 import { Button } from '../../../../shared/ui/button.js';
 import { ErrorState } from '../../../../shared/ui/states/error-state.js';
@@ -40,11 +40,15 @@ const TONE: Record<ChannelStateDto['state'], BadgeTone> = {
   opted_out: 'danger',
 };
 
+/** What reception is about to do and has to confirm: a baja for all channels, or a channel back on. */
+type Pending = { kind: 'optOut' } | { kind: 'reopen'; channel: MessageChannel };
+
 /**
  * The channels of a patient, as a tab of the patient record. It shows what the patient chose and
- * where it was recorded; reception can record what the patient says in person, send the WhatsApp
- * request by email, and record a baja. The control to switch a channel back on is disabled, with
- * the reason, when the patient opted out: only the patient can do that.
+ * where it was recorded, and says "Sin avisos" when nothing can reach them. A baja is for every
+ * channel at once (owner decision B7); reception can record what the patient says in person, send
+ * the WhatsApp request by email, and switch a channel back on, one at a time, when the patient asks
+ * for it. Both the baja and the switch-back ask first, and both are audited.
  */
 export function ChannelsPanel({ patientId }: { patientId: string }) {
   const { t } = useTranslation(['messaging', 'common']);
@@ -53,7 +57,7 @@ export function ChannelsPanel({ patientId }: { patientId: string }) {
   const queryClient = useQueryClient();
   const key = messagingKeys.channels(patientId);
   const canWrite = hasAnyPermission(me.permissions, ['patients.write']);
-  const [leaving, setLeaving] = useState<MessageChannel | null>(null);
+  const [pending, setPending] = useState<Pending | null>(null);
 
   const channels = useQuery({
     queryKey: key,
@@ -66,16 +70,22 @@ export function ChannelsPanel({ patientId }: { patientId: string }) {
   };
   const optIn = useMutation({
     mutationFn: (channel: MessageChannel) => messagingApi(api).optIn(patientId, channel),
-    onSuccess: onRecorded,
-  });
-  const optOut = useMutation({
-    mutationFn: (channel: MessageChannel) => messagingApi(api).optOut(patientId, channel),
     onSuccess: (updated) => {
-      setLeaving(null);
+      setPending(null);
       onRecorded(updated);
     },
     onError: () => {
-      setLeaving(null);
+      setPending(null);
+    },
+  });
+  const optOut = useMutation({
+    mutationFn: () => messagingApi(api).optOut(patientId),
+    onSuccess: (updated) => {
+      setPending(null);
+      onRecorded(updated);
+    },
+    onError: () => {
+      setPending(null);
     },
   });
   const request = useMutation({
@@ -98,6 +108,13 @@ export function ChannelsPanel({ patientId }: { patientId: string }) {
   }
   const data = channels.data;
   const failure = optIn.error ?? optOut.error ?? request.error;
+  const emailOff = data.email.state === 'opted_out';
+  // Switching a channel back on asks first when the patient had closed it; a channel that was
+  // never accepted is recorded at once, as before.
+  const record = (channel: MessageChannel) => {
+    if (data[channel].state === 'opted_out') setPending({ kind: 'reopen', channel });
+    else optIn.mutate(channel);
+  };
 
   return (
     <section aria-labelledby="channels-title" className="grid max-w-3xl gap-4">
@@ -107,6 +124,13 @@ export function ChannelsPanel({ patientId }: { patientId: string }) {
         </h2>
         <p className="text-sm text-muted-foreground">{t('messaging:channels.description')}</p>
       </div>
+
+      {data.noMessages ? (
+        <Alert tone="warning">
+          <AlertTitle>{t('messaging:channels.noMessages.title')}</AlertTitle>
+          <AlertDescription>{t('messaging:channels.noMessages.description')}</AlertDescription>
+        </Alert>
+      ) : null}
 
       {failure ? (
         <Alert tone="danger">
@@ -119,16 +143,16 @@ export function ChannelsPanel({ patientId }: { patientId: string }) {
         state={data.email}
         warning={data.hasEmail ? null : t('messaging:channels.noEmail')}
       >
-        {canWrite && data.email.state !== 'opted_out' ? (
+        {canWrite && emailOff ? (
           <Button
             type="button"
             variant="outline"
             className={WRAP}
             onClick={() => {
-              setLeaving('email');
+              setPending({ kind: 'reopen', channel: 'email' });
             }}
           >
-            {t('messaging:channels.recordOptOut')}
+            {t('messaging:channels.reopen')}
           </Button>
         ) : null}
       </ChannelCard>
@@ -145,13 +169,10 @@ export function ChannelsPanel({ patientId }: { patientId: string }) {
                 type="button"
                 variant="outline"
                 className={WRAP}
-                disabled={!data.hasMobile || data.whatsapp.state !== 'none'}
-                aria-describedby={
-                  data.whatsapp.state === 'opted_out' ? 'channels-opted-out-help' : undefined
-                }
+                disabled={!data.hasMobile || data.whatsapp.state === 'opted_in'}
                 loading={optIn.isPending}
                 onClick={() => {
-                  optIn.mutate('whatsapp');
+                  record('whatsapp');
                 }}
               >
                 {t('messaging:channels.recordOptIn')}
@@ -160,7 +181,13 @@ export function ChannelsPanel({ patientId }: { patientId: string }) {
                 type="button"
                 variant="outline"
                 className={WRAP}
-                disabled={!data.hasEmail || !data.hasMobile || data.whatsapp.state === 'opted_in'}
+                disabled={
+                  !data.hasEmail ||
+                  !data.hasMobile ||
+                  data.whatsapp.state === 'opted_in' ||
+                  emailOff
+                }
+                aria-describedby={emailOff ? 'channels-request-help' : undefined}
                 loading={request.isPending}
                 onClick={() => {
                   request.mutate();
@@ -168,56 +195,86 @@ export function ChannelsPanel({ patientId }: { patientId: string }) {
               >
                 {t('messaging:channels.sendRequest')}
               </Button>
-              {data.whatsapp.state !== 'opted_out' ? (
-                <Button
-                  type="button"
-                  variant="outline"
-                  className={WRAP}
-                  onClick={() => {
-                    setLeaving('whatsapp');
-                  }}
-                >
-                  {t('messaging:channels.recordOptOut')}
-                </Button>
-              ) : null}
             </div>
-            {data.whatsapp.state === 'opted_out' ? (
-              <p id="channels-opted-out-help" className="text-sm text-muted-foreground">
-                {t('messaging:channels.optedOutHelp')}
+            {emailOff ? (
+              <p id="channels-request-help" className="text-sm text-muted-foreground">
+                {t('messaging:channels.requestNeedsEmail')}
               </p>
             ) : null}
           </div>
         ) : null}
       </ChannelCard>
 
+      {canWrite && !data.noMessages ? (
+        <div className="grid gap-2 rounded-lg border bg-card p-4">
+          <p className="text-sm text-muted-foreground">{t('messaging:channels.optOutHelp')}</p>
+          <div>
+            <Button
+              type="button"
+              variant="outline"
+              className={WRAP}
+              onClick={() => {
+                setPending({ kind: 'optOut' });
+              }}
+            >
+              {t('messaging:channels.recordOptOut')}
+            </Button>
+          </div>
+        </div>
+      ) : null}
+
       <AlertDialog
-        open={leaving !== null}
+        open={pending !== null}
         onOpenChange={(open) => {
-          if (!open) setLeaving(null);
+          if (!open) setPending(null);
         }}
       >
         <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>
-              {t('messaging:channels.confirmOut.title', {
-                channel: leaving ? t(`messaging:channels.${leaving}`) : '',
-              })}
-            </AlertDialogTitle>
-            <AlertDialogDescription>
-              {t('messaging:channels.confirmOut.description')}
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>{t('messaging:channels.confirmOut.cancel')}</AlertDialogCancel>
-            <AlertDialogAction
-              onClick={(event) => {
-                event.preventDefault();
-                if (leaving) optOut.mutate(leaving);
-              }}
-            >
-              {t('messaging:channels.confirmOut.confirm')}
-            </AlertDialogAction>
-          </AlertDialogFooter>
+          {pending?.kind === 'reopen' ? (
+            <>
+              <AlertDialogHeader>
+                <AlertDialogTitle>
+                  {t('messaging:channels.confirmReopen.title', {
+                    channel: t(`messaging:channels.${pending.channel}`),
+                  })}
+                </AlertDialogTitle>
+                <AlertDialogDescription>
+                  {t('messaging:channels.confirmReopen.description')}
+                </AlertDialogDescription>
+              </AlertDialogHeader>
+              <AlertDialogFooter>
+                <AlertDialogCancel>{t('messaging:channels.confirmOut.cancel')}</AlertDialogCancel>
+                <AlertDialogAction
+                  onClick={(event) => {
+                    event.preventDefault();
+                    optIn.mutate(pending.channel);
+                  }}
+                >
+                  {t('messaging:channels.confirmReopen.confirm')}
+                </AlertDialogAction>
+              </AlertDialogFooter>
+            </>
+          ) : (
+            <>
+              <AlertDialogHeader>
+                <AlertDialogTitle>{t('messaging:channels.confirmOut.title')}</AlertDialogTitle>
+                <AlertDialogDescription>
+                  {t('messaging:channels.confirmOut.description')}
+                </AlertDialogDescription>
+              </AlertDialogHeader>
+              <AlertDialogFooter>
+                <AlertDialogCancel>{t('messaging:channels.confirmOut.cancel')}</AlertDialogCancel>
+                <AlertDialogAction
+                  onClick={(event) => {
+                    event.preventDefault();
+                    optOut.mutate();
+                  }}
+                >
+                  {t('messaging:channels.confirmOut.confirm')}
+                </AlertDialogAction>
+              </AlertDialogFooter>
+            </>
+          )}
         </AlertDialogContent>
       </AlertDialog>
     </section>

@@ -102,7 +102,7 @@ export function MoneyRecordsWidget({
         />
       ) : null}
       {data && data.total > 0 ? (
-        <div className="grid gap-3">
+        <div className="grid grid-cols-1 gap-3">
           <TableContainer aria-label={t('table.label', { title })}>
             <Table>
               <TableHeader>

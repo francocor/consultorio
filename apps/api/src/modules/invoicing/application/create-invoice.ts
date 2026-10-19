@@ -38,6 +38,7 @@ import {
   hashOf,
   sqlState,
   todayIn,
+  type InvoiceWorklist,
   type InvoicingActor,
 } from './common.js';
 import { packFor } from './country-rules.js';
@@ -54,6 +55,8 @@ export interface InvoicingDeps {
   clock: () => Date;
   /** Queues the submission to AFIP. Without a queue the sweeper of the worker picks the invoice up. */
   jobs?: JobClient | undefined;
+  /** Where an invoice that needs a person is put, and taken off when it is settled. */
+  worklist?: InvoiceWorklist | undefined;
 }
 
 export interface Viewer {
@@ -162,7 +165,16 @@ export async function choosePointOfSale(
         : undefined
       : active.find((point) => point.number === asked);
   if (!chosen) throw new AppError('invoice_point_of_sale_invalid');
-  return chosen;
+  // The point of sale is locked (shared) for the length of the transaction and read again: a change of
+  // its environment waits for the invoice, and an invoice that starts after the change reads the new
+  // environment instead of the one it looked at (JD-S4 R2-4).
+  const [current] = await tx
+    .select()
+    .from(pointOfSale)
+    .where(eq(pointOfSale.id, chosen.id))
+    .for('share');
+  if (!current?.active) throw new AppError('invoice_point_of_sale_invalid');
+  return current;
 }
 
 /** Looks for the invoice a key already created. A key with another request is refused. */
