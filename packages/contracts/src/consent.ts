@@ -147,3 +147,197 @@ export const OfferedConsentTemplatesResponse = z.strictObject({
   templates: z.array(OfferedConsentTemplateDto),
 });
 export type OfferedConsentTemplatesResponse = z.infer<typeof OfferedConsentTemplatesResponse>;
+
+// ---------------------------------------------------------------------------------------------
+// Requests, signing and revocation (S5.03)
+// ---------------------------------------------------------------------------------------------
+
+/** A request that nobody signs ends after this many days unless the staff say otherwise. */
+export const CONSENT_DEFAULT_EXPIRY_DAYS = 14;
+export const CONSENT_MAX_EXPIRY_DAYS = 90;
+/** The longest drawn signature (a PNG as a data URL), in characters. */
+export const CONSENT_MARK_IMAGE_MAX_CHARS = 150_000;
+export const CONSENT_REASON_MAX_LENGTH = 500;
+
+export const CreateConsentRequestRequest = z.strictObject({
+  patientId: z.uuid(),
+  /** The template to ask for: the request is made for its latest published version. */
+  templateId: z.uuid(),
+  method: z.enum(CONSENT_METHODS),
+  appointmentId: z.uuid().optional(),
+  encounterId: z.uuid().optional(),
+  expiresInDays: z.number().int().min(1).max(CONSENT_MAX_EXPIRY_DAYS).optional(),
+});
+export type CreateConsentRequestRequest = z.infer<typeof CreateConsentRequestRequest>;
+
+export const ConsentRequestDto = z.strictObject({
+  id: z.uuid(),
+  patientId: z.uuid(),
+  templateId: z.uuid(),
+  versionId: z.uuid(),
+  versionNumber: z.number().int(),
+  /** `pending` shows as `expired` once its date has passed, even before the job records it. */
+  status: z.enum(CONSENT_REQUEST_STATUSES),
+  method: z.enum(CONSENT_METHODS),
+  createdAt: z.string(),
+  expiresAt: z.string(),
+  signedAt: z.string().nullable(),
+  revokedAt: z.string().nullable(),
+  closedAt: z.string().nullable(),
+});
+export type ConsentRequestDto = z.infer<typeof ConsentRequestDto>;
+
+/**
+ * One consent in the list of a patient. The title is null for who may not see it: the screen shows
+ * the neutral label ("Consentimiento") then (informed-consent, "Visibility and access control").
+ */
+export const ConsentListItemDto = z.strictObject({
+  id: z.uuid(),
+  status: z.enum(CONSENT_REQUEST_STATUSES),
+  method: z.enum(CONSENT_METHODS),
+  createdAt: z.string(),
+  expiresAt: z.string(),
+  signedAt: z.string().nullable(),
+  revokedAt: z.string().nullable(),
+  closedAt: z.string().nullable(),
+  title: z.string().nullable(),
+  versionNumber: z.number().int().nullable(),
+  /** Whether the viewer may open the signed record (a treating professional, or the patient). */
+  canOpen: z.boolean(),
+});
+export type ConsentListItemDto = z.infer<typeof ConsentListItemDto>;
+
+export const ConsentListResponse = z.strictObject({ consents: z.array(ConsentListItemDto) });
+export type ConsentListResponse = z.infer<typeof ConsentListResponse>;
+
+/** The exact version a signer is shown. */
+export const ConsentVersionContentDto = z.strictObject({
+  id: z.uuid(),
+  number: z.number().int(),
+  title: z.string(),
+  body: z.string(),
+  contentHash: z.string(),
+});
+export type ConsentVersionContentDto = z.infer<typeof ConsentVersionContentDto>;
+
+/** What the signing screen shows: the full text of the version bound to the request. */
+export const ConsentSigningViewDto = z.strictObject({
+  requestId: z.uuid(),
+  status: z.enum(CONSENT_REQUEST_STATUSES),
+  method: z.enum(CONSENT_METHODS),
+  expiresAt: z.string(),
+  patientName: z.string(),
+  /** A minor is never marked as the signer: the screen asks for the representative. */
+  requiresRepresentative: z.boolean(),
+  version: ConsentVersionContentDto,
+});
+export type ConsentSigningViewDto = z.infer<typeof ConsentSigningViewDto>;
+
+export const ConsentRepresentativeInput = z.strictObject({
+  name: z.string().trim().min(2, 'required').max(120),
+  nationalId: z.string().trim().min(5, 'required').max(20),
+  relation: z.string().trim().min(2, 'required').max(60),
+});
+export type ConsentRepresentativeInput = z.infer<typeof ConsentRepresentativeInput>;
+
+/** What the signer left as their mark: a typed name, or a drawing as a PNG data URL. */
+export const ConsentMarkInput = z.discriminatedUnion('kind', [
+  z.strictObject({ kind: z.literal('typed'), name: z.string().trim().min(2, 'required').max(120) }),
+  z.strictObject({
+    kind: z.literal('drawn'),
+    imageDataUrl: z.string().max(CONSENT_MARK_IMAGE_MAX_CHARS).startsWith('data:image/png;base64,'),
+  }),
+]);
+export type ConsentMarkInput = z.infer<typeof ConsentMarkInput>;
+
+export const SignConsentRequest = z.strictObject({
+  /** The version the signer was shown: the signature binds to it and to nothing else. */
+  versionId: z.uuid(),
+  /** The explicit acceptance action: without it the signature is refused. */
+  accepted: z.boolean(),
+  signer: z.enum(CONSENT_SIGNER_KINDS),
+  representative: ConsentRepresentativeInput.optional(),
+  mark: ConsentMarkInput,
+});
+export type SignConsentRequest = z.infer<typeof SignConsentRequest>;
+
+export const RevokeConsentRequest = z.strictObject({
+  reason: z.string().trim().min(1).max(CONSENT_REASON_MAX_LENGTH).optional(),
+});
+export type RevokeConsentRequest = z.infer<typeof RevokeConsentRequest>;
+
+/** The signed record, for who may open it (clinical.consent.read) and for the patient. */
+export const SignedConsentDto = z.strictObject({
+  request: ConsentRequestDto,
+  version: ConsentVersionContentDto,
+  signerKind: z.enum(CONSENT_SIGNER_KINDS),
+  representative: ConsentRepresentativeInput.nullable(),
+  mark: z.discriminatedUnion('kind', [
+    z.strictObject({ kind: z.literal('typed'), name: z.string() }),
+    z.strictObject({ kind: z.literal('drawn'), imageDataUrl: z.string() }),
+  ]),
+  accepted: z.literal(true),
+  method: z.enum(CONSENT_METHODS),
+  signedAt: z.string(),
+  contentFingerprint: z.string(),
+  /** Recomputed from the stored facts: false means the record no longer matches its fingerprint. */
+  fingerprintValid: z.boolean(),
+  evidence: z.strictObject({
+    ip: z.string().nullable(),
+    userAgent: z.string().nullable(),
+    requestId: z.string().nullable(),
+  }),
+  revocation: z
+    .strictObject({
+      revokedAt: z.string(),
+      channel: z.enum(CONSENT_METHODS),
+      reason: z.string().nullable(),
+    })
+    .nullable(),
+});
+export type SignedConsentDto = z.infer<typeof SignedConsentDto>;
+
+/** Whether an appointment needs a consent and whether a valid one exists. */
+export const CONSENT_APPOINTMENT_STATES = ['not_required', 'valid', 'missing', 'revoked'] as const;
+export type ConsentAppointmentState = (typeof CONSENT_APPOINTMENT_STATES)[number];
+
+export const AppointmentConsentStatusDto = z.strictObject({
+  appointmentId: z.uuid(),
+  state: z.enum(CONSENT_APPOINTMENT_STATES),
+  /** The template the appointment type requires; null when none. Never its title. */
+  templateId: z.uuid().nullable(),
+});
+export type AppointmentConsentStatusDto = z.infer<typeof AppointmentConsentStatusDto>;
+
+/** The appointment types and the consent each one requires (set apart from the scheduling setup). */
+export const ConsentRequirementDto = z.strictObject({
+  appointmentTypeId: z.uuid(),
+  appointmentTypeName: z.string(),
+  templateId: z.uuid().nullable(),
+});
+export type ConsentRequirementDto = z.infer<typeof ConsentRequirementDto>;
+
+export const ConsentRequirementsResponse = z.strictObject({
+  requirements: z.array(ConsentRequirementDto),
+});
+export type ConsentRequirementsResponse = z.infer<typeof ConsentRequirementsResponse>;
+
+export const SetConsentRequirementRequest = z.strictObject({
+  /** The template a valid consent of is required, or null to stop requiring one. */
+  templateId: z.uuid().nullable(),
+});
+export type SetConsentRequirementRequest = z.infer<typeof SetConsentRequirementRequest>;
+
+/** The answer to a new request: the request, and whether the patient was told by email. */
+export const CONSENT_NOTICE_OUTCOMES = ['sent', 'not_sent', 'not_needed'] as const;
+
+export const CreateConsentRequestResponse = z.strictObject({
+  request: ConsentRequestDto,
+  /**
+   * `sent` when the email went out, `not_sent` when the patient could not be reached by email (no
+   * address, opted out, or the provider failed) so the staff tell them another way, `not_needed`
+   * when the consent is signed in person.
+   */
+  notice: z.enum(CONSENT_NOTICE_OUTCOMES),
+});
+export type CreateConsentRequestResponse = z.infer<typeof CreateConsentRequestResponse>;
