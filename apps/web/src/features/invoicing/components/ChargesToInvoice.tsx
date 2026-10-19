@@ -32,6 +32,12 @@ function day(daysFromToday: number): string {
  * billing, which decides who sees which; a voided charge, or one already invoiced in full, is left
  * out.
  */
+/**
+ * The name of the patient is part of the label of the button, and a long name must wrap inside the
+ * button instead of making the whole page wider than a phone.
+ */
+const WRAP = 'h-auto max-w-full whitespace-normal py-2 text-left';
+
 export function ChargesToInvoice({ readOnly }: { readOnly: boolean }) {
   const { t } = useTranslation('invoicing');
   const api = useApi();
@@ -125,6 +131,7 @@ export function ChargesToInvoice({ readOnly }: { readOnly: boolean }) {
                     <Button
                       type="button"
                       size="sm"
+                      className={WRAP}
                       onClick={() => {
                         setIssuing(charge);
                       }}
@@ -137,6 +144,7 @@ export function ChargesToInvoice({ readOnly }: { readOnly: boolean }) {
                       type="button"
                       size="sm"
                       variant="outline"
+                      className={WRAP}
                       onClick={() => {
                         setRegistering(charge);
                       }}
