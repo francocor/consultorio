@@ -74,23 +74,10 @@ const prescriptionsOf = async (page: Page, patientId: string) =>
 const withState = (page: Page, state: string) =>
   page.getByRole('article').filter({ has: page.getByText(state, { exact: true }) });
 
-/**
- * Selects a tab of the record. At 360 px the row of tabs scrolls sideways and the tab that a click
- * reaches depends on where the row happens to rest, so a click can select a neighbour. Focusing the
- * tab selects it (automatic activation of the tabs), which does not depend on the pointer.
- */
-async function openTab(page: Page, name: string) {
-  const tab = page.getByRole('tab', { name });
-  await expect(async () => {
-    await tab.focus({ timeout: 2000 });
-    await expect(tab).toHaveAttribute('aria-selected', 'true', { timeout: 1000 });
-  }).toPass({ timeout: 20_000 });
-}
-
 /** Opens the prescriptions tab of the record of a patient. */
 async function openPrescriptionsTab(page: Page, patientId: string) {
   await page.goto(urlOf('aillu', `/patients/${patientId}`));
-  await openTab(page, 'Recetas');
+  await page.getByRole('tab', { name: 'Recetas' }).click();
   await expect(page.getByRole('heading', { name: 'Recetas del paciente' })).toBeVisible();
 }
 
@@ -215,7 +202,7 @@ test('a prescription is issued, rides out an outage once, is dispensed and cance
       )
       .toBe('dispensed');
     await page.reload();
-    await openTab(page, 'Recetas');
+    await page.getByRole('tab', { name: 'Recetas' }).click();
     await expect(withState(page, 'Dispensada')).toHaveCount(1);
     await expectFitsAndAccessible(page);
 
