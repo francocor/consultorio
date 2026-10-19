@@ -38,6 +38,7 @@ import {
   hashOf,
   sqlState,
   todayIn,
+  type InvoiceWorklist,
   type InvoicingActor,
 } from './common.js';
 import { packFor } from './country-rules.js';
@@ -54,6 +55,8 @@ export interface InvoicingDeps {
   clock: () => Date;
   /** Queues the submission to AFIP. Without a queue the sweeper of the worker picks the invoice up. */
   jobs?: JobClient | undefined;
+  /** Where an invoice that needs a person is put, and taken off when it is settled. */
+  worklist?: InvoiceWorklist | undefined;
 }
 
 export interface Viewer {

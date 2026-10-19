@@ -134,6 +134,7 @@ export const invoicingWiring: ModuleWiring = {
       keys: context.keys,
       adapters: context.adapters,
       jobs: context.jobs,
+      worklist: context.worklist,
       fileResources: context.fileResources,
       ...(context.clock ? { clock: context.clock } : {}),
     }),

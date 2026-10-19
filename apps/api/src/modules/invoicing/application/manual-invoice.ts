@@ -62,16 +62,23 @@ async function readReplacement(tx: Tx, id: string): Promise<Replacement> {
  *   that finds it held answers `conflict` (the attempt could be about to receive a voucher; the
  *   other way round, an attempt that finds the invoice closed records what it got as an orphan).
  * - Its outcome must not be in doubt: while the request to the authority may have been answered
- *   (`awaiting_reconciliation`) the voucher may exist, and registering another one would bill the
- *   service twice. A person waits for the reconciliation.
- * - It must be the same invoice: it covers lines the voucher covers and has the same recipient.
+ *   (`awaiting_reconciliation`) the voucher may exist, and registering another one could bill the
+ *   service twice. A person waits for the reconciliation, UNLESS the owner or an admin acknowledges
+ *   that the outcome is unknown (`acknowledgeUnknownOutcome`): during a real outage the unknown
+ *   outcome lasts as long as the outage, and the fallback exists exactly for that. The replacement
+ *   is audited as `invoice.replaced_unresolved` and a person is told to look for the voucher in ARCA
+ *   (JD-S4 R2-2).
+ * - It must be the same invoice (JD-S4 R2-6): not a credit note, of the same voucher type and the
+ *   same total, covering lines the voucher covers, for the same recipient and the same document.
+ * - It leaves the worklist: the item that asked a person to look at it is resolved (JD-S4 B-S1).
  */
 async function closeReplaced(
   tx: Tx,
+  deps: InvoicingDeps,
   input: RegisterManualInput,
   target: Replacement,
   requestedIds: readonly string[],
-  recipient: Recipient,
+  manual: { type: string; totalCents: number; recipient: Recipient },
 ): Promise<void> {
   const taken = await tx.execute<{ locked: boolean }>(
     sql`select pg_try_advisory_xact_lock(hashtextextended(${'afip-invoice|' + target.id}, 0)) as locked`,
@@ -80,15 +87,25 @@ async function closeReplaced(
   const [pending] = await tx.select().from(invoice).where(eq(invoice.id, target.id)).for('update');
   if (!pending) throw new AppError('not_found');
   if (pending.status !== 'pending') throw new AppError('conflict');
-  if (pending.deliveryState === 'awaiting_reconciliation') {
+  const unknownOutcome = pending.deliveryState === 'awaiting_reconciliation';
+  if (unknownOutcome && input.request.acknowledgeUnknownOutcome !== true) {
     throw new AppError('invoice_awaiting_reconciliation');
   }
   const covered = new Set(requestedIds);
+  const { recipient } = manual;
   const sameRecipient =
     pending.recipientKind === recipient.kind &&
     pending.patientId === recipient.patientId &&
-    pending.tenantPayerId === recipient.tenantPayerId;
-  if (target.lineIds.some((id) => !covered.has(id)) || !sameRecipient) {
+    pending.tenantPayerId === recipient.tenantPayerId &&
+    pending.recipientDocType === (recipient.document?.type ?? null) &&
+    pending.recipientDocNumber === (recipient.document?.number ?? null);
+  if (
+    pending.creditNoteOfId !== null ||
+    pending.type !== manual.type ||
+    pending.totalCents !== manual.totalCents ||
+    target.lineIds.some((id) => !covered.has(id)) ||
+    !sameRecipient
+  ) {
     throw new AppError('invoice_replacement_mismatch');
   }
   await tx
@@ -98,6 +115,7 @@ async function closeReplaced(
       deliveryState: null,
       rejectionMessage: REPLACED_MESSAGE,
       nextAttemptAt: null,
+      expectedNumber: null,
     })
     .where(eq(invoice.id, pending.id));
   await audit(tx, {
@@ -108,6 +126,38 @@ async function closeReplaced(
     resourceId: pending.id,
     ...(pending.patientId ? { patientId: pending.patientId } : {}),
     metadata: { type: pending.type, replacedByManual: true },
+  });
+  // Whatever asked a person to look at the invoice is settled by this replacement.
+  await deps.worklist?.closeBySubject(tx, {
+    kind: 'invoice_attention',
+    subjectType: 'invoice',
+    subjectId: pending.id,
+    status: 'resolved',
+    resolution: 'replaced_by_manual',
+    actor: input.actor,
+  });
+  if (!unknownOutcome) return;
+  const unresolved = {
+    type: pending.type,
+    pointOfSale: pending.pointOfSale,
+    expectedNumber: pending.expectedNumber,
+  };
+  await audit(tx, {
+    action: 'invoice.replaced_unresolved',
+    outcome: 'allow',
+    actor: input.actor,
+    resourceType: 'invoice',
+    resourceId: pending.id,
+    ...(pending.patientId ? { patientId: pending.patientId } : {}),
+    metadata: { ...unresolved, replacedByManual: true },
+  });
+  // The voucher may exist at the authority. If it does, the organization holds two for one service:
+  // a person looks for it at that number and cancels it in ARCA with a credit note.
+  await deps.worklist?.openItem(tx, {
+    kind: 'invoice_attention',
+    subjectType: 'invoice',
+    subjectId: pending.id,
+    detail: { reason: 'replaced_unresolved', ...unresolved },
   });
 }
 
@@ -160,9 +210,45 @@ export async function registerManualInvoice(
   const pack = packFor(organization.country);
   const recipient = await resolveRecipient(tx, lines, request.recipient);
 
+  // The voucher is whatever the external tool made, but its data must still be well formed, and the
+  // type must be one the issuer could have made (when the fiscal profile is known). The total is the
+  // one of the request here; it is checked against the lines below.
+  const [profile] = await tx.select().from(fiscalProfile);
+  if (profile) {
+    const typed = pack.invoiceRules.resolveInvoiceType({
+      issuer: profile.taxCondition as 'monotributo' | 'responsable_inscripto' | 'exento',
+      recipient: recipient.taxCondition,
+      requested: request.type,
+    });
+    if (!typed.ok) throw validation('type', typed.error.i18nKey);
+  }
+  const checked = pack.invoiceRules.checkRecipient({
+    type: request.type,
+    totalCents: request.totalCents,
+    recipient: {
+      taxCondition: recipient.taxCondition,
+      ...(recipient.name ? { name: recipient.name } : {}),
+      ...(recipient.document ? { document: recipient.document } : {}),
+    },
+  });
+  if (!checked.ok) throw validation('recipient', checked.error.i18nKey);
+  const normalized: Recipient = {
+    ...recipient,
+    taxCondition: checked.value.taxCondition,
+    name: checked.value.name ?? recipient.name,
+    document: checked.value.document ?? null,
+  };
+
   // The pending invoice this one replaces gives its lines back first. Only one that no attempt is
-  // working on, whose outcome is not in doubt, and that is the same invoice (JD-S4 R1-C3).
-  if (target) await closeReplaced(tx, input, target, requestedIds, recipient);
+  // working on, whose outcome is not in doubt (or whose doubt the owner or an admin accepts), and
+  // that is the same invoice: the same type, total, lines and recipient (JD-S4 R1-C3, R2-2, R2-6).
+  if (target) {
+    await closeReplaced(tx, deps, input, target, requestedIds, {
+      type: request.type,
+      totalCents: request.totalCents,
+      recipient: normalized,
+    });
+  }
 
   // Lines of the invoice that were freed above are read again by the plan.
   const fresh = await lockLines(tx, requestedIds, input.viewer);
@@ -186,34 +272,6 @@ export async function registerManualInvoice(
       ),
     );
   if (taken) throw new AppError('invoice_number_taken');
-
-  // The voucher is whatever the external tool made, but its data must still be well formed, and the
-  // type must be one the issuer could have made (when the fiscal profile is known).
-  const [profile] = await tx.select().from(fiscalProfile);
-  if (profile) {
-    const typed = pack.invoiceRules.resolveInvoiceType({
-      issuer: profile.taxCondition as 'monotributo' | 'responsable_inscripto' | 'exento',
-      recipient: recipient.taxCondition,
-      requested: request.type,
-    });
-    if (!typed.ok) throw validation('type', typed.error.i18nKey);
-  }
-  const checked = pack.invoiceRules.checkRecipient({
-    type: request.type,
-    totalCents: plan.totalCents,
-    recipient: {
-      taxCondition: recipient.taxCondition,
-      ...(recipient.name ? { name: recipient.name } : {}),
-      ...(recipient.document ? { document: recipient.document } : {}),
-    },
-  });
-  if (!checked.ok) throw validation('recipient', checked.error.i18nKey);
-  const normalized: Recipient = {
-    ...recipient,
-    taxCondition: checked.value.taxCondition,
-    name: checked.value.name ?? recipient.name,
-    document: checked.value.document ?? null,
-  };
 
   const service = new Map(fresh.map((line) => [line.id, line]));
   const row = await insertInvoice(tx, deps, {

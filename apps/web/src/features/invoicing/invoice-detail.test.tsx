@@ -353,6 +353,56 @@ describe('registering by hand the invoice a pending one stands in for (task 4.55
     expect(bodies[0]?.issueDate).toMatch(/^\d{4}-\d{2}-\d{2}$/);
   });
 
+  it('asks the owner to accept an unknown outcome when the invoice it replaces may have been issued, and sends the acknowledgement (JD-S4 R2-2)', async () => {
+    const bodies: CreateManualInvoiceRequest[] = [];
+    const detail = await open({
+      roles: ['owner'],
+      invoices: [waiting],
+      routes: {
+        'POST /api/invoices/manual': (_url, init) => {
+          const body = jsonBody(init) as CreateManualInvoiceRequest;
+          bodies.push(body);
+          return body.acknowledgeUnknownOutcome === true
+            ? jsonResponse(invoice({ status: 'manual', number: 77 }), 201)
+            : problem(409, 'invoice_awaiting_reconciliation');
+        },
+      },
+    });
+    await userEvent.click(
+      within(detail).getByRole('button', { name: 'Registrar factura emitida por fuera' }),
+    );
+    const dialog = await screen.findByRole('dialog', {
+      name: 'Registrar factura emitida por fuera',
+    });
+    await userEvent.type(within(dialog).getByLabelText('Punto de venta'), '5');
+    await userEvent.type(within(dialog).getByLabelText('Número de comprobante'), '77');
+    await userEvent.type(within(dialog).getByLabelText('CAE (14 dígitos)'), '12345678901234');
+    expect(within(dialog).queryByRole('checkbox')).not.toBeInTheDocument();
+
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Registrar factura' }));
+
+    // The server said the outcome is unknown: the warning and the confirmation appear.
+    expect(
+      await within(dialog).findByText('No sabemos si ARCA emitió la factura original'),
+    ).toBeInTheDocument();
+    const submit = within(dialog).getByRole('button', { name: 'Registrar factura' });
+    expect(submit).toBeDisabled();
+    await userEvent.click(within(dialog).getByRole('checkbox'));
+    expect(submit).toBeEnabled();
+    await userEvent.click(submit);
+
+    await waitFor(() => {
+      expect(bodies).toHaveLength(2);
+    });
+    expect(bodies[0]).not.toHaveProperty('acknowledgeUnknownOutcome');
+    expect(bodies[1]).toMatchObject({
+      acknowledgeUnknownOutcome: true,
+      replacesInvoiceId: waiting.id,
+    });
+    // A different request than the first one, so a different key.
+    expect(bodies[1]?.idempotencyKey).not.toBe(bodies[0]?.idempotencyKey);
+  });
+
   it('says when the number is already registered', async () => {
     const detail = await open({
       roles: ['owner'],

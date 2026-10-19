@@ -94,7 +94,7 @@ export function invoiceRoutes(deps: InvoiceRoutesDeps) {
         config: {
           readOnly: 'write',
           permission: 'invoicing.manual',
-          audits: ['invoice.manual', 'invoice.rejected'],
+          audits: ['invoice.manual', 'invoice.rejected', 'invoice.replaced_unresolved'],
         },
         schema: { body: CreateManualInvoiceRequest, response: { 201: InvoiceDto } },
       },

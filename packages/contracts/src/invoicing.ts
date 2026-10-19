@@ -314,6 +314,14 @@ export const CreateManualInvoiceRequest = z.strictObject({
    * outage). It is closed as rejected, so it is never issued as well, and its lines are used here.
    */
   replacesInvoiceId: z.uuid().optional(),
+  /**
+   * The owner or admin knows that the invoice `replacesInvoiceId` names was sent to the authority and
+   * that nobody knows whether it was issued (a lost answer), and registers this voucher in its place
+   * anyway. Without it that replacement is refused. If the invoice turns out to have been issued, the
+   * organization holds two vouchers for one service: the replacement is audited and a person is told to
+   * look for the voucher in ARCA (JD-S4 R2-2).
+   */
+  acknowledgeUnknownOutcome: z.boolean().optional(),
   lines: InvoiceLinesInput,
   recipient: InvoiceRecipientInput,
 });

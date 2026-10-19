@@ -71,6 +71,7 @@ describe('invoicing catalogues', () => {
       'invoice.attempted',
       'invoice.needs_attention',
       'invoice.voucher_orphaned',
+      'invoice.replaced_unresolved',
       'invoicing.config.changed',
       'invoicing.credential.changed',
     ]);

@@ -16,6 +16,7 @@ import type { JobClient } from '../../platform/jobs/boss.js';
 import { createActionTokens } from '../../platform/tokens/index.js';
 import type { ExportRegistry } from '../tenancy/index.js';
 
+import type { InvoiceWorklist } from './application/common.js';
 import { exportInvoicing } from './application/export-contributor.js';
 import { createInvoiceFileResource } from './application/invoice-document.js';
 import { configRoutes } from './http/config-routes.js';
@@ -58,6 +59,8 @@ export interface InvoicingOptions {
   jobs?: JobClient | undefined;
   /** Where `GET /files/:token` finds the resource of the invoice PDF links. */
   fileResources?: FileResourceRegistry | undefined;
+  /** The reception worklist: a manual voucher takes the invoice it replaces off it. */
+  worklist?: InvoiceWorklist | undefined;
   clock?: () => Date;
 }
 
@@ -81,6 +84,7 @@ export function createInvoicing(options: InvoicingOptions): Invoicing {
     withTenant: options.withTenant,
     adapters: options.adapters,
     jobs: options.jobs,
+    worklist: options.worklist,
     clock,
     tokens,
   });

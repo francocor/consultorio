@@ -45,6 +45,7 @@ const INVOICE_REASONS = new Set([
   'cae_taken',
   'voucher_mismatch',
   'orphaned_voucher',
+  'replaced_unresolved',
 ]);
 
 /** Why an invoice needs a person, in words (the reason travels in the administrative detail). */
