@@ -575,6 +575,13 @@
       "when": 1792368208373,
       "tag": "0496_invoice_cae_unique",
       "breakpoints": true
+    },
+    {
+      "idx": 82,
+      "version": "7",
+      "when": 1792384625086,
+      "tag": "0510_consent_templates",
+      "breakpoints": true
     }
   ]
 }
