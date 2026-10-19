@@ -2298,3 +2298,50 @@ The ranges were already in `scripts/migration-journal.ts` and `docs/migration-ra
 | `corepack pnpm db:check` / `db:restamp` | No migration drift; stamps already rising; snapshots already chained |
 
 The full integration and e2e suites were not run (the Stage 4 fix agent owns the shared Docker). No `.env` file was read or written. Logs are in `$TEMP/s5seam-*.log`.
+
+## Stage 5 integration 1
+
+The four Stage 5 tracks merged into `feat/stage-5-compliance-portal` (A1 matricula `d9c6b7e`, A2 consent `151c10b`, A3 e-Rx `aad7385`, B portal `a4218a0`), the portal wired to the real consent and prescriptions modules, and the cross-track issues fixed. Node v24, pnpm 10.34.7, Docker shared with the Stage 4 fix agent.
+
+### Merges and conflicts
+
+| Merge | Conflicts | Resolution |
+| --- | --- | --- |
+| A1 | none | `db:restamp` and `db:check` clean |
+| A2 | `_journal.json` (idx 82 taken by both) | 0505 kept at 82, 0510 at 83, 0512 at 84; `when` made strictly rising; restamp re-chained snapshot 0510 |
+| A3 | `_journal.json` | 0530 at 85, 0532 at 86; restamp re-chained 0530 |
+| B | `_journal.json`, `modules/patients/index.ts` | 0550 at 87, 0552 at 88 (journal: 89 entries, idx unique and contiguous, `when` rising); `index.ts` keeps both exports (`isMinor` of A2, the portal source of B). `tasks.md`, the shared tests of token kinds, queues, definer functions and public routes merged without conflict |
+
+Beyond the textual conflicts, one semantic one: A3 and B both exported a `PortalPrescriptionDto` from `@consultorio/contracts` (typecheck error TS2308). A3's narrower module listing is now `PortalPrescriptionListing`; the portal's DTO keeps its name.
+
+### Wiring and fixes (commit per concern)
+
+| # | Change | Test that binds it |
+| --- | --- | --- |
+| 1 | `main/wiring/portal.ts`: `createPortalWiring` takes the ports or a function of the wiring context; `portalWiring` builds `adaptConsentModule(createConsentPortal({ keys }))` and `adaptPrescriptionModule({ list, openDocument })` from the real `keys`, `withTenant` and a `PrescriptionDeps` made from the context | `portal-consent-prescriptions.test.ts` (3, new): a portal patient lists, reads, signs and downloads a consent, lists and downloads a prescription, and cannot open another patient's. The application is the one `main` builds; only the e-prescription provider is the in-memory fake |
+| 2 | Doubled audit: the door asks a module twice per download (to issue the link, to redeem it). `purpose: 'link' \| 'download'` goes through `PortalConsentPort.document`, `PortalPrescriptionPort.document`, the two adapters and the modules; `prescription.downloaded` and `consent.read` are written only for `download` (absent means `download`) | same file: exactly one `prescription.downloaded` and one `consent.read` per download, none when only the link is asked (verified red by making the audit unconditional) |
+| 3 | The consent notice is `renderPortalNoticeEmail({ kind: 'consent_request' })` of the portal; the consent module's own renderer and test were removed | `consent-signing.test.ts` (subject and text of the portal notice, no title, no "consentimiento"); the e2e reads the email |
+| 4 | `ConsentDetail.tsx` signs with the shared `SignaturePad` (draw, or the typed-name alternative) and shows `ConsentStatusBadge`; the full name of the signer is asked apart | `sections.test.tsx` (typed, drawn, no mark); `stage5-portal.spec.ts` signs by drawing at 360 px with axe and width checks, and downloads the signed PDF |
+| 5 | `hasDocument` is the module's answer: `listPrescriptionsForPatient(..., { canRender })` says yes for a confirmed, not cancelled prescription when the document is kept or can be made (a bucket exists). The download button answers a 404 with an es-AR sentence | adapter unit tests, `sections.test.tsx` |
+| 6 | Tabs at 360 px: the cause was `flex-shrink` on `TabsTrigger` in a scrolling row (each button shrank to 44 px under its own label, so a click on the label hit the neighbour's box). Triggers are `shrink-0`; `TabsList` scrolls the open tab into view. The `focus()` workaround is gone from the e-Rx spec | `patients.tabs.responsive.spec.ts` (clicks every tab forward, backward and the two far ones; red before the fix at "Documentos"), `tabs.test.tsx` (5) |
+| 7 | Matricula in the stack: `start-stack.ts` unchanged (verifies the cardiologist `41258` as the operator, still works). The matricula journey verifies and withdraws the pediatrician, whom the e-Rx journey needs unverified: it now takes the same lock as the e-Rx journey, so two workers never overlap | e2e, both specs green on two workers |
+
+The two worlds of the portal tests that mean "no module behind the portal" now say `ports: {}`, because the default is the real wiring.
+
+### Verification (tip before this section)
+
+| Command | Result |
+| --- | --- |
+| `install --frozen-lockfile`, `typecheck`, `lint`, `format:check` | exit 0 |
+| `pnpm test` | **427 files, 5,387 tests passed, 1 skipped** |
+| `pnpm test:integration` (full) | first run **259 files: 253 passed, 1 skipped, 5 failed; 4,088 tests passed, 8 skipped, 5 failed**. Two files were my change (the portal worlds that expected "no module", fixed above). Three were load flakes that pass alone: `financial-report` (audit count under load), `worker` (sealing timing budget), `backup-restore` ("socket hang up"). The five files re-run together: **79 passed** |
+| `pnpm build`, `pnpm db:check` | exit 0, no drift |
+| Playwright, `--workers=2`, ports 4960/3960/9960, fresh stack | **218 passed, 2 failed of 220**. `patients.responsive` "edit dialog": `ERR_CONNECTION_REFUSED` to the preview server, passes alone (23 of 23 in that file). `stage4-demo` "closes the register": "the page is 10px wider than the screen" on the charges to invoice. NOT from this unit: the long patient name in the button is fixed on `feat/stage-4-revenue` (`ChargesToInvoice.tsx`, the Judgment Day fixes). With only that file taken from that branch the journey passes. It will pass once that branch is merged |
+| Docker | `infra/Dockerfile` built; fresh `postgres:17` with `infra/postgres/init`; `db:migrate` twice (both exit 0, 89 migrations recorded, `consent_request`, `prescription` and `portal_identity` exist). Production configuration (`NODE_ENV=production` of the image, `ADDRESS_HASH_PEPPER`, `CLAMAV_HOST`, `S3_BUCKET`, AWS KMS, SMTP): `/health` `{"status":"ok"}` with `ERX_PROVIDER` unset and with `off`; `ERX_PROVIDER=local` is refused at startup (exit 1, names only `ERX_PROVIDER`) and starts with `ALLOW_LOCAL_PROVIDERS=true`. Containers `s5int-smoke-*` and the image removed |
+
+### Risks
+
+- Merging the Stage 4 fix branch will touch `apply-progress.md` and `ChargesToInvoice.tsx`'s neighbours; keep both sections.
+- `hasDocument` says yes when a document can be made on request; if rendering then fails (storage down) the download answers 404 and the button says so.
+- The portal notice for a consent no longer greets by name nor says "consentimiento" (privacy over friendliness, as the portal's other notices).
+- The e2e journeys of Stage 4 and Stage 5 (e-Rx, cash register) are not re-runnable on a used stack: they need a fresh one.
