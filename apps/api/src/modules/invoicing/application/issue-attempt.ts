@@ -17,7 +17,12 @@ import type { Db } from '../../../platform/db/pool.js';
 import { SYSTEM_USER_ID, createWithTenant, type Tx } from '../../../platform/db/tenant-context.js';
 import type { JobClient } from '../../../platform/jobs/boss.js';
 import { readChargeLines } from '../../billing/index.js';
-import { awaitingBackoffMs, backoffMs, isStalled } from '../domain/retry-schedule.js';
+import {
+  awaitingBackoffMs,
+  backoffMs,
+  isAttemptAudited,
+  isStalled,
+} from '../domain/retry-schedule.js';
 import { voucherMatches, type VoucherFacts } from '../domain/voucher-match.js';
 
 import {
@@ -32,7 +37,13 @@ import { isSimulatedIssuer, issuerFor } from './issuer.js';
 import { INVOICE_PDF_JOB } from './job-names.js';
 import { invoicingReadiness } from './readiness.js';
 import { loadOrganization } from './settings.js';
-import { highestStrayNumber, isStrayNumber, recordStrayVoucher } from './stray-vouchers.js';
+import {
+  highestStrayNumber,
+  isStrayNumber,
+  recordStrayVoucher,
+  unconfirmedStraysBelow,
+  type StrayReason,
+} from './stray-vouchers.js';
 
 /** What invoicing asks of the reception worklist (the queue itself belongs to scheduling). */
 export type AttentionWorklist = InvoiceWorklist;
@@ -206,15 +217,34 @@ async function buildRequest(
 
 type Issued = Extract<IssueResult, { status: 'issued' }>;
 
-type AttentionReason = 'number_taken' | 'cae_taken' | 'voucher_mismatch' | 'issuer_mismatch';
+type AttentionReason =
+  'number_taken' | 'cae_taken' | 'voucher_mismatch' | 'issuer_mismatch' | 'voucher_ambiguous';
+
+/** A number to remember when the invoice is parked: a voucher that no invoice can record sits there. */
+interface StrayToRemember {
+  number: number;
+  reason: StrayReason;
+}
 
 type Verdict =
   | { kind: 'issued'; result: Issued }
   | { kind: 'rejected'; message: string }
   /** `unknown`: the request may have been answered. Otherwise the authority said it issued nothing. */
   | { kind: 'retry'; unknown: boolean }
-  /** A voucher the authority holds that cannot be recorded for this invoice. */
-  | { kind: 'attention'; number: number | null; cae: string | null; reason: AttentionReason };
+  /**
+   * A voucher the authority holds that cannot be recorded for this invoice, or that cannot be told
+   * apart from it. `unresolved` says that the lookup could not settle whether the request of THIS
+   * invoice was answered (no authorized answer is being refused: the doubt remains). `stray` is the
+   * number to remember (JD-S4 R4-3).
+   */
+  | {
+      kind: 'attention';
+      number: number | null;
+      cae: string | null;
+      reason: AttentionReason;
+      unresolved?: boolean;
+      stray?: StrayToRemember;
+    };
 
 /**
  * How many numbers a lookup asks about: the one the invoice expects and, when that one is already the
@@ -223,6 +253,103 @@ type Verdict =
  * meanwhile), so a third question has nothing to ask about.
  */
 const MAX_PROBES = 2;
+
+/**
+ * How many remembered numbers where a voucher MAY sit are asked about, besides the ones above. They
+ * are asked lowest first, and each one that holds a voucher of somebody else sends the question on to
+ * the next, so this bounds the work. An invoice that would need more is parked instead (nothing is
+ * sent when it cannot be told that nothing is there).
+ */
+const MAX_STRAY_PROBES = 5;
+
+/** The facts of an invoice that a voucher of the authority is compared with. */
+async function factsOf(tx: Tx, row: InvoiceRow, issuerCuit: string): Promise<VoucherFacts> {
+  return {
+    issuerCuit,
+    totalCents: row.totalCents,
+    issueDate: row.issueDate,
+    buyerDocument: buyerOf(row),
+    associatedVoucher: (await associatedOf(tx, row)) ?? null,
+  };
+}
+
+/**
+ * Asks the authority about a number. An authority that cannot be reached answers like one that does
+ * not know: the outcome stays unknown (it is never taken for "nothing there").
+ */
+function askAbout(
+  issuer: InvoiceIssuer,
+  row: InvoiceRow,
+  step: { issuer: IssuerSnapshot; tenantRef: string },
+  number: number,
+): Promise<IssueResult | null> {
+  return issuer
+    .findIssued({
+      issuerCuit: step.issuer.cuit,
+      tenantRef: step.tenantRef,
+      pointOfSale: row.pointOfSale,
+      type: row.type,
+      number,
+    })
+    .catch((): IssueResult => ({
+      status: 'retryable',
+      message: 'unreachable',
+      outcomeUnknown: true,
+    }));
+}
+
+/**
+ * Nothing is at the number this invoice expects, but a voucher of this invoice can still be sitting
+ * lower: the numbers below it where a voucher MAY exist (an invoice replaced or parked without knowing
+ * whether it had been issued) were counted as taken when this invoice was marked, and if nothing was
+ * ever issued there, the authority gave this invoice that number and not the one after it. Sending now
+ * would issue a second voucher (an authority does not take our key: JD-S4 R4-1).
+ *
+ * The numbering of the authority has no gaps, so the numbers are asked lowest first:
+ *
+ * - none there: nothing exists at or above it, and sending is safe (`undefined`);
+ * - a voucher that is this invoice's and not the one of the invoice the number was remembered for: it
+ *   is adopted;
+ * - a voucher that is that invoice's, or nobody's of ours: the number is taken, and the next one is
+ *   asked about;
+ * - a voucher that fits both: it cannot be told whose it is. Nothing is sent, the invoice is parked
+ *   with its outcome unknown;
+ * - an authority that cannot answer, or that refuses the question: nothing is sent.
+ */
+async function settleStrays(
+  tx: Tx,
+  issuer: InvoiceIssuer,
+  row: InvoiceRow,
+  step: { issuer: IssuerSnapshot; tenantRef: string },
+  context: { facts: VoucherFacts; below: number },
+): Promise<Verdict | undefined> {
+  const strays = await unconfirmedStraysBelow(tx, row, context.below, MAX_STRAY_PROBES + 1);
+  if (strays.length === 0) return undefined;
+  const ambiguous = (number: number | null, cae: string | null): Verdict => ({
+    kind: 'attention',
+    number,
+    cae,
+    reason: 'voucher_ambiguous',
+    unresolved: true,
+  });
+  if (strays.length > MAX_STRAY_PROBES) return ambiguous(null, null);
+  for (const stray of strays) {
+    const found = await askAbout(issuer, row, step, stray.number);
+    // Nothing at this number, so (no gaps) nothing above it either.
+    if (found === null) return undefined;
+    if (found.status !== 'issued') return { kind: 'retry', unknown: true };
+    const [owner] = await tx.select().from(invoice).where(eq(invoice.id, stray.invoiceId));
+    const ownerFacts = owner
+      ? await factsOf(tx, owner, owner.issuerSnapshot?.cuit ?? step.issuer.cuit)
+      : null;
+    const ours = voucherMatches(found, context.facts);
+    const theirs = ownerFacts !== null && voucherMatches(found, ownerFacts);
+    if (ours && !theirs) return { kind: 'issued', result: found };
+    if (ours) return ambiguous(found.number, found.cae);
+    // Theirs, or nobody's of ours: the number is taken. Ask about the next one.
+  }
+  return undefined;
+}
 
 /**
  * After an unknown outcome, or a crash, the authority is asked about the number the voucher is
@@ -235,7 +362,9 @@ const MAX_PROBES = 2;
  *   one nobody records (an invoice replaced without knowing, a voucher that arrived for a closed
  *   invoice): ours never got that number, and the number after the highest we hold is asked about
  *   instead. A number of that kind is never adopted, whatever it says;
- * - it holds none: the request goes out. It is the only answer that sends;
+ * - it holds none: before the request goes out, the numbers below where a voucher MAY sit are asked
+ *   about too (`settleStrays`). It is the only answer that sends, and only when they hold nothing of
+ *   this invoice;
  * - it holds a voucher there that is not this invoice's, or it refuses the question, or it does not
  *   answer: nothing is sent.
  */
@@ -246,31 +375,16 @@ async function reconcile(
   step: { issuer: IssuerSnapshot; tenantRef: string },
 ): Promise<Verdict | { kind: 'send'; refresh: boolean }> {
   if (row.expectedNumber === null) return { kind: 'send', refresh: true };
-  const facts: VoucherFacts = {
-    issuerCuit: step.issuer.cuit,
-    totalCents: row.totalCents,
-    issueDate: row.issueDate,
-    buyerDocument: buyerOf(row),
-    associatedVoucher: (await associatedOf(tx, row)) ?? null,
-  };
+  const facts = await factsOf(tx, row, step.issuer.cuit);
   let number = row.expectedNumber;
   let refresh = false;
   let last = number;
   for (let probes = 0; probes < MAX_PROBES; probes += 1) {
-    const probe = await issuer
-      .findIssued({
-        issuerCuit: step.issuer.cuit,
-        tenantRef: step.tenantRef,
-        pointOfSale: row.pointOfSale,
-        type: row.type,
-        number,
-      })
-      .catch((): IssueResult => ({
-        status: 'retryable',
-        message: 'unreachable',
-        outcomeUnknown: true,
-      }));
-    if (probe === null) return { kind: 'send', refresh };
+    const probe = await askAbout(issuer, row, step, number);
+    if (probe === null) {
+      const unsettled = await settleStrays(tx, issuer, row, step, { facts, below: number });
+      return unsettled ?? { kind: 'send', refresh };
+    }
     // An authority that cannot answer, or that refuses the question (a token, an environment), has
     // not said that nothing is there: sending now could issue a second voucher (JD-S4 R2-A-W4).
     if (probe.status !== 'issued') return { kind: 'retry', unknown: true };
@@ -278,13 +392,22 @@ async function reconcile(
     if (!(await belongsToAnother(tx, row, probe.number))) {
       return voucherMatches(probe, facts)
         ? { kind: 'issued', result: probe }
-        : { kind: 'attention', number: probe.number, cae: probe.cae, reason: 'voucher_mismatch' };
+        : {
+            kind: 'attention',
+            number: probe.number,
+            cae: probe.cae,
+            reason: 'voucher_mismatch',
+            // The voucher is there, and it is not ours: nobody may take it for theirs later.
+            stray: { number: probe.number, reason: 'unmatched' },
+          };
     }
     // Ours never got it: ask about the number after everything we hold instead of sending blind.
     number = Math.max(number, await highestNumberFor(tx, row)) + 1;
     refresh = true;
   }
-  return { kind: 'attention', number: last, cae: null, reason: 'number_taken' };
+  // Every number asked about belongs to another invoice, and nothing was found of this one: its
+  // request may still have been answered, so the doubt stays (JD-S4 R4-B-T2).
+  return { kind: 'attention', number: last, cae: null, reason: 'number_taken', unresolved: true };
 }
 
 /**
@@ -401,10 +524,17 @@ async function markIntent(
   const expectedNumber = await expectedNumberFor(tx, row);
   // True when the row was written: an invoice that is no longer pending (somebody closed it since the
   // attempt read it) matches nothing, and then the authority must not be called for it (JD-S4 R2-3).
+  // The wait began with the first mark of the episode; the later marks keep it.
+  const awaitingSince = row.awaitingSince ?? step.now;
   const write = async (target: Tx): Promise<boolean> => {
     const written = await target
       .update(invoice)
-      .set({ deliveryState: 'awaiting_reconciliation', expectedNumber, lastAttemptAt: step.now })
+      .set({
+        deliveryState: 'awaiting_reconciliation',
+        expectedNumber,
+        lastAttemptAt: step.now,
+        awaitingSince,
+      })
       .where(and(eq(invoice.id, row.id), eq(invoice.status, 'pending')))
       .returning({ id: invoice.id });
     return written.length > 0;
@@ -416,7 +546,7 @@ async function markIntent(
         // This connection is a second one for the attempt: if the row is locked by someone else it must
         // not wait for as long as that lasts, holding two connections of the pool.
         await own.execute(
-          sql`select set_config('lock_timeout', ${String(Math.max(1, Math.floor(deps.markLockTimeoutMs ?? DEFAULT_MARK_LOCK_TIMEOUT_MS))) + 'ms'}, true)`,
+          sql`select set_config('lock_timeout', ${String(lockTimeoutOf(deps.markLockTimeoutMs)) + 'ms'}, true)`,
         );
         return write(own);
       });
@@ -434,7 +564,20 @@ async function markIntent(
   } else {
     wrote = await write(tx);
   }
-  return wrote ? { ...row, deliveryState: 'awaiting_reconciliation', expectedNumber } : null;
+  return wrote
+    ? { ...row, deliveryState: 'awaiting_reconciliation', expectedNumber, awaitingSince }
+    : null;
+}
+
+/**
+ * The wait for a row lock of the mark, in whole milliseconds, at least 1. A value that is not a finite
+ * number (NaN, Infinity: a setting that was read badly) is the default, not a value for the database to
+ * choke on (JD-S4 R4-B-T4).
+ */
+function lockTimeoutOf(configured: number | undefined): number {
+  return configured !== undefined && Number.isFinite(configured)
+    ? Math.max(1, Math.floor(configured))
+    : DEFAULT_MARK_LOCK_TIMEOUT_MS;
 }
 
 /** What the authority answered, or an unknown outcome when the call itself failed. */
@@ -476,6 +619,8 @@ async function defer(
   step: { awaiting: boolean; expectedNumber: number | null; now: Date },
 ): Promise<void> {
   const attempts = row.attempts + 1;
+  // The wait began at the first mark of the episode (an invoice that predates the column begins now).
+  const awaitingSince = step.awaiting ? (row.awaitingSince ?? step.now) : null;
   await tx
     .update(invoice)
     .set({
@@ -486,41 +631,68 @@ async function defer(
       ),
       deliveryState: step.awaiting ? 'awaiting_reconciliation' : 'retrying',
       expectedNumber: step.awaiting ? step.expectedNumber : null,
+      awaitingSince,
     })
     .where(eq(invoice.id, row.id));
-  await audit(tx, {
-    action: 'invoice.attempted',
-    outcome: 'allow',
-    actor: SYSTEM_ACTOR,
-    resourceType: 'invoice',
-    resourceId: row.id,
-    ...(row.patientId ? { patientId: row.patientId } : {}),
-    metadata: {
-      type: row.type,
-      attempt: attempts,
-      unknown: step.awaiting,
-      chargeIds: await chargeIdsOf(tx, row.id),
-    },
-  });
-  if (step.awaiting) await surfaceStall(tx, deps, row, { attempts, now: step.now });
+  // A long wait is tried every few minutes: the first attempts are audited, then one for each hour.
+  if (
+    isAttemptAudited({ attempt: attempts, previousAttemptAt: row.lastAttemptAt, now: step.now })
+  ) {
+    await audit(tx, {
+      action: 'invoice.attempted',
+      outcome: 'allow',
+      actor: SYSTEM_ACTOR,
+      resourceType: 'invoice',
+      resourceId: row.id,
+      ...(row.patientId ? { patientId: row.patientId } : {}),
+      metadata: {
+        type: row.type,
+        attempt: attempts,
+        unknown: step.awaiting,
+        chargeIds: await chargeIdsOf(tx, row.id),
+      },
+    });
+  }
+  if (awaitingSince) {
+    await surfaceStall(tx, deps, row, { awaitingSince, now: step.now });
+  } else {
+    // A definite answer (the authority said it issued nothing): the doubt that held the series is over,
+    // and an item that said so is closed. Whatever the invoice does next, it is not that one (JD-S4 R4-2).
+    await settleStall(tx, deps, row.id, 'outcome_settled');
+  }
 }
 
 /**
  * A series that waits for an invoice whose outcome stays unknown is not left to be found by chance:
- * once that invoice has been tried six times, or was requested two hours ago, ONE worklist item is
- * opened on it, with the number of invoices it holds back (JD-S4 R3-2). The invoice stays as it is;
- * the item is resolved when it settles. Nothing is opened for an invoice that holds nothing back.
+ * once that invoice has waited for two hours, ONE worklist item is opened on it (JD-S4 R3-2). The item
+ * does not say how many invoices wait: the count is live in the invoices (`blocksSeries`), where it is
+ * also filtered by what the reader may see (JD-S4 R4-4). The invoice stays as it is; the item is
+ * resolved when it settles. Nothing is opened for an invoice that holds nothing back, nor again for
+ * one that a person already dismissed in this wait (JD-S4 R4-A-W3).
  */
 async function surfaceStall(
   tx: Tx,
   deps: IssueDeps,
   row: InvoiceRow,
-  step: { attempts: number; now: Date },
+  step: { awaitingSince: Date; now: Date },
 ): Promise<void> {
   if (!deps.worklist) return;
-  if (!isStalled({ attempts: step.attempts, createdAt: row.createdAt, now: step.now })) return;
+  if (!isStalled({ awaitingSince: step.awaitingSince, now: step.now })) return;
   // Only the invoice that holds the series is the one to look at.
   if (await blockerInSeries(tx, row)) return;
+  const about = {
+    kind: 'invoice_attention',
+    subjectType: 'invoice',
+    subjectId: row.id,
+  } as const;
+  // The item is there already, or a person dismissed it during this wait: nothing to open (and nothing
+  // to encrypt and insert on every attempt).
+  if (await deps.worklist.hasItem(tx, { ...about, status: 'open' })) return;
+  if (
+    await deps.worklist.hasItem(tx, { ...about, status: 'dismissed', since: step.awaitingSince })
+  ) {
+    return;
+  }
   const [held] = await tx
     .select({ held: sql<number>`count(*)::int` })
     .from(invoice)
@@ -533,29 +705,37 @@ async function surfaceStall(
         ne(invoice.id, row.id),
       ),
     );
-  const count = held?.held ?? 0;
-  if (count === 0) return;
+  if ((held?.held ?? 0) === 0) return;
   await deps.worklist.openItem(tx, {
-    kind: 'invoice_attention',
-    subjectType: 'invoice',
-    subjectId: row.id,
+    ...about,
     detail: {
       reason: 'outcome_unknown',
       type: row.type,
       pointOfSale: row.pointOfSale,
-      held: count,
     },
   });
 }
 
-/** The invoice is settled (issued, rejected or parked): the item that said its outcome is unknown goes. */
-async function settleStall(tx: Tx, deps: IssueDeps, invoiceId: string): Promise<void> {
+/**
+ * The invoice left the wait (issued, rejected, parked, or told by the authority that nothing was
+ * issued): the item that said its outcome is unknown is closed. It is called on every way out, whether
+ * or not the attempt began as a wait: an item that is still open would be returned by the next
+ * `openItem` and hide the real reason of whatever comes next (JD-S4 R4-2). `resolution` says how it
+ * ended: `outcome_settled` when the doubt is over, `parked` when the invoice is parked with the doubt
+ * still there (JD-S4 R4-A-T3).
+ */
+async function settleStall(
+  tx: Tx,
+  deps: IssueDeps,
+  invoiceId: string,
+  resolution: 'outcome_settled' | 'parked',
+): Promise<void> {
   await deps.worklist?.closeBySubject(tx, {
     kind: 'invoice_attention',
     subjectType: 'invoice',
     subjectId: invoiceId,
     status: 'resolved',
-    resolution: 'outcome_settled',
+    resolution,
     actor: { ...SYSTEM_ACTOR, userId: SYSTEM_USER_ID },
   });
 }
@@ -723,6 +903,7 @@ export async function attemptIssue(
           lastAttemptAt: now,
           nextAttemptAt: null,
           expectedNumber: null,
+          awaitingSince: null,
         })
         .where(eq(invoice.id, row.id));
       await audit(tx, {
@@ -734,7 +915,7 @@ export async function attemptIssue(
         ...(row.patientId ? { patientId: row.patientId } : {}),
         metadata: { type: row.type, attempts: row.attempts + 1 },
       });
-      if (wasAwaiting) await settleStall(tx, deps, row.id);
+      await settleStall(tx, deps, row.id, 'outcome_settled');
     });
     return wrote ? 'rejected' : 'skipped';
   }
@@ -763,6 +944,7 @@ export async function attemptIssue(
             lastAttemptAt: now,
             nextAttemptAt: null,
             expectedNumber: null,
+            awaitingSince: null,
           })
           .where(eq(invoice.id, row.id));
         await audit(inner, {
@@ -785,7 +967,7 @@ export async function attemptIssue(
           tenantId: organization.id,
           invoiceId: row.id,
         });
-        if (wasAwaiting) await settleStall(inner, deps, row.id);
+        await settleStall(inner, deps, row.id, 'outcome_settled');
       }),
     );
   } catch (error) {
@@ -799,7 +981,13 @@ export async function attemptIssue(
         deps,
         row,
         now,
-        { number: result.number, cae: result.cae, reason },
+        {
+          number: result.number,
+          cae: result.cae,
+          reason,
+          // The authority DID issue this voucher: it exists, and it cannot be recorded for anyone.
+          stray: { number: result.number, reason: 'unmatched' },
+        },
         wasAwaiting,
       );
       return parked ? 'attention' : 'skipped';
@@ -825,11 +1013,17 @@ function collisionOf(error: unknown): AttentionReason | undefined {
 
 /**
  * The reasons for which parking an invoice does not settle whether the authority issued a voucher
- * for an earlier request: nothing was sent now (`issuer_mismatch`), or the authority only showed that
- * it holds a voucher of somebody else where ours was expected (`voucher_mismatch`). With the others
- * the authority DID issue a voucher for the request: it is the one that cannot be recorded.
+ * for an earlier request: nothing was sent now (`issuer_mismatch`), the authority only showed that it
+ * holds a voucher of somebody else where ours was expected (`voucher_mismatch`), or it holds one that
+ * cannot be told from ours (`voucher_ambiguous`). With the others the authority DID issue a voucher for
+ * the request, and it is the one that cannot be recorded; except when the lookup itself ended without
+ * telling (`unresolved`: every number asked about was taken by another invoice).
  */
-const UNKNOWN_OUTCOME_REASONS: readonly AttentionReason[] = ['issuer_mismatch', 'voucher_mismatch'];
+const UNKNOWN_OUTCOME_REASONS: readonly AttentionReason[] = [
+  'issuer_mismatch',
+  'voucher_mismatch',
+  'voucher_ambiguous',
+];
 
 /** What the log says about each reason: never a message of the authority. */
 const PARK_LOG: Record<AttentionReason, string> = {
@@ -839,6 +1033,8 @@ const PARK_LOG: Record<AttentionReason, string> = {
     'an invoice needs attention: the authority holds a voucher where this invoice was expected that is not its own',
   issuer_mismatch:
     'an invoice needs attention: its issuer is not the one of the credential; nothing was sent',
+  voucher_ambiguous:
+    'an invoice needs attention: the authority holds a voucher that cannot be told from this invoice; nothing was sent',
 };
 
 /**
@@ -850,16 +1046,34 @@ const PARK_LOG: Record<AttentionReason, string> = {
  * and the item say `outcomeUnknown`, and the number expected stays on the row, so a replacement of
  * the invoice still needs the acknowledgement of the owner (JD-S4 R3-4). The item that said the
  * outcome was unknown is closed first, since the new reason takes its place.
+ *
+ * A voucher that exists and that no invoice can record, and the number where the voucher of an invoice
+ * parked with a doubt may sit, are remembered (`recordStrayVoucher`), so that no later invoice adopts
+ * the first as its own or counts on the second as free (JD-S4 R4-3).
  */
 async function park(
   tx: Tx,
   deps: IssueDeps,
   row: InvoiceRow,
   now: Date,
-  found: { number: number | null; cae: string | null; reason: AttentionReason },
+  found: {
+    number: number | null;
+    cae: string | null;
+    reason: AttentionReason;
+    unresolved?: boolean | undefined;
+    stray?: StrayToRemember | undefined;
+  },
   wasAwaiting: boolean,
 ): Promise<boolean> {
-  const outcomeUnknown = wasAwaiting && UNKNOWN_OUTCOME_REASONS.includes(found.reason);
+  const outcomeUnknown =
+    wasAwaiting && (UNKNOWN_OUTCOME_REASONS.includes(found.reason) || found.unresolved === true);
+  // Nothing was sent, so a doubt that was there stays: the voucher of the earlier request, if it exists,
+  // sits at the number this invoice expected.
+  const stray: StrayToRemember | undefined =
+    found.stray ??
+    (found.reason === 'issuer_mismatch' && outcomeUnknown && row.expectedNumber !== null
+      ? { number: row.expectedNumber, reason: 'parked_unknown' }
+      : undefined);
   const wrote = await lockedWrite(tx, row, async () => {
     await tx
       .update(invoice)
@@ -869,6 +1083,7 @@ async function park(
         lastAttemptAt: now,
         nextAttemptAt: null,
         expectedNumber: outcomeUnknown ? row.expectedNumber : null,
+        awaitingSince: null,
       })
       .where(eq(invoice.id, row.id));
     await audit(tx, {
@@ -888,7 +1103,11 @@ async function park(
         outcomeUnknown,
       },
     });
-    if (wasAwaiting) await settleStall(tx, deps, row.id);
+    if (stray) await recordStrayVoucher(tx, row.id, row, stray.number, stray.reason);
+    // Every way out closes the item that said the outcome was unknown (even when the attempt did not
+    // begin as a wait: an item that stayed open would be returned by the next one instead of the real
+    // reason). The label says whether the doubt is over.
+    await settleStall(tx, deps, row.id, outcomeUnknown ? 'parked' : 'outcome_settled');
     await deps.worklist?.openItem(tx, {
       kind: 'invoice_attention',
       subjectType: 'invoice',

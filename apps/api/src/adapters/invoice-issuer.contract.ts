@@ -281,6 +281,24 @@ export function describeInvoiceIssuerContract(target: InvoiceIssuerContractTarge
       });
     });
 
+    it('numbers without gaps: every number up to the last voucher is found, and the number after it is not (JD-S4 R4-1)', async () => {
+      // The invoicing module relies on it: when nothing is at a number, nothing is above it either, so a
+      // request that finds the number after the last one empty may be sent without issuing twice.
+      const { issuer } = await target.make();
+      const cuit = nextCuit();
+      for (let issued = 0; issued < 3; issued += 1) {
+        expectIssued(await issuer.issue(requestFor(cuit), key()));
+      }
+      const at = (number: number) =>
+        issuer.findIssued({ issuerCuit: cuit, pointOfSale: 1, type: 'FC', number });
+
+      expect(await at(1)).toMatchObject({ status: 'issued', number: 1 });
+      expect(await at(2)).toMatchObject({ status: 'issued', number: 2 });
+      expect(await at(3)).toMatchObject({ status: 'issued', number: 3 });
+      expect(await at(4)).toBeNull();
+      expect(await at(5)).toBeNull();
+    });
+
     it('says what it holds for a voucher it finds: the total and the date, so a caller can compare them', async () => {
       const { issuer } = await target.make();
       const cuit = nextCuit();

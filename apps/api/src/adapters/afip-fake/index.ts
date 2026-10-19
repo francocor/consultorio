@@ -52,7 +52,13 @@ export interface FakeInvoiceIssuer extends InvoiceIssuer {
   setMode(mode: AfipSimulatorMode): void;
   /** Everything issued, oldest first. */
   vouchers(): readonly FakeVoucher[];
-  /** Forgets every voucher and goes back to the `ok` mode. */
+  /**
+   * Test only: whether the same idempotency key gets the same voucher (the default). The real
+   * authority does not take our key: it issues a new voucher on every request. With `false` every call
+   * of `issue` issues a new voucher, so a request sent twice shows as two vouchers.
+   */
+  setIdempotent(idempotent: boolean): void;
+  /** Forgets every voucher and goes back to the `ok` mode, idempotent. */
   reset(): void;
 }
 
@@ -70,6 +76,7 @@ interface Stored {
 export function createFakeInvoiceIssuer(options: FakeInvoiceIssuerOptions = {}): FakeInvoiceIssuer {
   const slowMs = options.slowMs ?? DEFAULT_SLOW_MS;
   let mode: AfipSimulatorMode = 'ok';
+  let idempotent = true;
   let vouchers: FakeVoucher[] = [];
   let requests = new Map<string, Stored>();
 
@@ -103,8 +110,12 @@ export function createFakeInvoiceIssuer(options: FakeInvoiceIssuerOptions = {}):
       mode = next;
     },
     vouchers: () => [...vouchers],
+    setIdempotent(next) {
+      idempotent = next;
+    },
     reset() {
       mode = 'ok';
+      idempotent = true;
       vouchers = [];
       requests = new Map();
     },
@@ -117,7 +128,7 @@ export function createFakeInvoiceIssuer(options: FakeInvoiceIssuerOptions = {}):
       const tenantRef = request.tenantRef ?? '';
       // An answer is remembered per organization: the same key from another one is a new request.
       const requestKey = `${tenantRef}|${idempotencyKey}`;
-      const known = requests.get(requestKey);
+      const known = idempotent ? requests.get(requestKey) : undefined;
       if (known) {
         return known.fingerprint === fingerprint
           ? known.result

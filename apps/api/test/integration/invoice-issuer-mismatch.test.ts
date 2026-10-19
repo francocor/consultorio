@@ -166,10 +166,16 @@ describe('an invoice parked while its outcome is unknown (JD-S4 R3-4)', () => {
   it('says in the audit entry, the item and the log that the outcome is unknown, and does not claim a voucher was issued', async () => {
     const { pending, errors } = await parkedWhileUnknown();
 
-    expect(await world.rowOf(pending.id)).toMatchObject({
-      status: 'pending',
-      deliveryState: 'needs_attention',
-    });
+    const parkedRow = await world.rowOf(pending.id);
+    expect(parkedRow).toMatchObject({ status: 'pending', deliveryState: 'needs_attention' });
+    // The number it expected is remembered as one where its voucher may sit (JD-S4 R4-3).
+    const remembered = await world.inTenant((tx) =>
+      tx.select().from(invoiceStrayVoucher).where(eq(invoiceStrayVoucher.invoiceId, pending.id)),
+    );
+    expect(parkedRow.expectedNumber).not.toBeNull();
+    expect(remembered).toMatchObject([
+      { number: parkedRow.expectedNumber, reason: 'parked_unknown' },
+    ]);
     const entries = await world.inTenant((tx) =>
       tx.select().from(auditEvent).where(eq(auditEvent.resourceId, pending.id)),
     );

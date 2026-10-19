@@ -32,6 +32,17 @@ export interface InvoiceWorklist {
       actor: AuditActor & { userId: string };
     },
   ): Promise<void>;
+  /** Whether an item of a kind about a subject exists in a status (opened at `since` or later). */
+  hasItem(
+    tx: Tx,
+    input: {
+      kind: WorklistKind;
+      subjectType: WorklistSubjectType;
+      subjectId: string;
+      status: 'open' | 'resolved' | 'dismissed';
+      since?: Date | undefined;
+    },
+  ): Promise<boolean>;
 }
 
 /** Who acts, for the audit entry and for the columns that remember the author. */

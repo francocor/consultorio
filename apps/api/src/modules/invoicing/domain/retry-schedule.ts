@@ -31,18 +31,38 @@ export function awaitingBackoffMs(attempts: number): number {
   return Math.min(backoffMs(attempts), MAX_AWAITING_BACKOFF_MS);
 }
 
-/** After this many attempts, or this long, an unknown outcome is no longer something to wait out. */
-export const STALL_ATTEMPTS = 6;
+/** After this long, an unknown outcome is no longer something to wait out. */
 export const STALL_AFTER_MS = 2 * 60 * MINUTE_MS;
 
 /**
- * Whether an invoice that waits for reconciliation has waited long enough to tell a person: it was
- * tried at least `STALL_ATTEMPTS` times, or it was requested at least two hours ago.
+ * Whether an invoice that waits for reconciliation has waited long enough to tell a person: it began
+ * to wait at least two hours ago. Only time counts. The attempts do not: the invoices held behind it
+ * bring its probes forward, so it can be tried six times in six minutes, and its age does not either:
+ * it may have been retried for hours before its outcome became unknown (JD-S4 R4-B-S1).
  */
-export function isStalled(input: { attempts: number; createdAt: Date; now: Date }): boolean {
+export function isStalled(input: { awaitingSince: Date; now: Date }): boolean {
+  return input.now.getTime() - input.awaitingSince.getTime() >= STALL_AFTER_MS;
+}
+
+/** The first attempts of an invoice are all audited; after them, one per hour. */
+export const AUDITED_ATTEMPTS = 6;
+const HOUR_MS = 60 * MINUTE_MS;
+
+/**
+ * Whether the attempt that ended without an answer is written to the audit trail. An invoice whose
+ * outcome stays unknown is tried every five minutes for as long as the outage lasts, and a row per
+ * try would bury the others: the first `AUDITED_ATTEMPTS` are written, then one for each clock hour
+ * (JD-S4 R4).
+ */
+export function isAttemptAudited(input: {
+  attempt: number;
+  previousAttemptAt: Date | null;
+  now: Date;
+}): boolean {
+  if (input.attempt <= AUDITED_ATTEMPTS || input.previousAttemptAt === null) return true;
   return (
-    input.attempts >= STALL_ATTEMPTS ||
-    input.now.getTime() - input.createdAt.getTime() >= STALL_AFTER_MS
+    Math.floor(input.now.getTime() / HOUR_MS) !==
+    Math.floor(input.previousAttemptAt.getTime() / HOUR_MS)
   );
 }
 

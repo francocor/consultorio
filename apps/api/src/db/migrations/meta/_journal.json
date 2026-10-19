@@ -589,6 +589,13 @@
       "when": 1792387153477,
       "tag": "0480_invoice_stray_voucher",
       "breakpoints": true
+    },
+    {
+      "idx": 84,
+      "version": "7",
+      "when": 1792394301385,
+      "tag": "0481_stray_reasons_awaiting_since",
+      "breakpoints": true
     }
   ]
 }

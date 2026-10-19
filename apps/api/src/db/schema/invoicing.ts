@@ -109,6 +109,13 @@ export const invoice = tenantTable(
     lastAttemptAt: timestamp('last_attempt_at', { withTimezone: true }),
     /** After an unknown outcome: the number the authority is expected to have given. */
     expectedNumber: bigint('expected_number', { mode: 'number' }),
+    /**
+     * When the invoice began to wait for reconciliation (its request may have been answered). Set by
+     * the first mark of the episode, kept by the later attempts and cleared when the wait ends. A stalled
+     * series is measured from here, not from the creation of the invoice or from the number of
+     * attempts, which the probes that other invoices bring forward also count (JD-S4 R4-B-S1).
+     */
+    awaitingSince: timestamp('awaiting_since', { withTimezone: true }),
     issuedAt: timestamp('issued_at', { withTimezone: true }),
     /** The issuer as the fiscal profile said at the time of the request; never changes. */
     issuerSnapshot: jsonb('issuer_snapshot').$type<IssuerSnapshot>(),
@@ -321,7 +328,13 @@ export const invoiceStrayVoucher = tenantTable(
     pointOfSale: integer('point_of_sale').notNull(),
     type: text('type').notNull(),
     number: bigint('number', { mode: 'number' }).notNull(),
-    /** `replaced_unresolved` or `orphaned`. */
+    /**
+     * Why the number is remembered. `orphaned` (a voucher arrived for a closed invoice) and `unmatched`
+     * (a voucher found or issued that no invoice can record) are vouchers that certainly exist;
+     * `replaced_unresolved` and `parked_unknown` are numbers where one MAY exist (an invoice replaced or
+     * parked without knowing whether it was issued): unconfirmed until an invoice of the series records
+     * a higher number (JD-S4 R4-1, R4-3).
+     */
     reason: text('reason').notNull(),
   },
   (table) => [
@@ -338,7 +351,7 @@ export const invoiceStrayVoucher = tenantTable(
     check('invoice_stray_voucher_number_check', sql`${table.number} > 0`),
     check(
       'invoice_stray_voucher_reason_check',
-      sql`${table.reason} in ('replaced_unresolved', 'orphaned')`,
+      sql`${table.reason} in ('replaced_unresolved', 'orphaned', 'unmatched', 'parked_unknown')`,
     ),
     uniqueIndex('invoice_stray_voucher_number_key').on(
       table.tenantId,

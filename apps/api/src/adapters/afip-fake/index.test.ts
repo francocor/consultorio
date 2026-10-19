@@ -67,4 +67,20 @@ describe('the in-memory invoice issuer (task 4.41)', () => {
       [2, 100],
     ]);
   });
+
+  it('issues a new voucher on every call when it is told not to take the key (an authority does not)', async () => {
+    const issuer = createFakeInvoiceIssuer();
+    const cuit = nextCuit();
+    issuer.setIdempotent(false);
+
+    const first = await issuer.issue(request(cuit), 'same');
+    const second = await issuer.issue(request(cuit), 'same');
+
+    expect(first).toMatchObject({ status: 'issued', number: 1 });
+    expect(second).toMatchObject({ status: 'issued', number: 2 });
+    expect(issuer.vouchers()).toHaveLength(2);
+    issuer.reset();
+    expect(await issuer.issue(request(cuit), 'same')).toMatchObject({ number: 1 });
+    expect(await issuer.issue(request(cuit), 'same')).toMatchObject({ number: 1 });
+  });
 });

@@ -8,6 +8,7 @@ import {
   awaitingBackoffMs,
   backoffMs,
   isOutageFlagged,
+  isAttemptAudited,
   isStalled,
 } from './retry-schedule.js';
 
@@ -76,17 +77,45 @@ describe('the backoff of an invoice that waits for reconciliation (JD-S4 R3-1)',
   });
 });
 
-describe('when an invoice that waits for reconciliation counts as stalled (JD-S4 R3-2)', () => {
-  const created = new Date('2031-05-20T10:00:00Z');
-  const at = (minutes: number) => new Date(created.getTime() + minutes * MINUTE);
+describe('when an invoice that waits for reconciliation counts as stalled (JD-S4 R3-2, R4-B-S1)', () => {
+  const since = new Date('2031-05-20T10:00:00Z');
+  const at = (minutes: number) => new Date(since.getTime() + minutes * MINUTE);
 
-  it('is stalled after six attempts', () => {
-    expect(isStalled({ attempts: 5, createdAt: created, now: at(10) })).toBe(false);
-    expect(isStalled({ attempts: 6, createdAt: created, now: at(10) })).toBe(true);
+  it('is stalled two hours after it began to wait, and not before', () => {
+    expect(isStalled({ awaitingSince: since, now: at(119) })).toBe(false);
+    expect(isStalled({ awaitingSince: since, now: at(120) })).toBe(true);
+    expect(isStalled({ awaitingSince: since, now: at(600) })).toBe(true);
   });
 
-  it('is stalled after two hours, whatever the number of attempts', () => {
-    expect(isStalled({ attempts: 1, createdAt: created, now: at(119) })).toBe(false);
-    expect(isStalled({ attempts: 1, createdAt: created, now: at(120) })).toBe(true);
+  it('does not count a clock that is behind the start of the wait', () => {
+    expect(isStalled({ awaitingSince: since, now: at(-30) })).toBe(false);
+  });
+});
+
+describe('which attempts are audited (JD-S4 R4)', () => {
+  const at = (hours: number, minutes: number) => new Date(Date.UTC(2031, 4, 20, hours, minutes));
+
+  it('audits the first six attempts, whenever they happen', () => {
+    for (const attempt of [1, 2, 3, 4, 5, 6]) {
+      expect(isAttemptAudited({ attempt, previousAttemptAt: at(10, 1), now: at(10, 2) })).toBe(
+        true,
+      );
+    }
+  });
+
+  it('audits one attempt for each clock hour after that', () => {
+    expect(isAttemptAudited({ attempt: 7, previousAttemptAt: at(10, 40), now: at(10, 45) })).toBe(
+      false,
+    );
+    expect(isAttemptAudited({ attempt: 40, previousAttemptAt: at(10, 55), now: at(10, 59) })).toBe(
+      false,
+    );
+    expect(isAttemptAudited({ attempt: 41, previousAttemptAt: at(10, 59), now: at(11, 4) })).toBe(
+      true,
+    );
+  });
+
+  it('audits an attempt that has no earlier one to compare with', () => {
+    expect(isAttemptAudited({ attempt: 9, previousAttemptAt: null, now: at(10, 0) })).toBe(true);
   });
 });
