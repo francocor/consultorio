@@ -26,6 +26,7 @@ export const FILE_TOKEN_KINDS = [
   'document_download',
   'export_download',
   'invoice_pdf',
+  'prescription_pdf',
 ] as const satisfies readonly TokenKind[];
 export type FileTokenKind = (typeof FILE_TOKEN_KINDS)[number];
 
