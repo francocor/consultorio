@@ -68,4 +68,20 @@ export const QUEUES: readonly QueueDefinition[] = [
   { name: 'invoice.deliver', options: { retryLimit: 3, retryDelay: 60, expireInSeconds: 300 } },
   // Builds a CSV, xlsx or PDF export (billing exports and reports) and stores the result.
   { name: 'export.build', options: { retryLimit: 2, retryDelay: 30, expireInSeconds: 900 } },
+
+  // Stage 5, compliance and portal. Same rule: the owning track writes the handler, the queue exists
+  // from the seam.
+  // Submits (or retries) a prescription the provider has not confirmed. The handler asks the
+  // provider for the key before it issues, and chooses its own backoff by queuing itself again.
+  { name: 'erx.submit', options: { retryLimit: 2, retryDelay: 30, expireInSeconds: 300 } },
+  // Asks the provider where the prescriptions of an organization stand (dispensed, expired,
+  // cancelled) and settles the ones whose answer was lost.
+  { name: 'erx.reconcile', options: { retryLimit: 1, retryDelay: 60, expireInSeconds: 600 } },
+  // Daily, per organization: closes the consent requests whose time ran out.
+  { name: 'consent.expire', options: { retryLimit: 1, retryDelay: 300, expireInSeconds: 900 } },
+  // Daily, per organization: suspends the representative links of the dependents who turned 18.
+  {
+    name: 'portal.majority_review',
+    options: { retryLimit: 1, retryDelay: 300, expireInSeconds: 900 },
+  },
 ];
