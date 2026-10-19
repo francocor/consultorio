@@ -97,7 +97,6 @@ describe('telling a voucher that differs from one that cannot be told (JD-S4 R5-
     expect(compareVoucher({ ...held, totalCents: 1 }, facts)).toBe('differs');
     expect(compareVoucher({ ...held, issueDate: '2026-10-16' }, facts)).toBe('differs');
     expect(compareVoucher({ ...held, issuerCuit: '30712345671' }, facts)).toBe('differs');
-    expect(compareVoucher({ ...held, buyerDocument: null }, facts)).toBe('differs');
     expect(
       compareVoucher(
         { ...held, associatedVoucher: { type: 'FC', pointOfSale: 1, number: 3 } },
@@ -121,5 +120,53 @@ describe('telling a voucher that differs from one that cannot be told (JD-S4 R5-
     expect(compareVoucher({ ...silentAbout('buyerDocument'), totalCents: 1 }, facts)).toBe(
       'differs',
     );
+  });
+});
+
+describe('a recipient that cannot be told is not "another voucher" (JD-S4 R6-6)', () => {
+  it('says "unclear", not "differs", when only the document of the recipient is not the one of the invoice', () => {
+    // The authority may normalize a document, or hold the CUIT of a person we know by DNI: a voucher that
+    // fits in everything else may be the invoice's, and treating it as foreign would send a second one.
+    expect(compareVoucher({ ...held, buyerDocument: null }, facts)).toBe('unclear');
+    expect(
+      compareVoucher({ ...held, buyerDocument: { type: 'cuit', number: '20301234567' } }, facts),
+    ).toBe('unclear');
+    expect(
+      compareVoucher({ ...held, buyerDocument: { type: 'dni', number: '30999999' } }, facts),
+    ).toBe('unclear');
+  });
+
+  it('still says "differs" when anything else is not the same, whatever the recipient says', () => {
+    expect(compareVoucher({ ...held, buyerDocument: null, totalCents: 1 }, facts)).toBe('differs');
+    expect(compareVoucher({ ...held, buyerDocument: null, issueDate: '2026-10-16' }, facts)).toBe(
+      'differs',
+    );
+    expect(compareVoucher({ ...held, buyerDocument: null, issuerCuit: '30712345671' }, facts)).toBe(
+      'differs',
+    );
+    expect(
+      compareVoucher(
+        {
+          ...held,
+          buyerDocument: null,
+          associatedVoucher: { type: 'FC', pointOfSale: 1, number: 3 },
+        },
+        facts,
+      ),
+    ).toBe('differs');
+  });
+
+  it('takes the document type 99 with the number 0 (consumidor final) for a voucher with no buyer', () => {
+    const anonymous = { ...facts, buyerDocument: null };
+    // How the authority writes an anonymous buyer: DocTipo 99, DocNro 0.
+    const noBuyer = (number: string) =>
+      ({ ...held, buyerDocument: { type: '99', number } }) as unknown as Issued;
+
+    expect(compareVoucher(noBuyer('0'), anonymous)).toBe('match');
+    expect(compareVoucher(noBuyer('00000000'), anonymous)).toBe('match');
+    // It is not a buyer: an invoice that names one does not match it, and cannot be told from it either.
+    expect(compareVoucher(noBuyer('0'), facts)).toBe('unclear');
+    // A buyer with a number is not anonymous.
+    expect(compareVoucher(noBuyer('12345'), anonymous)).toBe('unclear');
   });
 });

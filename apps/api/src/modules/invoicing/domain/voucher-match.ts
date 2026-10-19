@@ -16,8 +16,22 @@ export interface VoucherFacts {
   associatedVoucher: Associated | null;
 }
 
-const sameDocument = (a: Document | null, b: Document | null): boolean =>
-  a === null || b === null ? a === b : a.type === b.type && a.number === b.number;
+/**
+ * The authority writes an anonymous buyer (consumidor final) as document type 99 with number 0. An
+ * invoice without a recipient document is the same thing: both are "no buyer" (JD-S4 R6-6).
+ */
+function withoutBuyer(document: Document | null): Document | null {
+  if (document === null) return null;
+  const { type, number } = document as { type: string; number: string };
+  return type === '99' && /^0+$/.test(number) ? null : document;
+}
+
+const sameDocument = (a: Document | null, b: Document | null): boolean => {
+  const [left, right] = [withoutBuyer(a), withoutBuyer(b)];
+  return left === null || right === null
+    ? left === right
+    : left.type === right.type && left.number === right.number;
+};
 
 const sameAssociated = (a: Associated | null, b: Associated | null): boolean =>
   a === null || b === null
@@ -46,15 +60,23 @@ type Field = 'same' | 'differs' | 'unstated';
  * either: a voucher that states nothing against the invoice and leaves a field out MAY be the invoice's
  * (`unclear`), and an invoice that looks past it could issue a second one (JD-S4 R5-1). (The one
  * exception is `associatedVoucher` of something that is not a credit note: silence is the same as "none".)
+ *
+ * The document of the recipient is the field an adapter is most likely to write differently from what the
+ * invoice holds (an anonymous buyer, a DNI or a CUIT of the same person, a normalized number). When it is
+ * the ONLY field that is not the same the voucher is `unclear`, not `differs`: the invoice is parked
+ * instead of treating its own voucher as foreign and sending it again (JD-S4 R6-6). Total, date, issuer and
+ * the voucher a note cancels still tell a foreign voucher apart.
  */
 export function compareVoucher(found: Issued, facts: VoucherFacts): VoucherComparison {
   const stated = <T>(value: T | undefined, same: (value: T) => boolean): Field =>
     value === undefined ? 'unstated' : same(value) ? 'same' : 'differs';
+  const buyer = stated(found.buyerDocument, (document) =>
+    sameDocument(document, facts.buyerDocument),
+  );
   const fields: Field[] = [
     stated(found.totalCents, (total) => total === facts.totalCents),
     stated(found.issueDate, (date) => date === facts.issueDate),
     stated(found.issuerCuit, (cuit) => cuit === facts.issuerCuit),
-    stated(found.buyerDocument, (document) => sameDocument(document, facts.buyerDocument)),
     facts.associatedVoucher === null
       ? found.associatedVoucher === undefined || found.associatedVoucher === null
         ? 'same'
@@ -64,6 +86,7 @@ export function compareVoucher(found: Issued, facts: VoucherFacts): VoucherCompa
         ),
   ];
   if (fields.includes('differs')) return 'differs';
+  if (buyer !== 'same') return 'unclear';
   return fields.includes('unstated') ? 'unclear' : 'match';
 }
 
