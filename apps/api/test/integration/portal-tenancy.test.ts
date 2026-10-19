@@ -170,6 +170,8 @@ describe('a read-only organization', () => {
         'POST /portal/copy-requests',
         'POST /portal/documents/:id/download-link',
         'POST /portal/invoices/:id/download-link',
+        // JD-S5 R1-B-S5: ending a representative's access protects the patient, so it stays open.
+        'POST /portal/links/:id/revoke',
         'POST /portal/consents/:id/download-link',
         'POST /portal/logout',
         'POST /portal/prescriptions/:id/download-link',

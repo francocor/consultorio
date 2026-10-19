@@ -659,6 +659,13 @@
       "when": 1792419615647,
       "tag": "0594_demo_outbox_retention",
       "breakpoints": true
+    },
+    {
+      "idx": 94,
+      "version": "7",
+      "when": 1792423418340,
+      "tag": "0595_portal_session_guard_foreign_key",
+      "breakpoints": true
     }
   ]
 }
