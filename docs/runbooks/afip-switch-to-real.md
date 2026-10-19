@@ -27,11 +27,25 @@ You do not write these again; the real adapter plugs into them.
   and the simulator already do. The real adapter must pass it too.
 - **Outage and double issue.** An invoice is requested in one transaction and submitted by a job
   (`afip.issue`, category `afip_submission`, so it also runs for a read-only organization). A retry
-  clock (`runDueAttempts`, every 30 seconds) waits 1 minute, doubling up to 6 hours. After an outcome
-  that is not known (a timeout after the authority may have answered) the module asks `findIssued` for
-  the number it expects before it sends anything again, and then calls `issue` with the same
-  idempotency key. A voucher is never issued twice: this is the part to review most closely against
-  the real service, because ARCA has no idempotency key of its own (see "Design points" below).
+  clock (`runDueAttempts`, every 30 seconds) waits 1 minute, doubling up to 6 hours. BEFORE every call
+  to the authority the invoice is marked `awaiting_reconciliation` with the number it is expected to
+  get, in a commit of its own on a connection of its own (`markIntent`); only a definite answer
+  (issued, rejected, or "nothing was issued") clears the mark. If the process dies after the authority
+  answered, or the outcome is unknown, the next attempt finds the mark and asks `findIssued` for that
+  number BEFORE it sends anything: a voucher whose type, point of sale, number, total and date match
+  the invoice is adopted and `issue` is not called; one that does not match parks the invoice for a
+  person; no answer means nothing is sent. The transaction of the job stays open across the call (it
+  holds only the advisory lock of the invoice, no row lock): the mark is what survives a crash, and
+  it is committed before the call, not at its end. A voucher is never issued twice: this is the part
+  to review most closely against the real service, because ARCA has no idempotency key of its own
+  (see "Design points" below).
+- **Who the issuer is.** The invoice keeps the issuer (CUIT, business name, tax condition, address,
+  start of the activity) as it was when it was requested (`invoice.issuer_snapshot`). The request to
+  the authority, its fingerprint and the PDF use that snapshot, so editing the fiscal profile while an
+  invoice waits for reconciliation neither makes the authority reject it (`10099`) nor changes a
+  document. The key the authority sees is derived from the organization and the invoice
+  (`issuerKeyOf`), never the key the client sent, and `InvoiceRequest.tenantRef` lets a simulator
+  keep the series of two organizations apart (the real adapter ignores it).
 - **Credentials.** Each organization loads its own certificate and private key in Settings >
   Facturación electrónica (`PUT /invoicing/credentials`). They are checked (the key matches the
   certificate, the CUIT of the subject is the CUIT of the fiscal profile, the dates), stored encrypted
@@ -123,10 +137,50 @@ loaded.
   again, and answer the voucher it finds when its data (type, point of sale, number, total, date)
   matches the request. The module already calls `findIssued` first; the adapter makes it true.
 - **Numbers are the authority's.** A manual voucher (made in ARCA's web tool during an outage) takes a
-  number in the same series. The module registers it as `manual` and refuses a collision, leaving the
-  invoice pending for a person; keep that behaviour.
+  number in the same series. The module registers it as `manual` and refuses a collision. When the
+  authority answers an invoice with a number (or a CAE) that is already one of ours, the invoice is
+  NOT retried: every retry could issue another real voucher. It is parked in `needs_attention`, no
+  attempt touches it again, and an item `invoice_attention` is opened in the worklist (reception, the
+  whole organization), with an audit entry (`invoice.needs_attention`) and an error log line with the
+  number and the CAE (never a message). A person decides: register the voucher that exists by hand
+  (`replacesInvoiceId` is accepted for a parked invoice), or issue a credit note for it in ARCA.
+  Because the numbers of the other environment start again at 1, **the environment of a point of sale
+  cannot change once invoices went through it** (`point_of_sale_has_invoices`): create a new point of
+  sale for production instead.
+- **A voucher for an invoice somebody closed.** If the authority answers after the invoice was closed
+  (a person replaced it with a manual voucher while the request was in flight) the voucher exists and
+  nothing records it. The attempt answers `orphaned`, writes `invoice.voucher_orphaned` (type, point of
+  sale, number, CAE), logs the same and opens the worklist item. The way back is a credit note in ARCA.
+  In practice it cannot happen through the product: a manual entry that replaces an invoice takes the
+  advisory lock of the attempts (`conflict` if an attempt holds it), and refuses an invoice that is
+  `awaiting_reconciliation` (`invoice_awaiting_reconciliation`) until the authority is asked.
 - **Rate limits and timeouts.** Keep a timeout shorter than the job lock so a hung call becomes an
   unknown outcome, not a stuck job.
+
+## Before you switch an organization from the simulator
+
+- **Drain the simulated invoices first.** An invoice still pending when the issuer changes would be
+  sent to the real service with the numbering of the simulator in its head (the `expected_number` of
+  a lost answer is a simulator's number). Wait until nothing is pending (the invoices screen shows
+  none, or run the retries until they are issued or rejected), and register by hand or reject what is
+  left.
+- **A mistyped manual number moves the series of a simulator.** The number of a manual voucher is
+  whatever the person typed; a very high one makes the simulator number after it
+  (`lastKnownNumber`). The real adapter must validate the number against
+  `FECompUltimoAutorizado` before it accepts a manual entry; the simulator does not.
+- **The certificate chain is not validated.** `parseCredential` checks the key, the CUIT of the
+  subject and the dates, not that the certificate was issued by the ARCA CA. It only matters once the
+  real adapter exists: validate the chain there (a certificate that ARCA would not accept is better
+  refused when it is loaded).
+- **The invoice PDF needs a bucket from the start.** Without a bucket the `invoice.pdf` job is not
+  registered, an invoice has no document, and adding a bucket later does not render the PDFs of the
+  invoices already issued: turn the bucket on before the first real voucher, or queue
+  `invoice.pdf` for the issued invoices that have no `invoice_document` (the job is idempotent).
+- **The simulator tables have no row level security, by design.** `local_afip_control`,
+  `local_afip_voucher` and `local_afip_request` stand in for the tax authority, which is outside
+  every organization; they carry a `tenant_ref` (an opaque reference, not a foreign key) that keeps
+  the series apart, and nothing reads them in production (the guard refuses the simulator there).
+  Do not grant them to a role that serves requests of an organization.
 
 ## Rollback
 

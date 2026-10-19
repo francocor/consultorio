@@ -213,7 +213,7 @@
   "money.empty.action": "Ir a cobros",
   "cash.title": "Informe de caja",
   "cash.description": "Por sede y por día: apertura, cobros por medio de pago, devoluciones, efectivo esperado, efectivo contado y diferencia con su motivo.",
-  "cash.basis": "Cada caja cuenta en el día en que se abrió, aunque se cierre más tarde. En el cajón solo hay efectivo: los demás medios figuran por medio de pago y no entran en el efectivo esperado.",
+  "cash.basis": "Cada caja cuenta en el día en que se abrió, aunque se cierre más tarde. En el cajón solo hay efectivo: los demás medios figuran por medio de pago y no entran en el efectivo esperado. Esta pantalla cuenta solo los cobros que quedaron en una caja; el informe de dinero cuenta todos los cobros del período, estén o no en una caja.",
   "cash.summary.title": "Resumen de la caja",
   "cash.kpi.opening": "Aperturas",
   "cash.kpi.payments": "Cobros",

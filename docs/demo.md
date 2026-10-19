@@ -189,6 +189,7 @@ pnpm demo:reset --rotate        # new random passwords, printed once
 
 - The seed refuses `NODE_ENV=production` with the public password and refuses any organization that is not flagged as a demo.
 - Demo organizations never reach real services: the adapter resolver (`apps/api/src/main/adapter-resolver.ts`) gives them the fake email sender, the fake WhatsApp sender, the fake video provider and the fake bot challenge, and refuses a configuration that would not. The Stage 3 seed writes rows and queues nothing.
+- The in-memory fake of AFIP lives in each process. The demonstration stack runs the API and the worker in one process, so the "down" mode that the platform console sets is the one the worker's retries see; a deployment that runs them as two processes (`main.ts api` and `main.ts worker`) has two fakes, and the console reaches only the one of the API process. Until the fake keeps its mode in Postgres like the local simulator does, put a demonstration in an outage with the stack of this page, not in a split deployment (judgment day Stage 4 round 1, A-T9).
 - The invoices of the Stage 4 seed go through an in-memory fake of AFIP and hold no certificate; the payments are rows written by the seed. A demonstration organization cannot reach a real fiscal service even if the configuration says so.
 - Demo organizations are exempt from billing.
 - All data is deterministic: the same seed gives the same content, which is what makes the tests and the screenshots stable.
