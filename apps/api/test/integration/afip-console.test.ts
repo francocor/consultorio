@@ -117,6 +117,52 @@ describe('the AFIP controls of the provider console', () => {
     });
   });
 
+  it('list the vouchers of one organization when asked for it, and say whose each one is (JD-S4 R2-B-S5)', async () => {
+    const cuit = nextCuit();
+    const issuer = createLocalInvoiceIssuer({ db: runtime.db });
+    const request = {
+      issuerCuit: cuit,
+      pointOfSale: 4,
+      type: 'FC',
+      issueDate: '2026-10-17',
+      currency: 'ARS',
+      totalCents: 777_700,
+    };
+    const first = '0190a000-0000-7000-8000-00000000a001';
+    const second = '0190a000-0000-7000-8000-00000000a002';
+    await issuer.issue({ ...request, tenantRef: first }, `scope-a-${cuit}`);
+    await issuer.issue({ ...request, tenantRef: second }, `scope-b-${cuit}`);
+    await issuer.issue({ ...request, tenantRef: second }, `scope-c-${cuit}`);
+
+    const scoped = await send(on, 'GET', `/operator/dev/afip/state?tenantRef=${second}`, onCookie);
+    const everyone = await send(on, 'GET', '/operator/dev/afip/state', onCookie);
+    const nobody = await send(
+      on,
+      'GET',
+      '/operator/dev/afip/state?tenantRef=0190a000-0000-7000-8000-00000000a003',
+      onCookie,
+    );
+
+    expect(scoped.statusCode, scoped.body).toBe(200);
+    const mine = AfipSimulatorStateResponse.parse(scoped.json()).vouchers.filter(
+      (voucher) => voucher.issuerCuit === cuit,
+    );
+    expect(mine.map((voucher) => voucher.tenantRef)).toEqual([second, second]);
+    expect(
+      AfipSimulatorStateResponse.parse(scoped.json()).vouchers.every(
+        (voucher) => voucher.tenantRef === second,
+      ),
+    ).toBe(true);
+    const all = AfipSimulatorStateResponse.parse(everyone.json()).vouchers.filter(
+      (voucher) => voucher.issuerCuit === cuit,
+    );
+    expect(all.map((voucher) => voucher.tenantRef).sort()).toEqual([first, second, second]);
+    expect(AfipSimulatorStateResponse.parse(nobody.json()).vouchers).toEqual([]);
+    expect(
+      (await send(on, 'GET', '/operator/dev/afip/state?tenantRef=nope', onCookie)).statusCode,
+    ).toBe(400);
+  });
+
   it('switch the mode of the simulator the issuer reads', async () => {
     const response = await send(on, 'PUT', '/operator/dev/afip/mode', onCookie, { mode: 'down' });
 

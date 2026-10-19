@@ -1,7 +1,7 @@
 import type { CreateCreditNoteRequest, InvoiceDto, InvoiceType } from '@consultorio/contracts';
 import { asc, eq, sql } from 'drizzle-orm';
 
-import { invoice, invoiceLine, pointOfSale } from '../../../db/schema/index.js';
+import { fiscalCredential, invoice, invoiceLine, pointOfSale } from '../../../db/schema/index.js';
 import { audit } from '../../../platform/audit/writer.js';
 import type { Tx } from '../../../platform/db/tenant-context.js';
 import { AppError } from '../../../platform/http/problem.js';
@@ -112,6 +112,19 @@ export async function createCreditNote(
   const simulated = isSimulatedIssuer(
     issuerFor(deps.adapters, { id: organization.id, isDemo: organization.isDemo }),
   );
+  // The note is issued by the one who issued the invoice it cancels. With a real authority the
+  // credential is the one of the live fiscal profile: if the CUIT changed since, the request would be
+  // signed for one CUIT and name another (JD-S4 R2-B-T5).
+  const issuer = original.issuerSnapshot ?? (await currentIssuer(tx));
+  if (!simulated && issuer) {
+    const [credential] = await tx
+      .select({ subjectCuit: fiscalCredential.subjectCuit })
+      .from(fiscalCredential)
+      .where(eq(fiscalCredential.active, true));
+    if (credential && credential.subjectCuit !== issuer.cuit) {
+      throw new AppError('invoice_issuer_mismatch');
+    }
+  }
 
   const recipient: Recipient = {
     kind: original.recipientKind === 'payer' ? 'payer' : 'patient',
@@ -146,7 +159,7 @@ export async function createCreditNote(
         totalCents: noteCents,
         locationIds: original.locationIds,
         // The note is issued by the one who issued the invoice it cancels.
-        issuer: original.issuerSnapshot ?? (await currentIssuer(tx)),
+        issuer,
         creditNote: { originalId: original.id, reason: input.request.reason },
       },
     });

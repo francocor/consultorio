@@ -95,6 +95,7 @@ describe('invoicing catalogues', () => {
       'invoice_pdf_not_ready',
       'invoice_awaiting_reconciliation',
       'invoice_replacement_mismatch',
+      'invoice_issuer_mismatch',
       'invoice_cae_taken',
       'point_of_sale_has_invoices',
     ]);

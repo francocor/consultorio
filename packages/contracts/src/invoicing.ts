@@ -209,6 +209,8 @@ export type AfipSimulatorModeRequest = z.infer<typeof AfipSimulatorModeRequest>;
 /** A voucher the simulator authorized, as the console lists it. */
 export const AfipSimulatorVoucherDto = z.strictObject({
   id: z.uuid(),
+  /** The organization the voucher belongs to (`''`: it predates the reference). */
+  tenantRef: z.string(),
   issuerCuit: z.string(),
   pointOfSale: z.int(),
   type: z.string(),
@@ -220,6 +222,10 @@ export const AfipSimulatorVoucherDto = z.strictObject({
   createdAt: z.iso.datetime(),
 });
 export type AfipSimulatorVoucherDto = z.infer<typeof AfipSimulatorVoucherDto>;
+
+/** The console lists every organization's vouchers, or the ones of one of them. */
+export const AfipSimulatorStateQuery = z.strictObject({ tenantRef: z.uuid().optional() });
+export type AfipSimulatorStateQuery = z.infer<typeof AfipSimulatorStateQuery>;
 
 export const AfipSimulatorStateResponse = z.strictObject({
   mode: z.enum(AFIP_SIMULATOR_MODES),

@@ -67,7 +67,8 @@ function composedControls(
       demo.setMode(mode);
       await local?.setMode(mode);
     },
-    vouchers: (limit) => (local ? local.vouchers(limit) : Promise.resolve([])),
+    vouchers: (limit, tenantRef) =>
+      local ? local.vouchers(limit, tenantRef) : Promise.resolve([]),
     async reset() {
       demo.reset();
       await local?.reset();

@@ -258,6 +258,7 @@ export function createLocalInvoiceIssuer(options: LocalInvoiceIssuerOptions): Lo
 
 export interface LocalAfipVoucherDto {
   id: string;
+  tenantRef: string;
   issuerCuit: string;
   pointOfSale: number;
   type: string;
@@ -273,8 +274,11 @@ export interface LocalAfipVoucherDto {
 export interface LocalAfipControls {
   mode(): Promise<AfipSimulatorMode>;
   setMode(mode: AfipSimulatorMode): Promise<void>;
-  /** The newest vouchers of the current epoch first. */
-  vouchers(limit: number): Promise<LocalAfipVoucherDto[]>;
+  /**
+   * The newest vouchers of the current epoch first: every organization's, or only the ones of the
+   * organization `tenantRef` names (JD-S4 R2-B-S5).
+   */
+  vouchers(limit: number, tenantRef?: string): Promise<LocalAfipVoucherDto[]>;
   /** Starts numbering again and puts the mode back to `ok`. Nothing is deleted. */
   reset(): Promise<void>;
 }
@@ -288,16 +292,21 @@ export function createLocalAfipControls(db: Db): LocalAfipControls {
       await readControl(db);
       await db.update(localAfipControl).set({ mode }).where(eq(localAfipControl.id, 1));
     },
-    async vouchers(limit) {
+    async vouchers(limit, tenantRef) {
       const { epoch } = await readControl(db);
       const rows = await db
         .select()
         .from(localAfipVoucher)
-        .where(eq(localAfipVoucher.epoch, epoch))
+        .where(
+          tenantRef === undefined
+            ? eq(localAfipVoucher.epoch, epoch)
+            : and(eq(localAfipVoucher.epoch, epoch), eq(localAfipVoucher.tenantRef, tenantRef)),
+        )
         .orderBy(desc(localAfipVoucher.createdAt), desc(localAfipVoucher.number))
         .limit(limit);
       return rows.map((row) => ({
         id: row.id,
+        tenantRef: row.tenantRef,
         issuerCuit: row.issuerCuit,
         pointOfSale: row.pointOfSale,
         type: row.type,

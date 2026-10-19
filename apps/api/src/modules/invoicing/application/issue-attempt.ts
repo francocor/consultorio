@@ -10,6 +10,7 @@ import type {
 import { and, asc, eq, ne, sql } from 'drizzle-orm';
 
 import {
+  fiscalCredential,
   fiscalProfile,
   invoice,
   invoiceLine,
@@ -27,7 +28,7 @@ import { voucherMatches, type VoucherFacts } from '../domain/voucher-match.js';
 
 import { LOCK_NOT_AVAILABLE, UNIQUE_VIOLATION, constraintOf, sqlState } from './common.js';
 import { snapshotOfProfile, type IssuerSnapshot } from './issuer-snapshot.js';
-import { issuerFor } from './issuer.js';
+import { isSimulatedIssuer, issuerFor } from './issuer.js';
 import { INVOICE_PDF_JOB } from './job-names.js';
 import { invoicingReadiness } from './readiness.js';
 import { loadOrganization } from './settings.js';
@@ -205,7 +206,7 @@ async function buildRequest(
 
 type Issued = Extract<IssueResult, { status: 'issued' }>;
 
-type AttentionReason = 'number_taken' | 'cae_taken' | 'voucher_mismatch';
+type AttentionReason = 'number_taken' | 'cae_taken' | 'voucher_mismatch' | 'issuer_mismatch';
 
 type Verdict =
   | { kind: 'issued'; result: Issued }
@@ -213,7 +214,7 @@ type Verdict =
   /** `unknown`: the request may have been answered. Otherwise the authority said it issued nothing. */
   | { kind: 'retry'; unknown: boolean }
   /** A voucher the authority holds that cannot be recorded for this invoice. */
-  | { kind: 'attention'; number: number; cae: string | null; reason: AttentionReason };
+  | { kind: 'attention'; number: number | null; cae: string | null; reason: AttentionReason };
 
 /** How many numbers after a taken one are asked about before the attempt gives up and asks a person. */
 const FORWARD_PROBES = 5;
@@ -519,6 +520,24 @@ export async function attemptIssue(
     return wrote ? 'retry' : 'skipped';
   }
 
+  // The credential of a real authority follows the live fiscal profile, the request follows the issuer
+  // the invoice was made with. If the organization changed its CUIT since, the two differ: the request
+  // would be signed for one CUIT and name another. Nothing is sent; a person decides (JD-S4 R2-B-T5).
+  if (!isSimulatedIssuer(issuer)) {
+    const [credential] = await tx
+      .select({ subjectCuit: fiscalCredential.subjectCuit })
+      .from(fiscalCredential)
+      .where(eq(fiscalCredential.active, true));
+    if (credential && credential.subjectCuit !== snapshot.cuit) {
+      const parked = await park(tx, deps, row, now, {
+        number: null,
+        cae: null,
+        reason: 'issuer_mismatch',
+      });
+      return parked ? 'attention' : 'skipped';
+    }
+  }
+
   // Another invoice of the series may have been answered without us knowing: its voucher is out
   // there under a number that this one would be expecting too. Nothing of the series is sent until
   // that one is settled (adopted, parked, replaced or sent again). Among two that both wait, the
@@ -683,7 +702,7 @@ async function park(
   deps: IssueDeps,
   row: InvoiceRow,
   now: Date,
-  found: { number: number; cae: string | null; reason: AttentionReason },
+  found: { number: number | null; cae: string | null; reason: AttentionReason },
 ): Promise<boolean> {
   const wrote = await lockedWrite(tx, row, async () => {
     await tx

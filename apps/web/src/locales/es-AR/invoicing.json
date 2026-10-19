@@ -95,6 +95,7 @@
   "dev.vouchers.title": "Comprobantes autorizados",
   "dev.vouchers.caption": "Comprobantes que autorizó el simulador, los más nuevos primero",
   "dev.vouchers.none": "El simulador todavía no autorizó ningún comprobante.",
+  "dev.vouchers.col.organization": "Organización",
   "dev.vouchers.col.issuer": "CUIT emisor",
   "dev.vouchers.col.pointOfSale": "Punto de venta",
   "dev.vouchers.col.type": "Tipo",

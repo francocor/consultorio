@@ -16,6 +16,7 @@ const BASE = '/api/operator/dev/afip';
 
 const voucher = (overrides: Partial<AfipSimulatorVoucherDto> = {}): AfipSimulatorVoucherDto => ({
   id: '0190a000-0000-7000-8000-0000000000c1',
+  tenantRef: '0190a000-0000-7000-8000-0000000000d1',
   issuerCuit: '20123456786',
   pointOfSale: 1,
   type: 'FC',
