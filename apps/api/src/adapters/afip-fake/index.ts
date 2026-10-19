@@ -79,10 +79,11 @@ export interface FakeInvoiceIssuer extends InvoiceIssuer {
   /** Forgets the requests held without finishing them (a request the authority never processed). */
   dropHeld(): void;
   /**
-   * Tells the fake where to learn what the organization holds when its own memory is empty (a restart
-   * of the process): the first time it is asked about a series it numbers after `held(series)` as well.
-   * The real authority has no such need; this is only so the in-memory issuer of the demo does not
-   * restart its numbering below vouchers that exist. `reset()` keeps it: it is wiring, not memory.
+   * Tells the fake where to learn what the organization holds that it does not remember (a restart of
+   * the process, a voucher registered by hand in the same series): every time it is asked about a series
+   * it numbers after `held(series)` as well, the way the real authority counts the vouchers made on its
+   * website. The real authority has no such need; this is only so the in-memory issuer of the demo does
+   * not number below vouchers that exist. `reset()` keeps it: it is wiring, not memory.
    */
   rememberFrom(held: HeldNumbers | undefined): void;
 }
@@ -114,17 +115,17 @@ export function createFakeInvoiceIssuer(options: FakeInvoiceIssuerOptions = {}):
   let holdNext = false;
   let held: (() => Promise<IssueResult>)[] = [];
   let heldNumbers: HeldNumbers | undefined;
-  /** What the organization held, per series, the first time this process was asked about it. */
+  /** What the organization held for the series the last time it was asked (see `rememberFrom`). */
   let baselines = new Map<string, number>();
 
   type Series = Pick<InvoiceSeriesRef, 'tenantRef' | 'issuerCuit' | 'pointOfSale' | 'type'>;
   const seriesKey = (series: Series) =>
     [series.tenantRef ?? '', series.issuerCuit ?? '', series.pointOfSale, series.type].join('|');
 
-  /** Loads, once per series, the numbers the organization holds that this process does not remember. */
+  /** Learns the numbers the organization holds that this process does not remember. */
   const remember = async (series: Series): Promise<void> => {
     const key = seriesKey(series);
-    if (!heldNumbers || baselines.has(key)) return;
+    if (!heldNumbers) return;
     baselines.set(
       key,
       await heldNumbers({

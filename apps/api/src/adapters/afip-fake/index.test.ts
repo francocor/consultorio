@@ -131,13 +131,14 @@ describe('a request that finishes after the caller gave up (JD-S4 R6-1)', () => 
 });
 
 describe('a fake that learns what the organization holds (JD-S4 R6-1)', () => {
-  it('numbers after what it is told, once per series, and keeps doing so after a reset', async () => {
+  it('numbers after what it is told, every time, and keeps doing so after a reset', async () => {
     const issuer = createFakeInvoiceIssuer();
     const cuit = nextCuit();
     const asked: unknown[] = [];
+    let held = 41;
     issuer.rememberFrom((series) => {
       asked.push(series);
-      return Promise.resolve(41);
+      return Promise.resolve(held);
     });
 
     expect(await issuer.lastAuthorized({ issuerCuit: cuit, pointOfSale: 1, type: 'FC' })).toEqual({
@@ -152,9 +153,15 @@ describe('a fake that learns what the organization holds (JD-S4 R6-1)', () => {
       status: 'issued',
       number: 42,
     });
-    expect(asked).toHaveLength(1);
+    // A voucher registered by hand in the meantime moves the numbering: the authority counts it too.
+    held = 50;
+    expect(await issuer.lastAuthorized({ issuerCuit: cuit, pointOfSale: 1, type: 'FC' })).toEqual({
+      status: 'ok',
+      number: 50,
+    });
+    expect(asked.length).toBeGreaterThan(1);
 
     issuer.reset();
-    expect(await issuer.issue(request(cuit), 'c')).toMatchObject({ status: 'issued', number: 42 });
+    expect(await issuer.issue(request(cuit), 'c')).toMatchObject({ status: 'issued', number: 51 });
   });
 });

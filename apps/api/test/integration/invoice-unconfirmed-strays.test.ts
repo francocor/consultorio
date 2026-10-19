@@ -72,10 +72,10 @@ describe('a parked invoice remembers the vouchers it knows of (JD-S4 R4-3, R5-1)
     const floor = await authorityLast(world, first.created.id);
     const t0 = Date.now();
     await markAwaiting(world, first.created.id, floor, t0);
-    // Somebody else issued a voucher at the number the first invoice expects, with other facts.
+    // Somebody else issued a voucher at the number the first invoice expects, for another amount.
     const foreign = await issueOutOfBand(
       world,
-      { invoiceId: first.created.id, document: DNI },
+      { invoiceId: first.created.id, totalCents: 99_000 },
       `foreign-${String(floor + 1)}`,
     );
     expect(foreign.number).toBe(floor + 1);

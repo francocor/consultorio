@@ -471,7 +471,10 @@ async function reconcile(
       const [owner] = await tx.select().from(invoice).where(eq(invoice.id, rival.invoiceId));
       if (!owner) continue;
       const ownerFacts = await factsOf(tx, owner, owner.issuerSnapshot?.cuit ?? step.issuer.cuit);
-      if (compareVoucher(found, ownerFacts) !== 'differs') contested = true;
+      // Another invoice's voucher states its own recipient: one that states another is not its voucher.
+      if (compareVoucher(found, ownerFacts, { otherRecipientIsForeign: true }) !== 'differs') {
+        contested = true;
+      }
     }
     if (contested || match) {
       return ambiguous({

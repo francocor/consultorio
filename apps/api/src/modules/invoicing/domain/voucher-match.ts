@@ -66,8 +66,17 @@ type Field = 'same' | 'differs' | 'unstated';
  * the ONLY field that is not the same the voucher is `unclear`, not `differs`: the invoice is parked
  * instead of treating its own voucher as foreign and sending it again (JD-S4 R6-6). Total, date, issuer and
  * the voucher a note cancels still tell a foreign voucher apart.
+ *
+ * `otherRecipientIsForeign` is for a comparison with an invoice that is NOT the one being reconciled (a
+ * rival that was replaced or parked): the hazard that makes a recipient-only difference `unclear` is
+ * sending the invoice's OWN voucher again, which a rival's comparison cannot cause. A voucher that states
+ * another recipient is simply not the rival's.
  */
-export function compareVoucher(found: Issued, facts: VoucherFacts): VoucherComparison {
+export function compareVoucher(
+  found: Issued,
+  facts: VoucherFacts,
+  options: { otherRecipientIsForeign?: boolean } = {},
+): VoucherComparison {
   const stated = <T>(value: T | undefined, same: (value: T) => boolean): Field =>
     value === undefined ? 'unstated' : same(value) ? 'same' : 'differs';
   const buyer = stated(found.buyerDocument, (document) =>
@@ -86,6 +95,7 @@ export function compareVoucher(found: Issued, facts: VoucherFacts): VoucherCompa
         ),
   ];
   if (fields.includes('differs')) return 'differs';
+  if (buyer === 'differs' && options.otherRecipientIsForeign) return 'differs';
   if (buyer !== 'same') return 'unclear';
   return fields.includes('unstated') ? 'unclear' : 'match';
 }

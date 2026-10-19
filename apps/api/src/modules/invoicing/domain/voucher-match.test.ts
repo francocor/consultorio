@@ -169,4 +169,15 @@ describe('a recipient that cannot be told is not "another voucher" (JD-S4 R6-6)'
     // A buyer with a number is not anonymous.
     expect(compareVoucher(noBuyer('12345'), anonymous)).toBe('unclear');
   });
+
+  it('can be told that another recipient is foreign, for the comparison with an invoice that is not the one being reconciled', () => {
+    expect(
+      compareVoucher({ ...held, buyerDocument: null }, facts, { otherRecipientIsForeign: true }),
+    ).toBe('differs');
+    // Nothing else changes: a missing field is still unclear, and a match is still a match.
+    expect(
+      compareVoucher(silentAbout('buyerDocument'), facts, { otherRecipientIsForeign: true }),
+    ).toBe('unclear');
+    expect(compareVoucher(held, facts, { otherRecipientIsForeign: true })).toBe('match');
+  });
 });
