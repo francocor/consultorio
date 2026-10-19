@@ -5,8 +5,9 @@ import type { Role } from '@consultorio/contracts';
  * membership and the database, never from anything the client sent.
  *
  * - `kind: 'staff'` is a member of the organization's staff.
- * - `kind: 'patient'` is a patient portal session (a separate class, ADR-008). Patient sessions do
- *   not exist yet; the class is here so every staff route denies it by default from the start.
+ * - `kind: 'patient'` is the old marker of a patient session inside the staff shape. It is kept so
+ *   that every staff route denies it by default; a person signed in to the portal is a
+ *   `PortalActor` (below).
  */
 export interface Actor {
   kind: 'staff' | 'patient';
@@ -33,4 +34,27 @@ export interface Actor {
    * with a scope). Empty or absent without a live grant.
    */
   delegatedProfessionalIds?: readonly string[];
+}
+
+/**
+ * A person signed in to the patient portal (ADR-008), as the authorization engine sees them: a
+ * class apart from the staff `Actor`, with no roles, no grants and no professional profile. Built on
+ * the server from the portal session (`psid`) and the database, never from anything the client
+ * sent. It holds only the permissions of `PORTAL_ACTOR_PERMISSIONS`; every staff route denies it by
+ * default.
+ */
+export interface PortalActor {
+  kind: 'portal';
+  tenantId: string;
+  /** The portal identity (one per email per organization). */
+  identityId: string;
+  /**
+   * The link the person picked as the subject of what they read (`portal_link`), validated to
+   * belong to the identity. Null until they pick one. Every portal query runs for this subject only.
+   */
+  linkId: string | null;
+}
+
+export function isPortalActor(actor: Actor | PortalActor): actor is PortalActor {
+  return actor.kind === 'portal';
 }

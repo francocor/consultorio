@@ -11,7 +11,7 @@ import {
 } from '@consultorio/contracts';
 import { describe, expect, it } from 'vitest';
 
-import type { Actor } from './actor.js';
+import { isPortalActor, type Actor, type PortalActor } from './actor.js';
 import { can } from './can.js';
 
 const TENANT = '0190a000-0000-7000-8000-0000000000e1';
@@ -221,5 +221,65 @@ describe('the patient actor class (default deny on every staff route)', () => {
     ] as const) {
       expect(can(patient, permission).allowed, permission).toBe(false);
     }
+  });
+});
+
+describe('the portal actor (a person signed in to the portal: default deny outside the portal)', () => {
+  const portal: PortalActor = {
+    kind: 'portal',
+    tenantId: TENANT,
+    identityId: '0190a000-0000-7000-8000-0000000000c1',
+    linkId: '0190a000-0000-7000-8000-0000000000c2',
+  };
+
+  it('holds every permission of the portal actor, and only those', () => {
+    expect(PORTAL_ACTOR_PERMISSIONS.length).toBeGreaterThan(5);
+    for (const permission of PERMISSIONS) {
+      const held = PORTAL_ACTOR_PERMISSIONS.some((known) => known === permission);
+
+      expect(can(portal, permission).allowed, permission).toBe(held);
+    }
+  });
+
+  it('is told it reached a staff route, whatever the staff permission', () => {
+    for (const permission of ['patients.read', 'clinical.note.read', 'portal.manage'] as const) {
+      expect(can(portal, permission), permission).toEqual({
+        allowed: false,
+        reason: 'patient_on_staff_route',
+      });
+    }
+  });
+
+  it('is denied an action that is not in the catalog', () => {
+    expect(can(portal, 'portal.everything')).toEqual({ allowed: false, reason: 'unknown_action' });
+  });
+
+  it('is denied a resource of another organization', () => {
+    expect(can(portal, 'portal.self.read', { tenantId: OTHER_TENANT })).toEqual({
+      allowed: false,
+      reason: 'cross_tenant',
+    });
+    expect(can(portal, 'portal.self.read', { tenantId: TENANT })).toEqual({ allowed: true });
+  });
+
+  it('fails closed when the actor does not say whose it is', () => {
+    expect(can({ ...portal, tenantId: '' }, 'portal.self.read')).toEqual({
+      allowed: false,
+      reason: 'invalid_actor',
+    });
+    expect(can({ ...portal, identityId: '' }, 'portal.self.read')).toEqual({
+      allowed: false,
+      reason: 'invalid_actor',
+    });
+  });
+
+  it('is allowed before it has picked a subject: picking one is the portal reads, not the permission', () => {
+    expect(can({ ...portal, linkId: null }, 'portal.self.read')).toEqual({ allowed: true });
+  });
+
+  it('is told apart from a staff actor by its kind', () => {
+    expect(isPortalActor(portal)).toBe(true);
+    expect(isPortalActor(staff(['owner']))).toBe(false);
+    expect(isPortalActor({ ...staff(['patient']), kind: 'patient' })).toBe(false);
   });
 });

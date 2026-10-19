@@ -7,7 +7,7 @@ import {
   type Permission,
 } from '@consultorio/contracts';
 
-import type { Actor } from './actor.js';
+import { isPortalActor, type Actor, type PortalActor } from './actor.js';
 import { calendarAccess } from './calendar-scope.js';
 
 /** Why a request was denied. Goes to the audit entry, never to the client. */
@@ -44,6 +44,20 @@ function isPortalActorPermission(action: Permission): boolean {
   return PORTAL_ACTOR_PERMISSIONS.some((permission) => permission === action);
 }
 
+/**
+ * A person signed in to the portal holds the permissions of the portal actor and nothing else: a
+ * staff permission is a staff route, whatever its name (`portal.manage` is the staff's). Which
+ * patient they may read is decided after this check, by the subject of their session.
+ */
+function canPortal(actor: PortalActor, action: Permission, resource: Resource): Decision {
+  if (actor.tenantId === '' || actor.identityId === '') return deny('invalid_actor');
+  if (!isPortalActorPermission(action)) return deny('patient_on_staff_route');
+  if (resource.tenantId !== undefined && resource.tenantId !== actor.tenantId) {
+    return deny('cross_tenant');
+  }
+  return { allowed: true };
+}
+
 const deny = (reason: DenyReason): Decision => ({ allowed: false, reason });
 
 /**
@@ -59,8 +73,10 @@ const deny = (reason: DenyReason): Decision => ({ allowed: false, reason });
  * another tenant. Sharing-scope rules (which entries a professional may read) are separate and
  * apply after this check passes (`sharing-scope.ts`).
  */
-export function can(actor: Actor, action: string, resource: Resource = {}): Decision {
+export function can(actor: Actor | PortalActor, action: string, resource: Resource = {}): Decision {
   if (!isPermission(action)) return deny('unknown_action');
+
+  if (isPortalActor(actor)) return canPortal(actor, action, resource);
 
   if (actor.kind === 'patient') {
     // A patient session only ever holds the permissions of the portal actor, whatever else it claims
