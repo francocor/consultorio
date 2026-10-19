@@ -6,6 +6,7 @@ import {
 } from '@consultorio/contracts';
 import { sql } from 'drizzle-orm';
 import {
+  boolean,
   check,
   date,
   foreignKey,
@@ -262,3 +263,50 @@ export const documentShare = tenantTable(
 );
 
 export type DocumentShareRow = typeof documentShare.$inferSelect;
+
+/**
+ * A change to the e-mail or the birth date of a patient's record (JD-S5 R2-2), written by a trigger of
+ * `patient` in the same transaction as the change, whoever makes it. Two things follow from it:
+ *
+ * - the address the record HAD is told, with no link (`notice_email`; the worker sends the notice
+ *   and clears the address, so the previous address does not stay in a table), because the portal
+ *   notices of an access go to the record, and a record whose address was just replaced would send
+ *   them to whoever replaced it;
+ * - for seven days after it, giving anybody access to that patient through the portal needs an
+ *   owner or an administrator (`created_at` is what the rule reads).
+ *
+ * Nothing is deleted (the application role has no DELETE).
+ */
+export const patientRecordChange = tenantTable(
+  'patient_record_change',
+  {
+    patientId: uuid('patient_id').notNull(),
+    emailChanged: boolean('email_changed').notNull(),
+    birthDateChanged: boolean('birth_date_changed').notNull(),
+    /** The address the record had, until the notice is sent (or the week is over). Null: nobody to tell. */
+    noticeEmail: citext('notice_email'),
+    noticeSentAt: timestamp('notice_sent_at', { withTimezone: true }),
+  },
+  (table) => [
+    foreignKey({
+      name: 'patient_record_change_tenant_id_fkey',
+      columns: [table.tenantId],
+      foreignColumns: [tenant.id],
+    }),
+    foreignKey({
+      name: 'patient_record_change_patient_fkey',
+      columns: [table.tenantId, table.patientId],
+      foreignColumns: [patient.tenantId, patient.id],
+    }),
+    check(
+      'patient_record_change_what_check',
+      sql`${table.emailChanged} or ${table.birthDateChanged}`,
+    ),
+    index('patient_record_change_patient_idx').on(table.tenantId, table.patientId, table.createdAt),
+    index('patient_record_change_pending_idx')
+      .on(table.createdAt)
+      .where(sql`${table.noticeEmail} is not null`),
+  ],
+);
+
+export type PatientRecordChangeRow = typeof patientRecordChange.$inferSelect;

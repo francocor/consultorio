@@ -104,6 +104,17 @@ export const prescription = tenantTable(
      * attempt, a cancellation and a manual registration leave the row alone while it is in the future.
      */
     attemptLeaseUntil: timestamp('attempt_lease_until', { withTimezone: true }),
+    /**
+     * Who holds that lease (JD-S5 R2-7): a lease is released only by the attempt that took it, so an
+     * attempt that overran and finds another one in charge does not end the lease of the other.
+     */
+    attemptLeaseToken: uuid('attempt_lease_token'),
+    /**
+     * Until when a request to the provider that timed out may still be in flight (JD-S5 R2-3). The
+     * caller stopped waiting, the provider did not: until then nothing is sent again, nothing is
+     * cancelled here and nothing is registered by hand, because the provider may be about to issue.
+     */
+    providerInFlightUntil: timestamp('provider_in_flight_until', { withTimezone: true }),
   },
   (table) => [
     foreignKey({
