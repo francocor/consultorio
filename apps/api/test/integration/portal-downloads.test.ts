@@ -1,6 +1,6 @@
 import type { DownloadLinkResponse, PortalDownloadLinkResponse } from '@consultorio/contracts';
 import { and, asc, eq, sql } from 'drizzle-orm';
-import { afterAll, beforeAll, describe, expect, inject, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, inject, it, vi } from 'vitest';
 
 import { auditEvent } from '../../src/db/schema/audit.js';
 import { createRuntimeDb, type DbHandle } from '../../src/platform/db/pool.js';
@@ -293,6 +293,35 @@ describe('links to what other modules own', () => {
     expect(prescriptionFile.headers['content-disposition']).toContain('filename="receta.pdf"');
     const rows = (await audits('portal.download')).filter((row) => row.patientId === patientId);
     expect(rows.map((row) => row.resourceType).sort()).toEqual(['consent', 'prescription']);
+  });
+
+  it('serves a file the module renders as bytes, keeps it for that one download only, and audits it', async () => {
+    const { visitor, patientId } = await world.patientSession();
+    const rendered = Buffer.from('%PDF registro firmado y generado al pedirlo');
+    const consentId = consents.seed(patientId, {
+      status: 'signed',
+      file: { bytes: rendered, fileName: 'registro firmado.pdf', contentType: 'application/pdf' },
+    });
+    const before = world.storage.keys();
+
+    const link = await visitor.post(`/portal/consents/${consentId}/download-link`, {});
+    expect(link.statusCode, link.body).toBe(200);
+    // Asking for the link only checks the file exists: nothing is written to storage yet.
+    expect(world.storage.keys()).toEqual(before);
+    const file = await visitor.get(link.json<PortalDownloadLinkResponse>().url);
+
+    expect(file.statusCode).toBe(200);
+    expect(file.rawPayload.equals(rendered)).toBe(true);
+    expect(file.headers['content-type']).toBe('application/pdf');
+    expect(file.headers['content-disposition']).toContain('registro firmado.pdf');
+    // The copy made for the download goes when the response is over.
+    await vi.waitFor(() => {
+      expect(world.storage.keys()).toEqual(before);
+    });
+    const rows = (await audits('portal.download')).filter(
+      (row) => row.patientId === patientId && row.resourceId === consentId,
+    );
+    expect(rows).toHaveLength(1);
   });
 
   it("is not given for what the module does not hand out: not the patient's, or no file", async () => {

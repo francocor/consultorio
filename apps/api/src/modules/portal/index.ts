@@ -61,7 +61,11 @@ export type {
   PortalConsentPort,
   PortalFile,
   PortalPrescriptionPort,
+  PortalRenderedFile,
+  PortalStoredFile,
 } from './application/ports.js';
+export { adaptConsentModule } from './application/consent-adapter.js';
+export type { ConsentModulePortal } from './application/consent-adapter.js';
 export type { PortalSubject } from './application/subject.js';
 
 /** Registers what the portal takes with an organization that leaves: identities and links. */
@@ -174,7 +178,12 @@ export function createPortal(options: PortalOptions): Portal {
   });
   // The portal's door to files: ONE resource for the kind `document_download`, which dispatches on
   // what the link was issued for (a shared document, an invoice, a prescription, a consent).
-  const downloads = { tokens, consent: options.consent, prescriptions: options.prescriptions };
+  const downloads = {
+    tokens,
+    consent: options.consent,
+    prescriptions: options.prescriptions,
+    storage: options.storage,
+  };
   options.portalFileResources.register(createPortalFileResource(downloads));
   const files = downloadRoutes({
     withTenant: options.withTenant,

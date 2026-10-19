@@ -1,3 +1,5 @@
+import { randomUUID } from 'node:crypto';
+
 import type { PortalDownloadLinkResponse } from '@consultorio/contracts';
 
 import { audit } from '../../../platform/audit/writer.js';
@@ -5,12 +7,20 @@ import type { PortalActor } from '../../../platform/authz/actor.js';
 import { can } from '../../../platform/authz/can.js';
 import type { Tx } from '../../../platform/db/tenant-context.js';
 import { FileRefused, type FileResource } from '../../../platform/files/file-resources.js';
+import { AppError } from '../../../platform/http/problem.js';
+import type { ObjectStorage } from '../../../platform/storage/object-storage.js';
 import type { ActionTokens } from '../../../platform/tokens/index.js';
 import { findInvoiceFileForPatient } from '../../invoicing/index.js';
 import { attachmentHeader } from '../domain/attachment-header.js';
 
 import { readSharedDocument } from './document-shares.js';
-import type { PortalCall, PortalConsentPort, PortalPrescriptionPort } from './ports.js';
+import {
+  isRenderedFile,
+  type PortalCall,
+  type PortalConsentPort,
+  type PortalFile,
+  type PortalPrescriptionPort,
+} from './ports.js';
 import { bindSubject, resolveSubject } from './subject.js';
 
 /** What a patient can download from the portal. One door, four kinds of file. */
@@ -33,6 +43,19 @@ export interface DownloadDeps {
   tokens: ActionTokens;
   consent: PortalConsentPort | undefined;
   prescriptions: PortalPrescriptionPort | undefined;
+  /**
+   * Where a file a module renders on demand is kept for the length of one download. Absent: such a
+   * file cannot be delivered (the door answers "unavailable").
+   */
+  storage?: ObjectStorage | undefined;
+}
+
+/** Where the files rendered for one download sit inside the prefix of the organization. */
+export const RENDERED_FILE_SEGMENT = 'portal-rendered';
+
+/** True for a key the portal itself wrote for one download: the door removes it once it is sent. */
+export function isRenderedKey(tenantId: string, key: string): boolean {
+  return key.startsWith(`t/${tenantId}/${RENDERED_FILE_SEGMENT}/`);
 }
 
 /** A file to hand over: where it is in storage, what it is and what to call it. */
@@ -51,6 +74,31 @@ function servedType(contentType: string | null): string {
 }
 
 /**
+ * Hands a file a module returned over as a `DownloadFile`. A file in storage is served from where
+ * it is. A rendered file is written to storage only when it is going to be delivered (`deliver`);
+ * asking for the link only needs to know it exists.
+ */
+async function toDownload(
+  deps: DownloadDeps,
+  call: PortalCall,
+  file: PortalFile,
+  deliver: boolean,
+): Promise<DownloadFile> {
+  const patientId = call.subject.patientId;
+  if (!isRenderedFile(file)) return { ...file, patientId };
+  if (!deliver)
+    return { objectKey: '', contentType: file.contentType, fileName: file.fileName, patientId };
+  if (!deps.storage) throw new AppError('service_unavailable');
+  const objectKey = `t/${call.actor.tenantId}/${RENDERED_FILE_SEGMENT}/${randomUUID()}`;
+  await deps.storage.put(call.actor.tenantId, objectKey, {
+    body: file.bytes,
+    contentType: file.contentType,
+    contentLength: file.bytes.length,
+  });
+  return { objectKey, contentType: file.contentType, fileName: file.fileName, patientId };
+}
+
+/**
  * Finds the file of a resource FOR THE SUBJECT of the call, or null: it does not exist, it is not
  * the subject's, it is not shared with them any more, or the module that owns it has no file for it.
  * Asking for the link and using the link both come through here, so access is decided again when
@@ -62,7 +110,9 @@ export async function findDownload(
   call: PortalCall,
   kind: DownloadKind,
   id: string,
+  options: { deliver?: boolean } = {},
 ): Promise<DownloadFile | null> {
+  const deliver = options.deliver ?? false;
   const patientId = call.subject.patientId;
   switch (kind) {
     case 'document': {
@@ -89,11 +139,11 @@ export async function findDownload(
     }
     case 'prescription': {
       const file = await deps.prescriptions?.document(tx, { ...call, prescriptionId: id });
-      return file ? { ...file, patientId } : null;
+      return file ? toDownload(deps, call, file, deliver) : null;
     }
     case 'consent': {
       const file = await deps.consent?.document(tx, { ...call, consentId: id });
-      return file ? { ...file, patientId } : null;
+      return file ? toDownload(deps, call, file, deliver) : null;
     }
   }
 }
@@ -163,6 +213,7 @@ export function createPortalFileResource(deps: DownloadDeps): FileResource<Porta
         { actor: input.actor, subject, auditActor: input.auditActor },
         kind,
         redeemed.subjectId,
+        { deliver: true },
       );
       if (!file) throw refused('portal_download_not_available', subject.patientId);
 

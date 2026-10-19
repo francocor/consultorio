@@ -10,6 +10,7 @@ import { FileRefused, type FileResourceRegistry } from '../../../platform/files/
 import { AppError } from '../../../platform/http/problem.js';
 import type { ObjectStorage } from '../../../platform/storage/object-storage.js';
 import {
+  isRenderedKey,
   issueDownloadLink,
   type DownloadDeps,
   type DownloadKind,
@@ -134,6 +135,13 @@ export function downloadRoutes(deps: DownloadRoutesDeps) {
         if (!deps.storage) throw new AppError('service_unavailable');
         const stored = await deps.storage.get(actor.tenantId, delivery.objectKey);
         if (!stored) throw new AppError('not_found');
+        // A file rendered for this download is not kept: it goes when the response is over.
+        if (isRenderedKey(actor.tenantId, delivery.objectKey)) {
+          const storage = deps.storage;
+          reply.raw.once('close', () => {
+            void storage.remove(actor.tenantId, delivery.objectKey).catch(() => undefined);
+          });
+        }
         return reply
           .header('content-type', delivery.contentType)
           .header('content-disposition', delivery.contentDisposition)

@@ -33,12 +33,27 @@ export interface PortalCall {
   auditActor: AuditActor;
 }
 
-/** A file the module renders for a download: where it sits in storage and what to call it. */
-export interface PortalFile {
+/** A file the module keeps in storage: where it sits and what to call it. */
+export interface PortalStoredFile {
   objectKey: string;
   fileName: string;
   contentType: string;
 }
+
+/**
+ * A file the module renders on demand (a PDF made from the signed record, for instance) and hands
+ * over as bytes. The portal stores it for the length of one download, under a key of its own that
+ * it removes when the response ends, and serves it through the same single-use link as any other.
+ */
+export interface PortalRenderedFile {
+  bytes: Buffer;
+  fileName: string;
+  contentType: string;
+}
+
+export type PortalFile = PortalStoredFile | PortalRenderedFile;
+
+export const isRenderedFile = (file: PortalFile): file is PortalRenderedFile => 'bytes' in file;
 
 export interface PortalConsentPort {
   /** The consents of the subject: pending, signed, revoked, expired. */
