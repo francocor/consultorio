@@ -8,6 +8,8 @@ import {
   CONSENT_REQUEST_STATUSES,
   CONSENT_SIGNER_KINDS,
   CONSENT_TEMPLATE_STATUSES,
+  CreateConsentTemplateRequest,
+  UpdateConsentTemplateRequest,
 } from './consent.js';
 import { ERROR_CATALOG } from './errors.js';
 
@@ -49,5 +51,46 @@ describe('consent catalogues', () => {
       expect(ERROR_CATALOG, code).toHaveProperty(code);
       expect(entry.i18nKey, code).toBe(`errors.${code}`);
     }
+  });
+});
+
+describe('template requests', () => {
+  const valid = { title: 'Extracción dental', body: 'Autorizo la extracción.' };
+
+  it('accepts a title and a text, with an optional specialty and starter', () => {
+    expect(CreateConsentTemplateRequest.safeParse(valid).success).toBe(true);
+    expect(
+      CreateConsentTemplateRequest.safeParse({
+        ...valid,
+        specialty: 'odontology',
+        starterKey: 'odontology_extraction',
+        appointmentTypeId: null,
+      }).success,
+    ).toBe(true);
+  });
+
+  it('refuses a blank title, a blank text, a text that is too long and a specialty that is not a key', () => {
+    for (const bad of [
+      { ...valid, title: '   ' },
+      { ...valid, body: '   \t ' },
+      { ...valid, body: 'x'.repeat(20_001) },
+      { ...valid, specialty: 'Odontología' },
+    ]) {
+      expect(
+        CreateConsentTemplateRequest.safeParse(bad).success,
+        JSON.stringify(bad).slice(0, 40),
+      ).toBe(false);
+    }
+  });
+
+  it('knows no field beyond its own: a tenant or a patient never comes in the body', () => {
+    expect(CreateConsentTemplateRequest.safeParse({ ...valid, tenantId: 'x' }).success).toBe(false);
+    expect(UpdateConsentTemplateRequest.safeParse({ patientId: 'x' }).success).toBe(false);
+  });
+
+  it('needs at least one change to edit a template', () => {
+    expect(UpdateConsentTemplateRequest.safeParse({}).success).toBe(false);
+    expect(UpdateConsentTemplateRequest.safeParse({ specialty: null }).success).toBe(true);
+    expect(UpdateConsentTemplateRequest.safeParse({ body: 'Nuevo texto.' }).success).toBe(true);
   });
 });

@@ -582,6 +582,20 @@
       "when": 1792384681517,
       "tag": "0505_matricula_operator_note",
       "breakpoints": true
+    },
+    {
+      "idx": 83,
+      "version": "7",
+      "when": 1792384681518,
+      "tag": "0510_consent_templates",
+      "breakpoints": true
+    },
+    {
+      "idx": 84,
+      "version": "7",
+      "when": 1792386974914,
+      "tag": "0512_consent_signing",
+      "breakpoints": true
     }
   ]
 }

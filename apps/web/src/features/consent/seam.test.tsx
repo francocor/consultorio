@@ -12,9 +12,14 @@ import slots from './slots.js';
 
 const PATIENT = '0190a000-0000-7000-8000-0000000000c1';
 const boot = bootFor('Centro Médico Aillu');
-const routes = { 'GET /api/worklist/count': () => jsonResponse({ open: 0 }) };
+const routes = {
+  'GET /api/worklist/count': () => jsonResponse({ open: 0 }),
+  'GET /api/consent/templates': () => jsonResponse({ templates: [] }),
+  'GET /api/consent/appointment-types': () => jsonResponse({ requirements: [] }),
+  [`GET /api/patients/${PATIENT}/consents`]: () => jsonResponse({ consents: [] }),
+};
 
-describe('the consent seam (route, navigation entry and patient tab: stubs of Stage 5)', () => {
+describe('the consent registrations (route, navigation entry, patient tab and appointment warning)', () => {
   it.each([['owner'], ['admin'], ['professional']] as const)(
     'opens /consents for %s, who manage the templates',
     async (role) => {
@@ -52,6 +57,14 @@ describe('the consent seam (route, navigation entry and patient tab: stubs of St
     expect(screen.queryByRole('link', { name: 'Consentimientos' })).not.toBeInTheDocument();
   });
 
+  it('registers the warning of the appointment drawer for whoever reads the schedule', () => {
+    const warning = defaultRegistry().slots.find(
+      (piece) => piece.slot === 'appointment-drawer' && piece.id === 'consent.warning',
+    );
+
+    expect(warning).toMatchObject({ anyOf: ['scheduling.read'] });
+  });
+
   it('registers a tab of the patient record for whoever asks for consents or runs the templates', () => {
     const tab = defaultRegistry().slots.find(
       (piece) => piece.slot === 'patient-detail-tab' && piece.id === 'consent.list',
@@ -87,12 +100,12 @@ describe('the consent seam (route, navigation entry and patient tab: stubs of St
       });
 
     it.each([['professional'], ['reception'], ['admin']] as const)(
-      'shows %s where the consents of the patient will be',
+      'mounts the consents of the patient for %s',
       async (role) => {
         openAs(role);
 
         expect(
-          await screen.findByText('Los consentimientos de este paciente aparecerán aquí.'),
+          await screen.findByText('Este paciente no tiene consentimientos'),
         ).toBeInTheDocument();
       },
     );
@@ -101,9 +114,7 @@ describe('the consent seam (route, navigation entry and patient tab: stubs of St
       openAs('patient');
 
       await screen.findAllByRole('navigation');
-      expect(
-        screen.queryByText('Los consentimientos de este paciente aparecerán aquí.'),
-      ).not.toBeInTheDocument();
+      expect(screen.queryByText('Este paciente no tiene consentimientos')).not.toBeInTheDocument();
     });
   });
 });
