@@ -1304,17 +1304,17 @@ Start: S5.03, S5.10. Done when: staff manage templates, request and record conse
 
 Start: all tracks merged. Done when: the demo tenant has consents, prescriptions and portal accounts, and demo emails are readable inside the app. Verify: default plus the gap check. Rollback: default.
 
-- [ ] 5.47 `db/seed/demo/stage5/{consent,prescriptions,portal}.ts`: template with two versions, signed and revoked consents, prescriptions issued through the demo fake, a verified matricula for the demo professional, portal identities with self and representative links; registered in `contributors.ts`. [DEM-04, DEM-02, DEM-03] Test: gap check; deterministic content.
-- [ ] 5.48 Demo outbox: the demo `EmailSender` fake persists captured messages to `demo_outbox` (platform table, migration `0590_demo_outbox.sql`, removed by `demo.reset`) and the operator dev console lists them, so the demo portal code can be read without sending anything. [DEM-03, DEM-06] Test: demo email never reaches SMTP; the outbox shows the code; reset clears it.
-- [ ] 5.49 Reset timing with Stage 5 data under 60 s. [DEM-05] Test: timing test.
+- [x] 5.47 `db/seed/demo/stage5/{consent,prescriptions,portal}.ts`: template with two versions, signed and revoked consents, prescriptions issued through the demo fake, a verified matricula for the demo professional, portal identities with self and representative links; registered in `contributors.ts`. [DEM-04, DEM-02, DEM-03] Test: gap check; deterministic content. (Done at Stage 5 track C: `db/seed/demo/stage5/{consent,prescriptions,portal,matricula,snapshot,shared,index}.ts` through the real services; the exemptions of `consent` and `prescriptions` and four of the five of `portal` are gone; `demo-stage5.test.ts` proves the content, the determinism and the run without the operator.)
+- [x] 5.48 Demo outbox: the demo `EmailSender` fake persists captured messages to `demo_outbox` (platform table, migration `0590_demo_outbox.sql`, removed by `demo.reset`) and the operator dev console lists them, so the demo portal code can be read without sending anything. [DEM-03, DEM-06] Test: demo email never reaches SMTP; the outbox shows the code; reset clears it. (Done at Stage 5 track C: `adapters/demo-outbox/`, migration 0590 that also replaces `app.demo_reset`, the tab `features/operator/dev/demo-outbox`. Outside production the development catcher still receives a copy, which the browser suites read; in production nothing is forwarded.)
+- [x] 5.49 Reset timing with Stage 5 data under 60 s. [DEM-05] Test: timing test. (Done: `demo-stage5.test.ts`, 10 to 12 s measured against the 60 s requirement.)
 
 ## S5.13 Stage 5 gate (~200) [Track C]
 
 Start: S5.12. Done when: the Stage 5 demo runs locally end to end. Verify: the e2e spec plus a fresh review. Rollback: default.
 
-- [ ] 5.50 `e2e/stage5-demo.spec.ts`: operator verifies a matricula, the professional prescribes, the patient signs a consent and downloads the prescription from the portal. [ERX-01, CNS-04, POR-08, POR-09] Test: that spec.
-- [ ] 5.51 `docs/security/asvs-l2-portal.md` checklist with evidence links, then a fresh-context review (`judgment-day`) of portal isolation, consent integrity and prescription access; fix findings. Test: review report attached.
-- [ ] 5.52 Update `docs/external-dependencies.md` (e-Rx provider: local adapter in use, real deferred) and re-run `sdd-init`. Test: none.
+- [x] 5.50 `e2e/stage5-demo.spec.ts`: operator verifies a matricula, the professional prescribes, the patient signs a consent and downloads the prescription from the portal. [ERX-01, CNS-04, POR-08, POR-09] Test: that spec. (Done at Stage 5 track C: at 360 px, axe and width on every screen, the sign-in code read in the demo outbox.)
+- [ ] 5.51 `docs/security/asvs-l2-portal.md` checklist with evidence links, then a fresh-context review (`judgment-day`) of portal isolation, consent integrity and prescription access; fix findings. Test: review report attached. (Partly done at Stage 5 track C: the checklist is written, `test/policy/stage5-{routes,audit}.ts` pin the category and the audit author of every route, and `test/security/stage5-isolation.test.ts` holds the probes. The fresh-context Judgment Day is left to the orchestrator: this box stays open until its report is attached.)
+- [x] 5.52 Update `docs/external-dependencies.md` (e-Rx provider: local adapter in use, real deferred) and re-run `sdd-init`. Test: none. (Done at Stage 5 track C: the e-Rx row and the "Stage 5 provider" section. `sdd-init` has no script in the repository, it is the orchestrator's skill: not re-run here.)
 
 ## S5.D Deferred real-provider adapter (no gate depends on it)
 
