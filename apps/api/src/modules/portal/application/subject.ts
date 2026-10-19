@@ -1,5 +1,5 @@
 import type { PortalMeResponse, PortalRelation } from '@consultorio/contracts';
-import { and, asc, eq, inArray } from 'drizzle-orm';
+import { and, asc, eq, inArray, sql } from 'drizzle-orm';
 
 import { portalIdentity, portalLink } from '../../../db/schema/portal.js';
 import type { PortalActor } from '../../../platform/authz/actor.js';
@@ -71,9 +71,16 @@ export type WithPortalSubject = <T>(
  */
 export function createWithPortalSubject(withTenant: WithTenant): WithPortalSubject {
   return (actor, work) =>
-    withTenant({ tenantId: actor.tenantId, userId: SYSTEM_USER_ID }, async (tx) =>
-      work(tx, await resolveSubject(tx, actor)),
-    );
+    withTenant({ tenantId: actor.tenantId, userId: SYSTEM_USER_ID }, async (tx) => {
+      const subject = await resolveSubject(tx, actor);
+      // The functions of the database that read what a policy hides from a patient's session
+      // (the documents shared with them) answer only for this link and this identity.
+      await tx.execute(
+        sql`select set_config('app.portal_link_id', ${subject.linkId}, true),
+                   set_config('app.portal_identity_id', ${subject.identityId}, true)`,
+      );
+      return work(tx, subject);
+    });
 }
 
 /** The links that matter to the person: those that give access, and those that were suspended. */

@@ -6,6 +6,8 @@
 export const exemptions: Record<string, string> = {
   portal_identity: 'Seeded by the Stage 5 demo seed (S5.12).',
   portal_link: 'Seeded by the Stage 5 demo seed (S5.12).',
+  document_share:
+    'Seeded by the Stage 5 demo seed (S5.12): a document shared with the demo patient.',
   portal_session:
     'A session lives 12 hours at most and is made by a sign-in; the demo seed signs nobody in.',
 };

@@ -33,6 +33,7 @@ import type { IdentityDeps } from './application/identities.js';
 import { createPortalSessions } from './application/sessions.js';
 import type { SignInDeps } from './application/sign-in.js';
 import { createWithPortalSubject } from './application/subject.js';
+import { documentRoutes } from './http/document-routes.js';
 import { portalRoutes } from './http/portal-routes.js';
 import { publicRoutes } from './http/public-routes.js';
 import { sessionRoutes } from './http/session-routes.js';
@@ -114,6 +115,13 @@ export function createPortal(options: PortalOptions): Portal {
     origins: options.origins,
     signIn,
   });
+  const shares = documentRoutes({
+    withTenant: options.withTenant,
+    auditDeny: options.auditDeny,
+    email: options.email,
+    origins: options.origins,
+    clock,
+  });
   const withPortalSubject = createWithPortalSubject(options.withTenant);
   const portal = portalRoutes({
     withTenant: options.withTenant,
@@ -157,6 +165,7 @@ export function createPortal(options: PortalOptions): Portal {
           }),
       });
       staff(app);
+      shares(app);
       pages(app);
       sessions(app);
       portal(app);

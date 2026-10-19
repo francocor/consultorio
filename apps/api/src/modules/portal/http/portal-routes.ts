@@ -1,6 +1,7 @@
 import {
   PortalAppointmentResponse,
   PortalAppointmentsResponse,
+  PortalDocumentsResponse,
   PortalMeResponse,
   PortalSubjectRequest,
 } from '@consultorio/contracts';
@@ -8,6 +9,7 @@ import type { FastifyInstance, FastifyRequest } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 
+import { audit } from '../../../platform/audit/writer.js';
 import type { PortalActor } from '../../../platform/authz/actor.js';
 import type { AuthzOptions } from '../../../platform/authz/guard.js';
 import { SYSTEM_USER_ID, type WithTenant } from '../../../platform/db/tenant-context.js';
@@ -19,6 +21,7 @@ import {
   readAppointments,
   type AppointmentDeps,
 } from '../application/appointments.js';
+import { listSharedDocuments } from '../application/document-shares.js';
 import type { PortalSessions } from '../application/sessions.js';
 import {
   readMe,
@@ -147,6 +150,34 @@ export function portalRoutes(deps: PortalRoutesDeps) {
         return deps.withPortalSubject(actor, (tx, subject) =>
           readAppointments(tx, deps.appointments, subject),
         );
+      },
+    );
+
+    typed.get(
+      '/portal/documents',
+      {
+        config: {
+          readOnly: 'read',
+          auth: 'portal',
+          portalPermission: 'portal.document.read',
+          audits: ['portal.read'],
+        },
+        schema: { querystring: NoQuery, response: { 200: PortalDocumentsResponse } },
+      },
+      async (request) => {
+        const { actor } = portalCaller(request);
+        return deps.withPortalSubject(actor, async (tx, subject) => {
+          const documents = await listSharedDocuments(tx);
+          await audit(tx, {
+            action: 'portal.read',
+            outcome: 'allow',
+            actor: request.auditActor,
+            resourceType: 'document',
+            patientId: subject.patientId,
+            metadata: { section: 'documents', count: documents.length },
+          });
+          return { documents };
+        });
       },
     );
 

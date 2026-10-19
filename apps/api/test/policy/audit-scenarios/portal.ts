@@ -14,7 +14,7 @@ export const PORTAL_SCENARIOS: Record<(typeof PORTAL_AUDIT_ACTIONS)[number], Aud
   'portal.identity.deactivated': t('portal-identity.test.ts'),
   'portal.signin.success': t('portal-signin.test.ts'),
   'portal.signin.failure': t('portal-signin.test.ts'),
-  'portal.read': { pending: 'S5.08 (task 5.31): a portal read' },
+  'portal.read': t('portal-documents.test.ts'),
   'portal.download': { pending: 'S5.09 (task 5.35): a session-bound download' },
   'portal.profile.changed': { pending: 'S5.08 (task 5.34): contact data changed' },
   'portal.denied': t('portal-isolation.test.ts'),

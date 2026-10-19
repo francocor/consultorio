@@ -31,6 +31,10 @@ export {
 export { createDocumentJobs } from './application/jobs.js';
 export type { DocumentJobs, DocumentJobsDeps } from './application/jobs.js';
 export type { RejectionNotice, ScanAlert } from './application/scan-job.js';
+// The patient portal (Stage 5, track B): who may share a document with its patient.
+export { loadDocumentForSharing } from './application/sharing-source.js';
+export type { DocumentForSharing } from './application/sharing-source.js';
+export { DocumentRefused } from './application/refusal.js';
 export { SCAN_JOB } from './application/uploads.js';
 
 /** Registers what documents contributes to the cancellation export: one part per classification. */

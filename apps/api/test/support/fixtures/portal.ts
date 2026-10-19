@@ -1,4 +1,4 @@
-import { randomBytes } from 'node:crypto';
+import { randomBytes, randomUUID } from 'node:crypto';
 
 import { sql } from 'drizzle-orm';
 
@@ -12,11 +12,16 @@ import { insertPatient, returningId, unique, type TenantTableFixture } from '../
 
 type Tx = Parameters<TenantTableFixture['insert']>[0];
 
-async function insertIdentity(tx: Tx, tenantId: string): Promise<string> {
+async function insertIdentity(
+  tx: Tx,
+  tenantId: string,
+  overrides?: Readonly<Record<string, string>>,
+): Promise<string> {
   return returningId(
     tx,
-    sql`INSERT INTO portal_identity (tenant_id, email)
-          VALUES (${tenantId}, ${`${unique('portal')}@example.test`})
+    sql`INSERT INTO portal_identity (tenant_id, email, invited_patient_id)
+          VALUES (${tenantId}, ${`${unique('portal')}@example.test`},
+                  ${overrides?.['invited_patient_id'] ?? null})
           RETURNING id`,
   );
 }
@@ -53,5 +58,31 @@ export const fixtures: Record<string, TenantTableFixture> = {
                       now() + interval '12 hours')
               RETURNING id`,
       ),
+  },
+  // A share points at an administrative document and at the patient of that document; the isolation
+  // suite points either at another organization's row to prove the composite key refuses it.
+  document_share: {
+    insert: async (tx, tenantId, overrides) => {
+      const patientId = overrides?.['patient_id'] ?? (await insertPatient(tx, tenantId));
+      const documentId =
+        overrides?.['document_id'] ??
+        (await (async () => {
+          const id = randomUUID();
+          return returningId(
+            tx,
+            sql`INSERT INTO document (id, tenant_id, patient_id, category, classification, original_name,
+                                      declared_content_type, size_bytes, object_key, uploaded_by)
+                  VALUES (${id}, ${tenantId}, ${patientId}, 'id_copy', 'administrative', 'dni.pdf',
+                          'application/pdf', 1000, ${`t/${tenantId}/quarantine/${id}`}, ${randomUUID()})
+                  RETURNING id`,
+          );
+        })());
+      return returningId(
+        tx,
+        sql`INSERT INTO document_share (tenant_id, document_id, patient_id, shared_by)
+              VALUES (${tenantId}, ${documentId}, ${patientId}, ${randomUUID()})
+              RETURNING id`,
+      );
+    },
   },
 };

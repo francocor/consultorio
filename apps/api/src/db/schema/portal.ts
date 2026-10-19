@@ -18,6 +18,7 @@ import {
 } from 'drizzle-orm/pg-core';
 
 import { citext, tenantTable } from './_helpers.js';
+import { document } from './documents.js';
 import { patient } from './patients.js';
 import { tenant } from './tenant.js';
 
@@ -209,3 +210,55 @@ export const portalSession = tenantTable(
 );
 
 export type PortalSessionRow = typeof portalSession.$inferSelect;
+
+/**
+ * A document the staff shared with the patient (patient-portal "Documents shared with the
+ * patient"). The portal lists only these: an attachment nobody shared is invisible to the patient,
+ * whatever it is. A share is ended (`unshared_at`), never deleted, so the trail of who shared what
+ * stays. At most one live share per document.
+ *
+ * The portal does not read `document` itself: a clinical document is invisible to every
+ * transaction that is not a professional's, so the portal reads the metadata and the storage key of
+ * a SHARED document through two functions of the database (`app.portal_shared_documents` and
+ * `app.portal_shared_document`) that answer only for the link of the request.
+ */
+export const documentShare = tenantTable(
+  'document_share',
+  {
+    documentId: uuid('document_id').notNull(),
+    /** The patient the document is shared with: always the patient of the document. */
+    patientId: uuid('patient_id').notNull(),
+    sharedBy: uuid('shared_by').notNull(),
+    unsharedAt: timestamp('unshared_at', { withTimezone: true }),
+    unsharedBy: uuid('unshared_by'),
+  },
+  (table) => [
+    foreignKey({
+      name: 'document_share_tenant_id_fkey',
+      columns: [table.tenantId],
+      foreignColumns: [tenant.id],
+    }),
+    foreignKey({
+      name: 'document_share_document_fkey',
+      columns: [table.tenantId, table.documentId],
+      foreignColumns: [document.tenantId, document.id],
+    }),
+    foreignKey({
+      name: 'document_share_patient_fkey',
+      columns: [table.tenantId, table.patientId],
+      foreignColumns: [patient.tenantId, patient.id],
+    }),
+    check(
+      'document_share_unshared_check',
+      sql`(${table.unsharedAt} is null) = (${table.unsharedBy} is null)`,
+    ),
+    uniqueIndex('document_share_live_key')
+      .on(table.tenantId, table.documentId)
+      .where(sql`${table.unsharedAt} is null`),
+    index('document_share_patient_idx')
+      .on(table.tenantId, table.patientId)
+      .where(sql`${table.unsharedAt} is null`),
+  ],
+);
+
+export type DocumentShareRow = typeof documentShare.$inferSelect;

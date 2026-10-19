@@ -1,10 +1,14 @@
 import { randomUUID } from 'node:crypto';
 
 import type { PatientPortalResponse, PortalIdentityDto } from '@consultorio/contracts';
-import { type sql } from 'drizzle-orm';
+import { sql } from 'drizzle-orm';
 import type { LightMyRequestResponse } from 'fastify';
 import { expect } from 'vitest';
 
+import {
+  createMemoryObjectStorage,
+  type MemoryObjectStorage,
+} from '../../src/adapters/memory-storage/index.js';
 import type { patient } from '../../src/db/schema/patients.js';
 import { createPortalCodeSendJob } from '../../src/modules/portal/index.js';
 
@@ -45,6 +49,22 @@ export interface PortalWorld extends BookingWorld {
   onboard(patientId: string, body?: Record<string, unknown>): Promise<PortalIdentityDto>;
   /** What the staff screen of a patient shows. */
   portalOf(patientId: string, by?: TestSession): Promise<PatientPortalResponse>;
+  /** The object storage of the application: the files of the documents live here. */
+  storage: MemoryObjectStorage;
+  /**
+   * A document of the patient that passed its scan and is available, with its file in storage. A
+   * clinical one is written by the first professional, who is its author. Not shared with anybody.
+   */
+  documentFor(
+    patientId: string,
+    options?: {
+      clinical?: boolean;
+      name?: string;
+      bytes?: Buffer;
+      category?: string;
+      status?: 'available' | 'quarantined';
+    },
+  ): Promise<{ id: string; objectKey: string; bytes: Buffer }>;
   /** Signs an address with an active account in, on a browser of its own. */
   signInAs(email: string): Promise<Visitor>;
   /**
@@ -63,7 +83,8 @@ export async function createPortalWorld(
   runtime: Parameters<typeof createBookingWorld>[0],
   options: { slug: string; now?: Date },
 ): Promise<PortalWorld> {
-  const base = await createBookingWorld(runtime, options);
+  const storage = createMemoryObjectStorage();
+  const base = await createBookingWorld(runtime, { ...options, app: { storage } });
   const jobDefinitions = [
     ...base.jobDefinitions,
     createPortalCodeSendJob({ email: base.email, clock: () => base.now() }),
@@ -119,6 +140,44 @@ export async function createPortalWorld(
     ...base,
     jobDefinitions,
     runJobs: () => runPending(runtime.db, base.jobs, jobDefinitions),
+    storage,
+    documentFor: async (patientId, documentOptions = {}) => {
+      const id = randomUUID();
+      const clinical = documentOptions.clinical === true;
+      const status = documentOptions.status ?? 'available';
+      const bytes = documentOptions.bytes ?? Buffer.from(`%PDF-1.4 ${id}`);
+      const objectKey =
+        status === 'available'
+          ? `t/${base.tenant.id}/docs/${id}`
+          : `t/${base.tenant.id}/quarantine/${id}`;
+      await storage.put(base.tenant.id, objectKey, {
+        body: bytes,
+        contentType: 'application/pdf',
+        contentLength: bytes.length,
+      });
+      const category = documentOptions.category ?? (clinical ? 'lab_result' : 'id_copy');
+      await base.inTenant(async (tx) => {
+        if (clinical) {
+          await tx.execute(
+            sql`select set_config('app.professional_id', ${base.doctor.professionalId}, true)`,
+          );
+        }
+        await tx.execute(
+          sql`INSERT INTO document
+                (id, tenant_id, patient_id, category, classification, original_name,
+                 declared_content_type, content_type, size_bytes, status, object_key, sha256,
+                 scan_result, upload_completed_at, uploaded_by, author_professional_id)
+              VALUES (${id}, ${base.tenant.id}, ${patientId}, ${category},
+                      ${clinical ? 'clinical' : 'administrative'},
+                      ${documentOptions.name ?? 'documento.pdf'}, 'application/pdf',
+                      ${status === 'available' ? 'application/pdf' : null}, ${bytes.length},
+                      ${status}, ${objectKey}, ${status === 'available' ? 'a'.repeat(64) : null},
+                      ${status === 'available' ? 'clean' : null}, now(), ${randomUUID()},
+                      ${clinical ? base.doctor.professionalId : null})`,
+        );
+      });
+      return { id, objectKey, bytes };
+    },
     patientWith,
     invite,
     inviteOk,

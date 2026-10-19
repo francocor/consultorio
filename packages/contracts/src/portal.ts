@@ -227,3 +227,27 @@ export type PortalAppointmentsResponse = z.infer<typeof PortalAppointmentsRespon
 /** What confirming or cancelling answers with: the appointment as it is now. */
 export const PortalAppointmentResponse = z.strictObject({ appointment: PortalAppointmentDto });
 export type PortalAppointmentResponse = z.infer<typeof PortalAppointmentResponse>;
+
+// Documents shared with the patient ---------------------------------------------------------------
+
+/** A document the staff shared with the patient. The file is not in the list: it is asked for apart. */
+export const PortalDocumentDto = z.strictObject({
+  id: Id,
+  name: z.string(),
+  /** The category the organization filed it under (a lab result, a referral, ...). */
+  category: z.string(),
+  contentType: z.string().nullable(),
+  sizeBytes: z.number().int(),
+  sharedAt: Instant,
+});
+export type PortalDocumentDto = z.infer<typeof PortalDocumentDto>;
+
+export const PortalDocumentsResponse = z.strictObject({ documents: z.array(PortalDocumentDto) });
+export type PortalDocumentsResponse = z.infer<typeof PortalDocumentsResponse>;
+
+/** Whether a document is shared with its patient, for the staff screen of the document. */
+export const DocumentPortalShareResponse = z.strictObject({
+  shared: z.boolean(),
+  sharedAt: Instant.nullable(),
+});
+export type DocumentPortalShareResponse = z.infer<typeof DocumentPortalShareResponse>;
