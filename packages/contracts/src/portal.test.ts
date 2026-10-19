@@ -33,7 +33,9 @@ describe('portal catalogues', () => {
   });
 
   it('has an error catalog that is part of the API catalog', () => {
-    for (const [code, entry] of Object.entries(PORTAL_ERRORS)) {
+    // Typed as a plain catalog: once the track fills it in, it has its own literal shape.
+    const catalog: Readonly<Record<string, { status: number; i18nKey: string }>> = PORTAL_ERRORS;
+    for (const [code, entry] of Object.entries(catalog)) {
       expect(ERROR_CATALOG, code).toHaveProperty(code);
       expect(entry.i18nKey, code).toBe(`errors.${code}`);
     }
