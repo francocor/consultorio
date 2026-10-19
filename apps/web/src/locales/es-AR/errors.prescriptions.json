@@ -1,1 +1,13 @@
-{}
+{
+  "prescription_provider_not_connected": "La receta electrónica no está conectada en esta organización. Pida al titular o a un administrador que la active en la configuración.",
+  "prescription_matricula_unverified": "Su matrícula todavía no fue verificada por la plataforma, así que no puede emitir recetas. El resto de su trabajo clínico no se ve afectado.",
+  "prescription_patient_document_required": "El paciente no tiene documento cargado. Complete el documento en su ficha para poder emitir la receta.",
+  "prescription_not_editable": "Una receta emitida no se puede modificar. Anúlela y emita una nueva con los datos correctos.",
+  "prescription_not_cancellable": "Esta receta ya no se puede anular porque fue dispensada, venció o ya estaba anulada.",
+  "prescription_cancel_refused": "El proveedor rechazó la anulación. La receta sigue emitida.",
+  "prescription_provider_unavailable": "No pudimos comunicarnos con el proveedor de recetas. No se hizo ningún cambio: intente nuevamente en unos minutos.",
+  "prescription_awaiting_reconciliation": "Todavía no sabemos si el proveedor emitió esta receta. Espere a que se verifique antes de registrarla a mano o anularla.",
+  "prescription_not_pending": "Solo se puede reintentar o registrar a mano una receta que el proveedor todavía no confirmó.",
+  "prescription_identifier_taken": "Ese identificador ya corresponde a otra receta de la organización.",
+  "prescription_document_not_ready": "El documento de la receta todavía no está listo. Intente de nuevo en unos minutos."
+}

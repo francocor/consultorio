@@ -575,6 +575,20 @@
       "when": 1792368208373,
       "tag": "0496_invoice_cae_unique",
       "breakpoints": true
+    },
+    {
+      "idx": 82,
+      "version": "7",
+      "when": 1792384661400,
+      "tag": "0530_prescriptions",
+      "breakpoints": true
+    },
+    {
+      "idx": 83,
+      "version": "7",
+      "when": 1792384667346,
+      "tag": "0532_local_erx",
+      "breakpoints": true
     }
   ]
 }
