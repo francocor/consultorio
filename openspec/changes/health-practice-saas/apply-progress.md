@@ -2694,3 +2694,36 @@ Migrations: none. Files: `application/opt-out.ts` (`optOutWhatsapp`, `OptOutScop
 Two test-setup lessons: the queued messages of a family fixture must be created after every member was reminded (the job that sends the next reminder would send them), and the fixture needs its own booking weeks (the file books by a slot counter).
 
 Verification of the refinement: `pnpm install --frozen-lockfile` (unchanged lockfile), `typecheck`, `lint`, `format:check`, `build` and `db:check` clean; `pnpm test` 384 files, 4877 passed plus 1 skipped, with one timeout of `platform/pdf/render.test.ts` under load that passes alone (12 of 12); targeted integration (whatsapp inbound, attribution and loop, waitlist fairness, entries and offers, global opt-out, listener, preferences, channels, tokens, booking confirmation, `demo-stage3`, `scheduling-worklist`, `public-tokens`): 15 files, 253 tests green; e2e `stage3-*` on 4900/3900/9900 with 2 workers: 17 passed. The four containers of the e2e stack were removed by id.
+
+## Stage 4 integration 3 (B7)
+
+`feat/owner-decisions-d22-b7` (tip `a978ac6`, cut from `9cd11e9`) merged with `--no-ff` into `feat/stage-4-revenue` after the Stage 4 close commit (`d42464b`, task 4.66 done). The merge commit is `c284aa5`. B7 has no migrations: `db:restamp` found nothing to change and `db:check` reports no drift (90 migrations recorded).
+
+### Conflicts
+
+Git reported two textual conflicts; the rest auto-merged and was read afterwards.
+
+| File | Resolution |
+| ---- | ---------- |
+| `apps/web/src/locales/es-AR/scheduling.json` | Both sides added a line at the same place: Stage 4 `worklist.kind.invoice_attention`, B7 `worklist.replyReason.email_optout_unconfirmed`. Both kept. |
+| `openspec/changes/health-practice-saas/apply-progress.md` | Both sides appended sections: the Stage 4 Judgment Day sections (rounds 1 to 8 and the approval) and the B7 section "Owner decisions D22/B7". Both kept, B7 after. |
+
+Checked by hand after the auto-merge:
+
+- `opt-out.ts` still reports a listener failure through `describeFailure` (Stage 3 hardening); B7 changed the rest of the file (the opt-out of all channels, the shared-number rules).
+- `WorklistItemCard.tsx`: B7 added the reply reason line (`replyReason`, only for the known `email_optout_unconfirmed`), and the Stage 4 invoice reasons are untouched; the two do not share a key.
+- B7 deleted `notifications-channel-fallback.test.ts` (replaced by `notifications-global-optout.test.ts`); nothing on Stage 4's side had changed it.
+
+### Fixes
+
+None needed: the merge was green without a fix commit.
+
+### Verification (tip `c284aa5`, Node v24, pnpm via corepack, a Docker shared with another agent)
+
+- `pnpm install --frozen-lockfile`, `pnpm typecheck`, `pnpm lint`, `pnpm format:check`: clean.
+- `pnpm test` (unit): 387 files, 4966 tests passed and 1 failed, 1 skipped. The failure was a 5 s timeout of `scripts/new-migration.test.ts` under load; alone it passes (9 tests).
+- Full integration (Testcontainers, Postgres 17): 248 files passed and 1 skipped, 3751 tests passed, 4 skipped (1980 s), no failure.
+- `pnpm build`: green. `pnpm db:check`: no drift.
+- Full e2e (`E2E_WEB_PORT=4890 E2E_API_PORT=3890 E2E_MINIO_PORT=9890`, `--workers=2`): 214 passed, 0 failed (7.8 minutes).
+- Docker: `infra/Dockerfile` built; a fresh `postgres:17` with `infra/postgres/init/01-roles.sql`; `db:migrate` run twice (both: migrations applied, platform catalogs loaded; 90 migrations recorded; the three invoice wait columns exist); the image started as `api` with `NODE_ENV=production`, multi-tenant, KMS `aws`, `S3_BUCKET`, `CLAMAV_HOST`, SMTP starttls and `ADDRESS_HASH_PEPPER`: `GET /health` answered `{"status":"ok"}`. Removed by id: the postgres and api containers, the image, and the three containers of the e2e stack (postgres, MinIO, Mailpit). A `postgres:17` (`06078eadeeb1`) that appeared during the run belongs to another agent and was left.
+- Incident: none. Logs are in `$TEMP/s4close-*.log`.
