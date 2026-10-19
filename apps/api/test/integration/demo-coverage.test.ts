@@ -31,7 +31,6 @@ const RESET_BUDGET_MS = 30_000;
  * tables to the seed or, with a reason, to this list: the test fails until one of the two happens.
  */
 const CORE_NO_SEED_DATA: Record<string, string> = {
-  action_token: 'One-time links are created by people inviting or resetting; none is pending.',
   job_execution: 'Idempotence markers of background jobs; created when a job runs.',
   login_challenge: 'A pending second-factor step; exists for minutes while somebody signs in.',
   patient_rights_request:
@@ -79,6 +78,8 @@ beforeAll(async () => {
     consentText: { textKey: 'consent.data_processing', version: '1' },
     clock: () => new Date('2026-03-02T12:00:00Z'),
     documents: { storage: createMemoryObjectStorage(), scanner: createFakeScanner() },
+    // The platform operator verifies the cardiologist, who then prescribes (Stage 5 demo seed).
+    operatorDb: operator.db.db,
   };
 }, 120_000);
 

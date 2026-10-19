@@ -1,5 +1,6 @@
 import type { CreateUploadsRequest, Role } from '@consultorio/contracts';
 
+import type { FakePrescriptionProvider } from '../../../adapters/erx-fake/index.js';
 import { createAmendmentService } from '../../../modules/clinical/application/amendments.js';
 import { createNoteService, type Caller } from '../../../modules/clinical/application/notes.js';
 import { createScanJob } from '../../../modules/documents/application/scan-job.js';
@@ -7,6 +8,7 @@ import { createUploadService, SCAN_JOB } from '../../../modules/documents/applic
 import { findCareSourceAppointment } from '../../../modules/scheduling/application/care-source.js';
 import type { AuditActor } from '../../../platform/audit/writer.js';
 import type { Actor } from '../../../platform/authz/actor.js';
+import type { Db } from '../../../platform/db/pool.js';
 import { SYSTEM_USER_ID, type WithTenant } from '../../../platform/db/tenant-context.js';
 import { uuidv7 } from '../../../platform/db/uuid.js';
 import { EICAR, minimalJpeg, minimalPdf, minimalPng } from '../../../platform/files/test-files.js';
@@ -55,6 +57,17 @@ export interface Stage2Input {
   keys: Parameters<typeof createNoteService>[0]['keys'];
   clock: () => Date;
   documents: DemoDocumentsDeps | undefined;
+  /**
+   * The connection of the platform operator's database role (the only one that may verify a
+   * matricula). Absent when the seed runs without the operator: the demo then has no professional
+   * who may prescribe, and no prescription.
+   */
+  operatorDb?: Db | undefined;
+  /**
+   * The prescription provider the demo organizations use: the in-memory fake the process holds, so
+   * what the seed issues is known to the provider console. Absent: the seed uses a fake of its own.
+   */
+  prescriptionProvider?: FakePrescriptionProvider | undefined;
   reception: Person;
   people: ReadonlyMap<string, Person>;
   professionalIds: ReadonlyMap<string, string>;

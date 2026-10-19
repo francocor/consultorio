@@ -1,5 +1,6 @@
 import { eq, inArray, sql } from 'drizzle-orm';
 
+import type { FakePrescriptionProvider } from '../../../adapters/erx-fake/index.js';
 import { createAmendmentService } from '../../../modules/clinical/application/amendments.js';
 import { createNoteService, type Caller } from '../../../modules/clinical/application/notes.js';
 import type { PasswordHasher } from '../../../modules/identity/infrastructure/argon2.js';
@@ -17,6 +18,7 @@ import type { BookActor } from '../../../modules/scheduling/application/placemen
 import { instantAtLocalMinute } from '../../../modules/scheduling/domain/time.js';
 import { audit, type AuditActor } from '../../../platform/audit/writer.js';
 import type { TenantKeys } from '../../../platform/crypto/tenant-keys.js';
+import type { Db } from '../../../platform/db/pool.js';
 import { SYSTEM_USER_ID, type Tx, type WithTenant } from '../../../platform/db/tenant-context.js';
 import { uuidv7 } from '../../../platform/db/uuid.js';
 import { membershipLocation } from '../../schema/access.js';
@@ -71,6 +73,18 @@ export interface DemoSeedDeps {
    * documents (the seed cannot invent files that a download would not find).
    */
   documents?: DemoDocumentsDeps | undefined;
+  /**
+   * The connection of the platform operator's database role. Only that role may verify a matricula,
+   * so only with it can the demo have a professional who prescribes (the cardiologist). Without it
+   * the demo has none and no prescriptions.
+   */
+  operatorDb?: Db | undefined;
+  /**
+   * The prescription provider of the demo organizations: the in-memory fake the process holds, so the
+   * provider console knows what the seed issued. Without it the seed uses a fake of its own (a
+   * command-line seed runs in another process than the API).
+   */
+  prescriptionProvider?: FakePrescriptionProvider | undefined;
 }
 
 export interface SeededCredential {
@@ -429,6 +443,8 @@ export async function seedDemoTenant(
     keys: deps.keys,
     clock: deps.clock,
     documents: deps.documents,
+    operatorDb: deps.operatorDb,
+    prescriptionProvider: deps.prescriptionProvider,
     reception,
     people,
     professionalIds,
