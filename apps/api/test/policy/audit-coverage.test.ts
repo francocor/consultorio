@@ -14,6 +14,12 @@ import {
   WRITTEN_OUTSIDE_ROUTES,
   findStage4AuditProblems,
 } from './stage4-audit.js';
+import {
+  STAGE5_AUDIT_ACTIONS,
+  STAGE5_NO_AUDIT_ON_PURPOSE,
+  STAGE5_WRITTEN_OUTSIDE_ROUTES,
+  findStage5AuditProblems,
+} from './stage5-audit.js';
 
 /**
  * Audit coverage (audit-log, "Mandatory events"). Two rules keep the trail honest as the product
@@ -188,6 +194,80 @@ describe('the audit trail of Stage 4', () => {
       expect(findStage4AuditProblems(routes)).toEqual([
         'POST /invoices/:id/void is listed as auditing nothing but it declares invoice.rejected',
         'charge.flagged is listed as written outside the routes but POST /billing/more declares it',
+      ]);
+    });
+  });
+});
+
+/**
+ * Stage 5 (consent, prescriptions, the patient portal). The catalogue rule above is the floor; what
+ * a patient signed, what was prescribed and what the portal opened are what an owner shows an
+ * auditor, so:
+ *
+ * - every action of Stage 5 is proven by a test (never "pending") that also reads the trail back;
+ * - every action is written by a route, or says which other writer owns it;
+ * - a route of these modules that changes something declares what it audits, and the few that audit
+ *   nothing say why.
+ */
+describe('the audit trail of Stage 5', () => {
+  it('has a scenario for every action of consent, prescriptions and the portal, none of them pending', () => {
+    expect(STAGE5_AUDIT_ACTIONS.length).toBeGreaterThanOrEqual(23);
+    for (const action of STAGE5_AUDIT_ACTIONS) {
+      const scenario = AUDIT_SCENARIOS[action];
+
+      expect('test' in scenario, `${action} is still pending`).toBe(true);
+      if (!('test' in scenario)) continue;
+      const text = readFileSync(`${REPO}${scenario.test}`, 'utf8');
+      expect(text, `${scenario.test} does not read the audit trail back`).toMatch(
+        /auditEvent|audit_event|auditRows|audit\(|actions\b|trail/i,
+      );
+    }
+  });
+
+  it('finds an author for every action: a route declares it, or the table names the other writer', async () => {
+    const routes = await realRoutes();
+
+    expect(findStage5AuditProblems(routes)).toEqual([]);
+  });
+
+  describe('the check itself', () => {
+    const declared = (extra: Record<string, Declared> = {}) => {
+      const routes = new Map<string, Declared>();
+      for (const action of STAGE5_AUDIT_ACTIONS) {
+        if (action in STAGE5_WRITTEN_OUTSIDE_ROUTES) continue;
+        routes.set(`POST /portal/${action}`, [action]);
+      }
+      for (const route of Object.keys(STAGE5_NO_AUDIT_ON_PURPOSE)) routes.set(route, 'none');
+      for (const [route, audits] of Object.entries(extra)) routes.set(route, audits);
+      return routes;
+    };
+
+    it('accepts a complete picture', () => {
+      expect(findStage5AuditProblems(declared())).toEqual([]);
+    });
+
+    it('flags a route that declares nothing, one that audits nothing without saying why, and an action nobody writes', () => {
+      const routes = declared({
+        'POST /prescriptions/new-thing': undefined,
+        'POST /consents/unexplained': 'none',
+      });
+      routes.delete('POST /portal/consent.signed');
+
+      expect(findStage5AuditProblems(routes)).toEqual([
+        'POST /prescriptions/new-thing declares nothing about its audit trail',
+        'POST /consents/unexplained audits nothing and the table does not say why',
+        'consent.signed is written by no route and no other writer is named for it',
+      ]);
+    });
+
+    it('flags a table entry that went stale', () => {
+      const routes = declared();
+      routes.set('POST /webhooks/erx', ['prescription.cancelled']);
+      routes.set('POST /portal/more', ['consent.read']);
+
+      expect(findStage5AuditProblems(routes)).toEqual([
+        'POST /webhooks/erx is listed as auditing nothing but it declares prescription.cancelled',
+        'consent.read is listed as written outside the routes but POST /portal/more declares it',
       ]);
     });
   });
