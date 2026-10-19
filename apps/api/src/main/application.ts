@@ -163,7 +163,7 @@ export interface ApplicationOptions {
     console: boolean;
     providers: readonly DevProvider[];
     /** Which providers run on a simulator; the public boot payload tells the app. */
-    simulated?: { afip: boolean };
+    simulated?: { afip: boolean; erx?: boolean };
   };
   /**
    * The appointment event bus. Defaults to a new one per application; a test passes its own to

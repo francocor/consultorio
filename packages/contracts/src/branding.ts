@@ -97,10 +97,11 @@ export const BootPayload = z.strictObject({
   isDemo: z.boolean(),
   /**
    * Which providers of this deployment run on a local simulator (Stages 3 to 6). A screen that
-   * shows what a simulator produced says so: `afip` marks the invoices as test documents. Only
+   * shows what a simulator produced says so: `afip` marks the invoices as test documents and `erx`
+   * the prescriptions (Stage 5; absent means no, so a payload built before it still parses). Only
    * yes or no per provider; the deployment's settings never travel.
    */
-  localProviders: z.strictObject({ afip: z.boolean() }),
+  localProviders: z.strictObject({ afip: z.boolean(), erx: z.boolean().optional() }),
 });
 export type BootPayload = z.infer<typeof BootPayload>;
 

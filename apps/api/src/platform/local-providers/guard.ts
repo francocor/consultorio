@@ -20,6 +20,8 @@ export interface ProviderSelection {
   botChallenge: 'local' | 'turnstile';
   /** `AFIP_PROVIDER`: the issuer of electronic invoices (Stage 4). */
   afip: 'local' | 'afip' | 'off';
+  /** `ERX_PROVIDER`: the e-prescription platform (Stage 5). The real provider key arrives with its adapter. */
+  erx: 'local' | 'off';
 }
 
 const VARIABLE_OF: Record<keyof ProviderSelection, string> = {
@@ -27,6 +29,7 @@ const VARIABLE_OF: Record<keyof ProviderSelection, string> = {
   video: 'VIDEO_PROVIDER',
   botChallenge: 'BOT_CHALLENGE',
   afip: 'AFIP_PROVIDER',
+  erx: 'ERX_PROVIDER',
 };
 
 /** The names of the variables whose value is a local simulator, in a stable order. */
