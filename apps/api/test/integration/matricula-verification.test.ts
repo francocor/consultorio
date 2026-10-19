@@ -15,6 +15,7 @@ import { professional } from '../../src/db/schema/staff.js';
 import { createRuntimeDb, type DbHandle } from '../../src/platform/db/pool.js';
 import { uuidv7 } from '../../src/platform/db/uuid.js';
 import { buildTestApplication } from '../support/app.js';
+import { verifyMatriculaAsOperator } from '../support/matricula.js';
 import {
   createOperatorHarness,
   createTestClock,
@@ -457,6 +458,23 @@ describe('the queue', () => {
     expect(item).toMatchObject({ status: 'verified', fullName: 'Dora Vega' });
     expect(item?.verifiedAt).not.toBeNull();
     expect(items.every((entry) => entry.status === 'verified')).toBe(true);
+  });
+
+  it('shows a registration verified out of band with the helper other tracks use in their tests', async () => {
+    const who = await registered(north, 'Ines Mora');
+    expect((await queue()).some((item) => item.professionalId === who.professionalId)).toBe(true);
+
+    await verifyMatriculaAsOperator(harness.db, north.id, who.professionalId, operatorId);
+
+    expect((await queue()).some((item) => item.professionalId === who.professionalId)).toBe(false);
+    const verified = (await queue('verified')).find(
+      (item) => item.professionalId === who.professionalId,
+    );
+    expect(verified).toMatchObject({ status: 'verified', fullName: 'Ines Mora' });
+    expect((await profileOf(north, who)).matricula?.status).toBe('verified');
+    await expect(
+      verifyMatriculaAsOperator(harness.db, south.id, who.professionalId),
+    ).rejects.toThrow('no professional to verify');
   });
 
   it('leaves out inactive professionals and profiles with no registration', async () => {
