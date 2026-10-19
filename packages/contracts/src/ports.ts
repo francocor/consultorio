@@ -92,8 +92,53 @@ export interface PrescriptionRequest {
 export type PrescriptionResult =
   | { status: 'issued'; externalId: string; documentUrl: string }
   | { status: 'rejected'; message: string }
+  /**
+   * The provider could not say. `outcomeUnknown` is true when it may have issued the prescription
+   * and lost the answer: the caller asks `findByKey` before it tries again, so one prescription
+   * is never issued twice.
+   */
+  | { status: 'retryable'; message: string; outcomeUnknown: boolean };
+
+/** Where a prescription stands at the provider. A prescription that is not issued yet has none. */
+export type ProviderPrescriptionState = 'issued' | 'cancelled' | 'dispensed' | 'expired';
+
+export type PrescriptionStatusResult =
+  | {
+      status: 'found';
+      externalId: string;
+      state: ProviderPrescriptionState;
+      /** The reason given when it was cancelled. */
+      cancelReason?: string;
+    }
+  /** The provider holds no prescription with that id. */
+  | { status: 'unknown' }
   | { status: 'retryable'; message: string };
 
+export type PrescriptionCancelResult =
+  | { status: 'cancelled'; externalId: string }
+  /** The provider refuses: the prescription was dispensed or expired, or it is not known. */
+  | { status: 'rejected'; message: string }
+  | { status: 'retryable'; message: string; outcomeUnknown: boolean };
+
+/**
+ * The authorized e-prescription platform (Ley 27.553). Every idempotency key is global: the server
+ * derives it from the organization and the prescription, so a provider that serves many
+ * organizations keeps their prescriptions apart without being told who asks.
+ */
 export interface PrescriptionProvider {
+  /** Issues one prescription. Calling twice with the same key never produces two prescriptions. */
   issue(request: PrescriptionRequest, idempotencyKey: string): Promise<PrescriptionResult>;
+  /** Cancels an issued prescription with a reason. Calling twice with the same key answers the same. */
+  cancel(
+    externalId: string,
+    reason: string,
+    idempotencyKey: string,
+  ): Promise<PrescriptionCancelResult>;
+  /**
+   * The prescription the provider issued for a key, or null when it never issued one. A retry
+   * calls it first, so an answer that was lost does not become a second prescription.
+   */
+  findByKey(idempotencyKey: string): Promise<PrescriptionResult | null>;
+  /** Where a prescription stands at the provider (issued, cancelled, dispensed, expired). */
+  status(externalId: string): Promise<PrescriptionStatusResult>;
 }
