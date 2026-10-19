@@ -6,8 +6,8 @@ import { SYSTEM_USER_ID, type WithTenant } from '../../../platform/db/tenant-con
 import type { PublicOrigins } from '../../../platform/http/public-origin.js';
 import type { EmailSender } from '../../../platform/mail/email-sender.js';
 import { loadNoticeRecipient } from '../../notifications/index.js';
+import { renderPortalNoticeEmail } from '../../portal/index.js';
 import { readOrganizationName } from '../../tenancy/index.js';
-import { renderConsentRequestEmail } from '../domain/request-email.js';
 
 export type NoticeOutcome = 'sent' | 'not_sent' | 'not_needed';
 
@@ -23,8 +23,9 @@ export interface ConsentNotice {
 /**
  * The notice of a consent request (task 5.15). The channel policy of notifications decides the
  * channel: kind `consent_request` is email only, so an opt-out, a missing address or one that
- * failed for good leaves nobody to write to. The message carries no template title (see
- * `renderConsentRequestEmail`) and links to the authenticated portal.
+ * failed for good leaves nobody to write to. The message is the notice of the portal (kind
+ * `consent_request` of `renderPortalNoticeEmail`): it carries no template title, no name and no
+ * clinical content, and links to the authenticated portal.
  */
 export function createConsentNotice(deps: {
   withTenant: WithTenant;
@@ -50,10 +51,10 @@ export function createConsentNotice(deps: {
             .where(eq(tenant.id, tenantId));
           if (!organization) return 'not_sent' as const;
 
-          const rendered = renderConsentRequestEmail({
+          const rendered = renderPortalNoticeEmail({
             organizationName: await readOrganizationName(tx),
-            givenNames: recipient.givenNames,
-            portalUrl: `${deps.origins(organization.slug)}/portal`,
+            kind: 'consent_request',
+            link: `${deps.origins(organization.slug)}/portal`,
           });
           await deps.email.send({
             to: recipient.email,

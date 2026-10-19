@@ -329,7 +329,10 @@ describe('requesting a consent', () => {
     const everything =
       `${sent?.subject ?? ''} ${sent?.text ?? ''} ${sent?.html ?? ''}`.toLowerCase();
     expect(everything).toContain('/portal');
-    expect(everything).toContain('consentimiento');
+    // The one notice of the portal (kind consent_request): it says a document waits, never which.
+    expect(sent?.subject).toMatch(/^Tiene un documento esperando en el portal de /);
+    expect(sent?.text).toContain('le dejó un documento para revisar en su portal de pacientes');
+    expect(everything).not.toContain('consentimiento');
     for (const word of ['cirugía', 'rodilla', 'extracción']) {
       expect(everything, word).not.toContain(word);
     }
