@@ -402,7 +402,7 @@ async function reconcile(
   issuer: InvoiceIssuer,
   row: InvoiceRow,
   step: Step,
-  clock: { now: Date; settleMs: number },
+  clock: { now: Date; settleMs: number; ignoreSettle?: boolean },
 ): Promise<Verdict | SendVerdict> {
   const floor = row.authorityLastAtMark;
   // Marked before the authority's count was kept: nobody knows from where to look. A person decides.
@@ -421,8 +421,12 @@ async function reconcile(
   if (last < floor) return ambiguous({ lastNow: last, lastAtMark: floor });
   // "Nothing was issued" is proven only when enough time has passed since the request went out: a request
   // the caller gave up on may still be processed and finish after this lookup (JD-S4 R6-1). Until then the
-  // lookup may still adopt a voucher that has appeared, but it never sends.
-  const settled = isSettled({ sentAt: sentAtOf(row), now: clock.now, settleMs: clock.settleMs });
+  // lookup may still adopt a voucher that has appeared, but it never sends. `ignoreSettle` skips the gate
+  // for the last look before a rejection closes the invoice, which asks only whether the earlier request
+  // landed: the time of the request just made is not what that look is about (JD-S4 R8-1).
+  const settled =
+    clock.ignoreSettle === true ||
+    isSettled({ sentAt: sentAtOf(row), now: clock.now, settleMs: clock.settleMs });
   // `unmoved`: the numbering of the authority did not move since the mark (JD-S4 R7-1).
   const nothingIssued = (at: number): Verdict | SendVerdict =>
     settled
@@ -1147,7 +1151,16 @@ export async function attemptIssue(
       // counts as sent, so nothing goes out in this attempt.
       const again = await reconcile(tx, issuer, row, step, { now, settleMs });
       const unmoved = (again.kind === 'send' || again.kind === 'retry') && again.unmoved === true;
-      if (unmoved) {
+      if (again.kind === 'issued' && !wasAwaiting) {
+        // This was the FIRST request of the episode: no earlier request exists that could have been
+        // answered, so a voucher that fits is somebody else's by construction. It is never adopted; a
+        // person decides (JD-S4 R8 A-2).
+        verdict = ambiguous({
+          number: again.result.number,
+          cae: again.result.cae,
+          candidates: [again.result.number],
+        });
+      } else if (unmoved) {
         // The numbering did not move, so the refusal is not explained by another voucher: ARCA error 10016
         // also covers a date earlier than the last voucher, which waiting does not cure. After a few of
         // them in a row the invoice is parked instead of being sent for ever (JD-S4 R7-1).
@@ -1169,8 +1182,13 @@ export async function attemptIssue(
     } else if (verdict.kind === 'rejected' && wasAwaiting) {
       // An earlier request of this episode exists and may have landed after the lookup that found
       // nothing: look once more, with no settle time, before the invoice is closed as rejected and its
-      // lines are released for another one (JD-S4 R7 B-T4).
-      const lastLook = await reconcile(tx, issuer, row, step, { now, settleMs: 0 });
+      // lines are released for another one (JD-S4 R7 B-T4). The request just made was stamped later than
+      // `now`, so a settle time of zero would not be reached: the gate is skipped explicitly (JD-S4 R8-1).
+      const lastLook = await reconcile(tx, issuer, row, step, {
+        now,
+        settleMs,
+        ignoreSettle: true,
+      });
       if (lastLook.kind !== 'send') verdict = lastLook;
     }
   }

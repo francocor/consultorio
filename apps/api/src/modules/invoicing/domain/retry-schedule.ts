@@ -45,7 +45,13 @@ export const DEFAULT_SETTLE_MS = 10 * MINUTE_MS;
  * pin of the request is then the only guard, and nothing better is known.
  */
 export function isSettled(input: { sentAt: Date | null; now: Date; settleMs: number }): boolean {
-  return input.sentAt === null || input.now.getTime() - input.sentAt.getTime() >= input.settleMs;
+  // No settle time is settled at once, even when the send is stamped a little after `now` (a clock that
+  // moved during the attempt): the elapsed time is then negative (JD-S4 R8-1).
+  return (
+    input.sentAt === null ||
+    input.settleMs <= 0 ||
+    input.now.getTime() - input.sentAt.getTime() >= input.settleMs
+  );
 }
 
 /** The settle time of a setting: a finite number of milliseconds, never negative; otherwise the default. */

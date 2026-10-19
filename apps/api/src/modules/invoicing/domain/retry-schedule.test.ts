@@ -136,6 +136,11 @@ describe('when "nothing was issued" is believed (JD-S4 R6-1)', () => {
     expect(isSettled({ sentAt: null, now: sent, settleMs: DEFAULT_SETTLE_MS })).toBe(true);
   });
 
+  it('counts no settle time as settled even when the send is stamped after now (JD-S4 R8-1)', () => {
+    expect(isSettled({ sentAt: later(1), now: sent, settleMs: 0 })).toBe(true);
+    expect(isSettled({ sentAt: later(1), now: sent, settleMs: DEFAULT_SETTLE_MS })).toBe(false);
+  });
+
   it('takes the default for a setting that is not a finite, non-negative number', () => {
     expect(settleMsOf(undefined)).toBe(DEFAULT_SETTLE_MS);
     expect(settleMsOf(Number.NaN)).toBe(DEFAULT_SETTLE_MS);
