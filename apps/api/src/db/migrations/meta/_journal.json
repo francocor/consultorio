@@ -631,6 +631,34 @@
       "when": 1792406348377,
       "tag": "0590_demo_outbox",
       "breakpoints": true
+    },
+    {
+      "idx": 90,
+      "version": "7",
+      "when": 1792416086343,
+      "tag": "0591_prescription_hardening",
+      "breakpoints": true
+    },
+    {
+      "idx": 91,
+      "version": "7",
+      "when": 1792416180671,
+      "tag": "0592_portal_guards",
+      "breakpoints": true
+    },
+    {
+      "idx": 92,
+      "version": "7",
+      "when": 1792416182704,
+      "tag": "0593_operator_audit_unverified",
+      "breakpoints": true
+    },
+    {
+      "idx": 93,
+      "version": "7",
+      "when": 1792419615647,
+      "tag": "0594_demo_outbox_retention",
+      "breakpoints": true
     }
   ]
 }

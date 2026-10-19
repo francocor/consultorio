@@ -87,6 +87,23 @@ export const prescription = tenantTable(
     /** Where the PDF lives in the storage of the organization, once rendered. */
     documentKey: text('document_key'),
     version: integer('version').notNull().default(1),
+    /**
+     * Which submission the provider key belongs to. A prescription the provider refused is corrected
+     * and sent again under a NEW key (the old one is bound to the refused fingerprint), so the
+     * version goes up on that one transition and the key is derived from it (JD-S5 R1-S5-4).
+     */
+    submissionVersion: integer('submission_version').notNull().default(1),
+    /**
+     * When the provider may first have been asked to issue this prescription. Set before the call
+     * and never cleared: whatever state the row is parked in later, a row with this mark is checked
+     * against the provider before it is cancelled or registered by hand (JD-S5 R1-S5-3).
+     */
+    providerContactedAt: timestamp('provider_contacted_at', { withTimezone: true }),
+    /**
+     * Until when an attempt that holds no connection (the one a request starts) owns the row. Another
+     * attempt, a cancellation and a manual registration leave the row alone while it is in the future.
+     */
+    attemptLeaseUntil: timestamp('attempt_lease_until', { withTimezone: true }),
   },
   (table) => [
     foreignKey({
@@ -135,6 +152,7 @@ export const prescription = tenantTable(
     ),
     check('prescription_attempts_check', sql`${table.attempts} >= 0`),
     check('prescription_version_check', sql`${table.version} >= 1`),
+    check('prescription_submission_version_check', sql`${table.submissionVersion} >= 1`),
     uniqueIndex('prescription_client_key').on(table.tenantId, table.clientKey),
     uniqueIndex('prescription_idempotency_key').on(table.idempotencyKey),
     uniqueIndex('prescription_external_key')
