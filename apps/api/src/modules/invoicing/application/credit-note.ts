@@ -42,8 +42,9 @@ export interface CreateCreditNoteInput {
  * limit, rejected ones do not. The original invoice is not touched. Only once the note is ISSUED
  * does the amount invoiced of the charge lines go down (the database does it).
  *
- * The charge lines of the invoice are locked first, in the order of their ids, so two notes over
- * the same invoice (and an invoice being created over the same lines) wait for each other.
+ * The charges of the invoice are locked first (shared) and then its charge lines, in the order of
+ * their ids, so two notes over the same invoice (and an invoice being created over the same lines)
+ * wait for each other, and a void of the charge does not meet them in the opposite order.
  */
 export async function createCreditNote(
   tx: Tx,
@@ -65,7 +66,9 @@ export async function createCreditNote(
   await readChargeLines(
     tx,
     originalLines.map((line) => line.chargeLineId),
-    { lock: true },
+    // The charges first (shared), then the lines: the order of the writers of invoices and of the void
+    // of a charge, so the note and a void never wait for each other in a circle (JD-S4 R2-5).
+    { lock: true, lockCharges: true },
   );
 
   const requestHash = hashOf({

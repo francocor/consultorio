@@ -68,6 +68,17 @@ export const localAfipVoucher = pgTable(
     caeExpiresOn: date('cae_expires_on', { mode: 'string' }).notNull(),
     issueDate: date('issue_date', { mode: 'string' }).notNull(),
     totalCents: bigint('total_cents', { mode: 'number' }).notNull(),
+    /**
+     * Who the voucher is addressed to and, for a credit note, the voucher it cancels: what the real
+     * authority holds for a voucher and says in a lookup, so the caller compares them before it adopts
+     * one (JD-S4 R2-1). Null: no document (a consumer below the threshold) / not a credit note. The
+     * rows that predate the columns have them all null.
+     */
+    buyerDocType: text('buyer_doc_type'),
+    buyerDocNumber: text('buyer_doc_number'),
+    assocType: text('assoc_type'),
+    assocPointOfSale: integer('assoc_point_of_sale'),
+    assocNumber: integer('assoc_number'),
     idempotencyKey: text('idempotency_key').notNull(),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
