@@ -2577,3 +2577,18 @@ Hygiene:
 - E2E `stage4-invoicing` and `stage4-demo` (`E2E_WEB_PORT=4890 E2E_API_PORT=3890 E2E_MINIO_PORT=9890`, `--workers=2`): 5 passed (4.5 minutes).
 - Docker: the three containers of the e2e stack (`aef05f034468`, `2d99deeee81b`, `7adb863391a2`) were removed by id. A `postgres:17` (`636bfd41431e`) that appeared during the integration run was still receiving queries from someone else, so it was left.
 - Incident: none. Logs are in `$TEMP/jd4r8-*.log`.
+
+## Stage 4 Judgment Day: APPROVED (round 9, 2026-10-19)
+
+Both judges approved round 9 at tip `adff3f1` of `feat/stage-4-revenue`. Task 4.66 is marked done. Nine rounds in total; each has its own section above (rounds 1 to 8), and round 9 found nothing to fix.
+
+- Rounds 1 and 2: money invariants, immutability triggers and credentials (twelve plus seven confirmed findings); the cash register and payment guards read the register `FOR SHARE` (migration 0490), and issuance is serialized per series with an advisory lock.
+- Rounds 4 to 8, the double-issue invariant against an ARCA that is not idempotent (no path may lead to two vouchers for one invoice):
+  - R5-1: the core stopped inferring the last number from its own records; `InvoiceIssuer.lastAuthorized` asks the authority (the equivalent of `FECompUltimoAutorizado`).
+  - R6-1: the number is pinned (`expectedNumber`, `CbteDesde`); the issuer issues exactly that number or answers `not_next` (ARCA error 10016).
+  - R6: the settle time, so a request that may still be in flight is never re-sent.
+  - R7-2: when the pin is honoured, the candidate set is the single expected number (`honoursPin`).
+  - R7-1, R7-5, B-S2, B-S3 and round 8: the parks (`authority_refuses_number`, `authority_refuses_lookup`, `pin_not_honoured`, `number_taken`, `voucher_ambiguous`), each with its worklist reason and its es-AR text.
+  - R8-1: the last look before a rejected re-send ignores the settle time.
+- Liveness (rounds 3, 4, 7 and 8): a blocked series always ends in a worklist item (`outcome_unknown` after two hours, `surfaceStall`), a refused lookup is surfaced, the refusal streak ends in a park, and a rejected re-send reaches `rejected` instead of looping.
+- Open for the real adapter (runbook): answer `outcomeUnknown: true` after a timeout, a reset after the request left, or a 5xx; declare `honoursPin`.
