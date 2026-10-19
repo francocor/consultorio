@@ -16,28 +16,13 @@ function contributors(deps?: { keys?: TenantKeys }) {
   return registry.list();
 }
 
-describe('the consent export contributors (seam skeleton)', () => {
+// What each part delivers is proved against a real database in test/integration/consent-signing.test.ts.
+describe('the consent export contributors', () => {
   it('registers an administrative part for the owner and a clinical part per professional', () => {
     expect(contributors().map((entry) => [entry.kind, entry.name])).toEqual([
       ['administrative', 'consent'],
       ['clinical', 'consent'],
     ]);
-  });
-
-  it('hands the owner the templates', async () => {
-    const [administrative] = contributors();
-
-    await expect(administrative?.contribute({ tx, tenantId: TENANT })).resolves.toEqual({
-      templates: [],
-    });
-  });
-
-  it('hands a professional the consents of their own patients', async () => {
-    const clinical = contributors({ keys })[1];
-
-    await expect(
-      clinical?.contribute({ tx, tenantId: TENANT, professionalId: PROFESSIONAL }),
-    ).resolves.toEqual({ consents: [] });
   });
 
   it('refuses to deliver a clinical part it cannot decrypt, or one that is not for a professional', async () => {
