@@ -2161,3 +2161,82 @@ The slowest target query is the financial report of a year (604 ms). The "of whi
 
 - Docker: `infra/Dockerfile` built; fresh `postgres:17` with `infra/postgres/init/01-roles.sql`; `db:migrate` run twice (both: migrations applied, platform catalogs loaded; 75 migrations recorded; `charge_report_idx`, `payment_report_idx`, `payment_reversal_report_idx` and `invoice_report_idx` exist); the image started as `api` with `NODE_ENV=production`, multi-tenant, KMS `aws`, `S3_BUCKET`, `CLAMAV_HOST`, SMTP starttls and `ADDRESS_HASH_PEPPER` (32 or more characters) against that database: `GET /health` answered `{"status":"ok"}`. Containers `int2b-api` and `int2b-pg`, the network `int2b-net` and the image `int2b-api:smoke` were removed by name.
 - Incident: none. Logs are in `$TEMP/int2b-*.log`.
+
+
+## Owner decisions D22/B7 (2026-10-18)
+
+Branch `feat/owner-decisions-d22-b7`, cut from `feat/stage-4-revenue` at `9cd11e9`. Mode: Strict TDD, openspec store, automatic.
+
+### What the owner decided
+
+- **D22 stays as originally designed (kept by owner decision).** The email double opt-in is not touched: the `whatsapp_opt_in` token kind, its email, its page and the pending state are unchanged. An earlier instruction to replace it with immediate WhatsApp activation was withdrawn before any code was written; no D22 code, spec or doc change exists on this branch except the consequence of B7 below.
+- **D23 confirmed, no change.**
+- **B7 revised:** opting out on any channel opts the patient out of ALL channels. Reception can open a channel again, per channel, with an audit entry. "Sin avisos" is shown on the record. The reply to BAJA and the unsubscribe page say that no more messages come on any channel.
+- Interaction D22 x B7: an opt-out revokes every pending `whatsapp_opt_in` link of the patient, also when WhatsApp was already opted out and the link was asked for afterwards.
+
+### What changed per decision
+
+| Area | Change |
+|---|---|
+| `modules/notifications/application/opt-out.ts` | `optOutChannel` (per channel, with the D10 replacement on the other channel) is replaced by `optOutPatient`: records both channels through `recordOptOut`, cancels everything queued on either, replaces nothing, revokes the pending opt-in links unconditionally, tells the listener once. |
+| `application/preferences.ts` | `OptInRefused` removed: staff can opt a channel back in; the audit metadata carries `reopened: true`. `revokeWhatsappOptInLinks` extracted. |
+| Callers | WhatsApp keyword (`inbound.ts`), email link (`token-handlers.ts`, page text), reception (`channel-routes.ts`: new `POST /patients/:id/opt-out`, the per-channel route is gone; the opt-in route now reopens email and WhatsApp). |
+| Waitlist | The listener closes every entry (`closeEntriesOfOptedOutPatient`); `closeEntriesOfUnreachablePatient` removed. |
+| Contract | `PatientChannelsResponse.noMessages` ("Sin avisos": email opted out and WhatsApp not accepted). |
+| Texts | `optout_ack` says no more messages by WhatsApp or by email; the email footer sentence and label say every channel. |
+| Seed | The two demo opt-out patients go through `optOutPatient`. |
+| Web | `ChannelsPanel`: one baja for all channels (confirm dialog), "Sin avisos" alert, reopen per channel (confirm dialog), request-by-email disabled while email is off; new `patient-header` slot with a lazy `NoMessagesBadge` in the header of the record. |
+| Specs and docs | `proposal.md` (D22/D23 confirmed 2026-10-18, new B7 section), `notifications`, `waitlist`, `online-booking`, `patients` specs, `design.md`, `docs/demo.md`. |
+
+### Migrations
+
+None. `channel_preference` already stores one row per channel and the source constraints already allow every case. Range 0470 to 0479 not used; `db:check`: no drift. The journal and `_journal.json` are untouched.
+
+Opt-outs recorded for one channel before B7 are not rewritten (a data change nobody asked for): such a patient keeps the other channel until their next opt-out, which completes it. A legacy patient with email opted out and WhatsApp never accepted already shows "Sin avisos".
+
+### Messages that still go out after a global opt-out (explicit, closed list)
+
+1. The one-time code of an online booking and of a waitlist join, to the email just typed (`otp-send-job`, `waitlist/application/join.ts`); neither reads the patients.
+2. The confirmation of an online booking, to the verified email, with the manage link and the D22 WhatsApp-accept link (`booking-confirmation.ts`): it does not depend on the opt-outs of the matched record (existence-oracle rule of Stage 3).
+3. The email of a waitlist join that carries the D22 WhatsApp-accept link (`whatsapp-opt-in.ts`).
+4. The acknowledgment of the WhatsApp opt-out itself (`optout_ack`).
+
+Everything that goes through the channel policy follows the opt-out: reminders, confirmations of staff-made appointments, waitlist offers, video follow-ups, and also the email-only kinds that use `loadNoticeRecipient` (the invoice email of `modules/invoicing` is skipped with `deliverySkippedReason = 'opted_out'`, as it already was for an email opt-out; not changed here). The staff request to accept WhatsApp is refused while email is off. Tests: `booking-submission.test.ts` (code to an opted-out record), `notifications-booking-confirmation.test.ts` (confirmation), `whatsapp.test.ts` (acknowledgment).
+
+### TDD cycle evidence
+
+| Task | Test file | Layer | Safety net | RED | GREEN | TRIANGULATE | REFACTOR |
+|---|---|---|---|---|---|---|---|
+| `optOutPatient`: both channels, queued of any kind cancelled, nothing replaced | `test/integration/notifications-global-optout.test.ts` (replaces `notifications-channel-fallback.test.ts`) | Integration | the 8 tests of the old file green before | Written first against a function that did not exist | 17 tests with `optout-listener` pass | WhatsApp, email link, reception; never opted in to WhatsApp; legacy one-channel opt-out; idempotent; other patient untouched | Fallback code removed |
+| Listener told once | same + `notifications-optout-listener.test.ts` | Integration | green before | Written first | Passes | Twice asked, told once | None needed |
+| D22 x B7: stale links revoked | same + `whatsapp-inbound.test.ts` (BAJA through the webhook, the link answers 404) | Integration | green before | Written first | Passes | Staff link and form link; WhatsApp already opted out plus a new link; another patient's link kept | None needed |
+| Reception reopens a channel (audit `reopened`) | `notifications-preferences.test.ts`, `notifications-channels.test.ts` | Integration | green before | Old "staff cannot re-enable" tests turned into the new rule first | Passes | WhatsApp and email; two audit rows with the staff member | `OptInRefused` removed |
+| `POST /patients/:id/opt-out` and `noMessages` | `notifications-channels.test.ts` | Integration | green before | Written first | Passes | All channels; legacy email-only; WhatsApp accepted keeps it false | None needed |
+| Waitlist closes every entry | `waitlist-fairness.test.ts` | Integration | green before | Old "one channel keeps the list" test turned around first | Passes | Patient with WhatsApp accepted; another patient's entry stays | Dead function removed |
+| Unsubscribe page and email text, acknowledgment | `notifications-tokens.test.ts`, `public-tokens.test.ts`, `render.test.ts`, `whatsapp.test.ts` | Integration, security, unit | green before | Expectations changed first (copy was changed in the same step) | Passes | Both channels recorded once per press | None needed |
+| Survivors: code and confirmation | `booking-submission.test.ts`, `notifications-booking-confirmation.test.ts` | Integration | green before | Written after the code was already independent of preferences (characterization) | Passes | A record opted out of every channel | None needed |
+| `ChannelsPanel` and `NoMessagesBadge` | `channels-panel.test.tsx`, `no-messages-badge.test.tsx` | Component | 10 green before | Written first | 14 pass | Sin avisos shown and absent; confirm and back out; reopen email and WhatsApp | Request button gets its reason |
+| Journeys | `stage3-messaging.spec.ts`, `stage3-demo.spec.ts` | E2E | green before | Expectations rewritten for the new rule | Pass | n/a | n/a |
+
+### Deviations and incidents
+
+- The video visit of `stage3-demo.spec.ts` used the patient who had written BAJA; under B7 nothing reaches them, so the visit now has a patient of its own. First attempt (moving the BAJA to the end) failed because the confirmation then went to the WhatsApp simulator, not to the mailbox; reverted.
+- Python edits in this run first wrote CRLF into LF files (Windows text mode); fixed before any commit (`git diff` is free of whole-file changes).
+- No process was killed and nothing was stashed. The e2e stack left its three containers after each Playwright run (and a failed start left two more); all of them were listed by id and removed by id, the baseline containers are untouched.
+
+### Risks
+
+- A BAJA from a shared number (a family) opts out of EVERY channel of every patient that number was written about, email included; before B7 it only closed WhatsApp. Reception sees "Sin avisos" and can reopen a channel.
+- Invoices (`modules/invoicing`, owned by the Stage 4 billing agent) follow the email opt-out through the channel policy, as before; with B7 a BAJA on WhatsApp now also stops the invoice email. Not touched here.
+- Reception reopening a channel is a human judgement call: it asks for confirmation and writes an audit entry, nothing more.
+- Meta-approved WhatsApp templates: only the text of `optout_ack` changed (the simulator and the fake render it from `assets/es-AR/whatsapp.ts`). A real provider would need that template re-approved.
+
+### Verification
+
+Node v24.22.0 (PATH), pnpm 10.34.7.
+
+- `pnpm install --frozen-lockfile`, `pnpm typecheck`, `pnpm lint`, `pnpm format:check` (the files that failed were mine and were formatted individually, never the `apps/api/src` tree), `pnpm build`, `pnpm db:check`: clean.
+- `pnpm test` (unit): 384 files, 4873 tests passed, 1 skipped, 0 failed.
+- Targeted integration (`vitest.integration.config.ts`, only my files, the full suite was left to the other agent): notifications (preferences, channels, tokens, global-optout, optout-listener, booking-confirmation, offers, message-log, send, video-followup, usage-metering), inbound and attribution, booking-submission, waitlist (fairness, join, entries, offers), demo seed files and `public-tokens`: all green.
+- E2E (`E2E_WEB_PORT=4900 E2E_API_PORT=3900 E2E_MINIO_PORT=9900`, `--workers=2`): `stage3-*`, `patients.spec`, `patients.responsive`: 42 passed, 0 failed after the demo fix.
+- Logs: `$TEMP/decisions-*.log`.
