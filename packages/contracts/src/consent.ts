@@ -258,6 +258,8 @@ export const SignConsentRequest = z.strictObject({
   signer: z.enum(CONSENT_SIGNER_KINDS),
   representative: ConsentRepresentativeInput.optional(),
   mark: ConsentMarkInput,
+  /** The full name the signer typed, kept with the record. The mark may be a drawing. */
+  signerName: z.string().trim().min(2).max(120).optional(),
 });
 export type SignConsentRequest = z.infer<typeof SignConsentRequest>;
 
@@ -276,6 +278,8 @@ export const SignedConsentDto = z.strictObject({
     z.strictObject({ kind: z.literal('typed'), name: z.string() }),
     z.strictObject({ kind: z.literal('drawn'), imageDataUrl: z.string() }),
   ]),
+  /** The full name the signer typed (a record signed before it was kept has none). */
+  signerName: z.string().nullable(),
   accepted: z.literal(true),
   method: z.enum(CONSENT_METHODS),
   signedAt: z.string(),

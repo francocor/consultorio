@@ -109,6 +109,7 @@ export function createFakePortalConsents(): FakePortalConsents {
         ? {
             ...dto(record),
             body: record.body,
+            contentHash: 'f'.repeat(64),
             requiresRepresentative: call.subject.relationship === 'representative',
           }
         : null;

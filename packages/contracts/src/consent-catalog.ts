@@ -44,6 +44,8 @@ export const CONSENT_ERRORS = {
     status: 422,
     i18nKey: 'errors.consent_representative_unexpected',
   },
+  // A representative cannot sign for an adult: the signature is the person's own.
+  consent_signer_not_allowed: { status: 409, i18nKey: 'errors.consent_signer_not_allowed' },
   // The drawn signature is not a usable PNG image.
   consent_mark_invalid: { status: 422, i18nKey: 'errors.consent_mark_invalid' },
   // Only a signed consent is revoked.
@@ -66,4 +68,8 @@ export const CONSENT_AUDIT_ACTIONS = [
   'consent.revoked',
   'consent.read',
   'consent.expired',
+  // The patient chose not to sign: the entry names who recorded it (JD-S5 R1-S5-10).
+  'consent.declined',
+  // A signed consent was opened and its stored record no longer matches its fingerprint (B-W7).
+  'consent.integrity_failed',
 ] as const;

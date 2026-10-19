@@ -206,7 +206,15 @@ export async function seedConsents(
   // minor's consent was signed by the father as the representative.
   await ask(people.cardiology, patients.valentina, generalId, 'portal');
   const joaquin = await ask(people.cardiology, patients.joaquin, generalId, 'in_person');
-  await run(people.cardiology, (tx) => requests.decline(tx, { requestId: joaquin.id }));
+  await run(people.cardiology, (tx) =>
+    requests.decline(tx, {
+      requestId: joaquin.id,
+      actor: {
+        ...auditActorOf(people.cardiology, 'professional'),
+        userId: people.cardiology.userId,
+      },
+    }),
+  );
   await ask(people.cardiology, patients.sofia, generalId, 'in_person');
   const isabella = await ask(people.pediatrics, patients.isabella, generalId, 'in_person');
   await signAtDevice(

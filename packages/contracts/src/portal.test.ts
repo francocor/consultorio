@@ -39,6 +39,7 @@ describe('portal catalogues', () => {
       'portal.download',
       'portal.profile.changed',
       'portal.denied',
+      'portal.notice.sent',
     ]);
     for (const action of PORTAL_AUDIT_ACTIONS) expect(AUDIT_ACTIONS).toContain(action);
   });
@@ -221,6 +222,7 @@ describe('what the portal can ever carry (design D11, patient-portal "Documents 
 
   it('asks for the explicit acceptance to sign', () => {
     const base = {
+      contentHash: 'a'.repeat(64),
       signerName: 'Ana Pérez',
       signature: { kind: 'typed', value: 'Ana Pérez' },
     };
@@ -228,5 +230,43 @@ describe('what the portal can ever carry (design D11, patient-portal "Documents 
     expect(PortalConsentSignRequest.safeParse({ ...base, accepted: true }).success).toBe(true);
     expect(PortalConsentSignRequest.safeParse({ ...base, accepted: false }).success).toBe(false);
     expect(PortalConsentSignRequest.safeParse(base).success).toBe(false);
+  });
+
+  it('binds the signature to the text it was shown: the hash is required and is a SHA-256 in hex (JD-S5 R1-B-S4)', () => {
+    const base = {
+      accepted: true,
+      signerName: 'Ana Pérez',
+      signature: { kind: 'typed', value: 'Ana Pérez' },
+    };
+
+    expect(PortalConsentSignRequest.safeParse(base).success).toBe(false);
+    expect(PortalConsentSignRequest.safeParse({ ...base, contentHash: 'abc' }).success).toBe(false);
+    expect(
+      PortalConsentSignRequest.safeParse({ ...base, contentHash: 'A'.repeat(64) }).success,
+    ).toBe(false);
+  });
+
+  it('limits the mark: a typed one to 120 characters, a drawn one to a PNG data URL (JD-S5 R1-S5-5)', () => {
+    const base = { accepted: true, contentHash: 'a'.repeat(64), signerName: 'Ana Pérez' };
+    const typed = (value: string) => ({ ...base, signature: { kind: 'typed', value } });
+    const drawn = (value: string) => ({ ...base, signature: { kind: 'drawn', value } });
+
+    expect(PortalConsentSignRequest.safeParse(typed('x'.repeat(120))).success).toBe(true);
+    expect(PortalConsentSignRequest.safeParse(typed('x'.repeat(121))).success).toBe(false);
+    expect(PortalConsentSignRequest.safeParse(typed('a'.repeat(150_000))).success).toBe(false);
+    expect(
+      PortalConsentSignRequest.safeParse(drawn('data:image/png;base64,iVBORw0KGgo=')).success,
+    ).toBe(true);
+    for (const value of [
+      'https://evil.example/pixel.png',
+      'data:image/svg+xml;base64,PHN2Zz4=',
+      'data:image/png,not-base64',
+    ]) {
+      expect(PortalConsentSignRequest.safeParse(drawn(value)).success).toBe(false);
+    }
+    expect(
+      PortalConsentSignRequest.safeParse(drawn(`data:image/png;base64,${'A'.repeat(150_000)}`))
+        .success,
+    ).toBe(false);
   });
 });

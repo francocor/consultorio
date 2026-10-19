@@ -40,6 +40,8 @@ describe('consent catalogues', () => {
       'consent.revoked',
       'consent.read',
       'consent.expired',
+      'consent.declined',
+      'consent.integrity_failed',
     ]);
     for (const action of CONSENT_AUDIT_ACTIONS) expect(AUDIT_ACTIONS).toContain(action);
   });

@@ -141,15 +141,22 @@ export function requestRoutes(deps: RequestRoutesDeps) {
     typed.post(
       '/consents/requests/:id/decline',
       {
-        // The patient chose not to sign; the request ends. The catalog has no action for it: the
-        // state and its date are the record.
-        config: { readOnly: 'write', permission: 'consent.request', audits: 'none' },
+        // The patient chose not to sign; the request ends, and the trail says who recorded it
+        // (JD-S5 R1-S5-10).
+        config: {
+          readOnly: 'write',
+          permission: 'consent.request',
+          audits: ['consent.declined'],
+        },
         schema: { params: RequestParams, response: { 200: ConsentRequestDto } },
       },
       async (request) => {
         const actor = actorOf(request);
         return deps.withTenant(transactionOf(actor), (tx) =>
-          deps.requests.decline(tx, { requestId: request.params.id }),
+          deps.requests.decline(tx, {
+            requestId: request.params.id,
+            actor: auditActorOf(request, actor),
+          }),
         );
       },
     );

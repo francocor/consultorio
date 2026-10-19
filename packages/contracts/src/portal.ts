@@ -1,5 +1,6 @@
 import { z } from 'zod';
 
+import { CONSENT_MARK_IMAGE_MAX_CHARS } from './consent.js';
 import { INVOICE_KINDS } from './invoicing.js';
 import { REPRESENTATIVE_RELATIONS } from './patients.js';
 import { PRESCRIPTION_STATUSES } from './prescriptions.js';
@@ -351,6 +352,12 @@ export type PortalConsentsResponse = z.infer<typeof PortalConsentsResponse>;
 export const PortalConsentDetailDto = PortalConsentDto.extend({
   /** The text of the version the patient is shown; signing binds to exactly this version. */
   body: z.string(),
+  /**
+   * The fingerprint of the text shown (SHA-256, hex): the signature sends it back and the server
+   * checks it is still the text of the version the request is bound to. Empty while there is no text
+   * to sign.
+   */
+  contentHash: z.string(),
   /** The subject is a minor: the person who signs is the representative, with their data. */
   requiresRepresentative: z.boolean(),
 });
@@ -359,12 +366,21 @@ export type PortalConsentDetailDto = z.infer<typeof PortalConsentDetailDto>;
 export const PortalConsentSignRequest = z.strictObject({
   /** The explicit action: the box was ticked. A request without it is refused. */
   accepted: z.literal(true),
+  /** The fingerprint of the text the patient was shown (`PortalConsentDetailDto.contentHash`). */
+  contentHash: z.string().regex(/^[0-9a-f]{64}$/),
+  /** The full name of whoever signs (the patient, or the representative), kept with the record. */
   signerName: z.string().trim().min(2).max(120),
-  /** How the name was written: typed, or drawn on the pad (the image travels as data). */
-  signature: z.strictObject({
-    kind: z.enum(['typed', 'drawn']),
-    value: z.string().min(1).max(200_000),
-  }),
+  /**
+   * How the name was written: typed (at most 120 characters), or drawn on the pad (a PNG data URL;
+   * the server decodes it and refuses what is not an image of reasonable size).
+   */
+  signature: z.discriminatedUnion('kind', [
+    z.strictObject({ kind: z.literal('typed'), value: z.string().trim().min(2).max(120) }),
+    z.strictObject({
+      kind: z.literal('drawn'),
+      value: z.string().max(CONSENT_MARK_IMAGE_MAX_CHARS).startsWith('data:image/png;base64,'),
+    }),
+  ]),
   representative: z
     .strictObject({
       fullName: z.string().trim().min(2).max(120),

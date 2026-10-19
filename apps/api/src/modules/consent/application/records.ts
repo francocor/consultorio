@@ -92,6 +92,8 @@ export const SignaturePayload = z.strictObject({
   representative: z
     .strictObject({ name: z.string(), nationalId: z.string(), relation: z.string() })
     .nullable(),
+  /** The full name the signer typed (absent in a record signed before it was kept). */
+  signerName: z.string().optional(),
   /** The typed name, or the drawn image as a data URL. */
   mark: z.strictObject({ kind: z.enum(['typed', 'drawn']), value: z.string() }),
   /** The SHA-256 (hex) of the typed name or of the bytes of the image: what the fingerprint covers. */

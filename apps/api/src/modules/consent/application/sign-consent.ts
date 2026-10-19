@@ -6,8 +6,10 @@ import type {
   ConsentSigningViewDto,
   SignConsentRequest,
 } from '@consultorio/contracts';
+import { eq } from 'drizzle-orm';
+import sharp from 'sharp';
 
-import { consentSignature } from '../../../db/schema/consent.js';
+import { consentSignature, consentTemplate } from '../../../db/schema/consent.js';
 import { audit, type AuditActor } from '../../../platform/audit/writer.js';
 import type { TenantKeys } from '../../../platform/crypto/tenant-keys.js';
 import type { Tx } from '../../../platform/db/tenant-context.js';
@@ -55,6 +57,11 @@ export interface SigningService {
 
 /** The most a drawn signature may weigh once decoded. */
 const MAX_IMAGE_BYTES = 100_000;
+/** The biggest drawing accepted: the pad is 480 by 160; this leaves room for a larger one. */
+const MAX_IMAGE_SIDE = 2_000;
+const MAX_IMAGE_PIXELS = 1_000_000;
+/** The longest typed mark, in characters. */
+const MAX_TYPED_MARK = 120;
 const PNG_SIGNATURE = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
 const DATA_URL_PREFIX = 'data:image/png;base64,';
 
@@ -66,16 +73,25 @@ interface ResolvedMark {
   digest: string;
 }
 
-/** A typed name stands as it is; a drawing must be a real PNG of a reasonable size. */
-function resolveMark(input: ConsentMarkInput): ResolvedMark {
+/**
+ * A typed name stands as it is (up to 120 characters); a drawing must be a real PNG of a reasonable
+ * size, and it is really decoded here (JD-S5 R1-S5-5): a corrupt image, or garbage after a valid
+ * header, would otherwise be stored for good, immutable, and break every render of the record. The
+ * prefix is checked here whatever the route said, so no caller can hand over another kind of data.
+ */
+async function resolveMark(input: ConsentMarkInput): Promise<ResolvedMark> {
   if (input.kind === 'typed') {
     const name = input.name.normalize('NFC');
+    if (name.trim().length === 0 || name.length > MAX_TYPED_MARK) {
+      throw new AppError('consent_mark_invalid');
+    }
     return {
       mark: { kind: 'typed', value: name },
       payload: { kind: 'typed', value: name },
       digest: sha256(name),
     };
   }
+  if (!input.imageDataUrl.startsWith(DATA_URL_PREFIX)) throw new AppError('consent_mark_invalid');
   const encoded = input.imageDataUrl.slice(DATA_URL_PREFIX.length);
   if (!/^[A-Za-z0-9+/]+={0,2}$/.test(encoded)) throw new AppError('consent_mark_invalid');
   const bytes = Buffer.from(encoded, 'base64');
@@ -84,6 +100,25 @@ function resolveMark(input: ConsentMarkInput): ResolvedMark {
     bytes.length > MAX_IMAGE_BYTES ||
     !bytes.subarray(0, PNG_SIGNATURE.length).equals(PNG_SIGNATURE)
   ) {
+    throw new AppError('consent_mark_invalid');
+  }
+  try {
+    // The header says how big it is before anything is decoded; then every pixel is decoded, so a
+    // truncated or corrupt image fails here and not when the record is printed.
+    const image = sharp(bytes, { limitInputPixels: MAX_IMAGE_PIXELS, failOn: 'error' });
+    const { format, width, height } = await image.metadata();
+    if (
+      format !== 'png' ||
+      width < 1 ||
+      height < 1 ||
+      width > MAX_IMAGE_SIDE ||
+      height > MAX_IMAGE_SIDE ||
+      width * height > MAX_IMAGE_PIXELS
+    ) {
+      throw new AppError('consent_mark_invalid');
+    }
+    await image.raw().toBuffer();
+  } catch {
     throw new AppError('consent_mark_invalid');
   }
   const digest = sha256(bytes);
@@ -128,6 +163,14 @@ export function createSigningService(deps: {
     // A request is signed the way it was made: on the device at reception, or in the portal.
     const expected = recorder.kind === 'staff' ? 'in_person' : 'portal';
     if (found.request.method !== expected) throw new AppError('consent_method_mismatch');
+    // A template the organization retired is not offered for new signatures, also to a request that
+    // was made before it was retired (informed-consent, "Retire a template"). A NEWER version of a
+    // live template is another matter: the signature binds to the version the signer was shown.
+    const [template] = await tx
+      .select({ status: consentTemplate.status })
+      .from(consentTemplate)
+      .where(eq(consentTemplate.id, found.version.templateId));
+    if (template?.status === 'retired') throw new AppError('consent_template_retired');
     return found;
   }
 
@@ -179,7 +222,7 @@ export function createSigningService(deps: {
         if (facts.minor) throw new AppError('consent_representative_required');
         if (request.representative) throw new AppError('consent_representative_unexpected');
       }
-      const mark = resolveMark(request.mark);
+      const mark = await resolveMark(request.mark);
 
       // What was published must still be what the version says it is.
       const versionFingerprint = templateFingerprint({
@@ -208,6 +251,10 @@ export function createSigningService(deps: {
       const payload: SignaturePayload = {
         v: 1,
         representative,
+        // The full name the signer typed, kept beside a mark that may be a drawing.
+        ...(request.signerName === undefined
+          ? {}
+          : { signerName: request.signerName.normalize('NFC') }),
         mark: mark.payload,
         markDigest: mark.digest,
         evidence: {

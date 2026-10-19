@@ -487,9 +487,13 @@ const CONSENT: PortalConsentDto = {
   hasDocument: false,
 };
 
+/** The fingerprint of the text on screen: the signature sends it back (JD-S5 R1-B-S4). */
+const HASH = 'c'.repeat(64);
+
 const detail = (overrides: Partial<PortalConsentDetailDto> = {}): PortalConsentDetailDto => ({
   ...CONSENT,
   body: 'Acepto el tratamiento propuesto y entiendo sus alcances.',
+  contentHash: HASH,
   requiresRepresentative: false,
   ...overrides,
 });
@@ -595,6 +599,7 @@ describe('the consents of the patient', () => {
       expect(bodies).toEqual([
         {
           accepted: true,
+          contentHash: HASH,
           signerName: 'Ana Pérez',
           signature: { kind: 'typed', value: 'Ana Pérez' },
         },
@@ -648,6 +653,7 @@ describe('the consents of the patient', () => {
       expect(bodies).toEqual([
         {
           accepted: true,
+          contentHash: HASH,
           signerName: 'Ana Pérez',
           signature: { kind: 'drawn', value: IMAGE },
         },
@@ -707,6 +713,7 @@ describe('the consents of the patient', () => {
       expect(bodies).toEqual([
         {
           accepted: true,
+          contentHash: HASH,
           signerName: 'María Pérez',
           signature: { kind: 'typed', value: 'María Pérez' },
           representative: { fullName: 'María Pérez', nationalId: '20111222', relation: 'mother' },

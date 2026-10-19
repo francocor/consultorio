@@ -10,6 +10,9 @@ const templates: AuditScenario = {
   test: 'apps/api/test/integration/consent-templates.test.ts',
 };
 const signing: AuditScenario = { test: 'apps/api/test/integration/consent-signing.test.ts' };
+const hardening: AuditScenario = {
+  test: 'apps/api/test/integration/consent-hardening.test.ts',
+};
 
 export const CONSENT_SCENARIOS: Record<(typeof CONSENT_AUDIT_ACTIONS)[number], AuditScenario> = {
   'consent.template.created': templates,
@@ -20,4 +23,6 @@ export const CONSENT_SCENARIOS: Record<(typeof CONSENT_AUDIT_ACTIONS)[number], A
   'consent.revoked': signing,
   'consent.read': signing,
   'consent.expired': signing,
+  'consent.declined': hardening,
+  'consent.integrity_failed': hardening,
 };

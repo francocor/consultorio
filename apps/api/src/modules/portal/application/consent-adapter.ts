@@ -76,7 +76,7 @@ export interface ModuleListItem {
 /** `ConsentSigningViewDto` of the consent module, for the fields the portal reads. */
 export interface ModuleSigningView {
   requiresRepresentative: boolean;
-  version: { id: string; title: string; body: string };
+  version: { id: string; title: string; body: string; contentHash: string };
 }
 
 /** `SignConsentRequest` of the consent module. */
@@ -86,6 +86,8 @@ export interface ModuleSignRequest {
   signer: 'patient' | 'representative';
   representative?: { name: string; nationalId: string; relation: string };
   mark: { kind: 'typed'; name: string } | { kind: 'drawn'; imageDataUrl: string };
+  /** The full name the signer typed, kept with the record. */
+  signerName: string;
 }
 
 /** What the screens call a consent whose title the viewer may not read. */
@@ -165,6 +167,7 @@ export function adaptConsentModule(module: ConsentModulePortal): PortalConsentPo
         return {
           ...consent,
           body: '',
+          contentHash: '',
           requiresRepresentative: false,
         } satisfies PortalConsentDetailDto;
       }
@@ -176,6 +179,7 @@ export function adaptConsentModule(module: ConsentModulePortal): PortalConsentPo
         ...consent,
         title: view.version.title,
         body: view.version.body,
+        contentHash: view.version.contentHash,
         requiresRepresentative: view.requiresRepresentative,
       };
     },
@@ -186,6 +190,22 @@ export function adaptConsentModule(module: ConsentModulePortal): PortalConsentPo
       );
       if (!view) return null;
       const { request } = call;
+      // The signature binds to the text the patient was shown: the fingerprint they send back must
+      // be the one of the version the request is bound to (JD-S5 R1-B-S4).
+      if (request.contentHash !== view.version.contentHash) {
+        throw new AppError('consent_version_mismatch');
+      }
+      // Who signs is decided by the link of the session, never by the body (JD-S5 R1-S5-5): a
+      // representative signs as the representative, with the relation the organization verified
+      // (the link's, not the one typed in the form), and only for a minor; the person signs as
+      // themselves and cannot send representative data.
+      const asRepresentative = call.subject.relationship === 'representative';
+      if (asRepresentative) {
+        if (!view.requiresRepresentative) throw new AppError('consent_signer_not_allowed');
+        if (!request.representative) throw new AppError('consent_representative_required');
+      } else if (request.representative) {
+        throw new AppError('consent_representative_unexpected');
+      }
       const signed = await orNull(() =>
         module.sign(tx, {
           ...subject(call),
@@ -194,13 +214,14 @@ export function adaptConsentModule(module: ConsentModulePortal): PortalConsentPo
           request: {
             versionId: view.version.id,
             accepted: request.accepted,
-            signer: request.representative ? 'representative' : 'patient',
-            ...(request.representative
+            signer: asRepresentative ? 'representative' : 'patient',
+            signerName: request.signerName,
+            ...(asRepresentative && request.representative
               ? {
                   representative: {
                     name: request.representative.fullName,
                     nationalId: request.representative.nationalId,
-                    relation: request.representative.relation,
+                    relation: call.subject.relation ?? request.representative.relation,
                   },
                 }
               : {}),

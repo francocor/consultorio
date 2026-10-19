@@ -120,9 +120,10 @@ describe('a consent, through the portal and the consent module', () => {
     expect(read.statusCode, read.body).toBe(200);
     expect(read.json<PortalConsentDetailDto>().body).toContain('muela del juicio');
 
-    // Signed, in their own words.
+    // Signed, in their own words, for the text they were shown.
     const signed = await visitor.post(`/portal/consents/${consentId}/sign`, {
       accepted: true,
+      contentHash: read.json<PortalConsentDetailDto>().contentHash,
       signerName: 'Paciente Portal',
       signature: { kind: 'typed', value: 'Paciente Portal' },
     });

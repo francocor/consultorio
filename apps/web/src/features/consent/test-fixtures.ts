@@ -119,6 +119,7 @@ export function record(overrides: Partial<SignedConsentDto> = {}): SignedConsent
     },
     signerKind: 'patient',
     representative: null,
+    signerName: null,
     mark: { kind: 'typed', name: 'Ana Pérez' },
     accepted: true,
     method: 'in_person',

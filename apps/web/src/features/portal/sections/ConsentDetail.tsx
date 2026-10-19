@@ -96,6 +96,8 @@ function SigningForm({
     setProblem(null);
     onSign({
       accepted: true,
+      // The fingerprint of the text on screen: the signature binds to this text and no other.
+      contentHash: consent.contentHash,
       signerName: signer.trim(),
       signature:
         mark.kind === 'typed'

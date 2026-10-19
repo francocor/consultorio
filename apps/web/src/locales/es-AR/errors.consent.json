@@ -11,6 +11,7 @@
   "consent_version_mismatch": "El texto que se mostró no es el de esta solicitud. Vuelva a abrir el consentimiento para leerlo.",
   "consent_representative_required": "El paciente es menor de edad: el consentimiento lo firma su representante, con nombre, documento y vínculo.",
   "consent_representative_unexpected": "Se completaron datos de un representante, pero la firma es del propio paciente.",
+  "consent_signer_not_allowed": "Un representante no puede firmar por una persona adulta: la firma es de la propia persona, desde su acceso al portal.",
   "consent_mark_invalid": "La firma dibujada no es una imagen válida. Dibújela de nuevo o escriba el nombre.",
   "consent_not_signed": "Solo se puede revocar un consentimiento que fue firmado.",
   "consent_already_revoked": "Este consentimiento ya fue revocado.",

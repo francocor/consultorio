@@ -17,9 +17,15 @@ import type { PortalCall } from './ports.js';
 const TX = {} as never;
 const CALL = {
   actor: { identityId: 'identity-1' },
-  subject: { patientId: 'patient-1' },
+  subject: { patientId: 'patient-1', relationship: 'self', relation: null },
   auditActor: { actingRole: 'patient', userId: null },
 } as unknown as PortalCall;
+/** The session of a person who represents the patient, with the relation the organization verified. */
+const AS_REPRESENTATIVE = {
+  ...CALL,
+  subject: { patientId: 'patient-1', relationship: 'representative', relation: 'father' },
+} as unknown as PortalCall;
+const HASH = 'a'.repeat(64);
 const PENDING_ID = '0190a000-0000-7000-8000-000000000a01';
 const SIGNED_ID = '0190a000-0000-7000-8000-000000000a02';
 const DEVICE_ID = '0190a000-0000-7000-8000-000000000a03';
@@ -59,7 +65,12 @@ function moduleOf(items: ModuleListItem[], overrides: Partial<ConsentModulePorta
       refuseForeign(input.requestId);
       return Promise.resolve({
         requiresRepresentative: false,
-        version: { id: 'version-7', title: 'Título de la versión', body: 'Texto completo.' },
+        version: {
+          id: 'version-7',
+          title: 'Título de la versión',
+          body: 'Texto completo.',
+          contentHash: HASH,
+        },
       });
     },
     sign: (_tx, input) => {
@@ -143,6 +154,7 @@ describe('reading one', () => {
     expect(await port.read(TX, { ...CALL, consentId: PENDING_ID })).toMatchObject({
       title: 'Título de la versión',
       body: 'Texto completo.',
+      contentHash: HASH,
       requiresRepresentative: false,
       canSign: true,
     });
@@ -153,6 +165,7 @@ describe('reading one', () => {
 
     expect(await port.read(TX, { ...CALL, consentId: SIGNED_ID })).toMatchObject({
       body: '',
+      contentHash: '',
       canSign: false,
       hasDocument: true,
     });
@@ -169,9 +182,30 @@ describe('reading one', () => {
 describe('signing', () => {
   const REQUEST = {
     accepted: true as const,
+    contentHash: HASH,
     signerName: 'Ana Pérez',
     signature: { kind: 'typed' as const, value: 'Ana Pérez' },
   };
+  const REPRESENTATIVE_REQUEST = {
+    accepted: true as const,
+    contentHash: HASH,
+    signerName: 'María Pérez',
+    signature: { kind: 'drawn' as const, value: 'data:image/png;base64,AAAA' },
+    representative: {
+      fullName: 'María Pérez',
+      nationalId: '20111222',
+      relation: 'mother' as const,
+    },
+  };
+  /** The module of a minor: the signature has to be the representative's. */
+  const minorModule = (items: ModuleListItem[]) =>
+    moduleOf(items, {
+      signingView: () =>
+        Promise.resolve({
+          requiresRepresentative: true,
+          version: { id: 'version-7', title: 'T', body: 'B', contentHash: HASH },
+        }),
+    });
 
   it('signs against the version the request is bound to, with the typed name as the mark', async () => {
     const { port, calls } = moduleOf([item({})]);
@@ -183,33 +217,69 @@ describe('signing', () => {
       versionId: 'version-7',
       accepted: true,
       signer: 'patient',
+      signerName: 'Ana Pérez',
       mark: { kind: 'typed', name: 'Ana Pérez' },
     });
     expect(sent?.['auditActor']).toBe(CALL.auditActor);
   });
 
-  it('sends the drawing as the mark and the representative as the signer of a minor', async () => {
-    const { port, calls } = moduleOf([item({})]);
+  it('sends the drawing as the mark and the representative as the signer of a minor, with the relation of the link', async () => {
+    const { port, calls } = minorModule([item({})]);
 
     await port.sign(TX, {
-      ...CALL,
+      ...AS_REPRESENTATIVE,
       consentId: PENDING_ID,
-      request: {
-        accepted: true,
-        signerName: 'María Pérez',
-        signature: { kind: 'drawn', value: 'data:image/png;base64,AAAA' },
-        representative: { fullName: 'María Pérez', nationalId: '20111222', relation: 'mother' },
-      },
+      request: REPRESENTATIVE_REQUEST,
     });
 
     const [sent] = sentTo(calls, 'sign');
+    // The relation is the one the organization verified (the link: father), not the one typed (mother).
     expect(sent?.['request'] as ModuleSignRequest).toEqual({
       versionId: 'version-7',
       accepted: true,
       signer: 'representative',
-      representative: { name: 'María Pérez', nationalId: '20111222', relation: 'mother' },
+      signerName: 'María Pérez',
+      representative: { name: 'María Pérez', nationalId: '20111222', relation: 'father' },
       mark: { kind: 'drawn', imageDataUrl: 'data:image/png;base64,AAAA' },
     });
+  });
+
+  it('decides the signer by the link, not by the body: a representative cannot sign as the patient, nor the patient as a representative (JD-S5 R1-S5-5)', async () => {
+    const asAdult = moduleOf([item({})]);
+    const asMinor = minorModule([item({})]);
+
+    await expect(
+      asAdult.port.sign(TX, {
+        ...AS_REPRESENTATIVE,
+        consentId: PENDING_ID,
+        request: REPRESENTATIVE_REQUEST,
+      }),
+    ).rejects.toMatchObject({ code: 'consent_signer_not_allowed' });
+    await expect(
+      asMinor.port.sign(TX, { ...AS_REPRESENTATIVE, consentId: PENDING_ID, request: REQUEST }),
+    ).rejects.toMatchObject({ code: 'consent_representative_required' });
+    await expect(
+      asAdult.port.sign(TX, {
+        ...CALL,
+        consentId: PENDING_ID,
+        request: REPRESENTATIVE_REQUEST,
+      }),
+    ).rejects.toMatchObject({ code: 'consent_representative_unexpected' });
+    expect(sentTo(asAdult.calls, 'sign')).toEqual([]);
+    expect(sentTo(asMinor.calls, 'sign')).toEqual([]);
+  });
+
+  it('refuses a signature for a text that is not the one of the version (JD-S5 R1-B-S4)', async () => {
+    const { port, calls } = moduleOf([item({})]);
+
+    await expect(
+      port.sign(TX, {
+        ...CALL,
+        consentId: PENDING_ID,
+        request: { ...REQUEST, contentHash: 'b'.repeat(64) },
+      }),
+    ).rejects.toMatchObject({ code: 'consent_version_mismatch' });
+    expect(sentTo(calls, 'sign')).toEqual([]);
   });
 
   it('answers the consent as it stands after the module recorded the signature', async () => {

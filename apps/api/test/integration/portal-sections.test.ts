@@ -21,6 +21,9 @@ import {
 } from '../support/portal-fakes.js';
 import { createPortalWorld, rowsOf, type PortalWorld } from '../support/portal-world.js';
 
+/** The fingerprint the fake port shows for the text of every consent. */
+const HASH = 'f'.repeat(64);
+
 /**
  * The sections of the portal that read other modules and the patient's own data (S5.08, tasks 5.33
  * and 5.34). Consents and prescriptions come from the modules of other tracks: here they are fakes
@@ -84,6 +87,7 @@ describe('consents', () => {
       (
         await visitor.post(`/portal/consents/${id}/sign`, {
           accepted: true,
+          contentHash: HASH,
           signerName: 'Ana Pérez',
           signature: { kind: 'typed', value: 'Ana Pérez' },
         })
@@ -146,11 +150,13 @@ describe('consents', () => {
     const callsBefore = consents.calls.length;
 
     const without = await visitor.post(`/portal/consents/${id}/sign`, {
+      contentHash: HASH,
       signerName: 'Ana Pérez',
       signature: { kind: 'typed', value: 'Ana Pérez' },
     });
     const unticked = await visitor.post(`/portal/consents/${id}/sign`, {
       accepted: false,
+      contentHash: HASH,
       signerName: 'Ana Pérez',
       signature: { kind: 'typed', value: 'Ana Pérez' },
     });
@@ -160,6 +166,7 @@ describe('consents', () => {
 
     const signed = await visitor.post(`/portal/consents/${id}/sign`, {
       accepted: true,
+      contentHash: HASH,
       signerName: 'Ana Pérez',
       signature: { kind: 'typed', value: 'Ana Pérez' },
     });
@@ -177,6 +184,7 @@ describe('consents', () => {
       (
         await visitor.post(`/portal/consents/${id}/sign`, {
           accepted: true,
+          contentHash: HASH,
           signerName: 'Ana Pérez',
           signature: { kind: 'typed', value: 'Ana Pérez' },
         })
@@ -198,6 +206,7 @@ describe('consents', () => {
     const sign = (extra: Record<string, unknown>) =>
       visitor.post(`/portal/consents/${id}/sign`, {
         accepted: true,
+        contentHash: HASH,
         signerName: 'María Gómez',
         signature: { kind: 'typed', value: 'María Gómez' },
         ...extra,
@@ -220,6 +229,7 @@ describe('consents', () => {
     try {
       const sign = await visitor.post(`/portal/consents/${pendingId}/sign`, {
         accepted: true,
+        contentHash: HASH,
         signerName: 'Ana Pérez',
         signature: { kind: 'typed', value: 'Ana Pérez' },
       });

@@ -68,6 +68,17 @@ export async function renderSignedConsent(
       : 'El propio paciente';
 
   const blocks: PdfBlock[] = [
+    // A record that no longer matches its fingerprint says so before anything else (JD-S5 R1-B-W7):
+    // whoever prints it must not take it for the document that was signed.
+    ...(record.fingerprintValid
+      ? []
+      : ([
+          { kind: 'heading', text: 'ATENCIÓN: falló la verificación de integridad' },
+          {
+            kind: 'paragraph',
+            text: 'Los datos guardados de esta firma o el texto firmado no coinciden con la huella que se calculó cuando se firmó. Este documento no prueba lo que firmó la persona: avise a la persona responsable de la organización.',
+          },
+        ] satisfies PdfBlock[])),
     ...paragraphsOf(version.body),
     { kind: 'heading', text: 'Firma' },
     {
@@ -75,6 +86,9 @@ export async function renderSignedConsent(
       rows: [
         { label: 'Paciente', value: context.patientName },
         { label: 'Firmó', value: signer },
+        ...(payload.signerName === undefined
+          ? []
+          : [{ label: 'Nombre completo del firmante', value: payload.signerName }]),
         { label: 'Fecha y hora', value: dateText(signature.signedAt, context.timeZone) },
         {
           label: 'Modalidad',
@@ -87,11 +101,14 @@ export async function renderSignedConsent(
   ];
 
   if (payload.mark.kind === 'drawn') {
-    blocks.push({
-      kind: 'image',
-      data: await squareMark(payload.mark.value),
-      size: MARK_SIZE / 2,
-    });
+    // A drawing is decoded before it is stored, so this does not fail for a new record; a record
+    // from before that check, whose image does not decode, still prints, and says so.
+    const image = await squareMark(payload.mark.value).catch(() => null);
+    blocks.push(
+      image === null
+        ? { kind: 'paragraph', text: 'Firma dibujada: la imagen guardada no se pudo leer.' }
+        : { kind: 'image', data: image, size: MARK_SIZE / 2 },
+    );
   } else {
     blocks.push({ kind: 'paragraph', text: `Firma (nombre escrito): ${payload.mark.value}` });
   }

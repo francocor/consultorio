@@ -30,8 +30,11 @@ export interface RequestService {
     tx: Tx,
     input: { actor: Auditor; request: CreateConsentRequestRequest },
   ): Promise<ConsentRequestDto>;
-  /** The patient chose not to sign. The request ends declined and cannot be signed. */
-  decline(tx: Tx, input: { requestId: string }): Promise<ConsentRequestDto>;
+  /**
+   * The patient chose not to sign. The request ends declined and cannot be signed. `actor` is who
+   * recorded it: the entry of the trail names them.
+   */
+  decline(tx: Tx, input: { requestId: string; actor: Auditor }): Promise<ConsentRequestDto>;
 }
 
 /**
@@ -176,7 +179,7 @@ export function createRequestService(deps: { clock: () => Date }): RequestServic
       return toRequestDto(row, latest, now);
     },
 
-    async decline(tx, { requestId }) {
+    async decline(tx, { requestId, actor }) {
       const { request, version } = await requireRequest(tx, requestId, { lock: true });
       const now = deps.clock();
       if (request.status !== 'pending') throw new AppError('consent_request_closed');
@@ -187,6 +190,21 @@ export function createRequestService(deps: { clock: () => Date }): RequestServic
         .set({ status: 'declined', closedAt: now })
         .where(eq(consentRequest.id, request.id))
         .returning();
+      // A refusal to sign is a decision about the patient's care that somebody recorded: the trail
+      // names who (JD-S5 R1-S5-10), the template by id and version, never by title.
+      await audit(tx, {
+        action: 'consent.declined',
+        outcome: 'allow',
+        actor,
+        resourceType: 'consent_request',
+        resourceId: request.id,
+        patientId: request.patientId,
+        metadata: {
+          templateId: version.templateId,
+          version: version.versionNumber,
+          method: request.method,
+        },
+      });
       return toRequestDto(row as ConsentRequestRow, version, now);
     },
   };

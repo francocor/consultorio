@@ -139,6 +139,7 @@ const requestOf = async (tenantId: string, patientFamily: string, status: string
 
 const SIGN_BODY = (name: string) => ({
   accepted: true,
+  contentHash: 'a'.repeat(64),
   signerName: name,
   signature: { kind: 'typed', value: name },
 });
@@ -326,11 +327,13 @@ describe('consent integrity', () => {
 
     const withoutAcceptance = await valentina.post(`/portal/consents/${waiting.id}/sign`, {
       accepted: false,
+      contentHash: 'a'.repeat(64),
       signerName: 'Valentina Gómez',
       signature: { kind: 'typed', value: 'Valentina Gómez' },
     });
     const notAPicture = await valentina.post(`/portal/consents/${waiting.id}/sign`, {
       accepted: true,
+      contentHash: 'a'.repeat(64),
       signerName: 'Valentina Gómez',
       signature: { kind: 'drawn', value: 'data:image/png;base64,AAAA' },
     });

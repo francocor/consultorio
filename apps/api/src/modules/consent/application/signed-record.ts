@@ -111,12 +111,22 @@ export async function openSignedRecord(
   };
 }
 
-/** Every read of a signed consent is audited: who, which consent, and through which door. */
+/**
+ * Every read of a signed consent is audited: who, which consent, and through which door. A record
+ * whose stored facts no longer match its fingerprint writes a second entry, `consent.integrity_failed`
+ * (JD-S5 R1-B-W7): somebody must be able to find out from the trail that a signed record is no longer
+ * what was signed, without having to open the document to see it.
+ */
 export async function auditRead(
   tx: Tx,
   record: SignedRecord,
   input: { auditActor: AuditActor; via: 'view' | 'document' | 'portal' },
 ): Promise<void> {
+  const metadata = {
+    templateId: record.version.templateId,
+    version: record.version.versionNumber,
+    via: input.via,
+  };
   await audit(tx, {
     action: 'consent.read',
     outcome: 'allow',
@@ -124,12 +134,20 @@ export async function auditRead(
     resourceType: 'consent_request',
     resourceId: record.request.id,
     patientId: record.request.patientId,
-    metadata: {
-      templateId: record.version.templateId,
-      version: record.version.versionNumber,
-      via: input.via,
-    },
+    metadata,
   });
+  if (!record.fingerprintValid) {
+    await audit(tx, {
+      action: 'consent.integrity_failed',
+      outcome: 'deny',
+      actor: input.auditActor,
+      resourceType: 'consent_request',
+      resourceId: record.request.id,
+      patientId: record.request.patientId,
+      reason: 'fingerprint_mismatch',
+      metadata,
+    });
+  }
 }
 
 export function toSignedConsentDto(record: SignedRecord, now: Date): SignedConsentDto {
@@ -145,6 +163,7 @@ export function toSignedConsentDto(record: SignedRecord, now: Date): SignedConse
     },
     signerKind: signature.signerKind as SignedConsentDto['signerKind'],
     representative: payload.representative,
+    signerName: payload.signerName ?? null,
     mark:
       payload.mark.kind === 'typed'
         ? { kind: 'typed', name: payload.mark.value }
