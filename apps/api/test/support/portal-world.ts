@@ -1,10 +1,15 @@
-import { randomUUID } from 'node:crypto';
+import { randomBytes, randomUUID } from 'node:crypto';
 
-import type { PatientPortalResponse, PortalIdentityDto } from '@consultorio/contracts';
+import type {
+  PatientPortalResponse,
+  PortalIdentityDto,
+  PrescriptionProvider,
+} from '@consultorio/contracts';
 import { sql } from 'drizzle-orm';
 import type { LightMyRequestResponse } from 'fastify';
 import { expect } from 'vitest';
 
+import { createLocalBotChallenge } from '../../src/adapters/bot-challenge-local/index.js';
 import {
   createMemoryObjectStorage,
   type MemoryObjectStorage,
@@ -14,7 +19,12 @@ import { MODULE_WIRINGS } from '../../src/main/wiring/index.js';
 import { createPortalWiring, type PortalPorts } from '../../src/main/wiring/portal.js';
 import { createPortalCodeSendJob } from '../../src/modules/portal/index.js';
 
-import { createBookingWorld, type BookingWorld, type Visitor } from './booking-world.js';
+import {
+  createBookingWorld,
+  testAdapters,
+  type BookingWorld,
+  type Visitor,
+} from './booking-world.js';
 import { runPending } from './jobs.js';
 import { createTestPatient } from './patients.js';
 import type { TestSession } from './session.js';
@@ -88,14 +98,29 @@ export async function createPortalWorld(
     now?: Date;
     /** The doors of the consent and prescription modules (fakes, until the integrator wires them). */
     ports?: PortalPorts;
+    /**
+     * Serves the organization's e-prescription with this provider (the in-memory fake), so the
+     * prescriptions module issues for real. Without it the organization has no provider.
+     */
+    erx?: PrescriptionProvider;
   },
 ): Promise<PortalWorld> {
   const storage = createMemoryObjectStorage();
-  const { ports, ...worldOptions } = options;
+  const { ports, erx, ...worldOptions } = options;
+  const challenge = createLocalBotChallenge({ secret: randomBytes(32), difficulty: 6 });
+  const served = testAdapters(challenge);
   const base = await createBookingWorld(runtime, {
     ...worldOptions,
     app: {
       storage,
+      ...(erx
+        ? {
+            adapters: {
+              forTenant: (tenant, port) =>
+                (port === 'prescriptionProvider' ? erx : served.forTenant(tenant, port)) as never,
+            },
+          }
+        : {}),
       // The modules wired as `main` wires them, with the portal's doors replaced when a test asks.
       wiring: MODULE_WIRINGS.map((wiring) =>
         wiring.name === 'portal' && ports !== undefined ? createPortalWiring(ports) : wiring,

@@ -3,7 +3,7 @@ import type { PortalPrescriptionDto } from '@consultorio/contracts';
 import type { AuditActor } from '../../../platform/audit/writer.js';
 import type { PortalActor } from '../../../platform/authz/actor.js';
 
-import type { PortalPrescriptionPort } from './ports.js';
+import type { DownloadPurpose, PortalPrescriptionPort } from './ports.js';
 
 /** What the prescriptions module asks of every call: the actor, the subject and the audit actor. */
 export interface PrescriptionModuleInput {
@@ -17,6 +17,8 @@ export interface ModulePrescription {
   id: string;
   issuedAt: string;
   status: 'issued' | 'cancelled' | 'dispensed' | 'expired';
+  /** Whether the module can give a document for it now (kept, or made on request). */
+  hasDocument: boolean;
 }
 
 /** `FileDelivery` of the platform: the object to stream and the headers its owner decided. */
@@ -41,7 +43,7 @@ export interface ModuleFileDelivery {
 export interface PrescriptionModulePortal {
   list(input: PrescriptionModuleInput): Promise<ModulePrescription[]>;
   openDocument(
-    input: PrescriptionModuleInput & { prescriptionId: string },
+    input: PrescriptionModuleInput & { prescriptionId: string; purpose: DownloadPurpose },
   ): Promise<ModuleFileDelivery | null>;
 }
 
@@ -57,8 +59,8 @@ export function fileNameOf(contentDisposition: string): string {
  * Wires the prescriptions module into the portal. The mapping:
  *
  * - list: the module's list (confirmed prescriptions only, no medication). The portal adds
- *   `prescriberName: null` (the module does not say who prescribed) and `hasDocument` for every
- *   status but `cancelled`, which the module never gives a document to.
+ *   `prescriberName: null` (the module does not say who prescribed). Whether there is a document is
+ *   the module's answer (`hasDocument`), never inferred from the status here.
  * - document: the module's `FileDelivery` is a storage object, which fits the file door as it is.
  *   Its file name is read back from the `content-disposition` the module set.
  *
@@ -78,7 +80,7 @@ export function adaptPrescriptionModule(module: PrescriptionModulePortal): Porta
         issuedAt: entry.issuedAt,
         status: entry.status,
         prescriberName: null,
-        hasDocument: entry.status !== 'cancelled',
+        hasDocument: entry.hasDocument,
       }));
     },
 
@@ -88,6 +90,7 @@ export function adaptPrescriptionModule(module: PrescriptionModulePortal): Porta
         patientId: call.subject.patientId,
         auditActor: call.auditActor,
         prescriptionId: call.prescriptionId,
+        purpose: call.purpose,
       });
       return delivery
         ? {

@@ -9,7 +9,7 @@ import type { PortalActor } from '../../../platform/authz/actor.js';
 import type { Tx } from '../../../platform/db/tenant-context.js';
 import { AppError } from '../../../platform/http/problem.js';
 
-import type { PortalCall, PortalConsentPort } from './ports.js';
+import type { DownloadPurpose, PortalCall, PortalConsentPort } from './ports.js';
 
 /**
  * The portal entry points of the consent module (`createConsentPortal` of `modules/consent`), as
@@ -49,7 +49,13 @@ export interface ConsentModulePortal {
   ): Promise<{ id: string }>;
   document(
     tx: Tx,
-    input: { actor: PortalActor; auditActor: AuditActor; patientId: string; requestId: string },
+    input: {
+      actor: PortalActor;
+      auditActor: AuditActor;
+      patientId: string;
+      requestId: string;
+      purpose: DownloadPurpose;
+    },
   ): Promise<{ bytes: Buffer; fileName: string }>;
 }
 
@@ -226,6 +232,7 @@ export function adaptConsentModule(module: ConsentModulePortal): PortalConsentPo
           ...subject(call),
           auditActor: call.auditActor,
           requestId: call.consentId,
+          purpose: call.purpose,
         }),
       );
       return rendered

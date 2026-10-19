@@ -187,6 +187,8 @@ export const PortalPrescriptionListing = z.strictObject({
   id: z.uuid(),
   issuedAt: z.iso.datetime(),
   status: z.enum(['issued', 'cancelled', 'dispensed', 'expired']),
+  /** Whether a document can be downloaded now: kept, or made on request. */
+  hasDocument: z.boolean(),
 });
 export type PortalPrescriptionListing = z.infer<typeof PortalPrescriptionListing>;
 

@@ -186,6 +186,12 @@ export interface PortalDocumentInput {
   patientId: string;
   prescriptionId: string;
   auditActor: AuditActor;
+  /**
+   * `link`: the portal only asks whether the document exists and is the patient's, to issue a link,
+   * and nothing leaves, so nothing is audited. `download`: the document goes out and the download is
+   * audited, once. Absent means `download`, so a caller that forgets to say audits too much, never too little.
+   */
+  purpose?: 'link' | 'download';
 }
 
 /**
@@ -214,15 +220,17 @@ export async function openPortalDocument(
     await storeDocument(tx, deps, row.id);
     const fresh = await findPrescription(tx, row.id);
     if (!fresh?.documentKey) return null;
-    await audit(tx, {
-      action: 'prescription.downloaded',
-      outcome: 'allow',
-      actor: input.auditActor,
-      resourceType: 'prescription',
-      resourceId: row.id,
-      patientId: row.patientId,
-      metadata: { via: 'portal' },
-    });
+    if (input.purpose !== 'link') {
+      await audit(tx, {
+        action: 'prescription.downloaded',
+        outcome: 'allow',
+        actor: input.auditActor,
+        resourceType: 'prescription',
+        resourceId: row.id,
+        patientId: row.patientId,
+        metadata: { via: 'portal' },
+      });
+    }
     return deliveryOf(fresh, fresh.documentKey);
   });
 }

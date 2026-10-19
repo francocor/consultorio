@@ -113,6 +113,7 @@ export async function findDownload(
   options: { deliver?: boolean } = {},
 ): Promise<DownloadFile | null> {
   const deliver = options.deliver ?? false;
+  const purpose = deliver ? ('download' as const) : ('link' as const);
   const patientId = call.subject.patientId;
   switch (kind) {
     case 'document': {
@@ -138,11 +139,15 @@ export async function findDownload(
         : null;
     }
     case 'prescription': {
-      const file = await deps.prescriptions?.document(tx, { ...call, prescriptionId: id });
+      const file = await deps.prescriptions?.document(tx, {
+        ...call,
+        prescriptionId: id,
+        purpose,
+      });
       return file ? toDownload(deps, call, file, deliver) : null;
     }
     case 'consent': {
-      const file = await deps.consent?.document(tx, { ...call, consentId: id });
+      const file = await deps.consent?.document(tx, { ...call, consentId: id, purpose });
       return file ? toDownload(deps, call, file, deliver) : null;
     }
   }

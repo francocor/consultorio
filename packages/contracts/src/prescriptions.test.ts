@@ -123,9 +123,10 @@ describe('prescription request shapes (task 5.17)', () => {
       id: '0190a000-0000-7000-8000-0000000000a3',
       issuedAt: '2026-10-19T12:00:00.000Z',
       status: 'issued',
+      hasDocument: true,
     });
 
-    expect(Object.keys(portal).sort()).toEqual(['id', 'issuedAt', 'status']);
+    expect(Object.keys(portal).sort()).toEqual(['hasDocument', 'id', 'issuedAt', 'status']);
     expect(
       PortalPrescriptionListing.safeParse({ ...portal, items: [{ genericName: 'Amoxicilina' }] })
         .success,

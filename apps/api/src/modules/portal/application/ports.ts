@@ -55,6 +55,14 @@ export type PortalFile = PortalStoredFile | PortalRenderedFile;
 
 export const isRenderedFile = (file: PortalFile): file is PortalRenderedFile => 'bytes' in file;
 
+/**
+ * Why a module is asked for a file. The door asks twice for one download: once to issue the link
+ * (`link`: only to know the file exists and is the subject's) and once when the link is used
+ * (`download`: the file is going out). Only a `download` is a read of the file for the trail, so a
+ * module audits that one and nothing for a `link`.
+ */
+export type DownloadPurpose = 'link' | 'download';
+
 export interface PortalConsentPort {
   /** The consents of the subject: pending, signed, revoked, expired. */
   list(tx: Tx, call: PortalCall): Promise<PortalConsentDto[]>;
@@ -71,12 +79,18 @@ export interface PortalConsentPort {
     call: PortalCall & { consentId: string; request: PortalConsentRevokeRequest },
   ): Promise<PortalConsentDto | null>;
   /** The signed document, or null when it is not theirs or there is none. */
-  document(tx: Tx, call: PortalCall & { consentId: string }): Promise<PortalFile | null>;
+  document(
+    tx: Tx,
+    call: PortalCall & { consentId: string; purpose: DownloadPurpose },
+  ): Promise<PortalFile | null>;
 }
 
 export interface PortalPrescriptionPort {
   /** The prescriptions issued to the subject. Never one the provider has not confirmed as valid. */
   list(tx: Tx, call: PortalCall): Promise<PortalPrescriptionDto[]>;
   /** The prescription document, or null when it is not theirs or there is none. */
-  document(tx: Tx, call: PortalCall & { prescriptionId: string }): Promise<PortalFile | null>;
+  document(
+    tx: Tx,
+    call: PortalCall & { prescriptionId: string; purpose: DownloadPurpose },
+  ): Promise<PortalFile | null>;
 }

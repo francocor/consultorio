@@ -70,6 +70,11 @@ export interface ConsentPortal {
       auditActor: AuditActor;
       patientId: string;
       requestId: string;
+      /**
+       * `link`: the portal only checks the record exists to issue a link, and nothing is read for the
+       * trail. `download` (the default): the record goes out and `consent.read` is written once.
+       */
+      purpose?: 'link' | 'download';
     },
   ): Promise<SignedDocument>;
 }
@@ -128,12 +133,12 @@ export function createConsentPortal(deps: { keys: TenantKeys; clock?: () => Date
       });
     },
 
-    async document(tx, { actor, auditActor, patientId, requestId }) {
+    async document(tx, { actor, auditActor, patientId, requestId, purpose }) {
       await authorize(tx, actor, 'portal.document.read');
       // The signature of this patient, and no other, is readable from here on.
       await allowPortalSubject(tx, patientId);
       const record = await openSignedRecord(deps.keys, tx, requestId, { patientId });
-      await auditRead(tx, record, { auditActor, via: 'portal' });
+      if (purpose !== 'link') await auditRead(tx, record, { auditActor, via: 'portal' });
       return renderSignedDocument(tx, record, clock());
     },
   };

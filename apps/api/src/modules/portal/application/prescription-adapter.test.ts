@@ -40,11 +40,22 @@ function moduleOf(
 }
 
 describe('the list', () => {
-  it('shows each prescription with where it stands, and offers the document for every one that has it', async () => {
+  it('shows each prescription with where it stands, and offers the document only where the module says there is one', async () => {
     const { port } = moduleOf(
       [
-        { id: ID, issuedAt: '2031-05-18T14:00:00.000Z', status: 'issued' },
-        { id: 'other', issuedAt: '2031-04-18T14:00:00.000Z', status: 'cancelled' },
+        { id: ID, issuedAt: '2031-05-18T14:00:00.000Z', status: 'issued', hasDocument: true },
+        {
+          id: 'other',
+          issuedAt: '2031-04-18T14:00:00.000Z',
+          status: 'cancelled',
+          hasDocument: false,
+        },
+        {
+          id: 'nobucket',
+          issuedAt: '2031-03-18T14:00:00.000Z',
+          status: 'issued',
+          hasDocument: false,
+        },
       ],
       null,
     );
@@ -61,6 +72,13 @@ describe('the list', () => {
         id: 'other',
         issuedAt: '2031-04-18T14:00:00.000Z',
         status: 'cancelled',
+        prescriberName: null,
+        hasDocument: false,
+      },
+      {
+        id: 'nobucket',
+        issuedAt: '2031-03-18T14:00:00.000Z',
+        status: 'issued',
         prescriberName: null,
         hasDocument: false,
       },
@@ -89,7 +107,7 @@ describe('the document', () => {
       contentDisposition: 'attachment; filename="receta-2031-05-18-00000b01.pdf"',
     });
 
-    const file = await port.document(TX, { ...CALL, prescriptionId: ID });
+    const file = await port.document(TX, { ...CALL, prescriptionId: ID, purpose: 'download' });
 
     expect(file).toEqual({
       objectKey: 't/tenant/prescriptions/abc.pdf',
@@ -101,13 +119,26 @@ describe('the document', () => {
       patientId: 'patient-1',
       auditActor: CALL.auditActor,
       prescriptionId: ID,
+      purpose: 'download',
     });
+  });
+
+  it('tells the module why it is asked for the document, so only a download is audited', async () => {
+    const { port, calls } = moduleOf([], null);
+
+    await port.document(TX, { ...CALL, prescriptionId: ID, purpose: 'link' });
+    await port.document(TX, { ...CALL, prescriptionId: ID, purpose: 'download' });
+
+    expect(calls.map((entry) => (entry.input as { purpose?: string }).purpose)).toEqual([
+      'link',
+      'download',
+    ]);
   });
 
   it('is null when the module has none: not theirs, not confirmed, cancelled or no document', async () => {
     const { port } = moduleOf([], null);
 
-    expect(await port.document(TX, { ...CALL, prescriptionId: ID })).toBeNull();
+    expect(await port.document(TX, { ...CALL, prescriptionId: ID, purpose: 'link' })).toBeNull();
   });
 
   it('falls back to a plain name when the header does not carry one', () => {

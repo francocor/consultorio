@@ -8,6 +8,7 @@ import { can } from '../../../platform/authz/can.js';
 import { SYSTEM_USER_ID, type WithTenant } from '../../../platform/db/tenant-context.js';
 
 import { PrescriptionDenied } from './errors.js';
+import { DOCUMENT_STATUSES } from './read-model.js';
 
 /** Most prescriptions one read returns: a patient has a handful, and a portal page is not a report. */
 const LIMIT = 100;
@@ -29,6 +30,7 @@ const SHOWN = ['issued', 'cancelled', 'dispensed', 'expired'] as const;
 export async function listPrescriptionsForPatient(
   withTenant: WithTenant,
   input: { actor: PortalActor; patientId: string; auditActor: AuditActor },
+  options: { canRender?: boolean } = {},
 ): Promise<PortalPrescriptionListing[]> {
   const decision = can(input.actor, 'portal.prescription.read', { tenantId: input.actor.tenantId });
   if (!decision.allowed)
@@ -40,6 +42,7 @@ export async function listPrescriptionsForPatient(
         id: prescription.id,
         issuedAt: prescription.issuedAt,
         status: prescription.status,
+        documentKey: prescription.documentKey,
       })
       .from(prescription)
       .where(
@@ -63,6 +66,9 @@ export async function listPrescriptionsForPatient(
               id: row.id,
               issuedAt: row.issuedAt.toISOString(),
               status: row.status as PortalPrescriptionListing['status'],
+              hasDocument:
+                DOCUMENT_STATUSES.includes(row.status as (typeof DOCUMENT_STATUSES)[number]) &&
+                (row.documentKey !== null || options.canRender === true),
             },
           ],
     );

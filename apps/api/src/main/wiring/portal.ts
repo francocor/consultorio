@@ -1,32 +1,65 @@
+import { createConsentPortal } from '../../modules/consent/index.js';
 import {
+  adaptConsentModule,
+  adaptPrescriptionModule,
   createMajorityReviewJob,
   createPortal,
   createPortalCodeSendJob,
   type PortalConsentPort,
   type PortalPrescriptionPort,
 } from '../../modules/portal/index.js';
+import {
+  listPrescriptionsForPatient,
+  openPortalDocument,
+  type PrescriptionDeps,
+} from '../../modules/prescriptions/index.js';
 import { createTenantRoutedEmail } from '../adapter-resolver.js';
 
-import type { ModuleWiring } from './types.js';
+import type { ModuleWiring, WiringContext } from './types.js';
 
-/**
- * What the portal needs from the modules that are built in parallel and merged later. Each one is a
- * port of `modules/portal/application/ports.ts`, implemented on top of the `index.ts` of the module
- * that owns the data. Left out, the section of the portal answers `available: false` and the screen
- * shows its empty state.
- *
- * INTEGRATOR (merging tracks A2 and A3): build the two ports from the exports those modules
- * document (see the report of Track B and `docs/stage5-tracks.md`) and pass them in `portalWiring`
- * below, for example `createPortalWiring({ consent: createPortalConsentPort(...), prescriptions:
- * createPortalPrescriptionPort(...) })`. Nothing else of the portal changes.
- */
 /** The review of the dependents who reached the age of majority runs once a day. */
 const MAJORITY_REVIEW_EVERY_MS = 24 * 3_600_000;
 
+/**
+ * What the portal needs from the modules that are built in parallel: a port per module, from
+ * `modules/portal/application/ports.ts`. Left out, the section of the portal answers
+ * `available: false` and the screen shows its empty state.
+ */
 export interface PortalPorts {
   consent?: PortalConsentPort | undefined;
   prescriptions?: PortalPrescriptionPort | undefined;
 }
+
+/** The doors of the real modules, built from what the composition root holds. */
+export function realPortalPorts(context: WiringContext): PortalPorts {
+  const { keys, withTenant } = context;
+  // The same dependencies the prescriptions module is built with (`wiring/prescriptions.ts`): the
+  // portal opens a document through the module's own function, which may have to make it first.
+  const prescriptionDeps: PrescriptionDeps = {
+    keys,
+    adapters: context.adapters,
+    clock: context.clock ?? (() => new Date()),
+    jobs: context.jobs,
+    withTenant,
+    storage: context.storage,
+  };
+  return {
+    consent: adaptConsentModule(
+      createConsentPortal({ keys, ...(context.clock ? { clock: context.clock } : {}) }),
+    ),
+    prescriptions: adaptPrescriptionModule({
+      // Without a bucket a document cannot be made: the list says so (`hasDocument: false`).
+      list: (input) =>
+        listPrescriptionsForPatient(withTenant, input, {
+          canRender: context.storage !== undefined,
+        }),
+      openDocument: (input) => openPortalDocument(withTenant, prescriptionDeps, input),
+    }),
+  };
+}
+
+/** The doors as given, or built from the context when the application is composed. */
+export type PortalPortsSource = PortalPorts | ((context: WiringContext) => PortalPorts);
 
 /**
  * Everything the portal module registers with the composition root (Track B). The track edits this
@@ -36,7 +69,7 @@ export interface PortalPorts {
  * has no adapter slot: the code is an email, sent through the channel policy (kind `portal_notice`).
  * Its permissions, audit actions, queues and the `PortalActor` already exist.
  */
-export function createPortalWiring(ports: PortalPorts = {}): ModuleWiring {
+export function createPortalWiring(source: PortalPortsSource = {}): ModuleWiring {
   return {
     name: 'portal',
     // The sign-in code goes out by a job (queue `portal.code_send`, category `auth`), so the API
@@ -54,8 +87,9 @@ export function createPortalWiring(ports: PortalPorts = {}): ModuleWiring {
         ],
       };
     },
-    create: (context) =>
-      createPortal({
+    create: (context) => {
+      const ports = typeof source === 'function' ? source(context) : source;
+      return createPortal({
         withTenant: context.withTenant,
         auditDeny: context.auditDeny,
         keys: context.keys,
@@ -71,8 +105,9 @@ export function createPortalWiring(ports: PortalPorts = {}): ModuleWiring {
         consent: ports.consent,
         prescriptions: ports.prescriptions,
         ...(context.clock ? { clock: context.clock } : {}),
-      }),
+      });
+    },
   };
 }
 
-export const portalWiring: ModuleWiring = createPortalWiring();
+export const portalWiring: ModuleWiring = createPortalWiring(realPortalPorts);

@@ -259,18 +259,30 @@ describe('revoking and the document', () => {
     const { port } = moduleOf([SIGNED]);
 
     expect(await port.revoke(TX, { ...CALL, consentId: PENDING_ID, request: {} })).toBeNull();
-    expect(await port.document(TX, { ...CALL, consentId: PENDING_ID })).toBeNull();
+    expect(await port.document(TX, { ...CALL, consentId: PENDING_ID, purpose: 'link' })).toBeNull();
   });
 
   it('hands the rendered record over as bytes of a PDF', async () => {
     const { port } = moduleOf([SIGNED]);
 
-    const file = await port.document(TX, { ...CALL, consentId: SIGNED_ID });
+    const file = await port.document(TX, { ...CALL, consentId: SIGNED_ID, purpose: 'download' });
 
     expect(file).toEqual({
       bytes: Buffer.from('%PDF'),
       fileName: 'consentimiento.pdf',
       contentType: 'application/pdf',
     });
+  });
+
+  it('tells the module why it is asked for the record, so only a download is a read for the trail', async () => {
+    const { port, calls } = moduleOf([SIGNED]);
+
+    await port.document(TX, { ...CALL, consentId: SIGNED_ID, purpose: 'link' });
+    await port.document(TX, { ...CALL, consentId: SIGNED_ID, purpose: 'download' });
+
+    expect(sentTo(calls, 'document').map((input) => input['purpose'])).toEqual([
+      'link',
+      'download',
+    ]);
   });
 });
