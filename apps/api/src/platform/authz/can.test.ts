@@ -1,6 +1,7 @@
 import {
   GRANTABLE,
   PERMISSIONS,
+  PORTAL_ACTOR_PERMISSIONS,
   ROLE_PERMISSIONS,
   ROLES,
   effectivePermissions,
@@ -167,8 +168,10 @@ describe('failing closed', () => {
 describe('the patient actor class (default deny on every staff route)', () => {
   const patient: Actor = { ...staff(['patient']), kind: 'patient' };
 
-  it('is denied every permission that is not a portal permission', () => {
-    const staffPermissions = PERMISSIONS.filter((permission) => !permission.startsWith('portal.'));
+  it('is denied every permission that is not one of the portal actor', () => {
+    const staffPermissions = PERMISSIONS.filter(
+      (permission) => !PORTAL_ACTOR_PERMISSIONS.some((held) => held === permission),
+    );
 
     expect(staffPermissions.length).toBeGreaterThan(20);
     for (const permission of staffPermissions) {
@@ -185,7 +188,9 @@ describe('the patient actor class (default deny on every staff route)', () => {
       kind: 'patient',
     };
 
-    for (const permission of PERMISSIONS.filter((p) => !p.startsWith('portal.'))) {
+    for (const permission of PERMISSIONS.filter(
+      (p) => !PORTAL_ACTOR_PERMISSIONS.some((held) => held === p),
+    )) {
       expect(can(disguised, permission), permission).toEqual({
         allowed: false,
         reason: 'patient_on_staff_route',
@@ -193,7 +198,28 @@ describe('the patient actor class (default deny on every staff route)', () => {
     }
   });
 
-  it('keeps its own portal permissions', () => {
-    expect(can(patient, 'portal.self.read')).toEqual({ allowed: true });
+  it('keeps its own portal permissions, every one of them', () => {
+    expect(PORTAL_ACTOR_PERMISSIONS.length).toBeGreaterThan(5);
+    for (const permission of PORTAL_ACTOR_PERMISSIONS) {
+      expect(can(patient, permission), permission).toEqual({ allowed: true });
+    }
+  });
+
+  it('is denied the permission the staff use to run portal accounts, although it starts with portal', () => {
+    expect(can(patient, 'portal.manage')).toEqual({
+      allowed: false,
+      reason: 'patient_on_staff_route',
+    });
+  });
+
+  it('is denied the new clinical and consent permissions of Stage 5', () => {
+    for (const permission of [
+      'clinical.prescription.write',
+      'clinical.consent.read',
+      'consent.template.manage',
+      'consent.request',
+    ] as const) {
+      expect(can(patient, permission).allowed, permission).toBe(false);
+    }
   });
 });

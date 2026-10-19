@@ -1,5 +1,6 @@
 import {
   PERMISSIONS,
+  PORTAL_ACTOR_PERMISSIONS,
   ROLES,
   effectivePermissions,
   isClinicalPermission,
@@ -39,6 +40,10 @@ function isPermission(value: string): value is Permission {
   return PERMISSIONS.some((permission) => permission === value);
 }
 
+function isPortalActorPermission(action: Permission): boolean {
+  return PORTAL_ACTOR_PERMISSIONS.some((permission) => permission === action);
+}
+
 const deny = (reason: DenyReason): Decision => ({ allowed: false, reason });
 
 /**
@@ -58,8 +63,9 @@ export function can(actor: Actor, action: string, resource: Resource = {}): Deci
   if (!isPermission(action)) return deny('unknown_action');
 
   if (actor.kind === 'patient') {
-    // A patient session only ever holds portal permissions, whatever else it claims to hold.
-    return action.startsWith('portal.') ? { allowed: true } : deny('patient_on_staff_route');
+    // A patient session only ever holds the permissions of the portal actor, whatever else it claims
+    // to hold. The prefix is not the rule: `portal.manage` is the staff's, to run the accounts.
+    return isPortalActorPermission(action) ? { allowed: true } : deny('patient_on_staff_route');
   }
 
   if (

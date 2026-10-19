@@ -1,9 +1,12 @@
 import { z } from 'zod';
 
 import { BILLING_ERRORS } from './billing-catalog.js';
+import { CONSENT_ERRORS } from './consent-catalog.js';
 import { INVOICING_ERRORS } from './invoicing-catalog.js';
 import { NOTIFICATION_ERRORS } from './notifications-catalog.js';
 import { ONLINE_BOOKING_ERRORS } from './online-booking-catalog.js';
+import { PORTAL_ERRORS } from './portal-catalog.js';
+import { PRESCRIPTION_ERRORS } from './prescriptions-catalog.js';
 import { REPORTS_ERRORS } from './reports-catalog.js';
 import { TELECONSULTATION_ERRORS } from './teleconsultation-catalog.js';
 import { WAITLIST_ERRORS } from './waitlist-catalog.js';
@@ -70,6 +73,9 @@ const duplicated = findDuplicateErrorCodes([
   BILLING_ERRORS,
   REPORTS_ERRORS,
   INVOICING_ERRORS,
+  CONSENT_ERRORS,
+  PRESCRIPTION_ERRORS,
+  PORTAL_ERRORS,
 ]);
 if (duplicated.length > 0) {
   throw new Error(`Error codes defined twice: ${duplicated.join(', ')}.`);
@@ -85,6 +91,9 @@ export const ERROR_CATALOG = {
   ...BILLING_ERRORS,
   ...REPORTS_ERRORS,
   ...INVOICING_ERRORS,
+  ...CONSENT_ERRORS,
+  ...PRESCRIPTION_ERRORS,
+  ...PORTAL_ERRORS,
 } as const;
 
 export type ErrorCode = keyof typeof ERROR_CATALOG;

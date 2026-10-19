@@ -25,6 +25,9 @@ export const PLATFORM_AUDIT_ACTIONS = [
   // The country holiday catalog, which the operator maintains as data.
   'holiday.added',
   'holiday.removed',
+  // The platform operator vouches for the registration of a professional, or withdraws it (Stage 5).
+  'operator.matricula.verified',
+  'operator.matricula.unverified',
 ] as const;
 export type PlatformAuditAction = (typeof PLATFORM_AUDIT_ACTIONS)[number];
 
