@@ -34,7 +34,12 @@ describe('invoicing catalogues', () => {
   });
 
   it('keeps the retry sub-state of a pending invoice apart from the statuses', () => {
-    expect([...INVOICE_DELIVERY_STATES]).toEqual(['queued', 'retrying', 'awaiting_reconciliation']);
+    expect([...INVOICE_DELIVERY_STATES]).toEqual([
+      'queued',
+      'retrying',
+      'awaiting_reconciliation',
+      'needs_attention',
+    ]);
     for (const state of INVOICE_DELIVERY_STATES) expect(INVOICE_STATUSES).not.toContain(state);
   });
 
@@ -63,6 +68,9 @@ describe('invoicing catalogues', () => {
       'invoice.retried',
       'invoice.manual',
       'invoice.credit_note',
+      'invoice.attempted',
+      'invoice.needs_attention',
+      'invoice.voucher_orphaned',
       'invoicing.config.changed',
       'invoicing.credential.changed',
     ]);
@@ -84,6 +92,10 @@ describe('invoicing catalogues', () => {
       'invoice_number_taken',
       'invoice_not_rejected',
       'invoice_pdf_not_ready',
+      'invoice_awaiting_reconciliation',
+      'invoice_replacement_mismatch',
+      'invoice_cae_taken',
+      'point_of_sale_has_invoices',
     ]);
     expect(INVOICING_ERRORS.fiscal_profile_required).toEqual({
       status: 409,
