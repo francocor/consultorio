@@ -41,6 +41,10 @@ export function useWorld(slug: string): {
     state.world?.issuer.setIdempotent(true);
     state.world?.issuer.setMode('ok');
     state.world?.issuer.dropHeld();
+    if (state.world) {
+      state.world.issuer.honoursPin = true;
+      state.world.issuer.setDateTrap(false);
+    }
     vi.restoreAllMocks();
   });
   afterAll(async () => {
@@ -163,10 +167,20 @@ export function realAuthority(world: InvoicingWorld): MockInstance<FakeInvoiceIs
 }
 
 /**
+ * The authority does not carry the pin and does not say it does: the lookup examines the whole window of
+ * numbers after the mark, as it does for any issuer that does not declare `honoursPin` (JD-S4 R7-2).
+ */
+export function withoutPin(world: InvoicingWorld): void {
+  world.issuer.honoursPin = false;
+}
+
+/**
  * An authority that does NOT pin: it ignores the number a request is for and numbers after what it
  * holds. The settle time is the only thing left between an invoice and a second voucher.
  */
 export function unpinnedAuthority(world: InvoicingWorld): MockInstance<FakeInvoiceIssuer['issue']> {
+  // It does not carry the pin, and it does not say it does: the lookup examines the whole window (JD-S4 R7-2).
+  world.issuer.honoursPin = false;
   const original = world.issuer.issue.bind(world.issuer);
   return vi.spyOn(world.issuer, 'issue').mockImplementation((request, key) => {
     const asked = { ...request };

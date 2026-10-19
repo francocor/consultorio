@@ -133,10 +133,13 @@ describe('a voucher that sits at a number remembered for another invoice (JD-S4 
           reason: 'voucher_taken_by_other',
           number: floor + 1,
           otherInvoiceId: b.created.id,
-          outcomeUnknown: true,
         },
       },
     ]);
+    // It does not say that the outcome is unknown: the item says the voucher belongs to another invoice
+    // (JD-S4 R7 A-S3).
+    const [taken] = await openItems(world, a.created.id);
+    expect(taken?.detail).not.toHaveProperty('outcomeUnknown');
     expect(
       (await strayRows(world)).filter((stray) => stray.invoiceId === a.created.id),
     ).toHaveLength(1);

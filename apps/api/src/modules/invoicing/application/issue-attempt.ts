@@ -6,7 +6,7 @@ import type {
   IssueResult,
   LastAuthorizedResult,
 } from '@consultorio/contracts';
-import { and, asc, eq, gt, isNull, lte, ne, or, sql } from 'drizzle-orm';
+import { and, asc, eq, gt, isNull, lte, or, sql } from 'drizzle-orm';
 
 import {
   fiscalCredential,
@@ -200,7 +200,15 @@ async function buildRequest(
 type Issued = Extract<IssueResult, { status: 'issued' }>;
 
 type AttentionReason =
-  'number_taken' | 'cae_taken' | 'voucher_mismatch' | 'issuer_mismatch' | 'voucher_ambiguous';
+  | 'number_taken'
+  | 'cae_taken'
+  | 'voucher_mismatch'
+  | 'issuer_mismatch'
+  | 'voucher_ambiguous'
+  /** The authority keeps refusing the number although its numbering does not move (JD-S4 R7-1). */
+  | 'authority_refuses_number'
+  /** An authority that says it carries the pin answered with another number (JD-S4 R7 B-S2). */
+  | 'pin_not_honoured';
 
 /** A number to remember when the invoice is parked: a voucher that no invoice can record sits there. */
 interface StrayToRemember {
@@ -231,8 +239,17 @@ type Verdict =
    * `miss`: a number at or below the last one of the authority has no voucher (the lookup may lag).
    * `refusesLookup`: the authority refused the question (a token, an environment), which will not pass by
    * itself.
+   * `unmoved`: the last number of the authority is still the one the invoice was marked with.
+   * `refusedNotNext`: the streak of refusals to write (zero ends it); absent, the streak is kept.
    */
-  | { kind: 'retry'; unknown: boolean; miss?: boolean; refusesLookup?: boolean }
+  | {
+      kind: 'retry';
+      unknown: boolean;
+      miss?: boolean;
+      refusesLookup?: boolean;
+      unmoved?: boolean;
+      refusedNotNext?: number;
+    }
   /**
    * The authority refused the request because its number is not the next one: THIS request issued nothing,
    * and the last number of the authority is not the one the invoice was marked with (JD-S4 R6-1).
@@ -341,10 +358,18 @@ function ambiguous(found: NumbersInDoubt & { number?: number; cae?: string }): V
   };
 }
 
-/** The moment the last request of the wait was sent (the mark), or the closest thing the row remembers. */
+/**
+ * The moment the last request of the wait was sent (the mark). A row marked before the moment was kept
+ * falls back to the moment its wait began, never to its last attempt: every look rewrites the last
+ * attempt, so the settle time would restart at each of them and a row of that kind would never settle
+ * (JD-S4 R7-4).
+ */
 function sentAtOf(row: InvoiceRow): Date | null {
-  return row.lastSentAt ?? row.lastAttemptAt ?? row.awaitingSince;
+  return row.lastSentAt ?? row.awaitingSince;
 }
+
+/** What `reconcile` says when nothing of the invoice is there and it may be sent. */
+type SendVerdict = { kind: 'send'; floor: number; unmoved: boolean };
 
 /** How many misses in a row at a number the authority says it has issued the invoice waits for. */
 const MAX_LOOKUP_MISSES = 3;
@@ -362,6 +387,8 @@ const MAX_LOOKUP_MISSES = 3;
  *   sent, the invoice is parked with its outcome unknown;
  * - a voucher that is nobody's of ours (another tool of the issuer, a person on the website of the
  *   authority) is remembered as such, and the next number is examined;
+ * - under an authority that carries the pin (`honoursPin`) the candidate is only the number the request
+ *   was pinned to; the others are not examined (JD-S4 R7-2);
  * - a number that an invoice of ours records is not asked about: it is that invoice's. A voucher
  *   registered by hand is asked about and its CAE compared, since a person typed its number;
  * - when every number was examined and none is this invoice's, it was NOT issued: sending is safe.
@@ -376,7 +403,7 @@ async function reconcile(
   row: InvoiceRow,
   step: Step,
   clock: { now: Date; settleMs: number },
-): Promise<Verdict | { kind: 'send'; floor: number }> {
+): Promise<Verdict | SendVerdict> {
   const floor = row.authorityLastAtMark;
   // Marked before the authority's count was kept: nobody knows from where to look. A person decides.
   if (floor === null) return ambiguous({});
@@ -396,12 +423,22 @@ async function reconcile(
   // the caller gave up on may still be processed and finish after this lookup (JD-S4 R6-1). Until then the
   // lookup may still adopt a voucher that has appeared, but it never sends.
   const settled = isSettled({ sentAt: sentAtOf(row), now: clock.now, settleMs: clock.settleMs });
-  const nothingIssued = (at: number): Verdict | { kind: 'send'; floor: number } =>
-    settled ? { kind: 'send', floor: at } : { kind: 'retry', unknown: true };
+  // `unmoved`: the numbering of the authority did not move since the mark (JD-S4 R7-1).
+  const nothingIssued = (at: number): Verdict | SendVerdict =>
+    settled
+      ? { kind: 'send', floor: at, unmoved: at === floor }
+      : { kind: 'retry', unknown: true, unmoved: at === floor };
   if (last === floor) return nothingIssued(floor);
 
   const series = { pointOfSale: row.pointOfSale, type: row.type, environment: row.environment };
-  const window = { from: floor, to: last };
+  // An authority that carries the pin can only have answered the request of this invoice at the number
+  // the request was pinned to: that one number is the whole candidate set. Every other number between the
+  // mark and its last one is somebody else's, and a voucher there that looks like this invoice must not
+  // be taken for its own (JD-S4 R7-2). Any other authority is examined over the whole window.
+  const pinned =
+    issuer.honoursPin === true && row.expectedNumber !== null && row.expectedNumber === floor + 1;
+  const upTo = pinned ? floor + 1 : last;
+  const window = { from: floor, to: upTo };
   const recorded = new Map(
     (await recordedBetween(tx, series, step.issuer.cuit, window)).map((entry) => [
       entry.number,
@@ -418,11 +455,11 @@ async function reconcile(
   const skipped = (number: number) =>
     certain.has(number) || (recorded.has(number) && recorded.get(number)?.status !== 'manual');
   const skippable = new Set([...recorded.keys(), ...certain].filter(skipped)).size;
-  if (last - floor > MAX_CANDIDATES + skippable) {
+  if (upTo - floor > MAX_CANDIDATES + skippable) {
     return ambiguous({ candidatesFrom: floor + 1, candidatesTo: last });
   }
   const numbers: number[] = [];
-  for (let number = floor + 1; number <= last; number += 1) {
+  for (let number = floor + 1; number <= upTo; number += 1) {
     if (!skipped(number)) numbers.push(number);
   }
   if (numbers.length > MAX_CANDIDATES) {
@@ -442,7 +479,15 @@ async function reconcile(
       if (row.lookupMisses < MAX_LOOKUP_MISSES) return { kind: 'retry', unknown: true, miss: true };
       return ambiguous({ candidates: [number] });
     }
-    if (found.status !== 'issued') return { kind: 'retry', unknown: true };
+    if (found.status !== 'issued') {
+      // The authority refused the question for good (a token, an environment): waiting will not cure it,
+      // and a person is told, as for the question of its last number (JD-S4 R7-5).
+      return {
+        kind: 'retry',
+        unknown: true,
+        ...(found.status === 'rejected' ? { refusesLookup: true } : {}),
+      };
+    }
     // An answer about another number than the one asked is not an answer about this one.
     if (found.number !== number) return ambiguous({ candidates: [number] });
     const typed = recorded.get(number);
@@ -488,6 +533,34 @@ async function reconcile(
   // Every number between the mark and the last one of the authority is somebody else's: this invoice was
   // not issued, and its next request gets a number above `last`.
   return nothingIssued(last);
+}
+
+/**
+ * After this many requests in a row that the authority refused with `not_next` while its last number did
+ * not move, the invoice is parked: the refusal has a reason the numbering does not explain (a date earlier
+ * than the last voucher, ARCA error 10016) and no waiting cures it (JD-S4 R7-1).
+ */
+const MAX_REFUSED_NOT_NEXT = 3;
+
+/**
+ * Whether an invoice of the organization already records this number in the point of sale and type of the
+ * invoice. It has the scope of the unique index of the numbers (organization, point of sale, type), so an
+ * invoice under another CUIT or environment counts as well: the voucher the authority would issue there
+ * could not be recorded.
+ */
+async function numberIsRecorded(tx: Tx, row: InvoiceRow, number: number): Promise<boolean> {
+  const [held] = await tx
+    .select({ id: invoice.id })
+    .from(invoice)
+    .where(
+      and(
+        eq(invoice.pointOfSale, row.pointOfSale),
+        eq(invoice.type, row.type),
+        eq(invoice.number, number),
+      ),
+    )
+    .limit(1);
+  return held !== undefined;
 }
 
 /** How long an invoice that is held back waits before it is looked at again. */
@@ -596,6 +669,10 @@ async function markIntent(
   step: { now: Date; floor: number },
 ): Promise<InvoiceRow | null> {
   const expectedNumber = step.floor + 1;
+  // The settle time runs from the moment of the send, not from the start of the attempt: the question of
+  // the last number can take long (JD-S4 R7-3).
+  const clockNow = deps.clock();
+  const sentAt = clockNow.getTime() > step.now.getTime() ? clockNow : step.now;
   // The wait began at the first mark of the episode: a mark made while the invoice is already waiting
   // (it is sent again after the earlier request proved to have issued nothing) keeps it, or a request
   // that keeps timing out would restart the two hours after which the series is surfaced (JD-S4 R6-2).
@@ -604,7 +681,7 @@ async function markIntent(
   // The request is as good as sent from here. If the process dies, the sweeper looks at the invoice a
   // minute later: that look may adopt a voucher that appeared (the usual crash is after the authority
   // answered), and it never sends before the settle time has passed (`reconcile`), so it is safe.
-  const nextAttemptAt = new Date(step.now.getTime() + MIN_BACKOFF_MS);
+  const nextAttemptAt = new Date(sentAt.getTime() + MIN_BACKOFF_MS);
   // True when the row was written: an invoice that is no longer pending (somebody closed it since the
   // attempt read it) matches nothing, and then the authority must not be called for it (JD-S4 R2-3).
   const write = async (target: Tx): Promise<boolean> => {
@@ -615,7 +692,7 @@ async function markIntent(
         expectedNumber,
         authorityLastAtMark: step.floor,
         lastAttemptAt: step.now,
-        lastSentAt: step.now,
+        lastSentAt: sentAt,
         nextAttemptAt,
         lookupMisses: 0,
         awaitingSince,
@@ -656,7 +733,7 @@ async function markIntent(
         expectedNumber,
         authorityLastAtMark: step.floor,
         lastAttemptAt: step.now,
-        lastSentAt: step.now,
+        lastSentAt: sentAt,
         nextAttemptAt,
         lookupMisses: 0,
         awaitingSince,
@@ -689,7 +766,8 @@ async function callAuthority(
   if (result.status === 'rejected') return { kind: 'rejected', message: result.message };
   // This request issued nothing, but the last number of the authority is not the one it was marked with.
   if (result.status === 'not_next') return { kind: 'refused' };
-  return { kind: 'retry', unknown: result.outcomeUnknown };
+  // An answer that is not a refusal of the number ends the streak of refusals.
+  return { kind: 'retry', unknown: result.outcomeUnknown, refusedNotNext: 0 };
 }
 
 /** The charges an invoice covers, for the audit entries (the actor, the charge, the number). */
@@ -721,6 +799,8 @@ async function defer(
     miss?: boolean;
     /** The authority refused the question of its last number or of a voucher. */
     refusesLookup?: boolean;
+    /** The streak of refusals to write; absent, the invoice keeps the one it had (JD-S4 R7-1). */
+    refusedNotNext?: number;
   },
 ): Promise<void> {
   const attempts = row.attempts + 1;
@@ -742,7 +822,10 @@ async function defer(
       // The count of the authority belongs to the wait: a definite answer ends it.
       authorityLastAtMark: step.awaiting ? row.authorityLastAtMark : null,
       lastSentAt: step.awaiting ? row.lastSentAt : null,
-      lookupMisses: step.awaiting ? row.lookupMisses + (step.miss ? 1 : 0) : 0,
+      // Only misses that follow each other count: an answer that is not a miss starts the count again
+      // (JD-S4 R7 A-S1).
+      lookupMisses: step.awaiting && step.miss ? row.lookupMisses + 1 : 0,
+      refusedNotNext: step.awaiting ? (step.refusedNotNext ?? row.refusedNotNext) : 0,
       awaitingSince,
     })
     .where(eq(invoice.id, row.id));
@@ -781,8 +864,9 @@ async function defer(
  * once that invoice has waited for two hours, ONE worklist item is opened on it (JD-S4 R3-2). The item
  * does not say how many invoices wait: the count is live in the invoices (`blocksSeries`), where it is
  * also filtered by what the reader may see (JD-S4 R4-4). The invoice stays as it is; the item is
- * resolved when it settles. Nothing is opened for an invoice that holds nothing back, nor again for
- * one that a person already dismissed in this wait (JD-S4 R4-A-W3).
+ * resolved when it settles. An invoice that holds nothing back gets its item too: its own outcome is
+ * unknown, and nobody else will look at it (JD-S4 R7-1). Nothing is opened again for one that a person
+ * already dismissed in this wait (JD-S4 R4-A-W3).
  */
 async function surfaceStall(
   tx: Tx,
@@ -808,18 +892,6 @@ async function surfaceStall(
   ) {
     return;
   }
-  const [held] = await tx
-    .select({ held: sql<number>`count(*)::int` })
-    .from(invoice)
-    .where(
-      and(
-        inSeries(row, issuerCuit),
-        eq(invoice.status, 'pending'),
-        ne(invoice.deliveryState, 'needs_attention'),
-        ne(invoice.id, row.id),
-      ),
-    );
-  if ((held?.held ?? 0) === 0) return;
   await deps.worklist.openItem(tx, {
     ...about,
     detail: {
@@ -1043,28 +1115,70 @@ export async function attemptIssue(
       };
     }
   }
+  // Whether the verdict is the direct answer of the request just made (and not an adoption by a lookup).
+  let answered = false;
   if (!verdict) {
     if (floor === undefined) throw new Error('an attempt that sends has no last number');
+    // The number the authority would give is one this organization already records (the numbering of the
+    // authority was reset, another environment, a manual voucher): nothing is sent, because what comes
+    // back could not be recorded for anybody (JD-S4 R7 B-S3, A-S2).
+    if (await numberIsRecorded(tx, row, floor + 1)) {
+      const parked = await park(
+        tx,
+        deps,
+        row,
+        now,
+        { number: floor + 1, cae: null, reason: 'number_taken' },
+        wasAwaiting,
+      );
+      return parked ? 'attention' : 'skipped';
+    }
     const marked = await markIntent(tx, deps, organization.id, row, { now, floor });
     // Closed since it was read, or its row is locked by someone else: the authority is not called.
     if (!marked) return 'skipped';
     row = marked;
     const request = await buildRequest(tx, row, snapshot, organization.id);
     verdict = await callAuthority(issuer, request, issuerKeyOf(organization.id, row.id));
+    answered = verdict.kind === 'issued';
     if (verdict.kind === 'refused') {
       // The number was not the next one: this request issued nothing, but the voucher of an earlier
       // request of this invoice may be the very one that took it. The authority is asked again, and the
       // numbers in between are examined, before anything is sent (JD-S4 R6-1). The request just made
       // counts as sent, so nothing goes out in this attempt.
       const again = await reconcile(tx, issuer, row, step, { now, settleMs });
-      verdict = again.kind === 'send' ? { kind: 'retry', unknown: true } : again;
+      const unmoved = (again.kind === 'send' || again.kind === 'retry') && again.unmoved === true;
+      if (unmoved) {
+        // The numbering did not move, so the refusal is not explained by another voucher: ARCA error 10016
+        // also covers a date earlier than the last voucher, which waiting does not cure. After a few of
+        // them in a row the invoice is parked instead of being sent for ever (JD-S4 R7-1).
+        const streak = row.refusedNotNext + 1;
+        verdict =
+          streak >= MAX_REFUSED_NOT_NEXT
+            ? { kind: 'attention', number: null, cae: null, reason: 'authority_refuses_number' }
+            : { kind: 'retry', unknown: true, refusedNotNext: streak };
+      } else {
+        // The numbering moved: another voucher took the number, which explains the refusal and ends the
+        // streak. When the lookup could not tell, the streak stays as it is.
+        verdict =
+          again.kind === 'send'
+            ? { kind: 'retry', unknown: true, refusedNotNext: 0 }
+            : again.kind === 'retry' && again.unmoved === false
+              ? { ...again, refusedNotNext: 0 }
+              : again;
+      }
+    } else if (verdict.kind === 'rejected' && wasAwaiting) {
+      // An earlier request of this episode exists and may have landed after the lookup that found
+      // nothing: look once more, with no settle time, before the invoice is closed as rejected and its
+      // lines are released for another one (JD-S4 R7 B-T4).
+      const lastLook = await reconcile(tx, issuer, row, step, { now, settleMs: 0 });
+      if (lastLook.kind !== 'send') verdict = lastLook;
     }
   }
 
   if (verdict.kind === 'refused') throw new Error('a refused request has no verdict of its own');
 
   if (verdict.kind === 'retry') {
-    const { unknown, miss, refusesLookup } = verdict;
+    const { unknown, miss, refusesLookup, refusedNotNext } = verdict;
     const wrote = await lockedWrite(tx, row, () =>
       defer(tx, deps, row, {
         awaiting: unknown,
@@ -1074,6 +1188,7 @@ export async function attemptIssue(
         now,
         ...(miss ? { miss } : {}),
         ...(refusesLookup ? { refusesLookup } : {}),
+        ...(refusedNotNext !== undefined ? { refusedNotNext } : {}),
       }),
     );
     return wrote ? 'retry' : 'skipped';
@@ -1095,6 +1210,7 @@ export async function attemptIssue(
           authorityLastAtMark: null,
           lastSentAt: null,
           lookupMisses: 0,
+          refusedNotNext: 0,
           awaitingSince: null,
         })
         .where(eq(invoice.id, row.id));
@@ -1118,6 +1234,30 @@ export async function attemptIssue(
   }
 
   const { result } = verdict;
+  // An authority that says it carries the pin answered the request with another number: what the lookup
+  // takes for granted about it is not true. The voucher exists, so it is remembered, and nothing more is
+  // recorded for this invoice (JD-S4 R7 B-S2).
+  if (
+    answered &&
+    issuer.honoursPin === true &&
+    row.expectedNumber !== null &&
+    result.number !== row.expectedNumber
+  ) {
+    const parked = await park(
+      tx,
+      deps,
+      row,
+      now,
+      {
+        number: result.number,
+        cae: result.cae,
+        reason: 'pin_not_honoured',
+        stray: { number: result.number, reason: 'unmatched' },
+      },
+      wasAwaiting,
+    );
+    return parked ? 'attention' : 'skipped';
+  }
   let wrote: boolean;
   try {
     // A savepoint: a number that is already registered must not abort the whole attempt.
@@ -1139,6 +1279,7 @@ export async function attemptIssue(
             authorityLastAtMark: null,
             lastSentAt: null,
             lookupMisses: 0,
+            refusedNotNext: 0,
             awaitingSince: null,
           })
           .where(eq(invoice.id, row.id));
@@ -1231,6 +1372,10 @@ const PARK_LOG: Record<AttentionReason, string> = {
     'an invoice needs attention: its issuer is not the one of the credential; nothing was sent',
   voucher_ambiguous:
     'an invoice needs attention: the authority holds a voucher that cannot be told from this invoice; nothing was sent',
+  authority_refuses_number:
+    'an invoice needs attention: the authority keeps refusing its number although its numbering did not move',
+  pin_not_honoured:
+    'an invoice needs attention: the authority answered with a number other than the one the request was pinned to',
 };
 
 /** The numbers in doubt of a verdict, as the audit entry and the worklist item say them (JD-S4 R5-A-F4). */
@@ -1302,7 +1447,6 @@ async function settleStraysAt(
           pointOfSale: row.pointOfSale,
           number: result.number,
           otherInvoiceId: row.id,
-          outcomeUnknown: true,
         },
       });
     }
@@ -1381,6 +1525,7 @@ async function park(
         authorityLastAtMark: outcomeUnknown ? row.authorityLastAtMark : null,
         lastSentAt: null,
         lookupMisses: 0,
+        refusedNotNext: 0,
         awaitingSince: null,
       })
       .where(eq(invoice.id, row.id));

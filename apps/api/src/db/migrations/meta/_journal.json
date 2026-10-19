@@ -624,6 +624,13 @@
       "when": 1792416299890,
       "tag": "0485_invoice_lookup_misses",
       "breakpoints": true
+    },
+    {
+      "idx": 89,
+      "version": "7",
+      "when": 1792429659084,
+      "tag": "0486_invoice_refused_not_next",
+      "breakpoints": true
     }
   ]
 }

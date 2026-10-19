@@ -43,6 +43,7 @@ afterAll(async () => {
 });
 
 afterEach(() => {
+  world.issuer.honoursPin = true;
   vi.restoreAllMocks();
   world.issuer.setMode('ok');
 });
@@ -484,6 +485,8 @@ describe('the item closes on every way out of the wait (JD-S4 R4-2, R4-A-T3)', (
   });
 
   it('shows the real reason of a park that comes later, not the stale item', async () => {
+    // An issuer that does not carry the pin: it can answer with any number (JD-S4 R7-2).
+    world.issuer.honoursPin = false;
     await drain();
     const taken = await world.issueInvoiceOf(await world.charge());
     const { blocker, t0 } = await stalledSeries();

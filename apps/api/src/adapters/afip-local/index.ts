@@ -55,6 +55,7 @@ import {
 
 export interface LocalInvoiceIssuer extends InvoiceIssuer {
   readonly simulated: true;
+  readonly honoursPin: true;
 }
 
 export interface LocalInvoiceIssuerOptions {
@@ -116,6 +117,7 @@ export function createLocalInvoiceIssuer(options: LocalInvoiceIssuerOptions): Lo
 
   return {
     simulated: true,
+    honoursPin: true,
 
     async issue(request: InvoiceRequest, idempotencyKey: string): Promise<IssueResult> {
       const control = await readControl(db);

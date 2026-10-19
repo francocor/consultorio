@@ -55,6 +55,17 @@ export interface FakeVoucher {
 
 export interface FakeInvoiceIssuer extends InvoiceIssuer {
   readonly simulated: true;
+  /**
+   * It honours the pin of a request, like the authority does (JD-S4 R7-2). Test only: with `false` it
+   * ignores the pin and numbers after what it holds, like an authority that does not carry it.
+   */
+  honoursPin: boolean;
+  /**
+   * Test only: every pinned request is refused with `not_next` although the numbering did not move, and
+   * nothing is issued. ARCA error 10016 also covers a date earlier than the last authorized voucher, so
+   * a request can be refused for a reason the numbering does not explain (JD-S4 R7-1).
+   */
+  setDateTrap(on: boolean): void;
   mode(): AfipSimulatorMode;
   setMode(mode: AfipSimulatorMode): void;
   /** Everything issued, oldest first. */
@@ -113,6 +124,8 @@ export function createFakeInvoiceIssuer(options: FakeInvoiceIssuerOptions = {}):
   let vouchers: FakeVoucher[] = [];
   let requests = new Map<string, Stored>();
   let holdNext = false;
+  let honoursPin = true;
+  let dateTrap = false;
   let held: (() => Promise<IssueResult>)[] = [];
   let heldNumbers: HeldNumbers | undefined;
   /** What the organization held for the series the last time it was asked (see `rememberFrom`). */
@@ -189,7 +202,10 @@ export function createFakeInvoiceIssuer(options: FakeInvoiceIssuerOptions = {}):
     // A request pinned to a number is served only if it is the next one: nothing is issued, and nothing
     // is remembered under the key (the refusal is not an answer to the request).
     const last = lastNumber(request);
-    if (!isNextNumber(request, last)) {
+    if (
+      honoursPin &&
+      (dateTrap ? request.expectedNumber !== undefined : !isNextNumber(request, last))
+    ) {
       return { status: 'not_next', message: NOT_NEXT_MESSAGE };
     }
     const identity = {
@@ -222,6 +238,15 @@ export function createFakeInvoiceIssuer(options: FakeInvoiceIssuerOptions = {}):
 
   return {
     simulated: true,
+    get honoursPin() {
+      return honoursPin;
+    },
+    set honoursPin(next: boolean) {
+      honoursPin = next;
+    },
+    setDateTrap(on) {
+      dateTrap = on;
+    },
     mode: () => mode,
     setMode(next) {
       mode = next;
@@ -238,6 +263,8 @@ export function createFakeInvoiceIssuer(options: FakeInvoiceIssuerOptions = {}):
       baselines = new Map();
       held = [];
       holdNext = false;
+      honoursPin = true;
+      dateTrap = false;
     },
     holdNext() {
       holdNext = true;

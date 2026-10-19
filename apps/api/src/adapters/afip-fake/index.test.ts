@@ -165,3 +165,39 @@ describe('a fake that learns what the organization holds (JD-S4 R6-1)', () => {
     expect(await issuer.issue(request(cuit), 'c')).toMatchObject({ status: 'issued', number: 51 });
   });
 });
+
+describe('a fake that stands for an authority that does not carry the pin, or refuses it for another reason (JD-S4 R7)', () => {
+  it('refuses every pinned request while the date trap is set, whatever the numbering says, and issues nothing', async () => {
+    const issuer = createFakeInvoiceIssuer();
+    const cuit = nextCuit();
+    issuer.setDateTrap(true);
+
+    expect(await issuer.issue({ ...request(cuit), expectedNumber: 1 }, 'a')).toMatchObject({
+      status: 'not_next',
+    });
+    expect(await issuer.lastAuthorized({ issuerCuit: cuit, pointOfSale: 1, type: 'FC' })).toEqual({
+      status: 'ok',
+      number: 0,
+    });
+
+    issuer.setDateTrap(false);
+    expect(await issuer.issue({ ...request(cuit), expectedNumber: 1 }, 'b')).toMatchObject({
+      status: 'issued',
+      number: 1,
+    });
+  });
+
+  it('numbers after what it holds, whatever the pin says, when it does not honour it; reset gives the pin back', async () => {
+    const issuer = createFakeInvoiceIssuer();
+    const cuit = nextCuit();
+    issuer.honoursPin = false;
+
+    expect(await issuer.issue({ ...request(cuit), expectedNumber: 7 }, 'a')).toMatchObject({
+      status: 'issued',
+      number: 1,
+    });
+
+    issuer.reset();
+    expect(issuer.honoursPin).toBe(true);
+  });
+});

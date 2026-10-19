@@ -1,6 +1,6 @@
 import type { ChargeDto, InvoiceDto, Problem } from '@consultorio/contracts';
 import { eq } from 'drizzle-orm';
-import { afterAll, beforeAll, describe, expect, inject, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeAll, describe, expect, inject, it, vi } from 'vitest';
 
 import { invoice as invoiceTable } from '../../src/db/schema/index.js';
 import { issuerKeyOf } from '../../src/modules/invoicing/application/issue-attempt.js';
@@ -26,6 +26,10 @@ let world: InvoicingWorld;
 beforeAll(async () => {
   runtime = createRuntimeDb(inject('runtimeUrl'));
   world = await createInvoicingWorld(runtime, { slug: 'invoice-series' });
+});
+
+afterEach(() => {
+  world.issuer.honoursPin = true;
 });
 
 afterAll(async () => {
@@ -230,6 +234,8 @@ async function staleMark() {
 
 describe('a number that moved while the invoice waited (JD-S4 R2-1)', () => {
   it('does not ask about a number one of our invoices records, and adopts the voucher it finds after it, instead of issuing again', async () => {
+    // An issuer that does not carry the pin: it can answer with any number (JD-S4 R7-2).
+    world.issuer.honoursPin = false;
     const { waiting, takenNumber, t0 } = await staleMark();
     // The authority holds the voucher of the waiting invoice right after the one that is taken.
     const own = await issueOutOfBand(world, { invoiceId: waiting.id }, `series-own-${String(t0)}`);

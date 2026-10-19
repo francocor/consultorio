@@ -119,9 +119,25 @@ export type IssueResult =
    * (JD-S4 R6-1).
    */
   | { status: 'not_next'; message: string }
+  /**
+   * `outcomeUnknown: false` is a CLAIM by the adapter that the request provably did not reach the authority
+   * (a connection refused, a token that could not be obtained): the caller then forgets the request and may
+   * send a new one. A timeout, a reset after the request left, or a 5xx is `outcomeUnknown: true`: the
+   * authority may have processed it (JD-S4 R7, suspect B-T5).
+   */
   | { status: 'retryable'; message: string; outcomeUnknown: boolean };
 
 export interface InvoiceIssuer {
+  /**
+   * Whether the issuer HONOURS the number a request is pinned to (`InvoiceRequest.expectedNumber`): it
+   * issues exactly that number or refuses with `not_next` and issues nothing. An issuer that says so is
+   * trusted by the caller: a request of an invoice can only produce the voucher at its pin, so the
+   * lookup that follows an unknown outcome asks about that one number and never adopts a look-alike
+   * that sits elsewhere (JD-S4 R7-2). The real adapter MUST set it to `true` only if the authority
+   * carries the pin (FECAESolicitar `CbteDesde`/`CbteHasta`); absent or `false` means "not trusted": the
+   * lookup then examines the whole window of numbers (docs/runbooks/afip-switch-to-real.md).
+   */
+  readonly honoursPin?: boolean;
   /** Issues one voucher. Calling twice with the same key never produces two vouchers. */
   issue(request: InvoiceRequest, idempotencyKey: string): Promise<IssueResult>;
   /** Looks up a voucher at the authority, to reconcile a retry whose outcome is unknown. */

@@ -1,7 +1,7 @@
 import type { ChargeDto, InvoiceDto, Problem } from '@consultorio/contracts';
 import { and, desc, eq, sql } from 'drizzle-orm';
 import type { LightMyRequestResponse } from 'fastify';
-import { afterAll, beforeAll, describe, expect, inject, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeAll, describe, expect, inject, it, vi } from 'vitest';
 
 import { nextCuit } from '../../src/adapters/invoice-issuer.contract.js';
 import { auditEvent } from '../../src/db/schema/audit.js';
@@ -35,6 +35,10 @@ let world: InvoicingWorld;
 beforeAll(async () => {
   runtime = createRuntimeDb(inject('runtimeUrl'));
   world = await createInvoicingWorld(runtime, { slug: 'invoice-reconciliation' });
+});
+
+afterEach(() => {
+  world.issuer.honoursPin = true;
 });
 
 afterAll(async () => {
@@ -279,6 +283,8 @@ describe('the issuer an invoice keeps (JD-S4 R1-C7)', () => {
 
 describe('a voucher whose number is already ours (JD-S4 R1-C8)', () => {
   it('parks the invoice instead of retrying forever, tells the worklist, and no attempt touches it again', async () => {
+    // An issuer that does not carry the pin: it can answer with any number (JD-S4 R7-2).
+    world.issuer.honoursPin = false;
     // A voucher of ours holds a number; the authority now answers with that same number.
     const takenBy = await world.issueInvoiceOf(await world.charge());
     const { created, t0 } = await requested();

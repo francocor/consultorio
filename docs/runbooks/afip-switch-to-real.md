@@ -43,6 +43,15 @@ You do not write these again; the real adapter plugs into them.
   mark is what survives a crash, and it is committed before the call, not at its end. A voucher is never
   issued twice: this is the part to review most closely against the real service, because ARCA has no
   idempotency key of its own (see "Design points" below).
+- **Under a pin, the candidate is one number (JD-S4 R7-2).** An issuer that declares `honoursPin: true`
+  (see "The pin") can only have answered the request of an invoice at the number the request was pinned
+  to (`invoice.expected_number`, always `authority_last_at_mark + 1`). The lookup then asks about THAT
+  number only: a voucher with the facts of the invoice that sits above it is somebody else's look-alike
+  and is not adopted; the numbers between the pin and the last one are not asked about, so a busy foreign
+  issuer no longer parks the invoice with the 20-number cap, and the invoice is sent again with a fresh
+  pin. At the pin: the invoice's own voucher is adopted, a foreign one is remembered (`unmatched`) and the
+  invoice is sent again, an unclear one parks it. An issuer that does not declare `honoursPin` (absent or
+  `false`) is examined over the whole window as described next.
 - **Reconciliation uses the authority's count (JD-S4 R5-1, R5-2).** The core used to INFER the last
   number of the authority from the vouchers recorded here, so a manual voucher registered out of band
   (or a mistyped high number) moved the inference and an invoice could be sent a second time. It now
@@ -97,8 +106,9 @@ You do not write these again; the real adapter plugs into them.
 - **A stalled series is surfaced (JD-S4 R3-2, R4).** Once the blocker has been WAITING for 2 hours
   (counted from its first mark, `invoice.awaiting_since`, which a later mark keeps and the end of the
   wait clears; the number of attempts does not count, because the invoices held behind it bring its
-  probes forward) and while it holds at least one invoice, ONE `invoice_attention` item is opened on it
-  (reason `outcome_unknown`; reception sees it). The item says nothing of how many wait: that number is
+  probes forward), ONE `invoice_attention` item is opened on it (reason `outcome_unknown`; reception
+  sees it). Since round 7 it opens for a lone invoice too, one that holds nothing back: before, an
+  invoice nobody waited for could loop for ever with nothing on any screen (JD-S4 R7-1). The item says nothing of how many wait: that number is
   live in the invoice (below), and filtered by what the reader may see. The invoice stays as it is. A
   person who dismisses the item is not shown it again during the same wait. Every way out of the wait
   closes it: `outcome_settled` when the blocker is issued, rejected, or the authority says for certain
@@ -354,12 +364,33 @@ loaded.
   is not the next one (error **10016**, "El numero o fecha del comprobante no se corresponde con el
   proximo a autorizar") to `{ status: 'not_next', message }`. Of two requests for one number only one can
   win; the other is refused and issued nothing. After a `not_next` the module asks for the last number
-  again and examines the numbers in between, so the voucher of the first request is found and adopted. Two
-  traps: 10016 also covers a date that is not acceptable (ARCA ties both to "the next one to authorize"),
-  so validate `issueDate` against the allowed window BEFORE sending, or a bad date would answer
-  `not_next` for ever (the stall item opens after two hours of waiting); and a `not_next` is NEVER a
-  `rejected` (that closes the invoice) nor a `retryable` with `outcomeUnknown: false` (that clears the
-  mark and forgets the window).
+  again and examines the number of the pin, so the voucher of the first request is found and adopted.
+  - **`honoursPin` (JD-S4 R7-2).** The real adapter declares `readonly honoursPin = true` ONLY if it sends
+    `CbteDesde` = `CbteHasta` = `request.expectedNumber` and maps error 10016 to `not_next`. The core
+    trusts the declaration: with it, the lookup after an unknown outcome asks about the pin and nothing
+    else, and adopts nothing above it. An adapter that does not declare it (absent or `false`) is not
+    trusted and falls back to examining the whole window of numbers after the mark. The contract suite
+    asserts the declaration and holds the adapter to the cases that make it true. If an issuer that
+    declares it answers a request with another number than the pin, the invoice is parked
+    (`pin_not_honoured`) and the voucher is remembered: the declaration is wrong and a person must look.
+  - **The date trap (JD-S4 R7-1).** 10016 ALSO covers a date earlier than the last authorized voucher
+    (ARCA ties both to "the next one to authorize"), and the numbering does not move when that is the
+    cause. Validating `issueDate` against the allowed window (the days ARCA accepts around today) is
+    necessary but NOT enough: the date must also be NOT EARLIER than the date of the last authorized
+    voucher of the series, which only `FECompConsultar` of the number that `FECompUltimoAutorizado` gave
+    can tell (its `CbteFch`). The adapter should check that before it sends, and refuse the request itself
+    (a `rejected` with its own message) when it fails. The core has a net for the case that gets through:
+    after three requests in a row that are refused with `not_next` while the last number of the
+    authority did not move, the invoice is parked (`authority_refuses_number`, "revise la fecha del
+    comprobante") instead of being sent for ever. Do not count on the stall item for this: it opens after
+    two hours of waiting, and a lone invoice used to loop with no item at all (it gets one now, see "A
+    stalled series is surfaced").
+  - A `not_next` is NEVER a `rejected` (that closes the invoice) nor a `retryable` with
+    `outcomeUnknown: false` (that clears the mark and forgets the window).
+  - **`outcomeUnknown: false` is a claim (JD-S4 R7, B-T5).** A `retryable` with `outcomeUnknown: false`
+    clears the mark: the core takes the request as never sent and may send a new one with a fresh pin. The
+    adapter says it ONLY when the request provably did not reach ARCA (a connection refused, a token that
+    could not be obtained). A timeout, a reset after the request left, or a 5xx is `outcomeUnknown: true`.
 - **SETTLE: "nothing was issued" is believed late (JD-S4 R6-1).** Defence in depth for an adapter that
   does not pin, and for the pin itself. After a request is sent (the mark is committed BEFORE the call,
   and stamps `invoice.last_sent_at`, migration 0484) the module does not send again until `SETTLE`
@@ -436,7 +467,8 @@ loaded.
 - **Migrations 0484 and 0485** (track `4jd`): `invoice.last_sent_at` (when the last request of a wait
   was sent) and `invoice.lookup_misses` (how many times in a row a number the authority says it issued
   had no voucher). An invoice `awaiting_reconciliation` when the code arrives has no `last_sent_at`; the
-  module falls back to its last attempt, so it is not sent again before SETTLE either.
+  module falls back to the moment its wait began (round 7; never to its last attempt, which every look
+  rewrites), so it is not sent again before SETTLE either.
 - **`InvoiceRequest.lastKnownNumber` is gone**, replaced by `expectedNumber` (a pin), and `IssueResult`
   has a new `not_next` status. An adapter written against round 5 must implement both: see "The pin".
 - **A very rare change in what is parked.** A voucher that is the same in everything but the recipient
@@ -448,6 +480,28 @@ loaded.
   CUIT: a point of sale belongs to one CUIT on the website of the authority, so a CUIT change needs a new
   point of sale; if the old one is used the authority repeats numbers and the invoice is parked
   (`number_taken`) with a person alerted. Nothing is recorded twice.
+
+## Upgrade notes (judgment day, Stage 4, round 7)
+
+- **Migration 0486** (track `4jd`): `invoice.refused_not_next`, the requests in a row that ARCA refused
+  with `not_next` while its last number did not move. Zero outside a streak.
+- **The real adapter must declare `honoursPin`** (or leave it out, which is the safe default); see "The
+  pin". Both simulators declare it.
+- **A lone invoice stuck in an unknown outcome gets the stall item after two hours**, and so does one
+  whose lookup of a voucher is refused for good (`authority_refuses_lookup`).
+- **New reasons in the worklist:** `authority_refuses_number` (three refusals of the number with the
+  numbering unmoved: check the date of the voucher), `pin_not_honoured` (an issuer that declares the pin
+  answered another number).
+- **Nothing is sent when the number the authority would give is already recorded here** (`number_taken`
+  without calling the authority): a reset of a simulator, a point of sale reused under another CUIT. The
+  scope is the one of the unique index of the numbers (organization, point of sale, type).
+- **A rejection of a request sent again** is preceded by one more look at the authority when the invoice
+  was already waiting: the first request may have landed meanwhile, and its voucher is adopted instead of
+  the invoice being closed and its lines released.
+- **The settle time starts at the send**, not at the start of the attempt, and a row without
+  `last_sent_at` settles from the moment its wait began (never from its last look).
+- **Misses of the lookup count only when they follow each other**, and the item `voucher_taken_by_other`
+  no longer says that the outcome is unknown.
 
 ## Rollback
 

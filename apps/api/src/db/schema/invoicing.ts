@@ -137,6 +137,13 @@ export const invoice = tenantTable(
      * before it is parked for a person (JD-S4 R6-A-S1). Zero outside a wait.
      */
     lookupMisses: integer('lookup_misses').notNull().default(0),
+    /**
+     * How many requests in a row the authority refused with `not_next` while its last number did not move
+     * (ARCA error 10016 also covers a date earlier than the last voucher, which no wait cures). After a
+     * few of them the invoice is parked with its own reason instead of being sent for ever (JD-S4 R7-1).
+     * Kept while the invoice waits between two sends; zero otherwise.
+     */
+    refusedNotNext: integer('refused_not_next').notNull().default(0),
     issuedAt: timestamp('issued_at', { withTimezone: true }),
     /** The issuer as the fiscal profile said at the time of the request; never changes. */
     issuerSnapshot: jsonb('issuer_snapshot').$type<IssuerSnapshot>(),
@@ -222,6 +229,7 @@ export const invoice = tenantTable(
       sql`${table.attempts} >= 0 and (${table.expectedNumber} is null or ${table.expectedNumber} > 0)`,
     ),
     check('invoice_lookup_misses_check', sql`${table.lookupMisses} >= 0`),
+    check('invoice_refused_not_next_check', sql`${table.refusedNotNext} >= 0`),
     check(
       'invoice_authority_last_check',
       sql`${table.authorityLastAtMark} is null or ${table.authorityLastAtMark} >= 0`,

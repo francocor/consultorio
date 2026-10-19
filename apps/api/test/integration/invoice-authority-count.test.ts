@@ -20,6 +20,7 @@ import {
   replaceWithManual,
   strayRows,
   useWorld,
+  withoutPin,
   vouchersOf,
 } from '../support/invoice-series.js';
 
@@ -123,6 +124,8 @@ describe('the lowest number goes first (JD-S4 R5-2)', () => {
   it('parks, and sends nothing, when a look-alike above its own voucher fits as well (JD-S4 R6-4)', async () => {
     const { world } = ctx;
     await drain(world);
+    // An issuer that does not carry the pin: the whole window is examined (JD-S4 R7-2).
+    withoutPin(world);
     const issue = realAuthority(world);
     const a = await create(world);
     const floor = await authorityLast(world, a.created.id);
@@ -166,6 +169,8 @@ describe('the lowest number goes first (JD-S4 R5-2)', () => {
   it('remembers the foreign vouchers it passes on the way, and then adopts its own', async () => {
     const { world } = ctx;
     await drain(world);
+    // An issuer that does not carry the pin: the whole window is examined (JD-S4 R7-2).
+    withoutPin(world);
     const issue = realAuthority(world);
     const b = await create(world, DNI);
     const floor = await authorityLast(world, b.created.id);
@@ -452,6 +457,8 @@ describe('how many numbers are examined (JD-S4 R5-1)', () => {
   it('parks an invoice when more than 20 numbers could be its own, and sends nothing', async () => {
     const { world } = ctx;
     await drain(world);
+    // An issuer that does not carry the pin: the whole window is examined (JD-S4 R7-2).
+    withoutPin(world);
     const b = await create(world, DNI);
     const floor = await authorityLast(world, b.created.id);
     const t0 = Date.now();
@@ -477,6 +484,8 @@ describe('how many numbers are examined (JD-S4 R5-1)', () => {
   it('examines 20 numbers, and sends once when none is its own', async () => {
     const { world } = ctx;
     await drain(world);
+    // An issuer that does not carry the pin: the whole window is examined (JD-S4 R7-2).
+    withoutPin(world);
     const b = await create(world, DNI);
     const floor = await authorityLast(world, b.created.id);
     const t0 = Date.now();

@@ -148,6 +148,13 @@ export function describeInvoiceIssuerContract(target: InvoiceIssuerContractTarge
       expect(await last()).toEqual({ status: 'ok', number: 1 });
     });
 
+    it('declares that it honours the pin, which the cases around this one hold it to (JD-S4 R7-2)', async () => {
+      const { issuer } = await target.make();
+
+      // The core trusts a declared pin: the lookup after an unknown outcome asks about that one number.
+      expect(issuer.honoursPin).toBe(true);
+    });
+
     it('does not issue a second voucher for a late duplicate of a pinned request (JD-S4 R6-1)', async () => {
       const { issuer } = await target.make();
       const cuit = nextCuit();
