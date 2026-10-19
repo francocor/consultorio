@@ -1,4 +1,4 @@
-import type { PortalPrescriptionDto } from '@consultorio/contracts';
+import type { PortalPrescriptionListing } from '@consultorio/contracts';
 import { and, desc, eq, inArray } from 'drizzle-orm';
 
 import { prescription } from '../../../db/schema/prescriptions.js';
@@ -29,7 +29,7 @@ const SHOWN = ['issued', 'cancelled', 'dispensed', 'expired'] as const;
 export async function listPrescriptionsForPatient(
   withTenant: WithTenant,
   input: { actor: PortalActor; patientId: string; auditActor: AuditActor },
-): Promise<PortalPrescriptionDto[]> {
+): Promise<PortalPrescriptionListing[]> {
   const decision = can(input.actor, 'portal.prescription.read', { tenantId: input.actor.tenantId });
   if (!decision.allowed)
     throw new PrescriptionDenied(decision.reason, { patientId: input.patientId });
@@ -62,7 +62,7 @@ export async function listPrescriptionsForPatient(
             {
               id: row.id,
               issuedAt: row.issuedAt.toISOString(),
-              status: row.status as PortalPrescriptionDto['status'],
+              status: row.status as PortalPrescriptionListing['status'],
             },
           ],
     );

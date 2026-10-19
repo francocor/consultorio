@@ -12,7 +12,7 @@ export interface PrescriptionModuleInput {
   auditActor: AuditActor;
 }
 
-/** `PortalPrescriptionDto` of the prescriptions module: what it lists, never a medication. */
+/** `PortalPrescriptionListing` of the prescriptions module: what it lists, never a medication. */
 export interface ModulePrescription {
   id: string;
   issuedAt: string;

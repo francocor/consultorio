@@ -10,7 +10,7 @@ import {
   PRESCRIPTION_AUDIT_ACTIONS,
   PRESCRIPTION_ERRORS,
   PRESCRIPTION_STATUSES,
-  PortalPrescriptionDto,
+  PortalPrescriptionListing,
   RegisterManualPrescriptionRequest,
 } from './prescriptions.js';
 
@@ -119,7 +119,7 @@ describe('prescription request shapes (task 5.17)', () => {
   });
 
   it('keeps the portal view of a prescription free of medications', () => {
-    const portal = PortalPrescriptionDto.parse({
+    const portal = PortalPrescriptionListing.parse({
       id: '0190a000-0000-7000-8000-0000000000a3',
       issuedAt: '2026-10-19T12:00:00.000Z',
       status: 'issued',
@@ -127,7 +127,7 @@ describe('prescription request shapes (task 5.17)', () => {
 
     expect(Object.keys(portal).sort()).toEqual(['id', 'issuedAt', 'status']);
     expect(
-      PortalPrescriptionDto.safeParse({ ...portal, items: [{ genericName: 'Amoxicilina' }] })
+      PortalPrescriptionListing.safeParse({ ...portal, items: [{ genericName: 'Amoxicilina' }] })
         .success,
     ).toBe(false);
   });

@@ -183,12 +183,12 @@ export const GenericNameSearchResponse = z.strictObject({ names: z.array(z.strin
 export type GenericNameSearchResponse = z.infer<typeof GenericNameSearchResponse>;
 
 /** What the patient portal lists of a prescription: no medication unless the portal says so. */
-export const PortalPrescriptionDto = z.strictObject({
+export const PortalPrescriptionListing = z.strictObject({
   id: z.uuid(),
   issuedAt: z.iso.datetime(),
   status: z.enum(['issued', 'cancelled', 'dispensed', 'expired']),
 });
-export type PortalPrescriptionDto = z.infer<typeof PortalPrescriptionDto>;
+export type PortalPrescriptionListing = z.infer<typeof PortalPrescriptionListing>;
 
 // Provider console: the e-prescription simulator (S5.04) -----------------------------------------
 
