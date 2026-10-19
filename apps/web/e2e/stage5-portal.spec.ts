@@ -18,8 +18,9 @@ import {
  * consultorio invites the patient, who activates the access with the link of the email, signs in
  * with a code read from the mailbox, sees the appointment and confirms it, downloads a document the
  * staff shared (through a link bound to the session), looks at the sections that have nothing yet
- * (invoices, prescriptions and consents show their empty state until their modules are wired),
- * changes the contact data and signs out. A patient cannot reach staff pages, and a staff session
+ * (invoices, prescriptions and consents show their empty state), signs a consent that reception
+ * asked for on the signature pad and downloads the signed record, changes the contact data and signs
+ * out. A patient cannot reach staff pages, and a staff session
  * is not a portal session.
  *
  * Axe and the width of the page are checked on every screen.
@@ -215,6 +216,82 @@ test('a patient is invited, activates the access, signs in with a code, uses the
 
     await page.getByRole('link', { name: 'Consentimientos' }).click();
     await expect(page.getByText('No tiene consentimientos')).toBeVisible();
+    await expectFitsAndAccessible(page);
+  });
+
+  // 6b. A consent the consultorio asked for: the notice, the pad, the signature and the signed record.
+  await test.step('the patient signs a consent on the pad and downloads the signed record', async () => {
+    const adminContext = await browser.newContext(DESKTOP);
+    const admin = await adminContext.newPage();
+    await signInWithApi(admin.request, 'aillu', emailOf('admin'));
+    const title = `Consentimiento del portal ${String(Date.now())}`;
+    const template = await apiCall<{ id: string }>(admin, 'POST', '/consent/templates', {
+      title,
+      body: 'Autorizo el procedimiento que me explicó el profesional.\n\nEntiendo los riesgos.',
+    });
+    expect(template.status, JSON.stringify(template.body)).toBe(201);
+    const published = await apiCall(
+      admin,
+      'POST',
+      `/consent/templates/${template.body.id}/publish`,
+    );
+    expect(published.status, JSON.stringify(published.body)).toBe(200);
+    await adminContext.close();
+
+    const asked = await apiCall<{ notice: string }>(staff, 'POST', '/consents/requests', {
+      patientId: patient.id,
+      templateId: template.body.id,
+      method: 'portal',
+    });
+    expect(asked.status, JSON.stringify(asked.body)).toBe(201);
+    expect(asked.body.notice).toBe('sent');
+    // The notice is the one of the portal: it says a document waits and never which.
+    const notice = await emailTo(email, /Tiene un documento esperando/);
+    expect(notice).not.toContain(title);
+
+    await page.getByRole('link', { name: 'Consentimientos' }).click();
+    await page.reload();
+    await expect(page.getByText(title).first()).toBeVisible();
+    await expect(page.getByText('Para firmar')).toBeVisible();
+    await page.getByRole('link', { name: /Leer y firmar/ }).click();
+    await expect(page.getByRole('heading', { level: 1, name: title })).toBeVisible();
+    await expect(page.getByRole('article', { name: 'Texto del consentimiento' })).toContainText(
+      'Entiendo los riesgos.',
+    );
+    await expectFitsAndAccessible(page);
+
+    // Without a signature the form says so; then the pad takes a drawing.
+    await page.getByLabel('Escriba su nombre completo').fill(`Lucía ${patient.family}`);
+    await page.getByRole('checkbox', { name: /Leí el documento completo/ }).click();
+    await page.getByRole('button', { name: 'Firmar el documento' }).click();
+    await expect(
+      page.getByText('Dibuje su firma o escriba su nombre en el recuadro de la firma.'),
+    ).toBeVisible();
+    await expectFitsAndAccessible(page);
+
+    const pad = page.getByRole('img', { name: /Espacio para dibujar la firma/ });
+    const box = await pad.boundingBox();
+    expect(box, 'the pad is on screen').not.toBeNull();
+    if (box) {
+      await page.mouse.move(box.x + 20, box.y + 40);
+      await page.mouse.down();
+      await page.mouse.move(box.x + box.width / 2, box.y + 100, { steps: 6 });
+      await page.mouse.move(box.x + box.width - 20, box.y + 50, { steps: 6 });
+      await page.mouse.up();
+    }
+    await expect(page.getByRole('img', { name: /Firma dibujada/ })).toBeVisible();
+    await expectFitsAndAccessible(page);
+    await page.getByRole('button', { name: 'Firmar el documento' }).click();
+    await expect(page.getByText('El documento quedó firmado.')).toBeVisible();
+    await settleToasts(page);
+
+    // Signed: the record is a PDF, and the consent can be revoked.
+    const download = page.waitForEvent('download');
+    await page
+      .getByRole('button', { name: `Descargar el consentimiento firmado: ${title}` })
+      .click();
+    expect((await download).suggestedFilename()).toMatch(/.pdf$/);
+    await expect(page.getByRole('button', { name: 'Revocar mi consentimiento' })).toBeVisible();
     await expectFitsAndAccessible(page);
   });
 
