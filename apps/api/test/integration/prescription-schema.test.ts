@@ -519,5 +519,156 @@ describe('what the two definer functions give away', () => {
         await setting(false);
       }
     });
+
+    it('does not tell reception about a prescription cancelled before the provider confirmed it (JD-S5 R1-A-T6)', async () => {
+      const cancelledId = await asAuthor((tx) => insertPending(tx));
+      await asAuthor((tx) =>
+        tx.execute(
+          sql`UPDATE prescription SET status = 'cancelled', cancel_reason_enc = ${Buffer.from([7])},
+                     cancelled_at = now() WHERE id = ${cancelledId}`,
+        ),
+      );
+      await setting(true);
+      try {
+        const rows = await existence(receptionist);
+
+        expect(rows.map((row) => row.id)).toContain(issuedId);
+        expect(rows.map((row) => row.id)).not.toContain(cancelledId);
+      } finally {
+        await setting(false);
+      }
+    });
+  });
+});
+
+describe('JD-S5 R1: the guard of the table after the first review', () => {
+  const asDraft = async () => {
+    const id = await asAuthor((tx) => insertPending(tx));
+    await asAuthor((tx) =>
+      tx.execute(sql`UPDATE prescription SET status = 'draft' WHERE id = ${id}`),
+    );
+    return id;
+  };
+  const asTreating = <T>(fn: (tx: Tx) => Promise<T>) => asProfessional(runtime, a.id, treating, fn);
+
+  it('moves the provider key only when a refused draft is sent again, one version up (S5-4)', async () => {
+    const id = await asDraft();
+
+    // A draft cannot change its key without being sent again.
+    await expect(
+      asAuthor((tx) =>
+        tx.execute(sql`UPDATE prescription SET idempotency_key = 'k2' WHERE id = ${id}`),
+      ),
+    ).rejects.toMatchObject({ cause: { code: '23000' } });
+    // Sent again with the version skipping one, or with the same key: refused.
+    await expect(
+      asAuthor((tx) =>
+        tx.execute(
+          sql`UPDATE prescription SET status = 'pending_submission', submission_version = 3,
+                     idempotency_key = 'k2' WHERE id = ${id}`,
+        ),
+      ),
+    ).rejects.toMatchObject({ cause: { code: '23000' } });
+    await expect(
+      asAuthor((tx) =>
+        tx.execute(
+          sql`UPDATE prescription SET status = 'pending_submission', submission_version = 2 WHERE id = ${id}`,
+        ),
+      ),
+    ).rejects.toMatchObject({ cause: { code: '23000' } });
+    // The correction: pending again, version 2, a new key.
+    await asAuthor((tx) =>
+      tx.execute(
+        sql`UPDATE prescription SET status = 'pending_submission', submission_version = 2,
+                   idempotency_key = ${'key-' + randomUUID()} WHERE id = ${id}`,
+      ),
+    );
+    // Once waiting, the key is fixed again.
+    await expect(
+      asAuthor((tx) =>
+        tx.execute(sql`UPDATE prescription SET idempotency_key = 'k3' WHERE id = ${id}`),
+      ),
+    ).rejects.toMatchObject({ cause: { code: '23000' } });
+    await expect(
+      asAuthor((tx) =>
+        tx.execute(sql`UPDATE prescription SET submission_version = 3 WHERE id = ${id}`),
+      ),
+    ).rejects.toMatchObject({ cause: { code: '23000' } });
+  });
+
+  it('never forgets that the provider may hold the prescription (S5-3)', async () => {
+    const id = await asAuthor((tx) => insertPending(tx));
+    await asAuthor((tx) =>
+      tx.execute(sql`UPDATE prescription SET provider_contacted_at = now() WHERE id = ${id}`),
+    );
+
+    await expect(
+      asAuthor((tx) =>
+        tx.execute(sql`UPDATE prescription SET provider_contacted_at = NULL WHERE id = ${id}`),
+      ),
+    ).rejects.toMatchObject({ cause: { code: '23000' } });
+    await expect(
+      asAuthor((tx) =>
+        tx.execute(
+          sql`UPDATE prescription SET provider_contacted_at = now() + interval '1 hour' WHERE id = ${id}`,
+        ),
+      ),
+    ).rejects.toMatchObject({ cause: { code: '23000' } });
+  });
+
+  it('lets a colleague who treats the patient record the document once, and nothing else (S5-1)', async () => {
+    const id = await asAuthor((tx) => insertPending(tx));
+    await issue(id);
+
+    await asTreating((tx) =>
+      tx.execute(
+        sql`UPDATE prescription SET document_key = 't/x/prescriptions/a.pdf' WHERE id = ${id}`,
+      ),
+    );
+
+    await expect(
+      asTreating((tx) =>
+        tx.execute(
+          sql`UPDATE prescription SET document_key = 't/x/prescriptions/b.pdf' WHERE id = ${id}`,
+        ),
+      ),
+    ).rejects.toMatchObject({ cause: { code: '42501' } });
+    await expect(
+      asTreating((tx) =>
+        tx.execute(sql`UPDATE prescription SET status = 'cancelled' WHERE id = ${id}`),
+      ),
+    ).rejects.toMatchObject({ cause: { code: '42501' } });
+    const stored = await asAuthor((tx) =>
+      tx.execute<{ document_key: string }>(
+        sql`SELECT document_key FROM prescription WHERE id = ${id}`,
+      ),
+    );
+    expect(stored.rows[0]?.document_key).toBe('t/x/prescriptions/a.pdf');
+  });
+
+  it('is not the system for a transaction marked as the portal (S5-2)', async () => {
+    const id = await asAuthor((tx) => insertPending(tx));
+    await issue(id);
+    const portal = (work: (tx: Tx) => Promise<unknown>) =>
+      createWithTenant(runtime.db)({ tenantId: a.id, userId: SYSTEM_USER_ID }, async (tx) => {
+        await tx.execute(sql`select set_config('app.actor_kind', 'portal', true)`);
+        return work(tx);
+      });
+
+    const read = (await portal((tx) =>
+      tx.execute<{ n: number }>(sql`SELECT count(*)::int AS n FROM prescription`),
+    )) as { rows: { n: number }[] };
+    const system = await createWithTenant(runtime.db)(
+      { tenantId: a.id, userId: SYSTEM_USER_ID },
+      (tx) => tx.execute<{ n: number }>(sql`SELECT count(*)::int AS n FROM prescription`),
+    );
+
+    expect(read.rows[0]?.n).toBe(0);
+    expect(system.rows[0]?.n).toBeGreaterThan(0);
+    const written = (await portal((tx) =>
+      tx.execute(sql`UPDATE prescription SET status = 'expired' WHERE id = ${id}`),
+    )) as { rowCount: number | null };
+    expect(written.rowCount).toBe(0);
+    expect(await statusOf(id)).toBe('issued');
   });
 });

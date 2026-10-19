@@ -43,6 +43,12 @@ export const PRESCRIPTION_ERRORS = {
     status: 409,
     i18nKey: 'errors.prescription_awaiting_reconciliation',
   },
+  // An attempt to send the prescription is in progress: it can be cancelled or registered by hand
+  // once that attempt ends, not while the provider is being asked.
+  prescription_attempt_in_progress: {
+    status: 409,
+    i18nKey: 'errors.prescription_attempt_in_progress',
+  },
   // Only a prescription the provider has not confirmed can be retried or registered by hand.
   prescription_not_pending: { status: 409, i18nKey: 'errors.prescription_not_pending' },
   // The identifier belongs to another prescription of the organization.

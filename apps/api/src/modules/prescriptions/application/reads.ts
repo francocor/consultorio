@@ -18,15 +18,14 @@ import { findPrescription, hiddenOrMissing, toDto } from './read-model.js';
 const LIMIT = 100;
 
 /**
- * Writes the entry of the audit trail for what a professional looked at: one per prescription,
- * with the actor, the patient and the prescription (e-prescription, "Audit of a read"). The reader
- * is the prescriber or a professional who treats the patient; the sharing scope never opens one.
+ * Writes the entry of the audit trail for the prescription a professional opened, with the actor,
+ * the patient and the prescription (e-prescription, "Audit of a read"). The reader is the prescriber
+ * or a professional who treats the patient; the sharing scope never opens one.
  */
 async function auditRead(
   tx: Tx,
   caller: Caller,
   row: { id: string; patientId: string },
-  via: 'record' | 'list' | 'mine',
 ): Promise<void> {
   await audit(tx, {
     action: 'prescription.read',
@@ -35,7 +34,27 @@ async function auditRead(
     resourceType: 'prescription',
     resourceId: row.id,
     patientId: row.patientId,
-    metadata: { via },
+    metadata: { via: 'record' },
+  });
+}
+
+/**
+ * A list is one read, one entry: who listed, for which patient when there is one, and how many
+ * prescriptions it showed (JD-S5 R1-B-S3). An entry per row would turn a screen into a hundred
+ * entries of the trail, and the entry of the record is written when one of them is opened.
+ */
+async function auditList(
+  tx: Tx,
+  caller: Caller,
+  input: { via: 'list' | 'mine'; count: number; patientId?: string },
+): Promise<void> {
+  await audit(tx, {
+    action: 'prescription.read',
+    outcome: 'allow',
+    actor: caller.actor,
+    resourceType: 'prescription',
+    ...(input.patientId === undefined ? {} : { patientId: input.patientId }),
+    metadata: { via: input.via, count: input.count },
   });
 }
 
@@ -49,7 +68,7 @@ export async function getPrescription(
   // The policies of the database hide what this professional may not read, and a missing one looks the same.
   const row = await findPrescription(tx, prescriptionId);
   if (!row) return hiddenOrMissing(tx, prescriptionId);
-  await auditRead(tx, caller, row, 'record');
+  await auditRead(tx, caller, row);
   return toDto(deps.keys, tx, row);
 }
 
@@ -67,10 +86,8 @@ export async function listForPatient(
     .orderBy(desc(prescription.createdAt), desc(prescription.id))
     .limit(LIMIT);
   const dtos: PrescriptionDto[] = [];
-  for (const row of rows) {
-    await auditRead(tx, caller, row, 'list');
-    dtos.push(await toDto(deps.keys, tx, row));
-  }
+  for (const row of rows) dtos.push(await toDto(deps.keys, tx, row));
+  await auditList(tx, caller, { via: 'list', count: dtos.length, patientId });
   return dtos;
 }
 
@@ -87,10 +104,8 @@ export async function listMine(
     .orderBy(desc(prescription.createdAt), desc(prescription.id))
     .limit(LIMIT);
   const dtos: PrescriptionDto[] = [];
-  for (const row of rows) {
-    await auditRead(tx, caller, row, 'mine');
-    dtos.push(await toDto(deps.keys, tx, row));
-  }
+  for (const row of rows) dtos.push(await toDto(deps.keys, tx, row));
+  await auditList(tx, caller, { via: 'mine', count: dtos.length });
   return dtos;
 }
 

@@ -47,8 +47,11 @@ import { startsWithGenericName } from './inn-sample.js';
  *   one stays cancelled;
  * - modes: `ok`, `down` (retryable, nothing issued) and `timeout_after_issue` (issues, then answers
  *   "unknown outcome"; fires once);
- * - it signs the notices it sends (`signBody`) and verifies the ones that arrive (`verifyWebhook`)
- *   with the webhook secret, over the raw body.
+ * - it signs the notices it sends (`signNotice`) and verifies the ones that arrive (`verifyWebhook`)
+ *   with the webhook secret: the HMAC covers the time the notice was signed and the raw body
+ *   (`<timestamp>.<body>`), and a notice older (or newer) than five minutes is refused, so a notice
+ *   captured once cannot be replayed later (JD-S5 R1-B-T3). The headers are `x-erx-timestamp`
+ *   (unix seconds) and `x-erx-signature` (`sha256=<hex>`).
  *
  * It carries `simulated: true`: the prescriptions module reads it to say "simulated" on every
  * screen and to stamp the document. The address it hands out is `local-erx://...`, which resolves to
@@ -57,9 +60,14 @@ import { startsWithGenericName } from './inn-sample.js';
 
 export interface LocalPrescriptionProvider extends PrescriptionProvider {
   readonly simulated: true;
-  /** The signature a notice of this provider carries (`x-erx-signature`). */
-  signBody(raw: string): string;
-  /** Whether a notice really came from this provider: the HMAC of the raw body, compared in constant time. */
+  /** The signature (`x-erx-signature`) of a notice signed at `timestamp` (unix seconds, as text). */
+  signBody(raw: string, timestamp: string): string;
+  /** The two headers a notice of this provider carries, signed now. */
+  signNotice(raw: string): { 'x-erx-signature': string; 'x-erx-timestamp': string };
+  /**
+   * Whether a notice really came from this provider and is recent: the HMAC of the time and the
+   * raw body, compared in constant time, with the time inside the window of five minutes.
+   */
   verifyWebhook(raw: Buffer, headers: IncomingHttpHeaders): boolean;
 }
 
@@ -67,7 +75,12 @@ export interface LocalPrescriptionProviderOptions {
   db: Db;
   /** Signs and verifies the notices. At least 32 characters in production; a process secret in development. */
   webhookSecret: string;
+  /** The clock the freshness of a notice is judged by. */
+  clock?: () => Date;
 }
+
+/** How far from now the time of a notice may be, both ways. */
+export const WEBHOOK_WINDOW_SECONDS = 300;
 
 /** The message of a medication line the catalog does not know. */
 export const NOT_IN_CATALOG_MESSAGE =
@@ -77,6 +90,7 @@ export const NOT_IN_CATALOG_MESSAGE =
 export const LOCAL_DOCUMENT_SCHEME = 'local-erx://prescription/';
 
 const SIGNATURE_HEADER = 'x-erx-signature';
+const TIMESTAMP_HEADER = 'x-erx-timestamp';
 
 type Issued = Extract<PrescriptionResult, { status: 'issued' }>;
 
@@ -114,8 +128,9 @@ export function createLocalPrescriptionProvider(
   options: LocalPrescriptionProviderOptions,
 ): LocalPrescriptionProvider {
   const { db } = options;
-  const sign = (raw: string) =>
-    `sha256=${createHmac('sha256', options.webhookSecret).update(raw).digest('hex')}`;
+  const clock = options.clock ?? (() => new Date());
+  const sign = (raw: string, timestamp: string) =>
+    `sha256=${createHmac('sha256', options.webhookSecret).update(`${timestamp}.${raw}`).digest('hex')}`;
 
   /** Consumes a one-shot mode: true for the one request that finds it still set. */
   async function fire(tx: Pick<Db, 'update'>, mode: ErxSimulatorMode): Promise<boolean> {
@@ -138,10 +153,20 @@ export function createLocalPrescriptionProvider(
 
     signBody: sign,
 
+    signNotice(raw) {
+      const timestamp = String(Math.floor(clock().getTime() / 1000));
+      return { 'x-erx-signature': sign(raw, timestamp), 'x-erx-timestamp': timestamp };
+    },
+
     verifyWebhook(raw, headers) {
       const sent = headers[SIGNATURE_HEADER];
-      if (typeof sent !== 'string') return false;
-      const expected = Buffer.from(sign(raw.toString('utf8')));
+      const stamped = headers[TIMESTAMP_HEADER];
+      if (typeof sent !== 'string' || typeof stamped !== 'string') return false;
+      // A whole number of seconds, inside the window: a stale or future notice is a replay.
+      if (!/^\d{1,12}$/.test(stamped)) return false;
+      const age = Math.floor(clock().getTime() / 1000) - Number(stamped);
+      if (Math.abs(age) > WEBHOOK_WINDOW_SECONDS) return false;
+      const expected = Buffer.from(sign(raw.toString('utf8'), stamped));
       const received = Buffer.from(sent);
       return expected.length === received.length && timingSafeEqual(expected, received);
     },

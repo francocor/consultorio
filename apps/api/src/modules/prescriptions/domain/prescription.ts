@@ -67,8 +67,20 @@ const keyOf = (purpose: string, tenantId: string, prescriptionId: string) =>
  * so it is derived from the organization and the prescription and never taken from the client: the
  * key a form makes is only unique inside one organization.
  */
-export function issueKeyOf(tenantId: string, prescriptionId: string): string {
-  return keyOf('erx-issue', tenantId, prescriptionId);
+export function issueKeyOf(
+  tenantId: string,
+  prescriptionId: string,
+  submissionVersion = 1,
+): string {
+  // The first submission keeps the key it always had. A provider binds a key to the fingerprint of
+  // what it was sent (and remembers a refusal), so a prescription that was refused and then
+  // corrected is sent under a key of its own: the same key would answer "key already used" forever
+  // (JD-S5 R1-S5-4).
+  return keyOf(
+    'erx-issue',
+    tenantId,
+    submissionVersion <= 1 ? prescriptionId : `${prescriptionId}|v${String(submissionVersion)}`,
+  );
 }
 
 /** The key a cancellation is sent with: one answer per prescription, however many times it is asked. */

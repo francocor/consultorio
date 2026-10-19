@@ -70,7 +70,7 @@ export function erxDevRoutes(deps: ErxDevRoutesDeps) {
         url: '/webhooks/erx',
         headers: {
           'content-type': 'application/json',
-          'x-erx-signature': provider.signBody(raw),
+          ...provider.signNotice(raw),
         },
         payload: raw,
       });

@@ -240,6 +240,9 @@ export async function correctPrescription(
     { ...CONTENT_FIELD, rowId: row.id },
     serializeContent(content),
   );
+  // The provider remembers the refusal under the old key and binds the key to what was refused, so
+  // the corrected prescription is a new submission: a new version and a new key (JD-S5 R1-S5-4).
+  const submissionVersion = row.submissionVersion + 1;
   await tx
     .update(prescription)
     .set({
@@ -251,6 +254,8 @@ export async function correctPrescription(
       attempts: 0,
       nextAttemptAt: null,
       version: row.version + 1,
+      submissionVersion,
+      idempotencyKey: issueKeyOf(organization.id, row.id, submissionVersion),
     })
     .where(and(eq(prescription.id, row.id), eq(prescription.status, 'draft')));
   await deps.jobs?.enqueue(

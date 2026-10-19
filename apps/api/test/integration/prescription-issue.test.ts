@@ -511,11 +511,22 @@ describe('an outage never produces a valid prescription and never a second one',
     expect(world.provider.prescriptions().length).toBe(before);
 
     await world.verify(prescriber);
+    // The platform verified the NEW registration; the prescription still says the old one, so it is
+    // not sent either (JD-S5 R1-B-T4): a person cancels it and writes a new one.
     const afterVerification = await world.api.post(
       `/prescriptions/${pending.id}/retry`,
       prescriber.session,
     );
-    expect(afterVerification.json<PrescriptionDto>().status).toBe('issued');
+    expect(afterVerification.json<PrescriptionDto>()).toMatchObject({
+      status: 'pending_submission',
+      failure: { kind: 'needs_attention' },
+    });
+    expect(world.provider.prescriptions().length).toBe(before);
+    const fresh = await world.issue(prescriber, { patientId });
+    expect(fresh.json<PrescriptionDto>()).toMatchObject({
+      status: 'issued',
+      prescriber: { matricula: '700888', jurisdiction: 'AR-B' },
+    });
     expect(world.provider.prescriptions().length).toBe(before + 1);
   });
 

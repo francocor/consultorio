@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto';
+import { createHmac, randomUUID } from 'node:crypto';
 
 import type { AuditAction, PrescriptionDto, Problem } from '@consultorio/contracts';
 import { and, eq } from 'drizzle-orm';
@@ -506,35 +506,73 @@ describe('the notice of the provider (POST /webhooks/erx)', () => {
   const body = (externalId: string) =>
     JSON.stringify({ eventId: `evt-${externalId}`, externalId, state: 'dispensed' });
 
-  const post = (raw: string, signature?: string) =>
+  /** A notice with the headers it carries: the signature and the time it was signed. */
+  const post = (raw: string, headers: Record<string, string> = {}) =>
     localWorld.app.inject({
       method: 'POST',
       url: '/webhooks/erx',
       headers: {
         'content-type': 'application/json',
         host: 'platform.consultorio.test',
-        ...(signature === undefined ? {} : { 'x-erx-signature': signature }),
+        ...headers,
       },
       payload: raw,
     });
+  const nowSeconds = () => String(Math.floor(Date.now() / 1000));
 
   it('refuses a notice without a signature, or with a wrong one, and changes nothing', async () => {
     const before = localWorld.recorded.jobs.length;
     const raw = body('ERX-NOT-SIGNED');
 
     const unsigned = await post(raw);
-    const wrong = await post(raw, 'sha256=00');
-    const tampered = await post(raw + ' ', local.signBody(raw));
+    const wrong = await post(raw, {
+      'x-erx-signature': 'sha256=00',
+      'x-erx-timestamp': nowSeconds(),
+    });
+    const tampered = await post(raw + ' ', local.signNotice(raw));
 
     expect([unsigned.statusCode, wrong.statusCode, tampered.statusCode]).toEqual([401, 401, 401]);
     expect(localWorld.recorded.jobs.length).toBe(before);
+  });
+
+  it('refuses a notice captured earlier: the signature covers the time and five minutes is the window (JD-S5 R1-B-T3)', async () => {
+    const before = localWorld.recorded.jobs.length;
+    const raw = body('ERX-REPLAYED');
+    const seconds = Math.floor(Date.now() / 1000);
+    const at = (offset: number) => String(seconds + offset);
+    const signedAt = (offset: number) => ({
+      'x-erx-signature': local.signBody(raw, at(offset)),
+      'x-erx-timestamp': at(offset),
+    });
+
+    const refused = await Promise.all([
+      // Signed ten minutes ago, and signed ten minutes from now.
+      post(raw, signedAt(-600)),
+      post(raw, signedAt(600)),
+      // A signature made for another time under a fresh time.
+      post(raw, { 'x-erx-signature': local.signBody(raw, at(-600)), 'x-erx-timestamp': at(0) }),
+      // The scheme without a time (the HMAC of the body alone), and a notice with no time at all.
+      post(raw, {
+        'x-erx-signature': `sha256=${createHmac('sha256', SECRET).update(raw).digest('hex')}`,
+        'x-erx-timestamp': at(0),
+      }),
+      post(raw, { 'x-erx-signature': local.signNotice(raw)['x-erx-signature'] }),
+      // A time that is not a whole number of seconds.
+      post(raw, { 'x-erx-signature': local.signBody(raw, '1e9'), 'x-erx-timestamp': '1e9' }),
+    ]);
+
+    expect(refused.map((response) => response.statusCode)).toEqual([401, 401, 401, 401, 401, 401]);
+    expect(localWorld.recorded.jobs.length).toBe(before);
+    // Within the window, in either direction, it is accepted.
+    expect((await post(raw, signedAt(-240))).statusCode).toBe(200);
+    expect((await post(raw, signedAt(240))).statusCode).toBe(200);
   });
 
   it('acknowledges a notice about an identifier nobody holds and queues nothing, telling nothing', async () => {
     const before = localWorld.recorded.jobs.length;
     const raw = body('ERX-NOBODY-HOLDS-THIS');
 
-    const response = await post(raw, local.signBody(raw));
+    const response = await post(raw, local.signNotice(raw));
 
     expect(response.statusCode).toBe(200);
     expect(response.json()).toEqual({ accepted: true });
@@ -547,8 +585,8 @@ describe('the notice of the provider (POST /webhooks/erx)', () => {
     await localControls.advance(externalId, 'dispensed');
     const raw = body(externalId);
 
-    const response = await post(raw, local.signBody(raw));
-    const repeated = await post(raw, local.signBody(raw));
+    const response = await post(raw, local.signNotice(raw));
+    const repeated = await post(raw, local.signNotice(raw));
 
     expect(response.statusCode).toBe(200);
     expect(repeated.statusCode).toBe(200);
@@ -563,7 +601,7 @@ describe('the notice of the provider (POST /webhooks/erx)', () => {
     const externalId = made.externalId ?? '';
     const raw = body(externalId);
 
-    await post(raw, local.signBody(raw));
+    await post(raw, local.signNotice(raw));
     await runPending(runtime.db, localWorld.recorded, localJobs.definitions);
 
     expect((await localWorld.get(prescriber, made.id)).status).toBe('issued');
@@ -587,7 +625,7 @@ describe('the notice of the provider (POST /webhooks/erx)', () => {
     await set('read_only');
     try {
       const raw = JSON.stringify({ eventId: 'evt-ro', externalId, state: 'expired' });
-      const response = await post(raw, local.signBody(raw));
+      const response = await post(raw, local.signNotice(raw));
       await runPending(runtime.db, localWorld.recorded, localJobs.definitions);
 
       expect(response.statusCode).toBe(200);
@@ -605,11 +643,39 @@ describe('the notice of the provider (POST /webhooks/erx)', () => {
       headers: {
         ...browserHeaders('prescription-lifecycle-local'),
         'content-type': 'application/json',
-        'x-erx-signature': local.signBody(raw),
+        ...local.signNotice(raw),
       },
       payload: raw,
     });
 
     expect(response.statusCode).toBe(200);
+  });
+});
+
+describe('the volume of notices (JD-S5 R1-B-T3)', () => {
+  it('stops a client that sends more notices than a provider ever would in a minute', async () => {
+    const raw = JSON.stringify({
+      eventId: 'evt-flood',
+      externalId: 'ERX-FLOOD',
+      state: 'dispensed',
+    });
+    const send = () =>
+      localWorld.app.inject({
+        method: 'POST',
+        url: '/webhooks/erx',
+        remoteAddress: '10.70.0.9',
+        headers: {
+          'content-type': 'application/json',
+          host: 'platform.consultorio.test',
+          ...local.signNotice(raw),
+        },
+        payload: raw,
+      });
+
+    const statuses: number[] = [];
+    for (let sent = 0; sent < 260; sent += 1) statuses.push((await send()).statusCode);
+
+    expect(statuses.slice(0, 240).every((status) => status === 200)).toBe(true);
+    expect(statuses.slice(240).every((status) => status === 429)).toBe(true);
   });
 });

@@ -9,19 +9,22 @@ import { and, eq, ne, sql } from 'drizzle-orm';
 
 import { prescription, type PrescriptionRow } from '../../../db/schema/prescriptions.js';
 import { audit, type AuditActor } from '../../../platform/audit/writer.js';
-import { SYSTEM_USER_ID, type Tx } from '../../../platform/db/tenant-context.js';
+import { SYSTEM_USER_ID, type Tx, type WithTenant } from '../../../platform/db/tenant-context.js';
 import { readPrescriberProfile } from '../../staff/index.js';
 import {
   cleanProviderMessage,
   nextAttemptDelayMs,
   providerRequestOf,
+  type PrescriptionContent,
 } from '../domain/prescription.js';
 
 import {
   SYSTEM_ACTOR,
   UNIQUE_VIOLATION,
+  UNREACHABLE,
   constraintOf,
   sqlState,
+  withinTime,
   type Organization,
   type PrescriptionDeps,
 } from './common.js';
@@ -32,14 +35,18 @@ import { findPrescription, lockPrescription, openContent } from './read-model.js
 
 /**
  * What one attempt ended in. A `retry` keeps the prescription pending, with the next attempt
- * scheduled. `attention` means a person is needed (the matricula lost its verification, or the
- * provider holds a prescription that cannot be recorded for this one); `orphaned` means the
+ * scheduled. `attention` means a person is needed (the matricula lost its verification or changed,
+ * or the provider holds a prescription that cannot be recorded for this one); `orphaned` means the
  * provider answered after the prescription was closed by someone else.
  */
 export type SubmitOutcome = 'issued' | 'rejected' | 'retry' | 'skipped' | 'attention' | 'orphaned';
 
 type AttentionReason =
-  'matricula_unverified' | 'identifier_taken' | 'identifier_mismatch' | 'cancelled_at_provider';
+  | 'matricula_unverified'
+  | 'matricula_changed'
+  | 'identifier_taken'
+  | 'identifier_mismatch'
+  | 'cancelled_at_provider';
 
 type Issued = Extract<PrescriptionResult, { status: 'issued' }>;
 
@@ -58,93 +65,149 @@ export interface SubmitOptions {
   actor?: AuditActor;
 }
 
-const UNREACHABLE: PrescriptionResult = {
-  status: 'retryable',
-  message: 'unreachable',
-  outcomeUnknown: true,
-};
+/**
+ * How long an attempt that holds no connection owns the row. Longer than the longest wait for the
+ * provider (a call, the question before it, and the writes around them), shorter than the wait of a
+ * person; a crashed attempt leaves a lease that simply runs out.
+ */
+const LEASE_MS = 120_000;
 
 /**
  * Writes down, BEFORE the provider is called, that it may answer this prescription: the row is
- * marked `awaiting_reconciliation`. If the process dies after the provider answered, the next
- * attempt finds the mark and asks the provider for the key before it sends anything. The mark is
- * committed on a connection of its own when there is one (`deps.withTenant`), so it does not wait for the end
- * of the attempt, which keeps its transaction open across the call. Only a definite answer clears it.
+ * marked `awaiting_reconciliation` and `provider_contacted_at` is set (it is never cleared, so a
+ * prescription parked later is still asked about before it is cancelled or registered by hand). If
+ * the process dies after the provider answered, the next attempt finds the mark and asks the
+ * provider for the key before it sends anything. Only a definite answer clears the state.
+ *
+ * It answers whether the row was marked: a prescription somebody cancelled in the meantime is not
+ * (the update touches only a row that still waits), and then NOTHING is sent (JD-S5 R1-S5-3).
+ *
+ * Where the mark is written: in the transaction given (`inTransaction`: the attempt of a request,
+ * which holds no connection across the call and commits the mark before it), or, for an attempt that
+ * keeps its transaction open across the call (a job), on a connection of its own so the mark does not
+ * wait for the end of the attempt. That nested connection is acceptable only where few attempts run
+ * at a time (the worker); no request may use it.
  */
 async function markIntent(
   tx: Tx,
   deps: PrescriptionDeps,
   organization: Organization,
   row: PrescriptionRow,
-  now: Date,
-): Promise<void> {
-  if (row.deliveryState === 'awaiting_reconciliation') return;
+  step: { now: Date; inTransaction: boolean },
+): Promise<boolean> {
+  if (row.deliveryState === 'awaiting_reconciliation' && row.providerContactedAt !== null) {
+    return true;
+  }
   const write = (target: Tx) =>
     target
       .update(prescription)
-      .set({ deliveryState: 'awaiting_reconciliation', lastAttemptAt: now })
-      .where(and(eq(prescription.id, row.id), eq(prescription.status, 'pending_submission')));
-  if (deps.withTenant) {
-    await deps.withTenant({ tenantId: organization.id, userId: SYSTEM_USER_ID }, async (own) => {
-      await write(own);
-    });
-  } else {
-    await write(tx);
-  }
+      .set({
+        deliveryState: 'awaiting_reconciliation',
+        lastAttemptAt: step.now,
+        ...(row.providerContactedAt === null ? { providerContactedAt: step.now } : {}),
+      })
+      .where(and(eq(prescription.id, row.id), eq(prescription.status, 'pending_submission')))
+      .returning({ id: prescription.id });
+  const written =
+    !step.inTransaction && deps.withTenant
+      ? await deps.withTenant({ tenantId: organization.id, userId: SYSTEM_USER_ID }, write)
+      : await write(tx);
+  return written.length > 0;
 }
 
-/** What the provider answered, or an unknown outcome when the call itself failed. */
+/** What the provider answered, or an unknown outcome when the call itself failed or took too long. */
 async function callProvider(
+  deps: PrescriptionDeps,
   provider: PrescriptionProvider,
   request: PrescriptionRequest,
   key: string,
 ): Promise<Verdict> {
   // The same key always gets the same prescription, so asking again after a lost answer finds it.
-  const result = await provider.issue(request, key).catch((): PrescriptionResult => UNREACHABLE);
+  const result = await withinTime(deps, () => provider.issue(request, key), UNREACHABLE);
   if (result.status === 'issued') return { kind: 'issued', result, settled: 'issued' };
   if (result.status === 'rejected') return { kind: 'rejected', message: result.message };
   return { kind: 'retry', unknown: result.outcomeUnknown };
 }
 
+/** What the provider says about the key of a prescription, before anything is sent. */
+type Facts =
+  | { kind: 'none' }
+  | { kind: 'retry' }
+  | { kind: 'rejected'; message: string }
+  | { kind: 'attention'; reason: AttentionReason; externalId: string }
+  | { kind: 'holds'; found: Issued; settled: ProviderPrescriptionState };
+
 /**
  * After an unknown outcome, or a crash, the provider is asked for the key BEFORE anything is sent
- * (design: "never issue blindly"). The answers:
+ * (design: "never issue blindly"). This is the part that talks to the provider and needs no
+ * transaction:
  *
  * - it holds nothing for the key: the request goes out;
  * - it holds a prescription, and every identifying fact agrees (the identifier is the one it says
- *   it holds when asked by identifier, it is not cancelled, and no other prescription of ours
- *   already has it): it is adopted, and nothing is issued;
+ *   it holds when asked by identifier, and it is not cancelled): it is a candidate to be adopted;
  * - it holds one that does not agree, or it does not answer: nothing is sent.
  */
-async function reconcile(
-  tx: Tx,
+async function askAboutKey(
+  deps: PrescriptionDeps,
   provider: PrescriptionProvider,
   row: PrescriptionRow,
-): Promise<Verdict | { kind: 'send' }> {
-  const found = await provider
-    .findByKey(row.idempotencyKey)
-    .catch((): PrescriptionResult => UNREACHABLE);
-  if (found === null) return { kind: 'send' };
-  if (found.status === 'retryable') return { kind: 'retry', unknown: true };
+): Promise<Facts> {
+  const found = await withinTime(deps, () => provider.findByKey(row.idempotencyKey), UNREACHABLE);
+  if (found === null) return { kind: 'none' };
+  if (found.status === 'retryable') return { kind: 'retry' };
   if (found.status === 'rejected') return { kind: 'rejected', message: found.message };
 
-  const status: PrescriptionStatusResult = await provider
-    .status(found.externalId)
-    .catch((): PrescriptionStatusResult => ({ status: 'retryable', message: 'unreachable' }));
-  if (status.status === 'retryable') return { kind: 'retry', unknown: true };
+  const status: PrescriptionStatusResult = await withinTime(
+    deps,
+    () => provider.status(found.externalId),
+    { status: 'retryable', message: 'unreachable' },
+  );
+  if (status.status === 'retryable') return { kind: 'retry' };
   if (status.status === 'unknown' || status.externalId !== found.externalId) {
     return { kind: 'attention', reason: 'identifier_mismatch', externalId: found.externalId };
   }
   if (status.state === 'cancelled') {
     return { kind: 'attention', reason: 'cancelled_at_provider', externalId: found.externalId };
   }
-  const [other] = await tx
-    .select({ id: prescription.id })
-    .from(prescription)
-    .where(and(eq(prescription.externalId, found.externalId), ne(prescription.id, row.id)))
-    .limit(1);
-  if (other) return { kind: 'attention', reason: 'identifier_taken', externalId: found.externalId };
-  return { kind: 'issued', result: found, settled: status.state };
+  return { kind: 'holds', found, settled: status.state };
+}
+
+/**
+ * What the facts mean for this prescription: a prescription the provider holds is adopted only when
+ * no other prescription of ours already has its identifier.
+ */
+async function conclude(
+  tx: Tx,
+  row: PrescriptionRow,
+  facts: Facts,
+): Promise<Verdict | { kind: 'send' }> {
+  switch (facts.kind) {
+    case 'none':
+      return { kind: 'send' };
+    case 'retry':
+      return { kind: 'retry', unknown: true };
+    case 'rejected':
+      return { kind: 'rejected', message: facts.message };
+    case 'attention':
+      return { kind: 'attention', reason: facts.reason, externalId: facts.externalId };
+    case 'holds': {
+      const [other] = await tx
+        .select({ id: prescription.id })
+        .from(prescription)
+        .where(
+          and(eq(prescription.externalId, facts.found.externalId), ne(prescription.id, row.id)),
+        )
+        .limit(1);
+      if (other) {
+        return {
+          kind: 'attention',
+          reason: 'identifier_taken',
+          externalId: facts.found.externalId,
+        };
+      }
+      return { kind: 'issued', result: facts.found, settled: facts.settled };
+    }
+  }
 }
 
 /**
@@ -206,6 +269,7 @@ async function defer(
 /**
  * Parks a pending prescription for a person: no automatic attempt touches it again until somebody
  * presses retry. Writes the audit entry and logs the identifiers (never a message or a medication).
+ * The mark that the provider may hold the prescription (`provider_contacted_at`) is not touched.
  */
 async function park(
   tx: Tx,
@@ -253,48 +317,60 @@ async function applySettled(
   await tx.update(prescription).set({ status: state }).where(eq(prescription.id, row.id));
 }
 
+/** Everything the steps after the first one need to know about the attempt. */
+interface Plan {
+  row: PrescriptionRow;
+  organization: Organization;
+  provider: PrescriptionProvider;
+  content: PrescriptionContent;
+  /** The provider may have been asked about this prescription before: ask it about the key first. */
+  ask: boolean;
+  now: Date;
+}
+
+type Begun = { done: SubmitOutcome } | { plan: Plan };
+
 /**
- * One attempt to get a pending prescription confirmed by the provider (e-prescription, "Provider
- * outage handling"). It is safe to run at any time and any number of times:
+ * Step 1 of an attempt: the gates, in a transaction. Nothing here talks to the provider.
  *
- * - one attempt per prescription at a time (an advisory lock); a second caller skips;
- * - a prescription that is not pending, whose next attempt is not due, or that waits for a person, is
- *   left alone (unless a person asked: `force`); an organization that is read-only submits nothing;
+ * - one attempt per prescription at a time: the advisory lock for as long as this transaction
+ *   lives, and, for an attempt that does not keep its transaction (`lease`), a lease on the row for
+ *   the length of the call, so another attempt, a cancellation and a manual registration wait;
+ * - a prescription that is not pending, whose next attempt is not due, or that waits for a person,
+ *   is left alone (unless a person asked: `force`); an organization that is read-only submits nothing;
  * - the matricula is checked AGAIN here: a registration that lost its verification since the
- *   prescription was made is not sent, it is parked;
- * - after an unknown outcome, or a crash, the provider is asked for the key BEFORE anything is sent,
- *   and a prescription it holds is adopted only when every identifying fact agrees. The mark that
- *   makes this possible is committed before every call (`markIntent`);
- * - a refusal is final for the attempt: the words of the provider are kept and the prescription
- *   becomes a draft that can be corrected;
- * - an outage or an unknown outcome keeps it pending with a longer wait each time, and queues the
- *   next attempt.
- *
- * The call to the provider is made without any row lock (the transaction of the caller stays open
- * across it, holding only the advisory lock); the row is locked only to write the answer.
+ *   prescription was made, or whose number or jurisdiction is no longer the one the prescription
+ *   says, is not sent, it is parked.
  */
-export async function attemptSubmit(
+async function begin(
   tx: Tx,
   deps: PrescriptionDeps,
   prescriptionId: string,
-  options: SubmitOptions = {},
-): Promise<SubmitOutcome> {
+  options: SubmitOptions,
+  mode: 'hold' | 'lease',
+): Promise<Begun> {
   const now = deps.clock();
   const lock = await tx.execute<{ locked: boolean }>(
     sql`select pg_try_advisory_xact_lock(hashtextextended(${'erx-prescription|' + prescriptionId}, 0)) as locked`,
   );
-  if (lock.rows[0]?.locked !== true) return 'skipped';
+  if (lock.rows[0]?.locked !== true) return { done: 'skipped' };
 
   const row = await findPrescription(tx, prescriptionId);
-  if (row?.status !== 'pending_submission') return 'skipped';
+  if (row?.status !== 'pending_submission') return { done: 'skipped' };
   if (!options.force) {
-    if (row.deliveryState === 'needs_attention') return 'skipped';
-    if (row.nextAttemptAt !== null && row.nextAttemptAt.getTime() > now.getTime()) return 'skipped';
+    if (row.deliveryState === 'needs_attention') return { done: 'skipped' };
+    if (row.nextAttemptAt !== null && row.nextAttemptAt.getTime() > now.getTime()) {
+      return { done: 'skipped' };
+    }
+  }
+  // Another attempt is waiting for the provider without a connection: it owns the row.
+  if (row.attemptLeaseUntil !== null && row.attemptLeaseUntil.getTime() > now.getTime()) {
+    return { done: 'skipped' };
   }
 
   const { provider, organization } = await connectedProvider(tx, deps);
   // A read-only or cancelled organization submits nothing (issuing is a write).
-  if (!organization.active) return 'skipped';
+  if (!organization.active) return { done: 'skipped' };
 
   if (!provider) {
     // Nothing was sent, so nothing is learned: a mark from an earlier attempt stays.
@@ -306,26 +382,74 @@ export async function attemptSubmit(
         tenantId: organization.id,
       }),
     );
-    return wrote ? 'retry' : 'skipped';
+    return { done: wrote ? 'retry' : 'skipped' };
   }
 
   // The verification is checked at the moment of issuing, every time the provider is about to be called.
   const profile = await readPrescriberProfile(tx, row.authorProfessionalId);
   if (profile?.status !== 'active' || profile.matriculaStatus !== 'verified') {
-    return (await park(tx, deps, row, { now, reason: 'matricula_unverified' }))
-      ? 'attention'
-      : 'skipped';
+    return {
+      done: (await park(tx, deps, row, { now, reason: 'matricula_unverified' }))
+        ? 'attention'
+        : 'skipped',
+    };
+  }
+  const content = await openContent(deps.keys, tx, row);
+  // The registration the prescription says is the one the platform verified, not an older one the
+  // professional had when it was made (the operator verified the NEW number, not the one on paper).
+  if (
+    content.prescriber.matricula !== profile.matricula ||
+    content.prescriber.jurisdiction !== profile.jurisdiction
+  ) {
+    return {
+      done: (await park(tx, deps, row, { now, reason: 'matricula_changed' }))
+        ? 'attention'
+        : 'skipped',
+    };
   }
 
-  const content = await openContent(deps.keys, tx, row);
-  let verdict: Verdict | { kind: 'send' } | undefined;
-  // Anything that may have reached the provider before (a mark, or any earlier attempt) is asked about first.
-  if (row.deliveryState === 'awaiting_reconciliation' || row.lastAttemptAt !== null) {
-    verdict = await reconcile(tx, provider, row);
+  if (mode === 'lease') {
+    await tx
+      .update(prescription)
+      .set({ attemptLeaseUntil: new Date(now.getTime() + LEASE_MS) })
+      .where(eq(prescription.id, row.id));
   }
-  if (verdict === undefined || verdict.kind === 'send') {
-    await markIntent(tx, deps, organization, row, now);
-    verdict = await callProvider(provider, providerRequestOf(content), row.idempotencyKey);
+  return {
+    plan: {
+      row,
+      organization,
+      provider,
+      content,
+      // Anything that may have reached the provider before (a mark, or any earlier attempt) is asked about first.
+      ask:
+        row.deliveryState === 'awaiting_reconciliation' ||
+        row.lastAttemptAt !== null ||
+        row.providerContactedAt !== null,
+      now,
+    },
+  };
+}
+
+/**
+ * The last step of an attempt: writes what the provider answered, in a transaction. A refusal is
+ * final for the attempt (the words of the provider are kept and the prescription becomes a draft that
+ * can be corrected); an outage or an unknown outcome keeps it pending with a longer wait each time
+ * and queues the next attempt.
+ */
+async function settle(
+  tx: Tx,
+  deps: PrescriptionDeps,
+  plan: Plan,
+  verdict: Verdict,
+  options: SubmitOptions,
+  step: { releaseLease: boolean },
+): Promise<SubmitOutcome> {
+  const { row, organization, now } = plan;
+  if (step.releaseLease) {
+    await tx
+      .update(prescription)
+      .set({ attemptLeaseUntil: null })
+      .where(eq(prescription.id, row.id));
   }
 
   if (verdict.kind === 'retry') {
@@ -447,4 +571,114 @@ export async function attemptSubmit(
     );
   }
   return 'issued';
+}
+
+/**
+ * One attempt to get a pending prescription confirmed by the provider (e-prescription, "Provider
+ * outage handling"), for a caller that has a transaction and keeps it open across the call: the job
+ * of the worker and the reconciliation pass. It is safe to run at any time and any number of times.
+ *
+ * - the steps are `begin` (gates), the question about the key, the mark, the call, and `settle`;
+ * - after an unknown outcome, or a crash, the provider is asked for the key BEFORE anything is sent,
+ *   and a prescription it holds is adopted only when every identifying fact agrees. The mark that
+ *   makes this possible is committed before every call (`markIntent`), and a prescription somebody
+ *   cancelled meanwhile is not sent at all;
+ * - the call to the provider is made without any row lock (the transaction of the caller stays open
+ *   across it, holding only the advisory lock); the row is locked only to write the answer.
+ *
+ * A request must use `attemptSubmitDetached`: it never holds a connection while it waits.
+ */
+export async function attemptSubmit(
+  tx: Tx,
+  deps: PrescriptionDeps,
+  prescriptionId: string,
+  options: SubmitOptions = {},
+): Promise<SubmitOutcome> {
+  const begun = await begin(tx, deps, prescriptionId, options, 'hold');
+  if ('done' in begun) return begun.done;
+  const { plan } = begun;
+
+  let verdict: Verdict | { kind: 'send' } = plan.ask
+    ? await conclude(tx, plan.row, await askAboutKey(deps, plan.provider, plan.row))
+    : { kind: 'send' };
+  if (verdict.kind === 'send') {
+    if (
+      !(await markIntent(tx, deps, plan.organization, plan.row, {
+        now: plan.now,
+        inTransaction: false,
+      }))
+    ) {
+      return 'skipped';
+    }
+    verdict = await callProvider(
+      deps,
+      plan.provider,
+      providerRequestOf(plan.content),
+      plan.row.idempotencyKey,
+    );
+  }
+  return settle(tx, deps, plan, verdict, options, { releaseLease: false });
+}
+
+/**
+ * The same attempt for a caller that must not hold a connection while the provider is being waited
+ * for: the request of a professional (JD-S5 R1-S5-1). Each step that touches the database runs in a
+ * short transaction of its own and commits before the next call to the provider, so a pool of ten
+ * connections serves any number of concurrent requests: no request holds one connection and waits
+ * for another. The mark is committed before the call, as always, and the row is leased for the
+ * length of the attempt (`attempt_lease_until`) so nothing else touches it meanwhile; a crash leaves
+ * a lease that runs out.
+ *
+ * It runs as the system, like the job: the authorization of the person who asked was decided by the
+ * route before it, and `options.actor` is who the trail names.
+ */
+export async function attemptSubmitDetached(
+  deps: PrescriptionDeps & { withTenant: WithTenant },
+  tenantId: string,
+  prescriptionId: string,
+  options: SubmitOptions = {},
+): Promise<SubmitOutcome> {
+  const as = <T>(work: (tx: Tx) => Promise<T>) =>
+    deps.withTenant({ tenantId, userId: SYSTEM_USER_ID }, work);
+  const release = () =>
+    as((tx) =>
+      tx
+        .update(prescription)
+        .set({ attemptLeaseUntil: null })
+        .where(eq(prescription.id, prescriptionId)),
+    ).then(() => undefined);
+
+  const begun = await as((tx) => begin(tx, deps, prescriptionId, options, 'lease'));
+  if ('done' in begun) return begun.done;
+  const { plan } = begun;
+
+  try {
+    let verdict: Verdict | { kind: 'send' };
+    if (plan.ask) {
+      const facts = await askAboutKey(deps, plan.provider, plan.row);
+      verdict = await as((tx) => conclude(tx, plan.row, facts));
+    } else {
+      verdict = { kind: 'send' };
+    }
+    if (verdict.kind === 'send') {
+      const marked = await as((tx) =>
+        markIntent(tx, deps, plan.organization, plan.row, { now: plan.now, inTransaction: true }),
+      );
+      if (!marked) {
+        await release();
+        return 'skipped';
+      }
+      verdict = await callProvider(
+        deps,
+        plan.provider,
+        providerRequestOf(plan.content),
+        plan.row.idempotencyKey,
+      );
+    }
+    const decided = verdict;
+    return await as((tx) => settle(tx, deps, plan, decided, options, { releaseLease: true }));
+  } catch (error) {
+    await release().catch(() => undefined);
+    throw error;
+  }
 }

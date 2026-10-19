@@ -67,8 +67,17 @@ export type CorrectPrescriptionRequest = z.infer<typeof CorrectPrescriptionReque
 export const CancelPrescriptionRequest = z.strictObject({ reason: Text(300) });
 export type CancelPrescriptionRequest = z.infer<typeof CancelPrescriptionRequest>;
 
+/**
+ * The shape of an identifier a provider gives: letters and digits, with dots, slashes, hyphens and
+ * underscores inside, 4 to 80 characters, no spaces. It ends on a document that a pharmacy reads, so
+ * a free text is not accepted (JD-S5 R1-A-T5).
+ */
+export const PRESCRIPTION_IDENTIFIER_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._/-]{3,79}$/;
+
 /** The identifier the professional got by issuing the prescription on the provider's own site. */
-export const RegisterManualPrescriptionRequest = z.strictObject({ identifier: Text(80) });
+export const RegisterManualPrescriptionRequest = z.strictObject({
+  identifier: Text(80).regex(PRESCRIPTION_IDENTIFIER_PATTERN),
+});
 export type RegisterManualPrescriptionRequest = z.infer<typeof RegisterManualPrescriptionRequest>;
 
 /** Why a prescription that is not issued is not: the provider refused it, or could not be reached. */

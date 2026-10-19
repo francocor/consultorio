@@ -1,4 +1,4 @@
-import type { PrescriptionProvider } from '@consultorio/contracts';
+import type { PrescriptionProvider, PrescriptionResult } from '@consultorio/contracts';
 import { eq, sql } from 'drizzle-orm';
 
 import { tenant } from '../../../db/schema/tenant.js';
@@ -42,16 +42,59 @@ export interface PrescriptionDeps {
   /** Queues the submission of a prescription the provider did not confirm. */
   jobs?: JobClient | undefined;
   /**
-   * Opens a transaction of its own. The mark that says "the provider may be answering this" is
-   * committed on it BEFORE the call, so it survives a crash of the process that made the call.
-   * Without it (a caller that only has a transaction) the mark is written in that transaction.
+   * Opens a transaction of its own. The attempt of a request runs its steps in short transactions
+   * opened with it, so it holds no connection while the provider is waited for; the attempt of a job
+   * commits the mark that says "the provider may be answering this" on one before the call, so it
+   * survives a crash of the process that made the call. Without it (a caller that only has a
+   * transaction) the mark is written in that transaction.
    */
   withTenant?: WithTenant | undefined;
   /** Where the PDF of a prescription lives. Without a bucket a prescription has no document. */
   storage?: ObjectStorage | undefined;
   /** The zone the date of a prescription is read in. */
   timeZone?: string | undefined;
+  /** How long a call to the provider is waited for before its outcome counts as unknown (20 s). */
+  providerTimeoutMs?: number | undefined;
   log?: AttemptLog | undefined;
+}
+
+/** The answer a call to the provider gets when it fails or takes too long: unreachable, outcome unknown. */
+export const UNREACHABLE: PrescriptionResult = {
+  status: 'retryable',
+  message: 'unreachable',
+  outcomeUnknown: true,
+};
+
+/** How long the provider is waited for before the outcome of a call counts as unknown. */
+export const DEFAULT_PROVIDER_TIMEOUT_MS = 20_000;
+
+/**
+ * A call to the provider that cannot hang whoever makes it (JD-S5 R1-B-T10): when the provider does
+ * not answer in time, or the call fails, the answer is `fallback`, which says "unreachable, outcome
+ * unknown" and is handled like a lost answer (the next attempt asks for the key first).
+ */
+export async function withinTime<T>(
+  deps: Pick<PrescriptionDeps, 'providerTimeoutMs'>,
+  call: () => Promise<T>,
+  fallback: T,
+): Promise<T> {
+  const limit = deps.providerTimeoutMs ?? DEFAULT_PROVIDER_TIMEOUT_MS;
+  let timer: NodeJS.Timeout | undefined;
+  const late = new Promise<T>((resolve) => {
+    timer = setTimeout(() => {
+      resolve(fallback);
+    }, limit);
+  });
+  try {
+    return await Promise.race([
+      Promise.resolve()
+        .then(call)
+        .catch(() => fallback),
+      late,
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 export interface Organization extends TenantRef {

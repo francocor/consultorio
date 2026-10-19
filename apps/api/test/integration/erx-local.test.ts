@@ -171,19 +171,41 @@ describe('the local e-prescription simulator', () => {
   it('verifies the signature of its notices over the raw body, and refuses anything else', () => {
     const local = provider();
     const body = JSON.stringify({ eventId: 'e-1', externalId: 'ERX-1', state: 'dispensed' });
-    const signature = local.signBody(body);
+    const headers = local.signNotice(body);
 
-    expect(local.verifyWebhook(Buffer.from(body), { 'x-erx-signature': signature })).toBe(true);
-    expect(local.verifyWebhook(Buffer.from(body + ' '), { 'x-erx-signature': signature })).toBe(
-      false,
-    );
+    expect(local.verifyWebhook(Buffer.from(body), headers)).toBe(true);
+    expect(local.verifyWebhook(Buffer.from(body + ' '), headers)).toBe(false);
     expect(local.verifyWebhook(Buffer.from(body), {})).toBe(false);
-    expect(local.verifyWebhook(Buffer.from(body), { 'x-erx-signature': 'sha256=00' })).toBe(false);
+    expect(
+      local.verifyWebhook(Buffer.from(body), {
+        'x-erx-signature': 'sha256=00',
+        'x-erx-timestamp': headers['x-erx-timestamp'],
+      }),
+    ).toBe(false);
     const other = createLocalPrescriptionProvider({
       db: runtime.db,
       webhookSecret: 'another-secret-0123456789abcdef',
     });
-    expect(other.verifyWebhook(Buffer.from(body), { 'x-erx-signature': signature })).toBe(false);
+    expect(other.verifyWebhook(Buffer.from(body), headers)).toBe(false);
+  });
+
+  it('judges the freshness of a notice by its clock: five minutes either way, not a second more (JD-S5 R1-B-T3)', () => {
+    const now = { value: new Date('2031-05-05T12:00:00.000Z') };
+    const local = createLocalPrescriptionProvider({
+      db: runtime.db,
+      webhookSecret: 'a-secret-for-the-clock-0123456789',
+      clock: () => now.value,
+    });
+    const body = JSON.stringify({ eventId: 'e-2', externalId: 'ERX-2', state: 'expired' });
+    const headers = local.signNotice(body);
+
+    expect(local.verifyWebhook(Buffer.from(body), headers)).toBe(true);
+    now.value = new Date('2031-05-05T12:05:00.000Z');
+    expect(local.verifyWebhook(Buffer.from(body), headers)).toBe(true);
+    now.value = new Date('2031-05-05T12:05:01.000Z');
+    expect(local.verifyWebhook(Buffer.from(body), headers)).toBe(false);
+    now.value = new Date('2031-05-05T11:54:59.000Z');
+    expect(local.verifyWebhook(Buffer.from(body), headers)).toBe(false);
   });
 });
 

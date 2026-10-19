@@ -36,7 +36,7 @@ export type { AttemptLog, PrescriptionDeps } from './application/common.js';
 // The patient portal (Stage 5): the prescriptions of one patient, and the document of one of them.
 export { listPrescriptionsForPatient } from './application/portal.js';
 export { openPortalDocument } from './application/document.js';
-export type { PortalDocumentInput } from './application/document.js';
+export type { PortalDocument, PortalDocumentInput } from './application/document.js';
 export { reconcileOrganization } from './application/settle.js';
 
 /** Registers what prescriptions takes with an organization that leaves: each professional's own. */

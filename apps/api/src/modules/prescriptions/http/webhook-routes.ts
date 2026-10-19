@@ -82,11 +82,23 @@ export function webhookRoutes(deps: WebhookDeps) {
 
       scope.post(
         '/webhooks/erx',
-        { config: { auth: 'public', readOnly: 'webhook', audits: 'none' } },
+        {
+          config: {
+            auth: 'public',
+            readOnly: 'webhook',
+            audits: 'none',
+            // A provider sends a notice per prescription that changes; a client that sends more than
+            // this many in a minute is not one (and a captured notice cannot be replayed in bulk).
+            rateLimit: { max: 240, timeWindow: 60_000 },
+          },
+        },
         async (request, reply) => {
           const raw = request.body;
           if (!deps.verifier) return reply.code(404).send();
           if (!Buffer.isBuffer(raw) || !deps.verifier.verifyWebhook(raw, request.headers)) {
+            // One line per refusal, nothing of the notice: the route's own limit bounds how many a
+            // client can make (a wrong secret, a clock out of step and a replay all look like this).
+            request.log.warn('a notice of the e-prescription provider was refused: bad signature');
             throw new AppError('unauthenticated');
           }
           let body: unknown;

@@ -3,19 +3,22 @@ import type {
   PrescriptionCancelResult,
   RegisterManualPrescriptionRequest,
 } from '@consultorio/contracts';
-import { eq } from 'drizzle-orm';
+import { eq, sql } from 'drizzle-orm';
 
 import { prescription, type PrescriptionRow } from '../../../db/schema/prescriptions.js';
 import { audit } from '../../../platform/audit/writer.js';
 import type { Tx } from '../../../platform/db/tenant-context.js';
 import { AppError } from '../../../platform/http/problem.js';
+import { readPrescriberProfile } from '../../staff/index.js';
 import { cancelKeyOf } from '../domain/prescription.js';
 
 import {
   CANCEL_REASON_FIELD,
   UNIQUE_VIOLATION,
+  UNREACHABLE,
   constraintOf,
   sqlState,
+  withinTime,
   type PrescriptionDeps,
 } from './common.js';
 import { requireProvider } from './connection.js';
@@ -33,6 +36,55 @@ export type CancelOutcome = 'cancelled' | 'refused' | 'unavailable';
 /** The prescriber is the one who cancels; a colleague who treats the patient reads and is refused. */
 function entryOf(row: PrescriptionRow) {
   return { prescriptionId: row.id, patientId: row.patientId };
+}
+
+/**
+ * Leaves the row alone while an attempt waits for the provider: the advisory lock of the attempts
+ * (held for the length of a job's transaction) and the lease of a request's attempt (which holds no
+ * connection) both mean "somebody is sending this". The same advisory lock as `attemptSubmit`'s, and
+ * a try-lock: it answers a conflict at once instead of waiting.
+ */
+async function assertNoAttemptInFlight(
+  tx: Tx,
+  deps: PrescriptionDeps,
+  row: PrescriptionRow,
+): Promise<void> {
+  const lock = await tx.execute<{ locked: boolean }>(
+    sql`select pg_try_advisory_xact_lock(hashtextextended(${'erx-prescription|' + row.id}, 0)) as locked`,
+  );
+  const leased =
+    row.attemptLeaseUntil !== null && row.attemptLeaseUntil.getTime() > deps.clock().getTime();
+  if (lock.rows[0]?.locked !== true || leased) {
+    throw new PrescriptionConflict(
+      'prescription_attempt_in_progress',
+      'prescription_attempt_in_progress',
+      entryOf(row),
+    );
+  }
+}
+
+/**
+ * Whether the provider may hold a prescription for this row: it was asked to issue it (the mark is
+ * never cleared, whatever state the row was parked in since), or the answer was lost. A refused
+ * draft holds nothing: the provider said so.
+ */
+function mayHoldAtProvider(row: PrescriptionRow): boolean {
+  return (
+    row.status === 'pending_submission' &&
+    (row.providerContactedAt !== null || row.deliveryState === 'awaiting_reconciliation')
+  );
+}
+
+/** What the provider says about the key of a row that may have reached it. */
+async function askProvider(
+  tx: Tx,
+  deps: PrescriptionDeps,
+  row: PrescriptionRow,
+): Promise<'free' | 'holds' | 'unreachable'> {
+  const { provider } = await requireProvider(tx, deps);
+  const found = await withinTime(deps, () => provider.findByKey(row.idempotencyKey), UNREACHABLE);
+  if (found === null || found.status === 'rejected') return 'free';
+  return found.status === 'retryable' ? 'unreachable' : 'holds';
 }
 
 async function writeCancelled(
@@ -95,12 +147,21 @@ export async function cancelPrescription(
   const { reason } = input.request;
 
   if (row.status === 'pending_submission' || row.status === 'draft') {
-    if (row.deliveryState === 'awaiting_reconciliation') {
-      throw new PrescriptionConflict(
-        'prescription_awaiting_reconciliation',
-        'prescription_awaiting_reconciliation',
-        entryOf(row),
-      );
+    // Not while an attempt is waiting for the provider (JD-S5 R1-S5-3): the provider would be given
+    // a prescription that was cancelled here a moment ago.
+    await assertNoAttemptInFlight(tx, deps, row);
+    if (mayHoldAtProvider(row)) {
+      // The provider may hold it even if this row says otherwise (a parked row, a lost answer): it
+      // is asked first, and a prescription it holds is cancelled after it is recorded, not here.
+      const answer = await askProvider(tx, deps, row);
+      if (answer === 'unreachable') return 'unavailable';
+      if (answer === 'holds') {
+        throw new PrescriptionConflict(
+          'prescription_awaiting_reconciliation',
+          'prescription_awaiting_reconciliation',
+          entryOf(row),
+        );
+      }
     }
     await writeCancelled(tx, deps, caller, row, { reason, via: 'local' });
     return 'cancelled';
@@ -114,13 +175,12 @@ export async function cancelPrescription(
   }
 
   const { provider, organization } = await requireProvider(tx, deps);
-  const result: PrescriptionCancelResult = await provider
-    .cancel(row.externalId, reason, cancelKeyOf(organization.id, row.id))
-    .catch((): PrescriptionCancelResult => ({
-      status: 'retryable',
-      message: 'unreachable',
-      outcomeUnknown: true,
-    }));
+  const externalId = row.externalId;
+  const result: PrescriptionCancelResult = await withinTime(
+    deps,
+    () => provider.cancel(externalId, reason, cancelKeyOf(organization.id, row.id)),
+    { status: 'retryable', message: 'unreachable', outcomeUnknown: true },
+  );
   if (result.status === 'cancelled') {
     await writeCancelled(tx, deps, caller, row, { reason, via: 'provider' });
     return 'cancelled';
@@ -159,8 +219,17 @@ export async function registerManually(
   if (row.status !== 'pending_submission' && row.status !== 'draft') {
     throw new AppError('prescription_not_pending');
   }
-  if (row.deliveryState === 'awaiting_reconciliation') {
-    throw new AppError('prescription_awaiting_reconciliation');
+  await assertNoAttemptInFlight(tx, deps, row);
+  // The identifier is typed by a person and ends on a document: the registration that vouches for it
+  // is checked again now, not only when the prescription was made (JD-S5 R1-A-T5).
+  const profile = await readPrescriberProfile(tx, caller.professionalId);
+  if (profile?.status !== 'active' || profile.matriculaStatus !== 'verified') {
+    throw new AppError('prescription_matricula_unverified');
+  }
+  if (mayHoldAtProvider(row)) {
+    const answer = await askProvider(tx, deps, row);
+    if (answer === 'unreachable') throw new AppError('prescription_provider_unavailable');
+    if (answer === 'holds') throw new AppError('prescription_awaiting_reconciliation');
   }
   const now = deps.clock();
   try {

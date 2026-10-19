@@ -30,7 +30,7 @@ import {
   listMine,
   receptionExistence,
 } from '../application/reads.js';
-import { attemptSubmit } from '../application/submit.js';
+import { attemptSubmitDetached } from '../application/submit.js';
 
 import { runAsProfessional, type PrescriptionRoutesDeps } from './guard.js';
 
@@ -73,19 +73,28 @@ export function prescriptionRoutes(deps: PrescriptionHttpDeps) {
   /**
    * The attempt that follows a request: the prescription was committed first, so a failure here
    * (anything unexpected) never loses it. The queue and the next request pick it up.
+   *
+   * It holds no connection while the provider is waited for (JD-S5 R1-S5-1): each step is a short
+   * transaction of its own, so concurrent requests cannot exhaust the pool by each holding one
+   * connection and waiting for another. The route authorized the professional before this; the
+   * attempt runs as the system and names the professional in the trail.
    */
   async function submitNow(
     request: FastifyRequest,
     id: string,
-    patientId: string,
     options: { force?: boolean } = {},
   ): Promise<void> {
+    const actor = request.actor;
+    if (!actor) throw new AppError('unauthenticated');
     try {
-      await runAsProfessional(
-        deps,
-        request,
-        { resourceType: 'prescription', resourceId: id, patientId },
-        (tx, caller) => attemptSubmit(tx, services, id, { ...options, actor: caller.actor }),
+      await attemptSubmitDetached(
+        { ...services, withTenant: deps.withTenant },
+        actor.tenantId,
+        id,
+        {
+          ...options,
+          actor: { ...request.auditActor, userId: actor.userId },
+        },
       );
     } catch (error) {
       if (error instanceof AppError) throw error;
@@ -116,7 +125,7 @@ export function prescriptionRoutes(deps: PrescriptionHttpDeps) {
         );
         // The prescription is committed before the provider is called: the mark of the attempt is
         // written on another connection and needs the row to exist.
-        if (created.created) await submitNow(request, created.id, request.body.patientId);
+        if (created.created) await submitNow(request, created.id);
         const dto = await runAsProfessional(
           deps,
           request,
@@ -149,12 +158,7 @@ export function prescriptionRoutes(deps: PrescriptionHttpDeps) {
             request: request.body,
           }),
         );
-        const patientId = await runAsProfessional(deps, request, subject, async (tx) => {
-          const row = await findPrescription(tx, request.params.id);
-          if (!row) return hiddenOrMissing(tx, request.params.id);
-          return row.patientId;
-        });
-        await submitNow(request, request.params.id, patientId);
+        await submitNow(request, request.params.id);
         return runAsProfessional(deps, request, subject, dtoOf(request.params.id));
       },
     );
@@ -171,7 +175,7 @@ export function prescriptionRoutes(deps: PrescriptionHttpDeps) {
       },
       async (request) => {
         const subject = { resourceType: 'prescription', resourceId: request.params.id };
-        const patientId = await runAsProfessional(deps, request, subject, async (tx, caller) => {
+        await runAsProfessional(deps, request, subject, async (tx, caller) => {
           const row = await findPrescription(tx, request.params.id);
           if (!row) return hiddenOrMissing(tx, request.params.id);
           if (row.authorProfessionalId !== caller.professionalId) {
@@ -182,9 +186,8 @@ export function prescriptionRoutes(deps: PrescriptionHttpDeps) {
           }
           // Only what the provider has not confirmed is sent again; a draft is corrected first.
           if (row.status !== 'pending_submission') throw new AppError('prescription_not_pending');
-          return row.patientId;
         });
-        await submitNow(request, request.params.id, patientId, { force: true });
+        await submitNow(request, request.params.id, { force: true });
         return runAsProfessional(deps, request, subject, dtoOf(request.params.id));
       },
     );
