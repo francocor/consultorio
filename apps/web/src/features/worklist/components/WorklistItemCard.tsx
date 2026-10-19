@@ -51,7 +51,12 @@ const INVOICE_REASONS = new Set([
   'outcome_unknown',
   'authority_refuses_lookup',
   'voucher_taken_by_other',
+  'authority_refuses_number',
+  'pin_not_honoured',
 ]);
+
+/** Reasons whose own text already says what is known about the outcome: the generic note would contradict it. */
+const REASONS_WITHOUT_OUTCOME_NOTE = new Set(['outcome_unknown', 'voucher_taken_by_other']);
 
 /** Why an invoice needs a person, in words (the reason travels in the administrative detail). */
 function invoiceAttentionText(
@@ -67,7 +72,7 @@ function invoiceAttentionText(
   const text = t(`scheduling:worklist.invoiceAttention.${reason}`, { number });
   // A parked invoice whose request may have been answered says so: the voucher may already exist.
   const withNote =
-    detail?.['outcomeUnknown'] === true && reason !== 'outcome_unknown'
+    detail?.['outcomeUnknown'] === true && !REASONS_WITHOUT_OUTCOME_NOTE.has(reason)
       ? `${text} ${t('scheduling:worklist.invoiceAttention.outcomeUnknownNote')}`
       : text;
   // The numbers in doubt: where a person looks for the voucher in ARCA (JD-S4 R5-A-F4).

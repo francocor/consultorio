@@ -269,10 +269,40 @@ describe('an invoice that needs a person (JD-S4 R1-C3, C8)', () => {
     const found = await card('Factura para revisar');
 
     expect(found.getByText(/No se sabe si ARCA emitió esta factura/)).toBeInTheDocument();
+    // An invoice that holds nothing back gets the item too (JD-S4 R7-1): the text does not claim that
+    // others wait.
     expect(
-      found.getByText(/las demás facturas de la misma serie esperan detrás/),
+      found.getByText(/Si hay otras facturas de la misma serie, esperan detrás/),
     ).toBeInTheDocument();
     expect(found.queryByText(/3 facturas/)).not.toBeInTheDocument();
+    expect(app.missingKeys).toEqual([]);
+  });
+
+  it('says that ARCA keeps refusing the number although its numbering did not move, and that the date may be the cause (JD-S4 R7-1)', async () => {
+    const app = open({
+      items: [
+        { ...INVOICE, detail: { reason: 'authority_refuses_number', outcomeUnknown: false } },
+      ],
+    });
+
+    const found = await card('Factura para revisar');
+
+    expect(found.getByText(/ARCA rechaza el número de esta factura/)).toBeInTheDocument();
+    expect(found.getByText(/Revise la fecha del comprobante/)).toBeInTheDocument();
+    expect(found.getByText(/no se envió más/)).toBeInTheDocument();
+    expect(app.missingKeys).toEqual([]);
+  });
+
+  it('says that ARCA issued the voucher with another number than the one asked for (JD-S4 R7 B-S2)', async () => {
+    const app = open({
+      items: [{ ...INVOICE, detail: { reason: 'pin_not_honoured', number: 15 } }],
+    });
+
+    const found = await card('Factura para revisar');
+
+    expect(
+      found.getByText(/ARCA emitió el comprobante 15 con un número distinto del que se le pidió/),
+    ).toBeInTheDocument();
     expect(app.missingKeys).toEqual([]);
   });
 
@@ -398,6 +428,10 @@ describe('an invoice that needs a person (JD-S4 R1-C3, C8)', () => {
     expect(
       found.getByText(/El comprobante 12 de ARCA pertenece a otra factura/),
     ).toBeInTheDocument();
+    // An item written before round 7 carries `outcomeUnknown`: the note would contradict it.
+    expect(
+      found.queryByText(/ARCA puede haber emitido esta factura antes/),
+    ).not.toBeInTheDocument();
     expect(app.missingKeys).toEqual([]);
   });
 
