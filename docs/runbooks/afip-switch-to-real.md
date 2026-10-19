@@ -22,44 +22,68 @@ Production refuses `local` unless `ALLOW_LOCAL_PROVIDERS=true`, and the producti
 
 You do not write these again; the real adapter plugs into them.
 
-- **The port.** `InvoiceIssuer` (`packages/contracts/src/ports.ts`): `issue(request, idempotencyKey)` and
-  `findIssued(ref)`. `adapters/invoice-issuer.contract.ts` is the suite every adapter passes; the fake
+- **The port.** `InvoiceIssuer` (`packages/contracts/src/ports.ts`): `issue(request, idempotencyKey)`,
+  `findIssued(ref)` and `lastAuthorized(series)` (the last number the authority authorized in a series,
+  JD-S4 R5-1). `adapters/invoice-issuer.contract.ts` is the suite every adapter passes; the fake
   and the simulator already do. The real adapter must pass it too.
 - **Outage and double issue.** An invoice is requested in one transaction and submitted by a job
   (`afip.issue`, category `afip_submission`, so it also runs for a read-only organization). A retry
   clock (`runDueAttempts`, every 30 seconds) waits 1 minute, doubling up to 6 hours (an invoice that is
   `awaiting_reconciliation` waits at most 5 minutes: see "A held series does not wait"). BEFORE every call
-  to the authority the invoice is marked `awaiting_reconciliation` with the number it is expected to
-  get, in a commit of its own on a connection of its own (`markIntent`); only a definite answer
-  (issued, rejected, or "nothing was issued") clears the mark. If the process dies after the authority
-  answered, or the outcome is unknown, the next attempt finds the mark and asks `findIssued` for that
-  number BEFORE it sends anything: a voucher whose type, point of sale, number, total, date, issuer
-  CUIT, recipient document and (for a credit note) associated voucher match the invoice is adopted
-  and `issue` is not called; one that does not match parks the invoice for a person; no answer, or an
-  answer that refuses the question, means nothing is sent. When nothing is at the expected number, the
-  numbers below it where a voucher MAY sit are asked about too before the request goes out (see "A
-  remembered number where nothing was ever issued"). The transaction of the job stays open
-  across the call (it holds only advisory locks, no row lock): the mark is what survives a crash, and
-  it is committed before the call, not at its end. A voucher is never issued twice: this is the part
-  to review most closely against the real service, because ARCA has no idempotency key of its own
-  (see "Design points" below).
-- **One invoice of a series at a time (JD-S4 R2-1).** The number an invoice is expected to get is the
-  one after the highest the organization holds, so two invoices sent together would expect the same
-  one and could take each other's voucher for their own (same total, same day, same recipient is
-  common: a clinic with a fixed fee). Issuance is serialized per series (organization, point of sale,
-  voucher type): an attempt takes the advisory lock `afip-attempt-series|<tenant>|<point of sale>|<type>`
-  right after the lock of its invoice and keeps it to the end of its transaction, which spans the
-  call; whoever does not get it answers `skipped` and the sweeper tries again. On top of that, while
-  one invoice of the series is `awaiting_reconciliation` (its answer may have been lost) no other
-  invoice of the series is sent (the older one that waits goes first): they are put back one minute
-  and tried again after the first one was adopted, parked or replaced. A long outage therefore holds
-  the whole series, which is the point: the authority numbers by itself and nothing can be sent until
-  the unknown one is settled. When the number an invoice was expecting turns out to be the voucher
-  of another invoice of ours, the attempt asks about ONE more number, the one after the highest the
-  organization holds (at most two questions in all: that number is above everything we record, so it
-  cannot be taken, and a second hop has nothing left to ask), and judges it the same way before it
-  sends: it sends only when the authority holds nothing there. If that second number were taken
-  anyway (a manual entry racing the attempt) the invoice is parked (`number_taken`), never sent.
+  to the authority the core asks `lastAuthorized` (the authority's own last number for the series) and
+  marks the invoice `awaiting_reconciliation` with it (`invoice.authority_last_at_mark`) and the number
+  after it (`expected_number`), in a commit of its own on a connection of its own (`markIntent`); only a
+  definite answer (issued, rejected, or "nothing was issued") clears the mark. If `lastAuthorized`
+  cannot answer, nothing is sent. If the process dies after the authority answered, or the outcome is
+  unknown, the next attempt finds the mark and RECONCILES (see "Reconciliation uses the authority's
+  count") BEFORE it sends anything: a voucher whose type, point of sale, number, total, date, issuer
+  CUIT, recipient document and (for a credit note) associated voucher match the invoice is adopted and
+  `issue` is not called; no answer, or an answer that refuses the question, means nothing is sent. The
+  transaction of the job stays open across the call (it holds only advisory locks, no row lock): the
+  mark is what survives a crash, and it is committed before the call, not at its end. A voucher is never
+  issued twice: this is the part to review most closely against the real service, because ARCA has no
+  idempotency key of its own (see "Design points" below).
+- **Reconciliation uses the authority's count (JD-S4 R5-1, R5-2).** The core used to INFER the last
+  number of the authority from the vouchers recorded here, so a manual voucher registered out of band
+  (or a mistyped high number) moved the inference and an invoice could be sent a second time. It now
+  asks the authority. A waiting invoice is reconciled in this order: (a) `lastAuthorized` now; if it
+  cannot answer, the invoice stays waiting and nothing is sent. (b) The candidate numbers are the ones
+  AFTER `authority_last_at_mark` up to that last number, examined LOWEST FIRST (so a look-alike above
+  the invoice's own voucher is never adopted instead of it): a number that an invoice of ours records
+  is not asked about (it is that invoice's), except a voucher registered by hand, which is asked about
+  and whose CAE is compared, since a person typed its number (a different CAE that matches this
+  invoice parks it); a number remembered as a voucher of somebody else (`orphaned`, `unmatched`) is
+  skipped; any other is looked up with `findIssued`. A voucher that matches this invoice and cannot be
+  another waiting invoice's is adopted. A voucher that matches this invoice AND an invoice replaced or
+  parked without knowing whether it was issued (the same anonymous consumer with the same fee on the
+  same day) parks it as `voucher_ambiguous` with its outcome unknown. A voucher that states a fact that
+  differs is foreign: it is remembered as `unmatched` and the next number is examined. A voucher that
+  leaves out a field the comparison needs (and states nothing against the invoice) is UNCLEAR, not
+  foreign: the invoice is parked, because it could be the invoice's. A lookup that cannot answer keeps
+  the invoice waiting; a number the authority says exists and then does not return parks it. (c) When
+  every candidate was examined and none is the invoice's, it was NOT issued: sending is safe, and the
+  new mark starts a new wait from that last number. At most 20 numbers are asked about; more parks the
+  invoice (`voucher_ambiguous`, with the range in the worklist item). An authority whose last number is
+  BELOW the one at the mark (a restore, a reset of a simulator) parks it too. An invoice marked before
+  migration 0482 (no `authority_last_at_mark`) is parked with its outcome unknown instead of being
+  guessed; Stage 4 is not deployed, so only development data can be in that state. The parked item
+  names the numbers in doubt (`candidates`, or `candidatesFrom`/`candidatesTo` when the range is too
+  wide to list).
+- **One invoice of a series at a time (JD-S4 R2-1).** Two invoices sent together would each be
+  waiting for a voucher in the same range of numbers and could take each other's voucher for their own
+  (same total, same day, same recipient is common: a clinic with a fixed fee). Issuance is serialized
+  per series (organization, point of sale, voucher type): an attempt takes the advisory lock
+  `afip-attempt-series|<tenant>|<point of sale>|<type>` right after the lock of its invoice and keeps it
+  to the end of its transaction, which spans the call; whoever does not get it answers `skipped` and the
+  sweeper tries again. On top of that, while one invoice of the series is `awaiting_reconciliation` (its
+  answer may have been lost) no other invoice of the series is sent (the older one that waits goes
+  first): they are put back one minute and tried again after the first one was adopted, parked or
+  replaced. A long outage therefore holds the whole series, which is the point: the authority numbers by
+  itself and nothing can be sent until the unknown one is settled. The series of the authority is the
+  one of the issuer CUIT, point of sale, type and environment, and every local query about a series
+  filters by the CUIT of the snapshot of the invoice and by the environment (a voucher registered by
+  hand is always `production`, so it belongs to the series by point of sale and type); the advisory lock
+  stays coarser (organization, point of sale, type), which only serializes more.
 - **A held series does not wait for a long backoff (JD-S4 R3-1).** An invoice that is
   `awaiting_reconciliation` is only ever ASKED about (a lookup sends nothing), so its backoff is capped
   at 5 minutes (1, 2, 4, 5, 5 ...) instead of 6 hours: the whole series waits for it, and a probe is
@@ -189,12 +213,27 @@ loaded.
   as `{ type: 'cuit' | 'dni', number }`, or `null` when the voucher has none: 99/0) and
   `associatedVoucher` (`CbtesAsoc`: type, point of sale and number of the voucher a credit note
   cancels, or `null`). The module adopts a voucher it did not just request only when every one of them
-  matches its invoice; a field the adapter leaves out (`undefined`) counts as a MISMATCH and parks the
-  invoice instead of adopting. Two invoices with the same fee on the same day differ only in these.
+  matches its invoice; a field the adapter leaves out (`undefined`) is never a match, and, when nothing
+  stated contradicts the invoice, the voucher is UNCLEAR and parks the invoice instead of adopting it
+  or looking past it (`voucher_ambiguous`). A field that is stated and differs makes the voucher
+  foreign. Two invoices with the same fee on the same day differ only in these. When the real adapter
+  has a CAE or an issuer reference for the voucher it asked for, it should also compare it: the facts
+  are a business decision (a foreign voucher with identical facts is taken for the invoice's, and the
+  lowest candidate wins), and a reference of the voucher itself is the only thing that tells identical
+  vouchers apart.
   The adapter must also answer a refused or failed lookup with `retryable` or `rejected`, never with
-  `null`: `null` means "nothing is issued at that number" and is the only answer that lets the module
-  send. A `rejected` lookup (bad token, wrong environment) is treated as "cannot tell": nothing is
-  sent and the mark stays. `adapters/invoice-issuer.contract.ts` states all of this and the real
+  `null`: `null` means "nothing is issued at that number". A `rejected` lookup (bad token, wrong
+  environment) is treated as "cannot tell": nothing is sent and the mark stays.
+- **What `lastAuthorized` must say (JD-S4 R5-1).** The real adapter implements it with
+  `FECompUltimoAutorizado` (the last number authorized for the CUIT of the credential, the point of
+  sale and the voucher type). It answers `{ status: 'ok', number }` with the number the authority
+  gives, and `number: 0` ONLY when the authority says the series has no voucher yet (an empty series is
+  an answer). A failed or refused call is `retryable` or `rejected`: it must NEVER be turned into 0 or
+  into an `ok`, because the core sends a request only after it has this number, and a 0 where there
+  were vouchers would make it look for its own voucher nowhere. The same applies to a "no voucher"
+  lookup in `findIssued`: it maps to `null`, never an error turned into `null`. The contract suite
+  (`invoice-issuer.contract.ts`) states the cases both adapters must pass, among them the round trip:
+  a voucher that was issued and then found must match the facts of its own request. `adapters/invoice-issuer.contract.ts` states all of this and the real
   adapter must pass it.
 - **Serialization is per series, and it is the module's.** The adapter does not need a lock of its
   own for numbering, but it must not assume parallel `issue` calls for one point of sale and type: the
@@ -236,44 +275,50 @@ loaded.
   look in ARCA for a voucher at that number: if it exists the organization holds two vouchers for one
   service and one is cancelled with a credit note in ARCA. The product does not look for it by itself
   afterwards (a closed invoice has no mark), but it REMEMBERS the number (`invoice_stray_voucher`,
-  migrations 0480 and 0481): no later lookup ever adopts a voucher at a remembered number as its own
-  without comparing it first (see the next point), and the number expected next is counted after the
-  highest remembered one. The same table keeps the number of a voucher that arrived for an invoice
-  somebody had closed (`orphaned`).
-- **A remembered number where nothing was ever issued (JD-S4 R4-1).** The number of an invoice that was
-  replaced or parked without knowing (`replaced_unresolved`, `parked_unknown`) is counted as taken, but
-  if that invoice was never issued the authority gives the NEXT voucher that very number, and the next
-  invoice, which expects the number after it, is not found where it looks. The core handles it, the
-  adapter does not have to: a remembered number is UNCONFIRMED while no invoice of the series records a
-  number that is higher or the same (`orphaned` and `unmatched` are certain by their reason). When the
-  lookup at the expected number finds nothing, the unconfirmed numbers below it are asked about, lowest
-  first (`settleStrays`), before anything is sent: nothing at one of them means nothing above it either
-  (the numbering has no gaps), so the request may go out; a voucher there that matches this invoice and
-  not the invoice the number was remembered for is adopted; one that matches only that invoice (or
-  neither) means the number is taken and the next one is asked about; one that matches BOTH (the same
-  anonymous consumer with the same fee on the same day) cannot be told, so nothing is sent and the
-  invoice is parked as `voucher_ambiguous` with its outcome unknown; an authority that cannot answer
-  means nothing is sent. At most 5 such numbers are asked about; more than that parks the invoice too.
-  What the real adapter must guarantee for this: `findIssued` answers a number above the last
-  authorized one with `null` and every number up to the last with its voucher (the contract suite
-  states it: "numbers without gaps"), with all the facts listed below; it must NEVER answer `null` for
-  a failed or refused lookup. The adapter does not need to compare `FECompUltimoAutorizado` with an
-  expected number on `issue`: it never receives that number, and the core has already asked. It still
-  has to ask `FECompUltimoAutorizado` and `FECompConsultar` after a timeout of its own `issue`.
-- **A parked invoice remembers what it knows (JD-S4 R4-3).** Parking an invoice writes the numbers that
-  nobody may take later: the number of the foreign voucher a lookup found where the invoice was expected
-  (`voucher_mismatch`), and the number of the voucher that collided with a number or a CAE we hold
-  (`number_taken`, `cae_taken` after an authorized answer) are certain (`unmatched`); the number a
-  parked invoice expected while its outcome was unknown (`issuer_mismatch`) is uncertain
-  (`parked_unknown`). A lookup that ends with every number it asked about taken by another invoice
-  (`number_taken` out of a lookup, not out of an answer) parks the invoice WITH its outcome unknown.
-  A replacement of an invoice that was PARKED with its outcome still unknown (reasons
-  `issuer_mismatch`, `voucher_mismatch` and `voucher_ambiguous` after a lost answer, and `number_taken` out of a lookup; the audit entry and the item say
-  `outcomeUnknown: true`, and the row keeps the number it expected) needs the same acknowledgement. An attempt that finds the mark after a definite "down"
-  (the authority was asked, held nothing, and then refused the request for certain) clears it, and
-  the replacement then needs no acknowledgement. A manual voucher may replace only the same invoice:
-  not a credit note, the same voucher type, total, lines, recipient and recipient document
-  (`invoice_replacement_mismatch`).
+  migrations 0480 and 0481): a record for people and for the screens, and the way a later
+  reconciliation knows that a voucher at that number may be that invoice's. It no longer decides
+  whether anything is sent (the authority's count does: see "Reconciliation uses the authority's
+  count"). The same table keeps the number of a voucher that arrived for an invoice somebody had
+  closed (`orphaned`) and the foreign vouchers a reconciliation passed (`unmatched`). When a
+  reason applies twice to one number, the FIRST one written wins (a number is remembered once); the
+  precedence is by time, not by importance.
+- **A remembered number where nothing was ever issued (JD-S4 R4-1, R5-1).** The number of an invoice
+  that was replaced or parked without knowing (`replaced_unresolved`, `parked_unknown`) may hold a
+  voucher or nothing. Round 4 inferred which from the local rows (a stray was "confirmed" by any higher
+  number recorded), and a manual voucher registered out of band confirmed it wrongly. Round 5 removes
+  the inference: the next invoice is marked with the authority's own last number, so a voucher of the
+  replaced invoice that exists is BELOW that mark and a number where nothing was issued is simply the
+  next number. A remembered number only matters inside the window of a reconciliation: a voucher found
+  there that matches the invoice AND an invoice remembered at that number or below it (same facts)
+  parks the invoice as `voucher_ambiguous`; one that matches only this invoice is adopted, and when it
+  sits at a number remembered for another invoice, that invoice's worklist item (`replaced_unresolved`,
+  which told a person to look for the voucher and cancel it) is resolved (`voucher_adopted_by_other`)
+  and the audit trail records `invoice.voucher_adopted` on the adopting invoice, naming the other one
+  (JD-S4 R5-A-F5).
+- **A parked invoice remembers what it knows (JD-S4 R4-3, R5-1).** Parking an invoice writes the
+  numbers that nobody may take later: the number of the voucher that collided with a number or a CAE we
+  hold (`number_taken`, `cae_taken` after an authorized answer) is certain (`unmatched`), like the
+  foreign vouchers a reconciliation passes; the number a parked invoice expected while its outcome was
+  unknown (`issuer_mismatch`) is uncertain (`parked_unknown`). A replacement of an invoice that was
+  PARKED with its outcome still unknown (reasons `issuer_mismatch` and `voucher_ambiguous` after a lost
+  answer; the audit entry and the item say `outcomeUnknown: true`, and the row keeps the number it
+  expected and the authority's last number at its mark) needs the same acknowledgement. An attempt that
+  finds the mark after a definite "down" (the authority said it has issued nothing since the mark, and
+  then refused the request for certain) clears it, and the replacement then needs no acknowledgement.
+  A manual voucher may replace only the same invoice: the same voucher type, total, lines, recipient and
+  recipient document (`invoice_replacement_mismatch`).
+- **A credit note parked for a person has a way out (JD-S4 R5-B-W2).** A credit note that was parked
+  (`needs_attention`: the authority answered with a number or a CAE we hold, or the issuer changed)
+  counts against the invoice it cancels, so the invoice could neither be credited again nor released. The
+  owner or an admin registers the credit note made outside the system IN PLACE OF it: `POST
+/invoices/manual` with a credit note type (`NCA`, `NCB`, `NCC`), `replacesInvoiceId` (the parked note)
+  and `associatedVoucher` (type, point of sale and number of the voucher it cancels). It is refused
+  (`invoice_replacement_mismatch`) unless the parked note has the same type, cancels the same voucher
+  and has the same total; it is refused for a note that is not parked, and for a note whose outcome is
+  unknown it needs `acknowledgeUnknownOutcome` like an invoice does. The new note is `manual`, covers
+  exactly what the parked one covered, keeps its reason and its issuer, and the parked one is closed as
+  rejected. A registered credit note takes back the amount invoiced of the charge lines like an issued
+  one (migration 0483). The web dialog for manual vouchers does not offer a credit note yet: the API does.
 - **The connection of the mark.** The mark is committed on a second connection while the attempt
   holds its own, so the runtime pool is opened with a connection timeout (10 seconds) and the mark
   gives up after a lock timeout (`markLockTimeoutMs`, 5 seconds): a pool full of attempts fails and
@@ -281,14 +326,19 @@ loaded.
   zero would switch the lock timeout off). A mark that gives up on a lock logs it. Size the pool for the
   number of attempts the worker runs at once plus one connection each with `DB_POOL_MAX` (6 to 100,
   default 10; the API and the worker both read it). The configuration refuses fewer than 6
-  (`MIN_DB_POOL_MAX`): each of the 2 attempts the worker runs at once holds 2 connections, and 2 more
+  (`MIN_DB_POOL_MAX`; 6 is a FLOOR, not a recommended size, and a deployment that set a smaller value
+  now refuses to start): each of the 2 attempts the worker runs at once holds 2 connections, and 2 more
   serve the sweeper and the other jobs. With fewer, two attempts would each hold one connection and wait
   for the other's (JD-S4 R4-B-T5). A value of `markLockTimeoutMs` that is not a finite number is the
   default (5 seconds), not an error (JD-S4 R4-B-T4).
-- **A foreign voucher at the expected number (INFO, JD-S4 R3-B-T3).** If somebody issues a voucher
-  outside the product at the number an invoice that lost its answer expects, the lookup finds a
-  voucher that is not that invoice's (another recipient or total) and parks it as `voucher_mismatch`.
-  It is loud and safe, never a double issue; a person registers or cancels the voucher that exists.
+- **A foreign voucher in the window (INFO, JD-S4 R3-B-T3, R5-1).** If somebody issues a voucher outside
+  the product while an invoice waits (another tool of the issuer, a person on the website of the
+  authority), the reconciliation finds a voucher that states another recipient or total, remembers it
+  (`unmatched`) and goes on: the invoice is NOT parked for it. If the invoice's own voucher is among the
+  candidates it is adopted; if none is, the invoice was not issued and is sent with the new count of the
+  authority. A foreign voucher that looks exactly like the invoice (same facts) cannot be told from it
+  by the facts alone: the lowest candidate wins, which is why the real adapter should compare a CAE or
+  an issuer reference when it has one.
 - **Rate limits and timeouts.** Keep a timeout shorter than the job lock so a hung call becomes an
   unknown outcome, not a stuck job.
 
@@ -325,6 +375,21 @@ loaded.
   voucher (their lookup says "no document" and "not a credit note"). Neither exists in production
   (the guard refuses the simulator there). Drain the pending invoices before a deploy that crosses
   those migrations, or reset the simulator from the console.
+
+## Upgrade notes (judgment day, Stage 4, round 5)
+
+- **`DB_POOL_MAX` below 6 refuses to start**, in the API and in the worker. 6 is a floor (2 connections
+  for each of the 2 attempts the worker runs at once, and 2 for the sweeper and the other jobs), not a
+  size: the default is 10, and a busy worker wants more. Check the value of every deployment before the
+  upgrade.
+- **Migrations 0482 and 0483** (track `4jd`): `invoice.authority_last_at_mark` (nullable), and the
+  condition of `app.refresh_invoiced` on the status of a credit note. An invoice that is
+  `awaiting_reconciliation` when the code arrives has no `authority_last_at_mark` and is parked with its
+  outcome unknown (`voucher_ambiguous`) instead of being guessed: register by hand the voucher that
+  exists, or let the owner replace it with the acknowledgement. Stage 4 is not deployed, so this only
+  touches development data.
+- **The real adapter must implement `lastAuthorized`** (`FECompUltimoAutorizado`) before it is
+  registered; see "What `lastAuthorized` must say".
 
 ## Rollback
 
