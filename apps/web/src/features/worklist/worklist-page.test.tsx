@@ -260,6 +260,32 @@ describe('an invoice that needs a person (JD-S4 R1-C3, C8)', () => {
     expect(app.missingKeys).toEqual([]);
   });
 
+  it('says that a series waits for an invoice whose outcome is unknown, with how many wait (JD-S4 R3-2)', async () => {
+    open({
+      items: [{ ...INVOICE, detail: { reason: 'outcome_unknown', held: 3, pointOfSale: 1 } }],
+    });
+
+    const found = await card('Factura para revisar');
+
+    expect(found.getByText(/No se sabe si ARCA emitió esta factura/)).toBeInTheDocument();
+    expect(found.getByText(/3 facturas esperan detrás/)).toBeInTheDocument();
+  });
+
+  it('does not promise that a parked invoice goes on by itself, and warns when its outcome is unknown (JD-S4 R3-4)', async () => {
+    open({
+      items: [
+        { ...INVOICE, detail: { reason: 'issuer_mismatch', outcomeUnknown: true, number: null } },
+      ],
+    });
+
+    const found = await card('Factura para revisar');
+
+    expect(found.getByText(/no se reintenta sola/)).toBeInTheDocument();
+    expect(found.getByText(/registre a mano el comprobante/)).toBeInTheDocument();
+    expect(found.getByText(/ARCA puede haber emitido esta factura/)).toBeInTheDocument();
+    expect(found.queryByText(/Cargue el certificado/)).not.toBeInTheDocument();
+  });
+
   it('falls back to a plain sentence for a reason it does not know', async () => {
     open({ items: [{ ...INVOICE, detail: { reason: 'something_new' } }] });
 

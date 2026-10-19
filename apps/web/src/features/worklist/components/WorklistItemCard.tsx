@@ -47,17 +47,26 @@ const INVOICE_REASONS = new Set([
   'orphaned_voucher',
   'replaced_unresolved',
   'issuer_mismatch',
+  'outcome_unknown',
 ]);
 
 /** Why an invoice needs a person, in words (the reason travels in the administrative detail). */
 function invoiceAttentionText(
-  t: (key: string) => string,
+  t: (key: string, options?: Record<string, unknown>) => string,
   detail: Record<string, unknown> | null,
 ): string {
   const reason = detail?.['reason'];
-  return typeof reason === 'string' && INVOICE_REASONS.has(reason)
-    ? t(`scheduling:worklist.invoiceAttention.${reason}`)
-    : t('scheduling:worklist.invoiceAttention.generic');
+  if (typeof reason !== 'string' || !INVOICE_REASONS.has(reason)) {
+    return t('scheduling:worklist.invoiceAttention.generic');
+  }
+  const held = detail?.['held'];
+  const text = t(`scheduling:worklist.invoiceAttention.${reason}`, {
+    count: typeof held === 'number' ? held : 0,
+  });
+  // A parked invoice whose request may have been answered says so: the voucher may already exist.
+  return detail?.['outcomeUnknown'] === true && reason !== 'outcome_unknown'
+    ? `${text} ${t('scheduling:worklist.invoiceAttention.outcomeUnknownNote')}`
+    : text;
 }
 
 /** One thing that needs a person: what it is about, what differs, and the ways to settle it. */

@@ -27,17 +27,17 @@ function day(daysFromToday: number): string {
 }
 
 /**
- * The charges of a period that still have something to invoice, each with the action to do it: the
- * issue flow from a charge (e-invoicing-afip, "Issuing an invoice with CAE"). Charges are read from
- * billing, which decides who sees which; a voided charge, or one already invoiced in full, is left
- * out.
- */
-/**
  * The name of the patient is part of the label of the button, and a long name must wrap inside the
  * button instead of making the whole page wider than a phone.
  */
 const WRAP = 'h-auto max-w-full whitespace-normal py-2 text-left';
 
+/**
+ * The charges of a period that still have something to invoice, each with the action to do it: the
+ * issue flow from a charge (e-invoicing-afip, "Issuing an invoice with CAE"). Charges are read from
+ * billing, which decides who sees which; a voided charge, or one already invoiced in full, is left
+ * out.
+ */
 export function ChargesToInvoice({ readOnly }: { readOnly: boolean }) {
   const { t } = useTranslation('invoicing');
   const api = useApi();

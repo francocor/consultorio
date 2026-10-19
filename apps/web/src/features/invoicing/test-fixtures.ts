@@ -53,6 +53,8 @@ export function invoice(overrides: Partial<InvoiceDto> = {}): InvoiceDto {
     creditedCents: 0,
     ageMinutes: null,
     outageFlag: false,
+    heldBy: null,
+    blocksSeries: 0,
     hasPdf: true,
     createdAt: '2031-05-20T13:00:00.000Z',
     issuedAt: '2031-05-20T13:00:05.000Z',
