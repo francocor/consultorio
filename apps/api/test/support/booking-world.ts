@@ -60,6 +60,7 @@ export interface Visitor {
   forget(): void;
   get(url: string): Promise<LightMyRequestResponse>;
   post(url: string, payload?: unknown): Promise<LightMyRequestResponse>;
+  patch(url: string, payload?: unknown): Promise<LightMyRequestResponse>;
   delete(url: string): Promise<LightMyRequestResponse>;
   /** Asks for a puzzle and solves it, the way the page does. */
   solve(): Promise<string>;
@@ -139,7 +140,11 @@ export async function createBookingWorld(
       visitorOptions.ip ?? `10.77.${String(Math.floor(visitors / 250))}.${String(visitors % 250)}`;
     let jar = '';
     const app: FastifyInstance = base.app;
-    const send = async (method: 'GET' | 'POST' | 'DELETE', url: string, payload?: unknown) => {
+    const send = async (
+      method: 'GET' | 'POST' | 'PATCH' | 'DELETE',
+      url: string,
+      payload?: unknown,
+    ) => {
       const response = await app.inject({
         method,
         url,
@@ -166,6 +171,7 @@ export async function createBookingWorld(
       },
       get: (url) => send('GET', url),
       post: (url, payload) => send('POST', url, payload),
+      patch: (url, payload) => send('PATCH', url, payload),
       delete: (url) => send('DELETE', url),
       solve: async () => {
         const response = await send('GET', '/public/challenge');

@@ -44,8 +44,19 @@ export type { DocumentRules } from './application/patients.js';
 export { readPatientContact, readPatientContacts } from './application/contact.js';
 export type { PatientContact } from './application/contact.js';
 // Track B of Stage 5 (patient portal): who a patient is, to invite them or to link a dependent.
-export { readPatientBasics } from './application/portal-source.js';
-export type { PatientBasics } from './application/portal-source.js';
+export {
+  createPortalRightsRequest,
+  listPortalRightsRequests,
+  readPatientBasics,
+  readPortalProfile,
+  updatePortalContact,
+} from './application/portal-source.js';
+export type {
+  PatientBasics,
+  PortalContactChanges,
+  PortalPatientProfile,
+  PortalRightsRequest,
+} from './application/portal-source.js';
 // Track A of Stage 4 (billing): the payer plan a patient is covered by on a day.
 export { readPatientPayerPlan } from './application/payer-plan.js';
 export type { PatientPayerPlan } from './application/payer-plan.js';

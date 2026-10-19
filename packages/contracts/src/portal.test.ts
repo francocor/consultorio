@@ -1,9 +1,13 @@
 import { describe, expect, it } from 'vitest';
+import { z } from 'zod';
 
 import { AUDIT_ACTIONS } from './audit-actions.js';
 import { ERROR_CATALOG } from './errors.js';
 import {
   CreatePortalLinkRequest,
+  PORTAL_RESPONSE_SCHEMAS,
+  PortalConsentSignRequest,
+  PortalProfileUpdateRequest,
   PortalCodeRequest,
   PortalCodeVerifyRequest,
   PortalRegisterRequest,
@@ -142,5 +146,87 @@ describe('the public requests of the portal', () => {
     expect(
       PortalRegisterVerifyRequest.safeParse({ email: body.email, code: body.code }).success,
     ).toBe(false);
+  });
+});
+
+/** Names no shape of the portal may carry: the clinical record is never displayed there (design D11). */
+const CLINICAL_FIELD_NAMES = new Set([
+  'note',
+  'notes',
+  'clinicalNote',
+  'diagnosis',
+  'diagnoses',
+  'anamnesis',
+  'symptoms',
+  'treatment',
+  'evolution',
+  'encounter',
+  'encounterId',
+  'medication',
+  'medications',
+  'items',
+  'lines',
+  'safetyFlags',
+  'adminNotes',
+]);
+
+function propertyNames(node: unknown, out: Set<string>): void {
+  if (Array.isArray(node)) {
+    for (const item of node) propertyNames(item, out);
+  } else if (typeof node === 'object' && node !== null) {
+    for (const [key, value] of Object.entries(node)) {
+      if (key === 'properties' && typeof value === 'object' && value !== null) {
+        for (const name of Object.keys(value as object)) out.add(name);
+      }
+      propertyNames(value, out);
+    }
+  }
+}
+
+describe('what the portal can ever carry (design D11, patient-portal "Documents shared with the patient")', () => {
+  it('has no clinical note, diagnosis, anamnesis, medication or internal note in any response', () => {
+    const checked: string[] = [];
+    for (const [name, schema] of Object.entries(PORTAL_RESPONSE_SCHEMAS)) {
+      const names = new Set<string>();
+      propertyNames(z.toJSONSchema(schema, { io: 'output', unrepresentable: 'any' }), names);
+      expect(
+        [...names].filter((field) => CLINICAL_FIELD_NAMES.has(field)),
+        name,
+      ).toEqual([]);
+      checked.push(name);
+    }
+    expect(checked.length).toBeGreaterThanOrEqual(10);
+  });
+
+  it('would notice a clinical field (the check proves itself)', () => {
+    const schema = z.strictObject({ appointment: z.strictObject({ diagnosis: z.string() }) });
+    const names = new Set<string>();
+
+    propertyNames(z.toJSONSchema(schema, { io: 'output' }), names);
+
+    expect([...names].filter((field) => CLINICAL_FIELD_NAMES.has(field))).toEqual(['diagnosis']);
+  });
+
+  it('lets the patient change only contact fields: a name, a document or a birth date is refused', () => {
+    expect(PortalProfileUpdateRequest.parse({ phone: '+54 11 5555 0000' })).toEqual({
+      phone: '+54 11 5555 0000',
+    });
+    expect(PortalProfileUpdateRequest.safeParse({ phone: '1', familyName: 'Otro' }).success).toBe(
+      false,
+    );
+    expect(PortalProfileUpdateRequest.safeParse({ birthDate: '1990-01-01' }).success).toBe(false);
+    expect(PortalProfileUpdateRequest.safeParse({}).success).toBe(false);
+    expect(PortalProfileUpdateRequest.safeParse({ phone: 'abc' }).success).toBe(false);
+  });
+
+  it('asks for the explicit acceptance to sign', () => {
+    const base = {
+      signerName: 'Ana Pérez',
+      signature: { kind: 'typed', value: 'Ana Pérez' },
+    };
+
+    expect(PortalConsentSignRequest.safeParse({ ...base, accepted: true }).success).toBe(true);
+    expect(PortalConsentSignRequest.safeParse({ ...base, accepted: false }).success).toBe(false);
+    expect(PortalConsentSignRequest.safeParse(base).success).toBe(false);
   });
 });

@@ -10,6 +10,8 @@ import {
   type MemoryObjectStorage,
 } from '../../src/adapters/memory-storage/index.js';
 import type { patient } from '../../src/db/schema/patients.js';
+import { MODULE_WIRINGS } from '../../src/main/wiring/index.js';
+import { createPortalWiring, type PortalPorts } from '../../src/main/wiring/portal.js';
 import { createPortalCodeSendJob } from '../../src/modules/portal/index.js';
 
 import { createBookingWorld, type BookingWorld, type Visitor } from './booking-world.js';
@@ -81,10 +83,25 @@ let patients = 0;
 
 export async function createPortalWorld(
   runtime: Parameters<typeof createBookingWorld>[0],
-  options: { slug: string; now?: Date },
+  options: {
+    slug: string;
+    now?: Date;
+    /** The doors of the consent and prescription modules (fakes, until the integrator wires them). */
+    ports?: PortalPorts;
+  },
 ): Promise<PortalWorld> {
   const storage = createMemoryObjectStorage();
-  const base = await createBookingWorld(runtime, { ...options, app: { storage } });
+  const { ports, ...worldOptions } = options;
+  const base = await createBookingWorld(runtime, {
+    ...worldOptions,
+    app: {
+      storage,
+      // The modules wired as `main` wires them, with the portal's doors replaced when a test asks.
+      wiring: MODULE_WIRINGS.map((wiring) =>
+        wiring.name === 'portal' && ports !== undefined ? createPortalWiring(ports) : wiring,
+      ),
+    },
+  });
   const jobDefinitions = [
     ...base.jobDefinitions,
     createPortalCodeSendJob({ email: base.email, clock: () => base.now() }),

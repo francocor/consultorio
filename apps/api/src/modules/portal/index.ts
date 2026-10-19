@@ -30,17 +30,26 @@ import { PORTAL_CODE_JOB } from './application/codes.js';
 import { majorityAgeOf } from './application/country.js';
 import { exportPortal } from './application/export-contributor.js';
 import type { IdentityDeps } from './application/identities.js';
+import type { PortalConsentPort, PortalPrescriptionPort } from './application/ports.js';
 import { createPortalSessions } from './application/sessions.js';
 import type { SignInDeps } from './application/sign-in.js';
 import { createWithPortalSubject } from './application/subject.js';
 import { documentRoutes } from './http/document-routes.js';
 import { portalRoutes } from './http/portal-routes.js';
 import { publicRoutes } from './http/public-routes.js';
+import { sectionRoutes } from './http/section-routes.js';
 import { sessionRoutes } from './http/session-routes.js';
 import { staffRoutes } from './http/staff-routes.js';
 
 export { createPortalCodeSendJob } from './application/code-job.js';
 export { PORTAL_CODE_JOB };
+export type {
+  PortalCall,
+  PortalConsentPort,
+  PortalFile,
+  PortalPrescriptionPort,
+} from './application/ports.js';
+export type { PortalSubject } from './application/subject.js';
 
 /** Registers what the portal takes with an organization that leaves: identities and links. */
 export function registerPortalExportContributors(registry: ExportRegistry): void {
@@ -69,6 +78,14 @@ export interface PortalOptions {
   appointmentEvents?: AppointmentEvents | undefined;
   /** The address of a video appointment, from teleconsultation (through notifications' registry). */
   videoJoin?: VideoJoinRegistry['resolver'] | undefined;
+  /**
+   * The consent module's door for the portal: list, read the text, sign, revoke and the signed
+   * document. Absent until the integrator wires it (`main/wiring/portal.ts`): the section is then an
+   * empty state.
+   */
+  consent?: PortalConsentPort | undefined;
+  /** The e-prescription module's door for the portal: the issued prescriptions and their document. */
+  prescriptions?: PortalPrescriptionPort | undefined;
   clock?: () => Date;
 }
 
@@ -134,7 +151,19 @@ export function createPortal(options: PortalOptions): Portal {
       videoJoin: options.videoJoin,
       clock,
     },
-    capabilities: () => ({ consents: false, prescriptions: false }),
+    capabilities: () => ({
+      consents: options.consent !== undefined,
+      prescriptions: options.prescriptions !== undefined,
+    }),
+  });
+  const sections = sectionRoutes({
+    withPortalSubject,
+    auditDeny: options.auditDeny,
+    clock,
+    email: options.email,
+    origins: options.origins,
+    consent: options.consent,
+    prescriptions: options.prescriptions,
   });
   const sessions = sessionRoutes({
     withTenant: options.withTenant,
@@ -169,6 +198,7 @@ export function createPortal(options: PortalOptions): Portal {
       pages(app);
       sessions(app);
       portal(app);
+      sections(app);
     },
   };
 }

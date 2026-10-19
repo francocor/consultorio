@@ -174,3 +174,43 @@ export function renderPortalNoticeEmail(input: PortalNoticeEmailInput): Rendered
   );
   return { subject, text, html };
 }
+
+export interface PortalRequestNoticeInput {
+  organizationName: string;
+  /** What the patient asked for. */
+  kind: 'copy' | 'rectification';
+  patientName: string;
+  /** The file of the patient in the staff application, where the request is. */
+  link: string;
+}
+
+/**
+ * The notice that goes to the organization (not to the patient) when a patient makes a request from
+ * the portal. It says who asked and what kind of request it is, and nothing of what they asked: no
+ * note, no value, nothing clinical.
+ */
+export function renderPortalRequestNoticeEmail(input: PortalRequestNoticeInput): RenderedEmail {
+  assertWebLink(input.link);
+  const what =
+    input.kind === 'copy'
+      ? 'una copia de su historia clínica'
+      : 'la corrección de un dato de su ficha';
+  const subject = `Nueva solicitud de un paciente desde el portal de ${input.organizationName}`;
+  const line = `${input.patientName} pidió ${what} desde el portal de pacientes.`;
+  const text = [
+    line,
+    '',
+    'Para verla y responderla, abra la ficha del paciente:',
+    '',
+    input.link,
+    '',
+    'Este mensaje no incluye el detalle de la solicitud.',
+  ].join('\n');
+  const html = layout(
+    'Nueva solicitud de un paciente',
+    [escapeHtml(line), 'Para verla y responderla, abra la ficha del paciente.'],
+    'Este mensaje no incluye el detalle de la solicitud.',
+    { label: 'Abrir la ficha', link: input.link },
+  );
+  return { subject, text, html };
+}

@@ -1,6 +1,8 @@
 import { z } from 'zod';
 
+import { INVOICE_KINDS } from './invoicing.js';
 import { REPRESENTATIVE_RELATIONS } from './patients.js';
+import { PRESCRIPTION_STATUSES } from './prescriptions.js';
 import { APPOINTMENT_STATUSES } from './scheduling.js';
 
 export { PORTAL_ERRORS, PORTAL_AUDIT_ACTIONS } from './portal-catalog.js';
@@ -251,3 +253,217 @@ export const DocumentPortalShareResponse = z.strictObject({
   sharedAt: Instant.nullable(),
 });
 export type DocumentPortalShareResponse = z.infer<typeof DocumentPortalShareResponse>;
+
+// Invoices and receipts ---------------------------------------------------------------------------
+
+/**
+ * An invoice or credit note addressed to the patient themselves (an invoice to their payer is not
+ * theirs to see). The lines, the tax breakdown and what the payer covers are not here: the patient
+ * gets the voucher, as the PDF, and what they owe is the total on it.
+ */
+export const PortalInvoiceDto = z.strictObject({
+  id: Id,
+  kind: z.enum(INVOICE_KINDS),
+  type: z.string(),
+  pointOfSale: z.int(),
+  number: z.int().nullable(),
+  issueDate: z.iso.date(),
+  totalCents: z.int(),
+  hasPdf: z.boolean(),
+  /** The voucher says "documento de prueba sin validez fiscal": a test environment or a simulator. */
+  testDocument: z.boolean(),
+});
+export type PortalInvoiceDto = z.infer<typeof PortalInvoiceDto>;
+
+export const PortalInvoicesResponse = z.strictObject({ invoices: z.array(PortalInvoiceDto) });
+export type PortalInvoicesResponse = z.infer<typeof PortalInvoicesResponse>;
+
+// Consents -----------------------------------------------------------------------------------------
+
+export const PORTAL_CONSENT_STATUSES = [
+  'pending',
+  'signed',
+  'revoked',
+  'expired',
+  'declined',
+] as const;
+export type PortalConsentStatus = (typeof PORTAL_CONSENT_STATUSES)[number];
+
+/** A consent the organization asked the patient to sign, or that they signed. */
+export const PortalConsentDto = z.strictObject({
+  id: Id,
+  /** The title of the document: the patient sees it, unlike reception. */
+  title: z.string(),
+  status: z.enum(PORTAL_CONSENT_STATUSES),
+  requestedAt: Instant,
+  signedAt: Instant.nullable(),
+  revokedAt: Instant.nullable(),
+  /** A request that is not signed by this day cannot be signed any more. */
+  expiresAt: Instant.nullable(),
+  canSign: z.boolean(),
+  canRevoke: z.boolean(),
+  /** A signed consent has a document to download. */
+  hasDocument: z.boolean(),
+});
+export type PortalConsentDto = z.infer<typeof PortalConsentDto>;
+
+export const PortalConsentsResponse = z.strictObject({
+  /** False while no module serves consents: the screen shows its empty state. */
+  available: z.boolean(),
+  consents: z.array(PortalConsentDto),
+});
+export type PortalConsentsResponse = z.infer<typeof PortalConsentsResponse>;
+
+/** The full text of what the patient is asked to sign. */
+export const PortalConsentDetailDto = PortalConsentDto.extend({
+  /** The text of the version the patient is shown; signing binds to exactly this version. */
+  body: z.string(),
+  /** The subject is a minor: the person who signs is the representative, with their data. */
+  requiresRepresentative: z.boolean(),
+});
+export type PortalConsentDetailDto = z.infer<typeof PortalConsentDetailDto>;
+
+export const PortalConsentSignRequest = z.strictObject({
+  /** The explicit action: the box was ticked. A request without it is refused. */
+  accepted: z.literal(true),
+  signerName: z.string().trim().min(2).max(120),
+  /** How the name was written: typed, or drawn on the pad (the image travels as data). */
+  signature: z.strictObject({
+    kind: z.enum(['typed', 'drawn']),
+    value: z.string().min(1).max(200_000),
+  }),
+  representative: z
+    .strictObject({
+      fullName: z.string().trim().min(2).max(120),
+      nationalId: z.string().trim().min(1).max(32),
+      relation: z.enum(PORTAL_RELATIONS),
+    })
+    .optional(),
+});
+export type PortalConsentSignRequest = z.infer<typeof PortalConsentSignRequest>;
+
+export const PortalConsentRevokeRequest = z.strictObject({
+  reason: z.string().trim().max(300).optional(),
+});
+export type PortalConsentRevokeRequest = z.infer<typeof PortalConsentRevokeRequest>;
+
+export const PortalConsentResponse = z.strictObject({ consent: PortalConsentDto });
+export type PortalConsentResponse = z.infer<typeof PortalConsentResponse>;
+
+// Prescriptions ------------------------------------------------------------------------------------
+
+/**
+ * A prescription issued to the patient. It says that it exists, when, from whom and where it
+ * stands; the medications are in the document, which is downloaded. A prescription the provider has
+ * not confirmed is never listed as valid.
+ */
+export const PortalPrescriptionDto = z.strictObject({
+  id: Id,
+  issuedAt: Instant.nullable(),
+  status: z.enum(PRESCRIPTION_STATUSES),
+  prescriberName: z.string().nullable(),
+  hasDocument: z.boolean(),
+});
+export type PortalPrescriptionDto = z.infer<typeof PortalPrescriptionDto>;
+
+export const PortalPrescriptionsResponse = z.strictObject({
+  /** False while no module serves prescriptions: the screen shows its empty state. */
+  available: z.boolean(),
+  prescriptions: z.array(PortalPrescriptionDto),
+});
+export type PortalPrescriptionsResponse = z.infer<typeof PortalPrescriptionsResponse>;
+
+// The patient's own data ---------------------------------------------------------------------------
+
+export const PortalRightsRequestDto = z.strictObject({
+  id: Id,
+  kind: z.enum(['access', 'rectification']),
+  status: z.enum(['open', 'fulfilled']),
+  requestedAt: Instant,
+});
+export type PortalRightsRequestDto = z.infer<typeof PortalRightsRequestDto>;
+
+const PortalPhone = z
+  .string()
+  .trim()
+  .max(30)
+  .regex(/^[0-9+()\-\s.]*$/, 'digits and phone punctuation only');
+
+export const PortalProfileResponse = z.strictObject({
+  givenNames: z.string(),
+  familyName: z.string(),
+  birthDate: z.iso.date(),
+  document: z.strictObject({ type: z.string(), number: z.string() }).nullable(),
+  phone: z.string().nullable(),
+  email: z.string().nullable(),
+  address: z.string().nullable(),
+  emergencyContact: z.strictObject({ name: z.string(), phone: z.string() }).nullable(),
+  /** The version of the record the screen is showing; the change sends it back. */
+  version: z.int(),
+  /** The data-processing consent (Ley 25.326): standing or not, and since when. */
+  dataProcessing: z.strictObject({ granted: z.boolean(), grantedAt: Instant.nullable() }),
+  /** What the patient asked about their data, and whether the organization closed it. */
+  requests: z.array(PortalRightsRequestDto),
+});
+export type PortalProfileResponse = z.infer<typeof PortalProfileResponse>;
+
+/** The contact fields a patient changes by themselves. Name, document and birth date go by request. */
+export const PortalProfileUpdateRequest = z
+  .strictObject({
+    phone: PortalPhone.nullable().optional(),
+    address: z.string().trim().max(200).nullable().optional(),
+    emergencyContact: z
+      .strictObject({ name: z.string().trim().min(1).max(80), phone: PortalPhone.min(1) })
+      .nullable()
+      .optional(),
+    expectedVersion: z.int().min(1).optional(),
+  })
+  .refine(
+    (body) =>
+      body.phone !== undefined || body.address !== undefined || body.emergencyContact !== undefined,
+    'at least one field to change',
+  );
+export type PortalProfileUpdateRequest = z.infer<typeof PortalProfileUpdateRequest>;
+
+/** The fields of the identity that the organization corrects after reviewing the request. */
+export const PORTAL_RECTIFIABLE_FIELDS = [
+  'familyName',
+  'givenNames',
+  'birthDate',
+  'document',
+] as const;
+export type PortalRectifiableField = (typeof PORTAL_RECTIFIABLE_FIELDS)[number];
+
+export const PortalRectificationRequest = z.strictObject({
+  field: z.enum(PORTAL_RECTIFIABLE_FIELDS),
+  /** What it should say. */
+  correctValue: z.string().trim().min(1).max(100),
+  note: z.string().trim().max(120).optional(),
+});
+export type PortalRectificationRequest = z.infer<typeof PortalRectificationRequest>;
+
+/** Asks the organization for a copy of the clinical history, which it prepares outside the portal. */
+export const PortalCopyRequest = z.strictObject({ note: z.string().trim().max(200).optional() });
+export type PortalCopyRequest = z.infer<typeof PortalCopyRequest>;
+
+export const PortalRequestResponse = z.strictObject({ request: PortalRightsRequestDto });
+export type PortalRequestResponse = z.infer<typeof PortalRequestResponse>;
+
+/**
+ * Every response of the portal, by name. A contract test walks them: no shape of the portal may
+ * carry a clinical note, a diagnosis, an anamnesis or the lines of a prescription (design D11).
+ */
+export const PORTAL_RESPONSE_SCHEMAS = {
+  PortalMeResponse,
+  PortalAppointmentsResponse,
+  PortalAppointmentResponse,
+  PortalDocumentsResponse,
+  PortalInvoicesResponse,
+  PortalConsentsResponse,
+  PortalConsentDetailDto,
+  PortalConsentResponse,
+  PortalPrescriptionsResponse,
+  PortalProfileResponse,
+  PortalRequestResponse,
+  PortalSessionsResponse,
+} as const;
