@@ -568,7 +568,7 @@ describe('what each role is allowed to read', () => {
             and(eq(auditEvent.tenantId, world.tenant.id), eq(auditEvent.action, 'access.denied')),
           ),
       );
-    const before = (await denials()).length;
+    const before = new Set((await denials()).map((entry) => entry.id));
 
     const { response } = await financial(world.doctor, {
       ...MAY,
@@ -576,9 +576,9 @@ describe('what each role is allowed to read', () => {
     });
 
     expect(response.statusCode).toBe(403);
-    const after = await denials();
-    expect(after.length).toBe(before + 1);
-    expect(after.at(-1)).toMatchObject({
+    const added = (await denials()).filter((entry) => !before.has(entry.id));
+    expect(added).toHaveLength(1);
+    expect(added[0]).toMatchObject({
       resourceType: 'report',
       metadata: { report: 'financial' },
     });
@@ -749,15 +749,17 @@ describe('tenant isolation and audit', () => {
             and(eq(auditEvent.tenantId, world.tenant.id), eq(auditEvent.action, 'report.accessed')),
           ),
       );
-    const before = (await reportEntries()).length;
+    // Earlier tests of the file write entries too, and the rows come back in no promised order: the
+    // new entry is the one whose id was not there before.
+    const before = new Set((await reportEntries()).map((entry) => entry.id));
 
     await financial(world.owner);
-    expect((await reportEntries()).length).toBe(before);
+    expect((await reportEntries()).length).toBe(before.size);
 
     await records(world.owner, 'charged', MAY, { limit: '2' });
-    const after = await reportEntries();
-    expect(after.length).toBe(before + 1);
-    expect(after.at(-1)?.metadata).toMatchObject({
+    const added = (await reportEntries()).filter((entry) => !before.has(entry.id));
+    expect(added).toHaveLength(1);
+    expect(added[0]?.metadata).toMatchObject({
       report: 'financial.records',
       kind: 'charged',
       from: '2031-05-01',
