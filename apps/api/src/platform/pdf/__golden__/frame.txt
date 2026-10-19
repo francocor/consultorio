@@ -1,0 +1,15 @@
+{
+  "pages": 1,
+  "info": {
+    "Producer": "Consultorio",
+    "Creator": "Consultorio",
+    "CreationDate": "D:20261017153000Z",
+    "Title": "Resumen de cobros",
+    "Author": "Centro Médico Aillu",
+    "Subject": "Cobros de octubre",
+    "ModificationDate": "D:20261017153000Z"
+  },
+  "texts": [
+    "Centro Médico Aillu Av. Corrientes 1234, Ciudad de Buenos Aires - CUIT 30-12345678-1 Resumen de cobros Cobros del 1 al 17 de octubre de 2026 Niño, año, ¿cuánto? Ñandú - Ángel - Ésta - Íntegro - Ópera - Último - pingüino. Sede Palermo Total cobrado $ 1.234,50 Fecha Paciente Importe 17/10/2026 Pérez, Juana $ 35.000,00 17/10/2026 Gómez, Luis $ 12.500,50 Documento generado por el sistema Página 1 de 1"
+  ]
+}

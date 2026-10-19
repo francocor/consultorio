@@ -29,6 +29,7 @@ describe('provider configuration', () => {
       whatsapp: 'local',
       video: 'local',
       botChallenge: 'local',
+      afip: 'local',
       videoAllowedDomains: [],
       allowLocalProviders: false,
       localProvidersConsole: false,
@@ -40,6 +41,7 @@ describe('provider configuration', () => {
       whatsapp: 'off',
       video: 'off',
       botChallenge: 'turnstile',
+      afip: 'off',
     });
   });
 
@@ -49,6 +51,14 @@ describe('provider configuration', () => {
       /WHATSAPP_PROVIDER/,
     );
     expect(() => loadConfig({ ...production, BOT_CHALLENGE: 'local' })).toThrow(/BOT_CHALLENGE/);
+    expect(() => loadConfig({ ...production, AFIP_PROVIDER: 'local' })).toThrow(/AFIP_PROVIDER/);
+  });
+
+  it('runs the AFIP simulator in development and selects the real provider or none by name', () => {
+    expect(loadConfig({ ...base, AFIP_PROVIDER: 'afip' }).providers.afip).toBe('afip');
+    expect(loadConfig({ ...base, AFIP_PROVIDER: 'off' }).providers.afip).toBe('off');
+    expect(loadConfig({ ...production, AFIP_PROVIDER: 'afip' }).providers.afip).toBe('afip');
+    expect(() => loadConfig({ ...base, AFIP_PROVIDER: 'wsfe' })).toThrow(/AFIP_PROVIDER/);
   });
 
   it('lets production run the simulators for a demo or staging when the flag says so', () => {
@@ -57,12 +67,14 @@ describe('provider configuration', () => {
       WHATSAPP_PROVIDER: 'local',
       VIDEO_PROVIDER: 'local',
       BOT_CHALLENGE: 'local',
+      AFIP_PROVIDER: 'local',
       ALLOW_LOCAL_PROVIDERS: 'true',
       LOCAL_PROVIDERS_CONSOLE: 'true',
     });
 
     expect(config.providers).toMatchObject({
       whatsapp: 'local',
+      afip: 'local',
       allowLocalProviders: true,
       localProvidersConsole: true,
     });
@@ -150,6 +162,7 @@ describe('provider configuration', () => {
     const guide = readFileSync(new URL('../../../../docs/dev-setup.md', import.meta.url), 'utf8');
 
     expect(PROVIDER_ENV_VARIABLES.length).toBeGreaterThanOrEqual(7);
+    expect(PROVIDER_ENV_VARIABLES).toContain('AFIP_PROVIDER');
     for (const name of PROVIDER_ENV_VARIABLES) expect(guide, name).toContain(name);
   });
 });

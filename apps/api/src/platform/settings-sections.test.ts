@@ -61,10 +61,10 @@ describe('settings section registry', () => {
 
     expect(() => {
       registry.register({
-        key: 'billing' as never,
+        key: 'payroll' as never,
         schema: z.strictObject({ on: z.boolean() }),
         defaults: { on: false },
       });
-    }).toThrow(/billing/);
+    }).toThrow(/payroll/);
   });
 });

@@ -1,13 +1,19 @@
 import type {
   AuditAction,
+  BILLING_AUDIT_ACTIONS,
+  INVOICING_AUDIT_ACTIONS,
   NOTIFICATION_AUDIT_ACTIONS,
   ONLINE_BOOKING_AUDIT_ACTIONS,
+  REPORTS_AUDIT_ACTIONS,
   TELECONSULTATION_AUDIT_ACTIONS,
   WAITLIST_AUDIT_ACTIONS,
 } from '@consultorio/contracts';
 
+import { BILLING_SCENARIOS } from './audit-scenarios/billing.js';
+import { INVOICING_SCENARIOS } from './audit-scenarios/invoicing.js';
 import { NOTIFICATION_SCENARIOS } from './audit-scenarios/notifications.js';
 import { ONLINE_BOOKING_SCENARIOS } from './audit-scenarios/online-booking.js';
+import { REPORTS_SCENARIOS } from './audit-scenarios/reports.js';
 import { TELECONSULTATION_SCENARIOS } from './audit-scenarios/teleconsultation.js';
 import { WAITLIST_SCENARIOS } from './audit-scenarios/waitlist.js';
 
@@ -31,7 +37,10 @@ type ModuleAuditAction =
   | (typeof NOTIFICATION_AUDIT_ACTIONS)[number]
   | (typeof ONLINE_BOOKING_AUDIT_ACTIONS)[number]
   | (typeof WAITLIST_AUDIT_ACTIONS)[number]
-  | (typeof TELECONSULTATION_AUDIT_ACTIONS)[number];
+  | (typeof TELECONSULTATION_AUDIT_ACTIONS)[number]
+  | (typeof BILLING_AUDIT_ACTIONS)[number]
+  | (typeof REPORTS_AUDIT_ACTIONS)[number]
+  | (typeof INVOICING_AUDIT_ACTIONS)[number];
 
 const PLATFORM_SCENARIOS: Record<Exclude<AuditAction, ModuleAuditAction>, AuditScenario> = {
   // Authentication.
@@ -177,4 +186,7 @@ export const AUDIT_SCENARIOS: Record<AuditAction, AuditScenario> = {
   ...ONLINE_BOOKING_SCENARIOS,
   ...WAITLIST_SCENARIOS,
   ...TELECONSULTATION_SCENARIOS,
+  ...BILLING_SCENARIOS,
+  ...REPORTS_SCENARIOS,
+  ...INVOICING_SCENARIOS,
 };

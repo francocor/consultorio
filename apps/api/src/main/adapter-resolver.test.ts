@@ -2,6 +2,7 @@ import { randomBytes } from 'node:crypto';
 
 import { describe, expect, it } from 'vitest';
 
+import { createFakeInvoiceIssuer } from '../adapters/afip-fake/index.js';
 import { createFakeBotChallenge } from '../adapters/bot-challenge-fake/index.js';
 import { createFakeEmailSender } from '../adapters/fake-email/index.js';
 import { createLocalKeyManagement } from '../adapters/local-kek/index.js';
@@ -37,6 +38,8 @@ function registry(overrides: Partial<AdapterRegistry> = {}): AdapterRegistry {
     whatsapp: { real: undefined, demo: fake(createFakeWhatsAppSender()) },
     videoLink: { real: undefined, demo: fake(createFakeVideoLinkProvider()) },
     botChallenge: { real: undefined, demo: fake(createFakeBotChallenge()) },
+    // Stage 4: the invoice issuer. Customers run on the AFIP simulator the invoicing track registers.
+    invoiceIssuer: { real: undefined, demo: fake(createFakeInvoiceIssuer()) },
     ...overrides,
   };
 }
@@ -46,6 +49,7 @@ describe('adapter resolver', () => {
     expect([...ADAPTER_PORTS].sort()).toEqual([
       'botChallenge',
       'email',
+      'invoiceIssuer',
       'keyManagement',
       'objectStorage',
       'videoLink',
@@ -149,7 +153,8 @@ describe('email routed by organization', () => {
 });
 
 describe('assembling the registry from the modules', () => {
-  const { email, objectStorage, keyManagement, whatsapp, videoLink, botChallenge } = registry();
+  const { email, objectStorage, keyManagement, whatsapp, videoLink, botChallenge, invoiceIssuer } =
+    registry();
 
   it('joins what the composition root and each module register into one complete registry', () => {
     const assembled = assembleAdapterRegistry([
@@ -157,6 +162,7 @@ describe('assembling the registry from the modules', () => {
       { whatsapp },
       { videoLink },
       { botChallenge },
+      { invoiceIssuer },
     ]);
 
     expect(Object.keys(assembled).sort()).toEqual([...ADAPTER_PORTS].sort());
@@ -165,17 +171,30 @@ describe('assembling the registry from the modules', () => {
 
   it('refuses to start when a port has no adapter at all, naming the port', () => {
     expect(() =>
-      assembleAdapterRegistry([{ email, objectStorage, keyManagement, whatsapp, videoLink }]),
+      assembleAdapterRegistry([
+        { email, objectStorage, keyManagement, whatsapp, videoLink, invoiceIssuer },
+      ]),
     ).toThrow(/botChallenge/);
+    expect(() =>
+      assembleAdapterRegistry([
+        { email, objectStorage, keyManagement, whatsapp, videoLink, botChallenge },
+      ]),
+    ).toThrow(/invoiceIssuer/);
     expect(() => assembleAdapterRegistry([])).toThrow(/email.*whatsapp|whatsapp.*email/s);
   });
 
   it('refuses a port that two modules both register: the second would silently win', () => {
     expect(() =>
       assembleAdapterRegistry([
-        { email, objectStorage, keyManagement, whatsapp, videoLink, botChallenge },
+        { email, objectStorage, keyManagement, whatsapp, videoLink, botChallenge, invoiceIssuer },
         { whatsapp },
       ]),
     ).toThrow(/whatsapp.*twice/);
+    expect(() =>
+      assembleAdapterRegistry([
+        { email, objectStorage, keyManagement, whatsapp, videoLink, botChallenge, invoiceIssuer },
+        { invoiceIssuer },
+      ]),
+    ).toThrow(/invoiceIssuer.*twice/);
   });
 });

@@ -1,4 +1,4 @@
-import type { BookingLinkDto } from '@consultorio/contracts';
+import type { BookingLinkDto, SettingsDto } from '@consultorio/contracts';
 import { expect, test, type APIRequestContext, type Page } from '@playwright/test';
 
 import { OPERATOR_STATE } from './support/operator.js';
@@ -6,6 +6,7 @@ import {
   apiOf,
   bookAsPatient,
   expectFitsAndAccessible,
+  firstTimeFrom,
   visitor,
   type Api,
 } from './support/public-booking.js';
@@ -35,6 +36,11 @@ test.setTimeout(240_000);
 /** The product bar: a patient finishes in under a minute. */
 const BUDGET_SECONDS = 60;
 const OWNER_PASSWORD = 'una frase larga para la titular 2026';
+const HOUR_MS = 3_600_000;
+/** A week: wider than any gap to the first free time of a practice with weekly hours. */
+const WIDE_DEADLINE_HOURS = 24 * 7;
+/** Room for the journey itself (a minute, plus the mailbox) before the patient opens the link. */
+const CHANGE_MARGIN_MS = 30 * 60_000;
 
 /** Enables the organization link and the professional's link, exposing one type of visit. */
 async function openLinks(api: Api, professionalId: string, typeId: string) {
@@ -96,31 +102,63 @@ test('a visitor books in under a minute, two visitors race for one time, and the
   await signInWithApi(page.request, 'aillu', emailOf('owner'));
   const { api, origin, professionalId, typeId } = await demoProfessional(page.request);
   const links = await openLinks(api, professionalId, typeId);
-  const professionalUrl = `${origin}${links.professional.path ?? ''}`;
+  const professionalPath = links.professional.path ?? '';
+  const professionalUrl = `${origin}${professionalPath}`;
 
-  // 1. The journey, on a phone, against the clock.
+  // The patient can cancel by link only until `rescheduleDeadlineHours` before the start. The
+  // journey below books and then cancels, so it needs a time that is still outside that window
+  // when the patient opens the link, whatever the hour the spec runs at. The window is widened to
+  // a week for the two steps that depend on it: the first free time is then inside it at every
+  // hour (the choice below must go past it, where "the first free time" would leave no button to
+  // press), and the spec does not depend on how the deadline happens to be set.
+  const before = await api.call<SettingsDto>('GET', '/settings');
+  expect(before.status).toBe(200);
+  const setDeadline = (rescheduleDeadlineHours: number) =>
+    api.call<SettingsDto>('PATCH', '/settings', { onlineBooking: { rescheduleDeadlineHours } });
+  const widened = await setDeadline(WIDE_DEADLINE_HOURS);
+  expect(widened.status, JSON.stringify(widened.body)).toBe(200);
+
   const first = await visitor(browser);
   const email = `visita.${String(Date.now())}@demo.invalid`;
-  const seconds = await bookAsPatient(first.page, professionalUrl, email);
-  test.info().annotations.push({ type: 'booking-seconds', description: String(seconds) });
-  expect(seconds).toBeLessThan(BUDGET_SECONDS);
+  try {
+    // The deadline in force, read back from the organization rather than assumed.
+    const deadlineHours = widened.body.onlineBooking.rescheduleDeadlineHours;
+    const earliest = await firstTimeFrom(page.request, origin, professionalPath, new Date(0));
+    expect(
+      Date.parse(earliest.startsAt),
+      'the first free time is inside the change window, so booking it would leave nothing to cancel',
+    ).toBeLessThan(Date.now() + deadlineHours * HOUR_MS);
+    const beyond = await firstTimeFrom(
+      page.request,
+      origin,
+      professionalPath,
+      new Date(Date.now() + deadlineHours * HOUR_MS + CHANGE_MARGIN_MS),
+    );
 
-  // The confirmation email names the place and carries the link to change the appointment.
-  const confirmation = await emailTo(email, /confirmado/i);
-  expect(confirmation).toMatch(/Dónde:/);
-  expect(linkIn(confirmation, '/book/manage/')).toContain('/book/manage/');
+    // 1. The journey, on a phone, against the clock.
+    const seconds = await bookAsPatient(first.page, professionalUrl, email, beyond);
+    test.info().annotations.push({ type: 'booking-seconds', description: String(seconds) });
+    expect(seconds).toBeLessThan(BUDGET_SECONDS);
 
-  // 2. The patient opens the link of the confirmation and cancels.
-  await first.page.getByRole('link', { name: 'Cambiar o cancelar el turno' }).click();
-  await expect(first.page.getByRole('heading', { level: 1, name: 'Su turno' })).toBeVisible();
-  await expectFitsAndAccessible(first.page);
-  await first.page.getByRole('button', { name: 'Cancelar el turno' }).click();
-  await expectFitsAndAccessible(first.page);
-  await first.page.getByRole('button', { name: 'Sí, cancelar el turno' }).click();
-  await expect(
-    first.page.getByRole('heading', { level: 1, name: 'Su turno quedó cancelado' }),
-  ).toBeVisible();
-  await first.context.close();
+    // The confirmation email names the place and carries the link to change the appointment.
+    const confirmation = await emailTo(email, /confirmado/i);
+    expect(confirmation).toMatch(/Dónde:/);
+    expect(linkIn(confirmation, '/book/manage/')).toContain('/book/manage/');
+
+    // 2. The patient opens the link of the confirmation and cancels.
+    await first.page.getByRole('link', { name: 'Cambiar o cancelar el turno' }).click();
+    await expect(first.page.getByRole('heading', { level: 1, name: 'Su turno' })).toBeVisible();
+    await expectFitsAndAccessible(first.page);
+    await first.page.getByRole('button', { name: 'Cancelar el turno' }).click();
+    await expectFitsAndAccessible(first.page);
+    await first.page.getByRole('button', { name: 'Sí, cancelar el turno' }).click();
+    await expect(
+      first.page.getByRole('heading', { level: 1, name: 'Su turno quedó cancelado' }),
+    ).toBeVisible();
+  } finally {
+    await first.context.close();
+    await setDeadline(before.body.onlineBooking.rescheduleDeadlineHours);
+  }
 
   // 3. Two visitors look at the same times; the first to choose one gets it, the other is told.
   const one = await visitor(browser);

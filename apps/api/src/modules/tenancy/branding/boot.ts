@@ -25,6 +25,8 @@ export interface BootDeps {
   deploymentMode: 'multi' | 'single';
   /** The interface language of an organization, from its country. */
   locale: (country: string) => string;
+  /** Which providers of the deployment are local simulators (see `BootPayload.localProviders`). */
+  localProviders: BootPayload['localProviders'];
 }
 
 /**
@@ -67,6 +69,7 @@ export function createBootService(deps: BootDeps): BootService {
         features: features.map((row) => row.feature),
         deploymentMode: deps.deploymentMode,
         isDemo: resolved.isDemo,
+        localProviders: deps.localProviders,
       };
     },
 

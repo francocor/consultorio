@@ -4,6 +4,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, inject, it } from 'v
 import { channelPreference } from '../../src/db/schema/channel-preference.js';
 import { message, messageAttempt } from '../../src/db/schema/notifications.js';
 import { worklistItem } from '../../src/db/schema/worklist.js';
+import { optOutPatient } from '../../src/modules/notifications/application/opt-out.js';
 import { recordOptOut } from '../../src/modules/notifications/application/preferences.js';
 import { createBookingNotifier } from '../../src/modules/notifications/index.js';
 import type { BookingNotice } from '../../src/modules/online-booking/index.js';
@@ -164,6 +165,19 @@ describe('the confirmation of an online booking', () => {
     await notifier().confirmBooking(notice);
 
     expect(notes.email.sent.map((mail) => mail.to)).toEqual(['verificado@example.test']);
+    expect(await logOf(appointment.id)).toMatchObject([{ status: 'sent' }]);
+  });
+
+  it('is sent to the verified address even when the record opted out of every channel (B7)', async () => {
+    const { notice, appointment, patientId } = await booking();
+    await scheduling.inTenant((tx) =>
+      optOutPatient(tx, { patientId, source: 'whatsapp_keyword', actor }),
+    );
+
+    await notifier().confirmBooking(notice);
+
+    expect(notes.email.sent.map((mail) => mail.to)).toEqual(['verificado@example.test']);
+    expect(notes.email.sent[0]?.text).toContain('/book/manage/MANAGE-TOKEN');
     expect(await logOf(appointment.id)).toMatchObject([{ status: 'sent' }]);
   });
 

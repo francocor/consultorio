@@ -12,6 +12,8 @@ Stage 2: slices S2.01 to S2.16 done (tasks 2.1 to 2.46, the scheduling backend a
 
 Stage 3: the seam slices S3.00 and S3.00b are done (tasks 3.1 to 3.10) on branch `feat/stage-3-patient-engagement`, stacked on the Stage 2 branch; see "Stage 3 seam" at the end of this file. Next: the parallel tracks A to D, then the integration track E (`docs/stage3-tracks.md`).
 
+Stage 4: the seam slice S4.00 is done (tasks 4.1 to 4.6) on branch `feat/stage-4-revenue`, stacked on the Stage 3 branch; see "Stage 4 seam" at the end of this file. Next: the parallel tracks A (billing), B (reports) and C (invoicing), then the integration track D (`docs/stage4-tracks.md`).
+
 ## Batch 1: Stage 0, slices S0.01 to S0.05
 
 | Slice | Branch (stacked on previous) | Commits | Tasks | State |
@@ -1743,7 +1745,6 @@ Success criteria of `proposal.md` that Stage 3 can show, and the evidence:
 
 Not claimed here: the Stage 1 and 2 criteria (10-minute first booking, 30-second reception booking, PWA and 4G load, clinical audit, legacy removal) were verified at their own gates, and the e2e suite that guards them passed.
 
-
 ## Judgment Day Stage 3, round 1
 
 Two judges reviewed `7b6df20` (diff `f8db04c..7b6df20`) and found no critical issue. This section records the fixes of round 1 on branch `feat/stage-3-patient-engagement`: the 15 confirmed findings (C1 to C15), the two orchestrator decisions (D22, D23), the suspects and the CI failure. Every fix has a commit that names its finding ("JD-S3 <id>") and a test that failed before it (the exceptions are said below). Migrations used: `0392` to `0397` (the range `3e` has `0398` and `0399` left).
@@ -1886,6 +1887,165 @@ Run in the worktree after the last code change (ports 4780, 3780, 9780):
 - Not run here: the Lighthouse budget (CI) and the browser pass over `lighthouserc.json`; no web page changed in this round (only an e2e spec). `boot.test.ts` is part of the unit run above.
 - Incident: none. The containers this agent started (e2e stack, test databases, the smoke container and image) were removed by name.
 
+## Stage 4 seam: S4.00 (tasks 4.1 to 4.6)
+
+Branch `feat/stage-4-revenue`, stacked on `feat/stage-3-patient-engagement` (tip `7b6df20`). Mode: automatic, strict TDD, `size:exception` (work-unit commits, draft PR with base the Stage 3 branch, merges after #16, CI not polled). The seam registers every shared Stage 4 piece once so that the tracks (A billing and payments, B reports, C AFIP invoicing, D integration) only add files. The per-track boundaries are in `docs/stage4-tracks.md`; the migration convention is in `docs/migration-ranges.md`.
+
+### Commits (in order)
+
+| Task   | Commit    | What                                                                                                                                                                                      |
+| ------ | --------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 4.1    | `20c4183` | `Money` (whole cents, branded), `addMoney`/`sumMoney`, `applyBasisPoints` (half away from zero), `allocateProportional` (largest remainder, ties to the earliest line), `formatArs`/`parseArs`; web `formatMoney`/`parseMoney` use it |
+| 4.3    | `de75aaf` | Seven permissions, 21 audit actions, `billing`/`reports`/`invoicing` contract files with `-catalog.ts` apart from the schemas, audit scenario files, es-AR labels, card/certificate/key metadata keys refused |
+| 4.4    | `8890290` | Queues `afip.issue`, `fiscal.credential_watch`, `invoice.pdf`, `invoice.deliver`, `export.build` and their read-only categories                                                           |
+| 4.2    | `4ed8d9d` | `AFIP_PROVIDER` (`local\|afip\|off`) and its production guard                                                                                                                             |
+| 4.2/4.4| `fc5a466` | `invoiceIssuer` port, `adapters/afip-fake/` placeholder, three module skeletons and wiring, export contributors, settings sections (`billing`, `invoicing`, `integrations.einvoicing`), schema files pre-exported |
+| 4.4    | `2ca20c1` | `platform/files/file-resources.ts` and `file-routes.ts`: one registry behind `GET /files/:token`; documents register `document_download`; token kinds `export_download` and `invoice_pdf` (disabled) |
+| 4.5    | `40d9f0a` | `platform/pdf/render.ts` (`renderPdf`, `pdfSafeText`), `test/support/pdf.ts`, golden reading of the frame; `@react-pdf/renderer`, `react`                                                 |
+| 4.6    | `05795e5` | `BootPayload.localProviders.afip`, carried from `main`/`start-stack` to the public boot document                                                                                          |
+| 4.6    | `bef3bbc` | `MoneyInput`, `SimulatedBillingBanner`/`SimulatedBillingNotice`, `cash` and `reports` out of the shell navigation; dependencies for the tracks (`exceljs`, `qrcode`, `recharts`)           |
+| docs   | `184c2d4` | `docs/stage4-tracks.md`, Stage 4 paragraph in `docs/migration-ranges.md`, tasks 4.1 to 4.6 marked                                                                                         |
+
+### Migration convention for the Stage 4 tracks
+
+The ranges were already in `scripts/migration-journal.ts` and `docs/migration-ranges.md` (`4seam` 0400-0409, `4a` 0410-0429, `4b` 0430-0439, `4c` 0440-0469, `4d` 0490-0499; 0470-0489 reserved), so no tool change was needed. The seam has no tables and adds no migration. Tracks run `pnpm db:new 4a|4b|4c|4d <name>` (with `--number` for the numbers `tasks.md` names: A 0410, 0412, 0414; B 0430; C 0440, 0442, 0444), then `pnpm db:restamp` and `pnpm db:check` after every merge. The invoices migration (0444) has a foreign key and a trigger on `charge_line` (0412), so it must come later in the journal: the run order (S4.10 waits for S4.02) guarantees it.
+
+### Extra seam work (not listed as tasks, or listed under other slices)
+
+1. **`reports.read` for professional and reception.** `tasks.md` says it "already exists", but only owner and admin held it, and the spec scopes professionals (own figures) and reception (operations and cash of its locations) on the server. A route cannot be reached without the permission, so S4.07 and S4.34 could not work. Added to both bundles; the scope stays the job of Track B (`application/scope.ts`).
+2. **`/files/:token` is a platform door.** The route moved out of the documents module into `platform/files/file-routes.ts`; documents keep their rules through a `FileResource` (`modules/documents/application/file-resource.ts`). The generic refusal is `file_link_invalid` (it was `document_link_invalid`), and a link of an unknown kind fails closed with the same uniform 403 and a deny entry. The route declares the union of the audit actions of the registered resources, so it is registered last in `createApplication`.
+3. **Dependencies installed once** (`@react-pdf/renderer`, `react`, `@types/react`, `exceljs`, `qrcode`, `@types/qrcode` in the API; `recharts` in the web app) so that no track edits a manifest or the lockfile.
+4. **Forbidden audit metadata keys** gained `cardNumber`, `cvv`, `pan`, `certificate`, `privateKey`, `pem` (task 4.62 proves it later; the writer refuses them from now on).
+5. **`InvoiceLookup`**: `modules/invoicing/index.ts` exports a stub (`invoiceLookup`, always "no invoice") so billing can build the void rule of task 4.14 without waiting for task 4.45.
+6. **`test/support/pdf.ts`** (`readPdf`, `allText`): reads the text, the page count and the information of the PDFs the product renders, for the tracks' tests.
+7. **Settings sections** `billing` (`lateFeeEnabled`, `lateFeeAmount`) and `invoicing` (`outageThresholdHours`, default 24); `integrations.einvoicing` (default off) is audited as `invoicing.config.changed`.
+
+### TDD cycle evidence
+
+| Task    | Tests                                                                                                                                              | RED                                                                                                   | GREEN  | Notes                                                                                                                                       |
+| ------- | -------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------- | ------ | ------------------------------------------------------------------------------------------------------------------------------------------- |
+| 4.1     | `money.test.ts` (35, with fast-check: parts sum to the total and are never negative, each part within one cent of its quota, round trip of format and parse), `format.test.ts` | module missing / `parseMoney` not a function                                                          | passed | the sign of `negateMoney` needed `0 - amount` for the lint rule on branded numbers                                                         |
+| 4.3     | `billing`/`reports`/`invoicing.test.ts`, `roles.test.ts` (Stage 4 describe), `audit-actions.test.ts`, `errors.test.ts`, `access.test.ts` (sections)  | 7 files failed                                                                                        | passed | `access.ts` was applied after its test alone failed (3 tests)                                                                               |
+| 4.4     | `jobs.test.ts` (classification), `job-queues.test.ts` (integration)                                                                                | 2 failed                                                                                              | passed |                                                                                                                                             |
+| 4.2     | `guard.test.ts` matrix with `afip`, `config-providers.test.ts`                                                                                      | 9 failed                                                                                              | passed |                                                                                                                                             |
+| 4.2/4.4 | `adapter-resolver.test.ts`, `wiring.test.ts` (sections, owners, console entry), `schema-index.test.ts`, `settings.test.ts`, `access-settings.test.ts` | 12 failed (resolver, wiring, schema index)                                                            | passed | the `afip-fake` test was written together with its trivial placeholder: no separate RED                                                     |
+| 4.4     | `file-resources.test.ts` (9), `kinds.test.ts`, integration `file-resources.test.ts` (7, a probe module registers `export_download`), `documents-download.test.ts` unchanged apart from the reason name | integration: `context.fileResources` undefined                                                        | passed | the unit tests of the registry were written before the module; the integration test failed first                                           |
+| 4.5     | `render.test.ts` (12: metadata, deterministic bytes, golden reading, accents, header and footer, watermark, many pages, image, empty document)       | `render.js` missing; then 7 failed on the test reader (regexes) and one on hyphenation of the mark    | passed | bugs found by the tests: the library hyphenated "PRUEBA" (hyphenation callback now returns the word whole); the reader had to join wrapped lines |
+| 4.6     | `money-input.test.tsx` (14, with axe), `simulated-billing.test.tsx` (5), `nav-config.test.ts` (Stage 4 describe), `branding-boot.test.ts`            | boot payload: schema field missing; nav: 4 failed                                                     | passed | `money-input` and the banner were written after their test files, with the missing-module state as the RED                                  |
+
+### Deviations from the tasks and the design
+
+1. **Nav entries and slot pieces are the tracks' files, not the seam's.** Task 4.6 lists "slot entries for billing" and "nav entries ... through `nav.ts`". The registries are globs, so a track adds its `nav.ts`, `slots.tsx` and `routes.tsx`; if the seam had created them, the shell would show entries (and a patient tab) that lead nowhere. What the seam did: freed the ids `cash` and `reports` (the shell used to hold them, and a contributed entry cannot reuse a shell id), fixed the plan (ids, paths, permissions, places) in `docs/stage4-tracks.md`, and tests the plan against the real permission bundles (`nav-config.test.ts`). The charges screen is `/charges`, not `/billing`: the shell id `billing` and the path belong to the Stage 6 subscription.
+2. **`localProviders` in the boot payload is `{ afip: boolean }`, not a bare boolean.** One flag would mark invoices as simulated whenever WhatsApp or video run on a simulator; a flag per provider family is precise and extends to Stages 5 and 6. The banner shows for a demo organization too (it only ever has the fake issuer).
+3. **No payments gateway port.** The brief asked for "the payment-related providers"; the design puts `PaymentsGateway` (Mercado Pago) in Stage 6 (S6.03), and Stage 4 records payments by hand. The only new port is `invoiceIssuer`.
+4. **The port is the Stage 1 `InvoiceIssuer` of `packages/contracts/src/ports.ts`**, not a new file under `modules/invoicing/application/ports.ts` (the country pack already types it). Track C may add optional fields to `InvoiceRequest` (declared in `docs/stage4-tracks.md`).
+5. **The golden file is a reading of the PDF, not its bytes** (`src/platform/pdf/__golden__/frame.txt`): page count, information dictionary and the text of each page. Compressed streams can differ between zlib versions; the reading cannot. `UPDATE_GOLDEN=1` rewrites it.
+6. **PDF fonts are the standard Helvetica (WinAnsi)**: it draws every character of Spanish and the euro sign without bundling a font; anything else is replaced by `?` (`pdfSafeText`).
+7. **`ENABLED_STAGE` stays 2**; contributed entries carry no stage.
+
+### Risks and follow-ups
+
+- The appointment type has no invoice description (task 4.51 assumes one). Track C adds a nullable `invoice_description` to `appointment_type` with a `4c` migration (declared exception) or falls back to the type name.
+- Reports read other modules' data only through their `index.ts`; `modules/scheduling/index.ts`, `modules/patients/index.ts` and `modules/waitlist/index.ts` will each get new export lines from the tracks (declared exceptions in `docs/stage4-tracks.md`).
+- `test/security/public-tokens.test.ts` needs one line in `ELSEWHERE` when a track enables `export_download` or `invoice_pdf` (its test fails until the kind is placed).
+- The Judgment Day of Stage 3 lands fixes on `feat/stage-3-patient-engagement`; this branch merges them later (documents, tokens or the shell may conflict in `access-routes.ts` if the review touched the download route).
+- Lighthouse, CI and the real ARCA adapter were not run (S4.D is deferred).
+
+### Verification (tip of `feat/stage-4-revenue` before this progress commit, Node v24.22.0, pnpm 10.34.7, Docker running and shared with other projects)
+
+| Command | Result |
+| --- | --- |
+| `corepack pnpm install --frozen-lockfile` | exit 0 |
+| `corepack pnpm typecheck` | exit 0 (contracts, api, web) |
+| `corepack pnpm lint` / `format:check` | exit 0 |
+| `corepack pnpm test` | **329 files, 4,228 tests passed** (`boot.test.ts` included: boot stays DB-free) |
+| `corepack pnpm test:integration` | **178 files passed, 1 skipped (the slow ClamAV suite); 2,784 tests passed, 4 skipped** |
+| `corepack pnpm build` | exit 0 (the entry chunk of the web app holds none of the new schemas or `recharts`: they sit in lazy chunks) |
+| `corepack pnpm db:check` | No migration drift |
+| `test:e2e` (`vite build`, private ports 3660/4660/9660, `--workers=3`) | **185 passed** |
+| `docker build -f infra/Dockerfile` and a smoke run with the production configuration of the CI smoke test (private port 3667) | image built; `/health` answered `{"status":"ok"}`; inside the image `@react-pdf/renderer` rendered a PDF and `exceljs` and `qrcode` loaded; the container and the image were removed |
+
+CI was not run or polled. Lighthouse was not run. No `.env` file was read or written.
+
+## Stage 4: merged Stage 3 JD round 1
+
+`origin/feat/stage-3-patient-engagement` at `ac8751b` (the 38 commits of the Stage 3 Judgment Day round 1, migrations `0392` to `0397`) was merged into `feat/stage-4-revenue` with a merge commit (no rebase, no force push). Only two files conflicted:
+
+- `docs/dev-setup.md`: the table of provider variables. Both sides edited it; the result is the Stage 3 table (with `ADDRESS_HASH_PEPPER` and the note on the simulator's phone) plus the `AFIP_PROVIDER` row of the seam.
+- `apply-progress.md`: the Stage 3 "Judgment Day Stage 3, round 1" section comes first and the Stage 4 seam section after it. `tasks.md` merged without conflict.
+
+Everything else merged on its own (`platform/tokens`, `platform/files`, `rate-limit.ts`, the contracts, `main/*`, `config-providers.ts`, the web shell, the locales, `ci.yml`), and `typecheck` stayed green, so the seam and the round-1 fixes touch disjoint lines. The migration journal is linear: `0397` is the last entry and Stage 4 has none yet (its ranges start at `0410`). `pnpm db:restamp` found nothing to change and `pnpm db:check` reports no drift.
+
+### The toast contrast failure of the Stage 3 messaging journey
+
+Reported: `stage3-messaging.spec.ts` ("the owner resends a reminder...") failed axe `color-contrast` on a toast title on a Stage 4 track branch, even alone. On the merged tip it passes on a quiet machine (185 of 185, and 6 of 6 of that journey alone), so the seam did not change `shared/ui` toast or tokens (the seam adds `MoneyInput` and a banner; `toaster.tsx` and the colors are untouched, and the Stage 3 round-1 fixes touch no toast either).
+
+**Root cause, a race in the check and not a palette problem.** With 12 busy CPU loops running next to the suite, 2 of 6 runs of the journey failed with `li[data-index="0"] > div[data-content] > div[data-title]` at the step that records the WhatsApp opt-in in person (a "saved" toast). The spec's `settle()` waits until every toast is at `opacity: 1`, but it passes at once when the toast is not in the page yet, and a toast that is fading out is read half transparent; axe blends a half-transparent element with the page behind it, which reads as low contrast. The final colors are fine. A busy machine (several tracks running at once) moves the toast timing past the check, which is why the track branches saw it and the quiet gate did not.
+
+**Fix, without weakening the check.** `reducedMotion: 'reduce'` in `apps/web/playwright.config.ts` (the same option other specs already set one by one): Sonner drops its transitions under `prefers-reduced-motion`, so a toast is either absent or at full opacity and axe checks its real colors. Under the same load the six runs then showed no contrast failure (one run timed out waiting for a slot button because of the load, unrelated). The check itself is untouched.
+
+### Verification of the merged tip
+
+| Check | Result |
+| ----- | ------ |
+| `pnpm install --frozen-lockfile` | up to date |
+| `typecheck`, `lint`, `format:check` | exit 0 |
+| `pnpm test` | 4,255 passed; 4 files timed out under load (`boot`, `request-context`, `problem`, `read-only/index`) and passed alone, 56 of 56 |
+| `pnpm test:integration` | **185 files passed, 1 skipped (ClamAV); 2,849 tests passed, 4 skipped.** Two earlier runs failed with `ECONNREFUSED` because the shared Postgres container of the run was stopped from outside while other agents cleaned up their own; the third run was clean |
+| `pnpm build`, `pnpm db:check` | exit 0, no drift |
+| `test:e2e` (ports 4760, 3760, 9760, `--workers=3`) | **185 passed**, before and after the motion fix |
+| Docker image and smoke run with the CI production environment, `ADDRESS_HASH_PEPPER` included (private port 3767) | `/health` answered `{"status":"ok"}` |
+
+CI was not run or polled. No `.env` file was read or written.
+
+### What the Stage 4 tracks take when they merge this seam
+
+- The seam is stacked on `ac8751b`, not `7b6df20`: a track branch that already has the seam must merge the seam tip (or this branch) before its own PR.
+- Production now requires `ADDRESS_HASH_PEPPER` (at least 32 characters) in any environment that starts the API or the worker; `ci.yml` has it in the smoke test, and `docs/dev-setup.md` describes it.
+- `platform/http/rate-limit.ts` has a separate bucket for public routes; new public routes of Stage 4 (none planned) must choose a bucket.
+- Migrations `0392` to `0397` exist; Stage 4 ranges (`0410` and up) do not overlap. Run `pnpm db:restamp` then `pnpm db:check` after the merge.
+- `pnpm test:e2e` now runs with reduced motion: a new spec that checks a toast with axe gets the final colors.
+
+## Stage 4 integration 1: tracks A, B and C (wave 1) and the Stage 3 round-2 fixes
+
+Branch `feat/stage-4-revenue`, from the seam tip `e3a7f6c`. Automatic mode, strict TDD, merge commits only (no rebase, no force push). Each track keeps its own progress file, which has the commits, the TDD evidence, the deviations and the track's own verification:
+
+- Track A (billing, S4.01 to S4.05, tasks 4.7 to 4.27): `apply-progress-stage4-track-a.md`. Merge `649bd6e`. Migrations `0410`, `0412`, `0414`, `0416`.
+- Track B (reports, S4.06 and S4.07, tasks 4.28 to 4.32 and 4.34): `apply-progress-stage4-track-b.md`. Merge `22ae1d1`. Migration `0430`. Task 4.33 and S4.14 are pending.
+- Track C, first wave (invoicing configuration and the AFIP simulator, S4.08 and S4.09, tasks 4.35 to 4.42 and the settings half of 4.54): `apply-progress-stage4-track-c.md`. Merge `01f48fc`. Migrations `0440`, `0442`. S4.10 to S4.13 are pending.
+- `6609f25` removes the NUL bytes that a track left in `translate.ts` (they made git treat the file as binary and refuse a text merge) and adds the `no-nul-bytes` policy test; `bded4e5` gives that scan a 60 s timeout because it took more than 5 s on a loaded machine.
+
+### Stage 3 round 2 merged
+
+`origin/feat/stage-3-patient-engagement` at `53e7dfd` (the Stage 3 Judgment Day round 2: migration `0398_usage_confirmed_backfill`, and changes in notifications, online booking, teleconsultation, waitlist and scheduling, among them `lockProfessional` with `FOR NO KEY UPDATE` in the scheduling `drizzle-ports.ts`, `validateDeferredConstraints` in `db/migrate.ts` and `calendar-scope.ts`) was merged with commit `71564da`. Three files conflicted and both sides were kept:
+
+- `meta/_journal.json`: `0398` is inserted between `0397` and `0410`, the indexes are renumbered, and `pnpm db:restamp` raised the stamps of `0410` to `0442` above the `when` of `0398` and re-chained the snapshot of `0410`.
+- `docs/dev-setup.md`: the provider table keeps the `AFIP_PROVIDER` row of Stage 4 and takes the longer `ADDRESS_HASH_PEPPER` row of round 2 (the demo seed and reset hash the message log with the same value).
+- `apply-progress.md`: the section "Judgment Day Stage 3, round 2" goes before the Stage 4 sections.
+
+The journal order after the merge: `0397_booking_link_unconfirmed_cap`, `0398_usage_confirmed_backfill`, `0410_pricing`, `0412_charges`, `0414_payments_cash`, `0416_payer_cuit`, `0430_report_indexes`, `0440_fiscal_config`, `0442_local_afip` (69 entries, indexes 0 to 68, linear).
+
+### Verification of the merged tip
+
+| Check | Result |
+| ----- | ------ |
+| `pnpm install --frozen-lockfile` | up to date |
+| `typecheck`, `lint`, `format:check` | exit 0 |
+| `pnpm test` | 4,628 of 4,634 passed; 6 files timed out at 5 s under load (`boot`, `no-nul-bytes`, `request-context`, `read-only/index`, `pdf/render`, `teleconsultation/dev-routes`) and passed alone, 73 of 73 |
+| `pnpm test:integration` (alone, nothing else using Docker) | 212 files passed, 1 skipped (ClamAV), 3,267 tests passed; `backup-restore.test.ts` failed to start with `socket hang up` (a container start) and passed alone, 4 of 4 |
+| `pnpm build`, `pnpm db:check` | exit 0, no migration drift |
+| `playwright test --workers=3` (ports 4800, 3800, 9800, fresh stack) | 193 passed |
+| Docker image and smoke run with the CI production environment, `ADDRESS_HASH_PEPPER` and `CLAMAV_HOST` included (private port 3810) | `/health` answered `{"status":"ok"}` |
+
+The containers and the image started by these runs were removed by their ID (the Testcontainers ones by Ryuk). CI was not run or polled. No `.env` file was read or written.
+
+### Notes for wave 2
+
+- Track C, S4.10 to S4.13 (tasks 4.43 to 4.56): the charge lines are now readable through `modules/billing/index.ts`; migration `0444` (FK and trigger on `charge_line`) must come after `0412` and use the FORCE RLS lift of `docs/migration-ranges.md`; the payer CUIT exists now (`0416`), so the recipient form does not need to ask for it; `invoiceLookup` (stub) is replaced by task 4.45 without changing its signature; the `country.ar.invoice.*` failure keys have no es-AR text yet; the `invoices` navigation entry and the `invoice_pdf` token kind are still open.
+- Track B, S4.14 (tasks 4.57 to 4.59) and task 4.33: they need the export job of task 4.24 (track A, now on this branch) and the invoicing read functions of S4.10. The list of what S4.14 needs from A and C is in `apply-progress-stage4-track-b.md`.
+- After any new migration: `pnpm db:restamp`, `pnpm db:check`, and remove `node_modules/.vitest-cache` when a glob-found fixture or demo exemption was added.
+- Under load the unit suite can time out on a handful of files that pass alone (the list above): re-run those files alone before suspecting the code.
+
 ## Judgment Day Stage 3, round 4
 
 Two judges reviewed `53e7dfd` (round 3). This section records the fixes of round 4 (the final round) on branch `feat/stage-3-patient-engagement`: W1 to W3 and T1 to T3, plus the two CI e2e failures of PR #16 (CI1, CI2). Every commit names its finding ("JD-S3 R4-<id>"). Strict TDD: each fix has a test that failed before it (the failing run is the one before the fix was written). One migration was used: `0399`, the last number of the range `3e`, which is now full. No applied migration was edited.
@@ -1916,3 +2076,654 @@ Run in the worktree after the last code change (ports 4840, 3840, 9840):
 - `playwright test e2e/pwa.spec.ts e2e/stage3-messaging.spec.ts e2e/stage3-teleconsult.spec.ts --workers=2 --project=desktop`: 14 passed (the signing-out spec of `pwa`, the messaging journey with axe at 360 px and the real-browser join button are among them). The whole e2e suite was not rerun: only the toast wait of five specs and the sign-out redirect changed.
 - Docker image built from `infra/Dockerfile`; the database was migrated twice with `db:migrate` (the second run exercises the idempotent backfill step), and `GET /health` answered `{"status":"ok"}` with a production configuration that includes `ADDRESS_HASH_PEPPER` and `CLAMAV_HOST` (KMS `aws`, `S3_BUCKET`, SMTP with starttls).
 - Incident: a first launch of the e2e run and a second one overlapped and collided on the MinIO port; the second failed at start, the first ran normally, and the test containers were removed by the testcontainers reaper. The smoke containers (`s3fix-r4-api`, `s3fix-r4-pg`) and the image were removed by name.
+
+## Stage 4 integration 2a (track C)
+
+Track C (invoicing, S4.10 to S4.13) merged into `feat/stage-4-revenue` as a merge commit (`--no-ff`) from `feat/stage-4-track-4c` (tip `cad5473`).
+
+### Merge
+
+- No textual conflicts. Git merged `meta/_journal.json` without a conflict marker but left a duplicate `idx` (`0444` took `69`, the idx that `0442` already had).
+- `pnpm --filter @consultorio/api db:restamp` renumbered the two new entries (`0444` is `70`, `0446` is `71`). The journal has 72 entries, `idx` runs 0 to 71 without a gap, `when` rises strictly, and the order ends `0397, 0398, 0399, 0410, 0412, 0414, 0416, 0430, 0440, 0442, 0444, 0446`. No applied entry moved and no migration SQL changed. Committed as `chore(db): restamp the track C migrations after the merge`. After the commit (lint-staged ran prettier on the JSON), `db:restamp` and `db:check` reported no change.
+
+### Verification (tip of the branch after the restamp, Node v24.22.0, pnpm 10.34.7, Docker running and shared with other agents)
+
+- `pnpm install --frozen-lockfile`, `pnpm typecheck`, `pnpm lint`, `pnpm format:check`: clean.
+- `pnpm test` (unit): 376 files, 4769 tests. One timeout under load (`render.test.ts`, "renders a PDF with the title, author and creation date it was given", 5 s); the file passed alone (12 of 12). Recorded as a load flake: 4769 passed, 0 failed on the final read.
+- `pnpm test:integration` (the full suite): 225 files passed (1 skipped), 3432 tests passed (4 skipped), 0 failed.
+- `pnpm build`: green. `pnpm db:check`: no drift.
+- Full e2e (`E2E_WEB_PORT=4880 E2E_API_PORT=3880 E2E_MINIO_PORT=9880`, `--workers=2`): 194 passed, 0 failed, 0 flaky, 0 skipped.
+- Docker: `infra/Dockerfile` built; a fresh `postgres:17` with `infra/postgres/init`; `db:migrate` run twice (both: migrations applied, platform catalogs loaded; 72 migrations recorded; `invoice`, `invoice_line` and `invoice_document` exist); the image started as `api` with `NODE_ENV=production`, multi-tenant, KMS `aws`, `S3_BUCKET`, SMTP starttls, `ADDRESS_HASH_PEPPER` (32 or more characters) and `CLAMAV_HOST`, and `GET /health` answered `{"status":"ok"}`. Containers `s4c-int-api` and `s4c-int-pg` and the image `consultorio-api:s4c-int` were removed by name.
+- Fixes: none were needed beyond the journal restamp.
+
+## Stage 3 hardening follow-ups
+
+Branch `fix/stage-3-hardening`, created from `feat/stage-4-revenue` at `41bd201`. These are the non-blocking items both judges raised in the final Stage 3 Judgment Day (engram `sdd/health-practice-saas/jd-stage3-verdict`). Migrations `0498` and `0499` (range `4d`; track D keeps `0490` - `0497`). The late-401 session epoch is out of scope.
+
+| Item                                | What changed                                                                                                                                                                                                                                                                                                                                                                                                | Proof                                                                                                                                                                                                                          |
+| ----------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Backfill must not fail the deploy   | `backfillUsageConfirmation` is best effort: a tenant that fails is reported (`onFailure`, default one stderr line with tenant id, error class and database code, never the message) and skipped; the others go on; the next run retries it. The lookup of the tenants is guarded too, so `runMigrations` never rejects because of it. New shared helper `platform/db/failure-log.ts` (`describeFailure`). | `migrate-usage-backfill.test.ts`: a real `22012` (trigger doing `1/0`) on one tenant leaves the others done and is retried after; the stderr line has no message; a broken `db` does not reject                                  |
+| Backfill scanned the table per boot | Migration `0498`: partial index `whatsapp_usage_event_unsettled_idx (tenant_id, id) WHERE confirmed_at IS NULL AND released_at IS NULL`. Live queued reservations match it too, which is acceptable.                                                                                                                                                                                                         | `migrate-usage-backfill.test.ts` reads the index definition from `pg_indexes`                                                                                                                                                  |
+| `sweep.ts` ordering                 | Planning runs first in a savepoint of its own; every cleanup (`seal_legacy_offer_urls`, the housekeeping hooks, `rehash_legacy_addresses`, `close_stale`, `clear_expired_offer_links`) runs after it in a savepoint each and is reported on failure; a planning failure is rethrown after the cleanups. No cleanup needs to run before the planning for correctness (see the comment in the handler).        | `reminder-sweep.test.ts` with real SQL errors: a failing hook, and a failing `closeStale` (trigger), still let the planning commit and the next steps run; a failing planning (`worklist.open` doing `1/0`) still runs the cleanups and the job rejects |
+| `defaultReport`                     | Logs `step`, `tenantId`, error class (`name`) and database `code`; never `error.message`. `onFailure` now receives `{ step, tenantId, error }`.                                                                                                                                                                                                                                                              | `reminder-sweep.test.ts` parses the stderr line and checks a value of the message is absent                                                                                                                                    |
+| Webhook lookup index                | Migration `0499`: partial index `message_whatsapp_address_hash_idx (address_hash) WHERE channel = 'whatsapp'`.                                                                                                                                                                                                                                                                                              | `whatsapp-attribution.test.ts`: the index exists and `EXPLAIN` of the lookup uses it with sequential scans disabled (the log is too small for the planner to choose it by cost)                                               |
+| Unused definer function             | Migration `0499` also drops `app.whatsapp_reply_tenants(text, timestamptz, integer)` (0392); `rg` found no caller (the webhook uses `..._any`). Removed from the allowlist of `definer-functions.test.ts`.                                                                                                                                                                                                   | `definer-functions.test.ts` (the catalog equals the allowlist)                                                                                                                                                                 |
+| Docs and comment                    | `docs/migration-ranges.md`: on a database that never applied 0398, 0398 itself still runs in the migrator transaction with its lock hazard, the runner step is only a safety net; 0498 / 0499 documented. `migrate-usage-backfill.test.ts` says why the second-run `{0, 0}` relies on `fileParallelism: false`.                                                                                              | -                                                                                                                                                                                                                              |
+
+Known limit, not changed: when the planning fails the handler rethrows, and `runJob` rolls back the whole transaction (the `job_execution` marker included) when a handler throws. The cleanups still run and are reported, but their work is undone with the rest and repeated by the retry. Making them persist would need the cleanups in a transaction of their own (a separate job, or a `runJob` that commits and then fails), which is a design change.
+
+Same class of leak, not touched (outside `sweep.ts`): `defaultReport` in `modules/notifications/application/opt-out.ts` still logs `error.message`.
+
+## Stage 4 integration 2b (track B + Stage 3 hardening)
+
+Merge of `feat/stage-4-track-4b` (tip `440349e`, wave 2: financial and cash reports, S4.14 and task 4.33) into `feat/stage-4-revenue` (tip `4f80ddf`, which has track C restamped and the Stage 3 hardening migrations `0498` and `0499`). Merge commit `7b888c5`.
+
+### Conflicts
+
+- `docs/migration-ranges.md`: both sides rewrote the Stage 4 paragraph. Kept the Stage 4 branch text (the `0498` / `0499` note) and added the track B wording (`0430` and `0431`, indexes only).
+- `apps/api/src/db/migrations/meta/_journal.json`: the last entries conflicted (`0498` / `0499` against `0431`). Resolved by keeping the Stage 4 branch entries, adding `0431` once and renumbering `idx`; then `db:restamp` (stamps raised for `0440` to `0446`, snapshots `0431` and `0440` re-chained) and `db:check` (no drift).
+- `docs/stage4-tracks.md`, this file and the track B apply-progress: merged without conflict.
+
+### Journal order (the first resolution was wrong)
+
+- The first resolution put `0431` right after `0430`. The e2e stack then failed to migrate: `0431` creates `invoice_report_idx` on `invoice`, and `0444_invoices` creates that table later in the journal.
+- `0431` is now the last journal entry, after `0499` (the order in the track B journal too). No applied entry moved, and a database that already applied `0499` picks `0431` up because its `when` is the highest. Order of the tail: `0446`, `0498`, `0499`, `0431` (`idx` 71 to 74).
+- Checked by script: 75 entries, `idx` 0 to 74 unique and contiguous, `when` strictly rising, every SQL file present, the `prevId` chain of the snapshots unbroken. `0431_snapshot.json` is `0499` with new ids (the report indexes are custom SQL, not in the Drizzle schema). `docs/migration-ranges.md` says why `0431` is last.
+
+### Fixes (three separate commits)
+
+| Commit                                                                  | Why                                                                                                                                                                                                                                                                                                                                                                                                         | Test first                                                                                                                                                                                         |
+| ----------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `fix(db): run the report money indexes after the invoices table exists` | Journal order above.                                                                                                                                                                                                                                                                                                                                                                                        | The e2e stack failed to start (the `invoice` table did not exist yet); it starts now.                                                                                                              |
+| `fix(e2e): give the stack worker the MinIO bucket ...`                  | `scripts/stack/start-stack.ts` gave the API its storage directly but `loadConfig` no `S3_*`, and the billing and invoicing worker wirings read `config.storage`, so `export.build` and `invoice.pdf` were never registered in e2e. The stack now passes `S3_BUCKET`, `S3_REGION`, `S3_ENDPOINT`, `S3_FORCE_PATH_STYLE`, `S3_ACCESS_KEY_ID` and `S3_SECRET_ACCESS_KEY` of its MinIO to `loadConfig`.         | `stage4-cash.spec.ts` step 5 requests a charges export through the API and waits for `ready`. Without the change it stayed `queued` (expected `ready`, received `queued`); with it, `ready`.      |
+| `fix(web): let the money breakdown tabs shrink ...`                     | With charges in the data, the "by location / professional / payer / type" table widened the whole page at 360 px (the `Tabs` root is a classless grid item with `min-width: auto`; `scrollWidth` 892 against 360), so the browser zoomed out and the filter button was unreachable. `className="min-w-0"` on that `Tabs`: the table scrolls inside its card.                                              | The money-report e2e tests failed (4 tests, "Aplicar filtros" never clickable) when run after the cash spec had created charges; green after the change with the data present.                   |
+
+`stage4-reports.spec.ts` export test: it stays valid with or without charges (the demonstration data has none of its own): with charges in the period it waits for "Archivo listo: N filas.", without them it expects "No hay nada para exportar". `stage4-invoicing.spec.ts` still passes.
+
+### Verification (tip after the last fix, Node v24.22.0, pnpm 10.34.7, Docker not shared)
+
+- `pnpm install --frozen-lockfile`, `pnpm typecheck`, `pnpm lint`, `pnpm format:check`: clean.
+- `pnpm test` (unit): 381 files, 4833 tests passed, 0 failed, no flake.
+- `pnpm test:integration` (full): first run 225 files passed, 1 failed, 1 skipped; 3477 tests passed, 2 failed, 4 skipped. Both failures are in `backup-restore.test.ts` ("socket hang up" against MinIO under load, and the test after it); the file passed alone (4 of 4). Recorded as a load flake: 0 failed on the final read.
+- `pnpm build`: green. `pnpm db:check`: no drift.
+- Full e2e (`E2E_WEB_PORT=4880 E2E_API_PORT=3880 E2E_MINIO_PORT=9880`, `--workers=2`): 203 passed, 0 failed, 0 flaky, 0 skipped.
+- `apps/api/scripts/bench-reports.ts` with defaults (50,000 appointments, 35,000 charges, 29,143 payments, 14,500 vouchers). Every target (p95 under 1000 ms) is met:
+
+| Query                                                                       | p95 (ms)            |
+| --------------------------------------------------------------------------- | ------------------- |
+| Operational: month whole org / year whole org / month reception / professional | 135 / 352 / 59 / 53 |
+| Operational drill-down of 50: a month / no-shows of a year                  | 15 / 20             |
+| Financial: month whole org / year whole org / month reception / professional | 98 / 604 / 52 / 28  |
+| Financial drill-down of 50: charges of a month / payments of a year / vouchers of a year | 122 / 368 / 121 |
+| Cash: month whole org / year whole org / month reception                    | 8 / 41 / 6          |
+
+The slowest target query is the financial report of a year (604 ms). The "of which" lines of the cash report are reference rows with no target (the vouchers of a year alone take 2032 ms at p95 as a stand-alone reference).
+
+- Docker: `infra/Dockerfile` built; fresh `postgres:17` with `infra/postgres/init/01-roles.sql`; `db:migrate` run twice (both: migrations applied, platform catalogs loaded; 75 migrations recorded; `charge_report_idx`, `payment_report_idx`, `payment_reversal_report_idx` and `invoice_report_idx` exist); the image started as `api` with `NODE_ENV=production`, multi-tenant, KMS `aws`, `S3_BUCKET`, `CLAMAV_HOST`, SMTP starttls and `ADDRESS_HASH_PEPPER` (32 or more characters) against that database: `GET /health` answered `{"status":"ok"}`. Containers `int2b-api` and `int2b-pg`, the network `int2b-net` and the image `int2b-api:smoke` were removed by name.
+- Incident: none. Logs are in `$TEMP/int2b-*.log`.
+
+## Judgment Day Stage 4, round 1
+
+Fresh-context review of `feat/stage-4-revenue` at `9cd11e9` (two judges, neither found a CRITICAL; both: NEEDS FIX). The twelve findings both judges confirmed (C1 to C12) were fixed, and each suspect item (one judge) was reproduced with a failing test first. Strict TDD: the race findings have real two-connection integration tests (`cash-register-races.test.ts`, `invoice-races.test.ts`, `invoice-reconciliation.test.ts`) that failed before the fix; where the fix came with a refactor (C3, C4) the tests were also checked by mutation (the line that carries the behaviour switched off: the matching tests fail).
+
+### Findings
+
+| Id    | Fix                                                                                                                                                                                                                                                                                                                                 | Test                                                                             |
+| ----- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------- |
+| C1    | `findOpenSession` reads the register `FOR SHARE` on the write paths; `guard_payment` and `guard_payment_reversal` read it `FOR SHARE` too (migration 0490). A close in progress makes the entry wait and then find the register closed.                                                                                              | `cash-register-races.test.ts` (4 tests, 3 red before)                            |
+| C2    | `readChargeLines({ lockCharges })` locks the charges (shared) before the lines when an invoice is created; `voidCharge` locks the lines before asking for invoices; `guard_invoice_line_insert` refuses a line of a voided charge (0491).                                                                                              | `invoice-races.test.ts` (void first, invoice first, database backstop)           |
+| C3    | A manual voucher that replaces a pending invoice tries the advisory lock of the attempts (`conflict`), refuses `awaiting_reconciliation` (`invoice_awaiting_reconciliation`), requires the same lines and recipient (`invoice_replacement_mismatch`) and locks all the lines in order. `lockedWrite` says whether it wrote; an authorized answer for a closed invoice is `orphaned`: audit, error log with number and CAE, worklist item. | `invoice-reconciliation.test.ts` (4 tests; 3 mutants killed)                     |
+| C4    | The invoice is marked `awaiting_reconciliation` with the expected number in a commit of its own BEFORE the authority is called (`markIntent`, connection of its own); a retry asks `findIssued` and adopts a voucher whose type, point of sale, number, total and date match, without calling `issue`.                              | `invoice-reconciliation.test.ts` (mark visible mid-call, crash simulation, mismatch parks) |
+| C5    | `exportInvoicing` exports the fiscal profile, the points of sale, the invoices (no request hash), their lines and the document metadata; `fiscal_credential` is never read.                                                                                                                                                          | `invoicing-export-contributor.test.ts`                                           |
+| C6    | `refresh_invoiced` locks the charge line in a statement of its own before the UPDATE (fresh snapshot); `guard_invoice_line_insert` does the same; `guard_invoice_insert` locks the invoice a credit note cancels (0491).                                                                                                              | `invoice-races.test.ts` (lost update: 400000 instead of 1000000 before; two notes)|
+| C7    | `invoice.issuer_snapshot` (0492, backfilled in the migration): the request, its fingerprint and the PDF use the issuer of the request; the guard of the invoice keeps it immutable.                                                                                                                                                  | `invoice-reconciliation.test.ts` (CUIT edited while awaiting; PDF), `invoice-issuer-backfill.test.ts` |
+| C8    | A number or CAE we already hold parks the invoice in `needs_attention` (0493): never retried, audit `invoice.needs_attention`, error log, worklist item `invoice_attention` (0495, contract, API action `open_invoice`, web card). A point of sale with invoices cannot change its environment (`point_of_sale_has_invoices`).      | `invoice-reconciliation.test.ts`, `scheduling-worklist.test.ts`, `worklist-page.test.tsx` |
+| C9    | An invoice line without an appointment type description reads "Servicios de salud" (constant `GENERIC_SERVICE_WORDING`); the type name never reaches the line.                                                                                                                                                                      | `appointment-type-invoice-description.test.ts`                                   |
+| C10   | A unique violation is mapped by constraint: `payment_reference_key` is `payment_voucher_duplicate`, `payment_idempotency_key` and `invoice_idempotency_key` are `idempotency_key_reused`.                                                                                                                                              | `cash-register-races.test.ts`, `invoice-races.test.ts`                           |
+| C11   | `guard_payment_reversal` checks that the charge of the reversal is the one of its payment and serializes reversals of a payment on the row of its charge (0490).                                                                                                                                                                    | `cash-register-races.test.ts`                                                    |
+| C12   | The key the authority sees is `issuerKeyOf(tenantId, invoiceId)`; requests and lookups carry `tenantRef`; the simulators scope series, answers and CAE by it (`local_afip_*.tenant_ref`, 0494).                                                                                                                                      | `invoice-issuer.contract.ts` (both adapters), `afip-local.test.ts`               |
+
+Suspect items:
+
+| Id    | Outcome                                                                                                                                                                                                                  |
+| ----- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| A-W5  | Reproduced (a payment at 23:30 in Buenos Aires printed the next day). Fixed: the export prints the local day it filters by.                                                                                                                  |
+| A-W6  | Reproduced (no audit of the attempts). Each deferred attempt writes `invoice.attempted` (attempt, unknown flag, charge ids, no message); `invoice.requested` and `invoice.issued` carry the charge ids. Registered in `audit-coverage`.   |
+| A-T6  | Reproduced. The financial drill-down returns `professionalId: null` where the name is hidden (contract: nullable).                                                                                                                                  |
+| A-T7  | Reproduced by mutation (a cap of 1 row listed a truncated file). An export with more rows than the cap (20.000) fails with `export_too_large`, and both screens ask for a shorter period.                                                         |
+| A-T8  | Documentation only: the invoice PDF job is not registered without a bucket and nothing backfills (runbook).                                                                                                                                       |
+| A-T9  | Verified: the demonstration stack runs API and worker in one process, so the console reaches the fake; two separate processes would not share it. Not cheap to fix; documented in `docs/demo.md`.                                         |
+| A-S2  | Reproduced by reading the schema (nothing stopped a second voucher from repeating a CAE). `unique (tenant_id, cae) where cae is not null` (0496) and `invoice_cae_taken`; the seed and the simulators never repeat one (their CAE hashes the whole voucher). The tests that reused a constant CAE now give every voucher its own. |
+| A-S3  | Reproduced. The manual request hash no longer depends on the order of the lines.                                                                                                                                                  |
+| A-S4  | Reproduced (two lines of one voucher had the same record id). The records of the invoiced figure carry the id of the voucher line.                                                                                                |
+| B-T4  | Reproduced only for staff who are both reception and professional and see a charge of their own at a location they are not assigned to (a professional cannot be granted `payments.write`). Money enters a register only from someone who may operate its location.   |
+
+### Migrations (range `4d`, 0497 left free)
+
+`0490_cash_payment_locks`, `0491_invoice_lock_guards`, `0492_invoice_issuer_snapshot` (column, guard, backfill by a `DO` block under the tenant context of each organization), `0493_invoice_needs_attention` (check, NOT VALID), `0494_local_afip_tenant_scope`, `0495_worklist_invoice_attention` (checks, NOT VALID), `0496_invoice_cae_unique`. `db:restamp` and `db:check`: no drift; the journal has 82 entries, `idx` 0 to 81 unique and contiguous, `when` strictly rising, `0431` still at `idx` 74 (after `0499`, so `invoice` exists when it indexes it); the seven new entries follow it.
+
+### Deviations from the instructions
+
+- C11 asked to lock the payment row `FOR UPDATE`. The application role has no UPDATE on `payment` (money is append only) and a row lock needs that privilege, so the reversals are serialized on the row of the charge, the lock the application takes first anyway. The charge check lets a charge the caller cannot see fall to the foreign key (the generated isolation suite expects `23503`).
+- C9 mentions an es-AR catalog key. The wording of a voucher line is stored on the invoice and printed on the PDF, not shown by a screen, and the API has no catalog for it; it is a constant of the domain (`GENERIC_SERVICE_WORDING`), like the other wordings.
+- C3 and C8 ask for "a worklist or attention item for the owner". It is a worklist item of reception (`invoice_attention`, the whole organization): that is the queue the product has, and the owner and the administrators see all of it.
+- C4: the transaction of the job cannot be shortened (`runJob` wraps the handler in the transaction that records the job); it holds only the advisory lock across the call. The mark is committed on a connection of its own (`IssueDeps.db`); a caller that has only a transaction (the demo seed) writes it in that transaction.
+- C6 and C2 add `FOR SHARE` on `charge` and `FOR UPDATE` on `charge_line` inside invoker triggers; none of them is a SECURITY DEFINER function, so the definer allowlist is unchanged.
+- The `invoice-reads` test dated the voucher in UTC; from 21:00 in Buenos Aires it failed every day. It now uses the Buenos Aires date, as the voucher does.
+
+### Verification (final tip, Node v24.22.0, pnpm 10.34.7, Docker shared with other projects)
+
+- `pnpm install --frozen-lockfile`, `pnpm typecheck`, `pnpm lint`, `pnpm format:check`: clean.
+- `pnpm test` (unit): 383 files, 4874 tests passed, 1 skipped, 0 failed.
+- `pnpm test:integration` (full, Testcontainers, Postgres 17): 236 files, 235 passed, 1 skipped; 3586 tests passed, 4 skipped, 0 failed. The first full run (before the last commit) had 8 failures in 3 files, all caused by this round and fixed in it: the generated isolation fixture of `payment_reversal` named a charge that is not the one of its payment, and two invoice tests expected the name of the appointment type on a line (it is "Servicios de salud" now).
+- `pnpm build`: green. `pnpm db:check`: no drift.
+- Full e2e (`E2E_WEB_PORT=4890 E2E_API_PORT=3890 E2E_MINIO_PORT=9890`, `--workers=2`): 206 passed, 0 failed, 0 flaky, 0 skipped (10.3 minutes). The containers it left behind (`postgres:17`, Mailpit, Ryuk) were removed by id; nothing else was touched.
+- Docker: `infra/Dockerfile` built (`consultorio-api:jd4r1`); a fresh `postgres:17` with `infra/postgres/init/01-roles.sql`; `db:migrate` run twice (both: migrations applied, platform catalogs loaded; 82 migrations recorded; `invoice.issuer_snapshot`, `invoice_cae_key` and `invoice_report_idx` exist; the three `NOT VALID` constraints were validated by the runner); the image started as `api` with `NODE_ENV=production` (the image's), multi-tenant, KMS `aws`, `S3_BUCKET`, `CLAMAV_HOST`, SMTP starttls and `ADDRESS_HASH_PEPPER`: `GET /health` answered `{"status":"ok"}`. The containers `jd4r1-pg` and `jd4r1-api`, the network `jd4r1-net` and the image `consultorio-api:jd4r1` were removed by name or id.
+- Kept green: `boot.test.ts`, the determinism of the demonstration and the money-invariants tests (all inside the runs above). The Lighthouse budget is a CI job and was not run here; the web changes only add one icon to the worklist screen and strings to the catalogs, no import in the entry chunk.
+- Incident: none. Logs are in `$TEMP/jd4r1-*.log`.
+
+
+## Judgment Day Stage 4, round 2
+
+Fresh-context review of `feat/stage-4-revenue` at `7abca49` (diff `9cd11e9..7abca49`; two judges, no CRITICAL, both: NEEDS FIX). Seven findings confirmed by both (R2-1 to R2-7) were fixed; six suspect items (one judge) were reproduced with a failing test first. Strict TDD: each fix has a test that failed on the code before it (the run of `invoice-series.test.ts` against the old `issue-attempt.ts` and `pool.ts` failed 11 of 12 tests; `invoice-guard-races.test.ts` failed 4 of 6 before the migration). Race tests are real two-connection tests. Exceptions to "red first", all disclosed: the contract-suite tests and the web dialog test were written after the code they cover (the contract tests assert fields that did not exist, so they could not have passed); the test "credit note and void of the same charge" in `invoice-guard-races.test.ts` passes before and after (see R2-5).
+
+### Findings
+
+| Id   | Fix                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             | Test                                                                                                                                                                                                                                                                                                      |
+| ---- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| R2-1 | (a) Issuance is serialized per series: right after the lock of the invoice, `pg_try_advisory_xact_lock` on `afip-attempt-series` + tenant + point of sale + type; whoever does not get it is `skipped`. On top of it, an invoice of the series that waits for reconciliation holds the others back (they are put back a minute; between two that wait, the older goes first), because the expected numbers of two sequential lost answers are the same too. (b) `voucherMatches` (`domain/voucher-match.ts`): total, date, issuer CUIT, recipient document (type and number, or none) and, for a credit note, `cbteAsoc`; a field the lookup does not state is a mismatch. `IssueResult` gained `issuerCuit`, `buyerDocument`, `associatedVoucher`; both adapters and the shared contract suite state them (the simulator stores them: migration 0497). (c) After a refresh the attempt probes forward from the highest known number plus one (five at most), adopts or parks on a match and sends only when the lookup answers `null`. | `invoice-series.test.ts` (same total and day with both answers lost; refresh adopts at the moved number; sends once after probing forward; a voucher that does not say whom it is for is not adopted; series lock contention; the second invoice is not sent while the first may have been answered), `voucher-match.test.ts`, `invoice-issuer.contract.ts` (both adapters) |
+| R2-2 | `acknowledgeUnknownOutcome` (contract; owner and admin only, through the permission of the route) lets a manual voucher replace an `awaiting_reconciliation` invoice; it writes `invoice.replaced_unresolved` (type, point of sale, expected number) and opens an `invoice_attention` item (`replaced_unresolved`). The web dialog shows the warning and a confirmation box after the server answers `invoice_awaiting_reconciliation`. A definite "down" after a lookup that found nothing already clears the mark (`defer`), so that replacement needs no acknowledgement.                                                                                                                                                                                                                                                                                                                                                              | `invoice-replacement.test.ts` (refuses without it, replaces with it and audits, reception refused, no entry when the outcome was not in doubt, mark cleared after probe-empty and down), `invoice-detail.test.tsx`                                                                                         |
+| R2-3 | `markIntent` uses `.returning` and answers `null` (the attempt is `skipped`, the authority is not called) when nothing was written; its connection sets `lock_timeout` (`markLockTimeoutMs`, 5 s) and a timeout is `skipped`; every pool is opened with `connectionTimeoutMillis` 10 s (`CONNECTION_TIMEOUT_MS`).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                | `invoice-series.test.ts` (closed before the mark; a locked row; the pool option)                                                                                                                                                                                                                          |
+| R2-4 | Migration 0497: `BEFORE UPDATE OF environment` trigger on `point_of_sale` that refuses the change when any invoice has the point of sale; `guard_invoice_insert` takes the point of sale `FOR SHARE`, so an invoice in progress makes the update wait and then be refused; `choosePointOfSale` re-reads the point `FOR SHARE`; the application check stays and maps the database refusal to `point_of_sale_has_invoices`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            | `invoice-guard-races.test.ts` (concurrent invoice and environment change; an update that skips the application)                                                                                                                                                                                           |
+| R2-5 | `createCreditNote` locks the charges before the lines (`lockCharges`); `guard_invoice_line_insert` takes the charge `FOR SHARE` before the line in every branch (0497).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          | `invoice-guard-races.test.ts` (the guard and the credit note wait for the charge BEFORE they hold the line; credit note against void)                                                                                                                                                                     |
+| R2-6 | `closeReplaced` refuses a credit note, and a target whose voucher type, total, lines, recipient or recipient document differ (`invoice_replacement_mismatch`); the type and recipient checks of the manual voucher now run before the target is closed.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          | `invoice-replacement.test.ts` (credit note, total, document, type, and the positive case)                                                                                                                                                                                                                 |
+| R2-7 | `waitForLockWaiters(holderPid)` counts only the backends blocked by the transaction the test holds (`pg_blocking_pids`) and returns their pids; `backendPid` and a typed `gate` came with it. A real `attemptIssue` (authority call blocked) against a manual replacement; a crash after the mark and before the call (the retry probes, finds nothing, sends once); the header of the cash race file says which test is only a guard (a payment already written when the close starts: the foreign key made the close wait before round 1, so it passed before the fix).                                                                                                                                                                                                                                                                                                                                                                              | `cash-register-races.test.ts`, `invoice-races.test.ts`, `invoice-series.test.ts`                                                                                                                                                                                                                          |
+
+Suspect items:
+
+| Id   | Outcome                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| ---- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| A    | Reproduced, and it is a flake: `credential.test.ts` passes most of the time and a certificate is unreadable about 1 time in 650 (9 of 6000 in a loop). The serial number of the development certificate is 16 random bytes and was written as a DER integer without dropping a leading zero byte (not minimal); Node refuses that certificate (`certificate_unreadable`). `integer()` is now minimal; the test fixes the serials that broke it (new `serial` option). Not time dependent, not an environment difference. |
+| A-W4 | Reproduced. A `rejected` lookup is "cannot tell": nothing is sent, the mark stays.                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| B-T5 | Reproduced (with the issuer made non-simulated and a credential of the new CUIT). A pending invoice whose snapshot CUIT is not the one of the credential is parked (`issuer_mismatch`, worklist text); a credit note is refused (`invoice_issuer_mismatch`, contract, es-AR). Retried invoices take the live issuer, so they are not affected. Simulators have no credential and are untouched.                                                                                                              |
+| B-S1 | Reproduced. `closeReplaced` resolves the `invoice_attention` item of the invoice (`replaced_by_manual`); the application takes the worklist through `InvoicingOptions.worklist`.                                                                                                                                                                                                                                                                                                                         |
+| B-S3 | Reproduced (the text said "otro pago"). `idempotency_key_reused` now names a payment, an invoice or a voucher; `locale-files.test.ts`.                                                                                                                                                                                                                                                                                                                                                                   |
+| B-S5 | Reproduced. The console lists every organization's vouchers with their `tenantRef` and accepts `?tenantRef=<uuid>`; the web table shows a short reference. No filter box in the screen yet.                                                                                                                                                                                                                                                                                                              |
+
+None of the suspect items failed to reproduce.
+
+INFO items (documentation only): the 0496 unique CAE would abort a deploy over duplicate manual CAEs (query in `docs/migration-ranges.md`); 0492 is a documented exception, fine; `local_afip_*` rows from before 0494 have `tenant_ref = ''` (runbook, simulator only); the export contributors read whole tables (`docs/stage4-tracks.md`, for Stage 6 retention). The runbook `docs/runbooks/afip-switch-to-real.md` now says what `findIssued` must return (recipient document, issuer CUIT, `cbteAsoc`; absent is a mismatch), the per-series serialization, the unknown-outcome replacement, the connection of the mark and the CUIT of the credential.
+
+### Migrations (range `4d`)
+
+`0497_invoice_race_guards` only (the reserved gap 0480 - 0489 was not used). Columns `buyer_doc_type`, `buyer_doc_number`, `assoc_type`, `assoc_point_of_sale`, `assoc_number` on `local_afip_voucher` (generated by drizzle-kit from the schema); `guard_invoice_line_insert` and `guard_invoice_insert` replaced (invoker functions, not SECURITY DEFINER: the definer allowlist is unchanged); `app.guard_point_of_sale_environment` and its trigger. `db:restamp` and `db:check`: no drift; the journal has 83 entries, `idx` 0 to 82 unique and contiguous, `when` strictly rising, `0431` still at `idx` 74; 0497 is the last. No applied migration was edited.
+
+### Deviations from the instructions
+
+- R2-2 asks that an invoice replaced while its outcome was unknown, and that later turns out to be issued (a reconcile or a late answer), be routed to `invoice_attention` as orphaned. A closed invoice has no mark (`invoice_delivery_state_check` ties the delivery state to `pending`), so nothing reconciles it afterwards, and a late answer cannot reach it either (the replacement takes the advisory lock of the attempts: `conflict` while a call is in flight). So the item is opened at the replacement, with the number to look for, and the existing `orphaned` path (an answer for a closed invoice) is unchanged. Looking for the voucher after the fact would need a schema change (a mark on a rejected invoice) and a job; it is left for the real adapter work.
+- R2-1 asks for the serialization of in-flight issuance. That alone does not make the expected numbers exclusive (two sequential lost answers share the same expected number), so an invoice of the series that is `awaiting_reconciliation` also holds back the others. The consequence is deliberate: a long outage holds the whole series.
+- R2-5: the credit note against void test passes before the fix as well (the credit note did not lock the charge, so there was no cycle). The fix is the consistency of the order (the guard now locks the charge in the credit note branch too, which would have created the inverse order if the application had not been changed with it); the red tests are the two that look at where each writer waits.
+- R2-2: the mark is cleared by a definite answer, as before; no new "probed empty" field was added.
+- The full e2e found a failure that is not from this round: `stage4-demo.spec.ts` ("the charges to invoice: layout", the page is 10px wider than the screen) failed on the day the rolling window of charges brought in a patient with a long name ("Facturar el cobro de Nicolás Andrés Torres" does not wrap). It fails identically at `7abca49` (checked in a throw-away worktree, removed). Fixed with the wrapping classes the project already uses for long buttons (`ChargesToInvoice.tsx`).
+- `storage-s3.test.ts` (MinIO from Testcontainers) hung once on `socket hang up` during the first full integration run, and the first start of the e2e stack failed once with the same error while another agent was also using Docker. Both passed on the next run (the S3 file alone: 17 of 17; the e2e: full).
+
+### Verification (final tip, Node v24.22.0, pnpm 10.34.7, Docker shared with other agents)
+
+- `pnpm install --frozen-lockfile`, `pnpm typecheck`, `pnpm lint`, `pnpm format:check`: clean (also after the last code commit).
+- `pnpm test` (unit): 384 files, 4886 tests passed, 1 skipped, 0 failed, no timeouts.
+- `pnpm test:integration` (full, Testcontainers, Postgres 17): 240 files, 238 passed, 1 skipped, 1 failed (`storage-s3.test.ts`, the MinIO hang above; 17 of 17 passed alone); 3604 tests passed, 21 skipped. The new files: `invoice-series`, `invoice-replacement`, `invoice-guard-races`, `invoice-issuer-mismatch`.
+- `pnpm build`: green. `pnpm db:check`: no drift.
+- Full e2e (`E2E_WEB_PORT=4890 E2E_API_PORT=3890 E2E_MINIO_PORT=9890`, `--workers=2`): 206 passed, 0 failed (8.7 minutes), after the layout fix. The run before it: 205 passed and the failure above.
+- Docker: `infra/Dockerfile` built (`consultorio-api:jd4r2`); a fresh `postgres:17` with `infra/postgres/init/01-roles.sql`; `db:migrate` run twice from the repository against it (both: migrations applied, platform catalogs loaded; 83 migrations recorded; `point_of_sale_environment_guard` and `local_afip_voucher.buyer_doc_*` exist); the image started as `api` (`NODE_ENV=production`, multi-tenant, KMS `aws`, `S3_BUCKET`, `CLAMAV_HOST`, SMTP starttls, `ADDRESS_HASH_PEPPER`): `GET /health` answered `{"status":"ok"}` and the container was healthy. The containers `jd4r2-pg` and `jd4r2-api`, the network `jd4r2-net` and the image were removed by name; the containers of the e2e stacks removed themselves; nothing of other agents was touched.
+- Kept green: `boot.test.ts`, the determinism of the demonstration, the money-invariants tests and the shared invoice-issuer contract suite for both adapters (inside the runs above). The Lighthouse budget is a CI job and was not run here; the web changes add a block to a dialog, a label and classes in lazy routes (no import in the entry chunk).
+- Incident: none. Logs are in `$TEMP/jd4r2-*.log`.
+
+## Judgment Day Stage 4, round 3
+
+Fresh-context review of `feat/stage-4-revenue` at `7518c0c` (diff `7abca49..7518c0c`; two judges, no CRITICAL, no new deadlock or double-issue path, both: NEEDS FIX on liveness and surfacing). Seven findings confirmed by both (R3-1 to R3-7) were fixed, four suspect items (one judge) were reproduced with a failing test first, and the INFO items went into the runbook. Plus one item from the coordinator: CI of PR #17 failed on `financial-report.test.ts` (an audit row picked by position).
+
+### CI of PR #17
+
+`reportEntries()` and `denials()` selected audit rows with no `ORDER BY` and asserted on `after.at(-1)`. The tests now take the ids from before and find the one new row by id (`financial-report.test.ts`, two tests), and the three other files that read audit rows with `.at(-1)` and no order got an `orderBy(occurredAt, id)` (`audit-viewer`, `clinical-appointments`, `clinical-encounter-access`). Commit `ed7a5cf`.
+
+### Findings
+
+| Id   | Fix | Test |
+| ---- | --- | ---- |
+| R3-1 | `awaitingBackoffMs` (`domain/retry-schedule.ts`): an invoice that is `awaiting_reconciliation` waits at most 5 minutes (1, 2, 4, 5, 5 ...). A held invoice (`holdBack`) writes only its own `next_attempt_at` (one minute), WITHOUT locking its charge lines and with `FOR UPDATE SKIP LOCKED` (it never waits for a row), and brings the blocker (the oldest awaiting invoice of the series, `blockerInSeries`) forward to now, at most once per `SERIES_WAIT_MS` (the `last_attempt_at` of the blocker decides). | `invoice-stall.test.ts` (an outage of five hours, then the series issues within 15 minutes; the cap; the pull-forward and its rate; a held invoice does not wait for a lock on its charge lines), `retry-schedule.test.ts` |
+| R3-2 | `surfaceStall` (end of `defer`): when the blocker has been tried 6 times or was requested 2 hours ago AND it holds at least one invoice, ONE `invoice_attention` item `outcome_unknown` (type, point of sale, `held`) is opened on it. `settleStall` closes it (`outcome_settled`) when the invoice is issued, rejected or parked; the replacement closes it as before. `InvoiceDto.heldBy` (`{ id, requestedAt }`, only if the reader may see the blocker) and `blocksSeries`; `domain/series-hold.ts` is the pure rule that the SQL one repeats. Web: the pending note says "Espera a otra factura de su serie" with a button that opens the blocker; the blocker says how many wait and offers the manual path; the worklist card has the `outcome_unknown` text. | `invoice-stall.test.ts` (item opened once with the count, DTO fields, item resolved when the blocker settles, an acknowledged replacement of the blocker releases the series and the held invoice issues), `series-hold.test.ts`, `invoices-page.test.tsx`, `worklist-page.test.tsx`, `invoicing.test.ts` (contracts) |
+| R3-3 | Migration 0480, table `invoice_stray_voucher` (tenant, invoice, point of sale, type, number, reason; unique per series number; insert and select only for `app_rw`). `closeReplaced` records the number the replaced invoice expected (`replaced_unresolved`) and `recordOrphan` the number of the orphaned voucher (`orphaned`). `highestNumberFor` (the number expected next) counts them; a lookup that lands on one (`belongsToAnother`) never adopts it and moves to the number after the highest. `lastKnownNumber` for the simulator still follows the recorded numbers only. | `invoice-ghost.test.ts` (4 tests; the ghost is made with a replacement at another point of sale, as the web tool of the authority does), the isolation and demo coverage suites for the new table |
+| R3-4 | `park` takes `wasAwaiting`. For `issuer_mismatch` and `voucher_mismatch` (the reasons that do not settle whether an earlier request was answered) an invoice that was awaiting keeps `outcomeUnknown: true` in the audit entry and in the item, and keeps its `expected_number`; `closeReplaced` then asks for `acknowledgeUnknownOutcome` for a `needs_attention` row that still has a number. The log line is chosen per reason (it no longer says "the authority issued a voucher" for an issuer mismatch). The es-AR text says that nothing resumes a parked invoice and that the only way out is to register the voucher by hand, plus a note when the outcome is unknown. | `invoice-issuer-mismatch.test.ts` (3 tests: audit, item and log; replacement refused without the acknowledgement and the number remembered with it; a parked invoice with no doubt is replaced as before), `worklist-page.test.tsx` |
+| R3-5 | `MAX_PROBES = 2` replaces `FORWARD_PROBES = 5`: after the first hop the number is `highest + 1`, so a third question cannot exist; the fallback `number_taken` is documented as a race with a manual entry. The runbook no longer says "up to five". | `invoice-series.test.ts` (probes `[taken, taken + 1]` in both paths) |
+| R3-6 | The test that said "both answers are lost" now says what it checks (the second invoice is held back, so it cannot lose an answer) and asserts that the authority is not called for it. New: the older one that waits goes first (the `id <` rule), the ghost number (three tests), the issuer mismatch of an awaiting invoice, a lookup that keeps answering `rejected` (the cap). | `invoice-series.test.ts`, `invoice-stall.test.ts`, `invoice-ghost.test.ts`, `invoice-issuer-mismatch.test.ts` |
+| R3-7 | The JSDoc of `WRAP` moved above the constant, so the docblock of the component sits on the component. | (cosmetic) |
+
+Suspect items:
+
+| Id   | Outcome |
+| ---- | ------- |
+| B-T1 | Reproduced, but only for a PAYER: the document of a patient is the one the person typed in the request (it is compared with the invoice, as it should be), while the document of a payer is read from the payer when the voucher is registered, so correcting the CUIT of the payer after the request refused the replacement for ever. A payer is now compared by identity (the same `tenant_payer_id`), not by document. Test in `invoice-replacement.test.ts`. |
+| B-S4 | Reproduced (the test hung until its timeout with `markLockTimeoutMs: 0`). The timeout is clamped to at least 1 ms. |
+| A-W5 | Reproduced as a missing setting (a config test that failed). `DB_POOL_MAX` (2 to 100, default 10) in the config, `.env.example`, `createRuntimeDb(url, { max })`, the API and the worker. |
+| A-W4 | Fixed the cheap way: a mark that gives up on a row lock logs it (`invoiceId`, no text). Consecutive skips are not counted; a stalled series is already surfaced by R3-2. |
+
+INFO items (documentation only): a foreign voucher at the expected number parks later lost-answer invoices as `voucher_mismatch` (loud and safe; runbook). The pool test now also asserts `max` (default 10, and the one given); a test where a full pool fails was not added (it would wait the 10 second timeout).
+
+### Migrations
+
+`0480_invoice_stray_voucher` (new track `4jd`, range 0480 - 0489). `pnpm db:new 4d invoice_stray_voucher --number 0480` was refused ("0480 is outside the range of track 4d"; `--custom` does not lift the check, and 0490 - 0499 of `4d` are full). So the reserved gap became a track of its own in `scripts/migration-journal.ts` (`4jd`), and `docs/migration-ranges.md` says so. The SQL was generated by drizzle-kit from the schema, finished with `finish-migration.ts` (RLS policies) and completed by hand with `REVOKE UPDATE, DELETE, TRUNCATE ... FROM app_rw`. `db:restamp`: stamps already rising; `db:check`: no drift. The journal has 84 entries, `idx` 0 to 83 unique and contiguous, `when` strictly rising, `0431` still at `idx` 74; 0480 is the last entry (it runs after 0497, the numbers are only names). No applied migration was edited.
+
+### Deviations from the instructions
+
+- R3-3 asks that `closeReplaced` keep `expected_number` on the closed row. A table was used instead for both cases: an orphaned voucher arrives after the invoice is closed, and a closed invoice cannot be written (`guard_invoice`), so the orphan needed storage anyway; one table answers both with one query. `closeReplaced` still clears `expected_number`.
+- R3-2 asks for `heldBy` with "the blocker's id and number". A pending blocker has no voucher number yet, so the field carries the id and the time it was requested. It is filled only when the blocker is inside the scope of the reader.
+- R3-2 opens the item only while the blocker holds at least one invoice, and measures the age from the request of the invoice (there is no column for "awaiting since"). `attempts` counts every attempt, not only the unknown ones.
+- R3-4 applies `outcomeUnknown` to `issuer_mismatch` and `voucher_mismatch`, not to `number_taken` and `cae_taken`: in those two the authority DID answer for the request.
+- Residual risk of R3-3, written in the runbook: if the invoice that was replaced without knowing was in fact never issued, the number it expected is skipped, and the next invoice that loses its answer is looked up one number too far; ARCA shows nothing there and the request goes out again. With the simulators that is harmless (the key is idempotent); the real adapter must make that second `issue` safe (ARCA has no key of its own).
+- Strict TDD was kept with these disclosed exceptions: the red run for R3-3 and R3-4 was made by disabling the new code on purpose (the stray reads: 3 of 4 tests failed; `outcomeUnknown` forced to false: 2 of 5 failed) because the tests were written after the first version of the code; `retry-schedule.test.ts`, `series-hold.test.ts` and the retitled test of R3-6 were written with their code. The first run of `invoice-stall.test.ts` (before any code) failed 8 of 8; B-T1, B-S4 and A-W5 failed first as described above.
+- The full integration run found what the new table needs: the isolation fixture (`test/support/fixtures/invoicing.ts`) and the demo-coverage exemption (`demo-coverage-exemptions/stage4.ts`). Fixed in `693403c`.
+- Known flakes under load, none from this round: the first start of the e2e stack failed once with `socket hang up` (MinIO, with other agents on Docker) and passed on the next start; `worker.test.ts` ("seals new audit events", 15 s) failed once in the full integration run and passed alone; `financial-report-page.test.tsx` timed out once in the unit run (32 s) and passed alone (26 of 26).
+
+### Verification (final tip, Node v24.22.0, pnpm 10.34.7, Docker shared with other agents)
+
+- `pnpm install`, `pnpm typecheck`, `pnpm lint`, `pnpm format:check`: clean.
+- `pnpm test` (unit): 385 files, 4898 tests passed, 1 skipped; the one timeout above passed alone.
+- `pnpm test:integration` (full, Testcontainers, Postgres 17): 242 files, 238 passed, 1 skipped, 3 failed; 3635 tests passed, 4 skipped, 7 failed. The three files are the two that need the fixture and the exemption of the new table (fixed) and the `worker.test.ts` load flake; the three files together pass after the fix (348 of 348). The full suite was not run a second time after that last commit (test support only).
+- `pnpm build`: green. `pnpm db:check`: no drift.
+- Full e2e (`E2E_WEB_PORT=4890 E2E_API_PORT=3890 E2E_MINIO_PORT=9890`, `--workers=2`): 206 passed, 0 failed (5.8 minutes), on the second start (the first failed to start the stack, see above).
+- Docker: `infra/Dockerfile` built (`consultorio-api:jd4r3`); a fresh `postgres:17` with `infra/postgres/init/01-roles.sql`; `db:migrate` run twice from the repository (both: migrations applied, platform catalogs loaded; 84 migrations recorded; `invoice_stray_voucher` exists); the image started as `api` (`NODE_ENV=production`, multi-tenant, KMS `aws`, `S3_BUCKET`, `CLAMAV_HOST`, SMTP starttls, `ADDRESS_HASH_PEPPER`): `GET /health` answered `{"status":"ok"}` and the container was healthy. The containers `jd4r3-pg` and `jd4r3-api`, the network `jd4r3-net` and the image were removed by name; the e2e stack removed its own containers.
+- Kept green (inside the runs above): `boot.test.ts`, the determinism of the demonstration, the money-invariants tests and the shared invoice-issuer contract suite for both adapters. The Lighthouse budget is a CI job and was not run here; the web changes add a note and a button inside lazy routes (no import in the entry chunk).
+- Incident: none. Logs are in `$TEMP/jd4r3-*.log`.
+
+## Judgment Day Stage 4, round 4
+
+Fresh-context review of `feat/stage-4-revenue` at `09aa371` (diff `7518c0c..09aa371`; two judges, no CRITICAL, both: NEEDS FIX). Four findings confirmed by both (R4-1 to R4-4) were fixed, the six suspect items (one judge) were reproduced with a failing test first and fixed (A-W3, A-T3, B-T2, B-T4, B-T5, B-S1), and the three cheap suggestions were done.
+
+### Findings
+
+| Id   | Fix | Test |
+| ---- | --- | ---- |
+| R4-1 | The numbering of the authority has no gaps, so a remembered number (`invoice_stray_voucher`) of an invoice replaced or parked without knowing is UNCONFIRMED while no invoice of the series records a number that is higher or the same (`unconfirmedStraysBelow`). `reconcile`: when the lookup at the expected number finds nothing, `settleStrays` asks about the unconfirmed numbers below it, lowest first, BEFORE anything is sent. Nothing at one of them: nothing above it either, so the request may go out. A voucher that matches this invoice and not the invoice the number was remembered for (`invoice_stray_voucher.invoice_id`, compared with its own facts and issuer snapshot): adopted. Only the remembered invoice's, or neither: the number is taken, the next one is asked about. Both match (the same anonymous consumer, the same fee): `voucher_ambiguous`, parked with its outcome unknown, nothing sent. Unreachable or refused: `retry`, nothing sent. At most `MAX_STRAY_PROBES = 5` such numbers (more: parked as `voucher_ambiguous`); `MAX_PROBES = 2` still bounds the ordinary lookups and the stray probes are counted apart. The stale-mark variant (`belongsToAnother` skipped N) is the same code path: the second probe finds nothing and the stray N is asked about. The fake issuer got `setIdempotent(false)` (a new voucher on every `issue`, like the real authority) so a double issue shows as two vouchers; the contract suite states the gapless numbering the core relies on. | `invoice-unconfirmed-strays.test.ts` (adopts its own voucher at the ghost number with a non-idempotent issuer, the stale-mark variant with probes `[n, n+1, n]`, the both-match park, the safe send when the voucher is the replaced invoice's, an authority that cannot answer, the bound), `afip-fake/index.test.ts`, `invoice-issuer.contract.ts` ("numbers without gaps", both adapters) |
+| R4-2 | `settleStall` is called on every way out of the wait: issued, rejected, parked (unconditionally, no longer `if (wasAwaiting)`) and in `defer` when the answer is a definite one (`!awaiting`). It is a no-op when there is no item. A later park therefore opens an item with its real reason instead of getting the stale `outcome_unknown` back from `openItem`. | `invoice-stall.test.ts` (item closed on a definite "down"; a later `number_taken` park shows its own reason) |
+| R4-3 | `park` records the numbers nobody may take later: `voucher_mismatch` (the probed number), `number_taken` and `cae_taken` after an authorized answer (`result.number`) as `unmatched` (certain); `issuer_mismatch` with a doubt (the retained `expected_number`) as `parked_unknown` (uncertain). The 0480 check is replaced in 0481 (see Migrations). Certain reasons (`orphaned`, `unmatched`) are never asked about again (the voucher is there and is nobody's); the uncertain ones take part in R4-1. | `invoice-unconfirmed-strays.test.ts` (a `voucher_mismatch` park, then an invoice with the same facts as the foreign voucher and a lost answer, finds its own voucher and does not adopt the foreign one; the two collisions), `invoice-issuer-mismatch.test.ts` (`parked_unknown`) |
+| R4-4 | The item no longer says how many invoices wait (the text lost its plural forms and the detail lost `held`); the live count is `blocksSeries`. `heldCount` takes a `counts` filter and `seriesHolds` counts only the held invoices the reader may see (the blocker is still found in the whole series). | `series-hold.test.ts`, `invoice-stall.test.ts` (an invoice of the north written straight into the table: the owner sees 2, reception of the centre sees 1; the item has no `held`), `worklist-page.test.tsx` |
+
+Suspect items (all reproduced with a failing test first):
+
+| Id   | Outcome |
+| ---- | ------- |
+| A-W3 | A dismissed `outcome_unknown` item was opened again within 5 minutes, writing `worklist.dismissed` rows each cycle. `WorklistService.hasItem` (new, also on the invoicing port) lets `surfaceStall` skip when an item is open (also the cheap suggestion: no encrypt and insert on every attempt) or was dismissed during the same wait (created at or after `awaiting_since`). |
+| A-T3 | The item closed by a park that keeps the doubt is labelled `parked`; every other way out stays `outcome_settled`. |
+| B-T2 | A lookup that ended with every number taken (`number_taken` out of `reconcile`) cleared the expected number and let the replacement go without the acknowledgement. The verdict now carries `unresolved`, and `park` treats it as an unknown outcome (the origin "an authorized answer collided" stays as it was). |
+| B-T4 | `markLockTimeoutMs` of NaN or an infinity made `set_config('lock_timeout', 'NaNms')` fail. `lockTimeoutOf` falls back to the default for anything that is not finite. |
+| B-T5 | `DB_POOL_MAX` is refused below `MIN_DB_POOL_MAX = 2 * JOB_LOCAL_CONCURRENCY + 2 = 6`, with a message that says why (new `platform/jobs/concurrency.ts`, used by the worker and the config). |
+| B-S1 | The item opened after 6 attempts, which the pull-forwards of held invoices reach in about 6 minutes, or 2 hours after the invoice was CREATED. `isStalled` now takes only `awaitingSince` and `now`: two hours of waiting counted from the first mark. New column `invoice.awaiting_since` (set by the first mark of the episode, kept by the later ones, cleared when the wait ends). |
+
+Suggestions: `surfaceStall` checks for an open item before encrypting and inserting (done with A-W3); the audit rows `invoice.attempted` are written for the first 6 attempts and then once per clock hour (`isAttemptAudited`); the weak assertions of `invoice-stall.test.ts` (the held invoice and the blocker after the pull-forward) are exact.
+
+### Migrations
+
+`0481_stray_reasons_awaiting_since` (track `4jd`): drops and adds again `invoice_stray_voucher_reason_check` with `unmatched` and `parked_unknown`, and adds `invoice.awaiting_since timestamptz` (nullable; the guard of the invoices lets a pending invoice move it). 0480 is not edited. Generated by `pnpm db:new 4jd stray_reasons_awaiting_since --number 0481` from the schema, header comment added by hand. `db:restamp`: already chained. `db:check`: no drift. Journal: 85 entries, `idx` 0 to 84 unique, `when` strictly rising, `0431` still at `idx` 74, 0481 last. No applied migration was edited. No new table, so the isolation fixtures and the demo-coverage exemptions did not need changes.
+
+### Deviations from the instructions
+
+- R4-1 says a stray is unconfirmed while no recorded number is higher or the same. That is the rule for the UNCERTAIN reasons (`replaced_unresolved`, `parked_unknown`). The certain ones (`orphaned`, `unmatched`) are never asked about: the voucher is known to exist and to be nobody's, and asking would only park an identical invoice for nothing.
+- The reason for the "both match" park and for the bound is one new reason, `voucher_ambiguous` (audit, worklist item, es-AR text in the web locale `scheduling.json`; the worklist reasons are free-form detail, so `packages/contracts` needed no new code).
+- B-S1: the 6-attempts rule is gone, not only moved. The item opens after two hours of waiting from the first mark. An invoice that predates the column begins its wait at its next attempt.
+- `.env.example` still says `DB_POOL_MAX` is "2 to 100": the instruction was not to touch `.env` files unless a test needs it, and none does. The runbook and the config say 6 to 100.
+- Strict TDD: the unit tests of `retry-schedule`, `series-hold`, the fake issuer and the new contract case were written together with their code. The integration tests were written after the first version of the code; the red run was made with the OLD `issue-attempt.ts` restored from `HEAD` (with the old 6-attempts rule inlined, because the first red run mixed the old file with the new `isStalled` and failed 23 of 24 for that reason alone): 16 of 24 failed (second `issue` call, missing strays, the item that is not closed, the timeout, the stale item), 8 passed (existing tests and the control "sends when the voucher there is the replaced invoice's"). The config test (`MIN_DB_POOL_MAX` forced to 2: failed) and the scope test (old `invoice-view.ts`: `expected 2 to be 1`) were also run red.
+- One test of mine mocked `issue` for whichever invoice came first in a sweep and the held invoice took the mock; it now answers only for the key of the blocker (`answerRequestsOf`).
+- `git status` showed `demo-coverage-exemptions/stage4.ts` and `fixtures/invoicing.ts` as modified from the start with an empty diff (stat noise); not touched.
+
+### Verification (final tip, Node v24.22.0, pnpm 10.34.7, Docker shared with other agents)
+
+- `pnpm install --frozen-lockfile`, `pnpm typecheck`, `pnpm lint`, `pnpm format:check`: clean.
+- `pnpm test` (unit): 385 files, 4907 tests passed, 1 skipped (237 s).
+- Full integration (`vitest.integration.config.ts`, Testcontainers, Postgres 17): 243 files, 242 passed, 1 skipped; 3660 tests passed, 4 skipped (1897 s). No failure, no flake.
+- `pnpm build`: green. `pnpm db:check`: no drift.
+- Full e2e (`E2E_WEB_PORT=4890 E2E_API_PORT=3890 E2E_MINIO_PORT=9890`, `--workers=2`): 206 passed, 0 failed (7.6 minutes).
+- Docker: `infra/Dockerfile` built (`consultorio-api:jd4r4`); a fresh `postgres:17` with `infra/postgres/init/01-roles.sql`; `db:migrate` run twice from the repository (both: migrations applied, platform catalogs loaded; 85 migrations recorded; `invoice.awaiting_since` exists and the check lists the four reasons); the image started as `api` (`NODE_ENV=production`, multi-tenant, KMS `aws`, `S3_BUCKET`, `CLAMAV_HOST`, SMTP starttls, `ADDRESS_HASH_PEPPER`): `GET /health` answered `{"status":"ok"}` and the container was healthy. Removed by id: the two containers `ff6bbfe47572` (api) and `813b3df8a67c` (postgres), the network `71c190a16e36` and the image; the e2e stack left three containers that were removed by id (`1894be66d17c`, `33fdfa700555`, `f21a395d5784`).
+- Kept green (inside the runs above): `boot.test.ts`, the determinism of the demonstration, the money-invariants tests, the shared invoice-issuer contract suite for both adapters and the isolation and demo-coverage suites. The Lighthouse budget is a CI job and was not run here; the web change removes plural keys from a locale and adds one text (no import in the entry chunk).
+- Incident: none. Logs are in `$TEMP/jd4r4-*.log`.
+
+## Judgment Day Stage 4, round 5
+
+Fresh-context review of `feat/stage-4-revenue` at `d2827a6` (diff `09aa371..d2827a6`; two judges, both NEEDS FIX; judge B rated the main finding CRITICAL, judge A WARNING; the same hole and the same fix). R5-1 and R5-2 were fixed, the three suspect items (one judge) were reproduced with a failing test first and fixed (B-W2, A-F5, A-F4), judge B's T2 (series identity) was done, and the documentation suggestions were done.
+
+### Findings
+
+| Id   | Fix | Test |
+| ---- | --- | ---- |
+| R5-1 | The core no longer INFERS the last number of the authority from the vouchers recorded here. New port method `InvoiceIssuer.lastAuthorized(series)` (the equivalent of `FECompUltimoAutorizado`): `{ status: 'ok', number }` (0 for an empty series), or `retryable` / `rejected`, never turned into 0. Implemented in `afip-fake` and `afip-local` (scoped by organization, issuer CUIT, point of sale and type, like their vouchers). `markIntent` asks it BEFORE the first send, persists it as `invoice.authority_last_at_mark` (migration 0482) with `expected_number = last + 1`; an authority that does not answer sends nothing. `reconcile` asks it again and examines the numbers after the mark up to the authority's last, lowest first (at most 20 questions; more parks as `voucher_ambiguous` with the range in the item): a number an invoice of ours records is not asked about (a voucher registered by hand is asked about and its CAE compared, since a person typed the number), a number remembered as certain (`orphaned`, `unmatched`) is skipped, a foreign voucher is remembered as `unmatched` and the next number is examined, a voucher that matches this invoice and not an invoice replaced or parked without knowing is adopted, one that matches both parks as `voucher_ambiguous` with the outcome unknown, an unreachable lookup keeps the invoice waiting, and when every candidate was examined and none is its own the invoice was not issued and is sent with a new mark. An invoice marked before 0482 (null) and an authority whose last number is below the mark park with the outcome unknown. `settleStrays`, `unconfirmedStraysBelow`, `highestStrayNumber`, `isStrayNumber` and `belongsToAnother` are gone; `invoice_stray_voucher` stays as the record for people. | `invoice-authority-count.test.ts` (20 tests, non-idempotent fake: the exact R5-1 scenario with a manual voucher at the next number of the same point of sale and type, a mistyped high number, a manual record that names another voucher, nothing issued since the mark, an unreachable `lastAuthorized` on a wait and on a first request, a refused one, an unreachable lookup in the middle, the legacy mark, the authority behind the mark, the bound of 20 and exactly 20), `invoice-issuer.contract.ts` (last number = highest issued and 0 when empty, not affected by other series, issuers or organizations, no answer in an outage, the round trip `findIssued` -> `voucherMatches`; both adapters) |
+| R5-2 | The number expected was asked about before the lower uncertain strays, so a look-alike at the expected number could be adopted while the invoice's own voucher sat lower. The scan is lowest first: nothing is asked about at the expected number before the candidates below it. | `invoice-authority-count.test.ts` ("adopts its own voucher, not a look-alike above it", "remembers the foreign vouchers it passes on the way, and then adopts its own") |
+
+Suspect items:
+
+| Id   | Outcome |
+| ---- | ------- |
+| B-W2 | Reproduced (red: 4 of 4 failed with `validation_failed` on `type`): a credit note that is parked has no way out, because the manual voucher could not be a credit note and the guard counts every note that is not rejected. `POST /invoices/manual` now accepts a credit note type with `associatedVoucher` (type, point of sale, number) and only together with `replacesInvoiceId` of a note that is `needs_attention`, of the same type, cancelling the same voucher, for the same total (`invoice_replacement_mismatch` otherwise; owner/admin; `acknowledgeUnknownOutcome` when the outcome is unknown, like an invoice). The new note is `manual`, covers exactly what the parked one covered and keeps its reason and issuer. Migration 0483: `app.refresh_invoiced` takes back a REGISTERED credit note like an issued one; `invoice-lookup.ts` follows. Not done: the web dialog for manual vouchers does not offer a credit note (the API does). Test: `invoice-credit-note-replacement.test.ts`, `invoicing.test.ts` (contracts). |
+| A-F5 | Reproduced (red): adopting a voucher at a stray number left the `replaced_unresolved` item of the stray's invoice open. On adoption the item is resolved (`voucher_adopted_by_other`) and `invoice.voucher_adopted` is audited on the adopting invoice naming the other one (new audit action; es-AR text; listed as written by the issue job in the Stage 4 audit tables). Test: `invoice-authority-count.test.ts`. |
+| A-F4 | Reproduced (red): a parked item carried `number: null`. The audit entry and the item now carry `candidates` (the numbers in doubt, lowest first) or `candidatesFrom` / `candidatesTo` for a range too wide to list; a park for an issuer mismatch with a doubt names the number expected. The worklist card says "Números para revisar en ARCA: ...". Tests: `invoice-authority-count.test.ts`, `invoice-stall.test.ts`, `worklist-page.test.tsx`. |
+| B-T2 | All local series queries filter by the CUIT of the snapshot of the invoice and by the environment (`series-scope.ts`, `inSeries`): the blocker of the series, the held count of the stall item, the numbers recorded, the strays. A voucher registered by hand is `production` whatever the point of sale says, so it belongs to the series by point of sale and type. Test: an invoice of another CUIT is not held behind one that waits. |
+
+Suggestions and documentation: `.env.example` says `DB_POOL_MAX` is "6 to 100" and that 6 is a floor; the runbook has an "Upgrade notes" section (the pool floor refuses to start below 6, migrations 0482 and 0483, the adapter must implement `lastAuthorized`), says what `lastAuthorized` must answer and that a "no voucher" lookup maps to `null` and never an error, states the business decision of adopting a voucher by facts (and that the real adapter should also compare the CAE or an issuer reference), the precedence of the stray reasons (the first written wins) and the credit note way out, and the obsolete stray-confirmation text is gone. `docs/migration-ranges.md` lists 0482 and 0483.
+
+### Migrations
+
+`0482_authority_last_at_mark` (track `4jd`): `invoice.authority_last_at_mark bigint` (nullable, check `>= 0`; the first mark of a wait fixes it). `0483_manual_credit_note_invoiced` (custom SQL): replaces `app.refresh_invoiced` so a credit note counts when `status in ('issued', 'manual')`. 0480 and 0481 (and 0491) are not edited. `pnpm db:new 4jd authority_last_at_mark --number 0482` from the schema (header comment added by hand) and `pnpm db:new 4jd manual_credit_note_invoiced --number 0483 --custom`. `db:restamp`: already rising and chained. `db:check`: no drift. Journal: 87 entries, `idx` 0 to 86 unique, `when` strictly rising, `0431` still at `idx` 74, 0483 last. No new table, so the isolation fixtures and the demo-coverage exemptions did not need changes.
+
+### Deviations from the instructions
+
+- The port method takes `type` (not `voucherType`) in `InvoiceSeriesRef`, like `InvoiceRef`.
+- A `lastAuthorized` that cannot answer on a FIRST request retries with `unknown: false` (nothing was sent, nothing is in doubt, so the series is not held); on a wait it is an unknown outcome as the synthesis says.
+- "On a refresh mark, keep the first `authority_last_at_mark`": the first one is kept for the whole wait (every retry and a park keep it). There is no refresh mark any more: when every candidate was examined and none is the invoice's, the wait is over and the new request starts a new one from the last number examined (sound, since everything up to it was examined; keeping the old floor would only repeat the questions).
+- Two additions to the synthesis: (1) a voucher that LEAVES OUT a field the comparison needs is `unclear` (`compareVoucher`: match / differs / unclear) and parks the invoice, instead of being passed as foreign (which would have sent a second voucher when the authority just does not return the recipient); (2) a voucher registered by hand inside the window is asked about and its CAE compared, instead of skipped, because a person typed its number.
+- The hint for simulators (`lastKnownNumber`) keeps the scope of the unique index of the numbers (organization, point of sale, type), NOT the series of the authority: with the CUIT in the filter the e2e journey of the invoice outage failed with `number_taken` (the demo data holds vouchers under another CUIT than the one the journey configures). Test: "still hints a simulator past every number recorded ... whatever the CUIT". The read-side `heldBy` / `blocksSeries` of the invoice view still group by point of sale and type (display only).
+- Strict TDD: the red runs were made against the unchanged core. R5: 18 of 19 failed (the 19th was the control). B-W2: 4 of 4. The hint: 1 of 1 (found by the e2e). The contract cases of the port: 3 failed on the fake first. NOT red-first: `compareVoucher` (written with its code), the candidates note of the web card, and the rewrites of the round 4 tests (`invoice-unconfirmed-strays`, `invoice-ghost`, `invoice-series`, `invoice-reconciliation`, `invoice-replacement`, `invoice-stall`), which tested the removed inference; the ones that tested what remains (parked remembers, collisions, the lock timeout) were kept.
+- `prettier --write` was run on single files I changed, never on a directory of `apps/api/src` or on `migrations/meta`; the commit hook also formats what is staged. A Python rewrite on Windows turned some files to CRLF once; they were converted back before the first commit.
+- One test of the round 4 ghost file used a clock one second after the start of the scenario and failed under load (the invoice was not yet due); it takes its own clock now.
+
+### Verification (final tip `4de2190` plus the apply-progress commit, Node v24.22.0, pnpm 10.34.7, a Docker and a CPU shared with other agents)
+
+- `pnpm install --frozen-lockfile`, `pnpm typecheck`, `pnpm lint`, `pnpm format:check`: clean.
+- `pnpm test` (unit): 385 files, 4918 tests passed, 1 skipped (252 s). The first run had four failures: two real (the Stage 4 audit tables did not know `invoice.voucher_adopted`; fixed) and two timeouts under load (`render.test.ts`, `financial-report-page.test.tsx`), which passed alone.
+- Full integration (`vitest.integration.config.ts` with `--hookTimeout=240000 --testTimeout=120000`, Testcontainers, Postgres 17): 245 files; on the first run (before the hint fix) 244 passed and 1 skipped, 3682 tests passed, 4 skipped (1792 s); on the final tip 244 passed, 1 skipped and one file (`backup-restore.test.ts`) failed with `socket hang up` at container start, which passed alone (4 tests): 3683 passed, 4 skipped (1999 s).
+- `pnpm build`: green. `pnpm db:check`: no drift.
+- Full e2e (`E2E_WEB_PORT=4890 E2E_API_PORT=3890 E2E_MINIO_PORT=9890`, `--workers=2`): the first full run (before the hint fix) failed `stage4-invoicing` (the invoice never became issued: `number_taken` in the worker log); on the final tip 205 passed, 1 failed (9.7 minutes) and `stage4-invoicing` passed. The one failure is `stage3-booking`: the public manage page answers "Ya pasó el plazo para cambiar este turno por internet" when the visitor books the earliest free time of the day and the time is within the change window of the moment the suite runs (09:5x for a 17:30 turn today). It failed the same way alone, nothing in it touches invoicing, and the page text was read with a throwaway spec (deleted). It needs a run at another hour of the day; it was not changed.
+- Docker: `infra/Dockerfile` built (`consultorio-api:jd4r5`, image `22dad5d549f0`); a fresh `postgres:17` (`ad8d03920d7b`) with `infra/postgres/init/01-roles.sql`; `db:migrate` run twice from the repository (both: migrations applied, platform catalogs loaded; 87 migrations recorded; `invoice.authority_last_at_mark` exists and `app.refresh_invoiced` counts manual notes); the image started as `api` (`40c6bb86e584`; `NODE_ENV=production`, multi-tenant, KMS `aws`, `S3_BUCKET`, `CLAMAV_HOST`, SMTP starttls, `ADDRESS_HASH_PEPPER`): `GET /health` answered `{"status":"ok"}` and the container was healthy. Removed by id: the two containers, the network `9113d6f8a289` and the image; the e2e stacks left containers that were removed by id (`e6bfb23b10f6`, `3ac27b5bdb31`, `941b133b5cdf`, `c07b009d4a4d`, `b462e75fdeb0`, `419a525e4e6e`, `c67f37b63cff`, `7814de65e8e9`). Nothing else was touched.
+- Kept green (inside the runs above): `boot.test.ts`, the determinism of the demonstration, the money-invariants tests, the shared invoice-issuer contract suite for both adapters and the isolation, policy and demo-coverage suites. The Lighthouse budget is a CI job and was not run here; the web change adds one text and a sentence inside a lazy route.
+- Incident: none. Logs are in `$TEMP/jd4r5-*.log`.
+
+## Judgment Day Stage 4, round 6
+
+Fresh-context review of `feat/stage-4-revenue` at `004ffb6` (diff `d2827a6..004ffb6`; two judges, both NEEDS FIX). The round 5 redesign (the authority's own count) held up; the holes were timing and bookkeeping. R6-1 to R6-6 (confirmed by both) were fixed, and every suspect item was reproduced with a failing test first and fixed only when it reproduced. The safety invariant came first: nothing may produce two vouchers for one invoice against a non-idempotent authority, including a request that is still in flight; where in doubt the invoice waits or is parked, it is not sent.
+
+### Findings
+
+| Id   | Fix | Test |
+| ---- | --- | ---- |
+| R6-1 | A request still in flight when the process dies or times out could be re-sent. Two guards. (a) The PIN: `InvoiceRequest.expectedNumber` (= the authority's last number at the mark + 1; it REPLACES `lastKnownNumber`, which is gone). The issuer issues exactly that number or answers the new `IssueResult` status `not_next` (ARCA error 10016 on `CbteDesde`) and issues nothing; both simulators implement it, nothing is remembered under the key for a refusal, and the pin is not part of the request a key stands for. After a `not_next` the attempt reconciles again at once (new lastAuthorized, the window is examined), so the voucher of the first request is adopted. (b) SETTLE: `reconcile` returns `send` only when `now - last_sent_at >= settleMs` (`IssueDeps.settleMs`, default 10 minutes, `retry-schedule.ts`); until then it asks and adopts a voucher that appeared, but sends nothing. `markIntent` stamps `last_sent_at` (migration 0484) BEFORE the call, so a crash between the mark and the call is covered. The pull-forward of a blocker never goes earlier than `last_sent_at + settle`. | `invoice-inflight.test.ts` (new "slow" fake mode: `holdNext` / `releaseHeld` / `dropHeld`: an authority that does not pin is not sent to before SETTLE and adopts the late voucher; with `settleMs: 0` the pin alone refuses the late duplicate and exactly one voucher exists; the first request finishing between the lookup and the second request is adopted; the crash between the mark and the call), the contract suite for both adapters (issue at the pinned number, a number that is not the next is refused definitely and issues nothing, a late duplicate cannot create a second voucher, the same key with another pin gets the same voucher), `afip-fake/index.test.ts`, `retry-schedule.test.ts` |
+| R6-2 | `awaiting_since` restarted at every re-mark. `markIntent` keeps `row.awaiting_since` while the invoice stays awaiting. | `invoice-r6.test.ts` (eleven resend cycles over two hours open the stall item; red when the mark resets it) |
+| R6-3 | A direct issue at a remembered stray number left the other invoice's item open. `settleStraysAt` runs after ANY issued write (direct or adopted), replacing `settleAdoptedStrays` / `adoptedFrom`. | `invoice-r6.test.ts` (red when `settleStraysAt` is a no-op) |
+| R6-4 | Lowest match won. The whole bounded window is examined after a match; a second voucher that fits, or one that is unclear, parks the invoice as `voucher_ambiguous` with both candidates. | `invoice-authority-count.test.ts` (the old "adopts its own voucher, not a look-alike above it" now parks) |
+| R6-5 | A manual credit note stored the typed recipient. It copies `recipient*` from the replaced note. | `invoice-credit-note-replacement.test.ts` (red when the copy is removed) |
+| R6-6 | Adapter fidelity. A mismatch only on the buyer document is `unclear` (park), not `differs`; document type 99 with number 0 (zeros) equals a null buyer; contract cases for an anonymous buyer, a DNI, a CUIT and a credit note association, each stating issuer, buyer and association; the runbook requires recorded-fixture round-trip tests before the real adapter is registered. The comparison with a RIVAL (an invoice replaced or parked) keeps the old strictness (`otherRecipientIsForeign`): the hazard of sending the invoice's own voucher again cannot come from a rival. | `voucher-match.test.ts`, the contract suite (both adapters), `invoice-r6.test.ts` (a voucher that differs only in the buyer parks and sends nothing) |
+
+Suspect items:
+
+| Id | Outcome |
+| -- | ------- |
+| B-W2 | Reproduced (red with R6-3's mutation): the item of an invoice that is still parked was closed. It is closed only for an invoice that is closed; for a parked one it is rewritten (`voucher_taken_by_other`, the number and `otherInvoiceId`, `outcomeUnknown`). Test: `invoice-r6.test.ts`. |
+| B-T1 | Reproduced as a behaviour (a number the authority repeats for a new CUIT collides with the unique index and the invoice is parked `number_taken`, a person is alerted, nothing is recorded twice), NOT fixed as a block: blocking the CUIT change would contradict the issuer snapshot (R1-C7) and the issuer mismatch guard (R2-B-T5), which exist because the CUIT can change, and a point of sale belongs to one CUIT in ARCA anyway. Documented in the runbook (a CUIT change needs a new point of sale). Test: `invoice-r6.test.ts` documents the safe outcome. |
+| B-T2 | The item of an invoice replaced without knowing carries `candidatesFrom = authority_last_at_mark + 1` (open ended: the authority is not asked at replacement); the web card says "del N en adelante". Test: `invoice-r6.test.ts`. |
+| B-T4 | An awaiting credit note can be replaced by a manual one with the acknowledgement, like an invoice (refused without it: `invoice_awaiting_reconciliation`). Test: `invoice-credit-note-replacement.test.ts`. |
+| A-S1 | `found === null` at a number at or below `last` is retried three times (`invoice.lookup_misses`, migration 0485) before the invoice is parked. Test: `invoice-r6.test.ts`. |
+| B-S (number) | The answer of a lookup must be about the number asked (`found.number === number`) or the invoice is parked. Test: `invoice-r6.test.ts`. |
+| B-S (refused lookup) | A permanent `rejected` from `lastAuthorized` opens ONE worklist item, reason `authority_refuses_lookup`, after two hours of waiting or eight attempts, held series or not. Tests: `invoice-r6.test.ts` (the awaiting and the never-sent paths). |
+| Cosmetic | A numbering that went back says `lastNow` / `lastAtMark` instead of "from 501 to 500". Tests: `invoice-r6.test.ts` and the web card test. |
+| A-S3 | NOT reproducible: `invoice_credit_note_check` already ties the credit-note types to `credit_note_of_id` in both directions for every status, a manual one included. No migration; a catalog test pins it. |
+
+Also: `FakeInvoiceIssuer.rememberFrom(held)` tells the in-memory fake (the demo issuer) what the organization holds that it does not remember (a restart, a voucher registered by hand), asked on every call like the real authority counts the vouchers made on its website; the wiring (`invoiceNumbersHeldBy`) and the seed wire it. The runbook gained the pin and error 10016, SETTLE and the fixture round-trip requirement; the web card and `es-AR` have the texts of the new reasons.
+
+### CI fix, PR #17 (requested by the coordinator during the round)
+
+`backup-restore.test.ts` failed in CI with `TimeoutError: read ECONNRESET`: the AWS SDK raises it as `name: 'TimeoutError'` with no `code`. `isTransientNetworkError` also accepts `name === 'TimeoutError'`, a message with `ECONNRESET`, `ETIMEDOUT` or `EPIPE`, and SDK errors with `$retryable`; EVERY object-store call of `createBackup` / `restoreBackup` (list, get with its stream, head, create, put) goes through `withTransientRetry` (a put of the same key and body is idempotent; a missing bucket, a refusal and our own guards still fail at once); the own S3 clients of the test have `maxAttempts: 5`. Commit `e1c07d9`.
+
+### Migrations
+
+`0484_invoice_last_sent_at` (track `4jd`): `invoice.last_sent_at timestamptz` (nullable; the application falls back to the last attempt for an invoice marked before). `0485_invoice_lookup_misses`: `invoice.lookup_misses integer not null default 0` with a check `>= 0`. Created with `pnpm db:new 4jd <name>`; `db:restamp` ran (snapshots already chained) and `db:check` reports no drift. No applied migration was edited. `docs/migration-ranges.md` has the round.
+
+### Deviations from the instructions
+
+- `markIntent` sets `next_attempt_at = now + 1 minute`, NOT `now + SETTLE`. With SETTLE inside `reconcile` the look of the sweeper is harmless (it only asks and adopts), and waiting the whole settle time would delay by ten minutes the adoption of the most common crash (the process dies AFTER the authority answered). Nothing is sent before SETTLE either way; `invoice-inflight.test.ts` proves it (a sweep a minute after a crash asks and sends nothing; the invoice is sent once after the time).
+- The anchor of SETTLE is the LAST send of the wait (`last_sent_at` is re-stamped at every mark), not the first: a re-send is a new request that can still be in flight. `awaiting_since` (R6-2) keeps the first mark, for the stall item.
+- The old tests that sent after a lookup found nothing at one minute now wait SETTLE (eleven minutes); the R5-2 look-alike test now parks (R6-4); the round 5 "hint" tests were rewritten around `rememberFrom`; one round 4 test used a foreign voucher that differed only in the buyer, which is now unclear: it differs in the amount.
+- B-T1 and A-S3 were reproduced or checked and NOT fixed (see above), and the local (Postgres) simulator does not learn from the invoices: a console reset starts it at 1 and the next invoice is parked (`number_taken`), documented in the runbook.
+- The fake asks the invoices for what the organization holds through a connection of its own on every call (demo organizations only). With the pool at its floor two attempts could each wait for a third connection; the wait ends with the connection timeout and the attempt is retried.
+- Strict TDD: red first for the app level tests of R6-1 (5 of 5), and the web card. NOT run red first: the contract cases (written before the adapters but not run before them), R6-2, R6-3, B-W2 and R6-5 (written with their code; proven red afterwards by mutation: reset `awaiting_since` in the mark, no-op `settleStraysAt`, no recipient copy; 4 of 4 failed) and the voucher comparison tests.
+- `prettier --write` was run on single files I changed, never on a directory of `apps/api/src` or on `migrations/meta`. `\b` written through a script became a backspace character once in `retry.ts` (found by a test, fixed). The PR #17 fix was committed separately with explicit paths.
+
+### Verification (final tip, Node v24.22.0, pnpm 10.34.7, a Docker and a CPU shared with other agents)
+
+- `pnpm install --frozen-lockfile`, `pnpm typecheck`, `pnpm lint`, `pnpm format:check`: clean.
+- `pnpm test` (unit): 385 files, 4945 tests passed, 1 skipped. Two earlier runs hit timeouts under load (`boot.test.ts`, `render.test.ts`, `module-boundaries`, `country-isolation`, `request-context`, `security-headers`, `read-only/index`), every one passing alone and in the last run.
+- Full integration (Testcontainers, Postgres 17): 247 files; on the tip after the last code change 245 passed, 1 skipped, 3707 tests passed, 4 skipped; one failure, `demo-coverage.test.ts` "resets in a fraction of the minute" (62 s under load, over the budget), which passes alone (reset 9.6 s). The run before it had caught `invoice_stray_voucher` no longer empty in the demo (the fake did not know the manual voucher of the seed): fixed by the seed teaching the fake.
+- `pnpm build`: green. `pnpm db:check`: no drift.
+- Full e2e (`E2E_WEB_PORT=4890 E2E_API_PORT=3890 E2E_MINIO_PORT=9890`, `--workers=2`): 205 passed, 1 failed (7.6 minutes), `stage4-demo` "every screen of Stage 4 fits a phone": `owner /cash: the page is 56px wider than the screen`. It fails the same way on the untouched base `004ffb6` (checked in a scratch worktree: 25 px there; the demo data of the cash screen depends on the day it runs on, it was a Monday), so this round did not cause it. `stage4-invoicing` (the outage journey, without the `lastKnownNumber` hint) passed.
+- Docker: `infra/Dockerfile` built (`consultorio-api:jd4r6`, image `f12742a12457`); a fresh `postgres:17` (`453e2706b84d`) with `infra/postgres/init/01-roles.sql`; `db:migrate` run twice from the repository (both: migrations applied, platform catalogs loaded; 89 migrations recorded; `invoice.last_sent_at` and `invoice.lookup_misses` exist); the image started as `api` (`7e654c73c340`; `NODE_ENV=production`, multi-tenant, KMS `aws`, `S3_BUCKET`, `CLAMAV_HOST`, SMTP starttls, `ADDRESS_HASH_PEPPER`): `GET /health` answered `{"status":"ok"}`. Removed by id: the two containers, the network `9825f9814fd1` and the image; the e2e stacks left containers that were removed by id (`899fc18ee010`, `a34e4cd4a863`, `a46cbc79e39b`, `a54b32ec79a2`, `d6ce1e257cfb`, `27e53f982205`, `fa10e7c3b04c`, `6e7f620d3453`, `0d3d88afdbce`, `ff6874a1d317`, `7fec0cb0e4b4`, `9a98e3bb948d`, `7538df39a870`, `fb675e21a5c6`). The scratch worktree `jd4r6-base` was removed. Nothing else was touched.
+- Kept green: `boot.test.ts`, the determinism of the demonstration, the money-invariants tests, the shared invoice-issuer contract suite for both adapters, the isolation, policy and demo-coverage suites.
+- Incident: a second `stage4-demo` run could not start because the minio of the first run still held the port; its containers were removed by id and the run repeated. Logs are in `$TEMP/jd4r6-*.log`.
+
+## Judgment Day Stage 4, round 7
+
+Fresh-context review of `feat/stage-4-revenue` at `b8dc061` (diff `fdd21ab..b8dc061`; two judges). Neither found a critical issue, and both confirmed the invariant: no path leads to two vouchers for one invoice against an authority that honours the pin. Both asked for small fixes. R7-1 to R7-5 (confirmed by both) were fixed; every suspect item was reproduced with a failing test first and fixed only when it reproduced. The invariant was kept as the first rule: nothing is sent while a request of the episode could still land, and where in doubt the invoice is parked.
+
+### Findings
+
+| Id | Fix | Test |
+| -- | --- | ---- |
+| R7-1 | A `not_next` that does not move the numbering looped silently (ARCA error 10016 also covers a date earlier than the last voucher). `invoice.refused_not_next` (migration 0486) counts the requests in a row that were refused while the re-run `reconcile` shows `last == authority_last_at_mark` (`unmoved`). After three, the invoice is parked with the new reason `authority_refuses_number` (`outcomeUnknown: false`: every request of the streak was sent after the earlier ones had settled, and each was refused for certain). The streak is kept between sends, ended by a refusal the numbering explains and by any other answer of a send, and cleared by every final write. `surfaceStall` no longer needs another invoice held behind the blocker: a lone invoice gets its `outcome_unknown` item after two hours. The runbook claim "the stall item opens after two hours" is corrected, and it now says the date must be checked against the date of the last voucher (`FECompConsultar` of the number `FECompUltimoAutorizado` gave), not only against the allowed window. | `invoice-r7.test.ts` (new test-only `FakeInvoiceIssuer.setDateTrap`: parks after three, with the sends counted and nothing sent afterwards; a refusal explained by a foreign voucher does not count; a lone invoice gets the item after 2 h), `afip-fake/index.test.ts`, web card test |
+| R7-2 | The window was broader than the pin needs. `InvoiceIssuer.honoursPin?: boolean` (contract); both simulators declare it, the contract suite asserts it. When `row.expected_number === authority_last_at_mark + 1` and the issuer honours the pin, the candidate set is exactly `{expected_number}`: match, adopt; foreign, remember it as `unmatched` and send again with a fresh pin; unclear, park. The cap of 20 numbers no longer applies to it. An issuer that does not declare it keeps the full window. | `invoice-r7.test.ts` (a foreign voucher at the pin plus a look-alike above it: not adopted, sent again at `floor + 3`; 25 foreign vouchers no longer park; the own voucher at the pin is adopted; the window is still examined without `honoursPin`). The R5/R6 window tests and the three that make the authority answer arbitrary numbers now run under `honoursPin = false` (`withoutPin`) |
+| R7-3 | `markIntent` stamped the start of the attempt. It reads `deps.clock()` again for `last_sent_at` and for `next_attempt_at` (never earlier than the start). | `invoice-r7.test.ts` (a slow `lastAuthorized` that advances the injected clock four minutes) |
+| R7-4 | A legacy row without `last_sent_at` never settled (`sentAtOf` fell back to the last attempt, which every look rewrites). It falls back to `awaiting_since`. | `invoice-r7.test.ts` (looks at 1, 3 and 7 minutes do not restart the settle time; at 11 it is sent) |
+| R7-5 | A permanent refusal of `findIssued` was never surfaced. It propagates `refusesLookup` like the refusal of `lastAuthorized`. | `invoice-r7.test.ts` (two hours: the item `authority_refuses_lookup`, not the generic one, and nothing was sent) |
+
+Suspect items:
+
+| Id | Outcome |
+| -- | ------- |
+| B-T4 | Reproduced (the first request landed between the lookup and a rejected second request: the invoice was closed, its voucher orphaned and its lines released). When the invoice was already waiting, a `rejected` answer to a re-send is followed by one more `reconcile` without settle time; `issued`, `attention` or `retry` replace the rejection, `send` keeps it. Test: `invoice-r7.test.ts`. |
+| B-T5 | NOT changed. A `retryable` with `outcomeUnknown: false` clearing the mark is the documented contract of the port ("the request provably did not reach the authority"); keeping the mark for it would turn every WSAA hiccup or refused connection into a ten-minute wait that holds the series, and a test that makes it reproduce needs an adapter that lies. The contract now says it in the type (`outcomeUnknown: false` is a claim) and the runbook tells the real adapter to answer `true` after a timeout, a reset after the request left, or a 5xx. |
+| B-S2 | Reproduced (an issuer that declares the pin answered another number and the invoice adopted it). A direct `issued` answer whose number differs from the pin of an issuer that honours it parks the invoice with the new reason `pin_not_honoured`, and the voucher is remembered as `unmatched`. A lookup adoption is not affected. Test: `invoice-r7.test.ts`. |
+| B-S3, A-S2 | Reproduced (after a reset of the numbering the authority gave a number the organization records: the voucher was issued and could not be recorded). Before the mark, `numberIsRecorded(floor + 1)` (the scope of the unique index: organization, point of sale, type, so another CUIT counts) parks the invoice as `number_taken` without calling the authority. Test: `invoice-r7.test.ts`. |
+| A-S1 | Reproduced. `lookup_misses` counts only the misses that follow each other (`step.miss ? n + 1 : 0`). Test: `invoice-r7.test.ts`. |
+| A-S3 | Reproduced. The item `voucher_taken_by_other` no longer carries `outcomeUnknown`; the card also never appends the generic note to it (items written before). Tests: `invoice-r6.test.ts`, `worklist-page.test.tsx`. |
+| B-S5 | Reproduced as a unit. `ensureBucket` (`scripts/backup/bucket.ts`) takes `BucketAlreadyOwnedByYou` after a retried create as success and throws any other refusal. Test: `scripts/backup/bucket.test.ts`. The optional size comparison with `item.Size` was NOT added: an object overwritten between the list and the get would fail a good backup. |
+
+Also: new es-AR texts for `authority_refuses_number` and `pin_not_honoured`, and `outcome_unknown` no longer says that other invoices wait (it may be a lone one). The runbook has the `honoursPin` requirement, the date trap, the one-candidate lookup and an upgrade section for the round.
+
+### Migrations
+
+`0486_invoice_refused_not_next` (track `4jd`): `invoice.refused_not_next integer not null default 0` with a check `>= 0`. Created with `pnpm db:new 4jd invoice_refused_not_next --number 0486`; `db:restamp` ran (nothing to change) and `db:check` reports no drift. No applied migration was edited. `docs/migration-ranges.md` has the round.
+
+### Deviations from the instructions
+
+- The date trap needs a way to make the fake refuse a pin whatever the numbering says. It is a test-only method of the fake (`setDateTrap`), not a new simulator mode: a mode would have needed a new value in the shared enum, the check of `local_afip_control` and a migration for a thing only tests use.
+- `honoursPin` is a mutable property of the FAKE only (tests set it to `false` to model an authority that does not carry the pin; `reset()` gives it back). The local simulator and the contract type are `readonly`.
+- B-T5 was not changed (see above); B-S2 parks a voucher that exists instead of recording it: the declaration of the issuer is wrong, so a person looks.
+- The tests of the R5/R6 window rules (look-alike above the voucher, more than 20 numbers, a voucher that is found after a taken number) and the three tests that make the authority answer an arbitrary number (`number_taken`) were adapted to `honoursPin = false`: under a pinning authority they describe situations that cannot happen any more. The pin versions of them are in `invoice-r7.test.ts`.
+- Strict TDD: red first for every test of `invoice-r7.test.ts` (12 of 14 failed before the code; the other two are the control cases), for the web card tests and for `bucket.test.ts`. NOT run red first: the contract case for `honoursPin` and the two unit tests of the fake (`setDateTrap`, `honoursPin = false`), written with the code.
+- `prettier --write` was run on single files I changed (and the runbook), never on a directory of `apps/api/src` or on `migrations/meta`. A script that wrote the runbook edit was run from a file because a heredoc with backticks broke the shell.
+
+### Verification (final tip, Node v24.22.0, pnpm 10.34.7, a Docker and a CPU shared with other agents)
+
+- `pnpm install --frozen-lockfile`, `pnpm typecheck`, `pnpm lint`, `pnpm format:check`: clean.
+- `pnpm test` (unit): 386 files, 4954 tests passed (one run: 4952 passed and two timeouts under load, `new-migration.test.ts` and `boot.test.ts`, both passing alone), 1 skipped.
+- Full integration (Testcontainers, Postgres 17): 248 files, 247 passed and 1 skipped, 3723 tests passed, 4 skipped (1739 s), no failure.
+- `pnpm build`: green. `pnpm db:check`: no drift.
+- Full e2e (`E2E_WEB_PORT=4890 E2E_API_PORT=3890 E2E_MINIO_PORT=9890`, `--workers=2`): 213 passed, 1 failed (5.1 minutes): `calendar.day` "book, confirm, check in, start and attend" waited for a free time of `09:45` that the day no longer offered at 15:19; it passed alone (2 tests, 49 s). `stage4-invoicing` (the outage journey) and `stage4-demo` (the phone layout, `/cash` included, after the fix of the other agent) passed.
+- Docker: `infra/Dockerfile` built (`consultorio-api:jd4r7`, image `b88a24e370ad`); a fresh `postgres:17` (`819f1c7892ac`) with `infra/postgres/init/01-roles.sql`; `db:migrate` run twice from the repository (both: migrations applied, platform catalogs loaded; 90 migrations recorded; `invoice.refused_not_next`, `lookup_misses` and `last_sent_at` exist); the image started as `api` (`b3dd975b6a63`; `NODE_ENV=production`, multi-tenant, KMS `aws`, `S3_BUCKET`, `CLAMAV_HOST`, SMTP starttls, `ADDRESS_HASH_PEPPER`): `GET /health` answered `{"status":"ok"}`. Removed by id: the two containers and the image. Nothing else was touched; four containers that appeared during the e2e belong to another agent and were left.
+- Kept green (inside the runs above): `boot.test.ts`, the determinism of the demonstration, the money-invariants tests, the shared invoice-issuer contract suite for both adapters, and the isolation, policy and demo-coverage suites.
+- Incident: none. Logs are in `$TEMP/jd4r7-*.log`.
+
+## Judgment Day Stage 4, round 8
+
+Both judges found the same single defect; the three hygiene items came with it. Commit `677504a` on `feat/stage-4-revenue`.
+
+### Finding
+
+| Id | Fix | Test |
+| -- | --- | ---- |
+| R8-1 | The last look before a rejected re-send is closed (B-T4, R7) called `reconcile(..., { now, settleMs: 0 })` with the start of the attempt. Since R7-3 `markIntent` stamps `last_sent_at = max(clock(), now)`, which is later than `now` once the clock advances, so `isSettled` computed a negative elapsed time against 0, said "not settled" and the look answered `retry unknown`: the rejection became a retry, the invoice never reached `rejected` and kept its lines locked until the stall item two hours later. `reconcile` takes an explicit `ignoreSettle` option, used by the last look; `isSettled` also counts `settleMs <= 0` as settled whatever the sign of the elapsed time. | `invoice-r8.test.ts` (an awaiting invoice whose re-send is rejected, once with a frozen clock and once with a clock that moves a second per read: the invoice ends `rejected`, nothing is left in the authority, and another invoice can be asked for the same charge; and a first request that landed meanwhile is still adopted with the moving clock), `retry-schedule.test.ts` (`settleMs: 0` is settled with a negative elapsed time) |
+
+Hygiene:
+
+| Item | Outcome |
+| ---- | ------- |
+| `manual-invoice.ts` | The manual replacement of a pending invoice also resets `refused_not_next` (it reset every other piece of the wait). Test: `invoice-r8.test.ts`. |
+| Judge A, finding 2 | On a FIRST send (`!wasAwaiting`) that the authority refuses with `not_next`, no earlier request of the episode exists, so a voucher found by the follow-up lookup is foreign by construction. A match there is now `voucher_ambiguous` (the invoice is parked), never adopted. Test: `invoice-r8.test.ts` (a look-alike takes the number after the last-number question). |
+| Frozen plus advancing clock | `invoice-r8.test.ts` runs the R8-1 scenario with both clocks (`it.each`). |
+
+### Deviations from the instructions
+
+- Strict TDD: red first for the moving-clock case, the first-send case and the replacement case (3 of the 5 tests of `invoice-r8.test.ts` failed before the code; the frozen-clock case and the adoption control passed, as controls). The replacement test was red for a mistake in the test (a recipient with a document) and then for the right reason (checked by removing the line temporarily). The unit test of `isSettled` was added with the fix.
+- No migration. No `prettier --write` on a directory.
+
+### Verification (tip after the fix, Node v24, pnpm via corepack, a Docker shared with other agents)
+
+- `pnpm typecheck`, `pnpm lint`, `pnpm format:check`: clean. `pnpm test` (unit): 386 files, 4955 tests passed, 1 skipped.
+- Invoicing integration (`invoice-*`, `afip-*`, `demo-*`): 31 files, 379 tests passed.
+- Full integration (Testcontainers, Postgres 17): 248 files passed and 1 skipped, 3728 tests passed, 4 skipped, no failure.
+- E2E `stage4-invoicing` and `stage4-demo` (`E2E_WEB_PORT=4890 E2E_API_PORT=3890 E2E_MINIO_PORT=9890`, `--workers=2`): 5 passed (4.5 minutes).
+- Docker: the three containers of the e2e stack (`aef05f034468`, `2d99deeee81b`, `7adb863391a2`) were removed by id. A `postgres:17` (`636bfd41431e`) that appeared during the integration run was still receiving queries from someone else, so it was left.
+- Incident: none. Logs are in `$TEMP/jd4r8-*.log`.
+
+## Stage 4 Judgment Day: APPROVED (round 9, 2026-10-19)
+
+Both judges approved round 9 at tip `adff3f1` of `feat/stage-4-revenue`. Task 4.66 is marked done. Nine rounds in total; each has its own section above (rounds 1 to 8), and round 9 found nothing to fix.
+
+- Rounds 1 and 2: money invariants, immutability triggers and credentials (twelve plus seven confirmed findings); the cash register and payment guards read the register `FOR SHARE` (migration 0490), and issuance is serialized per series with an advisory lock.
+- Rounds 4 to 8, the double-issue invariant against an ARCA that is not idempotent (no path may lead to two vouchers for one invoice):
+  - R5-1: the core stopped inferring the last number from its own records; `InvoiceIssuer.lastAuthorized` asks the authority (the equivalent of `FECompUltimoAutorizado`).
+  - R6-1: the number is pinned (`expectedNumber`, `CbteDesde`); the issuer issues exactly that number or answers `not_next` (ARCA error 10016).
+  - R6: the settle time, so a request that may still be in flight is never re-sent.
+  - R7-2: when the pin is honoured, the candidate set is the single expected number (`honoursPin`).
+  - R7-1, R7-5, B-S2, B-S3 and round 8: the parks (`authority_refuses_number`, `authority_refuses_lookup`, `pin_not_honoured`, `number_taken`, `voucher_ambiguous`), each with its worklist reason and its es-AR text.
+  - R8-1: the last look before a rejected re-send ignores the settle time.
+- Liveness (rounds 3, 4, 7 and 8): a blocked series always ends in a worklist item (`outcome_unknown` after two hours, `surfaceStall`), a refused lookup is surfaced, the refusal streak ends in a park, and a rejected re-send reaches `rejected` instead of looping.
+- Open for the real adapter (runbook): answer `outcomeUnknown: true` after a timeout, a reset after the request left, or a 5xx; declare `honoursPin`.
+
+## Owner decisions D22/B7 (2026-10-18)
+
+Branch `feat/owner-decisions-d22-b7`, cut from `feat/stage-4-revenue` at `9cd11e9`. Mode: Strict TDD, openspec store, automatic.
+
+### What the owner decided
+
+- **D22 stays as originally designed (kept by owner decision).** The email double opt-in is not touched: the `whatsapp_opt_in` token kind, its email, its page and the pending state are unchanged. An earlier instruction to replace it with immediate WhatsApp activation was withdrawn before any code was written; no D22 code, spec or doc change exists on this branch except the consequence of B7 below.
+- **D23 confirmed, no change.**
+- **B7 revised:** opting out on any channel opts the patient out of ALL channels. Reception can open a channel again, per channel, with an audit entry. "Sin avisos" is shown on the record. The reply to BAJA and the unsubscribe page say that no more messages come on any channel.
+- Interaction D22 x B7: an opt-out revokes every pending `whatsapp_opt_in` link of the patient, also when WhatsApp was already opted out and the link was asked for afterwards.
+
+### What changed per decision
+
+| Area | Change |
+|---|---|
+| `modules/notifications/application/opt-out.ts` | `optOutChannel` (per channel, with the D10 replacement on the other channel) is replaced by `optOutPatient`: records both channels through `recordOptOut`, cancels everything queued on either, replaces nothing, revokes the pending opt-in links unconditionally, tells the listener once. |
+| `application/preferences.ts` | `OptInRefused` removed: staff can opt a channel back in; the audit metadata carries `reopened: true`. `revokeWhatsappOptInLinks` extracted. |
+| Callers | WhatsApp keyword (`inbound.ts`), email link (`token-handlers.ts`, page text), reception (`channel-routes.ts`: new `POST /patients/:id/opt-out`, the per-channel route is gone; the opt-in route now reopens email and WhatsApp). |
+| Waitlist | The listener closes every entry (`closeEntriesOfOptedOutPatient`); `closeEntriesOfUnreachablePatient` removed. |
+| Contract | `PatientChannelsResponse.noMessages` ("Sin avisos": email opted out and WhatsApp not accepted). |
+| Texts | `optout_ack` says no more messages by WhatsApp or by email; the email footer sentence and label say every channel. |
+| Seed | The two demo opt-out patients go through `optOutPatient`. |
+| Web | `ChannelsPanel`: one baja for all channels (confirm dialog), "Sin avisos" alert, reopen per channel (confirm dialog), request-by-email disabled while email is off; new `patient-header` slot with a lazy `NoMessagesBadge` in the header of the record. |
+| Specs and docs | `proposal.md` (D22/D23 confirmed 2026-10-18, new B7 section), `notifications`, `waitlist`, `online-booking`, `patients` specs, `design.md`, `docs/demo.md`. |
+
+### Migrations
+
+None. `channel_preference` already stores one row per channel and the source constraints already allow every case. Range 0470 to 0479 not used; `db:check`: no drift. The journal and `_journal.json` are untouched.
+
+Opt-outs recorded for one channel before B7 are not rewritten (a data change nobody asked for): such a patient keeps the other channel until their next opt-out, which completes it. A legacy patient with email opted out and WhatsApp never accepted already shows "Sin avisos".
+
+### Messages that still go out after a global opt-out (explicit, closed list)
+
+1. The one-time code of an online booking and of a waitlist join, to the email just typed (`otp-send-job`, `waitlist/application/join.ts`); neither reads the patients.
+2. The confirmation of an online booking, to the verified email, with the manage link and the D22 WhatsApp-accept link (`booking-confirmation.ts`): it does not depend on the opt-outs of the matched record (existence-oracle rule of Stage 3).
+3. The email of a waitlist join that carries the D22 WhatsApp-accept link (`whatsapp-opt-in.ts`).
+4. The acknowledgment of the WhatsApp opt-out itself (`optout_ack`).
+
+Everything that goes through the channel policy follows the opt-out: reminders, confirmations of staff-made appointments, waitlist offers, video follow-ups, and also the email-only kinds that use `loadNoticeRecipient` (the invoice email of `modules/invoicing` is skipped with `deliverySkippedReason = 'opted_out'`, as it already was for an email opt-out; not changed here). The staff request to accept WhatsApp is refused while email is off. Tests: `booking-submission.test.ts` (code to an opted-out record), `notifications-booking-confirmation.test.ts` (confirmation), `whatsapp.test.ts` (acknowledgment).
+
+### TDD cycle evidence
+
+| Task | Test file | Layer | Safety net | RED | GREEN | TRIANGULATE | REFACTOR |
+|---|---|---|---|---|---|---|---|
+| `optOutPatient`: both channels, queued of any kind cancelled, nothing replaced | `test/integration/notifications-global-optout.test.ts` (replaces `notifications-channel-fallback.test.ts`) | Integration | the 8 tests of the old file green before | Written first against a function that did not exist | 17 tests with `optout-listener` pass | WhatsApp, email link, reception; never opted in to WhatsApp; legacy one-channel opt-out; idempotent; other patient untouched | Fallback code removed |
+| Listener told once | same + `notifications-optout-listener.test.ts` | Integration | green before | Written first | Passes | Twice asked, told once | None needed |
+| D22 x B7: stale links revoked | same + `whatsapp-inbound.test.ts` (BAJA through the webhook, the link answers 404) | Integration | green before | Written first | Passes | Staff link and form link; WhatsApp already opted out plus a new link; another patient's link kept | None needed |
+| Reception reopens a channel (audit `reopened`) | `notifications-preferences.test.ts`, `notifications-channels.test.ts` | Integration | green before | Old "staff cannot re-enable" tests turned into the new rule first | Passes | WhatsApp and email; two audit rows with the staff member | `OptInRefused` removed |
+| `POST /patients/:id/opt-out` and `noMessages` | `notifications-channels.test.ts` | Integration | green before | Written first | Passes | All channels; legacy email-only; WhatsApp accepted keeps it false | None needed |
+| Waitlist closes every entry | `waitlist-fairness.test.ts` | Integration | green before | Old "one channel keeps the list" test turned around first | Passes | Patient with WhatsApp accepted; another patient's entry stays | Dead function removed |
+| Unsubscribe page and email text, acknowledgment | `notifications-tokens.test.ts`, `public-tokens.test.ts`, `render.test.ts`, `whatsapp.test.ts` | Integration, security, unit | green before | Expectations changed first (copy was changed in the same step) | Passes | Both channels recorded once per press | None needed |
+| Survivors: code and confirmation | `booking-submission.test.ts`, `notifications-booking-confirmation.test.ts` | Integration | green before | Written after the code was already independent of preferences (characterization) | Passes | A record opted out of every channel | None needed |
+| `ChannelsPanel` and `NoMessagesBadge` | `channels-panel.test.tsx`, `no-messages-badge.test.tsx` | Component | 10 green before | Written first | 14 pass | Sin avisos shown and absent; confirm and back out; reopen email and WhatsApp | Request button gets its reason |
+| Journeys | `stage3-messaging.spec.ts`, `stage3-demo.spec.ts` | E2E | green before | Expectations rewritten for the new rule | Pass | n/a | n/a |
+
+### Deviations and incidents
+
+- The video visit of `stage3-demo.spec.ts` used the patient who had written BAJA; under B7 nothing reaches them, so the visit now has a patient of its own. First attempt (moving the BAJA to the end) failed because the confirmation then went to the WhatsApp simulator, not to the mailbox; reverted.
+- Python edits in this run first wrote CRLF into LF files (Windows text mode); fixed before any commit (`git diff` is free of whole-file changes).
+- No process was killed and nothing was stashed. The e2e stack left its three containers after each Playwright run (and a failed start left two more); all of them were listed by id and removed by id, the baseline containers are untouched.
+
+### Risks
+
+- A BAJA from a shared number (a family) used to opt out of every channel of every patient on the number. Refined the same day (see "Shared numbers" below): WhatsApp closes for all, the full opt-out only for the patient the reply belongs to. The remaining risk is a wrong attribution (the latest message is not always the person who replied); the quoted message, the five-minute window and the reception item limit it.
+- Invoices (`modules/invoicing`, owned by the Stage 4 billing agent) follow the email opt-out through the channel policy, as before; with B7 a BAJA on WhatsApp now also stops the invoice email. Not touched here.
+- Reception reopening a channel is a human judgement call: it asks for confirmation and writes an audit entry, nothing more.
+- Meta-approved WhatsApp templates: only the text of `optout_ack` changed (the simulator and the fake render it from `assets/es-AR/whatsapp.ts`). A real provider would need that template re-approved.
+
+### Verification
+
+Node v24.22.0 (PATH), pnpm 10.34.7.
+
+- `pnpm install --frozen-lockfile`, `pnpm typecheck`, `pnpm lint`, `pnpm format:check` (the files that failed were mine and were formatted individually, never the `apps/api/src` tree), `pnpm build`, `pnpm db:check`: clean.
+- `pnpm test` (unit): 384 files, 4873 tests passed, 1 skipped, 0 failed.
+- Targeted integration (`vitest.integration.config.ts`, only my files, the full suite was left to the other agent): notifications (preferences, channels, tokens, global-optout, optout-listener, booking-confirmation, offers, message-log, send, video-followup, usage-metering), inbound and attribution, booking-submission, waitlist (fairness, join, entries, offers), demo seed files and `public-tokens`: all green.
+- E2E (`E2E_WEB_PORT=4900 E2E_API_PORT=3900 E2E_MINIO_PORT=9900`, `--workers=2`): `stage3-*`, `patients.spec`, `patients.responsive`: 42 passed, 0 failed after the demo fix.
+- Logs: `$TEMP/decisions-*.log`.
+
+### Shared numbers (B7 refinement, owner-approved 2026-10-18)
+
+A WhatsApp BAJA from a number written to several patients of the organization:
+
+- WhatsApp closes for every patient on the number (`optOutWhatsapp`, queued WhatsApp reminders and confirmations replaced by email when the patient has a usable email, the D10 fallback kept for this case only; the listener is told with `scope: 'whatsapp'`, so the waitlist uses `closeEntriesOfUnreachablePatient`, restored).
+- The full opt-out (`optOutPatient`) goes only to the patient the reply belongs to (`replyOwner` in `inbound.ts`): 1. the patient of the quoted message (the reply context); 2. otherwise the patient written to last on that number, unless another patient was written to within five minutes of that (`AMBIGUOUS_WITHIN_MS`); 3. otherwise nobody: WhatsApp-only for everybody, no email opt-out for anyone, and a `reply_to_review` item with `reason: email_optout_unconfirmed` (the worklist card now shows the sentence).
+- A number written to one patient only keeps the full opt-out. The unsubscribe link and reception are always the full opt-out of that patient.
+- New template `optout_ack_shared` (es-AR): the clinic will send no more WhatsApp messages to this number; the person who replied gets no emails either, or the reception will confirm it.
+- The other members do not show "Sin avisos" (their email is untouched).
+
+Migrations: none. Files: `application/opt-out.ts` (`optOutWhatsapp`, `OptOutScope`), `application/inbound.ts`, `assets/es-AR/whatsapp.ts`, waitlist `entries.ts` and wiring, web `WorklistItemCard`, `worklist-items.ts` and the `scheduling` locale.
+
+| Task | Test file | Layer | Safety net | RED | GREEN | TRIANGULATE | REFACTOR |
+|---|---|---|---|---|---|---|---|
+| `optout_ack_shared` | `assets/es-AR/whatsapp.test.ts` | Unit | 8 green before | Written first, failed (no such template) | Passes | With and without `emailPending` | None needed |
+| Attribution and the two levels of opt-out | `whatsapp-inbound.test.ts` (new describe, last in the file) | Integration | 18 green before | Written first | 23 pass | Quoted message beats the latest; latest wins without a quote; same-time is ambiguous (worklist item, nobody loses email); single-patient number stays global; acks | `replyOwner` extracted |
+| Email fallback of the other members | same | Integration | green before | Written first | Passes | Replacement queued with the group key of the reminder; the owner gets none | None needed |
+| Waitlist of the other members | `waitlist-fairness.test.ts` | Integration | green before | Written first | Passes | Keeps the entry with an email, closes it without one | `closeEntriesOfUnreachablePatient` restored |
+| Worklist sentence | `worklist-items.test.ts`, `worklist-page.test.tsx` | Unit, component | 25 green before | Written first, failed | 27 pass | Known and unknown reasons | None needed |
+
+Two test-setup lessons: the queued messages of a family fixture must be created after every member was reminded (the job that sends the next reminder would send them), and the fixture needs its own booking weeks (the file books by a slot counter).
+
+Verification of the refinement: `pnpm install --frozen-lockfile` (unchanged lockfile), `typecheck`, `lint`, `format:check`, `build` and `db:check` clean; `pnpm test` 384 files, 4877 passed plus 1 skipped, with one timeout of `platform/pdf/render.test.ts` under load that passes alone (12 of 12); targeted integration (whatsapp inbound, attribution and loop, waitlist fairness, entries and offers, global opt-out, listener, preferences, channels, tokens, booking confirmation, `demo-stage3`, `scheduling-worklist`, `public-tokens`): 15 files, 253 tests green; e2e `stage3-*` on 4900/3900/9900 with 2 workers: 17 passed. The four containers of the e2e stack were removed by id.
+
+## Stage 4 integration 3 (B7)
+
+`feat/owner-decisions-d22-b7` (tip `a978ac6`, cut from `9cd11e9`) merged with `--no-ff` into `feat/stage-4-revenue` after the Stage 4 close commit (`d42464b`, task 4.66 done). The merge commit is `c284aa5`. B7 has no migrations: `db:restamp` found nothing to change and `db:check` reports no drift (90 migrations recorded).
+
+### Conflicts
+
+Git reported two textual conflicts; the rest auto-merged and was read afterwards.
+
+| File | Resolution |
+| ---- | ---------- |
+| `apps/web/src/locales/es-AR/scheduling.json` | Both sides added a line at the same place: Stage 4 `worklist.kind.invoice_attention`, B7 `worklist.replyReason.email_optout_unconfirmed`. Both kept. |
+| `openspec/changes/health-practice-saas/apply-progress.md` | Both sides appended sections: the Stage 4 Judgment Day sections (rounds 1 to 8 and the approval) and the B7 section "Owner decisions D22/B7". Both kept, B7 after. |
+
+Checked by hand after the auto-merge:
+
+- `opt-out.ts` still reports a listener failure through `describeFailure` (Stage 3 hardening); B7 changed the rest of the file (the opt-out of all channels, the shared-number rules).
+- `WorklistItemCard.tsx`: B7 added the reply reason line (`replyReason`, only for the known `email_optout_unconfirmed`), and the Stage 4 invoice reasons are untouched; the two do not share a key.
+- B7 deleted `notifications-channel-fallback.test.ts` (replaced by `notifications-global-optout.test.ts`); nothing on Stage 4's side had changed it.
+
+### Fixes
+
+None needed: the merge was green without a fix commit.
+
+### Verification (tip `c284aa5`, Node v24, pnpm via corepack, a Docker shared with another agent)
+
+- `pnpm install --frozen-lockfile`, `pnpm typecheck`, `pnpm lint`, `pnpm format:check`: clean.
+- `pnpm test` (unit): 387 files, 4966 tests passed and 1 failed, 1 skipped. The failure was a 5 s timeout of `scripts/new-migration.test.ts` under load; alone it passes (9 tests).
+- Full integration (Testcontainers, Postgres 17): 248 files passed and 1 skipped, 3751 tests passed, 4 skipped (1980 s), no failure.
+- `pnpm build`: green. `pnpm db:check`: no drift.
+- Full e2e (`E2E_WEB_PORT=4890 E2E_API_PORT=3890 E2E_MINIO_PORT=9890`, `--workers=2`): 214 passed, 0 failed (7.8 minutes).
+- Docker: `infra/Dockerfile` built; a fresh `postgres:17` with `infra/postgres/init/01-roles.sql`; `db:migrate` run twice (both: migrations applied, platform catalogs loaded; 90 migrations recorded; the three invoice wait columns exist); the image started as `api` with `NODE_ENV=production`, multi-tenant, KMS `aws`, `S3_BUCKET`, `CLAMAV_HOST`, SMTP starttls and `ADDRESS_HASH_PEPPER`: `GET /health` answered `{"status":"ok"}`. Removed by id: the postgres and api containers, the image, and the three containers of the e2e stack (postgres, MinIO, Mailpit). A `postgres:17` (`06078eadeeb1`) that appeared during the run belongs to another agent and was left.
+- Incident: none. Logs are in `$TEMP/s4close-*.log`.

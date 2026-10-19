@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 
 import { Problem, type NoteDto } from '@consultorio/contracts';
-import { and, eq } from 'drizzle-orm';
+import { and, asc, eq } from 'drizzle-orm';
 import { afterAll, beforeAll, describe, expect, inject, it } from 'vitest';
 
 import { auditEvent } from '../../src/db/schema/audit.js';
@@ -115,7 +115,8 @@ describe('the exploit: opening an encounter to read a record', () => {
       tx
         .select()
         .from(auditEvent)
-        .where(and(eq(auditEvent.action, 'access.denied'), eq(auditEvent.patientId, patientId))),
+        .where(and(eq(auditEvent.action, 'access.denied'), eq(auditEvent.patientId, patientId)))
+        .orderBy(asc(auditEvent.occurredAt), asc(auditEvent.id)),
     );
     expect(rows.at(-1)).toMatchObject({
       outcome: 'deny',

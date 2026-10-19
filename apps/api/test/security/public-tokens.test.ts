@@ -40,6 +40,8 @@ const ELSEWHERE: Partial<Record<TokenKind, string>> = {
   waitlist_offer: 'test/integration/waitlist-offer-link.test.ts (the offer page of the router)',
   video_join: 'test/integration/video-join-public.test.ts (`/public/v/:token`)',
   document_download: 'test/integration/documents-download.test.ts (`/files/:token`, session bound)',
+  export_download: 'test/integration/billing-exports.test.ts (`/files/:token`, session bound)',
+  invoice_pdf: 'test/integration/invoice-render.test.ts (`/files/:token`, session bound)',
   staff_invitation: 'test/integration/invitation-accept.test.ts (the invitation page of the app)',
   password_reset: 'test/integration/auth-routes.test.ts (the recovery routes)',
   signup_verification: 'test/integration/onboarding-api.test.ts (the signup verification)',
@@ -304,7 +306,8 @@ describe('a link acts once', () => {
         .from(channelPreference)
         .where(eq(channelPreference.patientId, set.patientId)),
     );
-    expect(rows).toEqual([{ state: 'opted_out' }]);
+    // One press records the opt-out of both channels (B7), once each.
+    expect(rows).toEqual([{ state: 'opted_out' }, { state: 'opted_out' }]);
   });
 
   it('does not let the link of one patient act on another: the subject is part of the token', async () => {

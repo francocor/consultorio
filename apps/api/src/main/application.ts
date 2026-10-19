@@ -60,6 +60,8 @@ import {
   createAppointmentEvents,
   type AppointmentEvents,
 } from '../platform/events/appointment-events.js';
+import { createFileResourceRegistry } from '../platform/files/file-resources.js';
+import { fileRoutes } from '../platform/files/file-routes.js';
 import type { HealthDeps } from '../platform/http/health.js';
 import { createPublicOrigins } from '../platform/http/public-origin.js';
 import { createMemoryRateLimitStore, type RateLimit } from '../platform/http/rate-limit.js';
@@ -157,7 +159,12 @@ export interface ApplicationOptions {
    * The provider console (`LOCAL_PROVIDERS_CONSOLE`): with `console: false` no `/operator/dev`
    * route exists. It lives inside the operator console, so it needs one.
    */
-  localProviders?: { console: boolean; providers: readonly DevProvider[] };
+  localProviders?: {
+    console: boolean;
+    providers: readonly DevProvider[];
+    /** Which providers run on a simulator; the public boot payload tells the app. */
+    simulated?: { afip: boolean };
+  };
   /**
    * The appointment event bus. Defaults to a new one per application; a test passes its own to
    * listen to what scheduling publishes.
@@ -313,11 +320,15 @@ export function createApplication(options: ApplicationOptions): FastifyInstance 
     ...(schedulingClock ? { clock: schedulingClock } : {}),
   });
 
+  // What `/files/:token` serves: documents register their kind here, and so does any module that
+  // hands out a file (billing exports, invoice PDFs). One registry per application.
+  const fileResources = createFileResourceRegistry();
   const documents = createDocuments({
     withTenant,
     auditDeny,
     storage: options.storage,
     jobs: options.jobs,
+    fileResources,
     ...(options.clock ? { clock: options.clock } : {}),
   });
 
@@ -363,6 +374,7 @@ export function createApplication(options: ApplicationOptions): FastifyInstance 
       appointmentEvents,
       worklist: scheduling.worklist,
       videoJoin,
+      fileResources,
       ...(options.clock ? { clock: options.clock } : {}),
       ...(options.storage ? { storage: options.storage } : {}),
       ...(options.jobs ? { jobs: options.jobs } : {}),
@@ -398,6 +410,7 @@ export function createApplication(options: ApplicationOptions): FastifyInstance 
     storage: options.storage,
     boot: {
       deploymentMode: options.deployment.mode,
+      localProviders: options.localProviders?.simulated ?? { afip: false },
       locale: (country) => {
         const found = getCountryPack(country, createCatalogReader(db));
         return found.ok ? found.value.defaults.locale : 'es-AR';
@@ -444,6 +457,13 @@ export function createApplication(options: ApplicationOptions): FastifyInstance 
       ...(operatorConsole ? [operatorConsole.routes] : []),
       ...wired.flatMap((module) => (module.routes ? [module.routes] : [])),
       ...(options.modules ?? []),
+      // Last: the door declares the audit actions of every resource the modules registered.
+      fileRoutes({
+        registry: fileResources,
+        withTenant,
+        auditDeny,
+        storage: options.storage,
+      }),
     ],
   });
   built.server = server;

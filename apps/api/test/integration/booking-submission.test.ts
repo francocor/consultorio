@@ -6,6 +6,7 @@ import { auditEvent } from '../../src/db/schema/audit.js';
 import { bookingSubmission, otpChallenge } from '../../src/db/schema/booking-submission.js';
 import { patient } from '../../src/db/schema/patients.js';
 import { appointment, slotHold } from '../../src/db/schema/scheduling.js';
+import { optOutPatient } from '../../src/modules/notifications/application/opt-out.js';
 import { verifyCode } from '../../src/modules/online-booking/application/otp.js';
 import { createRuntimeDb, type DbHandle } from '../../src/platform/db/pool.js';
 import { createBookingWorld, type BookingWorld, type Visitor } from '../support/booking-world.js';
@@ -142,6 +143,42 @@ describe('submitting the form', () => {
     expect(world.email.sent.map((message) => message.to)).toEqual(['typed@example.test']);
     expect(world.email.lastTo('on-file@example.test')).toBeUndefined();
     // The answer is the same for a visitor whose document is on file: nothing says so.
+    expect(response.json<PublicSubmissionResponse>().maskedEmail).toBe('t***@example.test');
+  });
+
+  it('still sends the code to the typed address when the record with that document opted out of every channel (B7)', async () => {
+    const { visitor, hold } = await heldBy();
+    const optedOut = world.form({
+      document: { type: 'dni', number: '31555001' },
+      email: 'baja@example.test',
+    });
+    await world.inTenant(async (tx) => {
+      const inserted = await tx.execute<{ id: string }>(
+        sql`INSERT INTO patient (tenant_id, family_name, given_names, birth_date, national_id_type, national_id, email)
+              VALUES (${world.tenant.id}, 'Baja', 'Paciente', '1980-01-01', 'dni', '31555001', ${optedOut.email})
+              RETURNING id`,
+      );
+      const patientId = inserted.rows[0]?.id ?? '';
+      await optOutPatient(tx, {
+        patientId,
+        source: 'email_link',
+        actor: { userId: null, actingRole: null, ip: null, userAgent: null, requestId: null },
+      });
+    });
+    world.email.clear();
+    world.jobs.jobs.length = 0;
+
+    const response = await submit(
+      visitor,
+      hold,
+      world.form({ document: optedOut.document, email: 'typed-baja@example.test' }),
+    );
+    await world.runJobs();
+
+    expect(response.statusCode, response.body).toBe(200);
+    // The visitor asked for the code at that moment: it goes out, and the answer is the one of any
+    // other visitor (nothing says that the document is on file or that its record opted out).
+    expect(world.email.sent.map((message) => message.to)).toEqual(['typed-baja@example.test']);
     expect(response.json<PublicSubmissionResponse>().maskedEmail).toBe('t***@example.test');
   });
 

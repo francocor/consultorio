@@ -10,6 +10,7 @@ import { SYSTEM_USER_ID, createWithTenant, type Tx } from '../db/tenant-context.
 import { jobMayRun } from '../read-only/jobs.js';
 
 import type { JobPayload } from './boss.js';
+import { JOB_LOCAL_CONCURRENCY } from './concurrency.js';
 
 export interface JobInfo {
   id: string;
@@ -145,7 +146,7 @@ export async function registerJobs(
         batchSize: BATCH_SIZE,
         burstWhenBatchFull: true,
         perJobResults: true,
-        localConcurrency: 2,
+        localConcurrency: JOB_LOCAL_CONCURRENCY,
       },
       async (jobs) => {
         const results: JobResult[] = [];

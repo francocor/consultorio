@@ -7,7 +7,9 @@ import type { DemoResetPort } from '../../../modules/operator/application/tenant
 import { writePlatformAudit } from '../../../platform/audit/platform-audit.js';
 import type { Db } from '../../../platform/db/pool.js';
 import { SYSTEM_USER_ID } from '../../../platform/db/tenant-context.js';
+import { exportRequest } from '../../schema/billing-payments.js';
 import { document } from '../../schema/documents.js';
+import { invoiceDocument } from '../../schema/invoicing.js';
 
 import type { DemoStaff } from './dataset.js';
 import { DemoSeedError, seedDemoTenant, type DemoSeedDeps, type SeededCredential } from './seed.js';
@@ -77,10 +79,16 @@ export async function resetDemoTenant(
 
   // The files of the demo are listed BEFORE their rows go; they leave the bucket after the reset has
   // succeeded, so a refused or failed reset never costs a download.
+  // The documents of patients, the PDF of every invoice and the files of the exports all live in the
+  // bucket of the organization.
   const files = deps.documents
-    ? await deps.withTenant({ tenantId, userId: SYSTEM_USER_ID }, (tx) =>
-        tx.select({ key: document.objectKey }).from(document),
-      )
+    ? await deps.withTenant({ tenantId, userId: SYSTEM_USER_ID }, async (tx) => [
+        ...(await tx.select({ key: document.objectKey }).from(document)),
+        ...(await tx.select({ key: invoiceDocument.objectKey }).from(invoiceDocument)),
+        ...(await tx.select({ key: exportRequest.objectKey }).from(exportRequest)).flatMap((row) =>
+          row.key === null ? [] : [{ key: row.key }],
+        ),
+      ])
     : [];
 
   const outcome = await run({ tenantId, operatorId: actor.operatorId }, async (tx) => {

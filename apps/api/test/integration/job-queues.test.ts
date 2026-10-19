@@ -34,16 +34,25 @@ const STAGE_3_QUEUES = [
   'video.link.create',
 ];
 
+const STAGE_4_QUEUES = [
+  'afip.issue',
+  'fiscal.credential_watch',
+  'invoice.pdf',
+  'invoice.deliver',
+  'export.build',
+];
+
 describe('the queues the installer creates', () => {
-  it('creates every queue of the application, the Stage 3 ones included', async () => {
+  it('creates every queue of the application, the Stage 3 and Stage 4 ones included', async () => {
     const existing = (await boss.getQueues()).map((queue) => queue.name);
 
     expect(existing).toEqual(expect.arrayContaining(QUEUES.map((queue) => queue.name)));
     expect(existing).toEqual(expect.arrayContaining(STAGE_3_QUEUES));
+    expect(existing).toEqual(expect.arrayContaining(STAGE_4_QUEUES));
     expect(JOBS_SCHEMA).toBe('pgboss');
   });
 
-  it.each(STAGE_3_QUEUES.map((name) => [name] as const))(
+  it.each([...STAGE_3_QUEUES, ...STAGE_4_QUEUES].map((name) => [name] as const))(
     'accepts a job for %s from a request transaction',
     async (name) => {
       const client = createJobClient(boss);

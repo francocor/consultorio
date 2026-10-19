@@ -1,0 +1,19 @@
+{
+  "billing_price_duplicate": "Ya hay un precio activo para este tipo de turno, con el mismo alcance y desde esa fecha.",
+  "billing_payer_exists": "Esta obra social o prepaga ya está en la lista de la organización.",
+  "charge_check_in_required": "Primero hay que registrar la llegada del paciente: el cobro empieza en el check-in.",
+  "charge_not_billable": "Este turno terminó sin atención y no genera un cobro.",
+  "charge_amount_required": "No hay un precio cargado para este turno. Ingrese el importe a cobrar.",
+  "charge_price_exists": "Hay un precio cargado para este turno: no se puede ingresar otro importe a mano.",
+  "charge_voided": "El cobro está anulado y ya no se puede modificar.",
+  "charge_has_payments": "El cobro tiene pagos registrados. Primero hay que devolverlos.",
+  "charge_has_invoice": "El cobro tiene una factura emitida. Primero hay que emitir una nota de crédito.",
+  "payment_overpayment": "El pago supera lo que el paciente debe. Confirme el saldo a favor o ingrese un importe menor.",
+  "payment_voucher_duplicate": "Ese número de comprobante ya fue registrado. Para repetirlo hay que indicar un motivo.",
+  "idempotency_key_reused": "Este envío ya se usó para otra operación distinta (otro pago, otra factura u otro comprobante). Vuelva a cargarla desde el principio.",
+  "cash_register_required": "No hay una caja abierta en esta sede. Abra la caja para registrar pagos en efectivo.",
+  "payment_refund_exceeds": "La devolución supera lo que queda del pago.",
+  "cash_register_open": "Ya hay una caja abierta en esta sede.",
+  "cash_register_closed": "La caja está cerrada y no admite más movimientos.",
+  "cash_difference_reason_required": "Lo contado no coincide con lo esperado. Indique el motivo de la diferencia."
+}

@@ -6,14 +6,13 @@ import { dirname, join } from 'node:path';
 import { pipeline } from 'node:stream/promises';
 
 import {
-  CreateBucketCommand,
   GetObjectCommand,
-  HeadBucketCommand,
   ListObjectsV2Command,
   PutObjectCommand,
   S3Client,
 } from '@aws-sdk/client-s3';
 
+import { ensureBucket } from './bucket.js';
 import {
   BackupCorrupt,
   MANIFEST_FILE,
@@ -155,27 +154,36 @@ async function copyObjects(
   try {
     let token: string | undefined;
     do {
-      const page = await client.send(
-        new ListObjectsV2Command({ Bucket: source.bucket, ContinuationToken: token }),
+      // Every call to the store is asked again when the connection is reset under load (CI PR #17).
+      const page = await withTransientRetry(() =>
+        client.send(new ListObjectsV2Command({ Bucket: source.bucket, ContinuationToken: token })),
       );
       for (const item of page.Contents ?? []) {
         const key = item.Key;
         if (key === undefined) continue;
         assertSafeKey(key);
-        const object = await client.send(new GetObjectCommand({ Bucket: source.bucket, Key: key }));
         const path = join(dir, OBJECTS_DIR, ...key.split('/'));
         await mkdir(dirname(path), { recursive: true });
-        const hash = createHash('sha256');
-        const body = object.Body as NodeJS.ReadableStream | undefined;
-        if (!body) throw new Error(`object ${key} has no body`);
-        body.on('data', (chunk: Buffer) => hash.update(chunk));
-        await pipeline(body, createWriteStream(path));
-        index.push({
-          key,
-          size: (await stat(path)).size,
-          sha256: hash.digest('hex'),
-          contentType: object.ContentType ?? 'application/octet-stream',
-        });
+        // The request and the stream are one unit: a connection reset while the body is read starts the
+        // object again, with a new hash and a file written from the beginning.
+        index.push(
+          await withTransientRetry(async () => {
+            const object = await client.send(
+              new GetObjectCommand({ Bucket: source.bucket, Key: key }),
+            );
+            const hash = createHash('sha256');
+            const body = object.Body as NodeJS.ReadableStream | undefined;
+            if (!body) throw new Error(`object ${key} has no body`);
+            body.on('data', (chunk: Buffer) => hash.update(chunk));
+            await pipeline(body, createWriteStream(path));
+            return {
+              key,
+              size: (await stat(path)).size,
+              sha256: hash.digest('hex'),
+              contentType: object.ContentType ?? 'application/octet-stream',
+            };
+          }),
+        );
       }
       token = page.IsTruncated ? page.NextContinuationToken : undefined;
     } while (token);
@@ -372,21 +380,20 @@ export async function restoreBackup(options: RestoreOptions): Promise<RestoreRep
   log('restoring the document bucket');
   const client = s3Client(options.bucket);
   try {
-    try {
-      await client.send(new HeadBucketCommand({ Bucket: options.bucket.bucket }));
-    } catch {
-      await client.send(new CreateBucketCommand({ Bucket: options.bucket.bucket }));
-    }
+    await ensureBucket(client, options.bucket.bucket);
     for (const entry of index) {
       assertSafeKey(entry.key);
       const body = await readFile(join(options.dir, OBJECTS_DIR, ...entry.key.split('/')));
-      await client.send(
-        new PutObjectCommand({
-          Bucket: options.bucket.bucket,
-          Key: entry.key,
-          Body: body,
-          ContentType: entry.contentType,
-        }),
+      // A put of the same key with the same body is idempotent, so asking again is safe.
+      await withTransientRetry(() =>
+        client.send(
+          new PutObjectCommand({
+            Bucket: options.bucket.bucket,
+            Key: entry.key,
+            Body: body,
+            ContentType: entry.contentType,
+          }),
+        ),
       );
     }
   } finally {

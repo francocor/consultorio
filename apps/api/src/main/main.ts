@@ -48,7 +48,7 @@ function waitForShutdownSignal(): Promise<void> {
 
 async function runApi(config: Config): Promise<void> {
   const probe = createDbProbe(config.databaseUrl);
-  const database = createRuntimeDb(config.databaseUrl);
+  const database = createRuntimeDb(config.databaseUrl, { max: config.dbPoolMax });
   const kms = createKeyManagement(config.kms);
   const keys = createTenantKeys({ kms });
   const operatorDatabase = config.operatorDatabaseUrl
@@ -94,6 +94,7 @@ async function runApi(config: Config): Promise<void> {
     localProviders: {
       console: config.providers.localProvidersConsole,
       providers: MODULE_WIRINGS.flatMap((module) => module.devProviders?.({ config }) ?? []),
+      simulated: { afip: config.providers.afip === 'local' },
     },
     passwordValidator,
     lockout: config.lockout,
@@ -170,7 +171,7 @@ async function runWorker(config: Config): Promise<void> {
     log.warn('CLAMAV_HOST is not set: documents are scanned by the fake scanner (EICAR only)');
   }
   // The same adapter registry as the API: a module's jobs resolve their providers through it.
-  const runtime = createRuntimeDb(config.databaseUrl);
+  const runtime = createRuntimeDb(config.databaseUrl, { max: config.dbPoolMax });
   const adapters = createAdapterResolver(
     buildAdapterRegistry({
       config,
@@ -185,6 +186,7 @@ async function runWorker(config: Config): Promise<void> {
   const videoJoin = createVideoJoinRegistry();
   const worker = await startWorker({
     databaseUrl: config.databaseUrl,
+    dbPoolMax: config.dbPoolMax,
     sealerDatabaseUrl: config.auditSealerDatabaseUrl,
     log,
     ...combineWorkerContributions([

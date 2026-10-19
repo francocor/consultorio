@@ -1,6 +1,9 @@
+import { billingWiring } from './billing.js';
 import { integrationsWiring } from './integrations.js';
+import { invoicingWiring } from './invoicing.js';
 import { notificationsWiring } from './notifications.js';
 import { onlineBookingWiring } from './online-booking.js';
+import { reportsWiring } from './reports.js';
 import { teleconsultationWiring } from './teleconsultation.js';
 import type { ModuleWiring } from './types.js';
 import { waitlistWiring } from './waitlist.js';
@@ -25,4 +28,7 @@ export const MODULE_WIRINGS: readonly ModuleWiring[] = [
   onlineBookingWiring,
   waitlistWiring,
   teleconsultationWiring,
+  billingWiring,
+  invoicingWiring,
+  reportsWiring,
 ];

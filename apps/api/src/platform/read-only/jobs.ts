@@ -33,6 +33,14 @@ export const JOB_CATEGORIES: Readonly<Record<string, RouteCategory>> = {
   'waitlist.offer': 'write',
   'waitlist.expire': 'write',
   'video.link.create': 'write',
+  // Stage 4. AFIP submission keeps running for invoices queued before the freeze (and only those);
+  // a PDF and an export are built from records a read-only tenant may read; an invoice email and
+  // the certificate warning are messages, so they end cancelled and are never replayed.
+  'afip.issue': 'afip_submission',
+  'fiscal.credential_watch': 'write',
+  'invoice.pdf': 'export',
+  'invoice.deliver': 'write',
+  'export.build': 'export',
 };
 
 /** The category of a queue. A queue nobody classified is refused, not guessed. */

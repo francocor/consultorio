@@ -43,6 +43,9 @@ export type { DocumentRules } from './application/patients.js';
 // Track A (messaging): how to reach a patient, without the rest of the demographics.
 export { readPatientContact, readPatientContacts } from './application/contact.js';
 export type { PatientContact } from './application/contact.js';
+// Track A of Stage 4 (billing): the payer plan a patient is covered by on a day.
+export { readPatientPayerPlan } from './application/payer-plan.js';
+export type { PatientPayerPlan } from './application/payer-plan.js';
 
 export interface PatientsOptions {
   withTenant: WithTenant;

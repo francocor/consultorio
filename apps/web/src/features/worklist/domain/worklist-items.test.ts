@@ -1,7 +1,7 @@
 import { WORKLIST_KINDS, type WorklistItemDto } from '@consultorio/contracts';
 import { describe, expect, it } from 'vitest';
 
-import { countByKind, filterItems, identityDifferences } from './worklist-items.js';
+import { countByKind, filterItems, identityDifferences, replyReason } from './worklist-items.js';
 
 const ID = (n: number) => `0190a000-0000-7000-8000-${String(n).padStart(12, '0')}`;
 
@@ -47,6 +47,22 @@ describe('identityDifferences', () => {
   });
 });
 
+describe('replyReason', () => {
+  it('reads why a reply was left for reception, when it is a reason the screen knows', () => {
+    expect(replyReason({ reason: 'email_optout_unconfirmed', patientIds: [] })).toBe(
+      'email_optout_unconfirmed',
+    );
+  });
+
+  it('shows nothing for no reason, or one it does not know', () => {
+    expect(replyReason(null)).toBeNull();
+    expect(replyReason({})).toBeNull();
+    expect(replyReason({ reason: 'something_new' })).toBeNull();
+    expect(replyReason({ reason: 'several_organizations' })).toBeNull();
+    expect(replyReason({ reason: 7 })).toBeNull();
+  });
+});
+
 describe('countByKind and filterItems', () => {
   const items = [
     item({ id: ID(10), kind: 'identity_review' }),
@@ -55,7 +71,7 @@ describe('countByKind and filterItems', () => {
     item({ id: ID(13), kind: 'reminder_not_sent', locationId: null }),
   ];
 
-  it('counts the items of each of the six kinds, including the ones with none', () => {
+  it('counts the items of each kind, including the ones with none', () => {
     const counts = countByKind(items);
 
     expect(counts).toEqual({
@@ -65,6 +81,7 @@ describe('countByKind and filterItems', () => {
       reminder_not_delivered: 0,
       reply_to_review: 0,
       waitlist_manual_contact: 0,
+      invoice_attention: 0,
     });
     expect(Object.keys(counts)).toEqual([...WORKLIST_KINDS]);
   });

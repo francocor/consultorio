@@ -186,6 +186,11 @@ export type ChannelStateDto = z.infer<typeof ChannelStateDto>;
 export const PatientChannelsResponse = z.strictObject({
   email: ChannelStateDto,
   whatsapp: ChannelStateDto,
+  /**
+   * "Sin avisos": the patient opted out (on any channel, which opts out of all of them) and no
+   * channel has been opened again, so no message of the organization can reach them.
+   */
+  noMessages: z.boolean(),
   /** Whether the record has an email, and a phone that can be read as a mobile number. */
   hasEmail: z.boolean(),
   hasMobile: z.boolean(),

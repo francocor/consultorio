@@ -1,5 +1,5 @@
 {
-  "channel_opted_out": "El paciente dio de baja este canal. Solo el paciente puede volver a activarlo.",
+  "channel_opted_out": "El paciente dio de baja este canal. Si él lo pidió, recepción puede volver a activarlo desde los canales del paciente.",
   "patient_without_email": "El paciente no tiene un email registrado. Cargue uno en su ficha para enviarle el pedido.",
   "patient_without_phone": "El paciente no tiene un celular que se pueda usar para WhatsApp. Cargue uno en su ficha.",
   "resend_limit_reached": "Ya se usaron los 3 reenvíos permitidos para este turno.",

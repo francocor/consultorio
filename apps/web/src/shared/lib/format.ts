@@ -1,3 +1,5 @@
+import { formatArs, parseArs, type Money } from '@consultorio/contracts';
+
 /**
  * Locale-aware formatting for the whole app. Everything goes through `Intl` with `es-AR`, and
  * dates and times are shown in the time zone of the location (never the browser's), so a
@@ -93,9 +95,17 @@ export function formatCalendarDay(value: string | null | undefined): string {
     : MISSING;
 }
 
-/** `$ 1.234,50` */
-export function formatMoney(amount: number, currency = 'ARS'): string {
-  return new Intl.NumberFormat(LOCALE, { style: 'currency', currency }).format(amount);
+/**
+ * `$ 1.234,50`. An amount is whole cents of ARS (the `Money` type of the contracts), the same text
+ * the server writes in exports and invoices; there is no decimal-peso variant on purpose.
+ */
+export function formatMoney(amount: Money): string {
+  return formatArs(amount);
+}
+
+/** What a person typed in an amount field (`1.234,50`), as cents; `null` when it is not an amount. */
+export function parseMoney(text: string): Money | null {
+  return parseArs(text);
 }
 
 export function formatNumber(value: number): string {

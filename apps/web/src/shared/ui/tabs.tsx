@@ -3,7 +3,14 @@ import type { ComponentProps } from 'react';
 
 import { cn } from '../lib/cn.js';
 
-export const Tabs = TabsPrimitive.Root;
+/**
+ * `min-w-0` lets the tabs shrink to the column they sit in. As the child of a grid or flex box they
+ * would otherwise be as wide as their widest content (a table, a long label) and push the page past
+ * the screen of a phone instead of letting that content scroll or wrap.
+ */
+export function Tabs({ className, ...props }: ComponentProps<typeof TabsPrimitive.Root>) {
+  return <TabsPrimitive.Root className={cn('min-w-0', className)} {...props} />;
+}
 
 export function TabsList({ className, ...props }: ComponentProps<typeof TabsPrimitive.List>) {
   return (

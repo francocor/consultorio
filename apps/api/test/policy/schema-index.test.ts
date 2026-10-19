@@ -39,4 +39,17 @@ describe('the schema index', () => {
       expect(files, name).toContain(name);
     }
   });
+
+  it('has a file for each table family the Stage 4 tracks add, already exported', () => {
+    for (const name of [
+      'billing-pricing',
+      'billing-charges',
+      'billing-payments',
+      'invoicing-config',
+      'invoicing',
+      'local-afip',
+    ]) {
+      expect(files, name).toContain(name);
+    }
+  });
 });

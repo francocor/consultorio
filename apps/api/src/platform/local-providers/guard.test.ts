@@ -2,9 +2,24 @@ import { describe, expect, it } from 'vitest';
 
 import { checkLocalProviders, localProvidersIn, type ProviderSelection } from './guard.js';
 
-const local: ProviderSelection = { whatsapp: 'local', video: 'local', botChallenge: 'local' };
-const real: ProviderSelection = { whatsapp: 'meta', video: 'jaas', botChallenge: 'turnstile' };
-const off: ProviderSelection = { whatsapp: 'off', video: 'off', botChallenge: 'turnstile' };
+const local: ProviderSelection = {
+  whatsapp: 'local',
+  video: 'local',
+  botChallenge: 'local',
+  afip: 'local',
+};
+const real: ProviderSelection = {
+  whatsapp: 'meta',
+  video: 'jaas',
+  botChallenge: 'turnstile',
+  afip: 'afip',
+};
+const off: ProviderSelection = {
+  whatsapp: 'off',
+  video: 'off',
+  botChallenge: 'turnstile',
+  afip: 'off',
+};
 
 describe('localProvidersIn', () => {
   it('names the variable of every provider that is a local simulator', () => {
@@ -12,8 +27,10 @@ describe('localProvidersIn', () => {
       'WHATSAPP_PROVIDER',
       'VIDEO_PROVIDER',
       'BOT_CHALLENGE',
+      'AFIP_PROVIDER',
     ]);
     expect(localProvidersIn({ ...real, video: 'local' })).toEqual(['VIDEO_PROVIDER']);
+    expect(localProvidersIn({ ...real, afip: 'local' })).toEqual(['AFIP_PROVIDER']);
   });
 
   it('names nothing when every provider is real or switched off', () => {
@@ -49,7 +66,22 @@ describe('checkLocalProviders (environment x provider x allow flag)', () => {
       selection: local,
       allow: false,
       console: false,
-      problems: ['WHATSAPP_PROVIDER', 'VIDEO_PROVIDER', 'BOT_CHALLENGE'],
+      problems: ['WHATSAPP_PROVIDER', 'VIDEO_PROVIDER', 'BOT_CHALLENGE', 'AFIP_PROVIDER'],
+    },
+    // A fiscal simulator would pretend to issue invoices in production: the same refusal.
+    {
+      nodeEnv: 'production',
+      selection: { ...real, afip: 'local' },
+      allow: false,
+      console: false,
+      problems: ['AFIP_PROVIDER'],
+    },
+    {
+      nodeEnv: 'production',
+      selection: { ...off, afip: 'local' },
+      allow: true,
+      console: false,
+      problems: [],
     },
     { nodeEnv: 'production', selection: local, allow: true, console: false, problems: [] },
     { nodeEnv: 'production', selection: local, allow: true, console: true, problems: [] },

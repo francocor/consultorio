@@ -35,6 +35,7 @@ export function bootFor(name = 'Clínica Norte', overrides: Partial<BootPayload>
     features: [],
     deploymentMode: 'multi',
     isDemo: false,
+    localProviders: { afip: false },
     ...overrides,
   };
 }

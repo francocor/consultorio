@@ -9,12 +9,14 @@ import {
 /**
  * The provider variables of the patient-engagement stages. They are documented in
  * `docs/dev-setup.md` (a test checks it). Every later stage that adds a provider adds its
- * variables here, so the shared `config.ts` stays untouched.
+ * variables here, so the shared `config.ts` stays untouched. `AFIP_PROVIDER` (Stage 4) is the
+ * electronic-invoicing issuer: the local simulator, the real ARCA adapter (deferred) or none.
  */
 export const PROVIDER_ENV_VARIABLES = [
   'WHATSAPP_PROVIDER',
   'VIDEO_PROVIDER',
   'BOT_CHALLENGE',
+  'AFIP_PROVIDER',
   'WHATSAPP_APP_SECRET',
   'VIDEO_ALLOWED_DOMAINS',
   'VIDEO_LOCAL_BASE_URL',
@@ -52,6 +54,7 @@ const providerEnv = z.object({
   WHATSAPP_PROVIDER: z.enum(['local', 'meta', 'off']).optional(),
   VIDEO_PROVIDER: z.enum(['local', 'jaas', 'off']).optional(),
   BOT_CHALLENGE: z.enum(['local', 'turnstile']).optional(),
+  AFIP_PROVIDER: z.enum(['local', 'afip', 'off']).optional(),
   /** Signs the WhatsApp webhook (`X-Hub-Signature-256`). Only a secret, never a default. */
   WHATSAPP_APP_SECRET: z.string().min(MIN_APP_SECRET_LENGTH).optional(),
   /** Comma-separated host names a professional's manual video link may point at. */
@@ -122,6 +125,7 @@ export function readProviderConfig(
     whatsapp: value.WHATSAPP_PROVIDER ?? (production ? 'off' : 'local'),
     video: value.VIDEO_PROVIDER ?? (production ? 'off' : 'local'),
     botChallenge: value.BOT_CHALLENGE ?? (production ? 'turnstile' : 'local'),
+    afip: value.AFIP_PROVIDER ?? (production ? 'off' : 'local'),
   };
 
   const problems: ProviderEnvProblem[] = checkLocalProviders({

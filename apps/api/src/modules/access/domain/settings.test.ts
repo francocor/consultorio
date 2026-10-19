@@ -1,5 +1,8 @@
 import {
+  BillingSettings,
+  DEFAULT_BILLING_SETTINGS,
   DEFAULT_INTEGRATION_SETTINGS,
+  DEFAULT_INVOICING_SETTINGS,
   DEFAULT_NOTIFICATION_SETTINGS,
   DEFAULT_ONLINE_BOOKING_SETTINGS,
   DEFAULT_QUIET_HOURS,
@@ -7,6 +10,8 @@ import {
   DEFAULT_TELECONSULTATION_SETTINGS,
   DEFAULT_WAITLIST_SETTINGS,
   IntegrationSettings,
+  InvoicingSettings,
+  money,
   NotificationSettings,
   OnlineBookingSettings,
   TeleconsultationSettings,
@@ -19,7 +24,7 @@ import type { SettingsSection } from '../../../platform/settings-sections.js';
 
 import { planSettingsUpdate, readSettings } from './settings.js';
 
-/** The five sections the modules register (see `main/wiring`). */
+/** The sections the modules register (see `main/wiring`). */
 const SECTIONS: readonly SettingsSection[] = [
   {
     key: 'notifications',
@@ -41,8 +46,13 @@ const SECTIONS: readonly SettingsSection[] = [
     key: 'integrations',
     schema: IntegrationSettings,
     defaults: DEFAULT_INTEGRATION_SETTINGS,
-    fieldAudits: { whatsapp: 'notification.integration.changed' },
+    fieldAudits: {
+      whatsapp: 'notification.integration.changed',
+      einvoicing: 'invoicing.config.changed',
+    },
   },
+  { key: 'billing', schema: BillingSettings, defaults: DEFAULT_BILLING_SETTINGS },
+  { key: 'invoicing', schema: InvoicingSettings, defaults: DEFAULT_INVOICING_SETTINGS },
 ];
 
 const defaults: SettingsDto = {
@@ -56,6 +66,8 @@ const defaults: SettingsDto = {
   waitlist: DEFAULT_WAITLIST_SETTINGS,
   teleconsultation: DEFAULT_TELECONSULTATION_SETTINGS,
   integrations: DEFAULT_INTEGRATION_SETTINGS,
+  billing: DEFAULT_BILLING_SETTINGS,
+  invoicing: DEFAULT_INVOICING_SETTINGS,
 };
 
 const read = (stored: Record<string, unknown>) => readSettings(stored, SECTIONS);
@@ -279,7 +291,7 @@ describe('settings sections', () => {
 
     expect(result).toEqual({
       ok: true,
-      stored: { integrations: { whatsapp: false, video: true } },
+      stored: { integrations: { whatsapp: false, video: true, einvoicing: false } },
       events: [
         {
           kind: 'section',
@@ -290,6 +302,44 @@ describe('settings sections', () => {
           ],
         },
       ],
+    });
+  });
+
+  it('audits the e-invoicing switch as a change of the invoicing configuration', () => {
+    const result = planFor(defaults, { integrations: { einvoicing: true } });
+
+    expect(result).toEqual({
+      ok: true,
+      stored: { integrations: { whatsapp: true, video: true, einvoicing: true } },
+      events: [
+        {
+          kind: 'section',
+          section: 'integrations',
+          changedFields: ['einvoicing'],
+          fieldAudits: [{ action: 'invoicing.config.changed', field: 'einvoicing', enabled: true }],
+        },
+      ],
+    });
+  });
+
+  it('reads the Stage 4 sections with their defaults, and keeps e-invoicing off for an old record', () => {
+    const settings = read({ integrations: { whatsapp: false, video: true } });
+
+    expect(settings.integrations).toEqual({ whatsapp: false, video: true, einvoicing: false });
+    expect(settings.billing).toEqual({ lateFeeEnabled: false, lateFeeAmount: 0 });
+    expect(settings.invoicing).toEqual({ outageThresholdHours: 24 });
+  });
+
+  it('plans a change of the billing and invoicing sections like any other', () => {
+    expect(planFor(defaults, { invoicing: { outageThresholdHours: 48 } })).toMatchObject({
+      ok: true,
+      stored: { invoicing: { outageThresholdHours: 48 } },
+    });
+    expect(
+      planFor(defaults, { billing: { lateFeeEnabled: true, lateFeeAmount: money(500_000) } }),
+    ).toMatchObject({
+      ok: true,
+      stored: { billing: { lateFeeEnabled: true, lateFeeAmount: 500_000 } },
     });
   });
 

@@ -205,7 +205,7 @@ describe('a link is not a bearer URL', () => {
   it('is useless to another user, and to the same user in another session', async () => {
     const { id } = await availableDocument();
     const { url } = (await issue(id, h.sessions.professional)).json<DownloadLinkResponse>();
-    const deniedBefore = await denialsBecause('document_link_invalid');
+    const deniedBefore = await denialsBecause('file_link_invalid');
     const sameUserElsewhere = await signInAs(
       h.app,
       h.tenant.slug,
@@ -217,7 +217,7 @@ describe('a link is not a bearer URL', () => {
     expect((await h.api.get(url, sameUserElsewhere)).statusCode).toBe(403);
     // And neither of those attempts spent the link: its owner can still use it.
     expect((await h.api.get(url, h.sessions.professional)).statusCode).toBe(200);
-    expect(await denialsBecause('document_link_invalid')).toBe(deniedBefore + 2);
+    expect(await denialsBecause('file_link_invalid')).toBe(deniedBefore + 2);
   });
 
   it('is not answered to HEAD, so a link checker cannot spend the one use of a link', async () => {

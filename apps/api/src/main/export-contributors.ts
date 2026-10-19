@@ -1,12 +1,15 @@
 import { registerAccessExportContributors } from '../modules/access/index.js';
 import { registerAuditExportContributors } from '../modules/audit/index.js';
+import { registerBillingExportContributors } from '../modules/billing/index.js';
 import { registerClinicalExportContributors } from '../modules/clinical/index.js';
 import { registerDocumentsExportContributors } from '../modules/documents/index.js';
 import { registerIdentityExportContributors } from '../modules/identity/index.js';
+import { registerInvoicingExportContributors } from '../modules/invoicing/index.js';
 import { registerNotificationsExportContributors } from '../modules/notifications/index.js';
 import { registerOnboardingExportContributors } from '../modules/onboarding/index.js';
 import { registerOnlineBookingExportContributors } from '../modules/online-booking/index.js';
 import { registerPatientsExportContributors } from '../modules/patients/index.js';
+import { registerReportsExportContributors } from '../modules/reports/index.js';
 import { registerSchedulingExportContributors } from '../modules/scheduling/index.js';
 import { registerStaffExportContributors } from '../modules/staff/index.js';
 import { registerTeleconsultationExportContributors } from '../modules/teleconsultation/index.js';
@@ -39,4 +42,7 @@ export function registerAllExportContributors(
   registerOnlineBookingExportContributors(registry);
   registerWaitlistExportContributors(registry);
   registerTeleconsultationExportContributors(registry);
+  registerBillingExportContributors(registry);
+  registerInvoicingExportContributors(registry);
+  registerReportsExportContributors(registry);
 }

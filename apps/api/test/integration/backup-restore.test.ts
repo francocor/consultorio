@@ -91,7 +91,13 @@ beforeAll(async () => {
   };
   target = { ...source, bucket: RESTORE_BUCKET };
   pdf = Buffer.concat([Buffer.from('%PDF-1.4\n'), randomBytes(2048), Buffer.from('\n%%EOF\n')]);
-  const s3 = new S3Client({ region: 'us-east-1', endpoint, forcePathStyle: true, credentials });
+  const s3 = new S3Client({
+    region: 'us-east-1',
+    endpoint,
+    forcePathStyle: true,
+    credentials,
+    maxAttempts: 5,
+  });
   await s3.send(new CreateBucketCommand({ Bucket: SOURCE_BUCKET }));
   await s3.send(
     new PutObjectCommand({
@@ -188,6 +194,7 @@ describe('the restore drill', () => {
       endpoint: target.endpoint,
       forcePathStyle: true,
       credentials: target.credentials,
+      maxAttempts: 5,
     });
     try {
       const object = await s3.send(
@@ -242,6 +249,7 @@ describe('the restore drill', () => {
         endpoint: source.endpoint,
         forcePathStyle: true,
         credentials: source.credentials,
+        maxAttempts: 5,
       });
       try {
         return (await s3.send(new ListObjectsV2Command({ Bucket: SOURCE_BUCKET }))).KeyCount;

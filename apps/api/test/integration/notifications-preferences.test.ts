@@ -5,7 +5,6 @@ import { auditEvent } from '../../src/db/schema/audit.js';
 import { channelPreference } from '../../src/db/schema/channel-preference.js';
 import {
   loadPreferences,
-  OptInRefused,
   recordOptIn,
   recordOptOut,
 } from '../../src/modules/notifications/application/preferences.js';
@@ -303,7 +302,7 @@ describe('an opt-out', () => {
 });
 
 describe('an opt-in', () => {
-  it('cannot be recorded by staff for a patient who opted out of the channel', async () => {
+  it('can be recorded by staff for a patient who opted out of the channel, and says it reopened it (B7)', async () => {
     const patientId = await notes.patient({ phone: '1144445555' });
     await inTenant((tx) =>
       recordOptOut(tx, {
@@ -314,18 +313,65 @@ describe('an opt-in', () => {
       }),
     );
 
-    await expect(
-      inTenant((tx) =>
-        recordOptIn(tx, {
-          patientId,
-          channel: 'whatsapp',
-          source: 'staff',
-          recordedBy: scheduling.reception.user.id,
-          actor: staffActor(),
-        }),
-      ),
-    ).rejects.toBeInstanceOf(OptInRefused);
-    expect((await inTenant((tx) => loadPreferences(tx, patientId))).whatsapp).toBe('opted_out');
+    const result = await inTenant((tx) =>
+      recordOptIn(tx, {
+        patientId,
+        channel: 'whatsapp',
+        source: 'staff',
+        recordedBy: scheduling.reception.user.id,
+        actor: staffActor(),
+      }),
+    );
+
+    expect(result).toEqual({ recorded: true });
+    expect((await inTenant((tx) => loadPreferences(tx, patientId))).whatsapp).toBe('opted_in');
+    const events = await inTenant((tx) =>
+      tx
+        .select({ metadata: auditEvent.metadata, actor: auditEvent.actorUserId })
+        .from(auditEvent)
+        .where(
+          and(
+            eq(auditEvent.action, 'notification.optin.recorded'),
+            eq(auditEvent.patientId, patientId),
+          ),
+        ),
+    );
+    expect(events).toEqual([
+      {
+        metadata: { channel: 'whatsapp', source: 'staff', reopened: true },
+        actor: scheduling.reception.user.id,
+      },
+    ]);
+  });
+
+  it('can be recorded by staff for email after the patient opted out of it (B7)', async () => {
+    const patientId = await notes.patient({ email: 'vuelve@example.test' });
+    await inTenant((tx) =>
+      recordOptOut(tx, { patientId, channel: 'email', source: 'email_link', actor: patientActor }),
+    );
+
+    await inTenant((tx) =>
+      recordOptIn(tx, {
+        patientId,
+        channel: 'email',
+        source: 'staff',
+        recordedBy: scheduling.reception.user.id,
+        actor: staffActor(),
+      }),
+    );
+
+    expect((await inTenant((tx) => loadPreferences(tx, patientId))).email).toBe('default');
+    const rows = await inTenant((tx) =>
+      tx
+        .select({ state: channelPreference.state, source: channelPreference.source })
+        .from(channelPreference)
+        .where(eq(channelPreference.patientId, patientId))
+        .orderBy(channelPreference.createdAt, channelPreference.id),
+    );
+    expect(rows).toEqual([
+      { state: 'opted_out', source: 'email_link' },
+      { state: 'opted_in', source: 'staff' },
+    ]);
   });
 
   it('can be given again by the patient, by their own email link', async () => {

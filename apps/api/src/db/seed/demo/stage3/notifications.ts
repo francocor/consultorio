@@ -7,10 +7,8 @@ import type {
 } from '@consultorio/contracts';
 import { and, asc, eq, inArray, sql } from 'drizzle-orm';
 
-import {
-  recordOptIn,
-  recordOptOut,
-} from '../../../../modules/notifications/application/preferences.js';
+import { optOutPatient } from '../../../../modules/notifications/application/opt-out.js';
+import { recordOptIn } from '../../../../modules/notifications/application/preferences.js';
 import { hashAddress } from '../../../../modules/notifications/domain/address.js';
 import { normalizeWhatsAppNumber } from '../../../../modules/notifications/domain/phone.js';
 import type { Tx } from '../../../../platform/db/tenant-context.js';
@@ -154,7 +152,8 @@ export async function seedNotifications(
     const whatsappOptOut = pick(others);
 
     // 1. What the patients chose. Opt-ins are recorded by the patient or by reception; an opt-out
-    // is the patient's own word (a keyword on WhatsApp, the link of an email).
+    // is the patient's own word (a keyword on WhatsApp, the link of an email) and it is for every
+    // channel (owner decision B7), so both patients end up with "Sin avisos".
     for (const entry of [readWhatsapp, refusedWhatsapp, replied, whatsappOptOut]) {
       if (!entry) continue;
       await recordOptIn(tx, {
@@ -166,17 +165,15 @@ export async function seedNotifications(
       });
     }
     if (whatsappOptOut) {
-      await recordOptOut(tx, {
+      await optOutPatient(tx, {
         patientId: whatsappOptOut.patientId,
-        channel: 'whatsapp',
         source: 'whatsapp_keyword',
         actor: anonymous(),
       });
     }
     if (emailOptOut) {
-      await recordOptOut(tx, {
+      await optOutPatient(tx, {
         patientId: emailOptOut.patientId,
-        channel: 'email',
         source: 'email_link',
         actor: anonymous(),
       });

@@ -253,6 +253,14 @@ export async function startStack(options: StackOptions): Promise<Stack> {
       PLATFORM_HOST: platformHost,
       KMS_LOCAL_KEK_BASE64: kek,
       LOCAL_PROVIDERS_CONSOLE: 'true',
+      // The worker wiring (exports, invoice PDFs) builds its storage from this configuration, the
+      // same bucket and credentials the API got above.
+      S3_BUCKET: BUCKET,
+      S3_REGION: 'us-east-1',
+      S3_ENDPOINT: storageUrl,
+      S3_FORCE_PATH_STYLE: 'true',
+      S3_ACCESS_KEY_ID: MINIO_USER,
+      S3_SECRET_ACCESS_KEY: MINIO_PASSWORD,
     });
     const adapters = createAdapterResolver(
       buildAdapterRegistry({
@@ -279,6 +287,7 @@ export async function startStack(options: StackOptions): Promise<Stack> {
       localProviders: {
         console: config.providers.localProvidersConsole,
         providers: MODULE_WIRINGS.flatMap((module) => module.devProviders?.({ config }) ?? []),
+        simulated: { afip: config.providers.afip === 'local' },
       },
       passwordValidator,
       storage,

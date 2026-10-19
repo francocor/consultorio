@@ -4,7 +4,7 @@ import {
   type AuditListResponse,
   type CreatePatientResponse,
 } from '@consultorio/contracts';
-import { and, eq, sql } from 'drizzle-orm';
+import { and, asc, eq, sql } from 'drizzle-orm';
 import type { FastifyInstance } from 'fastify';
 import { afterAll, beforeAll, describe, expect, inject, it } from 'vitest';
 
@@ -327,9 +327,8 @@ describe('GET /audit-events/export', () => {
       tx
         .select()
         .from(auditEvent)
-        .where(
-          and(eq(auditEvent.action, 'audit.exported'), eq(auditEvent.actorUserId, by.user.id)),
-        ),
+        .where(and(eq(auditEvent.action, 'audit.exported'), eq(auditEvent.actorUserId, by.user.id)))
+        .orderBy(asc(auditEvent.occurredAt), asc(auditEvent.id)),
     ).then((rows) => ({ rows, query }));
   }
 

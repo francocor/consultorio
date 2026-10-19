@@ -167,6 +167,7 @@ describe('turning WhatsApp off', () => {
     ).toEqual({
       whatsapp: false,
       video: true,
+      einvoicing: false,
     });
   });
 });

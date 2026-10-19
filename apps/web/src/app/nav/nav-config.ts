@@ -1,7 +1,5 @@
 import type { Permission, Role } from '@consultorio/contracts';
 import {
-  Banknote,
-  BarChart3,
   CalendarDays,
   CreditCard,
   FilePen,
@@ -25,6 +23,11 @@ import type { ContributedNavItem, NavLayout } from '../registry.js';
  *
  * Entries that belong to a later stage are defined now so the layouts are reviewed as a whole, and
  * switch on when `ENABLED_STAGE` is raised; until then they are not shown (no dead links).
+ *
+ * The cash register, the reports, the charges and the invoices (Stage 4) are not here: their
+ * features contribute them through their own `nav.ts` (`docs/stage4-tracks.md` gives the ids,
+ * paths, permissions and places), so no track edits this file. The subscription (`billing`, Stage
+ * 6) is a different screen and keeps its entry.
  */
 export const ENABLED_STAGE = 2;
 
@@ -43,9 +46,7 @@ export type NavId =
   | 'patients'
   | 'drafts'
   | 'prescriptions'
-  | 'cash'
   | 'staff'
-  | 'reports'
   | 'billing'
   | 'audit'
   | 'settings';
@@ -121,14 +122,6 @@ export const NAV_ITEMS: Record<NavId, NavItem> = {
     stage: 2,
     anyOf: ['clinical.prescription.read'],
   },
-  cash: {
-    id: 'cash',
-    to: '/cash',
-    labelKey: 'nav.cash',
-    icon: Banknote,
-    stage: 4,
-    anyOf: ['cash.operate'],
-  },
   staff: {
     id: 'staff',
     to: '/staff',
@@ -136,14 +129,6 @@ export const NAV_ITEMS: Record<NavId, NavItem> = {
     icon: UsersRound,
     stage: 1,
     anyOf: ['staff.manage'],
-  },
-  reports: {
-    id: 'reports',
-    to: '/reports',
-    labelKey: 'nav.reports',
-    icon: BarChart3,
-    stage: 3,
-    anyOf: ['reports.read'],
   },
   billing: {
     id: 'billing',
@@ -176,8 +161,8 @@ type Layout = NavLayout;
 /** The order of each role's area (design, section 8). */
 const LAYOUTS: Record<Layout, readonly string[]> = {
   professional: ['today', 'calendar', 'patients', 'drafts', 'prescriptions'],
-  reception: ['calendar', 'check-in', 'worklist', 'patients', 'cash'],
-  admin: ['calendar', 'worklist', 'patients', 'staff', 'reports', 'billing', 'audit', 'settings'],
+  reception: ['calendar', 'check-in', 'worklist', 'patients'],
+  admin: ['calendar', 'worklist', 'patients', 'staff', 'billing', 'audit', 'settings'],
 };
 
 const LAYOUT_OF_ROLE: Partial<Record<Role, Layout>> = {

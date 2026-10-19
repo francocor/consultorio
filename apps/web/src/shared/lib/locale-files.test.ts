@@ -48,4 +48,11 @@ describe('building the resources from the catalog files', () => {
     );
     expect(LOCALE_RESOURCES['common']?.['pagination.results_one']).toBeDefined();
   });
+
+  it('words the reuse of a submission key for payments AND invoices, not for payments alone (JD-S4 R2-B-S3)', () => {
+    const message = LOCALE_RESOURCES['errors']?.['idempotency_key_reused'];
+
+    expect(message).toMatch(/factura/);
+    expect(message).toMatch(/pago/);
+  });
 });
