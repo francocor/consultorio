@@ -28,6 +28,7 @@ const state = (overrides: Partial<ChannelStateDto> = {}): ChannelStateDto => ({
 const channels = (overrides: Partial<PatientChannelsResponse> = {}): PatientChannelsResponse => ({
   email: state({ state: 'default' }),
   whatsapp: state(),
+  noMessages: false,
   hasEmail: true,
   hasMobile: true,
   ...overrides,
@@ -48,8 +49,8 @@ afterEach(() => {
 
 const channelsUrl = `GET /api/patients/${PATIENT_ID}/channels`;
 const optInUrl = `POST /api/patients/${PATIENT_ID}/channels/whatsapp/opt-in`;
-const optOutEmailUrl = `POST /api/patients/${PATIENT_ID}/channels/email/opt-out`;
-const optOutWhatsAppUrl = `POST /api/patients/${PATIENT_ID}/channels/whatsapp/opt-out`;
+const optInEmailUrl = `POST /api/patients/${PATIENT_ID}/channels/email/opt-in`;
+const optOutUrl = `POST /api/patients/${PATIENT_ID}/opt-out`;
 const requestUrl = `POST /api/patients/${PATIENT_ID}/whatsapp-opt-in-request`;
 
 function open(routes: Record<string, Handler | Response>, me = meFor(['reception'])) {
@@ -159,54 +160,57 @@ describe('the channels of a patient', () => {
     ).toBeInTheDocument();
   });
 
-  it('disables the switch-back control with the reason when the patient opted out', async () => {
+  it('says "Sin avisos" when the patient opted out and no channel is open again (B7)', async () => {
     open({
       [channelsUrl]: () =>
         jsonResponse(
           channels({
+            email: state({
+              state: 'opted_out',
+              source: 'whatsapp_keyword',
+              recordedAt: '2031-03-02T15:00:00.000Z',
+            }),
             whatsapp: state({
               state: 'opted_out',
               source: 'whatsapp_keyword',
               recordedAt: '2031-03-02T15:00:00.000Z',
             }),
+            noMessages: true,
           }),
         ),
     });
 
-    const optIn = await screen.findByRole('button', {
-      name: 'Registrar que acepta WhatsApp (en persona)',
-    });
-    expect(optIn).toBeDisabled();
-    expect(optIn).toHaveAccessibleDescription(
-      'El paciente dio de baja este canal. Solo el paciente puede volver a activarlo.',
-    );
-    expect(screen.getByText(/respondiendo BAJA por WhatsApp/)).toBeInTheDocument();
-    // A channel already off has no second baja to record.
-    expect(
-      within(screen.getByRole('region', { name: 'WhatsApp' })).queryByRole('button', {
-        name: 'Registrar la baja del canal',
-      }),
-    ).not.toBeInTheDocument();
+    const title = await screen.findByText('Sin avisos');
+    const notice = title.closest('[role="status"]');
+    expect(notice).toHaveTextContent('no recibe mensajes de esta organización por ningún canal');
+    // A baja already recorded has no second one to record.
+    expect(screen.queryByRole('button', { name: 'Registrar la baja' })).not.toBeInTheDocument();
   });
 
-  it('asks for confirmation before recording a baja, and records nothing if reception backs out', async () => {
+  it('does not say "Sin avisos" while a channel is open', async () => {
+    open({ [channelsUrl]: () => jsonResponse(channels()) });
+
+    await screen.findByRole('region', { name: 'Email' });
+    expect(screen.queryByText('Sin avisos')).not.toBeInTheDocument();
+  });
+
+  it('asks for confirmation before recording a baja for every channel, and records nothing if reception backs out', async () => {
     const user = userEvent.setup();
     let called = false;
     open({
       [channelsUrl]: () => jsonResponse(channels()),
-      [optOutEmailUrl]: () => {
+      [optOutUrl]: () => {
         called = true;
-        return jsonResponse(channels({ email: state({ state: 'opted_out' }) }));
+        return jsonResponse(channels({ noMessages: true }));
       },
     });
 
-    await user.click(
-      within(await screen.findByRole('region', { name: 'Email' })).getByRole('button', {
-        name: 'Registrar la baja del canal',
-      }),
-    );
+    await user.click(await screen.findByRole('button', { name: 'Registrar la baja' }));
     const dialog = await screen.findByRole('alertdialog');
-    expect(within(dialog).getByText('¿Registrar la baja de Email?')).toBeInTheDocument();
+    expect(
+      within(dialog).getByText('¿Registrar la baja de todos los canales?'),
+    ).toBeInTheDocument();
+    expect(dialog).toHaveTextContent('Email y WhatsApp');
     await user.click(within(dialog).getByRole('button', { name: 'Cancelar' }));
 
     await waitFor(() => {
@@ -215,39 +219,131 @@ describe('the channels of a patient', () => {
     expect(called).toBe(false);
   });
 
-  it('records the baja once reception confirms', async () => {
+  it('records the baja of every channel once reception confirms, and shows "Sin avisos"', async () => {
     const user = userEvent.setup();
     let called = false;
     open({
       [channelsUrl]: () => jsonResponse(channels()),
-      [optOutWhatsAppUrl]: () => {
+      [optOutUrl]: () => {
         called = true;
-        return jsonResponse(channels({ whatsapp: state({ state: 'opted_out', source: 'staff' }) }));
+        return jsonResponse(
+          channels({
+            email: state({ state: 'opted_out', source: 'staff' }),
+            whatsapp: state({ state: 'opted_out', source: 'staff' }),
+            noMessages: true,
+          }),
+        );
       },
     });
 
-    await user.click(
-      within(await screen.findByRole('region', { name: 'WhatsApp' })).getByRole('button', {
-        name: 'Registrar la baja del canal',
-      }),
-    );
+    await user.click(await screen.findByRole('button', { name: 'Registrar la baja' }));
     const dialog = await screen.findByRole('alertdialog');
     await user.click(within(dialog).getByRole('button', { name: 'Registrar la baja' }));
 
     await waitFor(() => {
       expect(called).toBe(true);
     });
-    expect(await screen.findByText('Dado de baja')).toBeInTheDocument();
+    expect(await screen.findByText('Sin avisos')).toBeInTheDocument();
     await waitFor(() => {
       expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument();
     });
+  });
+
+  it('lets reception switch email back on after a baja, once it confirms (B7)', async () => {
+    const user = userEvent.setup();
+    let called = false;
+    open({
+      [channelsUrl]: () =>
+        jsonResponse(
+          channels({
+            email: state({ state: 'opted_out', source: 'email_link' }),
+            whatsapp: state({ state: 'opted_out', source: 'email_link' }),
+            noMessages: true,
+          }),
+        ),
+      [optInEmailUrl]: () => {
+        called = true;
+        return jsonResponse(
+          channels({
+            email: state({ state: 'opted_in', source: 'staff' }),
+            whatsapp: state({ state: 'opted_out', source: 'email_link' }),
+            noMessages: false,
+          }),
+        );
+      },
+    });
+
+    await user.click(
+      within(await screen.findByRole('region', { name: 'Email' })).getByRole('button', {
+        name: 'Volver a activar el canal',
+      }),
+    );
+    const dialog = await screen.findByRole('alertdialog');
+    expect(within(dialog).getByText('¿Volver a activar Email?')).toBeInTheDocument();
+    expect(called).toBe(false);
+    await user.click(within(dialog).getByRole('button', { name: 'Volver a activar' }));
+
+    await waitFor(() => {
+      expect(called).toBe(true);
+    });
+    await waitFor(() => {
+      expect(screen.queryByText('Sin avisos')).not.toBeInTheDocument();
+    });
+    expect(
+      within(screen.getByRole('region', { name: 'Email' })).getByText('Aceptado'),
+    ).toBeInTheDocument();
+  });
+
+  it('lets reception record WhatsApp again after a baja, asking first', async () => {
+    const user = userEvent.setup();
+    let called = false;
+    open({
+      [channelsUrl]: () =>
+        jsonResponse(
+          channels({
+            whatsapp: state({ state: 'opted_out', source: 'whatsapp_keyword' }),
+          }),
+        ),
+      [optInUrl]: () => {
+        called = true;
+        return jsonResponse(channels({ whatsapp: state({ state: 'opted_in', source: 'staff' }) }));
+      },
+    });
+
+    const optIn = await screen.findByRole('button', {
+      name: 'Registrar que acepta WhatsApp (en persona)',
+    });
+    expect(optIn).toBeEnabled();
+    await user.click(optIn);
+    const dialog = await screen.findByRole('alertdialog');
+    expect(called).toBe(false);
+    await user.click(within(dialog).getByRole('button', { name: 'Volver a activar' }));
+
+    await waitFor(() => {
+      expect(called).toBe(true);
+    });
+  });
+
+  it('asks for the email to be switched on first when it is the one that is off', async () => {
+    open({
+      [channelsUrl]: () =>
+        jsonResponse(channels({ email: state({ state: 'opted_out', source: 'staff' }) })),
+    });
+
+    const request = await screen.findByRole('button', {
+      name: 'Enviar por email el pedido de WhatsApp',
+    });
+    expect(request).toBeDisabled();
+    expect(request).toHaveAccessibleDescription(
+      'Para enviar el pedido, primero vuelva a activar el email del paciente.',
+    );
   });
 
   it('shows what the server says when it refuses', async () => {
     const user = userEvent.setup();
     open({
       [channelsUrl]: () => jsonResponse(channels()),
-      [optInUrl]: problemResponse(409, 'channel_opted_out'),
+      [optInUrl]: problemResponse(422, 'patient_without_phone'),
     });
 
     await user.click(
@@ -256,7 +352,7 @@ describe('the channels of a patient', () => {
 
     expect(
       await screen.findByText(
-        'El paciente dio de baja este canal. Solo el paciente puede volver a activarlo.',
+        'El paciente no tiene un celular que se pueda usar para WhatsApp. Cargue uno en su ficha.',
       ),
     ).toBeInTheDocument();
   });

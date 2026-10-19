@@ -33,7 +33,8 @@ import {
  * 1. A patient books online, ticking WhatsApp; the consultorio asks to approve every booking.
  * 2. Reception finds the booking in the pending list and approves it.
  * 3. The patient gets the reminder on the phone of the WhatsApp simulator and by email, confirms
- *    with the link, and writes BAJA on WhatsApp. The next reminder reaches them by email.
+ *    with the link, and writes BAJA on WhatsApp. That opts them out of every channel (owner
+ *    decision B7): the email is refused too and nothing more reaches them.
  * 4. A virtual appointment is made while the video provider is off. The patient's confirmation says
  *    the link will follow; when reception attaches a link, the message with the link arrives, its
  *    address opens the call, and the professional joins from the appointment.
@@ -403,7 +404,7 @@ test('a patient books online, is reminded and confirms, has a video visit, and a
     await expectFitsAndAccessible(phonePage);
   });
 
-  await test.step('the patient writes BAJA on WhatsApp and the next reminder comes by email', async () => {
+  await test.step('the patient writes BAJA on WhatsApp and no channel reaches them any more', async () => {
     await console_.getByLabel('Número del paciente (formato +549…)').fill(phone);
     await console_.getByLabel('Mensaje', { exact: true }).fill('BAJA');
     await console_.getByRole('button', { name: 'Enviar respuesta' }).click();
@@ -415,7 +416,7 @@ test('a patient books online, is reminded and confirms, has a video visit, and a
         .filter({ hasText: 'no le enviará más mensajes por WhatsApp' }),
     ).toHaveCount(1, { timeout: 30_000 });
 
-    // The consultorio's screen now shows the channel as left, and the reminder goes by email.
+    // The consultorio's screen now shows the channel as left, and email is closed as well (B7).
     await staff.goto(`${org.origin}${calendarPath(booked)}`);
     const drawer = staff.getByRole('dialog');
     await expect(
@@ -427,8 +428,13 @@ test('a patient books online, is reminded and confirms, has a video visit, and a
     ).toBeVisible();
     await expectFitsAndAccessible(staff);
     await drawer.getByRole('button', { name: 'Reenviar por email' }).click();
-    await expect(drawer.getByText('Ya se usaron los 3 reenvíos de este turno.')).toBeVisible();
-    expect(await mailbox(email, /Recordatorio/, { count: 2 })).toHaveLength(2);
+    await expect(
+      drawer.getByText(
+        'El paciente dio de baja este canal. Si él lo pidió, recepción puede volver a activarlo desde los canales del paciente.',
+      ),
+    ).toBeVisible();
+    // The only reminder by email is the one before the BAJA.
+    expect(await mailbox(email, /Recordatorio/, { count: 1 })).toHaveLength(1);
   });
 
   // 4. A virtual appointment: the link follows the confirmation.

@@ -82,6 +82,8 @@ export interface SlotProps {
   'appointment-drawer': { appointment: CalendarEntryDto; readOnly: boolean };
   /** A tab of the patient detail page. */
   'patient-detail-tab': { patientId: string };
+  /** A small mark beside the status badges in the header of the patient detail page. */
+  'patient-header': { patientId: string };
   /** A section inside a settings page. */
   'settings-section': { area: SettingsArea };
   /** Beside an appointment of the professional's day ("Hoy"): quick actions such as joining a call. */

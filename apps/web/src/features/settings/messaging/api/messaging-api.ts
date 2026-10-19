@@ -34,8 +34,9 @@ export function messagingApi(api: ApiClient) {
         body: {},
         schema: PatientChannelsResponse,
       }),
-    optOut: (patientId: string, channel: MessageChannel) =>
-      api.post(`/patients/${patientId}/channels/${channel}/opt-out`, {
+    /** A baja is for every channel (owner decision B7). */
+    optOut: (patientId: string) =>
+      api.post(`/patients/${patientId}/opt-out`, {
         body: {},
         schema: PatientChannelsResponse,
       }),
