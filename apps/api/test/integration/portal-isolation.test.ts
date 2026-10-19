@@ -21,7 +21,8 @@ let world: PortalWorld;
 
 beforeAll(async () => {
   runtime = createRuntimeDb(inject('runtimeUrl'));
-  world = await createPortalWorld(runtime, { slug: 'portal-isolation' });
+  // No consent or prescription module behind the portal in this world (the real path has its own test).
+  world = await createPortalWorld(runtime, { slug: 'portal-isolation', ports: {} });
 });
 
 afterAll(async () => {

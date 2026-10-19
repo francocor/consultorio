@@ -36,7 +36,8 @@ beforeAll(async () => {
   runtime = createRuntimeDb(inject('runtimeUrl'));
   consents = createFakePortalConsents();
   prescriptions = createFakePortalPrescriptions();
-  plain = await createPortalWorld(runtime, { slug: 'portal-sections-plain' });
+  // No consent or prescription module behind the portal: the sections are empty states.
+  plain = await createPortalWorld(runtime, { slug: 'portal-sections-plain', ports: {} });
   world = await createPortalWorld(runtime, {
     slug: 'portal-sections',
     ports: { consent: consents, prescriptions },
