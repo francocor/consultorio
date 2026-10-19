@@ -73,6 +73,22 @@ const issuedResult = (voucher: LocalAfipVoucherRow): Decided => ({
   caeExpiresOn: voucher.caeExpiresOn,
   totalCents: voucher.totalCents,
   issueDate: voucher.issueDate,
+  issuerCuit: voucher.issuerCuit,
+  buyerDocument:
+    voucher.buyerDocType !== null && voucher.buyerDocNumber !== null
+      ? {
+          type: voucher.buyerDocType === 'dni' ? ('dni' as const) : ('cuit' as const),
+          number: voucher.buyerDocNumber,
+        }
+      : null,
+  associatedVoucher:
+    voucher.assocType !== null && voucher.assocPointOfSale !== null && voucher.assocNumber !== null
+      ? {
+          type: voucher.assocType,
+          pointOfSale: voucher.assocPointOfSale,
+          number: voucher.assocNumber,
+        }
+      : null,
 });
 
 const lock = (name: string) => sql`select pg_advisory_xact_lock(hashtextextended(${name}, 0))`;
@@ -188,6 +204,11 @@ export function createLocalInvoiceIssuer(options: LocalInvoiceIssuerOptions): Lo
             caeExpiresOn: caeExpiresOn(request.issueDate),
             issueDate: request.issueDate,
             totalCents: request.totalCents,
+            buyerDocType: request.buyerDocument?.type ?? null,
+            buyerDocNumber: request.buyerDocument?.number ?? null,
+            assocType: request.associatedVoucher?.type ?? null,
+            assocPointOfSale: request.associatedVoucher?.pointOfSale ?? null,
+            assocNumber: request.associatedVoucher?.number ?? null,
             idempotencyKey,
           })
           .returning();

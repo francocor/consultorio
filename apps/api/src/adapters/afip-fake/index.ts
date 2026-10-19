@@ -40,6 +40,9 @@ export interface FakeVoucher {
   caeExpiresOn: string;
   issueDate: string;
   totalCents: number;
+  /** Whom the voucher is addressed to, and (a credit note) the voucher it cancels: a lookup says them. */
+  buyerDocument: { type: 'cuit' | 'dni'; number: string } | null;
+  associatedVoucher: { type: string; pointOfSale: number; number: number } | null;
   idempotencyKey: string;
 }
 
@@ -88,6 +91,9 @@ export function createFakeInvoiceIssuer(options: FakeInvoiceIssuerOptions = {}):
     caeExpiresOn: voucher.caeExpiresOn,
     totalCents: voucher.totalCents,
     issueDate: voucher.issueDate,
+    issuerCuit: voucher.issuerCuit,
+    buyerDocument: voucher.buyerDocument,
+    associatedVoucher: voucher.associatedVoucher,
   });
 
   return {
@@ -143,6 +149,8 @@ export function createFakeInvoiceIssuer(options: FakeInvoiceIssuerOptions = {}):
         caeExpiresOn: caeExpiresOn(request.issueDate),
         issueDate: request.issueDate,
         totalCents: request.totalCents,
+        buyerDocument: request.buyerDocument ?? null,
+        associatedVoucher: request.associatedVoucher ?? null,
         idempotencyKey,
       };
       vouchers.push(voucher);

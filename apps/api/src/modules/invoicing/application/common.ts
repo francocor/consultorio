@@ -13,6 +13,8 @@ export const CURRENT_TENANT = sql`current_setting('app.tenant_id')::uuid`;
 
 export const UNIQUE_VIOLATION = '23505';
 export const CHECK_VIOLATION = '23514';
+/** `lock_timeout` ran out: another transaction holds the row we need. */
+export const LOCK_NOT_AVAILABLE = '55P03';
 
 /** The SQLSTATE a driver error carries, if it is one. */
 export function sqlState(error: unknown): string | undefined {

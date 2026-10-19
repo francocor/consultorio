@@ -305,6 +305,50 @@ export function describeInvoiceIssuerContract(target: InvoiceIssuerContractTarge
       });
     });
 
+    it('says who issued a voucher it finds and whom it is addressed to, so two vouchers with the same total and date can be told apart (JD-S4 R2-1)', async () => {
+      const { issuer } = await target.make();
+      const cuit = nextCuit();
+      const buyer = { type: 'dni' as const, number: '30123456' };
+      expectIssued(
+        await issuer.issue(requestFor(cuit, { type: 'FB', buyerDocument: buyer }), key()),
+      );
+      expectIssued(await issuer.issue(requestFor(cuit, { type: 'FB' }), key()));
+      const lookup = (number: number) =>
+        issuer.findIssued({ issuerCuit: cuit, pointOfSale: 1, type: 'FB', number });
+
+      expect(await lookup(1)).toMatchObject({
+        status: 'issued',
+        issuerCuit: cuit,
+        buyerDocument: buyer,
+        associatedVoucher: null,
+      });
+      // A voucher with no buyer document says so: `null`, not an absent field.
+      expect(await lookup(2)).toMatchObject({
+        status: 'issued',
+        issuerCuit: cuit,
+        buyerDocument: null,
+        associatedVoucher: null,
+      });
+    });
+
+    it('says the voucher a credit note cancels when it finds the note (JD-S4 R2-1)', async () => {
+      const { issuer } = await target.make();
+      const cuit = nextCuit();
+      const cancelled = { type: 'FC', pointOfSale: 1, number: 7 };
+      expectIssued(
+        await issuer.issue(requestFor(cuit, { type: 'NCC', associatedVoucher: cancelled }), key()),
+      );
+
+      const found = await issuer.findIssued({
+        issuerCuit: cuit,
+        pointOfSale: 1,
+        type: 'NCC',
+        number: 1,
+      });
+
+      expect(found).toMatchObject({ status: 'issued', associatedVoucher: cancelled });
+    });
+
     it('keeps the series, the answers and the lookups of two organizations apart even when they name the same CUIT', async () => {
       const { issuer } = await target.make();
       const cuit = nextCuit();

@@ -11,8 +11,16 @@ export interface DbHandle {
   close(): Promise<void>;
 }
 
+/**
+ * How long a request for a connection waits when every connection of the pool is busy. Without a
+ * limit a pool that runs dry makes the callers wait for ever; with it they fail and the work is retried
+ * (an attempt to issue an invoice holds one connection and asks for a second one for its mark, so a
+ * pool full of attempts would otherwise wait on itself: JD-S4 R2-3).
+ */
+export const CONNECTION_TIMEOUT_MS = 10_000;
+
 function open(connectionString: string, max: number): DbHandle {
-  const pool = new Pool({ connectionString, max });
+  const pool = new Pool({ connectionString, max, connectionTimeoutMillis: CONNECTION_TIMEOUT_MS });
   // An idle client error must not crash the process; the next query reports the failure.
   pool.on('error', () => undefined);
   return { db: drizzle(pool, { schema }), pool, close: () => pool.end() };

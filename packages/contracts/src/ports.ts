@@ -70,6 +70,17 @@ export type IssueResult =
        */
       totalCents?: number;
       issueDate?: string;
+      /**
+       * Also what a lookup says (JD-S4 R2-1): who issued the voucher, whom it is addressed to and, for
+       * a credit note, the voucher it cancels. Two invoices of one series can have the same total and
+       * the same date; these tell their vouchers apart. A field the lookup does not state counts as a
+       * mismatch for the caller, never as a match.
+       */
+      issuerCuit?: string;
+      /** The document of the buyer; `null` when the voucher has none. */
+      buyerDocument?: { type: 'cuit' | 'dni'; number: string } | null;
+      /** The voucher a credit note cancels (`cbteAsoc`); `null` when it is not a credit note. */
+      associatedVoucher?: { type: string; pointOfSale: number; number: number } | null;
     }
   | { status: 'rejected'; message: string }
   | { status: 'retryable'; message: string; outcomeUnknown: boolean };

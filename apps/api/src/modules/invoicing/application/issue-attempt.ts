@@ -23,8 +23,9 @@ import { SYSTEM_USER_ID, createWithTenant, type Tx } from '../../../platform/db/
 import type { JobClient } from '../../../platform/jobs/boss.js';
 import { readChargeLines } from '../../billing/index.js';
 import { backoffMs } from '../domain/retry-schedule.js';
+import { voucherMatches, type VoucherFacts } from '../domain/voucher-match.js';
 
-import { UNIQUE_VIOLATION, constraintOf, sqlState } from './common.js';
+import { LOCK_NOT_AVAILABLE, UNIQUE_VIOLATION, constraintOf, sqlState } from './common.js';
 import { snapshotOfProfile, type IssuerSnapshot } from './issuer-snapshot.js';
 import { issuerFor } from './issuer.js';
 import { INVOICE_PDF_JOB } from './job-names.js';
@@ -64,6 +65,12 @@ export interface IssueDeps {
   /** Where an invoice that needs a person is put (the worklist of reception). */
   worklist?: AttentionWorklist | undefined;
   log?: AttemptLog | undefined;
+  /**
+   * How long the mark, written on the connection of its own, waits for a row lock before it gives up
+   * and the attempt is left for the sweeper (default 5 seconds). Without it a mark that waits for a
+   * row would hold two connections of the pool at once for as long as the other one lasts (JD-S4 R2-3).
+   */
+  markLockTimeoutMs?: number | undefined;
 }
 
 /**
@@ -131,6 +138,31 @@ async function expectedNumberFor(tx: Tx, row: InvoiceRow): Promise<number> {
   return (await highestNumberFor(tx, row)) + 1;
 }
 
+/** The document of the recipient as the authority is told it, or null when the invoice has none. */
+function buyerOf(row: InvoiceRow): { type: 'cuit' | 'dni'; number: string } | null {
+  return row.recipientDocType !== null && row.recipientDocNumber !== null
+    ? {
+        type: row.recipientDocType === 'dni' ? 'dni' : 'cuit',
+        number: row.recipientDocNumber,
+      }
+    : null;
+}
+
+/** The voucher a credit note cancels (once it has a number), or undefined for anything else. */
+async function associatedOf(
+  tx: Tx,
+  row: InvoiceRow,
+): Promise<{ type: string; pointOfSale: number; number: number } | undefined> {
+  if (row.creditNoteOfId === null) return undefined;
+  const [original] = await tx
+    .select({ type: invoice.type, pointOfSale: invoice.pointOfSale, number: invoice.number })
+    .from(invoice)
+    .where(eq(invoice.id, row.creditNoteOfId));
+  return original && original.number !== null
+    ? { type: original.type, pointOfSale: original.pointOfSale, number: original.number }
+    : undefined;
+}
+
 async function buildRequest(
   tx: Tx,
   row: InvoiceRow,
@@ -144,18 +176,8 @@ async function buildRequest(
     .where(eq(invoiceLine.invoiceId, row.id))
     .orderBy(asc(invoiceLine.position));
   const [first] = lines;
-  const associated =
-    row.creditNoteOfId === null
-      ? undefined
-      : await tx
-          .select({ type: invoice.type, pointOfSale: invoice.pointOfSale, number: invoice.number })
-          .from(invoice)
-          .where(eq(invoice.id, row.creditNoteOfId))
-          .then(([original]) =>
-            original && original.number !== null
-              ? { type: original.type, pointOfSale: original.pointOfSale, number: original.number }
-              : undefined,
-          );
+  const associated = await associatedOf(tx, row);
+  const buyer = buyerOf(row);
   return {
     // The issuer is the one the invoice was requested with, not the live fiscal profile (JD-S4 R1-C7).
     issuerCuit: issuer.cuit,
@@ -166,14 +188,7 @@ async function buildRequest(
     issueDate: row.issueDate,
     currency: 'ARS',
     totalCents: row.totalCents,
-    ...(row.recipientDocType !== null && row.recipientDocNumber !== null
-      ? {
-          buyerDocument: {
-            type: row.recipientDocType === 'dni' ? ('dni' as const) : ('cuit' as const),
-            number: row.recipientDocNumber,
-          },
-        }
-      : {}),
+    ...(buyer ? { buyerDocument: buyer } : {}),
     ...(row.recipientName ? { buyerName: row.recipientName } : {}),
     buyerTaxCondition: row.recipientTaxCondition as NonNullable<
       InvoiceRequest['buyerTaxCondition']
@@ -200,20 +215,22 @@ type Verdict =
   /** A voucher the authority holds that cannot be recorded for this invoice. */
   | { kind: 'attention'; number: number; cae: string | null; reason: AttentionReason };
 
-/** Whether a voucher the authority holds is the one this invoice asked for. */
-function matches(found: Issued, row: InvoiceRow): boolean {
-  return found.totalCents === row.totalCents && found.issueDate === row.issueDate;
-}
+/** How many numbers after a taken one are asked about before the attempt gives up and asks a person. */
+const FORWARD_PROBES = 5;
 
 /**
  * After an unknown outcome, or a crash, the authority is asked about the number the voucher is
  * expected to have, BEFORE anything is sent (design 5.5). The answers:
  *
  * - it holds a voucher there that is this invoice's (type, point of sale and number by the question;
- *   total and date by comparison): it is adopted, and nothing is issued;
- * - it holds none, or the number is already the voucher of another invoice of ours (so ours never
- *   got it): the request goes out, with a number to expect that is refreshed in the second case;
- * - it holds a voucher there that is not this invoice's, or it does not answer: nothing is sent.
+ *   total, date, issuer, recipient and, for a credit note, the voucher it cancels, by comparison):
+ *   it is adopted, and nothing is issued;
+ * - it holds a voucher there that is the voucher of another invoice of ours (so ours never got that
+ *   number): the numbers after the highest we know of are asked about in turn (up to
+ *   `FORWARD_PROBES`), and each is judged the same way;
+ * - it holds none: the request goes out. It is the only answer that sends;
+ * - it holds a voucher there that is not this invoice's, or it refuses the question, or it does not
+ *   answer: nothing is sent.
  */
 async function reconcile(
   tx: Tx,
@@ -222,22 +239,69 @@ async function reconcile(
   step: { issuer: IssuerSnapshot; tenantRef: string },
 ): Promise<Verdict | { kind: 'send'; refresh: boolean }> {
   if (row.expectedNumber === null) return { kind: 'send', refresh: true };
-  const probe = await issuer
-    .findIssued({
-      issuerCuit: step.issuer.cuit,
-      tenantRef: step.tenantRef,
-      pointOfSale: row.pointOfSale,
-      type: row.type,
-      number: row.expectedNumber,
-    })
-    .catch((): IssueResult => ({
-      status: 'retryable',
-      message: 'unreachable',
-      outcomeUnknown: true,
-    }));
-  if (probe === null || probe.status === 'rejected') return { kind: 'send', refresh: false };
-  if (probe.status === 'retryable') return { kind: 'retry', unknown: true };
-  // The number is already the voucher of another invoice of ours: our lost request never got it.
+  const facts: VoucherFacts = {
+    issuerCuit: step.issuer.cuit,
+    totalCents: row.totalCents,
+    issueDate: row.issueDate,
+    buyerDocument: buyerOf(row),
+    associatedVoucher: (await associatedOf(tx, row)) ?? null,
+  };
+  let number = row.expectedNumber;
+  let refresh = false;
+  let last = number;
+  for (let probes = 0; probes <= FORWARD_PROBES; probes += 1) {
+    const probe = await issuer
+      .findIssued({
+        issuerCuit: step.issuer.cuit,
+        tenantRef: step.tenantRef,
+        pointOfSale: row.pointOfSale,
+        type: row.type,
+        number,
+      })
+      .catch((): IssueResult => ({
+        status: 'retryable',
+        message: 'unreachable',
+        outcomeUnknown: true,
+      }));
+    if (probe === null) return { kind: 'send', refresh };
+    // An authority that cannot answer, or that refuses the question (a token, an environment), has
+    // not said that nothing is there: sending now could issue a second voucher (JD-S4 R2-A-W4).
+    if (probe.status !== 'issued') return { kind: 'retry', unknown: true };
+    last = probe.number;
+    // The number is already the voucher of another invoice of ours: our lost request never got it.
+    const [other] = await tx
+      .select({ id: invoice.id })
+      .from(invoice)
+      .where(
+        and(
+          eq(invoice.pointOfSale, row.pointOfSale),
+          eq(invoice.type, row.type),
+          eq(invoice.number, probe.number),
+          ne(invoice.id, row.id),
+        ),
+      )
+      .limit(1);
+    if (!other) {
+      return voucherMatches(probe, facts)
+        ? { kind: 'issued', result: probe }
+        : { kind: 'attention', number: probe.number, cae: probe.cae, reason: 'voucher_mismatch' };
+    }
+    // Ours never got it: ask about the numbers that follow instead of sending blind.
+    number = Math.max(number, await highestNumberFor(tx, row)) + 1;
+    refresh = true;
+  }
+  return { kind: 'attention', number: last, cae: null, reason: 'number_taken' };
+}
+
+/** How long an invoice waits for the one that is settled first in its series. */
+const SERIES_WAIT_MS = 60_000;
+
+/**
+ * Whether another invoice of the same series (point of sale and type) waits for the authority to be
+ * asked about a request that may have been answered, and goes before this one: any such invoice when
+ * this one has not been sent, the older one when both have.
+ */
+async function olderUnsettledInSeries(tx: Tx, row: InvoiceRow): Promise<boolean> {
   const [other] = await tx
     .select({ id: invoice.id })
     .from(invoice)
@@ -245,17 +309,20 @@ async function reconcile(
       and(
         eq(invoice.pointOfSale, row.pointOfSale),
         eq(invoice.type, row.type),
-        eq(invoice.number, probe.number),
+        eq(invoice.status, 'pending'),
+        eq(invoice.deliveryState, 'awaiting_reconciliation'),
         ne(invoice.id, row.id),
+        row.deliveryState === 'awaiting_reconciliation'
+          ? sql`${invoice.id} < ${row.id}`
+          : undefined,
       ),
     )
     .limit(1);
-  if (other) return { kind: 'send', refresh: true };
-  if (!matches(probe, row)) {
-    return { kind: 'attention', number: probe.number, cae: probe.cae, reason: 'voucher_mismatch' };
-  }
-  return { kind: 'issued', result: probe };
+  return other !== undefined;
 }
+
+/** How long the mark waits for a row lock on its own connection (see `IssueDeps.markLockTimeoutMs`). */
+const DEFAULT_MARK_LOCK_TIMEOUT_MS = 5000;
 
 /**
  * Writes down, BEFORE the authority is called, that it may answer this invoice: the invoice is
@@ -271,23 +338,39 @@ async function markIntent(
   tenantId: string,
   row: InvoiceRow,
   step: { now: Date; refresh: boolean },
-): Promise<InvoiceRow> {
+): Promise<InvoiceRow | null> {
   const marked = row.deliveryState === 'awaiting_reconciliation' && row.expectedNumber !== null;
   if (marked && !step.refresh) return row;
   const expectedNumber = await expectedNumberFor(tx, row);
-  const write = (target: Tx) =>
-    target
+  // True when the row was written: an invoice that is no longer pending (somebody closed it since the
+  // attempt read it) matches nothing, and then the authority must not be called for it (JD-S4 R2-3).
+  const write = async (target: Tx): Promise<boolean> => {
+    const written = await target
       .update(invoice)
       .set({ deliveryState: 'awaiting_reconciliation', expectedNumber, lastAttemptAt: step.now })
-      .where(and(eq(invoice.id, row.id), eq(invoice.status, 'pending')));
+      .where(and(eq(invoice.id, row.id), eq(invoice.status, 'pending')))
+      .returning({ id: invoice.id });
+    return written.length > 0;
+  };
+  let wrote: boolean;
   if (deps.db) {
-    await createWithTenant(deps.db)({ tenantId, userId: SYSTEM_USER_ID }, async (own) => {
-      await write(own);
-    });
+    try {
+      wrote = await createWithTenant(deps.db)({ tenantId, userId: SYSTEM_USER_ID }, async (own) => {
+        // This connection is a second one for the attempt: if the row is locked by someone else it must
+        // not wait for as long as that lasts, holding two connections of the pool.
+        await own.execute(
+          sql`select set_config('lock_timeout', ${String(deps.markLockTimeoutMs ?? DEFAULT_MARK_LOCK_TIMEOUT_MS) + 'ms'}, true)`,
+        );
+        return write(own);
+      });
+    } catch (error) {
+      if (sqlState(error) === LOCK_NOT_AVAILABLE) return null;
+      throw error;
+    }
   } else {
-    await write(tx);
+    wrote = await write(tx);
   }
-  return { ...row, deliveryState: 'awaiting_reconciliation', expectedNumber };
+  return wrote ? { ...row, deliveryState: 'awaiting_reconciliation', expectedNumber } : null;
 }
 
 /** What the authority answered, or an unknown outcome when the call itself failed. */
@@ -394,6 +477,18 @@ export async function attemptIssue(
   }
   let row: InvoiceRow = found;
 
+  // One invoice of a series (organization, point of sale, type) is in flight at a time. The number
+  // an invoice is expected to get is the one after the highest we hold, so two invoices that were
+  // sent together would be expecting the same one and could take each other's voucher for their own.
+  // The lock is held to the end of the transaction, which spans the call to the authority; whoever
+  // does not get it is left for the sweeper (JD-S4 R2-1).
+  const series = await tx.execute<{ locked: boolean }>(
+    sql`select pg_try_advisory_xact_lock(hashtextextended(
+          'afip-attempt-series|' || current_setting('app.tenant_id') || '|' ||
+          ${String(row.pointOfSale)}::text || '|' || ${row.type}::text, 0)) as locked`,
+  );
+  if (series.rows[0]?.locked !== true) return 'skipped';
+
   const organization = await loadOrganization(tx);
   const issuer = issuerFor(deps.adapters, { id: organization.id, isDemo: organization.isDemo });
   const [profile] = await tx.select().from(fiscalProfile);
@@ -424,6 +519,20 @@ export async function attemptIssue(
     return wrote ? 'retry' : 'skipped';
   }
 
+  // Another invoice of the series may have been answered without us knowing: its voucher is out
+  // there under a number that this one would be expecting too. Nothing of the series is sent until
+  // that one is settled (adopted, parked, replaced or sent again). Among two that both wait, the
+  // older goes first.
+  if (await olderUnsettledInSeries(tx, row)) {
+    await lockedWrite(tx, row, async () => {
+      await tx
+        .update(invoice)
+        .set({ nextAttemptAt: new Date(now.getTime() + SERIES_WAIT_MS) })
+        .where(eq(invoice.id, row.id));
+    });
+    return 'skipped';
+  }
+
   let verdict: Verdict | undefined;
   let refresh = false;
   if (row.deliveryState === 'awaiting_reconciliation') {
@@ -435,7 +544,10 @@ export async function attemptIssue(
     else verdict = reconciled;
   }
   if (!verdict) {
-    row = await markIntent(tx, deps, organization.id, row, { now, refresh });
+    const marked = await markIntent(tx, deps, organization.id, row, { now, refresh });
+    // Closed since it was read, or its row is locked by someone else: the authority is not called.
+    if (!marked) return 'skipped';
+    row = marked;
     const request = await buildRequest(tx, row, snapshot, organization.id);
     verdict = await callAuthority(issuer, request, issuerKeyOf(organization.id, row.id));
   }
