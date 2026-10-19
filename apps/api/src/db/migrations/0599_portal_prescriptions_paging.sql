@@ -46,3 +46,16 @@ $$;
 REVOKE ALL ON FUNCTION app.portal_prescriptions(timestamp with time zone, uuid, integer) FROM PUBLIC;
 --> statement-breakpoint
 GRANT EXECUTE ON FUNCTION app.portal_prescriptions(timestamp with time zone, uuid, integer) TO app_rw;
+--> statement-breakpoint
+-- The country rules the portal keeps in the database are Argentina's (JD-S5 R2, B-T6, A-S): the age
+-- of majority is 18 and the zone of the day is Buenos Aires. Argentina is the only country pack, by
+-- decision of the owner (the product is Argentina-first). A second country pack must turn these
+-- into data before its first organization (see `apps/api/src/country/ar/index.ts`).
+COMMENT ON FUNCTION app.majority_review_date(date, integer) IS
+  'Argentina only: the day a person reaches the age of majority they are given (the caller passes 18). A second country pack must pass its own age.';
+--> statement-breakpoint
+COMMENT ON FUNCTION app.patient_birth_date_changed() IS
+  'Argentina only: moves the review day of the representative links with the age of majority of 18. It runs as the user who corrects the birth date (SECURITY INVOKER): only the application role and the owner update patient.birth_date, and both can update portal_link. A second country pack must read the age from its pack.';
+--> statement-breakpoint
+COMMENT ON FUNCTION app.portal_today() IS
+  'Argentina only: without the day the portal bound, the day of America/Argentina/Buenos_Aires. A second country pack must bind its own zone.';

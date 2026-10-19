@@ -105,6 +105,8 @@ Gotchas: a prescription is never shown as valid unless the provider confirmed it
 
 After judgment day round 1 (JD-S5 R1): the attempt a REQUEST starts (`attemptSubmitDetached`) holds no connection while it waits for the provider: each step is a short transaction, the row is leased (`attempt_lease_until`) for the length of the attempt, and cancelling or registering by hand meanwhile answers `prescription_attempt_in_progress`; the attempt of a job (`attemptSubmit`, worker concurrency of two) keeps its transaction and the advisory lock `erx-prescription|<id>`. `provider_contacted_at` is set before every first call and never cleared, and a prescription with it (also one parked) is asked about at the provider before it is cancelled or registered by hand. A refused prescription that is corrected is sent under a new key (`submission_version`, `issueKeyOf(tenant, id, version)`). Every call to the provider is bounded (`providerTimeoutMs`, 20 s, outcome unknown). The notice of the provider carries `x-erx-timestamp` and signs `<timestamp>.<body>` (five-minute window). **The portal does not read the table**: its transactions carry `app.actor_kind = 'portal'` and read through `app.portal_prescriptions()` / `app.portal_prescription(id)`; a PDF that was not stored is rendered in memory and never written by the portal.
 
+After judgment day round 2 (JD-S5 R2): every method of `PrescriptionProvider` takes an optional `AbortSignal` that the caller aborts when it stops waiting (`callWithin` in `application/common.ts`), and an adapter must honour it; a call that TIMED OUT may still be running at the provider, so the verdict says `timedOut` and the row is pinned (`provider_in_flight_until`, `inFlightPinMs`, ten minutes): no attempt (not even a forced one), no cancellation, no manual registration until it ends. The lease of a request's attempt carries a token (`attempt_lease_token`, `application/lease.ts`) and only the attempt that took it lets go. Cancelling and registering by hand are phased like the submit (`cancelPrescriptionPhased`, `registerManuallyPhased`, run through `runPhasedAsProfessional`): a short transaction takes the row and the lease, the provider is asked holding nothing, a last short transaction writes the answer. The reconciliation pass works each row in transactions of its own. The fake provider has `hold()` for tests, and the contract suite proves that a concurrent second `issue` with the same key never creates two prescriptions.
+
 Must not: edit the portal or consent modules, touch the shell navigation (the entry exists), add a queue, a permission or an audit action, call a real provider (the real adapter is the deferred S5.D).
 
 ## Track B, portal (S5.06 to S5.10)
@@ -127,6 +129,8 @@ Gotchas: the portal owns no clinical table. The audit actor of a portal entry ha
 
 After judgment day round 1 (JD-S5 R1): `bindSubject` is the one place that marks a portal transaction (`app.actor_kind = 'portal'`) and binds the link, the identity and the day (`app.portal_today`); every read of the portal for a patient goes through `withPortalSubject` or the file door, which call it, and no function of the portal opens a second transaction while it holds one. A representative link exists only for a MINOR (`majorityStanding`), a minor has no `self` account, the age of majority is enforced at every read (`linkInForce`) and in the database functions, and changing the email of an account is `portal.identity.email` (owner and admin). `portal.notice.sent` is the audit action of the notices that go with a change of access. The staff routes that give access or move an account send those notices after the commit.
 
+After judgment day round 2 (JD-S5 R2): a decoy challenge has the purpose `portal_decoy` and takes part in nothing (the check of a code and the count of the sends of an address never read it); the tries at a code are counted per challenge AND per client (`challengeTriesKey`, five each, twenty on the challenge) and a client has six code requests an hour. The e-mail and the birth date of a record are watched by a trigger of `patient` that writes `patient_record_change` in the same transaction; `application/staff-gate.ts` (`assertMayGiveAccess`) is the one gate every way of giving access to a patient goes through for the staff (an owner or an administrator for seven days after a change, and for a representative of a patient with no e-mail); the notices of a changed record are delivered by the sweep `portal.notice_sweep` (every minute, per organization), and the notices of an account change and of a representative by `portal.notice_send`, queued in the transaction of the change. Both queues are `patient_protective`. A transaction of the portal sees no row of `document`. The prescriptions of the portal come in pages with a cursor (`app.portal_prescriptions(before, id, limit)`).
+
 Must not: edit another module's internals, the staff `AppShell`, `MinimalShell`, add a queue, a permission or an audit action (they exist), create a patient record from the registration flow.
 
 ## Track C, integration (S5.12, S5.13)
@@ -137,14 +141,14 @@ Consumes: the demo fake of the prescription provider (`demoPrescriptionProviderO
 
 ## Migration convention for the tracks
 
-| Track   | Command                    | Range       | Numbers in `tasks.md`         |
-| ------- | -------------------------- | ----------- | ----------------------------- |
-| `5seam` | `pnpm db:new 5seam <name>` | 0500 - 0504 | none (the seam has no tables) |
-| `5a1`   | `pnpm db:new 5a1 <name>`   | 0505 - 0509 | as needed                     |
-| `5a2`   | `pnpm db:new 5a2 <name>`   | 0510 - 0529 | 0510, 0512                    |
-| `5a3`   | `pnpm db:new 5a3 <name>`   | 0530 - 0549 | 0530, 0532                    |
-| `5b`    | `pnpm db:new 5b <name>`    | 0550 - 0579 | 0550, 0552                    |
-| `5c`    | `pnpm db:new 5c <name>`    | 0590 - 0599 | 0590 (0591 - 0595: JD-S5 R1)  |
+| Track   | Command                    | Range       | Numbers in `tasks.md`            |
+| ------- | -------------------------- | ----------- | -------------------------------- |
+| `5seam` | `pnpm db:new 5seam <name>` | 0500 - 0504 | none (the seam has no tables)    |
+| `5a1`   | `pnpm db:new 5a1 <name>`   | 0505 - 0509 | as needed                        |
+| `5a2`   | `pnpm db:new 5a2 <name>`   | 0510 - 0529 | 0510, 0512                       |
+| `5a3`   | `pnpm db:new 5a3 <name>`   | 0530 - 0549 | 0530, 0532                       |
+| `5b`    | `pnpm db:new 5b <name>`    | 0550 - 0579 | 0550, 0552                       |
+| `5c`    | `pnpm db:new 5c <name>`    | 0590 - 0599 | 0590 (0591 - 0599: JD-S5 R1, R2) |
 
 `0580 - 0589` stays reserved. The journal is **not** in number order on purpose: the Stage 4 fixes put 0431 after 0499 and the 0490s after it. Never reorder applied entries; after every merge or rebase run `pnpm db:restamp` then `pnpm db:check`. A foreign key between two tables that both have FORCE row level security needs the statement that lifts FORCE for the length of the `ADD CONSTRAINT`; a new `SECURITY DEFINER` function needs the hardening of the earlier stages and its entry in `test/support/function-catalog.ts` / `definer-functions.test.ts`; a table whose rows the application may delete needs an entry in `test/policy/no-delete/<track>.json` (the shared list is the seam's). New tenant tables run `scripts/finish-migration.ts` for the policies, as in `docs/migration-ranges.md`.
 

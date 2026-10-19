@@ -70,12 +70,15 @@ Portal sign-in MUST use the passwordless email one-time-code flow defined in `id
 - WHEN they ask the organization to change it
 - THEN the owner or an administrator (not reception) MUST verify the patient's identity out of band and change the email
 - AND the change MUST be audited and existing portal sessions revoked
-- AND a notice without a link MUST be sent to the PREVIOUS address, and recorded in the audit log
+- AND a notice without a link MUST be sent to the PREVIOUS address, queued in the same transaction as the change, and recorded in the audit log
 
 #### Scenario: Lock-out of a patient by a stranger
 - GIVEN a stranger who knows the email of a portal identity
 - WHEN they submit many wrong codes for it
 - THEN the portal MUST stop answering that client, and MUST NOT stop answering the patient from another client
+- AND the tries at a code MUST be counted per challenge and per client (five each), with a cap on the challenge, so that tries from one client cannot spend the code of the patient
+- AND a request for a code that the portal answers without sending one (a document that does not match) MUST NOT end the live code of the address nor count among the codes sent to it
+- AND a client MUST NOT be able to ask for codes without limit
 
 #### Scenario: Code request does not reveal accounts
 - GIVEN a code request for an email without a portal identity
@@ -113,7 +116,9 @@ A staff account (owner/admin, professional, reception) MUST NOT be able to use p
 
 ### Requirement: Legal representatives and dependents
 
-The system MUST support a representative, being a portal identity with representative links to one or more dependent patient records (for example minors), created after verification by the organization. The representative MUST act within the portal for dependents only, and sign-in is by the representative's own email one-time code. The portal MUST show clearly whose data is being viewed. A representative link MUST exist only for a MINOR: an adult is represented only through the adult's own authorization, given from their own portal session, and the organization MUST NOT create or restore a representative link for an adult. A minor MUST NOT have a portal account of their own; they are reached only through a verified representative. A representative link MUST be revocable by the organization and by the adult, and MUST stop giving access on the day the dependent reaches the age of majority (in the organization's time zone), whether or not any scheduled review has run; the organization MUST NOT restore it after that day. When the organization gives a representative access to a minor's record it MUST notify the email on the patient's record, when there is one, and record the notice in the audit log.
+The system MUST support a representative, being a portal identity with representative links to one or more dependent patient records (for example minors), created after verification by the organization. The representative MUST act within the portal for dependents only, and sign-in is by the representative's own email one-time code. The portal MUST show clearly whose data is being viewed. A representative link MUST exist only for a MINOR: an adult is represented only through the adult's own authorization, given from their own portal session, and the organization MUST NOT create or restore a representative link for an adult. A minor MUST NOT have a portal account of their own; they are reached only through a verified representative. A representative link MUST be revocable by the organization and by the adult, and MUST stop giving access on the day the dependent reaches the age of majority (in the organization's time zone), whether or not any scheduled review has run; the organization MUST NOT restore it after that day. When the organization gives a representative access to a minor's record it MUST notify the email on the patient's record, when there is one, and record the notice in the audit log. The notice MUST be queued in the same transaction as the change. A representative for a minor whose record has no email MUST be given by an owner or an administrator, not by reception.
+
+The portal trusts two facts that the staff can edit: the email of the patient's record and the birth date. Whenever either changes, the system MUST write the change in the same transaction, whoever makes it, and MUST notify the PREVIOUS email of the record (when there was one) with a notice that carries no link, no value and no name. For seven days after such a change, inviting the patient to the portal, inviting or linking a representative, restoring a suspended representative link, and registering through the public form MUST require an owner or an administrator (reception MUST be refused, and the refusal audited); the use of that exception by an owner or an administrator MUST be marked in the audit log.
 
 #### Scenario: Parent sees child appointments
 - GIVEN a verified representative linked to a minor
@@ -134,6 +139,17 @@ The system MUST support a representative, being a portal identity with represent
 - GIVEN a representative of a patient whose birth date is corrected so that the patient is an adult
 - WHEN the representative asks for the patient's data
 - THEN the system MUST refuse at once
+
+#### Scenario: Contact data of a record edited by reception
+- GIVEN a member of reception who changes the email or the birth date of a patient's record
+- WHEN they then invite the patient or a representative to the portal, within seven days
+- THEN the system MUST refuse reception, and allow an owner or an administrator
+- AND the previous email of the record MUST have been told of the change, without a link
+
+#### Scenario: Minor with no email on the record
+- GIVEN a minor whose record has no email
+- WHEN reception invites or links a representative for them
+- THEN the system MUST refuse, and allow an owner or an administrator
 
 ### Requirement: Appointments in the portal
 
