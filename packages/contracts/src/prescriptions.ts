@@ -210,6 +210,12 @@ export const PortalPrescriptionListing = z.strictObject({
 });
 export type PortalPrescriptionListing = z.infer<typeof PortalPrescriptionListing>;
 
+/** A page of that list, and where the next one starts (null on the last). */
+export interface PortalPrescriptionListingPage {
+  prescriptions: PortalPrescriptionListing[];
+  nextCursor: string | null;
+}
+
 // Provider console: the e-prescription simulator (S5.04) -----------------------------------------
 
 export const ErxSimulatorModeRequest = z.strictObject({ mode: z.enum(ERX_SIMULATOR_MODES) });

@@ -439,7 +439,11 @@ const PRESCRIPTION: PortalPrescriptionDto = {
 describe('the prescriptions of the patient', () => {
   it('shows the empty state while no module serves them', async () => {
     open('/portal/recetas', {
-      'GET /api/portal/prescriptions': jsonResponse({ available: false, prescriptions: [] }),
+      'GET /api/portal/prescriptions': jsonResponse({
+        available: false,
+        prescriptions: [],
+        nextCursor: null,
+      }),
     });
 
     expect(await screen.findByText('Todavía no hay recetas')).toBeInTheDocument();
@@ -460,6 +464,7 @@ describe('the prescriptions of the patient', () => {
             hasDocument: false,
           },
         ],
+        nextCursor: null,
       }),
     });
 
@@ -470,6 +475,43 @@ describe('the prescriptions of the patient', () => {
     expect(screen.getByText('Profesional no indicado')).toBeInTheDocument();
     // Only the prescription with a document can be downloaded.
     expect(screen.getAllByRole('button', { name: /Descargar la receta/ })).toHaveLength(1);
+    // The last page: nothing more to ask for.
+    expect(screen.queryByRole('button', { name: 'Ver más recetas' })).not.toBeInTheDocument();
+    expect(await a11yViolations(app.container)).toEqual([]);
+  });
+
+  it('asks for the next page when there is one, and adds it to the list (JD-S5 R2, B-S5)', async () => {
+    const user = userEvent.setup();
+    const asked: string[] = [];
+    const app = open('/portal/recetas', {
+      'GET /api/portal/prescriptions': (url) => {
+        const cursor = new URL(url, 'http://localhost').searchParams.get('cursor');
+        asked.push(cursor ?? '');
+        return jsonResponse(
+          cursor === null
+            ? { available: true, prescriptions: [PRESCRIPTION], nextCursor: 'page-2' }
+            : {
+                available: true,
+                prescriptions: [
+                  {
+                    ...PRESCRIPTION,
+                    id: '0190a000-0000-7000-8000-0000000000f3',
+                    status: 'dispensed',
+                  },
+                ],
+                nextCursor: null,
+              },
+        );
+      },
+    });
+
+    expect(await screen.findByText('Vigente')).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Ver más recetas' }));
+
+    expect(await screen.findByText('Entregada')).toBeInTheDocument();
+    expect(screen.getByText('Vigente')).toBeInTheDocument();
+    expect(asked).toEqual(['', 'page-2']);
+    expect(screen.queryByRole('button', { name: 'Ver más recetas' })).not.toBeInTheDocument();
     expect(await a11yViolations(app.container)).toEqual([]);
   });
 });

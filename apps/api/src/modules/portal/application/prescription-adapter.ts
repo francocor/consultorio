@@ -11,6 +11,14 @@ export interface PrescriptionModuleInput {
   actor: PortalActor;
   patientId: string;
   auditActor: AuditActor;
+  /** Where the page starts: the cursor the previous page gave. Absent for the first page. */
+  cursor?: string | undefined;
+}
+
+/** A page of what the module lists, and where the next one starts. */
+export interface ModulePrescriptionPage {
+  prescriptions: ModulePrescription[];
+  nextCursor: string | null;
 }
 
 /** `PortalPrescriptionListing` of the prescriptions module: what it lists, never a medication. */
@@ -50,7 +58,7 @@ export type ModuleDocument =
  * that transaction (JD-S5 R1-S5-2). Both check `portal.prescription.read` themselves.
  */
 export interface PrescriptionModulePortal {
-  list(tx: Tx, input: PrescriptionModuleInput): Promise<ModulePrescription[]>;
+  list(tx: Tx, input: PrescriptionModuleInput): Promise<ModulePrescriptionPage>;
   openDocument(
     tx: Tx,
     input: PrescriptionModuleInput & { prescriptionId: string; purpose: DownloadPurpose },
@@ -85,14 +93,18 @@ export function adaptPrescriptionModule(module: PrescriptionModulePortal): Porta
         actor: call.actor,
         patientId: call.subject.patientId,
         auditActor: call.auditActor,
+        cursor: call.cursor,
       });
-      return listed.map((entry): PortalPrescriptionDto => ({
-        id: entry.id,
-        issuedAt: entry.issuedAt,
-        status: entry.status,
-        prescriberName: null,
-        hasDocument: entry.hasDocument,
-      }));
+      return {
+        prescriptions: listed.prescriptions.map((entry): PortalPrescriptionDto => ({
+          id: entry.id,
+          issuedAt: entry.issuedAt,
+          status: entry.status,
+          prescriberName: null,
+          hasDocument: entry.hasDocument,
+        })),
+        nextCursor: listed.nextCursor,
+      };
     },
 
     async document(tx, call) {

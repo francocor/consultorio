@@ -124,6 +124,8 @@
   "prescriptions.by": "Profesional: {{name}}",
   "prescriptions.byUnknown": "Profesional no indicado",
   "prescriptions.downloadLabel": "Descargar la receta. {{when}}",
+  "prescriptions.more": "Ver más recetas",
+  "prescriptions.moreFailed": "No pudimos traer más recetas. Vuelva a intentar.",
   "prescriptions.status.draft": "Borrador",
   "prescriptions.status.pending_submission": "En proceso",
   "prescriptions.status.issued": "Vigente",

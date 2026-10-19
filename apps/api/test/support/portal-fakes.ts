@@ -190,8 +190,8 @@ export function createFakePortalPrescriptions(): FakePortalPrescriptions {
         patientId: call.subject.patientId,
         identityId: call.actor.identityId,
       });
-      return Promise.resolve(
-        [...records.values()]
+      return Promise.resolve({
+        prescriptions: [...records.values()]
           .filter((r) => r.patientId === call.subject.patientId)
           .map((r): PortalPrescriptionDto => ({
             id: r.id,
@@ -200,7 +200,8 @@ export function createFakePortalPrescriptions(): FakePortalPrescriptions {
             prescriberName: r.prescriberName,
             hasDocument: r.file !== null,
           })),
-      );
+        nextCursor: null,
+      });
     },
     document(_tx, call) {
       calls.push({

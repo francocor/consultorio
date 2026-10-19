@@ -41,7 +41,7 @@ const ALLOWED: Record<string, readonly string[]> = {
   // link and the identity of the request and re-checked against the tables. The portal is not a
   // professional, so the policies of `prescription` hide the table from it. The list names no
   // medication; the single one also gives the encrypted content the PDF is made from.
-  'app.portal_prescriptions()': ['app_rw'],
+  'app.portal_prescriptions(timestamp with time zone,uuid,integer)': ['app_rw'],
   'app.portal_prescription(uuid)': ['app_rw'],
   // The worker removes what the demo outbox kept for more than a day (the runtime role has no DELETE).
   'app.demo_outbox_purge(timestamp with time zone)': ['app_rw'],

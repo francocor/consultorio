@@ -85,9 +85,18 @@ export interface PortalConsentPort {
   ): Promise<PortalFile | null>;
 }
 
+/** A page of the prescriptions of the subject, and where the next one starts (null on the last). */
+export interface PortalPrescriptionPage {
+  prescriptions: PortalPrescriptionDto[];
+  nextCursor: string | null;
+}
+
 export interface PortalPrescriptionPort {
-  /** The prescriptions issued to the subject. Never one the provider has not confirmed as valid. */
-  list(tx: Tx, call: PortalCall): Promise<PortalPrescriptionDto[]>;
+  /**
+   * A page of the prescriptions issued to the subject, newest first. Never one the provider has not
+   * confirmed as valid. The `cursor` is the one the previous page gave (JD-S5 R2, B-S5).
+   */
+  list(tx: Tx, call: PortalCall & { cursor?: string | undefined }): Promise<PortalPrescriptionPage>;
   /** The prescription document, or null when it is not theirs or there is none. */
   document(
     tx: Tx,

@@ -6,6 +6,7 @@ import {
   PortalConsentsResponse,
   PortalCopyRequest,
   PortalInvoicesResponse,
+  PortalPrescriptionsQuery,
   PortalPrescriptionsResponse,
   PortalProfileResponse,
   PortalProfileUpdateRequest,
@@ -271,16 +272,28 @@ export function sectionRoutes(deps: SectionRoutesDeps) {
           portalPermission: 'portal.prescription.read',
           audits: ['portal.read'],
         },
-        schema: { querystring: NoQuery, response: { 200: PortalPrescriptionsResponse } },
+        schema: {
+          querystring: PortalPrescriptionsQuery,
+          response: { 200: PortalPrescriptionsResponse },
+        },
       },
       async (request) => {
         const { actor } = portalCaller(request);
         const port = deps.prescriptions;
-        if (!port) return { available: false, prescriptions: [] };
+        if (!port) return { available: false, prescriptions: [], nextCursor: null };
         return deps.withPortalSubject(actor, async (tx, subject) => {
-          const prescriptions = await port.list(tx, callOf(request, subject));
-          await auditRead(tx, request.auditActor, subject, 'prescription', prescriptions.length);
-          return { available: true, prescriptions };
+          const page = await port.list(tx, {
+            ...callOf(request, subject),
+            cursor: request.query.cursor,
+          });
+          await auditRead(
+            tx,
+            request.auditActor,
+            subject,
+            'prescription',
+            page.prescriptions.length,
+          );
+          return { available: true, ...page };
         });
       },
     );

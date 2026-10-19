@@ -419,8 +419,16 @@ export const PortalPrescriptionsResponse = z.strictObject({
   /** False while no module serves prescriptions: the screen shows its empty state. */
   available: z.boolean(),
   prescriptions: z.array(PortalPrescriptionDto),
+  /** Where the next page starts, or null when this one is the last (JD-S5 R2, B-S5). */
+  nextCursor: z.string().nullable(),
 });
 export type PortalPrescriptionsResponse = z.infer<typeof PortalPrescriptionsResponse>;
+
+/** The page of the prescriptions to list: the cursor a previous page gave, or none for the first. */
+export const PortalPrescriptionsQuery = z.strictObject({
+  cursor: z.string().min(1).max(300).optional(),
+});
+export type PortalPrescriptionsQuery = z.infer<typeof PortalPrescriptionsQuery>;
 
 // The patient's own data ---------------------------------------------------------------------------
 
@@ -511,6 +519,7 @@ export const PORTAL_RESPONSE_SCHEMAS = {
   PortalConsentsResponse,
   PortalConsentDetailDto,
   PortalConsentResponse,
+  PortalPrescriptionsQuery,
   PortalPrescriptionsResponse,
   PortalProfileResponse,
   PortalRequestResponse,

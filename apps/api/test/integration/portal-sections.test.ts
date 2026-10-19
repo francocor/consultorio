@@ -270,6 +270,7 @@ describe('prescriptions', () => {
     expect(response.json<PortalPrescriptionsResponse>()).toEqual({
       available: false,
       prescriptions: [],
+      nextCursor: null,
     });
   });
 

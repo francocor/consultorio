@@ -104,7 +104,13 @@ export function portalApi(api: ApiClient) {
         body: reason === undefined || reason === '' ? {} : { reason },
         schema: PortalConsentResponse,
       }),
-    prescriptions: () => api.get('/portal/prescriptions', { schema: PortalPrescriptionsResponse }),
+    prescriptions: (cursor?: string) =>
+      api.get(
+        cursor === undefined
+          ? '/portal/prescriptions'
+          : `/portal/prescriptions?cursor=${encodeURIComponent(cursor)}`,
+        { schema: PortalPrescriptionsResponse },
+      ),
 
     // Downloads: a link for this session, then the file itself --------------------------------------
     downloadLink: (kind: DownloadKind, id: string) =>

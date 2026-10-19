@@ -18,7 +18,7 @@ import { tenantKey } from '../../../platform/storage/object-storage.js';
 import type { ActionTokens } from '../../../platform/tokens/index.js';
 import { parseContent } from '../domain/prescription.js';
 
-import { CONTENT_FIELD, loadOrganization, type PrescriptionDeps } from './common.js';
+import { CONTENT_FIELD, loadOrganization, sqlState, type PrescriptionDeps } from './common.js';
 import { DOCUMENT_STATUSES, findPrescription, hiddenOrMissing, openContent } from './read-model.js';
 import { renderPrescription } from './render-prescription.js';
 
@@ -261,31 +261,35 @@ export async function openPortalDocument(
     return { kind: 'stored', delivery: deliveryOf(names, row.document_key) };
   }
   // Nothing was stored yet (the first attempt could not make it): the PDF is made now, from memory.
-  if (input.purpose === 'link') {
-    return {
-      kind: 'rendered',
-      bytes: Buffer.alloc(0),
-      fileName: documentFileName(names),
-      contentType: 'application/pdf',
-    };
+  // A link is issued only for a document that CAN be made (JD-S5 R2, B-S7): the link works once, and
+  // it must not be spent on a download that cannot happen. The bytes of the check are not kept.
+  let bytes: Buffer;
+  try {
+    const organization = await loadOrganization(tx);
+    const plain = await deps.keys.decryptField(
+      tx,
+      { ...CONTENT_FIELD, rowId: row.id },
+      row.content_enc,
+    );
+    bytes = await renderPrescription({
+      content: parseContent(plain.toString('utf8')),
+      externalId: row.external_id,
+      issuedAt: new Date(row.issued_at),
+      organizationName: organization.displayName,
+      simulated: row.simulated,
+      registeredManually: row.registered_manually,
+    });
+  } catch (error) {
+    deps.log?.error(
+      { prescriptionId: row.id, code: sqlState(error) ?? 'unknown' },
+      'the document of a prescription could not be made for the portal',
+    );
+    return null;
   }
-  const organization = await loadOrganization(tx);
-  const plain = await deps.keys.decryptField(
-    tx,
-    { ...CONTENT_FIELD, rowId: row.id },
-    row.content_enc,
-  );
-  const bytes = await renderPrescription({
-    content: parseContent(plain.toString('utf8')),
-    externalId: row.external_id,
-    issuedAt: new Date(row.issued_at),
-    organizationName: organization.displayName,
-    simulated: row.simulated,
-    registeredManually: row.registered_manually,
-  });
   return {
     kind: 'rendered',
-    bytes,
+    // A link only needs to know the document can be made; the download carries the bytes.
+    bytes: input.purpose === 'link' ? Buffer.alloc(0) : bytes,
     fileName: documentFileName(names),
     contentType: 'application/pdf',
   };

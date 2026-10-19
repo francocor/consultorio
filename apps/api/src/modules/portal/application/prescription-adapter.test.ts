@@ -24,13 +24,14 @@ const ID = '0190a000-0000-7000-8000-000000000b01';
 function moduleOf(
   listed: ModulePrescription[],
   delivery: Awaited<ReturnType<PrescriptionModulePortal['openDocument']>>,
+  nextCursor: string | null = null,
 ) {
   const calls: { fn: string; input: PrescriptionModuleInput }[] = [];
   const module: PrescriptionModulePortal = {
     list: (tx, input) => {
       expect(tx).toBe(TX);
       calls.push({ fn: 'list', input });
-      return Promise.resolve(listed);
+      return Promise.resolve({ prescriptions: listed, nextCursor });
     },
     openDocument: (tx, input) => {
       expect(tx).toBe(TX);
@@ -62,7 +63,7 @@ describe('the list', () => {
       null,
     );
 
-    expect(await port.list(TX, CALL)).toEqual([
+    expect((await port.list(TX, CALL)).prescriptions).toEqual([
       {
         id: ID,
         issuedAt: '2031-05-18T14:00:00.000Z',
@@ -87,6 +88,15 @@ describe('the list', () => {
     ]);
   });
 
+  it('hands over the cursor of the page asked, and the one of the next (JD-S5 R2, B-S5)', async () => {
+    const { port, calls } = moduleOf([], null, 'next-page');
+
+    const page = await port.list(TX, { ...CALL, cursor: 'this-page' });
+
+    expect(page).toEqual({ prescriptions: [], nextCursor: 'next-page' });
+    expect(calls[0]?.input.cursor).toBe('this-page');
+  });
+
   it('hands the module the subject of the session and the audit actor of the portal', async () => {
     const { port, calls } = moduleOf([], null);
 
@@ -95,7 +105,12 @@ describe('the list', () => {
     expect(calls).toEqual([
       {
         fn: 'list',
-        input: { actor: CALL.actor, patientId: 'patient-1', auditActor: CALL.auditActor },
+        input: {
+          actor: CALL.actor,
+          patientId: 'patient-1',
+          auditActor: CALL.auditActor,
+          cursor: undefined,
+        },
       },
     ]);
   });
