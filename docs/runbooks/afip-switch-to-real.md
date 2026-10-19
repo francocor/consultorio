@@ -36,7 +36,9 @@ You do not write these again; the real adapter plugs into them.
   number BEFORE it sends anything: a voucher whose type, point of sale, number, total, date, issuer
   CUIT, recipient document and (for a credit note) associated voucher match the invoice is adopted
   and `issue` is not called; one that does not match parks the invoice for a person; no answer, or an
-  answer that refuses the question, means nothing is sent. The transaction of the job stays open
+  answer that refuses the question, means nothing is sent. When nothing is at the expected number, the
+  numbers below it where a voucher MAY sit are asked about too before the request goes out (see "A
+  remembered number where nothing was ever issued"). The transaction of the job stays open
   across the call (it holds only advisory locks, no row lock): the mark is what survives a crash, and
   it is committed before the call, not at its end. A voucher is never issued twice: this is the part
   to review most closely against the real service, because ARCA has no idempotency key of its own
@@ -68,14 +70,21 @@ You do not write these again; the real adapter plugs into them.
   After an outage ends the series therefore moves within minutes. A lookup that keeps answering
   `rejected` (a bad token, a wrong environment) keeps the blocker probing every 5 minutes: that is
   visible, see the next point.
-- **A stalled series is surfaced (JD-S4 R3-2).** After the blocker has been tried 6 times, or was
-  requested 2 hours ago, and while it holds at least one invoice, ONE `invoice_attention` item is
-  opened on it (reason `outcome_unknown`, with the number of invoices held; reception sees it). The
-  invoice stays as it is. The item is resolved (`outcome_settled`) when the blocker is issued,
-  rejected or parked, and a replacement closes it (`replaced_by_manual`). `InvoiceDto` carries
-  `heldBy` (`{ id, requestedAt }` of the blocker, only when the reader may see it) on a held invoice
-  and `blocksSeries` (how many wait) on the blocker; the web says "espera a otra factura" with a link,
-  and the blocker says how many wait behind it and offers the manual path.
+- **A stalled series is surfaced (JD-S4 R3-2, R4).** Once the blocker has been WAITING for 2 hours
+  (counted from its first mark, `invoice.awaiting_since`, which a later mark keeps and the end of the
+  wait clears; the number of attempts does not count, because the invoices held behind it bring its
+  probes forward) and while it holds at least one invoice, ONE `invoice_attention` item is opened on it
+  (reason `outcome_unknown`; reception sees it). The item says nothing of how many wait: that number is
+  live in the invoice (below), and filtered by what the reader may see. The invoice stays as it is. A
+  person who dismisses the item is not shown it again during the same wait. Every way out of the wait
+  closes it: `outcome_settled` when the blocker is issued, rejected, or the authority says for certain
+  that nothing was issued; `parked` when the invoice is parked with the doubt still there (the park
+  opens its own item with the real reason); a replacement closes it too (`replaced_by_manual`).
+  `InvoiceDto` carries `heldBy` (`{ id, requestedAt }` of the blocker, only when the reader may see it)
+  on a held invoice and `blocksSeries` (how many wait, counting only the invoices the reader may see) on
+  the blocker; the web says "espera a otra factura" with a link, and the blocker says how many wait
+  behind it and offers the manual path. The attempts that end without an answer are audited
+  (`invoice.attempted`) for the first 6 and then once per clock hour.
 - **Who the issuer is.** The invoice keeps the issuer (CUIT, business name, tax condition, address,
   start of the activity) as it was when it was requested (`invoice.issuer_snapshot`). The request to
   the authority, its fingerprint and the PDF use that snapshot, so editing the fiscal profile while an
@@ -227,16 +236,39 @@ loaded.
   look in ARCA for a voucher at that number: if it exists the organization holds two vouchers for one
   service and one is cancelled with a credit note in ARCA. The product does not look for it by itself
   afterwards (a closed invoice has no mark), but it REMEMBERS the number (`invoice_stray_voucher`,
-  migration 0480): no later lookup ever adopts a voucher at a remembered number (an anonymous consumer
-  with the same fee on the same day looks exactly like the ghost), and the number expected next is
-  counted after the highest remembered one. The same table keeps the number of a voucher that arrived
-  for an invoice somebody had closed (`orphaned`). Residual risk, on purpose: if the replaced invoice
-  was in fact never issued, the number it expected is skipped, and an invoice that loses its answer
-  right after is looked up one number too far; ARCA then shows nothing there and the request goes out
-  again. Because ARCA has no idempotency key, the real adapter must make that second `issue` safe
-  (it can compare `FECompUltimoAutorizado` with the number it expects before it sends).
+  migrations 0480 and 0481): no later lookup ever adopts a voucher at a remembered number as its own
+  without comparing it first (see the next point), and the number expected next is counted after the
+  highest remembered one. The same table keeps the number of a voucher that arrived for an invoice
+  somebody had closed (`orphaned`).
+- **A remembered number where nothing was ever issued (JD-S4 R4-1).** The number of an invoice that was
+  replaced or parked without knowing (`replaced_unresolved`, `parked_unknown`) is counted as taken, but
+  if that invoice was never issued the authority gives the NEXT voucher that very number, and the next
+  invoice, which expects the number after it, is not found where it looks. The core handles it, the
+  adapter does not have to: a remembered number is UNCONFIRMED while no invoice of the series records a
+  number that is higher or the same (`orphaned` and `unmatched` are certain by their reason). When the
+  lookup at the expected number finds nothing, the unconfirmed numbers below it are asked about, lowest
+  first (`settleStrays`), before anything is sent: nothing at one of them means nothing above it either
+  (the numbering has no gaps), so the request may go out; a voucher there that matches this invoice and
+  not the invoice the number was remembered for is adopted; one that matches only that invoice (or
+  neither) means the number is taken and the next one is asked about; one that matches BOTH (the same
+  anonymous consumer with the same fee on the same day) cannot be told, so nothing is sent and the
+  invoice is parked as `voucher_ambiguous` with its outcome unknown; an authority that cannot answer
+  means nothing is sent. At most 5 such numbers are asked about; more than that parks the invoice too.
+  What the real adapter must guarantee for this: `findIssued` answers a number above the last
+  authorized one with `null` and every number up to the last with its voucher (the contract suite
+  states it: "numbers without gaps"), with all the facts listed below; it must NEVER answer `null` for
+  a failed or refused lookup. The adapter does not need to compare `FECompUltimoAutorizado` with an
+  expected number on `issue`: it never receives that number, and the core has already asked. It still
+  has to ask `FECompUltimoAutorizado` and `FECompConsultar` after a timeout of its own `issue`.
+- **A parked invoice remembers what it knows (JD-S4 R4-3).** Parking an invoice writes the numbers that
+  nobody may take later: the number of the foreign voucher a lookup found where the invoice was expected
+  (`voucher_mismatch`), and the number of the voucher that collided with a number or a CAE we hold
+  (`number_taken`, `cae_taken` after an authorized answer) are certain (`unmatched`); the number a
+  parked invoice expected while its outcome was unknown (`issuer_mismatch`) is uncertain
+  (`parked_unknown`). A lookup that ends with every number it asked about taken by another invoice
+  (`number_taken` out of a lookup, not out of an answer) parks the invoice WITH its outcome unknown.
   A replacement of an invoice that was PARKED with its outcome still unknown (reasons
-  `issuer_mismatch` and `voucher_mismatch` after a lost answer; the audit entry and the item say
+  `issuer_mismatch`, `voucher_mismatch` and `voucher_ambiguous` after a lost answer, and `number_taken` out of a lookup; the audit entry and the item say
   `outcomeUnknown: true`, and the row keeps the number it expected) needs the same acknowledgement. An attempt that finds the mark after a definite "down"
   (the authority was asked, held nothing, and then refused the request for certain) clears it, and
   the replacement then needs no acknowledgement. A manual voucher may replace only the same invoice:
@@ -247,8 +279,12 @@ loaded.
   gives up after a lock timeout (`markLockTimeoutMs`, 5 seconds): a pool full of attempts fails and
   the sweeper retries, it does not wait on itself. The mark's timeout is at least 1 millisecond (a
   zero would switch the lock timeout off). A mark that gives up on a lock logs it. Size the pool for the
-  number of attempts the worker runs at once plus one connection each with `DB_POOL_MAX` (2 to 100,
-  default 10; the API and the worker both read it).
+  number of attempts the worker runs at once plus one connection each with `DB_POOL_MAX` (6 to 100,
+  default 10; the API and the worker both read it). The configuration refuses fewer than 6
+  (`MIN_DB_POOL_MAX`): each of the 2 attempts the worker runs at once holds 2 connections, and 2 more
+  serve the sweeper and the other jobs. With fewer, two attempts would each hold one connection and wait
+  for the other's (JD-S4 R4-B-T5). A value of `markLockTimeoutMs` that is not a finite number is the
+  default (5 seconds), not an error (JD-S4 R4-B-T4).
 - **A foreign voucher at the expected number (INFO, JD-S4 R3-B-T3).** If somebody issues a voucher
   outside the product at the number an invoice that lost its answer expects, the lookup finds a
   voucher that is not that invoice's (another recipient or total) and parks it as `voucher_mismatch`.
