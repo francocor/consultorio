@@ -199,6 +199,7 @@ describe('the routes of Stage 5', () => {
       'POST /portal/appointments/:id/cancel patient_protective',
       'POST /portal/consents/:id/revoke patient_protective',
       'POST /portal/copy-requests patient_protective',
+      'POST /portal/links/:id/revoke patient_protective',
       'POST /portal/logout auth',
       'POST /portal/rectification-requests patient_protective',
       'POST /portal/subject auth',

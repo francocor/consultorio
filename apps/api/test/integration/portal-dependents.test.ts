@@ -71,8 +71,19 @@ async function family(options: { adultAccount?: boolean } = {}) {
   await world.activate(world.activationPathSentTo(parentEmail));
   let adult: Visitor | undefined;
   if (options.adultAccount === true) {
-    await world.inviteOk(child);
-    await world.activate(world.activationPathSentTo(childEmail));
+    // The account the person opened for themselves once they were an adult: the organization cannot
+    // invite a minor as themselves (JD-S5 R1-S5-6), so the account is made straight in the database
+    // (the clock of the application stays on the day before the birthday in this world).
+    await world.inTenant(async (tx) => {
+      const identity = await tx.execute<{ id: string }>(
+        sql`INSERT INTO portal_identity (tenant_id, email, status, activated_at)
+              VALUES (${world.tenant.id}, ${childEmail}, 'active', now()) RETURNING id`,
+      );
+      await tx.execute(
+        sql`INSERT INTO portal_link (tenant_id, portal_identity_id, patient_id, relationship)
+              VALUES (${world.tenant.id}, ${identity.rows[0]?.id ?? ''}, ${child}, 'self')`,
+      );
+    });
     adult = await world.signInAs(childEmail);
   }
   const parentVisitor = await world.signInAs(parentEmail);
@@ -246,7 +257,10 @@ describe('the adult', () => {
 });
 
 describe('the organization', () => {
-  it('authorizes a suspended representative again after verifying them, with a new note', async () => {
+  it('verifies a suspended representative again only while the person is still a minor, with a new note and a new day of majority', async () => {
+    // The job of this test runs on the day of the birthday, but the clock of the application is the
+    // day before: the person is still a minor for the organization, which is the case a link
+    // suspended in error would be in.
     const { parentVisitor, linkId } = await family();
     await reviewOn('2031-05-06');
 
@@ -255,7 +269,7 @@ describe('the organization', () => {
     });
     const noNote = await world.api.post(`/portal-links/${linkId}/authorize`, world.reception, {});
     const done = await world.api.post(`/portal-links/${linkId}/authorize`, world.reception, {
-      verificationNote: 'La paciente, ya mayor, confirmó en el mostrador.',
+      verificationNote: 'Verificado otra vez en el mostrador.',
     });
 
     expect(refused.statusCode).toBe(403);
@@ -263,11 +277,11 @@ describe('the organization', () => {
     expect(done.statusCode, done.body).toBe(200);
     expect(done.json<{ identity: PortalIdentityDto }>().identity.links[0]).toMatchObject({
       status: 'active',
-      majorityReviewOn: null,
+      majorityReviewOn: '2031-05-06',
     });
     expect((await parentVisitor.get('/portal/appointments')).statusCode).toBe(200);
     const again = await world.api.post(`/portal-links/${linkId}/authorize`, world.reception, {
-      verificationNote: 'La paciente, ya mayor, confirmó en el mostrador.',
+      verificationNote: 'Verificado otra vez en el mostrador.',
     });
     expect(again.statusCode).toBe(409);
   });

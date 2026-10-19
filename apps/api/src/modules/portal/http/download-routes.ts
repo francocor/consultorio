@@ -1,3 +1,5 @@
+import type { Readable } from 'node:stream';
+
 import { PortalDownloadLinkResponse } from '@consultorio/contracts';
 import type { FastifyInstance, FastifyRequest } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
@@ -10,7 +12,6 @@ import { FileRefused, type FileResourceRegistry } from '../../../platform/files/
 import { AppError } from '../../../platform/http/problem.js';
 import type { ObjectStorage } from '../../../platform/storage/object-storage.js';
 import {
-  isRenderedKey,
   issueDownloadLink,
   type DownloadDeps,
   type DownloadKind,
@@ -131,24 +132,27 @@ export function downloadRoutes(deps: DownloadRoutesDeps) {
           if (error instanceof FileRefused) return refuse(request, actor, error);
           throw error;
         }
-        // Audited and spent; now stream.
-        if (!deps.storage) throw new AppError('service_unavailable');
-        const stored = await deps.storage.get(actor.tenantId, delivery.objectKey);
-        if (!stored) throw new AppError('not_found');
-        // A file rendered for this download is not kept: it goes when the response is over.
-        if (isRenderedKey(actor.tenantId, delivery.objectKey)) {
-          const storage = deps.storage;
-          reply.raw.once('close', () => {
-            void storage.remove(actor.tenantId, delivery.objectKey).catch(() => undefined);
-          });
+        // Audited and spent; now deliver. A file rendered for this download comes as its bytes and
+        // is never stored, so there is nothing to clean up if the response fails (JD-S5 R1-S5-8).
+        let size: number;
+        let body: Buffer | Readable;
+        if (delivery.bytes) {
+          size = delivery.bytes.length;
+          body = delivery.bytes;
+        } else {
+          if (!deps.storage) throw new AppError('service_unavailable');
+          const stored = await deps.storage.get(actor.tenantId, delivery.objectKey);
+          if (!stored) throw new AppError('not_found');
+          size = stored.size;
+          body = stored.stream;
         }
         return reply
           .header('content-type', delivery.contentType)
           .header('content-disposition', delivery.contentDisposition)
-          .header('content-length', String(stored.size))
+          .header('content-length', String(size))
           .header('cache-control', 'no-store')
           .header('content-security-policy', "default-src 'none'; sandbox; frame-ancestors 'none'")
-          .send(stored.stream);
+          .send(body);
       },
     );
 

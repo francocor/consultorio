@@ -13,13 +13,15 @@ import {
   type PortalIdentityRow,
   type PortalLinkRow,
 } from '../../../db/schema/portal.js';
+import { tenant } from '../../../db/schema/tenant.js';
 import { audit, type AuditActor } from '../../../platform/audit/writer.js';
 import type { Tx } from '../../../platform/db/tenant-context.js';
 import { AppError } from '../../../platform/http/problem.js';
 import type { ActionTokens } from '../../../platform/tokens/index.js';
-import { readPatientBasics, readPatientContacts } from '../../patients/index.js';
+import { isMinor, readPatientBasics, readPatientContacts } from '../../patients/index.js';
 import { majorityReviewDate } from '../domain/majority.js';
 
+import { dayInZone, timeZoneOfCountry } from './country.js';
 import type { PortalSessions } from './sessions.js';
 
 const UNIQUE_VIOLATION = '23505';
@@ -47,6 +49,31 @@ function sqlState(error: unknown): string | undefined {
 
 function nameOf(contact: { givenNames: string; familyName: string }): string {
   return `${contact.givenNames} ${contact.familyName}`.trim();
+}
+
+/**
+ * Where a patient stands today against the age of majority of the organization's country, from the
+ * clock of the application. A representative is for a minor and a minor has no account of their own
+ * (JD-S5 R1-A-C1, S5-6): every place that creates or restores a link asks.
+ */
+export async function majorityStanding(
+  tx: Tx,
+  deps: Pick<IdentityDeps, 'clock' | 'majorityAge'>,
+  birthDate: string,
+): Promise<{ minor: boolean; reviewOn: string | null }> {
+  const [organization] = await tx.select({ country: tenant.country }).from(tenant);
+  const country = organization?.country ?? 'AR';
+  const today = dayInZone(timeZoneOfCountry(country), deps.clock());
+  const majorityAge = deps.majorityAge(country);
+  return {
+    minor: isMinor(birthDate, today, majorityAge),
+    // The day of the organization, not the UTC one: a day apart would drop the date of a minor.
+    reviewOn: majorityReviewDate({
+      birthDate,
+      majorityAge,
+      today: new Date(`${today}T12:00:00.000Z`),
+    }),
+  };
 }
 
 // Reading -----------------------------------------------------------------------------------------
@@ -147,6 +174,12 @@ export interface PreparedInvitation {
   /** The raw token of the link. It exists only here: put it in the email and forget it. */
   token: string;
   expiresAt: Date;
+  /**
+   * The email on the record of the patient, if there is one. When the invitation is for a
+   * representative, this address is told so (JD-S5 R1-A-C1): the person the record belongs to, or
+   * who answers for it, learns that somebody was given access.
+   */
+  recordEmail: string | null;
 }
 
 export async function liveSelfLink(tx: Tx, patientId: string): Promise<boolean> {
@@ -198,6 +231,12 @@ export async function prepareInvitation(
   const patient = await readPatientBasics(tx, input.patientId);
   if (!patient) throw new AppError('not_found');
   if (patient.status !== 'active') throw new AppError('portal_state_conflict');
+
+  // A representative is for a minor; an adult is represented only through their own authorization,
+  // and a minor has no account of their own (JD-S5 R1-A-C1, S5-6).
+  const { minor } = await majorityStanding(tx, deps, patient.birthDate);
+  if (input.representative && !minor) throw new AppError('portal_representation_requires_minor');
+  if (!input.representative && minor) throw new AppError('portal_minor_requires_representative');
 
   let email: string;
   if (input.representative) {
@@ -272,11 +311,13 @@ export async function prepareInvitation(
       },
     });
   }
+  const recordEmail = patient.email?.trim().toLowerCase() ?? '';
   return {
     identity: await identityDto(tx, identityId),
     email,
     token: issued.token,
     expiresAt: issued.expiresAt,
+    recordEmail: recordEmail === '' ? null : recordEmail,
   };
 }
 
@@ -324,6 +365,18 @@ export async function activateInvitation(
   if (asRepresentative && (relation === null || note === null)) return 'invalid';
   if (!asRepresentative && (await liveSelfLink(tx, patientId))) return 'invalid';
 
+  // What was true when the link was sent must still be true when it is followed (JD-S5 R1-B-T9,
+  // A-C1): the address of the account is still the one on the record of the patient, the patient is
+  // still an adult for their own account, and still a minor for a representative's.
+  const standing = await majorityStanding(tx, deps, patient.birthDate);
+  if (asRepresentative !== standing.minor) return 'invalid';
+  if (
+    !asRepresentative &&
+    (patient.email?.trim().toLowerCase() ?? '') !== identity.email.toLowerCase()
+  ) {
+    return 'invalid';
+  }
+
   try {
     await tx.transaction(async (inner) => {
       await inner
@@ -337,13 +390,7 @@ export async function activateInvitation(
         relationship: asRepresentative ? 'representative' : 'self',
         relation: asRepresentative ? relation : null,
         verificationNote: asRepresentative ? note : null,
-        majorityReviewOn: asRepresentative
-          ? majorityReviewDate({
-              birthDate: patient.birthDate,
-              majorityAge: deps.majorityAge(input.country),
-              today: now,
-            })
-          : null,
+        majorityReviewOn: asRepresentative ? standing.reviewOn : null,
         createdBy,
       });
     });
@@ -376,8 +423,7 @@ export async function linkDependent(
     relation: PortalRelation;
     verificationNote: string;
   },
-): Promise<PortalIdentityDto> {
-  const now = deps.clock();
+): Promise<{ identity: PortalIdentityDto; recordEmail: string | null }> {
   const [identity] = await tx
     .select()
     .from(portalIdentity)
@@ -388,6 +434,9 @@ export async function linkDependent(
   const patient = await readPatientBasics(tx, input.patientId);
   if (!patient) throw new AppError('not_found');
   if (patient.status !== 'active') throw new AppError('portal_state_conflict');
+  // Only for a minor: an adult authorizes a representative from their own account (JD-S5 R1-A-C1).
+  const standing = await majorityStanding(tx, deps, patient.birthDate);
+  if (!standing.minor) throw new AppError('portal_representation_requires_minor');
 
   try {
     await tx.transaction((inner) =>
@@ -398,11 +447,7 @@ export async function linkDependent(
         relationship: 'representative',
         relation: input.relation,
         verificationNote: input.verificationNote,
-        majorityReviewOn: majorityReviewDate({
-          birthDate: patient.birthDate,
-          majorityAge: deps.majorityAge(input.country),
-          today: now,
-        }),
+        majorityReviewOn: standing.reviewOn,
         createdBy: input.actor.userId,
       }),
     );
@@ -419,7 +464,11 @@ export async function linkDependent(
     patientId: patient.id,
     metadata: { relationship: 'representative', relation: input.relation, via: 'staff' },
   });
-  return identityDto(tx, identity.id);
+  const recordEmail = patient.email?.trim().toLowerCase() ?? '';
+  return {
+    identity: await identityDto(tx, identity.id),
+    recordEmail: recordEmail === '' ? null : recordEmail,
+  };
 }
 
 // Ending access -----------------------------------------------------------------------------------
@@ -494,15 +543,17 @@ export async function revokeLink(
 }
 
 /**
- * Changes the address of an identity. It is staff work after the person was verified out of band
- * (they lost the mailbox); every session of the identity ends, and the entry names the field and
- * never the address.
+ * Changes the address of an identity. It is work for the owner and the admin (permission
+ * `portal.identity.email`, not reception's) after the person was verified out of band (they lost the
+ * mailbox); every session of the identity ends, and the entry names the field and never the
+ * address. It answers the address the account had, so the caller can tell its owner with a notice
+ * that carries no link (JD-S5 R1-A-C1): whoever holds the mailbox holds the account.
  */
 export async function changeIdentityEmail(
   tx: Tx,
   deps: IdentityDeps,
   input: { actor: StaffAuditActor; identityId: string; email: string },
-): Promise<PortalIdentityDto> {
+): Promise<{ identity: PortalIdentityDto; previousEmail: string | null }> {
   const now = deps.clock();
   const [identity] = await tx
     .select()
@@ -511,7 +562,9 @@ export async function changeIdentityEmail(
     .for('update');
   if (!identity) throw new AppError('not_found');
   if (identity.status === 'deactivated') throw new AppError('portal_state_conflict');
-  if (identity.email.toLowerCase() === input.email) return identityDto(tx, identity.id);
+  if (identity.email.toLowerCase() === input.email) {
+    return { identity: await identityDto(tx, identity.id), previousEmail: null };
+  }
 
   try {
     await tx.transaction((inner) =>
@@ -535,7 +588,7 @@ export async function changeIdentityEmail(
     resourceId: identity.id,
     metadata: { field: 'email', by: 'staff' },
   });
-  return identityDto(tx, identity.id);
+  return { identity: await identityDto(tx, identity.id), previousEmail: identity.email };
 }
 
 /** Ends every session of an identity (an administrator did it), and says so in the trail. */

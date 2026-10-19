@@ -2,6 +2,7 @@ import type { PortalPrescriptionDto } from '@consultorio/contracts';
 
 import type { AuditActor } from '../../../platform/audit/writer.js';
 import type { PortalActor } from '../../../platform/authz/actor.js';
+import type { Tx } from '../../../platform/db/tenant-context.js';
 
 import type { DownloadPurpose, PortalPrescriptionPort } from './ports.js';
 
@@ -28,23 +29,32 @@ export interface ModuleFileDelivery {
   contentDisposition: string;
 }
 
+/** `PortalDocument` of the prescriptions module: the stored PDF, or the one rendered just now. */
+export type ModuleDocument =
+  | { kind: 'stored'; delivery: ModuleFileDelivery }
+  | { kind: 'rendered'; bytes: Buffer; fileName: string; contentType: string };
+
 /**
  * The two entry points of `modules/prescriptions` for the portal, as closures over the
- * `withTenant` and the `PrescriptionDeps` the integrator already holds:
+ * `PrescriptionDeps` the integrator already holds:
  *
  *   adaptPrescriptionModule({
- *     list: (input) => listPrescriptionsForPatient(withTenant, input),
- *     openDocument: (input) => openPortalDocument(withTenant, deps, input),
+ *     list: (tx, input) => listPrescriptionsForPatient(tx, input),
+ *     openDocument: (tx, input) => openPortalDocument(tx, deps, input),
  *   })
  *
- * (`openDocument` receives the prescription id as a field of its input.) Both run their own
- * transaction as the system and check `portal.prescription.read` themselves.
+ * (`openDocument` receives the prescription id as a field of its input.) Both run on the
+ * transaction of the portal request, which the portal opened for the subject of the session: they
+ * never open another connection while it is held (JD-S5 R1-S5-1), and the table of prescriptions
+ * is closed to the portal, so they read through the functions of the database bound to the link of
+ * that transaction (JD-S5 R1-S5-2). Both check `portal.prescription.read` themselves.
  */
 export interface PrescriptionModulePortal {
-  list(input: PrescriptionModuleInput): Promise<ModulePrescription[]>;
+  list(tx: Tx, input: PrescriptionModuleInput): Promise<ModulePrescription[]>;
   openDocument(
+    tx: Tx,
     input: PrescriptionModuleInput & { prescriptionId: string; purpose: DownloadPurpose },
-  ): Promise<ModuleFileDelivery | null>;
+  ): Promise<ModuleDocument | null>;
 }
 
 const FALLBACK_FILE_NAME = 'receta.pdf';
@@ -61,16 +71,17 @@ export function fileNameOf(contentDisposition: string): string {
  * - list: the module's list (confirmed prescriptions only, no medication). The portal adds
  *   `prescriberName: null` (the module does not say who prescribed). Whether there is a document is
  *   the module's answer (`hasDocument`), never inferred from the status here.
- * - document: the module's `FileDelivery` is a storage object, which fits the file door as it is.
- *   Its file name is read back from the `content-disposition` the module set.
+ * - document: a stored PDF is a storage object, which fits the file door as it is (its file name is
+ *   read back from the `content-disposition` the module set); one rendered just now travels as its
+ *   bytes.
  *
  * The module audits `prescription.read` on the list and `prescription.downloaded` (via the portal)
  * whenever it opens the document; the door adds `portal.download` when the link is used.
  */
 export function adaptPrescriptionModule(module: PrescriptionModulePortal): PortalPrescriptionPort {
   return {
-    async list(_tx, call) {
-      const listed = await module.list({
+    async list(tx, call) {
+      const listed = await module.list(tx, {
         actor: call.actor,
         patientId: call.subject.patientId,
         auditActor: call.auditActor,
@@ -84,21 +95,23 @@ export function adaptPrescriptionModule(module: PrescriptionModulePortal): Porta
       }));
     },
 
-    async document(_tx, call) {
-      const delivery = await module.openDocument({
+    async document(tx, call) {
+      const opened = await module.openDocument(tx, {
         actor: call.actor,
         patientId: call.subject.patientId,
         auditActor: call.auditActor,
         prescriptionId: call.prescriptionId,
         purpose: call.purpose,
       });
-      return delivery
-        ? {
-            objectKey: delivery.objectKey,
-            contentType: delivery.contentType,
-            fileName: fileNameOf(delivery.contentDisposition),
-          }
-        : null;
+      if (!opened) return null;
+      if (opened.kind === 'rendered') {
+        return { bytes: opened.bytes, fileName: opened.fileName, contentType: opened.contentType };
+      }
+      return {
+        objectKey: opened.delivery.objectKey,
+        contentType: opened.delivery.contentType,
+        fileName: fileNameOf(opened.delivery.contentDisposition),
+      };
     },
   };
 }

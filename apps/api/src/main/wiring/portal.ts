@@ -34,7 +34,7 @@ export interface PortalPorts {
 export function realPortalPorts(context: WiringContext): PortalPorts {
   const { keys, withTenant } = context;
   // The same dependencies the prescriptions module is built with (`wiring/prescriptions.ts`): the
-  // portal opens a document through the module's own function, which may have to make it first.
+  // portal opens a document through the module's own function, which may have to render it first.
   const prescriptionDeps: PrescriptionDeps = {
     keys,
     adapters: context.adapters,
@@ -48,12 +48,10 @@ export function realPortalPorts(context: WiringContext): PortalPorts {
       createConsentPortal({ keys, ...(context.clock ? { clock: context.clock } : {}) }),
     ),
     prescriptions: adaptPrescriptionModule({
-      // Without a bucket a document cannot be made: the list says so (`hasDocument: false`).
-      list: (input) =>
-        listPrescriptionsForPatient(withTenant, input, {
-          canRender: context.storage !== undefined,
-        }),
-      openDocument: (input) => openPortalDocument(withTenant, prescriptionDeps, input),
+      // Both run on the transaction of the portal request and open no other connection. A document
+      // that was not stored yet is rendered in memory, so no bucket is needed to offer it.
+      list: (tx, input) => listPrescriptionsForPatient(tx, input, { canRender: true }),
+      openDocument: (tx, input) => openPortalDocument(tx, prescriptionDeps, input),
     }),
   };
 }

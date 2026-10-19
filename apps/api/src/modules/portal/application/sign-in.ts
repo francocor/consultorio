@@ -7,11 +7,11 @@ import type { RateLimitStore } from '../../../platform/http/rate-limit.js';
 import type { JobClient } from '../../../platform/jobs/boss.js';
 import type { ActionTokens } from '../../../platform/tokens/index.js';
 import { findPatientByDocument } from '../../patients/index.js';
-import { PORTAL_VERIFY_ATTEMPTS, PORTAL_VERIFY_WINDOW_MS, addressKey } from '../domain/code.js';
+import { PORTAL_VERIFY_ATTEMPTS, PORTAL_VERIFY_WINDOW_MS, triesKey } from '../domain/code.js';
 
 import { checkCode, openChallenge, type PortalCodePurpose } from './codes.js';
 import { normalizeDocument } from './country.js';
-import { liveSelfLink, patientAuditActor } from './identities.js';
+import { liveSelfLink, majorityStanding, patientAuditActor } from './identities.js';
 import type { PortalSessions } from './sessions.js';
 
 export interface SignInDeps {
@@ -22,6 +22,8 @@ export interface SignInDeps {
   /** The counters of the tries per address. Best effort: a store that fails does not close the portal. */
   store: RateLimitStore;
   clock: () => Date;
+  /** The age of majority of the organization's country: a minor registers through a representative. */
+  majorityAge: (country: string) => number;
 }
 
 /** Who is asking and for which organization, as the route knows them. */
@@ -47,6 +49,7 @@ export type VerifyOutcome =
  */
 async function registrationCandidate(
   tx: Tx,
+  deps: Pick<SignInDeps, 'clock' | 'majorityAge'>,
   ctx: SignInContext,
   input: { nationalId: string; email: string },
 ): Promise<{ patientId: string; invitedIdentityId: string | null } | null> {
@@ -56,6 +59,11 @@ async function registrationCandidate(
   if (match?.status !== 'active') return null;
   if (match.email === null || match.email.trim().toLowerCase() !== input.email) return null;
   if (await liveSelfLink(tx, match.id)) return null;
+  // A minor is reached only through a representative the organization verified: were the guardian
+  // to register with the child's document and the address on their record, the guardian would
+  // become the child's `self` and nothing would review the majority (JD-S5 R1-S5-6). Said like any
+  // other mismatch: the visitor learns nothing.
+  if ((await majorityStanding(tx, deps, match.birthDate)).minor) return null;
 
   const [identity] = await tx
     .select({
@@ -73,25 +81,33 @@ async function registrationCandidate(
   return null;
 }
 
-/** Sends the registration code when the data match, and does nothing visible when they do not. */
+/**
+ * Sends the registration code when the data match, and sends nothing visible when they do not. The
+ * two cases do the same work (JD-S5 R1-A-T3): a challenge is written and the job is queued either
+ * way, and for an address that must not receive a code the challenge is born spent, so the job finds
+ * nothing to send. How long the answer takes tells nothing about the account.
+ */
 export async function requestRegistrationCode(
   tx: Tx,
   deps: SignInDeps & { jobs: JobClient },
   ctx: SignInContext,
   input: { nationalId: string; email: string },
 ): Promise<void> {
-  const candidate = await registrationCandidate(tx, ctx, input);
-  if (!candidate) return;
+  const candidate = await registrationCandidate(tx, deps, ctx, input);
   await openChallenge(tx, {
     tenantId: ctx.tenant.id,
     purpose: 'portal_registration',
     email: input.email,
     now: deps.clock(),
     jobs: deps.jobs,
+    decoy: candidate === null,
   });
 }
 
-/** Sends the sign-in code to an active account, and does nothing visible for any other address. */
+/**
+ * Sends the sign-in code to an active account, and sends nothing for any other address, with the
+ * same work in both cases (see `requestRegistrationCode`).
+ */
 export async function requestSignInCode(
   tx: Tx,
   deps: SignInDeps & { jobs: JobClient },
@@ -102,22 +118,23 @@ export async function requestSignInCode(
     .select({ id: portalIdentity.id })
     .from(portalIdentity)
     .where(and(eq(portalIdentity.email, input.email), eq(portalIdentity.status, 'active')));
-  if (!identity) return;
   await openChallenge(tx, {
     tenantId: ctx.tenant.id,
     purpose: 'portal_sign_in',
     email: input.email,
     now: deps.clock(),
     jobs: deps.jobs,
+    decoy: identity === undefined,
   });
 }
 
 // Using the code ---------------------------------------------------------------------------------
 
 /**
- * Counts one try for an address and says whether the portal still answers for it. The key holds a
- * hash of the address and counts the existing and the unknown addresses alike, so being locked out
- * tells nothing about the account.
+ * Counts one try for an address FROM A CLIENT and says whether the portal still answers that client
+ * for it. The key holds hashes of the address and of the client and counts the existing and the
+ * unknown addresses alike, so being locked out tells nothing about the account; and knowing an
+ * address is no longer enough to lock its owner out (JD-S5 R1-S5-9).
  */
 async function withinTries(
   deps: SignInDeps,
@@ -127,7 +144,7 @@ async function withinTries(
 ): Promise<boolean> {
   try {
     const state = await deps.store.hit(
-      `portal|${flow}|${addressKey(ctx.tenant.id, email)}`,
+      `portal|${flow}|${triesKey(ctx.tenant.id, email, ctx.ip)}`,
       PORTAL_VERIFY_WINDOW_MS,
     );
     return state.count <= PORTAL_VERIFY_ATTEMPTS;
@@ -226,7 +243,7 @@ export async function verifyRegistrationCode(
   if (!(await withinTries(deps, ctx, 'registration', input.email))) return { outcome: 'locked' };
   // Without a record that matches there is no challenge to try: a stranger's guess at somebody
   // else's document must not use up the code that person was sent.
-  const candidate = await registrationCandidate(tx, ctx, input);
+  const candidate = await registrationCandidate(tx, deps, ctx, input);
   if (!candidate) return { outcome: 'invalid' };
   const checked = await checkCode(tx, {
     purpose: 'portal_registration',

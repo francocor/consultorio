@@ -97,6 +97,7 @@
   "action.assignment.removed": "Asignación de paciente quitada",
   "action.assignment.review_flag": "Asignación a un profesional incorporado hace poco: conviene revisarla",
   "action.matricula.verified": "Matrícula verificada",
+  "action.matricula.unverified": "Se retiró la verificación de la matrícula",
   "action.setting.reception_sees_clinical_metadata.changed": "Cambio de lo que ve Recepción de lo clínico",
   "action.branding.updated": "Identidad visual modificada",
   "action.branding.logo_updated": "Logo modificado",
@@ -201,6 +202,8 @@
   "action.consent.revoked": "Consentimiento revocado",
   "action.consent.read": "Consentimiento firmado consultado",
   "action.consent.expired": "Solicitud de consentimiento vencida",
+  "action.consent.declined": "Consentimiento rechazado por el paciente",
+  "action.consent.integrity_failed": "Un consentimiento firmado no coincide con su huella",
   "action.prescription.issued": "Receta emitida",
   "action.prescription.cancelled": "Receta anulada",
   "action.prescription.read": "Receta consultada",
@@ -216,6 +219,7 @@
   "action.portal.download": "Descarga desde el portal de pacientes",
   "action.portal.profile.changed": "Datos de contacto modificados desde el portal",
   "action.portal.denied": "Acceso denegado en el portal de pacientes",
+  "action.portal.notice.sent": "Aviso enviado por un cambio en el acceso al portal",
   "action.access.denied": "Acceso denegado",
   "action.cross_tenant.denied": "Acceso entre organizaciones denegado"
 }

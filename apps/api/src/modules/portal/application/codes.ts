@@ -33,6 +33,10 @@ export async function sendsInLastHour(tx: Tx, email: string, now: Date): Promise
  * transaction: both exist or neither does. An address that already had three codes this hour gets
  * nothing. The code itself does not exist yet; the job generates it, hashes it and sends it. The
  * live codes of the same address and purpose end: there is one live code per account.
+ *
+ * A `decoy` does the same work for an address that must not receive a code, so the answer of the
+ * route takes the same time whether or not the address has an account (JD-S5 R1-A-T3): the challenge
+ * is written already spent (the job finds nothing to send) and it ends no live code of anybody.
  */
 export async function openChallenge(
   tx: Tx,
@@ -42,22 +46,24 @@ export async function openChallenge(
     email: string;
     now: Date;
     jobs: JobClient;
+    decoy?: boolean;
   },
 ): Promise<'queued' | 'limited'> {
   if ((await sendsInLastHour(tx, input.email, input.now)) >= PORTAL_CODE_SENDS_PER_HOUR) {
     return 'limited';
   }
-  await tx
-    .update(otpChallenge)
-    .set({ consumedAt: input.now })
-    .where(
-      and(
-        eq(otpChallenge.email, input.email),
-        eq(otpChallenge.purpose, input.purpose),
-        isNull(otpChallenge.consumedAt),
-        gt(otpChallenge.expiresAt, input.now),
-      ),
-    );
+  const live = and(
+    eq(otpChallenge.email, input.email),
+    eq(otpChallenge.purpose, input.purpose),
+    isNull(otpChallenge.consumedAt),
+    gt(otpChallenge.expiresAt, input.now),
+  );
+  if (input.decoy === true) {
+    // The same lookup, without touching what belongs to the address.
+    await tx.select({ id: otpChallenge.id }).from(otpChallenge).where(live);
+  } else {
+    await tx.update(otpChallenge).set({ consumedAt: input.now }).where(live);
+  }
   const [row] = await tx
     .insert(otpChallenge)
     .values({
@@ -67,6 +73,7 @@ export async function openChallenge(
       expiresAt: new Date(input.now.getTime() + PORTAL_CODE_LIFETIME_MS),
       // The clock of the application, not the database's, decides how old a challenge is.
       createdAt: input.now,
+      ...(input.decoy === true ? { consumedAt: input.now } : {}),
     })
     .returning({ id: otpChallenge.id });
   if (!row) throw new Error('otp challenge insert returned no row');

@@ -5,9 +5,16 @@ import { portalIdentity, portalLink } from '../../../db/schema/portal.js';
 import { audit, type AuditActor } from '../../../platform/audit/writer.js';
 import type { Tx } from '../../../platform/db/tenant-context.js';
 import { AppError } from '../../../platform/http/problem.js';
+import { readPatientBasics } from '../../patients/index.js';
 import { maskEmail } from '../domain/mask.js';
 
-import { patientAuditActor, type IdentityDeps, type StaffAuditActor } from './identities.js';
+import {
+  majorityStanding,
+  patientAuditActor,
+  type IdentityDeps,
+  type StaffAuditActor,
+} from './identities.js';
+import { organizationToday } from './link-access.js';
 import type { PortalSubject } from './subject.js';
 
 /** The system as the author of what the daily review does: no user, no role, no address. */
@@ -25,20 +32,19 @@ function toRelation(value: string | null): PortalRelation | null {
     : null;
 }
 
-/** The calendar day of an instant, `YYYY-MM-DD`, in UTC. */
-function dayOf(now: Date): string {
-  return now.toISOString().slice(0, 10);
-}
-
 /**
  * The daily review of the representative links (patient-portal "Legal representatives and
  * dependents", task 5.36): a dependent who reached the age of majority is no longer represented.
- * The link is SUSPENDED, not ended, until the adult authorizes it from their own account or the
- * organization verifies it again. It is a protection of the patient and runs whatever the state of
- * the subscription. A suspended link is no subject: the representative sees nothing of that person
- * at their next request.
+ * The link is SUSPENDED, not ended, until the adult authorizes it from their own account. It is a
+ * protection of the patient and runs whatever the state of the subscription. A suspended link is no
+ * subject: the representative sees nothing of that person at their next request.
+ *
+ * This job only records it: the access itself is refused from the day on by every read of the portal
+ * (`linkInForce`, and the definer functions of the database), so a job that did not run, or ran late,
+ * leaves nothing open. The day is the one of the organization, not the UTC one.
  */
 export async function suspendMajorityLinks(tx: Tx, input: { now: Date }): Promise<number> {
+  const today = await organizationToday(tx, input.now);
   const rows = await tx
     .update(portalLink)
     .set({ status: 'suspended', suspendedAt: input.now })
@@ -46,7 +52,7 @@ export async function suspendMajorityLinks(tx: Tx, input: { now: Date }): Promis
       and(
         eq(portalLink.status, 'active'),
         eq(portalLink.relationship, 'representative'),
-        lte(portalLink.majorityReviewOn, dayOf(input.now)),
+        lte(portalLink.majorityReviewOn, today),
       ),
     )
     .returning({
@@ -183,12 +189,15 @@ export async function revokeByAdult(
 }
 
 /**
- * The organization authorizes a suspended link again after verifying the person: the new note
- * replaces the old one and the link has no date of majority any more (the representation was
- * verified for an adult).
+ * The organization verifies a suspended link again: the new note replaces the old one. It is for a
+ * person who is still a minor (a link suspended by mistake, a birth date corrected); the date of
+ * majority is set again. Once the person is an adult the organization can NOT restore the link:
+ * only the adult does, from their own account (`authorizeByAdult`) — a member of the staff must
+ * not be able to give themselves, or anybody, the record of an adult (JD-S5 R1-A-C1).
  */
 export async function reverifyLink(
   tx: Tx,
+  deps: Pick<IdentityDeps, 'clock' | 'majorityAge'>,
   input: { actor: StaffAuditActor; linkId: string; verificationNote: string },
 ): Promise<string> {
   const [link] = await tx
@@ -200,12 +209,16 @@ export async function reverifyLink(
   if (link.relationship !== 'representative' || link.status !== 'suspended') {
     throw new AppError('portal_state_conflict');
   }
+  const patient = await readPatientBasics(tx, link.patientId);
+  if (!patient) throw new AppError('not_found');
+  const standing = await majorityStanding(tx, deps, patient.birthDate);
+  if (!standing.minor) throw new AppError('portal_representation_requires_minor');
   await tx
     .update(portalLink)
     .set({
       status: 'active',
       suspendedAt: null,
-      majorityReviewOn: null,
+      majorityReviewOn: standing.reviewOn,
       verificationNote: input.verificationNote,
     })
     .where(eq(portalLink.id, link.id));

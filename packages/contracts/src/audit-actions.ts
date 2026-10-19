@@ -75,6 +75,8 @@ export const AUDIT_ACTIONS = [
   // Decision D19: a non-clinical actor assigned a patient to a professional added in the last 7 days.
   'assignment.review_flag',
   'matricula.verified',
+  // The platform operator withdrew the verification of a professional's registration.
+  'matricula.unverified',
   'setting.reception_sees_clinical_metadata.changed',
   // Branding: the identity of the organization and its logo.
   'branding.updated',

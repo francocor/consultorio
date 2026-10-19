@@ -101,7 +101,11 @@ export function portalRoutes(deps: PortalRoutesDeps) {
       async (request) => {
         const { actor } = portalCaller(request);
         return deps.withTenant({ tenantId: actor.tenantId, userId: SYSTEM_USER_ID }, (tx) =>
-          readMe(tx, { actor, capabilities: deps.capabilities() }),
+          readMe(tx, {
+            actor,
+            capabilities: deps.capabilities(),
+            now: deps.appointments.clock(),
+          }),
         );
       },
     );
@@ -126,6 +130,7 @@ export function portalRoutes(deps: PortalRoutesDeps) {
               actor,
               sessionId: session.sessionId,
               linkId: request.body.linkId,
+              now: deps.appointments.clock(),
             }),
         );
         if (outcome === 'unknown') {
@@ -139,6 +144,7 @@ export function portalRoutes(deps: PortalRoutesDeps) {
           readMe(tx, {
             actor: { ...actor, linkId: request.body.linkId },
             capabilities: deps.capabilities(),
+            now: deps.appointments.clock(),
           }),
         );
       },
@@ -246,7 +252,9 @@ export function portalRoutes(deps: PortalRoutesDeps) {
       '/portal/links/:id/revoke',
       {
         config: {
-          readOnly: 'write',
+          // Ending the access of somebody who can read your record protects you, so it works in a
+          // read-only organization too (JD-S5 R1-B-S5). Authorizing a representative does not.
+          readOnly: 'patient_protective',
           auth: 'portal',
           portalPermission: 'portal.profile.write',
           audits: ['portal.identity.deactivated', 'portal.denied'],

@@ -507,14 +507,11 @@ describe('ending access', () => {
   it('changes the email only after the verification note, ends the sessions and audits it', async () => {
     const { identity, sessionId } = await activeWithSession('antes@example.test');
 
-    const response = await world.api.post(
-      `/portal-identities/${identity.id}/email`,
-      world.reception,
-      {
-        email: 'despues@example.test',
-        verificationNote: 'Verificó su identidad por teléfono con su fecha de nacimiento.',
-      },
-    );
+    // The owner and the admin, not reception (JD-S5 R1-A-C1).
+    const response = await world.api.post(`/portal-identities/${identity.id}/email`, world.admin, {
+      email: 'despues@example.test',
+      verificationNote: 'Verificó su identidad por teléfono con su fecha de nacimiento.',
+    });
 
     expect(response.statusCode, response.body).toBe(200);
     expect(response.json<{ identity: PortalIdentityDto }>().identity.email).toBe(
@@ -532,17 +529,13 @@ describe('ending access', () => {
     const { identity } = await activeWithSession('cambio@example.test');
     await world.onboard(await world.patientWith({ email: 'ocupada@example.test' }));
 
-    const taken = await world.api.post(`/portal-identities/${identity.id}/email`, world.reception, {
+    const taken = await world.api.post(`/portal-identities/${identity.id}/email`, world.owner, {
       email: 'ocupada@example.test',
       verificationNote: 'Verificó su identidad por teléfono con su fecha de nacimiento.',
     });
-    const noNote = await world.api.post(
-      `/portal-identities/${identity.id}/email`,
-      world.reception,
-      {
-        email: 'libre@example.test',
-      },
-    );
+    const noNote = await world.api.post(`/portal-identities/${identity.id}/email`, world.owner, {
+      email: 'libre@example.test',
+    });
 
     expect(taken.statusCode).toBe(409);
     expect(taken.json<Problem>().code).toBe('portal_email_in_use');

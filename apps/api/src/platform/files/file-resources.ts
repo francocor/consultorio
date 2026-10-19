@@ -38,6 +38,12 @@ export interface FileDelivery {
   contentType: string;
   /** The final `content-disposition` header value (a download name that cannot inject a header). */
   contentDisposition: string;
+  /**
+   * A file the owner rendered on demand and hands over as it is, instead of a stored object
+   * (`objectKey` is then empty). Only the portal's door serves one: a signed consent PDF made for
+   * the patient is streamed from memory and never written anywhere (JD-S5 R1-S5-8).
+   */
+  bytes?: Buffer;
 }
 
 /** Who redeems a link: a member of the staff, or a person signed in to the portal. */

@@ -175,6 +175,42 @@ export function renderPortalNoticeEmail(input: PortalNoticeEmailInput): Rendered
   return { subject, text, html };
 }
 
+export type PortalSecurityNoticeKind = 'email_changed' | 'representative_added';
+
+export interface PortalSecurityNoticeEmailInput {
+  organizationName: string;
+  kind: PortalSecurityNoticeKind;
+}
+
+/**
+ * The notice that a change to the access of the portal was made by the organization (JD-S5
+ * R1-A-C1): the address of an account was changed (it goes to the OLD address) or a representative
+ * was given access to a record (it goes to the address on the record of the patient). It carries no
+ * link, no code and no name: it is only a warning, so that nobody has the access changed without
+ * the person it concerns being able to find out.
+ */
+export function renderPortalSecurityNoticeEmail(
+  input: PortalSecurityNoticeEmailInput,
+): RenderedEmail {
+  const organization = input.organizationName;
+  const changed = input.kind === 'email_changed';
+  const subject = changed
+    ? `Cambió el correo de acceso a su portal de pacientes de ${organization}`
+    : `Se dio acceso al portal de pacientes de ${organization} a un representante`;
+  const line = changed
+    ? `El correo con el que se ingresa a su portal de pacientes de ${organization} fue cambiado por el personal de la organización. Desde ahora los códigos de acceso se envían al nuevo correo, no a este.`
+    : `${organization} dio acceso a su portal de pacientes a un representante legal, para ver la información de una persona menor de edad cuya ficha tiene este correo.`;
+  const advice = 'Si usted no lo esperaba, comuníquese con la organización.';
+  const footer = 'Este mensaje no incluye ningún enlace ni datos de la ficha.';
+  const text = [line, '', advice, '', footer].join('\n');
+  const html = layout(
+    changed ? 'Cambió el correo de acceso' : 'Se dio acceso a un representante',
+    [escapeHtml(line), escapeHtml(advice)],
+    footer,
+  );
+  return { subject, text, html };
+}
+
 export interface PortalRequestNoticeInput {
   organizationName: string;
   /** What the patient asked for. */

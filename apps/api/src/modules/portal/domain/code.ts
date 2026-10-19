@@ -44,3 +44,19 @@ export function codeMatches(challengeId: string, code: string, stored: string | 
 export function addressKey(tenantId: string, email: string): string {
   return createHash('sha256').update(`${tenantId}|${email.trim().toLowerCase()}`).digest('hex');
 }
+
+/**
+ * The key of the lock on the tries to use a code: the address AND who is trying (JD-S5 R1-S5-9).
+ * Keyed by the address alone, anyone who knows an email could spend its tries and lock the patient
+ * out of the portal for the window. Brute force is already bounded by the challenge itself (five
+ * wrong tries spend the code, three codes an hour per address), so the lock only has to stop a
+ * client that keeps trying, and that client is the one it locks. Nothing in it tells whether the
+ * address has an account.
+ */
+export function triesKey(tenantId: string, email: string, client: string | null): string {
+  const who = createHash('sha256')
+    .update(client ?? 'unknown')
+    .digest('hex')
+    .slice(0, 24);
+  return `${addressKey(tenantId, email)}|${who}`;
+}

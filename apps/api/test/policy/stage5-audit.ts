@@ -27,20 +27,18 @@ export const STAGE5_AUDIT_ACTIONS: readonly AuditAction[] = [
 export const STAGE5_WRITTEN_OUTSIDE_ROUTES: Readonly<Record<string, string>> = {
   'consent.read':
     'The door of the files and the portal entry point: opening a signed record writes it once, when the file is served (not when the link is asked for). The reads of the other modules declare theirs on the route.',
+  'consent.integrity_failed':
+    'Written next to consent.read by whoever opens a signed record whose stored facts no longer match its fingerprint: the door of the files, the portal entry point and the view of the record.',
 };
 
 /**
  * Routes of Stage 5 that change something and audit nothing, with the reason.
  *
- * - declining a consent ends the request: the request keeps the decision and the date, and the
- *   catalogue has no action for it;
  * - the link of a prescription document only builds the address; the PDF is audited when served;
  * - the webhook of the provider only queues a check of the prescription; whatever the check settles
  *   (a cancellation on the provider's side) is audited by the check, as the system.
  */
 export const STAGE5_NO_AUDIT_ON_PURPOSE: Readonly<Record<string, string>> = {
-  'POST /consents/requests/:id/decline':
-    'The request keeps the decision and the day it ended (status declined, closed_at); the catalogue has no action for it.',
   'POST /prescriptions/:id/document-link':
     'It only builds the link; the download is audited as prescription.downloaded by GET /files/:token.',
   'POST /webhooks/erx':

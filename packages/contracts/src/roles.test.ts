@@ -314,6 +314,9 @@ describe('Stage 5 permissions (compliance and portal)', () => {
     expect(holders('portal.manage')).toEqual(['owner', 'admin', 'reception']);
   });
 
+  it('keeps changing the email of a portal account from reception: only the owner and the admin (JD-S5 R1-A-C1)', () => {
+    expect(holders('portal.identity.email')).toEqual(['owner', 'admin']);
+  });
   it.each([
     'portal.consent.sign',
     'portal.consent.revoke',
@@ -339,6 +342,7 @@ describe('Stage 5 permissions (compliance and portal)', () => {
       ].sort(),
     );
     expect(PORTAL_ACTOR_PERMISSIONS).not.toContain('portal.manage');
+    expect(PORTAL_ACTOR_PERMISSIONS).not.toContain('portal.identity.email');
     expect(PORTAL_ACTOR_PERMISSIONS.filter(isClinicalPermission)).toEqual([]);
   });
 
@@ -347,6 +351,7 @@ describe('Stage 5 permissions (compliance and portal)', () => {
       'consent.template.manage',
       'consent.request',
       'portal.manage',
+      'portal.identity.email',
     ] as const) {
       expect(GRANTABLE).not.toContain(permission);
       expect(isClinicalPermission(permission)).toBe(false);

@@ -6,6 +6,8 @@ import { portalIdentity, portalLink, portalSession } from '../../../db/schema/po
 import type { Tx } from '../../../platform/db/tenant-context.js';
 import { PORTAL_SESSION_ABSOLUTE_MS, portalSessionVerdict } from '../domain/session-rules.js';
 
+import { linkInForce, organizationToday } from './link-access.js';
+
 /** `last_seen_at` is only rewritten when it is older than this, to avoid a write per request. */
 const TOUCH_AFTER_MS = 60_000;
 
@@ -159,13 +161,17 @@ export function createPortalSessions(): PortalSessions {
           .where(eq(portalSession.id, row.sessionId));
       }
       // A link that was revoked or suspended since the person picked it is no subject any more.
+      // Nor is a link whose dependent has reached the age of majority, whether or not the daily
+      // review has suspended it yet (JD-S5 R1-S5-7).
       let linkId = row.linkId;
       if (linkId !== null) {
         const [link] = await tx
-          .select({ status: portalLink.status })
+          .select({ status: portalLink.status, majorityReviewOn: portalLink.majorityReviewOn })
           .from(portalLink)
           .where(eq(portalLink.id, linkId));
-        if (link?.status !== 'active') linkId = null;
+        if (link?.status !== 'active' || !linkInForce(link, await organizationToday(tx, now))) {
+          linkId = null;
+        }
       }
       return {
         sessionId: row.sessionId,

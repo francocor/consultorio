@@ -136,6 +136,7 @@ export function createPortal(options: PortalOptions): Portal {
     jobs: options.jobs,
     store: options.rateLimitStore,
     clock,
+    majorityAge: majorityAgeOf,
   };
   // Whether the deployment serves over https is one fact for all organizations: the cookie has the
   // same name everywhere.
@@ -160,7 +161,7 @@ export function createPortal(options: PortalOptions): Portal {
     origins: options.origins,
     clock,
   });
-  const withPortalSubject = createWithPortalSubject(options.withTenant);
+  const withPortalSubject = createWithPortalSubject(options.withTenant, clock);
   const portal = portalRoutes({
     withTenant: options.withTenant,
     withPortalSubject,
@@ -184,7 +185,7 @@ export function createPortal(options: PortalOptions): Portal {
     tokens,
     consent: options.consent,
     prescriptions: options.prescriptions,
-    storage: options.storage,
+    clock,
   };
   options.portalFileResources.register(createPortalFileResource(downloads));
   const files = downloadRoutes({

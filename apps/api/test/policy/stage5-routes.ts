@@ -108,7 +108,8 @@ export const STAGE5_ROUTES: Readonly<Record<string, RouteCategory>> = {
   'POST /portal/copy-requests': 'patient_protective',
   'POST /portal/rectification-requests': 'patient_protective',
   'POST /portal/links/:id/authorize': 'write',
-  'POST /portal/links/:id/revoke': 'write',
+  // Ending the access of a representative protects the person, in a read-only organization too.
+  'POST /portal/links/:id/revoke': 'patient_protective',
   'PATCH /portal/profile': 'write',
 };
 

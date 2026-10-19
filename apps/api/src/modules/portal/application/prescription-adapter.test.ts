@@ -27,11 +27,13 @@ function moduleOf(
 ) {
   const calls: { fn: string; input: PrescriptionModuleInput }[] = [];
   const module: PrescriptionModulePortal = {
-    list: (input) => {
+    list: (tx, input) => {
+      expect(tx).toBe(TX);
       calls.push({ fn: 'list', input });
       return Promise.resolve(listed);
     },
-    openDocument: (input) => {
+    openDocument: (tx, input) => {
+      expect(tx).toBe(TX);
       calls.push({ fn: 'openDocument', input });
       return Promise.resolve(delivery);
     },
@@ -102,9 +104,12 @@ describe('the list', () => {
 describe('the document', () => {
   it('passes the storage object on, with the name the module chose', async () => {
     const { port, calls } = moduleOf([], {
-      objectKey: 't/tenant/prescriptions/abc.pdf',
-      contentType: 'application/pdf',
-      contentDisposition: 'attachment; filename="receta-2031-05-18-00000b01.pdf"',
+      kind: 'stored',
+      delivery: {
+        objectKey: 't/tenant/prescriptions/abc.pdf',
+        contentType: 'application/pdf',
+        contentDisposition: 'attachment; filename="receta-2031-05-18-00000b01.pdf"',
+      },
     });
 
     const file = await port.document(TX, { ...CALL, prescriptionId: ID, purpose: 'download' });
@@ -120,6 +125,24 @@ describe('the document', () => {
       auditActor: CALL.auditActor,
       prescriptionId: ID,
       purpose: 'download',
+    });
+  });
+
+  it('hands over the bytes of a document the module rendered just now, to be streamed and never stored', async () => {
+    const bytes = Buffer.from('%PDF-1.7 rendered');
+    const { port } = moduleOf([], {
+      kind: 'rendered',
+      bytes,
+      fileName: 'receta-2031-05-18-00000b01.pdf',
+      contentType: 'application/pdf',
+    });
+
+    const file = await port.document(TX, { ...CALL, prescriptionId: ID, purpose: 'download' });
+
+    expect(file).toEqual({
+      bytes,
+      fileName: 'receta-2031-05-18-00000b01.pdf',
+      contentType: 'application/pdf',
     });
   });
 

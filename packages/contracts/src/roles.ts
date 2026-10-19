@@ -172,6 +172,9 @@ export const PERMISSIONS = [
   'consent.request',
   // Patient portal: what the staff do about portal accounts, and what the portal actor itself may do.
   'portal.manage',
+  // Changes the email an account signs in with. Whoever holds the mailbox holds the account, so this
+  // is owner and admin only, never reception (JD-S5 R1-A-C1).
+  'portal.identity.email',
   'portal.self.read',
   'portal.appointment.cancel',
   'portal.consent.sign',
@@ -231,6 +234,7 @@ const ADMINISTRATION = [
   // Stage 5: the consent templates, and inviting, linking and deactivating portal accounts.
   'consent.template.manage',
   'portal.manage',
+  'portal.identity.email',
 ] as const satisfies readonly Permission[];
 
 /**

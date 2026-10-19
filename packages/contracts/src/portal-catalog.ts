@@ -28,6 +28,17 @@ export const PORTAL_ERRORS = {
   portal_cancel_deadline_passed: { status: 409, i18nKey: 'errors.portal_cancel_deadline_passed' },
   // The appointment is not in a state where the action applies (already cancelled, already over).
   portal_appointment_unavailable: { status: 409, i18nKey: 'errors.portal_appointment_unavailable' },
+  // A representative is for a minor. An adult is represented only through their own authorization,
+  // given from their own portal account; the organization cannot create or restore that link.
+  portal_representation_requires_minor: {
+    status: 409,
+    i18nKey: 'errors.portal_representation_requires_minor',
+  },
+  // A minor reaches the portal only through a verified representative, never as their own account.
+  portal_minor_requires_representative: {
+    status: 409,
+    i18nKey: 'errors.portal_minor_requires_representative',
+  },
 } as const satisfies Record<string, { status: number; i18nKey: string }>;
 
 /**
@@ -44,4 +55,7 @@ export const PORTAL_AUDIT_ACTIONS = [
   'portal.download',
   'portal.profile.changed',
   'portal.denied',
+  // A notice sent by email about a change to the access (a representative was given access to a
+  // record, the address of an account was changed). The entry names the kind, never the address.
+  'portal.notice.sent',
 ] as const;

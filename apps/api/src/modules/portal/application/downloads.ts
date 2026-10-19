@@ -1,5 +1,3 @@
-import { randomUUID } from 'node:crypto';
-
 import type { PortalDownloadLinkResponse } from '@consultorio/contracts';
 
 import { audit } from '../../../platform/audit/writer.js';
@@ -7,8 +5,6 @@ import type { PortalActor } from '../../../platform/authz/actor.js';
 import { can } from '../../../platform/authz/can.js';
 import type { Tx } from '../../../platform/db/tenant-context.js';
 import { FileRefused, type FileResource } from '../../../platform/files/file-resources.js';
-import { AppError } from '../../../platform/http/problem.js';
-import type { ObjectStorage } from '../../../platform/storage/object-storage.js';
 import type { ActionTokens } from '../../../platform/tokens/index.js';
 import { findInvoiceFileForPatient } from '../../invoicing/index.js';
 import { attachmentHeader } from '../domain/attachment-header.js';
@@ -43,28 +39,23 @@ export interface DownloadDeps {
   tokens: ActionTokens;
   consent: PortalConsentPort | undefined;
   prescriptions: PortalPrescriptionPort | undefined;
-  /**
-   * Where a file a module renders on demand is kept for the length of one download. Absent: such a
-   * file cannot be delivered (the door answers "unavailable").
-   */
-  storage?: ObjectStorage | undefined;
+  /** The clock of the application: the day decides whether a representative link is still in force. */
+  clock: () => Date;
 }
 
-/** Where the files rendered for one download sit inside the prefix of the organization. */
-export const RENDERED_FILE_SEGMENT = 'portal-rendered';
-
-/** True for a key the portal itself wrote for one download: the door removes it once it is sent. */
-export function isRenderedKey(tenantId: string, key: string): boolean {
-  return key.startsWith(`t/${tenantId}/${RENDERED_FILE_SEGMENT}/`);
-}
-
-/** A file to hand over: where it is in storage, what it is and what to call it. */
+/**
+ * A file to hand over: where it is in storage, or the bytes themselves when a module rendered them
+ * on demand (a signed consent, a prescription made at the moment). Rendered bytes are streamed from
+ * memory and never written to storage, so a failed response leaves nothing behind (JD-S5 R1-S5-8).
+ */
 export interface DownloadFile {
   objectKey: string;
   contentType: string;
   fileName: string;
   /** The patient it belongs to, for the trail. */
   patientId: string;
+  /** Present for a file rendered on demand; `objectKey` is then empty. */
+  bytes?: Buffer;
 }
 
 /** The type a file is served with. Text says its encoding so a browser never guesses. */
@@ -75,27 +66,19 @@ function servedType(contentType: string | null): string {
 
 /**
  * Hands a file a module returned over as a `DownloadFile`. A file in storage is served from where
- * it is. A rendered file is written to storage only when it is going to be delivered (`deliver`);
- * asking for the link only needs to know it exists.
+ * it is. A rendered file travels as its bytes, and only when it is going to be delivered
+ * (`deliver`); asking for the link only needs to know it exists.
  */
-async function toDownload(
-  deps: DownloadDeps,
-  call: PortalCall,
-  file: PortalFile,
-  deliver: boolean,
-): Promise<DownloadFile> {
+function toDownload(call: PortalCall, file: PortalFile, deliver: boolean): DownloadFile {
   const patientId = call.subject.patientId;
   if (!isRenderedFile(file)) return { ...file, patientId };
-  if (!deliver)
-    return { objectKey: '', contentType: file.contentType, fileName: file.fileName, patientId };
-  if (!deps.storage) throw new AppError('service_unavailable');
-  const objectKey = `t/${call.actor.tenantId}/${RENDERED_FILE_SEGMENT}/${randomUUID()}`;
-  await deps.storage.put(call.actor.tenantId, objectKey, {
-    body: file.bytes,
+  return {
+    objectKey: '',
     contentType: file.contentType,
-    contentLength: file.bytes.length,
-  });
-  return { objectKey, contentType: file.contentType, fileName: file.fileName, patientId };
+    fileName: file.fileName,
+    patientId,
+    ...(deliver ? { bytes: file.bytes } : {}),
+  };
 }
 
 /**
@@ -144,11 +127,11 @@ export async function findDownload(
         prescriptionId: id,
         purpose,
       });
-      return file ? toDownload(deps, call, file, deliver) : null;
+      return file ? toDownload(call, file, deliver) : null;
     }
     case 'consent': {
       const file = await deps.consent?.document(tx, { ...call, consentId: id, purpose });
-      return file ? toDownload(deps, call, file, deliver) : null;
+      return file ? toDownload(call, file, deliver) : null;
     }
   }
 }
@@ -206,7 +189,7 @@ export function createPortalFileResource(deps: DownloadDeps): FileResource<Porta
       }
       let subject;
       try {
-        subject = await resolveSubject(tx, input.actor);
+        subject = await resolveSubject(tx, input.actor, deps.clock());
       } catch {
         // The person has no subject any more (the link ended, or they switched to none).
         throw refused('portal_subject_lost');
@@ -235,6 +218,7 @@ export function createPortalFileResource(deps: DownloadDeps): FileResource<Porta
         objectKey: file.objectKey,
         contentType: file.contentType,
         contentDisposition: attachmentHeader(file.fileName),
+        ...(file.bytes ? { bytes: file.bytes } : {}),
       };
     },
   };
