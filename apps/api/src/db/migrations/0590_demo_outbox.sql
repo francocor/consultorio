@@ -17,12 +17,14 @@ CREATE INDEX "demo_outbox_tenant_idx" ON "demo_outbox" USING btree ("target_tena
 REVOKE UPDATE, DELETE, TRUNCATE ON "demo_outbox" FROM app_rw;
 --> statement-breakpoint
 -- app.demo_reset (migration 0018) with one more step: it removes the outbox rows of the organization
--- it resets. The signature, the owner, the search path and the grants (the operator console's role
--- only) are those of 0018; CREATE OR REPLACE keeps the grants.
+-- it resets. The signature, the owner and the grants (the operator console's role only) are those of
+-- 0018, and CREATE OR REPLACE keeps the grants. It does NOT keep the search path: migration 0022 pinned
+-- it for every definer function (pg_catalog first, pg_temp last) and this statement replaces it, so it
+-- is written again here.
 CREATE OR REPLACE FUNCTION app.demo_reset(p_tenant uuid)
 RETURNS jsonb
 LANGUAGE plpgsql SECURITY DEFINER
-SET search_path = pg_catalog, public
+SET search_path = pg_catalog, public, pg_temp
 AS $$
 DECLARE
   v_is_demo boolean;
