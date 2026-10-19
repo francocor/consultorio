@@ -68,8 +68,14 @@ Portal sign-in MUST use the passwordless email one-time-code flow defined in `id
 #### Scenario: Lost access to the email
 - GIVEN a patient who can no longer use the email of their portal identity
 - WHEN they ask the organization to change it
-- THEN staff MUST verify the patient's identity out of band and change the email
+- THEN the owner or an administrator (not reception) MUST verify the patient's identity out of band and change the email
 - AND the change MUST be audited and existing portal sessions revoked
+- AND a notice without a link MUST be sent to the PREVIOUS address, and recorded in the audit log
+
+#### Scenario: Lock-out of a patient by a stranger
+- GIVEN a stranger who knows the email of a portal identity
+- WHEN they submit many wrong codes for it
+- THEN the portal MUST stop answering that client, and MUST NOT stop answering the patient from another client
 
 #### Scenario: Code request does not reveal accounts
 - GIVEN a code request for an email without a portal identity
@@ -107,7 +113,7 @@ A staff account (owner/admin, professional, reception) MUST NOT be able to use p
 
 ### Requirement: Legal representatives and dependents
 
-The system MUST support a representative, being a portal identity with representative links to one or more dependent patient records (for example minors), created after verification by the organization. The representative MUST act within the portal for dependents only, and sign-in is by the representative's own email one-time code. The portal MUST show clearly whose data is being viewed. A representative link MUST be revocable by the organization and MUST expire when the dependent reaches the age of majority unless re-verified.
+The system MUST support a representative, being a portal identity with representative links to one or more dependent patient records (for example minors), created after verification by the organization. The representative MUST act within the portal for dependents only, and sign-in is by the representative's own email one-time code. The portal MUST show clearly whose data is being viewed. A representative link MUST exist only for a MINOR: an adult is represented only through the adult's own authorization, given from their own portal session, and the organization MUST NOT create or restore a representative link for an adult. A minor MUST NOT have a portal account of their own; they are reached only through a verified representative. A representative link MUST be revocable by the organization and by the adult, and MUST stop giving access on the day the dependent reaches the age of majority (in the organization's time zone), whether or not any scheduled review has run; the organization MUST NOT restore it after that day. When the organization gives a representative access to a minor's record it MUST notify the email on the patient's record, when there is one, and record the notice in the audit log.
 
 #### Scenario: Parent sees child appointments
 - GIVEN a verified representative linked to a minor
@@ -118,6 +124,16 @@ The system MUST support a representative, being a portal identity with represent
 - GIVEN a dependent turned 18
 - WHEN the representative signs in
 - THEN access to that dependent MUST be suspended until the patient authorizes it
+
+#### Scenario: Representative for an adult
+- GIVEN an adult patient
+- WHEN a member of the staff invites or links a representative for them
+- THEN the system MUST refuse
+
+#### Scenario: Birth date corrected
+- GIVEN a representative of a patient whose birth date is corrected so that the patient is an adult
+- WHEN the representative asks for the patient's data
+- THEN the system MUST refuse at once
 
 ### Requirement: Appointments in the portal
 
@@ -222,7 +238,7 @@ Sign-ins, failures, reads of consents, prescriptions, invoices and documents, do
 
 ### Requirement: Portal deactivation and read-only tenant
 
-An organization MUST be able to deactivate a portal identity (or a single representative link) without deleting the patient record. Deactivation MUST revoke active sessions. When the tenant is read-only (`subscriptions`), the portal MUST remain available for reading, sign-in, and the patient-protective writes in the read-only allowlist of `tenancy` (cancelling appointments, consent revocation, rectification requests, channel opt-out), while every other write, including features that create billable or clinical records, MUST be blocked.
+An organization MUST be able to deactivate a portal identity (or a single representative link) without deleting the patient record. Deactivation MUST revoke active sessions. When the tenant is read-only (`subscriptions`), the portal MUST remain available for reading, sign-in, and the patient-protective writes in the read-only allowlist of `tenancy` (cancelling appointments, consent revocation, ending the access of a representative, rectification requests, channel opt-out), while every other write, including features that create billable or clinical records, MUST be blocked.
 
 #### Scenario: Deactivate portal access
 - GIVEN a patient with an active session

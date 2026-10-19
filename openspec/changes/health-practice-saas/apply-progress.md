@@ -2345,3 +2345,61 @@ The two worlds of the portal tests that mean "no module behind the portal" now s
 - `hasDocument` says yes when a document can be made on request; if rendering then fails (storage down) the download answers 404 and the button says so.
 - The portal notice for a consent no longer greets by name nor says "consentimiento" (privacy over friendliness, as the portal's other notices).
 - The e2e journeys of Stage 4 and Stage 5 (e-Rx, cash register) are not re-runnable on a used stack: they need a fresh one.
+
+## Judgment Day Stage 5, round 1
+
+Fresh-context review of `feat/stage-5-compliance-portal` at `b1767a7` (two judges, both: NEEDS FIX). Every finding both judges confirmed (S5-1 to S5-11) was fixed, the one MUST FIX of a single judge (A-C1, staff insider bypass) was fixed with a failing test first, and every suspect item was reproduced with a failing test before it was touched. Strict TDD: the red runs were made on a detached sibling worktree at `b1767a7` (logs `$TEMP/jd5r1-red-*.log`), the green runs on the branch. Five fix commits: `4e2e2f7` (db), `bdb35de` (prescriptions), `296398a` (consent), `2be9b1f` (operator), `b42c64a` (portal).
+
+### Confirmed findings
+
+| Id | Fix | Test |
+| --- | --- | --- |
+| S5-1 | The portal reads prescriptions on the transaction of its own request (`listPrescriptionsForPatient(tx, ...)`, `openPortalDocument(tx, ...)`, the adapter uses its `tx`); `storeDocument` no longer opens a connection of its own. The staff submit is phased: the write-ahead mark (`markIntent`) commits on its own connection and the request holds no connection across the provider call (`attemptSubmitDetached`). | `portal-prescription-door.test.ts` (12 concurrent lists, links and downloads on a pool of 10) |
+| S5-2 | Portal transactions carry `app.actor_kind = 'portal'`; the clinical policies of `prescription` and `prescription_guard` stop treating the nil user as the system when it is set (0591). The portal reads through two hardened SECURITY DEFINER functions, `app.portal_prescriptions()` and `app.portal_prescription(uuid)`, bound to `app.portal_link_id` and `app.portal_identity_id` and re-checked against the tables (link live, identity matches, patient matches). Both are on the definer allowlist. | `portal-prescription-door.test.ts` (no row from the table, no write, forged settings open nothing) |
+| S5-3 | `markIntent` returns its row count (0 means `skipped`, no provider call); `cancelPrescription` and `registerManually` take the advisory lock `erx-prescription\|<id>` (`prescription_attempt_in_progress` when held); `provider_contacted_at` (0591) is never cleared by `park`, and a row with it asks `findByKey` before a local cancel or manual register. An attempt that holds a lease (`attempt_lease_until`) outside a transaction is respected the same way. | `prescription-hardening.test.ts` |
+| S5-4 | `submission_version` (0591); the key is `issueKeyOf(org, id, version)`; the guard lets the version rise only on the correction after a refusal. | `prescription-hardening.test.ts` (a real refusal of the fake, then correct and resend issues), `prescription-lifecycle.test.ts` |
+| S5-5 | The mark is decoded with `sharp(...).metadata()` (size and pixel limits), the prefix and base64 are checked, a typed mark is capped at 120 characters, the signer kind comes from the link (representative link: representative; a minor needs a representative), and `signerName` is stored and printed. | `consent-hardening.test.ts`, `consent-adapter.test.ts`, `consent.test.ts` (contracts) |
+| S5-6 | A minor cannot be registered or invited as `self` (`portal_minor_requires_representative`). | `portal-staff-hardening.test.ts` |
+| S5-7 | `resolveSubject`, `sessions.resolve` and `portal_shared_document(s)` (0592) require `majority_review_on IS NULL OR majority_review_on > today` in the time zone of the organization; a trigger on the patient recomputes `majority_review_on` when the birth date changes (`app.majority_review_date`). | `portal-staff-hardening.test.ts` (access the day after the 18th birthday with the job not run; birth date correction) |
+| S5-8 | The rendered consent PDF is streamed from memory (`FileDelivery.bytes`); nothing is stored under `portal-rendered/`. | `portal-staff-hardening.test.ts` |
+| S5-9 | The extra sign-in lock is keyed by address and client (`triesKey`), not by address alone; the responses stay identical. | `portal-staff-hardening.test.ts` |
+| S5-10 | `consent.declined` is audited with the author (catalog, es-AR text, `audit-coverage`, scenarios). | `consent-hardening.test.ts`, audit scenarios |
+| S5-11 | Documented in `docs/security/asvs-l2-portal.md` as defence in depth; every definer function re-checks the settings against the tables. | `portal-prescription-door.test.ts` (forged settings) |
+
+### MUST FIX of one judge
+
+A-C1 (staff insider bypass), all four parts, failing tests first: (1) a representative link needs a minor (`portal_representation_requires_minor`); an adult is represented only through `authorizeByAdult` from their own session; (2) changing an identity's email needs the new permission `portal.identity.email` (owner and administrators, not reception; contract, roles invariants, route categories), and the old address receives a notice with no link (`renderPortalSecurityNoticeEmail`), every session revoked; (3) a representative link for a minor sends a notice to the email of the patient's record, audited as `portal.notice.sent`; (4) `reverifyLink` cannot reactivate a link after majority. Tests: `portal-staff-hardening.test.ts`, `portal-dependents.test.ts`, `portal-identity.test.ts`. Spec updated (`specs/patient-portal/spec.md`).
+
+### Suspect items
+
+| Id | Outcome |
+| --- | --- |
+| B-W7 | Reproduced. The signed PDF prints an integrity block when `fingerprintValid` is false and the read audits `consent.integrity_failed`. |
+| B-W8 | Reproduced. The export contributor exports identities, links and session dates (no token hash). |
+| B-T2 / B-S5 | B-S5 reproduced and fixed: revoking a representative is `patient_protective`. B-T2 NOT changed on purpose: the spec says that a cancel is blocked while the organization is read-only, so `write` stays; documented as an accepted decision. |
+| B-T3 | Reproduced. The webhook carries a signed timestamp (window of 300 s) in the local adapter and its dev route, plus a rate limit (240 per minute) and a warn log for failed signatures. |
+| B-T4 | Reproduced. At send time the prescriber matricula and jurisdiction must equal the verified registration; otherwise the prescription parks. |
+| B-T5 | Reproduced. The spec says a retired template cannot be signed: refused. |
+| B-T7 | Reproduced. Guard triggers (0592) make the link, session and share keys immutable and `revoked` terminal. |
+| B-T9 | Reproduced. `activateInvitation` rechecks the email against the patient record. |
+| B-T10 | Reproduced. Provider calls are bounded (`withinTime`, 20 s) and map to unknown outcome. Unit test `common.test.ts`. |
+| A-T3 | Reproduced (the work differed between the branches). The decoy path does the same work. |
+| A-T5 | Format of the identifier validated (`PRESCRIPTION_IDENTIFIER_PATTERN`), matricula rechecked at manual register. "Webhook lookups bound to the provider" is documented as an accepted risk: the external id is looked up inside the tenant of the signed webhook. |
+| A-T6 | Reproduced. `reception_prescription_existence` has `issued_at IS NOT NULL` (0591). |
+| A-S matricula.unverified | Reproduced. Audit action in the tenant trail and in `operator_audit_scope` (0593). |
+| A-S demo_outbox | Reproduced. `app.demo_outbox_purge` (0594, never younger than one hour), hourly schedule, TTL 24 h. |
+| B-S1 | Reproduced. `/portal/me` does not show the name for a suspended link. |
+| B-S3 | Reproduced. One audit entry per list call. |
+| B-S4 | Reproduced. The sign body carries `contentHash`; a mismatch is refused (`consent.integrity_failed`). |
+
+INFO notes, in `docs/security/asvs-l2-portal.md`: the fingerprints are an unkeyed SHA-256 (an HMAC with the tenant key is a later improvement); failed webhook signatures now write a log line.
+
+### Migrations (range `5c`, 0596 to 0599 left free)
+
+`0591_prescription_hardening`, `0592_portal_guards`, `0593_operator_audit_unverified`, `0594_demo_outbox_retention`, `0595_portal_session_guard_foreign_key` (found by the full integration run: the guard of the portal session raised its own error ahead of the composite foreign key that the generated isolation suite expects, and `portal-tenancy` counted the revoke of a representative, now `patient_protective`, among the routes open in read-only; both tests were updated or satisfied). `db:restamp` ("already rising") and `db:check` (no drift). The new definer functions (`app.portal_prescriptions()`, `app.portal_prescription(uuid)`, `app.demo_outbox_purge(timestamptz)`) are hardened (`search_path` with `pg_catalog` first and `pg_temp` last, `REVOKE` from PUBLIC, narrow `GRANT`) and on the allowlist.
+
+### Deviations and notes
+
+- TODO (Stage 4 merge): this branch does not carry `connectionTimeoutMillis` and `DB_POOL_MAX` of the Stage 4 fix branch; they arrive on merge and are NOT duplicated here. S5-1 was fixed at the cause (no second connection while holding one), not by pool settings.
+- B-T2: not changed (see above).
+- A-T5: the webhook is bound to the tenant of the signed notice, not to the provider; accepted risk, documented.
