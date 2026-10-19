@@ -1286,9 +1286,9 @@ Start: S5.08. Done when: every patient download is session bound, dependents wor
 
 Start: S5.09, S5.04. Done when: a patient completes sign-in, reads their data and downloads at 360 px. Verify: default plus `e2e/stage5-portal.spec.ts`. Rollback: default. May run to about 450 lines.
 
-- [ ] 5.39 `features/portal/*` shell (`/portal`, branded, installable inside the PWA scope): sign-in by email and code, registration by DNI and email with generic responses, subject picker, header that always names whose data is shown; `locales/es-AR/portal.json`. [POR-02, POR-03, POR-06, POR-15] Test: component tests plus axe.
-- [ ] 5.40 Sections: appointments (confirm, cancel, join link), documents with a Spanish empty state, consents (list, sign, revoke screens reusing the consent signing components), prescriptions, invoices and receipts, each with loading, empty and error states. [POR-07, POR-08, POR-09, POR-15] Test: component tests per section.
-- [ ] 5.41 Personal data screen with rectification request, clinical history copy request, consent status, sessions page. [POR-10, POR-03] Test: component tests.
+- [x] 5.39 `features/portal/*` shell (`/portal`, branded, installable inside the PWA scope): sign-in by email and code, registration by DNI and email with generic responses, subject picker, header that always names whose data is shown; `locales/es-AR/portal.json`. [POR-02, POR-03, POR-06, POR-15] Test: component tests plus axe.
+- [x] 5.40 Sections: appointments (confirm, cancel, join link), documents with a Spanish empty state, consents (list, sign, revoke screens reusing the consent signing components), prescriptions, invoices and receipts, each with loading, empty and error states. [POR-07, POR-08, POR-09, POR-15] Test: component tests per section.
+- [x] 5.41 Personal data screen with rectification request, clinical history copy request, consent status, sessions page. [POR-10, POR-03] Test: component tests.
 - [ ] 5.42 `e2e/stage5-portal.spec.ts` at 360 px: register, read the code from the Mailpit API, see appointments, download a prescription (link bound to the session), sign a consent; a patient cannot reach staff pages. [POR-02, POR-05, POR-08, POR-09] Test: that spec.
 
 ## S5.11 Consent UI (~400) [Track A2]
