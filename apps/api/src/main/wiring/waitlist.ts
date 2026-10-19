@@ -10,7 +10,7 @@ import {
 import { createSchedulingPorts } from '../../modules/scheduling/index.js';
 import {
   WAITLIST_EXPIRE_JOB,
-  closeEntriesOfUnreachablePatient,
+  closeEntriesOfOptedOutPatient,
   createWaitlist,
   createWaitlistJobs,
 } from '../../modules/waitlist/index.js';
@@ -67,9 +67,10 @@ export const waitlistWiring: ModuleWiring = {
   // A freed slot is matched by a job that the cancellation enqueues in its own transaction.
   needsJobs: true,
   create: (context) => {
-    // A patient who opts out of a channel leaves the waitlist: messaging tells it, in the same transaction.
+    // A patient who opts out leaves the waitlist (an opt-out is for every channel, owner decision
+    // B7): messaging tells it, in the same transaction.
     bindOptOutListener((tx, event) =>
-      closeEntriesOfUnreachablePatient(tx, {
+      closeEntriesOfOptedOutPatient(tx, {
         patientId: event.patientId,
         now: event.now,
         jobs: context.jobs,

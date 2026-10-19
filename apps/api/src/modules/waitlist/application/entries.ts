@@ -583,7 +583,8 @@ export async function closeExpiredEntries(
 }
 
 /**
- * The patient asked to stop: every entry of theirs that is still in play closes as
+ * The patient asked to stop, on any channel (owner decision B7: that opts them out of all of them,
+ * so no channel is left for an offer): every entry of theirs that is still in play closes as
  * `patient_opted_out` and its offer ends (waitlist, "Opt-out and consent in offers"). Returns how
  * many entries it closed.
  */
@@ -607,20 +608,4 @@ export async function closeEntriesOfOptedOutPatient(
     await enqueueRematch(tx, input.jobs, ended);
   }
   return rows.length;
-}
-
-/**
- * What the waitlist does when a patient opts out of a channel (judgment day round 2, finding B7):
- * the entries close only when no channel is left through which an offer could reach the patient. A
- * patient who opted out of WhatsApp but still has an email that was not refused keeps their place
- * (their offers go by email, as the spec says); one who has nothing left leaves the list. Returns how
- * many entries it closed.
- */
-export async function closeEntriesOfUnreachablePatient(
-  tx: Tx,
-  input: { patientId: string; now: Date; jobs?: JobClient | undefined },
-): Promise<number> {
-  const reach = await reachOf(tx, input.patientId);
-  if (reach.email.usable || reach.whatsapp.usable) return 0;
-  return closeEntriesOfOptedOutPatient(tx, input);
 }

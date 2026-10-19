@@ -19,9 +19,12 @@ import { releaseWhatsappUsage } from './usage.js';
  *
  * - An opt-out is effective at once: what is still queued on that channel is cancelled in the same
  *   transaction, with the reason `opted_out`.
- * - Staff cannot undo a patient's opt-out. Only a source in which the patient acts (the booking
- *   form, their own email link) can opt back in.
+ * - Reception can opt a patient back in, per channel, when the patient asks for it in person
+ *   (owner decision B7); the opt-in is audited and says it reopened a channel the patient had
+ *   closed. The patient can do it too, by the booking form or their own email link.
  * - A message from the patient never opts in: this module has no entry for it.
+ * - An opt-out on any channel is an opt-out of all of them: that is `optOutPatient`
+ *   (`opt-out.ts`), which this module's `recordOptOut` serves one channel at a time.
  */
 
 export type OptInSource = (typeof OPT_IN_SOURCES)[number];
@@ -33,14 +36,6 @@ export interface PatientPreferences {
   email: 'default' | 'opted_out';
   /** `none` means the patient never opted in: WhatsApp stays unused. */
   whatsapp: 'none' | 'opted_in' | 'opted_out';
-}
-
-/** Raised when staff try to switch on a channel the patient switched off. */
-export class OptInRefused extends Error {
-  constructor() {
-    super('Only the patient can opt in to a channel they opted out of');
-    this.name = 'OptInRefused';
-  }
 }
 
 /** The state in force on a channel, from the latest event. */
@@ -74,6 +69,18 @@ interface RecordInput {
   /** The staff member, for the `staff` source. */
   recordedBy?: string | undefined;
   actor: AuditActor;
+}
+
+/**
+ * A link to accept WhatsApp that was still waiting must not undo an opt-out: following it later
+ * would opt the patient back in (judgment day round 2, finding B10). It covers the links of a
+ * public form (they belong to the submission and remember the patient in their payload) and the
+ * ones reception sent from the record. A patient who changes their mind asks for a new one.
+ */
+export async function revokeWhatsappOptInLinks(tx: Tx, patientId: string): Promise<void> {
+  const tokens = createActionTokens();
+  await tokens.revokeForSubject(tx, 'whatsapp_opt_in', patientId);
+  await tokens.revokeForPayload(tx, 'whatsapp_opt_in', 'patientId', patientId);
 }
 
 /**
@@ -112,12 +119,7 @@ export async function recordOptOut(
       tx,
       cancelled.map((row) => row.id),
     );
-    // A link to accept WhatsApp that was still waiting must not undo this: following it later
-    // would opt the patient back in (judgment day round 2, finding B10). A patient who changes
-    // their mind asks for a new one.
-    const tokens = createActionTokens();
-    await tokens.revokeForSubject(tx, 'whatsapp_opt_in', input.patientId);
-    await tokens.revokeForPayload(tx, 'whatsapp_opt_in', 'patientId', input.patientId);
+    await revokeWhatsappOptInLinks(tx, input.patientId);
   }
   await audit(tx, {
     action: 'notification.optout.recorded',
@@ -132,8 +134,9 @@ export async function recordOptOut(
 }
 
 /**
- * Records that the patient accepts a channel. Refused for staff when the patient opted out of it.
- * Idempotent: a channel already opted in keeps its first time and source.
+ * Records that the patient accepts a channel, or accepts it again after opting out of it (owner
+ * decision B7: reception can do that for the patient, per channel, and it is audited with
+ * `reopened`). Idempotent: a channel already opted in keeps its first time and source.
  */
 export async function recordOptIn(
   tx: Tx,
@@ -141,7 +144,6 @@ export async function recordOptIn(
 ): Promise<{ recorded: boolean }> {
   const state = await currentState(tx, input.patientId, input.channel);
   if (state === 'opted_in') return { recorded: false };
-  if (state === 'opted_out' && input.source === 'staff') throw new OptInRefused();
   await tx.insert(channelPreference).values({
     tenantId: sql`current_setting('app.tenant_id')::uuid`,
     patientId: input.patientId,
@@ -157,7 +159,11 @@ export async function recordOptIn(
     resourceType: 'patient',
     resourceId: input.patientId,
     patientId: input.patientId,
-    metadata: { channel: input.channel, source: input.source },
+    metadata: {
+      channel: input.channel,
+      source: input.source,
+      ...(state === 'opted_out' ? { reopened: true } : {}),
+    },
   });
   return { recorded: true };
 }

@@ -12,7 +12,9 @@ import {
 } from '../../src/modules/notifications/application/preferences.js';
 import type { AuditActor } from '../../src/platform/audit/writer.js';
 import { createRuntimeDb, type DbHandle } from '../../src/platform/db/pool.js';
+import { createActionTokens } from '../../src/platform/tokens/index.js';
 import { createTestAdapterResolver } from '../support/adapters.js';
+import { BASE_DOMAIN } from '../support/app.js';
 import { createRecordingJobClient } from '../support/jobs.js';
 import {
   createNotificationsWorld,
@@ -188,6 +190,59 @@ describe('BAJA and STOP', () => {
     });
     expect(whatsapp.sent.map((sent) => [sent.templateKey, sent.to])).toEqual([
       ['optout_ack', r.phone.e164],
+    ]);
+  });
+
+  it('opts the patient out of email too (B7) and cancels what was queued on email', async () => {
+    const r = await reminded();
+    const email = await notes.queue({
+      kind: 'reminder',
+      channel: 'email',
+      patientId: r.patientId,
+      appointmentId: r.appointment.id,
+      plannedStartsAt: new Date(r.appointment.startsAt),
+      appointmentVersion: r.appointment.version,
+      dedupeKey: `in:${r.appointment.id}:email`,
+    });
+
+    await reply(r.phone.e164, 'BAJA');
+
+    expect(await inForce(r.patientId)).toEqual({ email: 'opted_out', whatsapp: 'opted_out' });
+    expect(await notes.message(email)).toMatchObject({
+      status: 'cancelled',
+      cancelReason: 'opted_out',
+    });
+  });
+
+  it('revokes a link to accept WhatsApp that was still pending, so it cannot undo the BAJA (D22 stays)', async () => {
+    const r = await reminded();
+    const tokens = createActionTokens({ clock: () => notes.now() });
+    // The link of a public form belongs to the submission and remembers the patient.
+    const pending = await scheduling.inTenant((tx) =>
+      tokens.issue(tx, {
+        kind: 'whatsapp_opt_in',
+        subjectId: crypto.randomUUID(),
+        payload: { patientId: r.patientId, created: true },
+      }),
+    );
+
+    await reply(r.phone.e164, 'BAJA');
+
+    const followed = await scheduling.app.inject({
+      method: 'POST',
+      url: `/public/t/${pending.token}`,
+      headers: {
+        host: `${scheduling.slug}.${BASE_DOMAIN}`,
+        origin: `https://${scheduling.slug}.${BASE_DOMAIN}`,
+        'content-type': 'application/x-www-form-urlencoded',
+      },
+      payload: 'choice=accept',
+    });
+    expect(followed.statusCode).toBe(404);
+    expect((await inForce(r.patientId)).whatsapp).toBe('opted_out');
+    expect(await whatsappHistory(r.patientId)).toEqual([
+      { state: 'opted_in', source: 'online_booking' },
+      { state: 'opted_out', source: 'whatsapp_keyword' },
     ]);
   });
 

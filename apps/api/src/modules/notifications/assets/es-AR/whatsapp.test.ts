@@ -82,3 +82,14 @@ describe('the WhatsApp text of the follow-up with the video link', () => {
     expect(body).not.toContain('Responda 2');
   });
 });
+
+describe('the acknowledgment of a BAJA (owner decision B7)', () => {
+  it('names the organization and says no more messages will come on any channel', () => {
+    const body = whatsappBody('optout_ack', vars);
+
+    expect(body).toContain(
+      'Centro Médico Aillu no le enviará más mensajes por WhatsApp ni por email',
+    );
+    expect(body).toContain('avise en la recepción');
+  });
+});

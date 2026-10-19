@@ -86,7 +86,7 @@ const BODIES: Record<WhatsAppTemplateKey, (vars: Vars) => string> = {
       'Responda BAJA para dejar de recibir estos mensajes.',
     ].join('\n\n'),
   optout_ack: (vars) =>
-    `Listo: ${vars['organization'] ?? 'la organización'} no le enviará más mensajes por WhatsApp. Si cambia de opinión, avise en la recepción.`,
+    `Listo: ${vars['organization'] ?? 'la organización'} no le enviará más mensajes por WhatsApp ni por email. Si cambia de opinión, avise en la recepción.`,
   cancel_closed: (vars) =>
     `No pudimos cancelar su turno por este medio porque falta muy poco. Comuníquese con ${vars['organization'] ?? 'la organización'} para cancelarlo o cambiarlo.`,
 };

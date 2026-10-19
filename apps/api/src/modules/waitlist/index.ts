@@ -26,11 +26,7 @@ import { entryRoutes } from './http/entry-routes.js';
 import { createOfferHandler } from './http/offer-handler.js';
 import { publicRoutes } from './http/public-routes.js';
 
-export {
-  closeEntriesOfOptedOutPatient,
-  closeEntriesOfUnreachablePatient,
-  closeExpiredEntries,
-} from './application/entries.js';
+export { closeEntriesOfOptedOutPatient, closeExpiredEntries } from './application/entries.js';
 export { createWaitlistJobs } from './application/jobs.js';
 export { waitlistOutcomes } from './application/outcomes.js';
 export { recoveredAppointmentIds } from './application/report-facts.js';

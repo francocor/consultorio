@@ -15,7 +15,7 @@ import { withinCancelDeadline } from '../domain/validity.js';
 
 import { loadAppointment, loadTenantState } from './context.js';
 import type { Channels, Worklist } from './deps.js';
-import { optOutChannel } from './opt-out.js';
+import { optOutPatient } from './opt-out.js';
 import { actForPatient, type PatientActionDeps } from './patient-actions.js';
 import type { WhatsAppEvent } from './ports.js';
 import { loadMessagingSettings } from './settings.js';
@@ -55,7 +55,8 @@ const SYSTEM_ACTOR: AuditActor = {
  * that number; the reply never says which one it is.
  *
  * - `BAJA`, `STOP`, `PARAR` or `NO MAS` opts the patients that number was written about out of
- *   WhatsApp, and is answered with one acknowledgment that names the organization.
+ *   every channel (owner decision B7), and is answered with one acknowledgment that names the
+ *   organization and says no more messages will come, on any channel.
  * - `1` confirms and `2` cancels the appointment of the outstanding reminder, but only when exactly
  *   one appointment is outstanding for that number (the one of the quoted message, when the reply
  *   quotes one). Two patients on one number, none outstanding, or another organization that could
@@ -142,12 +143,7 @@ export async function processInbound(
   const kind = classifyReply(event.text);
   if (kind === 'opt_out') {
     for (const patientId of patientIds) {
-      await optOutChannel(tx, {
-        patientId,
-        channel: 'whatsapp',
-        source: 'whatsapp_keyword',
-        actor: SYSTEM_ACTOR,
-      });
+      await optOutPatient(tx, { patientId, source: 'whatsapp_keyword', actor: SYSTEM_ACTOR });
     }
     const sender = active ? deps.channels.whatsapp({ id: tenantId, isDemo: false }) : undefined;
     if (sender) {
