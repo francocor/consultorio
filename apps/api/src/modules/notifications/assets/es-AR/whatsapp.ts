@@ -13,6 +13,8 @@ export const WHATSAPP_TEMPLATE_KEYS = [
   'video_link',
   /** The single reply to an opt-out keyword. */
   'optout_ack',
+  /** The reply to an opt-out keyword written from a number that several patients share. */
+  'optout_ack_shared',
   /** The reply to a "2" that came too late to cancel by WhatsApp: reception takes it from there. */
   'cancel_closed',
 ] as const;
@@ -87,6 +89,14 @@ const BODIES: Record<WhatsAppTemplateKey, (vars: Vars) => string> = {
     ].join('\n\n'),
   optout_ack: (vars) =>
     `Listo: ${vars['organization'] ?? 'la organización'} no le enviará más mensajes por WhatsApp ni por email. Si cambia de opinión, avise en la recepción.`,
+  optout_ack_shared: (vars) =>
+    [
+      `Listo: ${vars['organization'] ?? 'la organización'} no enviará más mensajes por WhatsApp a este número.`,
+      vars['emailPending'] === undefined
+        ? 'A quien respondió tampoco le enviará mensajes por email.'
+        : 'La recepción confirmará si también corresponde dejar de enviar mensajes por email.',
+      'Si cambia de opinión, avise en la recepción.',
+    ].join(' '),
   cancel_closed: (vars) =>
     `No pudimos cancelar su turno por este medio porque falta muy poco. Comuníquese con ${vars['organization'] ?? 'la organización'} para cancelarlo o cambiarlo.`,
 };

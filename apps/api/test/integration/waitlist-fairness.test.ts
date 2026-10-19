@@ -2,6 +2,7 @@ import { eq, sql } from 'drizzle-orm';
 import { afterAll, beforeAll, beforeEach, describe, expect, inject, it } from 'vitest';
 
 import { tenant } from '../../src/db/schema/tenant.js';
+import { optOutWhatsapp } from '../../src/modules/notifications/application/opt-out.js';
 import {
   closeEntriesOfOptedOutPatient,
   waitlistOutcomes,
@@ -432,5 +433,37 @@ describe('opting out of any channel opts out of all of them (owner decision B7)'
     expect((await optOut(leaving)).statusCode).toBe(200);
 
     expect(await world.entryRow(staying.id)).toMatchObject({ status: 'active' });
+  });
+});
+
+describe('opting out of WhatsApp alone, for the other members of a shared number (B7)', () => {
+  const actor = { userId: null, actingRole: null, ip: null, userAgent: null, requestId: null };
+  const optOutWhatsappOnly = (patientId: string) =>
+    world.inTenant((tx) => optOutWhatsapp(tx, { patientId, source: 'whatsapp_keyword', actor }));
+
+  it('keeps the entries while the patient still has an email, and closes them when no channel is left', async () => {
+    const withEmail = await world.patient();
+    const withoutEmail = await world.patient({ email: false });
+    for (const patientId of [withEmail, withoutEmail]) {
+      const optedIn = await world.api.post(
+        `/patients/${patientId}/channels/whatsapp/opt-in`,
+        world.owner,
+        {},
+      );
+      expect(optedIn.statusCode, optedIn.body).toBe(200);
+    }
+    await world.advance(MINUTE);
+    const kept = await world.join(withEmail);
+    await world.advance(MINUTE);
+    const closed = await world.join(withoutEmail);
+
+    await optOutWhatsappOnly(withEmail);
+    await optOutWhatsappOnly(withoutEmail);
+
+    expect(await world.entryRow(kept.id)).toMatchObject({ status: 'active' });
+    expect(await world.entryRow(closed.id)).toMatchObject({
+      status: 'closed',
+      close_reason: 'patient_opted_out',
+    });
   });
 });

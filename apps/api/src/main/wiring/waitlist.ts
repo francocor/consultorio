@@ -11,6 +11,7 @@ import { createSchedulingPorts } from '../../modules/scheduling/index.js';
 import {
   WAITLIST_EXPIRE_JOB,
   closeEntriesOfOptedOutPatient,
+  closeEntriesOfUnreachablePatient,
   createWaitlist,
   createWaitlistJobs,
 } from '../../modules/waitlist/index.js';
@@ -68,13 +69,13 @@ export const waitlistWiring: ModuleWiring = {
   needsJobs: true,
   create: (context) => {
     // A patient who opts out leaves the waitlist (an opt-out is for every channel, owner decision
-    // B7): messaging tells it, in the same transaction.
+    // B7): messaging tells it, in the same transaction. A patient who only gave up WhatsApp (a member
+    // of a family that shares a number) leaves it only when no channel is left for an offer.
     bindOptOutListener((tx, event) =>
-      closeEntriesOfOptedOutPatient(tx, {
-        patientId: event.patientId,
-        now: event.now,
-        jobs: context.jobs,
-      }).then(() => undefined),
+      (event.scope === 'all' ? closeEntriesOfOptedOutPatient : closeEntriesOfUnreachablePatient)(
+        tx,
+        { patientId: event.patientId, now: event.now, jobs: context.jobs },
+      ).then(() => undefined),
     );
     return createWaitlist({
       // A WhatsApp choice on the public form is a request: the link goes to the verified address.

@@ -1,10 +1,18 @@
-import { MESSAGE_CHANNELS } from '@consultorio/contracts';
+import { MESSAGE_CHANNELS, type MessageChannel } from '@consultorio/contracts';
+import { and, eq, inArray } from 'drizzle-orm';
 
+import { message } from '../../../db/schema/notifications.js';
 import { describeFailure } from '../../../platform/db/failure-log.js';
 import type { Tx } from '../../../platform/db/tenant-context.js';
+import { selectChannels } from '../domain/channel-policy.js';
 
+import { loadTenantState } from './context.js';
 import { boundDelivery } from './offer-delivery.js';
 import { recordOptOut, revokeWhatsappOptInLinks } from './preferences.js';
+import { dedupeKeyFor, groupHasChannel, groupKeyOf, queueMessage } from './queue.js';
+import { loadRecipient } from './recipients.js';
+import { loadMessagingSettings } from './settings.js';
+import { UNLIMITED_QUOTA, whatsappQuotaAvailable } from './usage.js';
 
 /** What an opt-out needs: who, where the patient said it, and who wrote it down. */
 type OptOutInput = Omit<Parameters<typeof recordOptOut>[1], 'channel'>;
@@ -14,7 +22,15 @@ type OptOutInput = Omit<Parameters<typeof recordOptOut>[1], 'channel'>;
  * composition root, in the transaction of the opt-out: another module's rule, run by messaging
  * without messaging knowing the module (judgment day finding B3).
  */
-type OptOutListener = (tx: Tx, event: { patientId: string; now: Date }) => Promise<void>;
+/**
+ * What the patient gave up: every channel (`all`, the waitlist closes every entry) or WhatsApp
+ * alone (`whatsapp`, the waitlist closes the entries only when no channel is left).
+ */
+export type OptOutScope = 'all' | 'whatsapp';
+type OptOutListener = (
+  tx: Tx,
+  event: { patientId: string; now: Date; scope: OptOutScope },
+) => Promise<void>;
 let optOutListener: OptOutListener | undefined;
 let reportListenerFailure: (error: unknown) => void = defaultReport;
 
@@ -90,14 +106,102 @@ export async function optOutPatient(tx: Tx, input: OptOutInput): Promise<OptOutR
   // for after an earlier one still has to die.
   if (!whatsappRecorded) await revokeWhatsappOptInLinks(tx, input.patientId);
 
-  if (recorded && optOutListener) {
-    const listener = optOutListener;
-    const now = boundDelivery()?.clock() ?? new Date();
-    try {
-      await tx.transaction((inner) => listener(inner, { patientId: input.patientId, now }));
-    } catch (error) {
-      reportListenerFailure(error);
-    }
-  }
+  if (recorded) await tellListener(tx, input.patientId, 'all');
   return { recorded, cancelled };
+}
+
+/** Tells whoever is bound, in a savepoint: a failure there never undoes the patient's opt-out. */
+async function tellListener(tx: Tx, patientId: string, scope: OptOutScope): Promise<void> {
+  if (!optOutListener) return;
+  const listener = optOutListener;
+  const now = boundDelivery()?.clock() ?? new Date();
+  try {
+    await tx.transaction((inner) => listener(inner, { patientId, now, scope }));
+  } catch (error) {
+    reportListenerFailure(error);
+  }
+}
+
+export interface WhatsappOptOutResult extends OptOutResult {
+  /** Messages queued on email to take the place of the WhatsApp ones that were cancelled. */
+  replaced: number;
+}
+
+/**
+ * Closes WhatsApp for a patient and nothing else. It is for the people who share a WhatsApp number
+ * with the patient who wrote BAJA (a family with one phone): the number cannot be written to any
+ * more, but their email is not theirs to lose (owner decision B7, refined). Only the patient the
+ * reply belongs to gets `optOutPatient`.
+ *
+ * What was queued on WhatsApp is cancelled at once; each reminder or confirmation of an
+ * appointment that was among it is queued again, for the same moment, on email when the policy
+ * allows it (the fallback of decision D10, kept for this case only) unless that reminder already
+ * has one. The listener is told with the scope `whatsapp`: the waitlist keeps the entries of a
+ * patient who still has an email and closes them when no channel is left. Pending links to accept
+ * WhatsApp are revoked, even when WhatsApp had been opted out before.
+ */
+export async function optOutWhatsapp(tx: Tx, input: OptOutInput): Promise<WhatsappOptOutResult> {
+  const channel: MessageChannel = 'whatsapp';
+  // What is about to be cancelled, read before the cancellation.
+  const queued = await tx
+    .select()
+    .from(message)
+    .where(
+      and(
+        eq(message.patientId, input.patientId),
+        eq(message.channel, channel),
+        eq(message.status, 'queued'),
+        inArray(message.kind, ['reminder', 'confirmation']),
+      ),
+    );
+  const recorded = await recordOptOut(tx, { ...input, channel });
+  if (!recorded.recorded) await revokeWhatsappOptInLinks(tx, input.patientId);
+  else await tellListener(tx, input.patientId, 'whatsapp');
+
+  const deps = boundDelivery();
+  if (!recorded.recorded || deps === undefined || queued.length === 0) {
+    return { ...recorded, replaced: 0 };
+  }
+  const state = await loadTenantState(tx, queued[0]?.tenantId ?? '');
+  const recipient = await loadRecipient(tx, input.patientId);
+  if (!state || state.status !== 'active' || state.isDemo || !recipient) {
+    return { ...recorded, replaced: 0 };
+  }
+  const settings = await loadMessagingSettings(tx);
+  const now = deps.clock();
+  let replaced = 0;
+  for (const row of queued) {
+    if (row.appointmentId === null) continue;
+    const kind = row.kind === 'confirmation' ? 'confirmation' : 'reminder';
+    const decision = selectChannels(kind, recipient.facts, {
+      whatsappEnabled:
+        settings.whatsappEnabled && deps.whatsappAvailable({ id: state.id, isDemo: false }),
+      whatsappQuotaAvailable:
+        row.professionalId === null ||
+        (await whatsappQuotaAvailable(deps.quota ?? UNLIMITED_QUOTA, tx, row.professionalId, now)),
+    });
+    const group = groupKeyOf(row.dedupeKey);
+    let next: MessageChannel | undefined;
+    for (const candidate of decision.channels) {
+      if (candidate === channel || (await groupHasChannel(tx, group, candidate))) continue;
+      next = candidate;
+      break;
+    }
+    if (next === undefined) continue;
+    await queueMessage(deps, tx, {
+      kind,
+      channel: next,
+      patientId: row.patientId,
+      appointmentId: row.appointmentId,
+      professionalId: row.professionalId,
+      plannedStartsAt: row.plannedStartsAt,
+      appointmentVersion: row.appointmentVersion,
+      // The same moment; a reminder that was due already goes now.
+      sendAt: row.sendAt,
+      dedupeKey: dedupeKeyFor(group, next),
+      trigger: row.trigger === 'manual' ? 'manual' : 'automatic',
+    });
+    replaced += 1;
+  }
+  return { ...recorded, replaced };
 }

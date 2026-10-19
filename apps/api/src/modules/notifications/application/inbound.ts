@@ -1,4 +1,4 @@
-import { and, eq, gt, inArray, sql } from 'drizzle-orm';
+import { and, desc, eq, gt, inArray, isNotNull, max, sql } from 'drizzle-orm';
 
 import {
   inboundMessage,
@@ -15,7 +15,7 @@ import { withinCancelDeadline } from '../domain/validity.js';
 
 import { loadAppointment, loadTenantState } from './context.js';
 import type { Channels, Worklist } from './deps.js';
-import { optOutPatient } from './opt-out.js';
+import { optOutPatient, optOutWhatsapp } from './opt-out.js';
 import { actForPatient, type PatientActionDeps } from './patient-actions.js';
 import type { WhatsAppEvent } from './ports.js';
 import { loadMessagingSettings } from './settings.js';
@@ -31,6 +31,12 @@ const OUTSTANDING_DAYS = 7;
 
 /** The text of a reply that reception reads is kept short: it is a pointer, not a transcript. */
 const MAX_REVIEW_TEXT = 200;
+
+/**
+ * Two patients of a shared number written to within this time of each other have no "latest": a
+ * reply to either could be about either (see `replyOwner`).
+ */
+const AMBIGUOUS_WITHIN_MS = 5 * 60_000;
 
 export interface InboundDeps extends PatientActionDeps {
   channels: Channels;
@@ -48,6 +54,53 @@ const SYSTEM_ACTOR: AuditActor = {
   userAgent: null,
   requestId: null,
 };
+
+/**
+ * The patient a BAJA from a shared number belongs to, or undefined when that cannot be told:
+ *
+ * 1. the patient of the message the reply quotes (the "reply context" of the provider);
+ * 2. otherwise the patient written to last on that number, if no other patient was written to
+ *    within `AMBIGUOUS_WITHIN_MS` of that moment;
+ * 3. otherwise nobody (two written to at about the same time, or nothing was ever sent).
+ */
+async function replyOwner(
+  tx: Tx,
+  input: { patientIds: string[]; knownHashes: string[]; quotedMessageId: string | undefined },
+): Promise<string | undefined> {
+  if (input.quotedMessageId !== undefined) {
+    const [quoted] = await tx
+      .select({ patientId: message.patientId })
+      .from(message)
+      .where(
+        and(
+          eq(message.channel, 'whatsapp'),
+          eq(message.providerMessageId, input.quotedMessageId),
+          inArray(message.patientId, input.patientIds),
+        ),
+      )
+      .limit(1);
+    if (quoted) return quoted.patientId;
+  }
+  const lastWrittenTo = max(message.sentAt);
+  const [latest, other] = await tx
+    .select({ patientId: message.patientId, sentAt: lastWrittenTo })
+    .from(message)
+    .where(
+      and(
+        eq(message.channel, 'whatsapp'),
+        inArray(message.addressHash, input.knownHashes),
+        isNotNull(message.sentAt),
+      ),
+    )
+    .groupBy(message.patientId)
+    .orderBy(desc(lastWrittenTo))
+    .limit(2);
+  if (!latest?.sentAt) return undefined;
+  if (other?.sentAt && latest.sentAt.getTime() - other.sentAt.getTime() < AMBIGUOUS_WITHIN_MS) {
+    return undefined;
+  }
+  return latest.patientId;
+}
 
 /**
  * Handles one reply that reached an organization over WhatsApp (spec "Confirmation by the
@@ -142,17 +195,39 @@ export async function processInbound(
 
   const kind = classifyReply(event.text);
   if (kind === 'opt_out') {
+    // A number written about one patient is that patient's: the full opt-out (owner decision B7).
+    // A number several patients share (a family with one phone) closes WhatsApp for all of them, but
+    // email and everything else only for the patient the reply belongs to; when that cannot be told,
+    // nobody loses email and reception is asked to confirm it.
+    const shared = patientIds.length > 1;
+    const owner = shared
+      ? await replyOwner(tx, { patientIds, knownHashes, quotedMessageId: options.quotedMessageId })
+      : patientIds[0];
     for (const patientId of patientIds) {
-      await optOutPatient(tx, { patientId, source: 'whatsapp_keyword', actor: SYSTEM_ACTOR });
+      const input = { patientId, source: 'whatsapp_keyword', actor: SYSTEM_ACTOR } as const;
+      if (patientId === owner) await optOutPatient(tx, input);
+      else await optOutWhatsapp(tx, input);
+    }
+    if (shared && owner === undefined) {
+      await deps.worklist.open(tx, {
+        kind: 'reply_to_review',
+        subjectType: 'inbound_message',
+        subjectId: recorded.id,
+        locationId: null,
+        detail: { patientIds, reason: 'email_optout_unconfirmed' },
+      });
     }
     const sender = active ? deps.channels.whatsapp({ id: tenantId, isDemo: false }) : undefined;
     if (sender) {
       // One acknowledgment per reply and organization: the key is the event, so a replay sends nothing
       // more, and two organizations that answer the same reply do not collapse into one message.
       await sender.send({
-        templateKey: 'optout_ack',
+        templateKey: shared ? 'optout_ack_shared' : 'optout_ack',
         to: options.from,
-        vars: { organization: await readOrganizationName(tx) },
+        vars: {
+          organization: await readOrganizationName(tx),
+          ...(shared && owner === undefined ? { emailPending: 'yes' } : {}),
+        },
         idempotencyKey: `ack:${tenantId}:${event.eventId}`,
       });
     }

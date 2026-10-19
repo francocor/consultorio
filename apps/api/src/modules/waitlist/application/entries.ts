@@ -609,3 +609,19 @@ export async function closeEntriesOfOptedOutPatient(
   }
   return rows.length;
 }
+
+/**
+ * What the waitlist does when a patient gives up WhatsApp alone (a member of a family that shares
+ * a number with the patient who wrote BAJA, owner decision B7 refined): the entries close only when
+ * no channel is left through which an offer could reach the patient. A patient who still has an
+ * email that was not refused keeps their place and their offers go by email; one who has nothing
+ * left leaves the list. Returns how many entries it closed.
+ */
+export async function closeEntriesOfUnreachablePatient(
+  tx: Tx,
+  input: { patientId: string; now: Date; jobs?: JobClient | undefined },
+): Promise<number> {
+  const reach = await reachOf(tx, input.patientId);
+  if (reach.email.usable || reach.whatsapp.usable) return 0;
+  return closeEntriesOfOptedOutPatient(tx, input);
+}
