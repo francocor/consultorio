@@ -1,6 +1,8 @@
 import type { AfipSimulatorMode, InvoiceIssuer, InvoiceRequest } from '@consultorio/contracts';
 import { describe, expect, it } from 'vitest';
 
+import { voucherMatches } from '../modules/invoicing/domain/voucher-match.js';
+
 /**
  * The contract of the `InvoiceIssuer` port (design section 6, "one shared suite per port"). The
  * in-memory fake, the local AFIP simulator and, later, the WSAA/WSFEv1 adapter must all pass it:
@@ -391,6 +393,121 @@ export function describeInvoiceIssuerContract(target: InvoiceIssuerContractTarge
       expect(await lookup('organization-a', 2)).toBeNull();
       expect(await lookup('organization-b', 2)).toMatchObject({ number: 2 });
       expect(await lookup('organization-c', 1)).toBeNull();
+    });
+
+    it('says the last number it authorized in a series: the highest issued, and 0 for an empty series (JD-S4 R5-1)', async () => {
+      const { issuer } = await target.make();
+      const cuit = nextCuit();
+      const last = (ref: Partial<Parameters<InvoiceIssuer['lastAuthorized']>[0]> = {}) =>
+        issuer.lastAuthorized({ issuerCuit: cuit, pointOfSale: 1, type: 'FC', ...ref });
+
+      // An empty series is an answer (0), not a failure.
+      expect(await last()).toEqual({ status: 'ok', number: 0 });
+      expectIssued(await issuer.issue(requestFor(cuit), key()));
+      expectIssued(await issuer.issue(requestFor(cuit), key()));
+      expect(await last()).toEqual({ status: 'ok', number: 2 });
+      // A hint moves the numbering forward and so the last number of the series.
+      expectIssued(await issuer.issue(requestFor(cuit, { lastKnownNumber: 40 }), key()));
+      expect(await last()).toEqual({ status: 'ok', number: 41 });
+    });
+
+    it('does not count the vouchers of another series, issuer or organization in the last number (JD-S4 R5-1)', async () => {
+      const { issuer } = await target.make();
+      const cuit = nextCuit();
+      expectIssued(await issuer.issue(requestFor(cuit, { tenantRef: 'organization-a' }), key()));
+      expectIssued(await issuer.issue(requestFor(cuit, { tenantRef: 'organization-a' }), key()));
+      expectIssued(
+        await issuer.issue(
+          requestFor(cuit, { pointOfSale: 2, tenantRef: 'organization-a' }),
+          key(),
+        ),
+      );
+      expectIssued(
+        await issuer.issue(requestFor(cuit, { type: 'NCC', tenantRef: 'organization-a' }), key()),
+      );
+      expectIssued(await issuer.issue(requestFor(cuit, { tenantRef: 'organization-b' }), key()));
+      const last = (ref: Partial<Parameters<InvoiceIssuer['lastAuthorized']>[0]>) =>
+        issuer.lastAuthorized({ issuerCuit: cuit, pointOfSale: 1, type: 'FC', ...ref });
+
+      expect(await last({ tenantRef: 'organization-a' })).toEqual({ status: 'ok', number: 2 });
+      expect(await last({ tenantRef: 'organization-b' })).toEqual({ status: 'ok', number: 1 });
+      expect(await last({ tenantRef: 'organization-a', pointOfSale: 2 })).toEqual({
+        status: 'ok',
+        number: 1,
+      });
+      expect(await last({ tenantRef: 'organization-a', type: 'NCC' })).toEqual({
+        status: 'ok',
+        number: 1,
+      });
+      expect(await last({ tenantRef: 'organization-a', type: 'NCA' })).toEqual({
+        status: 'ok',
+        number: 0,
+      });
+      expect(await last({ tenantRef: 'organization-c' })).toEqual({ status: 'ok', number: 0 });
+      expect(await last({ issuerCuit: nextCuit(), tenantRef: 'organization-a' })).toEqual({
+        status: 'ok',
+        number: 0,
+      });
+    });
+
+    it('does not answer the last number in an outage, and never answers 0 for it (JD-S4 R5-1)', async () => {
+      const { issuer, setMode } = await target.make();
+      const cuit = nextCuit();
+      expectIssued(await issuer.issue(requestFor(cuit), key()));
+      await setMode('down');
+
+      const down = await issuer.lastAuthorized({ issuerCuit: cuit, pointOfSale: 1, type: 'FC' });
+      await setMode('ok');
+
+      expect(down).toMatchObject({ status: 'retryable', outcomeUnknown: false });
+      expect(down).not.toHaveProperty('number');
+    });
+
+    it('finds a voucher that says what the request said, so the facts of a request match the voucher found (round trip, JD-S4 R5-1)', async () => {
+      const { issuer } = await target.make();
+      const cuit = nextCuit();
+      const buyer = { type: 'dni' as const, number: '30123456' };
+      const request = requestFor(cuit, {
+        type: 'FB',
+        totalCents: 1_210_000,
+        netCents: 1_000_000,
+        vatCents: 210_000,
+        buyerDocument: buyer,
+      });
+      const credit = requestFor(cuit, {
+        type: 'NCC',
+        associatedVoucher: { type: 'FC', pointOfSale: 1, number: 7 },
+      });
+      expectIssued(await issuer.issue(request, key()));
+      expectIssued(await issuer.issue(credit, key()));
+      const facts = (asked: InvoiceRequest) => ({
+        issuerCuit: asked.issuerCuit ?? '',
+        totalCents: asked.totalCents,
+        issueDate: asked.issueDate,
+        buyerDocument: asked.buyerDocument ?? null,
+        associatedVoucher: asked.associatedVoucher ?? null,
+      });
+
+      const found = await issuer.findIssued({
+        issuerCuit: cuit,
+        pointOfSale: 1,
+        type: 'FB',
+        number: 1,
+      });
+      const foundCredit = await issuer.findIssued({
+        issuerCuit: cuit,
+        pointOfSale: 1,
+        type: 'NCC',
+        number: 1,
+      });
+
+      // A voucher that does not match its own request would make a caller look past its own voucher.
+      if (found?.status !== 'issued' || foundCredit?.status !== 'issued') {
+        throw new Error('the vouchers were not found');
+      }
+      expect(voucherMatches(found, facts(request))).toBe(true);
+      expect(voucherMatches(foundCredit, facts(credit))).toBe(true);
+      expect(voucherMatches(found, facts(credit))).toBe(false);
     });
 
     it('refuses a key that is reused for a different request', async () => {

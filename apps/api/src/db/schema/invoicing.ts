@@ -116,6 +116,14 @@ export const invoice = tenantTable(
      * attempts, which the probes that other invoices bring forward also count (JD-S4 R4-B-S1).
      */
     awaitingSince: timestamp('awaiting_since', { withTimezone: true }),
+    /**
+     * The last number the AUTHORITY had authorized in the series when the invoice was marked (its own
+     * answer, not an inference from our rows). The voucher of a request that may have been answered is
+     * above it, so reconciling looks at the numbers after it, up to the authority's last number now.
+     * The first mark of a wait fixes it; the later marks keep it. Null for an invoice marked before the
+     * column existed (JD-S4 R5-1).
+     */
+    authorityLastAtMark: bigint('authority_last_at_mark', { mode: 'number' }),
     issuedAt: timestamp('issued_at', { withTimezone: true }),
     /** The issuer as the fiscal profile said at the time of the request; never changes. */
     issuerSnapshot: jsonb('issuer_snapshot').$type<IssuerSnapshot>(),
@@ -199,6 +207,10 @@ export const invoice = tenantTable(
     check(
       'invoice_attempts_check',
       sql`${table.attempts} >= 0 and (${table.expectedNumber} is null or ${table.expectedNumber} > 0)`,
+    ),
+    check(
+      'invoice_authority_last_check',
+      sql`${table.authorityLastAtMark} is null or ${table.authorityLastAtMark} >= 0`,
     ),
     uniqueIndex('invoice_idempotency_key').on(table.tenantId, table.idempotencyKey),
     uniqueIndex('invoice_number_key')

@@ -128,6 +128,7 @@ async function closeReplaced(
       rejectionMessage: REPLACED_MESSAGE,
       nextAttemptAt: null,
       expectedNumber: null,
+      authorityLastAtMark: null,
       awaitingSince: null,
     })
     .where(eq(invoice.id, pending.id));

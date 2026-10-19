@@ -1,9 +1,10 @@
-import { and, asc, eq, inArray, lt, sql } from 'drizzle-orm';
+import { and, asc, eq, gt, lte, sql } from 'drizzle-orm';
 
 import { invoice, invoiceStrayVoucher } from '../../../db/schema/index.js';
 import type { Tx } from '../../../platform/db/tenant-context.js';
 
 import { CURRENT_TENANT } from './common.js';
+import { inSeries, type SeriesKey } from './series-scope.js';
 
 /** The series a number belongs to: point of sale and voucher type (the organization is the context). */
 export interface SeriesRef {
@@ -20,12 +21,14 @@ export interface SeriesRef {
  */
 export type StrayReason = 'replaced_unresolved' | 'orphaned' | 'unmatched' | 'parked_unknown';
 
-const UNCERTAIN_REASONS: readonly StrayReason[] = ['replaced_unresolved', 'parked_unknown'];
+/** Numbers where a voucher may or may not exist: the invoice it was remembered for may never have been issued. */
+export const UNCERTAIN_REASONS: readonly StrayReason[] = ['replaced_unresolved', 'parked_unknown'];
 
 /**
  * Remembers a number of the series that the authority may hold a voucher under and that no invoice
  * records (JD-S4 R3-3, R4-3). Idempotent: a number is remembered once, with the reason of the first
- * time.
+ * time. The record is for people and for the screens; it never decides whether a request is sent
+ * (the authority's own count does: JD-S4 R5-1).
  */
 export async function recordStrayVoucher(
   tx: Tx,
@@ -47,82 +50,69 @@ export async function recordStrayVoucher(
     .onConflictDoNothing();
 }
 
-/** The highest remembered stray number of the series, or 0 when there is none. */
-export async function highestStrayNumber(tx: Tx, series: SeriesRef): Promise<number> {
-  const [found] = await tx
-    .select({ highest: sql<number>`coalesce(max(${invoiceStrayVoucher.number}), 0)::int` })
-    .from(invoiceStrayVoucher)
-    .where(
-      and(
-        eq(invoiceStrayVoucher.pointOfSale, series.pointOfSale),
-        eq(invoiceStrayVoucher.type, series.type),
-      ),
-    );
-  return found?.highest ?? 0;
-}
-
-/** Whether the number is a remembered stray one: a voucher is there that no later invoice may adopt. */
-export async function isStrayNumber(tx: Tx, series: SeriesRef, number: number): Promise<boolean> {
-  const [found] = await tx
-    .select({ id: invoiceStrayVoucher.id })
-    .from(invoiceStrayVoucher)
-    .where(
-      and(
-        eq(invoiceStrayVoucher.pointOfSale, series.pointOfSale),
-        eq(invoiceStrayVoucher.type, series.type),
-        eq(invoiceStrayVoucher.number, number),
-      ),
-    )
-    .limit(1);
-  return found !== undefined;
-}
-
-/** A remembered number where a voucher MAY exist, and the invoice it was remembered for. */
-export interface UnconfirmedStray {
+/** A remembered number, and the invoice it was remembered for. */
+export interface StrayInWindow {
   number: number;
   invoiceId: string;
+  reason: string;
 }
 
-/**
- * The remembered numbers of the series below `below` where a voucher may or may not exist, lowest
- * first, at most `limit` of them (JD-S4 R4-1).
- *
- * The numbering of the authority has no gaps. A remembered number is CONFIRMED once an invoice of the
- * series records a number that is higher or the same: the voucher is certainly there, and it is not
- * the one of an invoice that is asking now. Until then it is unconfirmed: the invoice it was
- * remembered for may never have been issued, and then the next voucher of the series takes that very
- * number, so the voucher of an invoice that asks now can be sitting under it. Numbers that are certain
- * by their reason (`orphaned`, `unmatched`) are never unconfirmed.
- */
-export async function unconfirmedStraysBelow(
+/** The remembered numbers of a series after `from` and up to `to`, lowest first. */
+export async function straysBetween(
   tx: Tx,
-  series: SeriesRef,
-  below: number,
-  limit: number,
-): Promise<UnconfirmedStray[]> {
-  const [recorded] = await tx
-    .select({ highest: sql<number>`coalesce(max(${invoice.number}), 0)::int` })
+  series: SeriesKey,
+  issuerCuit: string,
+  window: { from: number; to: number },
+): Promise<StrayInWindow[]> {
+  return tx
+    .select({
+      number: invoiceStrayVoucher.number,
+      invoiceId: invoiceStrayVoucher.invoiceId,
+      reason: invoiceStrayVoucher.reason,
+    })
+    .from(invoiceStrayVoucher)
+    .innerJoin(invoice, eq(invoice.id, invoiceStrayVoucher.invoiceId))
+    .where(
+      and(
+        inSeries(series, issuerCuit),
+        gt(invoiceStrayVoucher.number, window.from),
+        lte(invoiceStrayVoucher.number, window.to),
+      ),
+    )
+    .orderBy(asc(invoiceStrayVoucher.number));
+}
+
+/** A voucher some invoice of the series records, in the numbers of a window. */
+export interface RecordedInWindow {
+  number: number;
+  invoiceId: string;
+  status: string;
+  cae: string | null;
+}
+
+/** The invoices of a series that record a number after `from` and up to `to`, lowest first. */
+export async function recordedBetween(
+  tx: Tx,
+  series: SeriesKey,
+  issuerCuit: string,
+  window: { from: number; to: number },
+): Promise<RecordedInWindow[]> {
+  const rows = await tx
+    .select({
+      number: invoice.number,
+      invoiceId: invoice.id,
+      status: invoice.status,
+      cae: invoice.cae,
+    })
     .from(invoice)
     .where(
       and(
-        eq(invoice.pointOfSale, series.pointOfSale),
-        eq(invoice.type, series.type),
+        inSeries(series, issuerCuit),
         sql`${invoice.number} is not null`,
-      ),
-    );
-  const confirmedUpTo = recorded?.highest ?? 0;
-  return tx
-    .select({ number: invoiceStrayVoucher.number, invoiceId: invoiceStrayVoucher.invoiceId })
-    .from(invoiceStrayVoucher)
-    .where(
-      and(
-        eq(invoiceStrayVoucher.pointOfSale, series.pointOfSale),
-        eq(invoiceStrayVoucher.type, series.type),
-        inArray(invoiceStrayVoucher.reason, [...UNCERTAIN_REASONS]),
-        sql`${invoiceStrayVoucher.number} > ${confirmedUpTo}`,
-        lt(invoiceStrayVoucher.number, below),
+        gt(invoice.number, window.from),
+        lte(invoice.number, window.to),
       ),
     )
-    .orderBy(asc(invoiceStrayVoucher.number))
-    .limit(limit);
+    .orderBy(asc(invoice.number));
+  return rows.flatMap((row) => (row.number === null ? [] : [{ ...row, number: row.number }]));
 }

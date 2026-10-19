@@ -34,6 +34,7 @@ const issuers: { current: InvoiceIssuer | undefined } = { current: createFakeInv
 const realLooking = (): InvoiceIssuer => ({
   issue: () => Promise.resolve({ status: 'rejected', message: 'unused' }),
   findIssued: () => Promise.resolve(null),
+  lastAuthorized: () => Promise.resolve({ status: 'ok', number: 0 }),
 });
 const resolver: AdapterResolver = {
   forTenant: (_tenant, port) => (port === 'invoiceIssuer' ? issuers.current : undefined) as never,

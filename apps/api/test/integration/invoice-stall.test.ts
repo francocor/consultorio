@@ -10,7 +10,7 @@ import { eq, inArray, sql } from 'drizzle-orm';
 import { afterAll, afterEach, beforeAll, describe, expect, inject, it, vi } from 'vitest';
 
 import { chargeLine } from '../../src/db/schema/billing-charges.js';
-import { invoice as invoiceTable, invoiceStrayVoucher } from '../../src/db/schema/index.js';
+import { invoice as invoiceTable } from '../../src/db/schema/index.js';
 import { issuerKeyOf } from '../../src/modules/invoicing/application/issue-attempt.js';
 import { createAfipIssueJob } from '../../src/modules/invoicing/index.js';
 import { createRuntimeDb, type DbHandle } from '../../src/platform/db/pool.js';
@@ -254,6 +254,7 @@ describe('the older of two invoices that wait goes first (JD-S4 R3-6)', () => {
         .set({
           deliveryState: 'awaiting_reconciliation',
           expectedNumber: olderNumber + 1,
+          authorityLastAtMark: olderNumber,
           nextAttemptAt: new Date(t0 - 2000),
         })
         .where(eq(invoiceTable.id, younger.created.id));
@@ -373,19 +374,25 @@ describe('a stalled series is surfaced (JD-S4 R3-2)', () => {
   });
 });
 
-/** The facts of a voucher the authority holds that is not the invoice's (another total). */
-function foreignVoucher(row: Awaited<ReturnType<InvoicingWorld['rowOf']>>, number: number) {
+/** A voucher the authority holds that states nothing against the invoice but leaves out whom it is for. */
+function unclearVoucher(row: Awaited<ReturnType<InvoicingWorld['rowOf']>>, number: number) {
   return {
     status: 'issued' as const,
     number,
     cae: '71111111111111',
     caeExpiresOn: '2031-06-01',
-    totalCents: row.totalCents + 100,
+    totalCents: row.totalCents,
     issueDate: row.issueDate,
     issuerCuit: row.issuerSnapshot?.cuit ?? '',
-    buyerDocument: null,
-    associatedVoucher: null,
   };
+}
+
+/** The authority says it has issued nothing since the invoice was marked (once). */
+async function nothingIssuedSince(invoiceId: string) {
+  const mark = (await world.rowOf(invoiceId)).authorityLastAtMark ?? 0;
+  return vi
+    .spyOn(world.issuer, 'lastAuthorized')
+    .mockResolvedValueOnce({ status: 'ok', number: mark });
 }
 
 /**
@@ -456,7 +463,7 @@ describe('an item that a person dismissed (JD-S4 R4-A-W3)', () => {
 describe('the item closes on every way out of the wait (JD-S4 R4-2, R4-A-T3)', () => {
   it('closes it when the authority says definitely that nothing was issued', async () => {
     const { blocker, t0 } = await stalledSeries();
-    vi.spyOn(world.issuer, 'findIssued').mockResolvedValueOnce(null);
+    await nothingIssuedSince(blocker.created.id);
     answerRequestsOf(blocker.created.id, {
       status: 'retryable',
       message: 'down',
@@ -479,7 +486,7 @@ describe('the item closes on every way out of the wait (JD-S4 R4-2, R4-A-T3)', (
     await drain();
     const taken = await world.issueInvoiceOf(await world.charge());
     const { blocker, t0 } = await stalledSeries();
-    vi.spyOn(world.issuer, 'findIssued').mockResolvedValueOnce(null);
+    await nothingIssuedSince(blocker.created.id);
     answerRequestsOf(
       blocker.created.id,
       { status: 'retryable', message: 'down', outcomeUnknown: false },
@@ -500,30 +507,29 @@ describe('the item closes on every way out of the wait (JD-S4 R4-2, R4-A-T3)', (
     expect(open[0]?.detail).toMatchObject({ reason: 'number_taken', outcomeUnknown: false });
   });
 
-  it('labels the item closed by a park that keeps the doubt, and remembers the foreign voucher', async () => {
+  it('labels the item closed by a park that keeps the doubt, and names the number in doubt', async () => {
     const { blocker, t0 } = await stalledSeries();
     const row = await world.rowOf(blocker.created.id);
     const expected = row.expectedNumber ?? 0;
-    vi.spyOn(world.issuer, 'findIssued').mockResolvedValueOnce(foreignVoucher(row, expected));
+    // The voucher is there and states nothing against the invoice, but leaves out whom it is for.
+    vi.spyOn(world.issuer, 'findIssued').mockResolvedValueOnce(unclearVoucher(row, expected));
 
     await world.sweep(after(t0, 131));
 
     expect(await world.rowOf(blocker.created.id)).toMatchObject({
       deliveryState: 'needs_attention',
       expectedNumber: expected,
+      authorityLastAtMark: row.authorityLastAtMark,
       awaitingSince: null,
     });
     const [closed] = await itemOf(blocker.created.id, 'resolved');
     expect(closed?.resolution).toBe('parked');
     const [open] = await itemOf(blocker.created.id);
-    expect(open?.detail).toMatchObject({ reason: 'voucher_mismatch', outcomeUnknown: true });
-    const remembered = await world.inTenant((tx) =>
-      tx
-        .select()
-        .from(invoiceStrayVoucher)
-        .where(eq(invoiceStrayVoucher.invoiceId, blocker.created.id)),
-    );
-    expect(remembered).toMatchObject([{ number: expected, reason: 'unmatched' }]);
+    expect(open?.detail).toMatchObject({
+      reason: 'voucher_ambiguous',
+      outcomeUnknown: true,
+      candidates: [expected],
+    });
   });
 });
 

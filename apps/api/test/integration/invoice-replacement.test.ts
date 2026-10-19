@@ -300,8 +300,11 @@ describe('a manual voucher in place of an invoice whose outcome is unknown (JD-S
 
   it('can be replaced without the acknowledgement once the authority was asked, found nothing and then was down', async () => {
     const { charge, created, t0 } = await lostAnswer();
-    // The authority is asked about the number and has nothing there; the request then fails for sure.
-    const probe = vi.spyOn(world.issuer, 'findIssued').mockResolvedValueOnce(null);
+    // The authority is asked and has issued nothing since the mark; the request then fails for sure.
+    const mark = (await world.rowOf(created.id)).authorityLastAtMark ?? 0;
+    const probe = vi
+      .spyOn(world.issuer, 'lastAuthorized')
+      .mockResolvedValueOnce({ status: 'ok', number: mark });
     world.issuer.setMode('down');
 
     try {

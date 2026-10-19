@@ -2,8 +2,9 @@ import type {
   AfipSimulatorMode,
   InvoiceIssuer,
   InvoiceRef,
-  InvoiceRequest,
+  InvoiceSeriesRef,
   IssueResult,
+  LastAuthorizedResult,
 } from '@consultorio/contracts';
 
 import {
@@ -80,14 +81,16 @@ export function createFakeInvoiceIssuer(options: FakeInvoiceIssuerOptions = {}):
   let vouchers: FakeVoucher[] = [];
   let requests = new Map<string, Stored>();
 
-  const lastNumber = (request: InvoiceRequest) =>
+  const lastNumber = (
+    series: Pick<InvoiceSeriesRef, 'tenantRef' | 'issuerCuit' | 'pointOfSale' | 'type'>,
+  ) =>
     vouchers
       .filter(
         (voucher) =>
-          voucher.tenantRef === (request.tenantRef ?? '') &&
-          voucher.issuerCuit === request.issuerCuit &&
-          voucher.pointOfSale === request.pointOfSale &&
-          voucher.type === request.type,
+          voucher.tenantRef === (series.tenantRef ?? '') &&
+          voucher.issuerCuit === (series.issuerCuit ?? '') &&
+          voucher.pointOfSale === series.pointOfSale &&
+          voucher.type === series.type,
       )
       .reduce((highest, voucher) => Math.max(highest, voucher.number), 0);
 
@@ -192,6 +195,18 @@ export function createFakeInvoiceIssuer(options: FakeInvoiceIssuerOptions = {}):
           voucher.number === ref.number,
       );
       return Promise.resolve(found ? issuedResult(found) : null);
+    },
+
+    lastAuthorized(series: InvoiceSeriesRef): Promise<LastAuthorizedResult> {
+      if (mode === 'down') {
+        return Promise.resolve({
+          status: 'retryable',
+          message: SERVICE_DOWN_MESSAGE,
+          outcomeUnknown: false,
+        });
+      }
+      // Whatever was issued in the series counts, whoever asked for it; an empty series is 0.
+      return Promise.resolve({ status: 'ok', number: lastNumber(series) });
     },
   };
 }

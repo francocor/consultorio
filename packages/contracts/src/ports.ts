@@ -21,6 +21,30 @@ export interface InvoiceRef {
   tenantRef?: string;
 }
 
+/** A series of the authority: numbering is per issuer, point of sale and voucher type. */
+export interface InvoiceSeriesRef {
+  /** CUIT of the issuer (11 digits). */
+  issuerCuit?: string;
+  pointOfSale: number;
+  /** Voucher type, for example "FA", "FB", "NCA". */
+  type: string;
+  /** The AFIP environment of the point of sale; an adapter that has only one ignores it. */
+  environment?: 'homologation' | 'production';
+  /** See `InvoiceRef.tenantRef`. */
+  tenantRef?: string;
+}
+
+/**
+ * What the authority answers about the last voucher of a series (FECompUltimoAutorizado in the real
+ * one). `ok` carries the number of the last voucher it authorized, and 0 for a series that is empty:
+ * the empty series is an answer, never an error. A lookup that fails is `retryable` (the number is not
+ * known) or `rejected` (a refused question: a token, an environment); neither is ever turned into 0.
+ */
+export type LastAuthorizedResult =
+  | { status: 'ok'; number: number }
+  | { status: 'rejected'; message: string }
+  | { status: 'retryable'; message: string; outcomeUnknown: boolean };
+
 export interface InvoiceRequest {
   /** CUIT of the issuer (11 digits). The adapter serves every organization, so the request names it. */
   issuerCuit?: string;
@@ -90,6 +114,13 @@ export interface InvoiceIssuer {
   issue(request: InvoiceRequest, idempotencyKey: string): Promise<IssueResult>;
   /** Looks up a voucher at the authority, to reconcile a retry whose outcome is unknown. */
   findIssued(ref: InvoiceRef): Promise<IssueResult | null>;
+  /**
+   * The number of the last voucher the authority authorized in a series, whoever issued it (this
+   * system, another tool of the same issuer, a person on the website of the authority). It is the
+   * authority's own count, so the caller does not have to infer it from the vouchers it recorded
+   * (JD-S4 R5-1). A series without vouchers answers `ok` with 0.
+   */
+  lastAuthorized(ref: InvoiceSeriesRef): Promise<LastAuthorizedResult>;
 }
 
 export interface PrescriptionRequest {

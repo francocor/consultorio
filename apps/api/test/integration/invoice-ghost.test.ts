@@ -14,7 +14,8 @@ import { createInvoicingWorld, type InvoicingWorld } from '../support/invoicing-
  * Judgment day, Stage 4, round 3, finding R3-3: the voucher of an invoice that was replaced without
  * knowing whether it had been issued, and the voucher that arrived for an invoice somebody had closed,
  * stay in the series. Nothing may adopt them as its own (an anonymous consumer with the same fee on
- * the same day looks exactly like them), and the next number expected is counted after them.
+ * the same day looks exactly like them). Since round 5 the next invoice counts from what the authority
+ * itself says it has issued, so the number it expects is after them.
  */
 
 let runtime: DbHandle;
@@ -124,12 +125,14 @@ describe('the voucher of an invoice replaced without knowing (JD-S4 R3-3)', () =
   });
 
   it('does not let the next anonymous invoice with the same fee adopt it when its answer is lost', async () => {
-    const { ghostNumber, t0 } = await replacedWithAGhost();
+    const { ghostNumber } = await replacedWithAGhost();
     const next = await create();
+    // After the invoice was requested: the first attempt is due from the moment it is created.
+    const sent = Date.now();
     world.issuer.setMode('timeout_after_authorize');
     await runIssueWith(
       next.created.id,
-      world.issueDeps(() => new Date(t0 + 1000)),
+      world.issueDeps(() => new Date(sent)),
     );
     const own = vouchersOf(next.created.id)[0];
     expect(own?.number).toBeGreaterThan(ghostNumber);
@@ -138,7 +141,7 @@ describe('the voucher of an invoice replaced without knowing (JD-S4 R3-3)', () =
     const issue = vi.spyOn(world.issuer, 'issue');
 
     try {
-      await world.sweep(after(t0, 10));
+      await world.sweep(after(sent, 10));
 
       expect(issue).not.toHaveBeenCalled();
     } finally {
@@ -151,40 +154,42 @@ describe('the voucher of an invoice replaced without knowing (JD-S4 R3-3)', () =
     });
   });
 
-  it('moves past a remembered number that a stale mark still expects, and never takes the voucher there', async () => {
-    const { ghostNumber, t0 } = await replacedWithAGhost();
+  it('parks, and never takes the voucher there, when a stale mark still reaches back to the remembered number (JD-S4 R5-1)', async () => {
+    const { ghostNumber } = await replacedWithAGhost();
     const next = await create();
+    // After the invoice was requested: the first attempt is due from the moment it is created.
+    const sent = Date.now();
     world.issuer.setMode('timeout_after_authorize');
     await runIssueWith(
       next.created.id,
-      world.issueDeps(() => new Date(t0 + 1000)),
+      world.issueDeps(() => new Date(sent)),
     );
+    world.issuer.setMode('ok');
     const own = vouchersOf(next.created.id)[0];
-    // A mark written before the ghost was known would expect the ghost's number.
+    // A mark written before the ghost existed would look from the number before it.
     await world.inTenant((tx) =>
       tx
         .update(invoiceTable)
-        .set({ expectedNumber: ghostNumber })
+        .set({ expectedNumber: ghostNumber, authorityLastAtMark: ghostNumber - 1 })
         .where(eq(invoiceTable.id, next.created.id)),
     );
-    const probed: number[] = [];
-    const original = world.issuer.findIssued.bind(world.issuer);
-    const probe = vi.spyOn(world.issuer, 'findIssued').mockImplementation((ref) => {
-      probed.push(ref.number);
-      return original(ref);
-    });
+    const issue = vi.spyOn(world.issuer, 'issue');
 
     try {
-      await world.sweep(after(t0, 10));
-    } finally {
-      probe.mockRestore();
-    }
+      const results = await world.sweep(after(sent, 10));
 
-    expect(probed).toEqual([ghostNumber, ghostNumber + 1]);
+      // The voucher at the remembered number has the facts of the invoice and of the one replaced: it
+      // cannot be told whose it is, so nothing is taken and nothing is sent.
+      expect(results).toContainEqual({ invoiceId: next.created.id, outcome: 'attention' });
+      expect(issue).not.toHaveBeenCalled();
+    } finally {
+      issue.mockRestore();
+    }
     expect(await world.rowOf(next.created.id)).toMatchObject({
-      status: 'issued',
-      number: own?.number,
+      status: 'pending',
+      deliveryState: 'needs_attention',
     });
+    expect(vouchersOf(next.created.id).map((voucher) => voucher.cae)).toEqual([own?.cae]);
   });
 });
 
@@ -224,13 +229,15 @@ describe('the voucher that arrived for an invoice somebody had closed (JD-S4 R3-
     ).toMatchObject([{ number: orphan?.number, reason: 'orphaned' }]);
 
     const next = await create();
+    // After the invoice was requested: the first attempt is due from the moment it is created.
+    const sent = Date.now();
     world.issuer.setMode('timeout_after_authorize');
     await runIssueWith(
       next.created.id,
-      world.issueDeps(() => new Date(t0 + 1000)),
+      world.issueDeps(() => new Date(sent)),
     );
     const own = vouchersOf(next.created.id)[0];
-    await world.sweep(after(t0, 10));
+    await world.sweep(after(sent, 10));
 
     expect(own?.number).not.toBe(orphan?.number);
     expect(await world.rowOf(next.created.id)).toMatchObject({

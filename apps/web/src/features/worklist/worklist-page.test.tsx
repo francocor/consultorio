@@ -294,6 +294,43 @@ describe('an invoice that needs a person (JD-S4 R1-C3, C8)', () => {
     expect(app.missingKeys).toEqual([]);
   });
 
+  it('names the numbers in doubt, or the range when it is too wide to list (JD-S4 R5-A-F4)', async () => {
+    const listed = open({
+      items: [
+        {
+          ...INVOICE,
+          detail: { reason: 'voucher_ambiguous', outcomeUnknown: true, candidates: [12, 14] },
+        },
+      ],
+    });
+
+    const found = await card('Factura para revisar');
+
+    expect(found.getByText(/Números para revisar en ARCA: 12, 14\./)).toBeInTheDocument();
+    expect(listed.missingKeys).toEqual([]);
+  });
+
+  it('names the range of numbers in doubt when it is too wide to list (JD-S4 R5-A-F4)', async () => {
+    const ranged = open({
+      items: [
+        {
+          ...INVOICE,
+          detail: {
+            reason: 'voucher_ambiguous',
+            outcomeUnknown: true,
+            candidatesFrom: 30,
+            candidatesTo: 80,
+          },
+        },
+      ],
+    });
+
+    const found = await card('Factura para revisar');
+
+    expect(found.getByText(/Números para revisar en ARCA: del 30 al 80\./)).toBeInTheDocument();
+    expect(ranged.missingKeys).toEqual([]);
+  });
+
   it('does not promise that a parked invoice goes on by itself, and warns when its outcome is unknown (JD-S4 R3-4)', async () => {
     open({
       items: [

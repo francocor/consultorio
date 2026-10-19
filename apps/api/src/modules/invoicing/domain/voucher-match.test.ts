@@ -1,7 +1,7 @@
 import type { IssueResult } from '@consultorio/contracts';
 import { describe, expect, it } from 'vitest';
 
-import { voucherMatches, type VoucherFacts } from './voucher-match.js';
+import { compareVoucher, voucherMatches, type VoucherFacts } from './voucher-match.js';
 
 type Issued = Extract<IssueResult, { status: 'issued' }>;
 
@@ -85,5 +85,41 @@ describe('whether a voucher the authority holds is the one an invoice asked for 
     // A plain invoice does not match a voucher that cancels something.
     expect(voucherMatches(cancelling, facts)).toBe(false);
     expect(voucherMatches({ ...held, associatedVoucher: undefined }, facts)).toBe(true);
+  });
+});
+
+describe('telling a voucher that differs from one that cannot be told (JD-S4 R5-1)', () => {
+  it('says "match" only when every field is stated and the same', () => {
+    expect(compareVoucher(held, facts)).toBe('match');
+  });
+
+  it('says "differs" when a field the authority states is not the one of the invoice', () => {
+    expect(compareVoucher({ ...held, totalCents: 1 }, facts)).toBe('differs');
+    expect(compareVoucher({ ...held, issueDate: '2026-10-16' }, facts)).toBe('differs');
+    expect(compareVoucher({ ...held, issuerCuit: '30712345671' }, facts)).toBe('differs');
+    expect(compareVoucher({ ...held, buyerDocument: null }, facts)).toBe('differs');
+    expect(
+      compareVoucher(
+        { ...held, associatedVoucher: { type: 'FC', pointOfSale: 1, number: 3 } },
+        facts,
+      ),
+    ).toBe('differs');
+  });
+
+  it('says "unclear" when a field is missing and nothing stated contradicts the invoice', () => {
+    expect(compareVoucher(silentAbout('buyerDocument'), facts)).toBe('unclear');
+    expect(compareVoucher(silentAbout('issuerCuit'), facts)).toBe('unclear');
+    const note = { ...facts, associatedVoucher: { type: 'FC', pointOfSale: 1, number: 3 } };
+    expect(compareVoucher({ ...held, associatedVoucher: undefined }, note)).toBe('unclear');
+    const withoutTotal = Object.fromEntries(
+      Object.entries(held).filter(([key]) => key !== 'totalCents'),
+    ) as Issued;
+    expect(compareVoucher(withoutTotal, facts)).toBe('unclear');
+  });
+
+  it('says "differs" when one field is missing and another one contradicts the invoice', () => {
+    expect(compareVoucher({ ...silentAbout('buyerDocument'), totalCents: 1 }, facts)).toBe(
+      'differs',
+    );
   });
 });

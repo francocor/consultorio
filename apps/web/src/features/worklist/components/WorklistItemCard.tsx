@@ -62,9 +62,22 @@ function invoiceAttentionText(
   }
   const text = t(`scheduling:worklist.invoiceAttention.${reason}`);
   // A parked invoice whose request may have been answered says so: the voucher may already exist.
-  return detail?.['outcomeUnknown'] === true && reason !== 'outcome_unknown'
-    ? `${text} ${t('scheduling:worklist.invoiceAttention.outcomeUnknownNote')}`
-    : text;
+  const withNote =
+    detail?.['outcomeUnknown'] === true && reason !== 'outcome_unknown'
+      ? `${text} ${t('scheduling:worklist.invoiceAttention.outcomeUnknownNote')}`
+      : text;
+  // The numbers in doubt: where a person looks for the voucher in ARCA (JD-S4 R5-A-F4).
+  const candidates = detail?.['candidates'];
+  if (Array.isArray(candidates) && candidates.length > 0 && candidates.every(Number.isInteger)) {
+    const numbers = candidates.join(', ');
+    return `${withNote} ${t('scheduling:worklist.invoiceAttention.candidatesNote', { numbers })}`;
+  }
+  const from = detail?.['candidatesFrom'];
+  const to = detail?.['candidatesTo'];
+  if (Number.isInteger(from) && Number.isInteger(to)) {
+    return `${withNote} ${t('scheduling:worklist.invoiceAttention.candidatesRangeNote', { from, to })}`;
+  }
+  return withNote;
 }
 
 /** One thing that needs a person: what it is about, what differs, and the ways to settle it. */

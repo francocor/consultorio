@@ -3,7 +3,9 @@ import type {
   InvoiceIssuer,
   InvoiceRef,
   InvoiceRequest,
+  InvoiceSeriesRef,
   IssueResult,
+  LastAuthorizedResult,
 } from '@consultorio/contracts';
 import { and, desc, eq, sql } from 'drizzle-orm';
 
@@ -41,7 +43,8 @@ import {
  * - it refuses what AFIP refuses (bad buyer CUIT, a total that is not the sum of its parts, a
  *   Factura A with no CUIT) with a message in AFIP's style, and a rejection consumes no number;
  * - the CAE has 14 digits and ends 10 days after the date of the voucher;
- * - `findIssued` reconciles: it answers with the voucher of a number, if there is one;
+ * - `findIssued` reconciles: it answers with the voucher of a number, if there is one, and
+ *   `lastAuthorized` says the last number of a series (0 when it is empty);
  * - modes: `ok`, `down` (retryable, nothing issued), `slow` (answers late), `timeout_after_authorize`
  *   (authorizes, then answers "unknown outcome"; fires once) and `reject_next` (fires once).
  */
@@ -252,6 +255,27 @@ export function createLocalInvoiceIssuer(options: LocalInvoiceIssuerOptions): Lo
           ),
         );
       return voucher ? issuedResult(voucher) : null;
+    },
+
+    async lastAuthorized(series: InvoiceSeriesRef): Promise<LastAuthorizedResult> {
+      const control = await readControl(db);
+      if (control.mode === 'down') {
+        return { status: 'retryable', message: SERVICE_DOWN_MESSAGE, outcomeUnknown: false };
+      }
+      // The same scope as the numbering of `issue`: epoch, organization, issuer, point of sale, type.
+      const [last] = await db
+        .select({ highest: sql<number>`coalesce(max(${localAfipVoucher.number}), 0)::int` })
+        .from(localAfipVoucher)
+        .where(
+          and(
+            eq(localAfipVoucher.epoch, control.epoch),
+            eq(localAfipVoucher.tenantRef, series.tenantRef ?? ''),
+            eq(localAfipVoucher.issuerCuit, series.issuerCuit ?? ''),
+            eq(localAfipVoucher.pointOfSale, series.pointOfSale),
+            eq(localAfipVoucher.type, series.type),
+          ),
+        );
+      return { status: 'ok', number: last?.highest ?? 0 };
     },
   };
 }

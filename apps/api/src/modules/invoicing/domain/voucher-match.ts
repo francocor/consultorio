@@ -24,27 +24,50 @@ const sameAssociated = (a: Associated | null, b: Associated | null): boolean =>
     ? a === b
     : a.type === b.type && a.pointOfSale === b.pointOfSale && a.number === b.number;
 
+/** What comparing a voucher with the facts of an invoice says. */
+export type VoucherComparison =
+  /** Every field is stated and the same. */
+  | 'match'
+  /** A field the authority states is not the one of the invoice: it is another voucher. */
+  | 'differs'
+  /** Nothing stated contradicts the invoice, but a field is missing: it cannot be told. */
+  | 'unclear';
+
+type Field = 'same' | 'differs' | 'unstated';
+
 /**
- * Whether a voucher the authority holds at a number is the one this invoice asked for. The type, the
+ * Compares a voucher the authority holds at a number with the invoice that asked for it. The type, the
  * point of sale and the number are the question that found it; the rest is compared here: the total
  * and the date, WHO issued it, WHOM it is addressed to, and for a credit note the voucher it cancels.
  * Two invoices of one series with the same total on the same day differ in the last ones (JD-S4 R2-1).
  *
- * A field the lookup does not state is a mismatch, never a match: an authority that does not say who
- * the voucher is for cannot be taken as saying it is for this recipient, and a wrong adoption is a
- * voucher recorded on the wrong invoice. (The one exception is `associatedVoucher` of something that is
- * not a credit note: silence is the same as "none".)
+ * A field the lookup does not state is never taken as the same: an authority that does not say who the
+ * voucher is for cannot be taken as saying it is for this recipient. But it is not taken as different
+ * either: a voucher that states nothing against the invoice and leaves a field out MAY be the invoice's
+ * (`unclear`), and an invoice that looks past it could issue a second one (JD-S4 R5-1). (The one
+ * exception is `associatedVoucher` of something that is not a credit note: silence is the same as "none".)
  */
+export function compareVoucher(found: Issued, facts: VoucherFacts): VoucherComparison {
+  const stated = <T>(value: T | undefined, same: (value: T) => boolean): Field =>
+    value === undefined ? 'unstated' : same(value) ? 'same' : 'differs';
+  const fields: Field[] = [
+    stated(found.totalCents, (total) => total === facts.totalCents),
+    stated(found.issueDate, (date) => date === facts.issueDate),
+    stated(found.issuerCuit, (cuit) => cuit === facts.issuerCuit),
+    stated(found.buyerDocument, (document) => sameDocument(document, facts.buyerDocument)),
+    facts.associatedVoucher === null
+      ? found.associatedVoucher === undefined || found.associatedVoucher === null
+        ? 'same'
+        : 'differs'
+      : stated(found.associatedVoucher, (voucher) =>
+          sameAssociated(voucher, facts.associatedVoucher),
+        ),
+  ];
+  if (fields.includes('differs')) return 'differs';
+  return fields.includes('unstated') ? 'unclear' : 'match';
+}
+
+/** Whether a voucher the authority holds at a number is the one this invoice asked for. */
 export function voucherMatches(found: Issued, facts: VoucherFacts): boolean {
-  if (found.totalCents !== facts.totalCents || found.issueDate !== facts.issueDate) return false;
-  if (found.issuerCuit === undefined || found.issuerCuit !== facts.issuerCuit) return false;
-  if (found.buyerDocument === undefined) return false;
-  if (!sameDocument(found.buyerDocument, facts.buyerDocument)) return false;
-  if (facts.associatedVoucher === null) {
-    return found.associatedVoucher === undefined || found.associatedVoucher === null;
-  }
-  return (
-    found.associatedVoucher !== undefined &&
-    sameAssociated(found.associatedVoucher, facts.associatedVoucher)
-  );
+  return compareVoucher(found, facts) === 'match';
 }

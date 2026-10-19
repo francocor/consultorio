@@ -8,6 +8,7 @@ import { createAfipIssueJob } from '../../src/modules/invoicing/index.js';
 import { createRuntimeDb, type DbHandle } from '../../src/platform/db/pool.js';
 import { runJob } from '../../src/platform/jobs/define-job.js';
 import { submissionKey } from '../support/billing-world.js';
+import { issueOutOfBand } from '../support/invoice-series.js';
 import { createInvoicingWorld, type InvoicingWorld } from '../support/invoicing-world.js';
 import { gate } from '../support/lock-waits.js';
 
@@ -215,7 +216,12 @@ async function staleMark() {
   await world.inTenant((tx) =>
     tx
       .update(invoiceTable)
-      .set({ deliveryState: 'awaiting_reconciliation', expectedNumber: takenNumber })
+      .set({
+        deliveryState: 'awaiting_reconciliation',
+        expectedNumber: takenNumber,
+        authorityLastAtMark: takenNumber - 1,
+        awaitingSince: new Date(t0),
+      })
       .where(eq(invoiceTable.id, waiting.created.id)),
   );
   const row = await world.rowOf(waiting.created.id);
@@ -223,27 +229,12 @@ async function staleMark() {
 }
 
 describe('a number that moved while the invoice waited (JD-S4 R2-1)', () => {
-  it('probes the numbers after the one that is taken, and adopts the voucher it finds there, instead of issuing again', async () => {
-    const { waiting, row, takenNumber, t0 } = await staleMark();
-    const probed: number[] = [];
-    const probe = vi.spyOn(world.issuer, 'findIssued').mockImplementation((ref) => {
-      probed.push(ref.number);
-      const base = {
-        status: 'issued' as const,
-        cae: '71000000000000',
-        caeExpiresOn: '2031-06-01',
-        totalCents: row.totalCents,
-        issueDate: row.issueDate,
-        issuerCuit: row.issuerSnapshot?.cuit ?? '',
-        buyerDocument: null,
-        associatedVoucher: null,
-      };
-      if (ref.number === takenNumber) return Promise.resolve({ ...base, number: takenNumber });
-      if (ref.number === takenNumber + 1) {
-        return Promise.resolve({ ...base, number: takenNumber + 1, cae: '71000000000001' });
-      }
-      return Promise.resolve(null);
-    });
+  it('does not ask about a number one of our invoices records, and adopts the voucher it finds after it, instead of issuing again', async () => {
+    const { waiting, takenNumber, t0 } = await staleMark();
+    // The authority holds the voucher of the waiting invoice right after the one that is taken.
+    const own = await issueOutOfBand(world, { invoiceId: waiting.id }, `series-own-${String(t0)}`);
+    expect(own.number).toBe(takenNumber + 1);
+    const probe = vi.spyOn(world.issuer, 'findIssued');
     const issue = vi.spyOn(world.issuer, 'issue');
 
     try {
@@ -251,7 +242,7 @@ describe('a number that moved while the invoice waited (JD-S4 R2-1)', () => {
 
       expect(results).toContainEqual({ invoiceId: waiting.id, outcome: 'issued' });
       expect(issue).not.toHaveBeenCalled();
-      expect(probed).toEqual([takenNumber, takenNumber + 1]);
+      expect(probe.mock.calls.map(([ref]) => ref.number)).toEqual([takenNumber + 1]);
     } finally {
       probe.mockRestore();
       issue.mockRestore();
@@ -259,28 +250,13 @@ describe('a number that moved while the invoice waited (JD-S4 R2-1)', () => {
     expect(await world.rowOf(waiting.id)).toMatchObject({
       status: 'issued',
       number: takenNumber + 1,
-      cae: '71000000000001',
+      cae: own.cae,
     });
   });
 
-  it('sends once, after probing the numbers that follow, when nothing is there', async () => {
-    const { waiting, row, takenNumber, t0 } = await staleMark();
-    const probed: number[] = [];
-    const probe = vi.spyOn(world.issuer, 'findIssued').mockImplementation((ref) => {
-      probed.push(ref.number);
-      return Promise.resolve(
-        ref.number === takenNumber
-          ? {
-              status: 'issued' as const,
-              number: takenNumber,
-              cae: '71000000000002',
-              caeExpiresOn: '2031-06-01',
-              totalCents: row.totalCents,
-              issueDate: row.issueDate,
-            }
-          : null,
-      );
-    });
+  it('sends once, asking about nothing, when the only number after the mark is one of ours', async () => {
+    const { waiting, t0 } = await staleMark();
+    const probe = vi.spyOn(world.issuer, 'findIssued');
     const issue = vi.spyOn(world.issuer, 'issue');
 
     try {
@@ -288,7 +264,7 @@ describe('a number that moved while the invoice waited (JD-S4 R2-1)', () => {
 
       expect(results).toContainEqual({ invoiceId: waiting.id, outcome: 'issued' });
       expect(issue).toHaveBeenCalledTimes(1);
-      expect(probed).toEqual([takenNumber, takenNumber + 1]);
+      expect(probe).not.toHaveBeenCalled();
     } finally {
       probe.mockRestore();
       issue.mockRestore();
@@ -489,7 +465,7 @@ describe('the mark written before the call (JD-S4 R2-3)', () => {
 });
 
 describe('a crash and a race around the call (JD-S4 R2-7)', () => {
-  it('probes, finds nothing and sends once when the process died after the mark and before the authority answered', async () => {
+  it('asks for the last number of the authority, finds nothing new and sends once when the process died after the mark and before the authority answered', async () => {
     await drain();
     const { created } = await create();
     const t0 = Date.now();
@@ -516,6 +492,8 @@ describe('a crash and a race around the call (JD-S4 R2-7)', () => {
       attempts: 0,
     });
     expect(left.expectedNumber).toBeGreaterThan(0);
+    // The mark holds the last number the authority had authorized, and expects the one after it.
+    expect(left.authorityLastAtMark).toBe((left.expectedNumber ?? 0) - 1);
     expect(vouchersOf(created.id)).toHaveLength(0);
     const probe = vi.spyOn(world.issuer, 'findIssued');
     const sent = vi.spyOn(world.issuer, 'issue');
@@ -524,7 +502,8 @@ describe('a crash and a race around the call (JD-S4 R2-7)', () => {
       const results = await world.sweep(after(t0, 1));
 
       expect(results).toContainEqual({ invoiceId: created.id, outcome: 'issued' });
-      expect(probe).toHaveBeenCalledWith(expect.objectContaining({ number: left.expectedNumber }));
+      // The authority has issued nothing since the mark: there is no number to ask about.
+      expect(probe).not.toHaveBeenCalled();
       expect(sent).toHaveBeenCalledTimes(1);
     } finally {
       probe.mockRestore();

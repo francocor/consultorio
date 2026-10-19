@@ -14,6 +14,12 @@ import { createRuntimeDb, type DbHandle } from '../../src/platform/db/pool.js';
 import type { JobClient } from '../../src/platform/jobs/boss.js';
 import { runJob } from '../../src/platform/jobs/define-job.js';
 import { submissionKey } from '../support/billing-world.js';
+import {
+  authorityLast,
+  issueOutOfBand,
+  markAwaiting,
+  strayRows,
+} from '../support/invoice-series.js';
 import { createInvoicingWorld, type InvoicingWorld } from '../support/invoicing-world.js';
 
 /**
@@ -113,10 +119,13 @@ describe('the mark written before the call (JD-S4 R1-C4)', () => {
 
     expect(seen).toMatchObject({ status: 'pending', deliveryState: 'awaiting_reconciliation' });
     expect(seen?.expectedNumber).toBeGreaterThan(0);
+    // The mark holds the last number the AUTHORITY had authorized, and expects the one after it.
+    expect(seen?.authorityLastAtMark).toBe((seen?.expectedNumber ?? 0) - 1);
     expect(await world.rowOf(created.id)).toMatchObject({
       status: 'issued',
       deliveryState: null,
       expectedNumber: null,
+      authorityLastAtMark: null,
     });
   });
 
@@ -157,37 +166,35 @@ describe('the mark written before the call (JD-S4 R1-C4)', () => {
     });
   });
 
-  it('parks the invoice when the voucher at the expected number is not its own', async () => {
+  it('goes on, remembering the voucher, when the one after the mark is not its own, and sends once (JD-S4 R5-1)', async () => {
     const { created, t0 } = await requested();
-    world.issuer.setMode('timeout_after_authorize');
-    await world.runIssue(after(t0, 0));
-    const authorized = vouchersOf(created.id)[0];
-    // The authority holds something else under that number now (another amount).
-    const probe = vi.spyOn(world.issuer, 'findIssued').mockResolvedValueOnce({
-      status: 'issued',
-      number: authorized?.number ?? 0,
-      cae: '70999999999999',
-      caeExpiresOn: '2031-06-01',
-      totalCents: 1,
-      issueDate: '2031-05-20',
-    });
+    const floor = await authorityLast(world, created.id);
+    await markAwaiting(world, created.id, floor, t0);
+    // The authority issued something else after the mark (another amount): it is not this invoice's.
+    const foreign = await issueOutOfBand(
+      world,
+      { invoiceId: created.id, totalCents: 1 },
+      `r5-${String(t0)}`,
+    );
+    expect(foreign.number).toBe(floor + 1);
+    world.issuer.setIdempotent(false);
     const issue = vi.spyOn(world.issuer, 'issue');
 
     try {
+      issue.mockClear();
       const outcome = await sweepOf(created.id, after(t0, 1));
 
-      expect(outcome).toEqual([{ invoiceId: created.id, outcome: 'attention' }]);
-      expect(issue).not.toHaveBeenCalled();
+      expect(outcome).toEqual([{ invoiceId: created.id, outcome: 'issued' }]);
+      expect(issue).toHaveBeenCalledTimes(1);
     } finally {
-      probe.mockRestore();
       issue.mockRestore();
+      world.issuer.setIdempotent(true);
     }
-    expect(await world.rowOf(created.id)).toMatchObject({
-      status: 'pending',
-      deliveryState: 'needs_attention',
-      nextAttemptAt: null,
-    });
-    expect(await attentionItems(created.id)).toHaveLength(1);
+    expect(vouchersOf(created.id).map((voucher) => voucher.number)).toEqual([floor + 2]);
+    expect(await world.rowOf(created.id)).toMatchObject({ status: 'issued', number: floor + 2 });
+    expect(
+      (await strayRows(world)).filter((stray) => stray.number === foreign.number),
+    ).toMatchObject([{ reason: 'unmatched', invoiceId: created.id }]);
   });
 });
 
