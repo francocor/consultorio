@@ -2226,7 +2226,7 @@ Everything that goes through the channel policy follows the opt-out: reminders, 
 
 ### Risks
 
-- A BAJA from a shared number (a family) opts out of EVERY channel of every patient that number was written about, email included; before B7 it only closed WhatsApp. Reception sees "Sin avisos" and can reopen a channel.
+- A BAJA from a shared number (a family) used to opt out of every channel of every patient on the number. Refined the same day (see "Shared numbers" below): WhatsApp closes for all, the full opt-out only for the patient the reply belongs to. The remaining risk is a wrong attribution (the latest message is not always the person who replied); the quoted message, the five-minute window and the reception item limit it.
 - Invoices (`modules/invoicing`, owned by the Stage 4 billing agent) follow the email opt-out through the channel policy, as before; with B7 a BAJA on WhatsApp now also stops the invoice email. Not touched here.
 - Reception reopening a channel is a human judgement call: it asks for confirmation and writes an audit entry, nothing more.
 - Meta-approved WhatsApp templates: only the text of `optout_ack` changed (the simulator and the fake render it from `assets/es-AR/whatsapp.ts`). A real provider would need that template re-approved.
@@ -2240,3 +2240,27 @@ Node v24.22.0 (PATH), pnpm 10.34.7.
 - Targeted integration (`vitest.integration.config.ts`, only my files, the full suite was left to the other agent): notifications (preferences, channels, tokens, global-optout, optout-listener, booking-confirmation, offers, message-log, send, video-followup, usage-metering), inbound and attribution, booking-submission, waitlist (fairness, join, entries, offers), demo seed files and `public-tokens`: all green.
 - E2E (`E2E_WEB_PORT=4900 E2E_API_PORT=3900 E2E_MINIO_PORT=9900`, `--workers=2`): `stage3-*`, `patients.spec`, `patients.responsive`: 42 passed, 0 failed after the demo fix.
 - Logs: `$TEMP/decisions-*.log`.
+
+### Shared numbers (B7 refinement, owner-approved 2026-10-18)
+
+A WhatsApp BAJA from a number written to several patients of the organization:
+
+- WhatsApp closes for every patient on the number (`optOutWhatsapp`, queued WhatsApp reminders and confirmations replaced by email when the patient has a usable email, the D10 fallback kept for this case only; the listener is told with `scope: 'whatsapp'`, so the waitlist uses `closeEntriesOfUnreachablePatient`, restored).
+- The full opt-out (`optOutPatient`) goes only to the patient the reply belongs to (`replyOwner` in `inbound.ts`): 1. the patient of the quoted message (the reply context); 2. otherwise the patient written to last on that number, unless another patient was written to within five minutes of that (`AMBIGUOUS_WITHIN_MS`); 3. otherwise nobody: WhatsApp-only for everybody, no email opt-out for anyone, and a `reply_to_review` item with `reason: email_optout_unconfirmed` (the worklist card now shows the sentence).
+- A number written to one patient only keeps the full opt-out. The unsubscribe link and reception are always the full opt-out of that patient.
+- New template `optout_ack_shared` (es-AR): the clinic will send no more WhatsApp messages to this number; the person who replied gets no emails either, or the reception will confirm it.
+- The other members do not show "Sin avisos" (their email is untouched).
+
+Migrations: none. Files: `application/opt-out.ts` (`optOutWhatsapp`, `OptOutScope`), `application/inbound.ts`, `assets/es-AR/whatsapp.ts`, waitlist `entries.ts` and wiring, web `WorklistItemCard`, `worklist-items.ts` and the `scheduling` locale.
+
+| Task | Test file | Layer | Safety net | RED | GREEN | TRIANGULATE | REFACTOR |
+|---|---|---|---|---|---|---|---|
+| `optout_ack_shared` | `assets/es-AR/whatsapp.test.ts` | Unit | 8 green before | Written first, failed (no such template) | Passes | With and without `emailPending` | None needed |
+| Attribution and the two levels of opt-out | `whatsapp-inbound.test.ts` (new describe, last in the file) | Integration | 18 green before | Written first | 23 pass | Quoted message beats the latest; latest wins without a quote; same-time is ambiguous (worklist item, nobody loses email); single-patient number stays global; acks | `replyOwner` extracted |
+| Email fallback of the other members | same | Integration | green before | Written first | Passes | Replacement queued with the group key of the reminder; the owner gets none | None needed |
+| Waitlist of the other members | `waitlist-fairness.test.ts` | Integration | green before | Written first | Passes | Keeps the entry with an email, closes it without one | `closeEntriesOfUnreachablePatient` restored |
+| Worklist sentence | `worklist-items.test.ts`, `worklist-page.test.tsx` | Unit, component | 25 green before | Written first, failed | 27 pass | Known and unknown reasons | None needed |
+
+Two test-setup lessons: the queued messages of a family fixture must be created after every member was reminded (the job that sends the next reminder would send them), and the fixture needs its own booking weeks (the file books by a slot counter).
+
+Verification of the refinement: `pnpm install --frozen-lockfile` (unchanged lockfile), `typecheck`, `lint`, `format:check`, `build` and `db:check` clean; `pnpm test` 384 files, 4877 passed plus 1 skipped, with one timeout of `platform/pdf/render.test.ts` under load that passes alone (12 of 12); targeted integration (whatsapp inbound, attribution and loop, waitlist fairness, entries and offers, global opt-out, listener, preferences, channels, tokens, booking confirmation, `demo-stage3`, `scheduling-worklist`, `public-tokens`): 15 files, 253 tests green; e2e `stage3-*` on 4900/3900/9900 with 2 workers: 17 passed. The four containers of the e2e stack were removed by id.

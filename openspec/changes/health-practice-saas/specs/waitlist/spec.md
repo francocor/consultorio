@@ -194,7 +194,7 @@ Every offer, acceptance, decline, expiry, priority override and manual change MU
 
 ### Requirement: Self-join cannot forge consent
 
-A public join MUST NOT record the agreement to receive offers on a record that already had the typed document: the entry is created for reception to call (reason "no offers opt-in"), because the visitor proved an email address, not who the document belongs to. For a patient the join registers, the agreement of the form MAY be recorded, and a WhatsApp choice MUST be only a request (see notifications, "WhatsApp opt-in from a public form"). A patient who opts out on any channel MUST leave the waitlist at once, because the opt-out is for every channel (owner decision B7, which replaces the earlier rule that kept the entries of a patient who still had another channel): all their entries close with reason "patient opted out" and their offers end. The opt-out is applied in the transaction of the opt-out, but a failure of the waitlist MUST NOT undo the patient's opt-out: it is reported and the opt-out stands. Staff MUST see only the entries of the places they work at and, for a professional, of the calendars they may work in; an entry outside that scope answers not found. An online booking cancelled within thirty minutes of being made MUST NOT start a match, and a slot MUST get at most five offers.
+A public join MUST NOT record the agreement to receive offers on a record that already had the typed document: the entry is created for reception to call (reason "no offers opt-in"), because the visitor proved an email address, not who the document belongs to. For a patient the join registers, the agreement of the form MAY be recorded, and a WhatsApp choice MUST be only a request (see notifications, "WhatsApp opt-in from a public form"). A patient who opts out on any channel MUST leave the waitlist at once, because the opt-out is for every channel (owner decision B7, which replaces the earlier rule that kept the entries of a patient who still had another channel): all their entries close with reason "patient opted out" and their offers end. The one exception is a patient who only gave up WhatsApp because they share the number with the patient who wrote BAJA (`notifications`, shared numbers): their entries MUST close only when no channel is left through which an offer could reach them (an email address that was not refused, or a WhatsApp number with a recorded opt-in); while they have an email they stay on the list and their offers go by email. The opt-out is applied in the transaction of the opt-out, but a failure of the waitlist MUST NOT undo the patient's opt-out: it is reported and the opt-out stands. Staff MUST see only the entries of the places they work at and, for a professional, of the calendars they may work in; an entry outside that scope answers not found. An online booking cancelled within thirty minutes of being made MUST NOT start a match, and a slot MUST get at most five offers.
 
 #### Scenario: Self-join with a document on file
 - GIVEN a patient on file with document D
@@ -211,6 +211,14 @@ A public join MUST NOT record the agreement to receive offers on a record that a
 - GIVEN a patient with an entry, an email that was not refused and a recorded WhatsApp opt-in
 - WHEN the patient opts out of WhatsApp (for example replying "BAJA")
 - THEN the entry closes as "patient opted out", because email is opted out as well
+
+#### Scenario: A family member who shares the number keeps the list
+- GIVEN two patients who share a WhatsApp number, the second with an entry and an email that was not refused
+- WHEN the first writes "BAJA" and the second is not the patient the reply belongs to
+- THEN the first patient's entries close as "patient opted out"
+- AND the second patient's entry stays active and their offers go by email
+- WHEN the second patient has no email
+- THEN their entry closes as "patient opted out"
 
 #### Scenario: Scope
 - GIVEN reception assigned to one place and an entry for another
