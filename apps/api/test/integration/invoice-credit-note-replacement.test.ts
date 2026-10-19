@@ -1,7 +1,7 @@
 import type { InvoiceDto, Problem } from '@consultorio/contracts';
 import { describe, expect, it, vi } from 'vitest';
 
-import { auditRows, drain, useWorld } from '../support/invoice-series.js';
+import { DNI, auditRows, drain, markAwaiting, useWorld } from '../support/invoice-series.js';
 
 /**
  * Judgment day, Stage 4, round 5, suspect B-W2: a credit note that was parked for a person had no way
@@ -16,7 +16,7 @@ describe('a credit note that needs a person (JD-S4 R5-B-W2)', () => {
   let numbers = 8000;
 
   /** An issued invoice and a credit note over it that the authority answered with a number we hold. */
-  async function parkedNote() {
+  async function parkedNote(options: { document?: typeof DNI } = {}) {
     const { world } = ctx;
     await drain(world);
     // A credit note of ours that the authority numbered: the next one is answered with its number.
@@ -25,7 +25,10 @@ describe('a credit note that needs a person (JD-S4 R5-B-W2)', () => {
     await world.runIssue();
     const taken = world.issuer.vouchers().filter((voucher) => voucher.type === 'NCC')[0];
     const charge = await world.charge();
-    const original = await world.issueInvoiceOf(charge);
+    const original = await world.issueInvoiceOf(
+      charge,
+      options.document ? { recipient: { kind: 'patient', document: options.document } } : {},
+    );
     const noteResponse = await world.creditNote(original.id, { reason: 'Error en la carga' });
     expect(noteResponse.statusCode, noteResponse.body).toBe(202);
     const note = noteResponse.json<InvoiceDto>();
@@ -173,5 +176,56 @@ describe('a credit note that needs a person (JD-S4 R5-B-W2)', () => {
 
     expect(refused.statusCode, refused.body).toBe(409);
     expect(await world.rowOf(pending.id)).toMatchObject({ status: 'pending' });
+  });
+
+  it('keeps the recipient of the parked note, not the one that was typed (JD-S4 R6-5)', async () => {
+    const { world } = ctx;
+    const parked = await parkedNote({ document: DNI });
+    const parkedRow = await world.rowOf(parked.note.id);
+    expect(parkedRow).toMatchObject({ recipientDocType: 'dni', recipientDocNumber: DNI.number });
+
+    // Nothing is typed about the document: the note of the invoice cancels is for that very person.
+    const response = await world.api.post('/invoices/manual', world.admin, await bodyFor(parked));
+
+    expect(response.statusCode, response.body).toBe(201);
+    const saved = await world.rowOf(response.json<InvoiceDto>().id);
+    expect(saved).toMatchObject({
+      recipientKind: parkedRow.recipientKind,
+      patientId: parkedRow.patientId,
+      tenantPayerId: parkedRow.tenantPayerId,
+      recipientName: parkedRow.recipientName,
+      recipientTaxCondition: parkedRow.recipientTaxCondition,
+      recipientDocType: 'dni',
+      recipientDocNumber: DNI.number,
+    });
+  });
+
+  it('can replace a note whose request may have been answered, with the acknowledgement of the owner (JD-S4 R6-B-T4)', async () => {
+    const { world } = ctx;
+    await drain(world);
+    const charge = await world.charge();
+    const original = await world.issueInvoiceOf(charge);
+    const note = (
+      await world.creditNote(original.id, { reason: 'Error en la carga' })
+    ).json<InvoiceDto>();
+    // The note was sent and the answer was lost: it waits for reconciliation.
+    await markAwaiting(world, note.id, 5, Date.now());
+    const parked = { charge, original, note };
+
+    const refused = await world.api.post('/invoices/manual', world.admin, await bodyFor(parked));
+    expect(refused.statusCode, refused.body).toBe(409);
+    expect(refused.json<Problem>().code).toBe('invoice_awaiting_reconciliation');
+    expect(await world.rowOf(note.id)).toMatchObject({ status: 'pending' });
+
+    const accepted = await world.api.post(
+      '/invoices/manual',
+      world.admin,
+      await bodyFor(parked, { acknowledgeUnknownOutcome: true }),
+    );
+
+    expect(accepted.statusCode, accepted.body).toBe(201);
+    expect(await world.rowOf(note.id)).toMatchObject({ status: 'rejected' });
+    const [entry] = await auditRows(world, note.id, 'invoice.replaced_unresolved');
+    expect(entry).toBeDefined();
   });
 });

@@ -3,6 +3,7 @@ import {
   type CreateManualInvoiceRequest,
   type FieldError,
   type InvoiceDto,
+  type RecipientTaxCondition,
 } from '@consultorio/contracts';
 import { and, asc, eq, sql } from 'drizzle-orm';
 
@@ -39,6 +40,24 @@ export interface RegisterManualInput {
 
 const validation = (path: string, i18nKey: string): AppError =>
   new AppError('validation_failed', [{ path, i18nKey } satisfies FieldError]);
+
+/** The recipient a note already has: the one of the invoice it cancels, as the parked note carries it. */
+function recipientOfNote(note: InvoiceRow): Recipient {
+  return {
+    kind: note.recipientKind === 'payer' ? 'payer' : 'patient',
+    patientId: note.patientId,
+    tenantPayerId: note.tenantPayerId,
+    name: note.recipientName,
+    taxCondition: note.recipientTaxCondition as RecipientTaxCondition,
+    document:
+      note.recipientDocType !== null && note.recipientDocNumber !== null
+        ? {
+            type: note.recipientDocType === 'dni' ? 'dni' : 'cuit',
+            number: note.recipientDocNumber,
+          }
+        : null,
+  };
+}
 
 /** What a pending invoice that a manual voucher stands in for says about itself afterwards. */
 const REPLACED_MESSAGE =
@@ -136,7 +155,11 @@ async function closeReplaced(
     (isNote || sameDocument);
   if (
     isNote !== CREDIT_NOTE_TYPES.some((type) => type === manual.type) ||
-    (isNote && pending.deliveryState !== 'needs_attention') ||
+    // A note is replaced when it is parked for a person or when its request may have been answered (the
+    // latter only with the acknowledgement, checked above), like an invoice (JD-S4 R6-B-T4).
+    (isNote &&
+      pending.deliveryState !== 'needs_attention' &&
+      pending.deliveryState !== 'awaiting_reconciliation') ||
     !(await cancelsTheSameVoucher(tx, pending, manual.associatedVoucher)) ||
     pending.type !== manual.type ||
     pending.totalCents !== manual.totalCents ||
@@ -154,6 +177,8 @@ async function closeReplaced(
       nextAttemptAt: null,
       expectedNumber: null,
       authorityLastAtMark: null,
+      lastSentAt: null,
+      lookupMisses: 0,
       awaitingSince: null,
     })
     .where(eq(invoice.id, pending.id));
@@ -180,6 +205,11 @@ async function closeReplaced(
     type: pending.type,
     pointOfSale: pending.pointOfSale,
     expectedNumber: pending.expectedNumber,
+    // The voucher may sit anywhere from the number after the last the authority had authorized when the
+    // request went out (JD-S4 R6-B-T2).
+    ...(pending.authorityLastAtMark !== null
+      ? { candidatesFrom: pending.authorityLastAtMark + 1 }
+      : {}),
   };
   // A voucher may sit at that number, and it is not the voucher of any invoice that asks later: the
   // number is remembered, so a lookup never adopts it and the next number expected is counted after it
@@ -348,6 +378,9 @@ export async function registerManualInvoice(
   // replaces were freed above, so they are read again). A credit note: exactly what the note it replaces
   // covered, cancelling the same invoice for the same reason.
   const covered: CoveredLine[] = [];
+  // A credit note is addressed to whoever the note it replaces is addressed to, not to what was typed
+  // (JD-S4 R6-5); an invoice to the recipient resolved from its lines.
+  let addressee: Recipient = normalized;
   let totalCents = request.totalCents;
   let locationIds: string[];
   let issuer: IssuerSnapshot | null;
@@ -372,6 +405,7 @@ export async function registerManualInvoice(
     locationIds = replaced.locationIds;
     issuer = replaced.issuerSnapshot;
     creditNote = { originalId: replaced.creditNoteOfId, reason: replaced.reason };
+    addressee = recipientOfNote(replaced);
   } else {
     const fresh = await lockLines(tx, requestedIds, input.viewer);
     const plan = planParts(fresh, request.lines);
@@ -424,7 +458,7 @@ export async function registerManualInvoice(
       issueDate: request.issueDate,
       key: request.idempotencyKey,
       requestHash,
-      recipient: normalized,
+      recipient: addressee,
       totalCents,
       locationIds,
       issuer,
@@ -444,7 +478,7 @@ export async function registerManualInvoice(
     actor: input.actor,
     resourceType: 'invoice',
     resourceId: row.id,
-    ...(normalized.patientId ? { patientId: normalized.patientId } : {}),
+    ...(addressee.patientId ? { patientId: addressee.patientId } : {}),
     metadata: {
       type: request.type,
       pointOfSale: request.pointOfSale,
