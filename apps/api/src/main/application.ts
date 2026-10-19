@@ -46,6 +46,7 @@ import {
   type DeploymentSettings,
 } from '../modules/tenancy/index.js';
 import { createAuditDeny } from '../platform/audit/deny.js';
+import type { PortalActor } from '../platform/authz/actor.js';
 import { createActorLoader } from '../platform/authz/guard.js';
 import {
   type MatriculaValidator,
@@ -323,6 +324,8 @@ export function createApplication(options: ApplicationOptions): FastifyInstance 
   // What `/files/:token` serves: documents register their kind here, and so does any module that
   // hands out a file (billing exports, invoice PDFs). One registry per application.
   const fileResources = createFileResourceRegistry();
+  // The portal's own door to files (Stage 5): a registry apart, with the portal actor.
+  const portalFileResources = createFileResourceRegistry<PortalActor>();
   const documents = createDocuments({
     withTenant,
     auditDeny,
@@ -375,6 +378,7 @@ export function createApplication(options: ApplicationOptions): FastifyInstance 
       worklist: scheduling.worklist,
       videoJoin,
       fileResources,
+      portalFileResources,
       ...(options.clock ? { clock: options.clock } : {}),
       ...(options.storage ? { storage: options.storage } : {}),
       ...(options.jobs ? { jobs: options.jobs } : {}),

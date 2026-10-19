@@ -52,4 +52,10 @@ describe('the schema index', () => {
       expect(files, name).toContain(name);
     }
   });
+
+  it('has a file for each table family the Stage 5 tracks add, already exported', () => {
+    for (const name of ['consent', 'prescriptions', 'local-erx', 'portal', 'demo-outbox']) {
+      expect(files, name).toContain(name);
+    }
+  });
 });

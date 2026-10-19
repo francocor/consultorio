@@ -29,7 +29,7 @@ const context = {
 };
 
 describe('the module wiring (every shared registration, in one place per module)', () => {
-  it('wires each Stage 3 and Stage 4 module that has a directory, once', () => {
+  it('wires each Stage 3, 4 and 5 module that has a directory, once', () => {
     const wired = MODULE_WIRINGS.map((wiring) => wiring.name);
     const directories = readdirSync(MODULES_DIR, { withFileTypes: true })
       .filter((entry) => entry.isDirectory())
@@ -44,6 +44,9 @@ describe('the module wiring (every shared registration, in one place per module)
       'billing',
       'invoicing',
       'reports',
+      'consent',
+      'prescriptions',
+      'portal',
     ]) {
       expect(directories, name).toContain(name);
       expect(wired, name).toContain(name);
@@ -56,7 +59,13 @@ describe('the module wiring (every shared registration, in one place per module)
     );
     const owned = slots.flatMap((slot) => Object.keys(slot)).sort();
 
-    expect(owned).toEqual(['botChallenge', 'invoiceIssuer', 'videoLink', 'whatsapp']);
+    expect(owned).toEqual([
+      'botChallenge',
+      'invoiceIssuer',
+      'prescriptionProvider',
+      'videoLink',
+      'whatsapp',
+    ]);
     for (const slot of slots) {
       for (const entry of Object.values(slot)) expect(entry.demo.kind).toBe('fake');
     }
@@ -65,7 +74,14 @@ describe('the module wiring (every shared registration, in one place per module)
   it('completes the adapter registry once the composition root adds its own ports', () => {
     const base = Object.fromEntries(
       ADAPTER_PORTS.filter(
-        (port) => !['whatsapp', 'videoLink', 'botChallenge', 'invoiceIssuer'].includes(port),
+        (port) =>
+          ![
+            'whatsapp',
+            'videoLink',
+            'botChallenge',
+            'invoiceIssuer',
+            'prescriptionProvider',
+          ].includes(port),
       ).map((port) => [port, { real: undefined, demo: { adapter: {}, kind: 'fake' as const } }]),
     );
 
@@ -169,6 +185,27 @@ describe('the registry of public links', () => {
   });
 });
 
+describe('the file registries the modules receive', () => {
+  it('gives every module the staff registry and a separate one for the portal', () => {
+    const seen: { staff: unknown; portal: unknown }[] = [];
+    const probe = {
+      name: 'probe',
+      create: (context: Parameters<(typeof MODULE_WIRINGS)[number]['create']>[0]) => {
+        seen.push({ staff: context.fileResources, portal: context.portalFileResources });
+        return {};
+      },
+    };
+
+    createApp([probe, { ...probe, name: 'probe-two' }]);
+
+    expect(seen).toHaveLength(2);
+    expect(seen[0]?.portal).toBeDefined();
+    expect(seen[0]?.portal).not.toBe(seen[0]?.staff);
+    // One registry per application, shared by its modules.
+    expect(seen[1]?.portal).toBe(seen[0]?.portal);
+  });
+});
+
 describe('the simulator console entries of the modules', () => {
   const env = {
     DATABASE_URL: 'postgres://app_rw:placeholder@localhost:5432/app',
@@ -183,12 +220,13 @@ describe('the simulator console entries of the modules', () => {
         : [],
     );
 
-  it('lists WhatsApp, the bot challenge, video and AFIP, each with the adapter that serves customers', async () => {
+  it('lists WhatsApp, the bot challenge, video, AFIP and the prescription provider, each with the adapter that serves customers', async () => {
     const entries = entriesFor();
 
     expect(entries.map((entry) => entry.id).sort()).toEqual([
       'afip',
       'bot-challenge',
+      'erx',
       'video',
       'whatsapp',
     ]);
@@ -216,6 +254,8 @@ describe('the simulator console entries of the modules', () => {
     expect(await status('bot-challenge')).toEqual({ adapter: 'real', mode: null });
     // Production selects no AFIP simulator by default: invoicing is off until a provider is chosen.
     expect(await status('afip')).toEqual({ adapter: 'off', mode: null });
+    // The same for the prescription provider: no simulator in production unless somebody asked.
+    expect(await status('erx')).toEqual({ adapter: 'off', mode: null });
   });
 });
 

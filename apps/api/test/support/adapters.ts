@@ -2,6 +2,7 @@ import { randomBytes } from 'node:crypto';
 
 import { createFakeInvoiceIssuer } from '../../src/adapters/afip-fake/index.js';
 import { createFakeBotChallenge } from '../../src/adapters/bot-challenge-fake/index.js';
+import { createFakePrescriptionProvider } from '../../src/adapters/erx-fake/index.js';
 import { createFakeEmailSender } from '../../src/adapters/fake-email/index.js';
 import { createLocalKeyManagement } from '../../src/adapters/local-kek/index.js';
 import { createMemoryObjectStorage } from '../../src/adapters/memory-storage/index.js';
@@ -42,6 +43,7 @@ export function createTestAdapterResolver(
         videoLink: { real: undefined, demo: fake(createFakeVideoLinkProvider()) },
         botChallenge: { real: undefined, demo: fake(createFakeBotChallenge()) },
         invoiceIssuer: { real: undefined, demo: fake(createFakeInvoiceIssuer()) },
+        prescriptionProvider: { real: undefined, demo: fake(createFakePrescriptionProvider()) },
       },
     ]),
   );
