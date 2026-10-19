@@ -13,6 +13,7 @@ import type { AuthzOptions } from '../../platform/authz/guard.js';
 import type { TenantKeys } from '../../platform/crypto/tenant-keys.js';
 import type { WithTenant } from '../../platform/db/tenant-context.js';
 import { SYSTEM_USER_ID } from '../../platform/db/tenant-context.js';
+import type { AppointmentEvents } from '../../platform/events/appointment-events.js';
 import type { FileResourceRegistry } from '../../platform/files/file-resources.js';
 import { registerPortalGuard } from '../../platform/http/portal-guard.js';
 import type { PublicOrigins } from '../../platform/http/public-origin.js';
@@ -21,6 +22,7 @@ import type { JobClient } from '../../platform/jobs/boss.js';
 import type { EmailSender } from '../../platform/mail/email-sender.js';
 import { registerTokenHandler } from '../../platform/public/token-router.js';
 import { createActionTokens } from '../../platform/tokens/index.js';
+import type { VideoJoinRegistry } from '../notifications/index.js';
 import type { ExportRegistry } from '../tenancy/index.js';
 
 import { createActivationHandler } from './application/activation-handler.js';
@@ -30,6 +32,8 @@ import { exportPortal } from './application/export-contributor.js';
 import type { IdentityDeps } from './application/identities.js';
 import { createPortalSessions } from './application/sessions.js';
 import type { SignInDeps } from './application/sign-in.js';
+import { createWithPortalSubject } from './application/subject.js';
+import { portalRoutes } from './http/portal-routes.js';
 import { publicRoutes } from './http/public-routes.js';
 import { sessionRoutes } from './http/session-routes.js';
 import { staffRoutes } from './http/staff-routes.js';
@@ -60,6 +64,10 @@ export interface PortalOptions {
    * its resources take the `PortalActor` of the session and authorize the subject again.
    */
   portalFileResources: FileResourceRegistry<PortalActor>;
+  /** What scheduling publishes: a cancellation by the patient frees the slot and reaches the waitlist. */
+  appointmentEvents?: AppointmentEvents | undefined;
+  /** The address of a video appointment, from teleconsultation (through notifications' registry). */
+  videoJoin?: VideoJoinRegistry['resolver'] | undefined;
   clock?: () => Date;
 }
 
@@ -106,6 +114,20 @@ export function createPortal(options: PortalOptions): Portal {
     origins: options.origins,
     signIn,
   });
+  const withPortalSubject = createWithPortalSubject(options.withTenant);
+  const portal = portalRoutes({
+    withTenant: options.withTenant,
+    withPortalSubject,
+    sessions: identities.sessions,
+    auditDeny: options.auditDeny,
+    appointments: {
+      keys: options.keys,
+      events: options.appointmentEvents,
+      videoJoin: options.videoJoin,
+      clock,
+    },
+    capabilities: () => ({ consents: false, prescriptions: false }),
+  });
   const sessions = sessionRoutes({
     withTenant: options.withTenant,
     sessions: identities.sessions,
@@ -137,6 +159,7 @@ export function createPortal(options: PortalOptions): Portal {
       staff(app);
       pages(app);
       sessions(app);
+      portal(app);
     },
   };
 }

@@ -4,5 +4,8 @@
   "portal_already_linked": "Esta persona ya tiene acceso al portal con ese vínculo.",
   "portal_state_conflict": "La cuenta o el vínculo ya estaba dado de baja, o el paciente no se puede invitar en este momento.",
   "portal_challenge_failed": "No pudimos comprobar que sea una persona. Vuelva a intentar.",
-  "portal_code_invalid": "El código no es válido o ya venció. Pida uno nuevo e inténtelo otra vez."
+  "portal_code_invalid": "El código no es válido o ya venció. Pida uno nuevo e inténtelo otra vez.",
+  "portal_subject_required": "Elija de quién quiere ver la información para continuar.",
+  "portal_cancel_deadline_passed": "Ya no se puede cancelar desde el portal porque falta muy poco para el turno. Comuníquese con la organización.",
+  "portal_appointment_unavailable": "Este turno ya no admite esa acción. Actualice la pantalla para ver cómo está ahora."
 }

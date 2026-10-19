@@ -17,5 +17,5 @@ export const PORTAL_SCENARIOS: Record<(typeof PORTAL_AUDIT_ACTIONS)[number], Aud
   'portal.read': { pending: 'S5.08 (task 5.31): a portal read' },
   'portal.download': { pending: 'S5.09 (task 5.35): a session-bound download' },
   'portal.profile.changed': { pending: 'S5.08 (task 5.34): contact data changed' },
-  'portal.denied': { pending: 'S5.08 (task 5.31): another patient answers 404 and is audited' },
+  'portal.denied': t('portal-isolation.test.ts'),
 };

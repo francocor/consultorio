@@ -37,6 +37,12 @@ export {
   readAppointmentsForCharge,
   type AppointmentForCharge,
 } from './application/charge-source.js';
+// The patient portal (Stage 5, track B): the appointments of one patient, as the patient sees them.
+export {
+  findPatientAppointment,
+  listPatientAppointments,
+  type PatientAppointmentView,
+} from './application/patient-appointments.js';
 // Invoicing (Stage 4, track C): the generic wording of the service of an appointment.
 export { readInvoiceWording } from './application/invoice-wording.js';
 export { createAppointmentTypeService } from './application/appointment-types.js';

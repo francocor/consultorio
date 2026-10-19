@@ -22,6 +22,12 @@ export const PORTAL_ERRORS = {
   portal_challenge_failed: { status: 400, i18nKey: 'errors.portal_challenge_failed' },
   // The code is wrong, expired, spent, or there never was one. One answer for all of them.
   portal_code_invalid: { status: 400, i18nKey: 'errors.portal_code_invalid' },
+  // The person has several records to read and has not picked one yet (or the one they picked ended).
+  portal_subject_required: { status: 409, i18nKey: 'errors.portal_subject_required' },
+  // The appointment is inside the cancellation cut-off: the patient contacts the organization.
+  portal_cancel_deadline_passed: { status: 409, i18nKey: 'errors.portal_cancel_deadline_passed' },
+  // The appointment is not in a state where the action applies (already cancelled, already over).
+  portal_appointment_unavailable: { status: 409, i18nKey: 'errors.portal_appointment_unavailable' },
 } as const satisfies Record<string, { status: number; i18nKey: string }>;
 
 /**

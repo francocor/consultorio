@@ -1,6 +1,7 @@
 import { z } from 'zod';
 
 import { REPRESENTATIVE_RELATIONS } from './patients.js';
+import { APPOINTMENT_STATUSES } from './scheduling.js';
 
 export { PORTAL_ERRORS, PORTAL_AUDIT_ACTIONS } from './portal-catalog.js';
 
@@ -165,3 +166,64 @@ export type PortalSessionDto = z.infer<typeof PortalSessionDto>;
 
 export const PortalSessionsResponse = z.strictObject({ sessions: z.array(PortalSessionDto) });
 export type PortalSessionsResponse = z.infer<typeof PortalSessionsResponse>;
+
+// Portal: whose data is shown ----------------------------------------------------------------------
+
+/** What the portal can show today. A part with no module behind it shows its empty state. */
+export const PortalCapabilities = z.strictObject({
+  consents: z.boolean(),
+  prescriptions: z.boolean(),
+});
+export type PortalCapabilities = z.infer<typeof PortalCapabilities>;
+
+/** Who is signed in, the records they can pick from, and which one is shown. */
+export const PortalMeResponse = z.strictObject({
+  email: z.string(),
+  organizationName: z.string(),
+  /** The links that give access today: active ones, and the suspended ones the person must hear about. */
+  links: z.array(PortalLinkDto),
+  /** The link whose record is shown. Null until the person picks one. */
+  selectedLinkId: Id.nullable(),
+  capabilities: PortalCapabilities,
+});
+export type PortalMeResponse = z.infer<typeof PortalMeResponse>;
+
+/** Picks the record that is shown. The server checks the link belongs to the person. */
+export const PortalSubjectRequest = z.strictObject({ linkId: Id });
+export type PortalSubjectRequest = z.infer<typeof PortalSubjectRequest>;
+
+// Portal: appointments ----------------------------------------------------------------------------
+
+export const PortalAppointmentDto = z.strictObject({
+  id: Id,
+  startsAt: Instant,
+  endsAt: Instant,
+  /** The zone of the place, for the screen to show the time the way the place keeps it. */
+  timeZone: z.string(),
+  status: z.enum(APPOINTMENT_STATUSES),
+  professionalName: z.string(),
+  locationName: z.string(),
+  typeName: z.string(),
+  mode: z.enum(['in_person', 'virtual']),
+  /** The patient can still confirm it. */
+  canConfirm: z.boolean(),
+  /** The patient can still cancel it, inside the cancellation policy of the organization. */
+  canCancel: z.boolean(),
+  /** Until when the patient can cancel from the portal. After that, they contact the organization. */
+  cancelDeadline: Instant.nullable(),
+  /** The address to join a video appointment, when there is one. */
+  joinUrl: z.string().nullable(),
+  /** A video appointment whose address does not exist yet: the screen says it will follow. */
+  joinPending: z.boolean(),
+});
+export type PortalAppointmentDto = z.infer<typeof PortalAppointmentDto>;
+
+export const PortalAppointmentsResponse = z.strictObject({
+  upcoming: z.array(PortalAppointmentDto),
+  past: z.array(PortalAppointmentDto),
+});
+export type PortalAppointmentsResponse = z.infer<typeof PortalAppointmentsResponse>;
+
+/** What confirming or cancelling answers with: the appointment as it is now. */
+export const PortalAppointmentResponse = z.strictObject({ appointment: PortalAppointmentDto });
+export type PortalAppointmentResponse = z.infer<typeof PortalAppointmentResponse>;

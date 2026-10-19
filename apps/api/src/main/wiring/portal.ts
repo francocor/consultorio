@@ -37,6 +37,8 @@ export const portalWiring: ModuleWiring = {
       jobs: context.jobs,
       adapters: context.adapters,
       portalFileResources: context.portalFileResources,
+      appointmentEvents: context.appointmentEvents,
+      videoJoin: context.videoJoin.resolver,
       ...(context.clock ? { clock: context.clock } : {}),
     }),
 };

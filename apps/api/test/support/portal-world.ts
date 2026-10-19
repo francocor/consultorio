@@ -45,6 +45,16 @@ export interface PortalWorld extends BookingWorld {
   onboard(patientId: string, body?: Record<string, unknown>): Promise<PortalIdentityDto>;
   /** What the staff screen of a patient shows. */
   portalOf(patientId: string, by?: TestSession): Promise<PatientPortalResponse>;
+  /** Signs an address with an active account in, on a browser of its own. */
+  signInAs(email: string): Promise<Visitor>;
+  /**
+   * A patient with an active portal account, signed in on a browser of their own. With `email` of
+   * its own, so a test can sign the same account in again.
+   */
+  patientSession(options?: {
+    email?: string;
+    patient?: Partial<typeof patient.$inferInsert>;
+  }): Promise<{ visitor: Visitor; email: string; patientId: string; identity: PortalIdentityDto }>;
 }
 
 let patients = 0;
@@ -92,7 +102,20 @@ export async function createPortalWorld(
     return { page, done };
   };
 
-  return {
+  const onboard: PortalWorld['onboard'] = async (patientId, body) => {
+    const identity = await inviteOk(patientId, body);
+    const { done } = await activate(activationPathSentTo(identity.email));
+    expect(done.statusCode, done.body).toBe(200);
+    const shown = await base.api.get(`/patients/${patientId}/portal`, base.reception);
+    const found = shown
+      .json<PatientPortalResponse>()
+      .identities.find((candidate) => candidate.id === identity.id);
+    if (!found) throw new Error('the activated identity is not listed');
+    return found;
+  };
+  const signIn = (email: string) => world.signInAs(email);
+
+  const world: PortalWorld = {
     ...base,
     jobDefinitions,
     runJobs: () => runPending(runtime.db, base.jobs, jobDefinitions),
@@ -101,16 +124,27 @@ export async function createPortalWorld(
     inviteOk,
     activationPathSentTo,
     activate,
-    onboard: async (patientId, body) => {
-      const identity = await inviteOk(patientId, body);
-      const { done } = await activate(activationPathSentTo(identity.email));
+    onboard,
+    signInAs: async (email) => {
+      const visitor = base.visitor();
+      const asked = await visitor.post(`/public/${options.slug}/portal/otp`, {
+        email,
+        challengeProof: await visitor.solve(),
+      });
+      expect(asked.statusCode, asked.body).toBe(200);
+      await runPending(runtime.db, base.jobs, jobDefinitions);
+      const done = await visitor.post(`/public/${options.slug}/portal/otp/verify`, {
+        email,
+        code: base.codeSentTo(email),
+      });
       expect(done.statusCode, done.body).toBe(200);
-      const shown = await base.api.get(`/patients/${patientId}/portal`, base.reception);
-      const found = shown
-        .json<PatientPortalResponse>()
-        .identities.find((candidate) => candidate.id === identity.id);
-      if (!found) throw new Error('the activated identity is not listed');
-      return found;
+      return visitor;
+    },
+    patientSession: async (sessionOptions = {}) => {
+      const email = sessionOptions.email ?? `p${randomUUID().slice(0, 8)}@example.test`;
+      const patientId = await patientWith({ ...sessionOptions.patient, email });
+      const identity = await onboard(patientId);
+      return { visitor: await signIn(email), email, patientId, identity };
     },
     portalOf: async (patientId, by = base.reception) => {
       const response = await base.api.get(`/patients/${patientId}/portal`, by);
@@ -118,6 +152,7 @@ export async function createPortalWorld(
       return response.json<PatientPortalResponse>();
     },
   };
+  return world;
 }
 
 /** Runs SQL as the organization and returns the rows. */
