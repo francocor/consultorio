@@ -2,9 +2,7 @@
  * Public API of the portal module (the patient portal: identities, links, sign-in by emailed code,
  * read models and downloads). Other modules and the composition root import from here only.
  *
- * This is the seam skeleton of Stage 5: the module is wired and registered, and does nothing yet.
- * The portal track (Track B, S5.06 to S5.10) adds files under this folder and edits this one. The
- * module owns no clinical table: it reads consents, prescriptions, invoices and documents only
+ * The module owns no clinical table: it reads consents, prescriptions, invoices and documents only
  * through the `index.ts` of the module that owns them, as the `PortalActor` of the session.
  */
 import type { FastifyInstance } from 'fastify';
@@ -19,9 +17,16 @@ import type { PublicOrigins } from '../../platform/http/public-origin.js';
 import type { RateLimitStore } from '../../platform/http/rate-limit.js';
 import type { JobClient } from '../../platform/jobs/boss.js';
 import type { EmailSender } from '../../platform/mail/email-sender.js';
+import { registerTokenHandler } from '../../platform/public/token-router.js';
+import { createActionTokens } from '../../platform/tokens/index.js';
 import type { ExportRegistry } from '../tenancy/index.js';
 
+import { createActivationHandler } from './application/activation-handler.js';
+import { majorityAgeOf } from './application/country.js';
 import { exportPortal } from './application/export-contributor.js';
+import type { IdentityDeps } from './application/identities.js';
+import { createPortalSessions } from './application/sessions.js';
+import { staffRoutes } from './http/staff-routes.js';
 
 /** Registers what the portal takes with an organization that leaves: identities and links. */
 export function registerPortalExportContributors(registry: ExportRegistry): void {
@@ -57,5 +62,29 @@ export interface Portal {
 }
 
 export function createPortal(options: PortalOptions): Portal {
-  return { options, routes: () => undefined };
+  const clock = options.clock ?? (() => new Date());
+  const tokens = createActionTokens({ clock });
+  const identities: IdentityDeps = {
+    tokens,
+    sessions: createPortalSessions(),
+    clock,
+    majorityAge: majorityAgeOf,
+  };
+  registerTokenHandler(
+    'portal_activation',
+    createActivationHandler({ ...identities, origins: options.origins }),
+  );
+  const staff = staffRoutes({
+    withTenant: options.withTenant,
+    identities,
+    email: options.email,
+    origins: options.origins,
+  });
+
+  return {
+    options,
+    routes: (app) => {
+      staff(app);
+    },
+  };
 }

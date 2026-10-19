@@ -9,10 +9,16 @@
  * the API catalog (errors.ts); the messages go in `locales/es-AR/errors.portal.json`, keyed by the
  * code. The portal track (Track B) adds its codes here and nowhere else.
  */
-export const PORTAL_ERRORS = {} as const satisfies Record<
-  string,
-  { status: number; i18nKey: string }
->;
+export const PORTAL_ERRORS = {
+  // The patient has no email on record, so there is nowhere to send the invitation.
+  portal_patient_has_no_email: { status: 409, i18nKey: 'errors.portal_patient_has_no_email' },
+  // The email already belongs to the portal account of another person: ask for a different one.
+  portal_email_in_use: { status: 409, i18nKey: 'errors.portal_email_in_use' },
+  // The patient already has a portal account of their own.
+  portal_already_linked: { status: 409, i18nKey: 'errors.portal_already_linked' },
+  // The account or the link is already deactivated, or the patient cannot be invited.
+  portal_state_conflict: { status: 409, i18nKey: 'errors.portal_state_conflict' },
+} as const satisfies Record<string, { status: number; i18nKey: string }>;
 
 /**
  * Audit actions of the portal. They are registered in the shared catalogue. A portal entry names
