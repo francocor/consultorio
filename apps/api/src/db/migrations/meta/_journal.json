@@ -533,6 +533,13 @@
       "when": 1792367117988,
       "tag": "0490_cash_payment_locks",
       "breakpoints": true
+    },
+    {
+      "idx": 76,
+      "version": "7",
+      "when": 1792367808164,
+      "tag": "0491_invoice_lock_guards",
+      "breakpoints": true
     }
   ]
 }

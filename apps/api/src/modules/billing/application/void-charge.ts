@@ -1,7 +1,7 @@
 import type { ChargeDto, VoidChargeRequest } from '@consultorio/contracts';
-import { eq } from 'drizzle-orm';
+import { asc, eq } from 'drizzle-orm';
 
-import { charge } from '../../../db/schema/billing-charges.js';
+import { charge, chargeLine } from '../../../db/schema/billing-charges.js';
 import { audit } from '../../../platform/audit/writer.js';
 import type { Tx } from '../../../platform/db/tenant-context.js';
 import { AppError } from '../../../platform/http/problem.js';
@@ -42,6 +42,16 @@ export async function voidCharge(
     .for('update');
   if (!row || !canSee(scope, row)) throw new AppError('not_found');
   if (row.status === 'voided') throw new AppError('charge_voided');
+
+  // The lines of the charge are locked, in the order of their ids, before the invoices are asked
+  // about: an invoice being created over them holds these locks until it commits, so the question
+  // below sees it (JD-S4 R1-C2). Charge first, then lines: the order of the writers of invoices.
+  await tx
+    .select({ id: chargeLine.id })
+    .from(chargeLine)
+    .where(eq(chargeLine.chargeId, input.chargeId))
+    .orderBy(asc(chargeLine.id))
+    .for('update');
 
   const paid = (await paidNetByCharge(tx, [input.chargeId])).get(input.chargeId) ?? 0;
   if (paid > 0) throw new AppError('charge_has_payments');

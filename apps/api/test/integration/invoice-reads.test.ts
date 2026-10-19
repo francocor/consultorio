@@ -1,4 +1,5 @@
 import type { InvoiceDto, TenantPayerDto } from '@consultorio/contracts';
+import { DateTime } from 'luxon';
 import { afterAll, beforeAll, describe, expect, inject, it } from 'vitest';
 
 import { readInvoicedLines, summarizeInvoiced } from '../../src/modules/invoicing/index.js';
@@ -18,7 +19,8 @@ let world: InvoicingWorld;
 let osdeCatalogId: string;
 let osde: TenantPayerDto;
 
-const TODAY = new Date().toISOString().slice(0, 10);
+// The date printed on a voucher is the one of Buenos Aires, not the UTC one (they differ from 21:00 on).
+const TODAY = DateTime.now().setZone('America/Argentina/Buenos_Aires').toISODate() ?? '';
 const PERIOD = { from: '2000-01-01', to: '2100-01-01' };
 
 beforeAll(async () => {

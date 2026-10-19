@@ -71,7 +71,11 @@ export interface CreateInvoiceInput {
 const validation = (path: string, i18nKey: string): AppError =>
   new AppError('validation_failed', [{ path, i18nKey } satisfies FieldError]);
 
-/** The lines the request names, locked, in the order of their ids; all of them must exist. */
+/**
+ * The lines the request names, locked, in the order of their ids; all of them must exist. Their
+ * charges are locked first (shared): a charge that is being voided makes the invoice wait and then be
+ * refused, and an invoice in progress makes the void wait (JD-S4 R1-C2).
+ */
 export async function lockLines(
   tx: Tx,
   ids: readonly string[],
@@ -79,7 +83,7 @@ export async function lockLines(
 ): Promise<ChargeLineForInvoicing[]> {
   const unique = [...new Set(ids)];
   if (unique.length !== ids.length) throw validation('lines', 'validation.duplicate');
-  const lines = await readChargeLines(tx, unique, { lock: true });
+  const lines = await readChargeLines(tx, unique, { lock: true, lockCharges: true });
   // A line the caller cannot see answers like one that does not exist.
   if (lines.length !== unique.length) throw new AppError('not_found');
   const locations = await visibleLocationIds(tx, viewer);
@@ -275,6 +279,8 @@ export async function insertInvoice(
       const constraint = constraintOf(error);
       if (constraint === 'invoice_previous_attempt_key') throw new AppError('invoice_not_rejected');
       if (constraint === 'invoice_number_key') throw new AppError('invoice_number_taken');
+      // Two submissions with the same key met at the index: the key was used for another request.
+      if (constraint === 'invoice_idempotency_key') throw new AppError('idempotency_key_reused');
     }
     throw error;
   }

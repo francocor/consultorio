@@ -128,13 +128,39 @@ function toLine(view: LineView): ChargeLineForInvoicing {
  * Reads lines by id, in the order of their ids (so two invoices that lock the same lines always
  * lock them in the same order and cannot deadlock). With `lock: true` the rows are locked FOR UPDATE
  * until the end of the transaction of the caller: the invoice is built over what it read.
+ *
+ * With `lockCharges: true` the charges the lines belong to are locked FOR SHARE first, in the order
+ * of their ids, and the lines after them: charge, then lines, the order the void of a charge follows
+ * (JD-S4 R1-C2). A void in progress makes the invoice wait and then read the charge as voided; an
+ * invoice in progress makes the void wait and then see the invoice. Only a writer that creates an
+ * invoice needs it: the rest of the writers of lines never read the state of the charge.
  */
 export async function readChargeLines(
   tx: Tx,
   lineIds: readonly string[],
-  options: { lock?: boolean } = {},
+  options: { lock?: boolean; lockCharges?: boolean } = {},
 ): Promise<ChargeLineForInvoicing[]> {
   if (lineIds.length === 0) return [];
+  if (options.lockCharges) {
+    const owners = await tx
+      .selectDistinct({ chargeId: chargeLine.chargeId })
+      .from(chargeLine)
+      .where(inArray(chargeLine.id, [...lineIds]))
+      .orderBy(asc(chargeLine.chargeId));
+    if (owners.length > 0) {
+      await tx
+        .select({ id: charge.id })
+        .from(charge)
+        .where(
+          inArray(
+            charge.id,
+            owners.map((owner) => owner.chargeId),
+          ),
+        )
+        .orderBy(asc(charge.id))
+        .for('share');
+    }
+  }
   const base = lineQuery(tx)
     .where(inArray(chargeLine.id, [...lineIds]))
     .orderBy(asc(chargeLine.id));
