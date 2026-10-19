@@ -1,5 +1,6 @@
-import { expect, test } from '@playwright/test';
+import { expect, test, type Browser, type Page } from '@playwright/test';
 
+import { acquireErxLock } from './support/erx-lock.js';
 import { OPERATOR_STATE } from './support/operator.js';
 import { axeViolations, openAs, urlOf } from './support/stack.js';
 
@@ -7,6 +8,11 @@ import { axeViolations, openAs, urlOf } from './support/stack.js';
  * Matricula verification (STF-04, S5.01): only the platform operator verifies a registration, the
  * organization sees the result in its team page, and the operator can withdraw it. The journey ends
  * where it started (unverified), so the rest of the suite finds the demo as it was.
+ *
+ * The professional of the first journey is the pediatrician, whom the e-prescription journey expects
+ * unverified; the cardiologist, whom that journey needs verified, is verified when the stack starts
+ * and is not touched here. The first journey takes the lock that the e-prescription journey holds, so
+ * the two never overlap on two workers.
  */
 test.use({ storageState: OPERATOR_STATE, reducedMotion: 'reduce' });
 
@@ -17,6 +23,15 @@ test('the operator verifies a registration, the organization sees it, and the op
   page,
   browser,
 }) => {
+  const release = await acquireErxLock();
+  try {
+    await journey(page, browser);
+  } finally {
+    release();
+  }
+});
+
+async function journey(page: Page, browser: Browser) {
   await page.goto(urlOf('platform', '/'));
   await page.getByRole('tab', { name: 'Matrículas' }).click();
   const panel = page.getByRole('tabpanel', { name: 'Matrículas' });
@@ -69,7 +84,7 @@ test('the operator verifies a registration, the organization sees it, and the op
   await expect(card).toContainText('Sin verificar');
   await panel.getByRole('button', { name: 'Pendientes' }).click();
   await expect(pending).toBeVisible();
-});
+}
 
 test('the note is saved on its own and stays with the registration', async ({ page }) => {
   await page.goto(urlOf('platform', '/'));

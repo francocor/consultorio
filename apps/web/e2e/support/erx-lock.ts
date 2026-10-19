@@ -9,6 +9,10 @@ import { join } from 'node:path';
  * lock for the whole journey. The lock is a directory (creating it is atomic) named after the API
  * port, so two stacks on one machine do not wait for each other. A lock older than twenty minutes
  * belongs to a run that died and is taken over.
+ *
+ * It also guards the matricula of the pediatrician: the e-prescription journey needs that professional
+ * UNverified (it is refused), and the journey of the operator's queue verifies and withdraws that very
+ * registration. They hold this lock too, so the pediatrician is never verified while the other looks.
  */
 const LOCK = join(tmpdir(), `consultorio-erx-mode-${process.env['E2E_API_PORT'] ?? '3100'}.lock`);
 const STALE_MS = 20 * 60_000;
