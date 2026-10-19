@@ -92,13 +92,21 @@ export const fixtures: Record<string, TenantTableFixture> = {
   payment_reversal: {
     insert: async (tx, tenantId, overrides) => {
       const paymentId = overrides?.['payment_id'] ?? (await insertPayment(tx, tenantId));
+      // A reversal names the charge of its payment (the guard of the database insists on it).
+      const paymentsCharge = await tx.execute<{ charge_id: string }>(
+        sql`SELECT charge_id FROM payment WHERE id = ${paymentId}`,
+      );
+      const chargeId =
+        overrides?.['charge_id'] ??
+        paymentsCharge.rows[0]?.charge_id ??
+        (await insertCharge(tx, tenantId));
       return returningId(
         tx,
         sql`INSERT INTO payment_reversal (tenant_id, payment_id, charge_id, location_id, cash_session_id,
                                           amount_cents, reason, kind, reversed_by, idempotency_key,
                                           request_hash)
               VALUES (${tenantId}, ${paymentId},
-                      ${overrides?.['charge_id'] ?? (await insertCharge(tx, tenantId))},
+                      ${chargeId},
                       ${overrides?.['location_id'] ?? (await insertLocation(tx, tenantId))},
                       ${overrides?.['cash_session_id'] ?? null},
                       100, 'Devolución', 'refund', gen_random_uuid(), ${randomUUID()}, 'hash')

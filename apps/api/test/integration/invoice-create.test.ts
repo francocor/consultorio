@@ -106,7 +106,7 @@ describe('an invoice over the lines of a charge', () => {
     expect(created.recipient.name).toBeTruthy();
     expect(created.lines).toEqual([
       expect.objectContaining({
-        description: 'Consulta',
+        description: 'Servicios de salud',
         amountCents: 2_000_000,
         chargeId: charge.id,
       }),
@@ -238,7 +238,7 @@ describe('an invoice over the lines of a charge', () => {
 
     expect(response.statusCode, response.body).toBe(202);
     const wording = response.json<InvoiceDto>().lines.map((line) => line.description);
-    expect(wording).toEqual(['Consulta', 'Otros conceptos']);
+    expect(wording).toEqual(['Servicios de salud', 'Otros conceptos']);
     expect(wording.join(' ')).not.toMatch(/HIV/);
   });
 });

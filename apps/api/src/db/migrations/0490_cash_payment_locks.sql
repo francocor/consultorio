@@ -56,7 +56,9 @@ CREATE OR REPLACE FUNCTION app.guard_payment_reversal() RETURNS trigger
     SELECT p.amount_cents, p.method, p.charge_id INTO original
       FROM payment p WHERE p.tenant_id = NEW.tenant_id AND p.id = NEW.payment_id;
     IF FOUND THEN
-      IF NEW.charge_id IS DISTINCT FROM original.charge_id THEN
+      -- A charge the caller cannot see is left to the foreign key, like the register below.
+      IF NEW.charge_id IS DISTINCT FROM original.charge_id
+         AND EXISTS (SELECT 1 FROM charge c WHERE c.tenant_id = NEW.tenant_id AND c.id = NEW.charge_id) THEN
         RAISE EXCEPTION 'the charge of a reversal is the charge of its payment' USING ERRCODE = '23514';
       END IF;
       -- Serializes the reversals of one payment (and the payments of one charge) before the sum is read.

@@ -97,7 +97,8 @@ describe('the invoice PDF job (task 4.52)', () => {
     expect(text).toContain(`CAE N° ${issued.cae ?? ''}`);
     expect(text).toContain(`Comp. Nro ${String(issued.number).padStart(8, '0')}`);
     expect(text).toContain('Factura C');
-    expect(text).toContain('Consulta');
+    // The generic wording of a service: the appointment type gave no description of its own.
+    expect(text).toContain('Servicios de salud');
     // The world runs on a simulator: the document is marked as a test.
     expect(text).toContain('Documento de prueba sin validez fiscal');
     expect((await world.getInvoice(issued.id)).hasPdf).toBe(true);
