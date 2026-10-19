@@ -17,6 +17,9 @@ import { findPrescription, hiddenOrMissing, toDto } from './read-model.js';
 /** Most prescriptions one read returns: a patient has a handful, and a screen is not a report. */
 const LIMIT = 100;
 
+/** Most patients one entry of the trail names: the limit of a list in the metadata of an entry. */
+const TRAIL_PATIENTS = 50;
+
 /**
  * Writes the entry of the audit trail for the prescription a professional opened, with the actor,
  * the patient and the prescription (e-prescription, "Audit of a read"). The reader is the prescriber
@@ -39,22 +42,39 @@ async function auditRead(
 }
 
 /**
- * A list is one read, one entry: who listed, for which patient when there is one, and how many
- * prescriptions it showed (JD-S5 R1-B-S3). An entry per row would turn a screen into a hundred
- * entries of the trail, and the entry of the record is written when one of them is opened.
+ * A list is one read, one entry: who listed, for which patient when there is one, how many
+ * prescriptions it showed (JD-S5 R1-B-S3) and, when it spans patients, which ones (each once, up to
+ * the limit of a list in an entry; `patientIdsTruncated` says there were more, JD-S5 R2). An entry
+ * per row would turn a screen into a hundred entries of the trail, and the entry of the record is
+ * written when one of them is opened.
  */
 async function auditList(
   tx: Tx,
   caller: Caller,
-  input: { via: 'list' | 'mine'; count: number; patientId?: string },
+  input: {
+    via: 'list' | 'mine';
+    count: number;
+    patientId?: string;
+    patientIds?: readonly string[];
+  },
 ): Promise<void> {
+  const distinct = [...new Set(input.patientIds ?? [])];
   await audit(tx, {
     action: 'prescription.read',
     outcome: 'allow',
     actor: caller.actor,
     resourceType: 'prescription',
     ...(input.patientId === undefined ? {} : { patientId: input.patientId }),
-    metadata: { via: input.via, count: input.count },
+    metadata: {
+      via: input.via,
+      count: input.count,
+      ...(input.patientIds === undefined
+        ? {}
+        : {
+            patientIds: distinct.slice(0, TRAIL_PATIENTS),
+            ...(distinct.length > TRAIL_PATIENTS ? { patientIdsTruncated: true } : {}),
+          }),
+    },
   });
 }
 
@@ -105,7 +125,11 @@ export async function listMine(
     .limit(LIMIT);
   const dtos: PrescriptionDto[] = [];
   for (const row of rows) dtos.push(await toDto(deps.keys, tx, row));
-  await auditList(tx, caller, { via: 'mine', count: dtos.length });
+  await auditList(tx, caller, {
+    via: 'mine',
+    count: dtos.length,
+    patientIds: rows.map((row) => row.patientId),
+  });
   return dtos;
 }
 

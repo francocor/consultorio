@@ -247,9 +247,12 @@ export function createSigningService(deps: {
         method: found.request.method as 'in_person' | 'portal',
         signedAt: signedAt.toISOString(),
         mark: mark.mark,
+        // The name the signer typed is covered by the fingerprint (JD-S5 R2, A-W3).
+        version: 2,
+        signerName: request.signerName === undefined ? null : request.signerName.normalize('NFC'),
       });
       const payload: SignaturePayload = {
-        v: 1,
+        v: 2,
         representative,
         // The full name the signer typed, kept beside a mark that may be a drawing.
         ...(request.signerName === undefined

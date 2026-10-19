@@ -100,12 +100,28 @@ export interface SignedFacts {
   /** ISO 8601 with milliseconds, in UTC. */
   signedAt: string;
   mark: SignatureMark;
+  /**
+   * The version of the facts the fingerprint was made from. Version 1 (no version given, the records
+   * signed before) does not cover the name the signer typed; version 2 does (JD-S5 R2, A-W3). A
+   * record is verified against the version it was signed with, so the old ones still verify.
+   */
+  version?: 1 | 2;
+  /** The full name the signer typed, covered from version 2 on. Null when the record has none. */
+  signerName?: string | null;
 }
 
 /** SHA-256 (hex) of the canonical JSON of the facts of a signature. */
 export function signatureFingerprint(facts: SignedFacts): string {
+  const second =
+    facts.version === 2
+      ? {
+          v: 2,
+          signerName: facts.signerName == null ? null : canonicalTitle(facts.signerName),
+        }
+      : {};
   return sha256(
     canonicalJson({
+      ...second,
       requestId: facts.requestId,
       patientId: facts.patientId,
       versionId: facts.versionId,

@@ -88,7 +88,8 @@ export function toRequestDto(
 
 /** What is kept encrypted of a signature: the personal part of the signed record. */
 export const SignaturePayload = z.strictObject({
-  v: z.literal(1),
+  /** 1: signed before the name was covered by the fingerprint. 2: the name is covered (A-W3). */
+  v: z.union([z.literal(1), z.literal(2)]),
   representative: z
     .strictObject({ name: z.string(), nationalId: z.string(), relation: z.string() })
     .nullable(),

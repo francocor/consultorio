@@ -24,7 +24,7 @@ import {
   type Organization,
   type PrescriptionDeps,
 } from './common.js';
-import { requireProvider } from './connection.js';
+import { connectedProvider, requireProvider } from './connection.js';
 import { PrescriptionConflict, PrescriptionDenied } from './errors.js';
 import type { Caller } from './issue.js';
 import { leaseIsLive, pinnedInFlight, releaseLease, takeLease } from './lease.js';
@@ -119,7 +119,7 @@ async function writeCancelled(
   deps: PrescriptionDeps,
   caller: Caller,
   row: PrescriptionRow,
-  step: { reason: string; via: 'provider' | 'local' },
+  step: { reason: string; via: 'provider' | 'local'; unconfirmed?: boolean },
 ): Promise<void> {
   const blob = await deps.keys.encryptField(
     tx,
@@ -144,7 +144,12 @@ async function writeCancelled(
     resourceType: 'prescription',
     resourceId: row.id,
     patientId: row.patientId,
-    metadata: { via: step.via, status: row.status },
+    metadata: {
+      via: step.via,
+      status: row.status,
+      // Closed here although the provider may hold it, because no provider was there to ask.
+      ...(step.unconfirmed === true ? { unconfirmed: true } : {}),
+    },
   });
 }
 
@@ -214,7 +219,16 @@ export async function cancelPrescriptionPhased(
       }
       // The provider may hold it even if this row says otherwise (a parked row, a lost answer): it
       // is asked first, and a prescription it holds is cancelled after it is recorded, not here.
-      const { provider } = await requireProvider(tx, deps);
+      const { provider } = await connectedProvider(tx, deps);
+      if (!provider) {
+        // Nobody to ask. The professional may close it knowing so (JD-S5 R2, B-T7); otherwise the
+        // prescription waits for a provider to be connected.
+        if (input.request.acknowledgeUnknownOutcome !== true) {
+          throw new AppError('prescription_provider_not_connected');
+        }
+        await writeCancelled(tx, deps, caller, row, { reason, via: 'local', unconfirmed: true });
+        return { kind: 'done' };
+      }
       return { kind: 'ask', row, provider, token: await takeLease(tx, row.id, deps.clock()) };
     }
     if (row.status !== 'issued' || row.externalId === null) {

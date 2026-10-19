@@ -59,6 +59,9 @@ export function factsOf(
       kind: payload.mark.kind,
       value: payload.mark.kind === 'typed' ? payload.mark.value : payload.markDigest,
     },
+    // The fingerprint is verified against the version the record was signed with.
+    version: payload.v,
+    signerName: payload.signerName ?? null,
   };
 }
 

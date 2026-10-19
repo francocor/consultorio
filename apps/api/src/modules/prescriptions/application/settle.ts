@@ -3,12 +3,12 @@ import { and, asc, eq, gt, inArray, isNull, lt, lte, or } from 'drizzle-orm';
 
 import { prescription } from '../../../db/schema/prescriptions.js';
 import { audit } from '../../../platform/audit/writer.js';
-import type { Tx } from '../../../platform/db/tenant-context.js';
+import { SYSTEM_USER_ID, type Tx } from '../../../platform/db/tenant-context.js';
 
 import { CANCEL_REASON_FIELD, SYSTEM_ACTOR, sqlState, type PrescriptionDeps } from './common.js';
 import { connectedProvider } from './connection.js';
 import { findPrescription, lockPrescription } from './read-model.js';
-import { attemptSubmit, type SubmitOutcome } from './submit.js';
+import { attemptSubmit, attemptSubmitDetached, type SubmitOutcome } from './submit.js';
 
 export type SettleOutcome =
   'unchanged' | 'dispensed' | 'expired' | 'cancelled' | 'skipped' | 'unavailable';
@@ -102,11 +102,18 @@ export interface ReconcileResult {
  *
  * An organization that is read-only submits nothing (issuing is a write); it still settles what the
  * provider reports (a provider notice is allowed there).
+ *
+ * Each prescription is worked in transactions of its own (JD-S5 R2, B-W2) when the pass knows how to
+ * open them (`deps.withTenant` and the organization): the advisory lock and the row lock of one
+ * prescription are let go when its turn is over. Inside the one transaction of the job, a savepoint
+ * does not release them, so a pass of fifty prescriptions kept all fifty until it ended: a
+ * cancellation of one that was done with answered "an attempt is in progress" and a retry answered
+ * "skipped".
  */
 export async function reconcileOrganization(
   tx: Tx,
   deps: PrescriptionDeps,
-  options: { prescriptionId?: string | undefined } = {},
+  options: { prescriptionId?: string | undefined; tenantId?: string | undefined } = {},
 ): Promise<ReconcileResult> {
   const now = deps.clock();
   const result: ReconcileResult = { settled: 0, submitted: 0, failed: 0 };
@@ -137,22 +144,29 @@ export async function reconcileOrganization(
     .orderBy(asc(prescription.createdAt))
     .limit(BATCH);
 
+  const { withTenant } = deps;
+  const { tenantId } = options;
   for (const row of rows) {
     try {
-      await tx.transaction(async (inner) => {
-        if (row.status === 'issued') {
-          const outcome = await settleFromProvider(inner, deps, row.id);
-          if (outcome === 'dispensed' || outcome === 'expired' || outcome === 'cancelled') {
-            result.settled += 1;
-          }
-        } else {
-          const outcome: SubmitOutcome = await attemptSubmit(inner, deps, row.id, {
-            // A notice that names the prescription is a nudge to try now.
-            force: false,
-          });
-          if (outcome === 'issued') result.submitted += 1;
+      if (row.status === 'issued') {
+        const settle = (inner: Tx) => settleFromProvider(inner, deps, row.id);
+        const outcome =
+          withTenant && tenantId
+            ? await withTenant({ tenantId, userId: SYSTEM_USER_ID }, settle)
+            : await tx.transaction(settle);
+        if (outcome === 'dispensed' || outcome === 'expired' || outcome === 'cancelled') {
+          result.settled += 1;
         }
-      });
+      } else {
+        // A notice that names the prescription is a nudge to try now: not forced.
+        const outcome: SubmitOutcome =
+          withTenant && tenantId
+            ? await attemptSubmitDetached({ ...deps, withTenant }, tenantId, row.id, {
+                force: false,
+              })
+            : await tx.transaction((inner) => attemptSubmit(inner, deps, row.id, { force: false }));
+        if (outcome === 'issued') result.submitted += 1;
+      }
     } catch (error) {
       result.failed += 1;
       deps.log?.error(

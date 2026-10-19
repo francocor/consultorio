@@ -64,7 +64,16 @@ export type IssuePrescriptionRequest = z.infer<typeof IssuePrescriptionRequest>;
 export const CorrectPrescriptionRequest = z.strictObject({ items: Items });
 export type CorrectPrescriptionRequest = z.infer<typeof CorrectPrescriptionRequest>;
 
-export const CancelPrescriptionRequest = z.strictObject({ reason: Text(300) });
+export const CancelPrescriptionRequest = z.strictObject({
+  reason: Text(300),
+  /**
+   * The professional knows that the provider may hold this prescription and that no provider is
+   * connected to ask (JD-S5 R2, B-T7): the prescription is closed here without asking, and the trail
+   * says so. Without it, a prescription the provider may hold is closed only after the provider was
+   * asked, and it is never closed this way while a provider is connected.
+   */
+  acknowledgeUnknownOutcome: z.boolean().optional(),
+});
 export type CancelPrescriptionRequest = z.infer<typeof CancelPrescriptionRequest>;
 
 /**

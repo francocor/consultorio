@@ -48,8 +48,8 @@ export function createErxJobs(deps: PrescriptionDeps): ErxJobs {
     name: ERX_RECONCILE_JOB,
     category: 'webhook',
     payload: ReconcilePayload,
-    async handler({ tx, payload }) {
-      await reconcileOrganization(tx, deps, { prescriptionId: payload.prescriptionId });
+    async handler({ tx, tenantId, payload }) {
+      await reconcileOrganization(tx, deps, { prescriptionId: payload.prescriptionId, tenantId });
     },
   });
   return { submit, reconcile, definitions: [submit, reconcile] as readonly JobDefinition[] };

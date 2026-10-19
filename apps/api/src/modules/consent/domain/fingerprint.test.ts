@@ -160,4 +160,32 @@ describe('signatureFingerprint', () => {
     expect(verifySignatureFingerprint({ ...facts, method: 'portal' }, stored)).toBe(false);
     expect(verifySignatureFingerprint(facts, 'c'.repeat(64))).toBe(false);
   });
+
+  describe('the name the signer typed (JD-S5 R2, A-W3)', () => {
+    const v2: SignedFacts = { ...facts, version: 2, signerName: 'Ana Pérez' };
+
+    it('is part of what a record of the second version is a fingerprint of', () => {
+      const hash = signatureFingerprint(v2);
+
+      expect(signatureFingerprint({ ...v2, signerName: 'Eva Pérez' })).not.toBe(hash);
+      expect(signatureFingerprint({ ...v2, signerName: null })).not.toBe(hash);
+      expect(verifySignatureFingerprint({ ...v2, signerName: 'Eva Pérez' }, hash)).toBe(false);
+      expect(verifySignatureFingerprint(v2, hash)).toBe(true);
+    });
+
+    it('reads the name in one form, as it does the other names', () => {
+      expect(signatureFingerprint({ ...v2, signerName: '  Ana   Pérez ' })).toBe(
+        signatureFingerprint(v2),
+      );
+    });
+
+    it('is not part of a record of the first version, which still verifies as it was signed', () => {
+      const first = signatureFingerprint({ ...facts, version: 1 });
+
+      expect(signatureFingerprint({ ...facts, version: 1, signerName: 'Eva Pérez' })).toBe(first);
+      // A record with no version is a first one: the fingerprints stored before the name was covered.
+      expect(signatureFingerprint(facts)).toBe(first);
+      expect(signatureFingerprint(v2)).not.toBe(first);
+    });
+  });
 });

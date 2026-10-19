@@ -12,8 +12,10 @@ import {
   attemptSubmit,
   attemptSubmitDetached,
 } from '../../src/modules/prescriptions/application/submit.js';
+import { createErxJobs } from '../../src/modules/prescriptions/index.js';
 import { createRuntimeDb, type DbHandle } from '../../src/platform/db/pool.js';
 import { createWithTenant } from '../../src/platform/db/tenant-context.js';
+import { runJob } from '../../src/platform/jobs/define-job.js';
 import { createErxWorld, type ErxWorld } from '../support/erx-world.js';
 import { asTenant } from '../support/tenants.js';
 
@@ -415,6 +417,148 @@ describe('R2-10: a legacy row with a past attempt is asked about at the provider
     expect(cancelled.statusCode, cancelled.body).toBe(409);
     expect(problemOf(cancelled).code).toBe('prescription_awaiting_reconciliation');
     expect((await world.rowOf(pending.id))['status']).toBe('pending_submission');
+  });
+});
+
+describe('B-W2: a long pass of the reconciliation does not keep the rows it is done with', () => {
+  it('lets a cancellation through for a row that is not the one the pass is working on', async () => {
+    const first = await pendingAfterOutage();
+    const second = await pendingAfterOutage();
+    world.clock.now = new Date(START.getTime() + 10 * 60_000);
+    const jobs = createErxJobs({
+      ...patientDeps(),
+      providerTimeoutMs: 60_000,
+    });
+    const keyOfSecond = (await world.rowOf(second.pending.id))['idempotency_key'] as string;
+    const gate = deferred();
+    const original = world.provider.issue.bind(world.provider);
+    world.provider.issue = async (request, key, signal) => {
+      if (key === keyOfSecond) {
+        gate.entered();
+        await gate.gate;
+      }
+      return original(request, key, signal);
+    };
+    try {
+      // The pass sends the first prescription and then waits for the provider on the second one.
+      const pass = runJob(runtime.db, jobs.reconcile, {
+        id: crypto.randomUUID(),
+        name: jobs.reconcile.name,
+        data: { tenantId: world.tenant.id },
+        enqueuedAt: new Date(),
+        retryCount: 0,
+      });
+      await gate.inside;
+
+      const cancelled = await world.api.post(
+        `/prescriptions/${first.pending.id}/cancel`,
+        first.prescriber.session,
+        { reason: 'Ya no hace falta' },
+      );
+
+      expect(cancelled.statusCode, cancelled.body).toBe(200);
+      expect(cancelled.json<PrescriptionDto>().status).toBe('cancelled');
+      gate.release();
+      expect(await pass).toEqual({ status: 'completed' });
+      expect((await world.rowOf(second.pending.id))['status']).toBe('issued');
+    } finally {
+      gate.release();
+      world.provider.issue = original;
+    }
+  });
+});
+
+describe('B-T7: a prescription the provider may hold can be closed when no provider is connected', () => {
+  it('refuses to close it without asking, and closes it when the professional acknowledges the unknown outcome', async () => {
+    const { prescriber, pending } = await pendingAfterOutage();
+    await world.connect(false);
+    try {
+      const refused = await world.api.post(
+        `/prescriptions/${pending.id}/cancel`,
+        prescriber.session,
+        { reason: 'Ya no hace falta' },
+      );
+      expect(refused.statusCode, refused.body).toBe(409);
+      expect(problemOf(refused).code).toBe('prescription_provider_not_connected');
+      expect((await world.rowOf(pending.id))['status']).toBe('pending_submission');
+
+      const closed = await world.api.post(
+        `/prescriptions/${pending.id}/cancel`,
+        prescriber.session,
+        {
+          reason: 'Ya no hace falta',
+          acknowledgeUnknownOutcome: true,
+        },
+      );
+
+      expect(closed.statusCode, closed.body).toBe(200);
+      expect(closed.json<PrescriptionDto>().status).toBe('cancelled');
+      const entries = await asTenant(runtime, world.tenant.id, (tx) =>
+        tx
+          .select()
+          .from(auditEvent)
+          .where(
+            and(
+              eq(auditEvent.action, 'prescription.cancelled'),
+              eq(auditEvent.resourceId, pending.id),
+            ),
+          ),
+      );
+      expect(entries).toHaveLength(1);
+      expect(entries[0]?.metadata).toMatchObject({ via: 'local', unconfirmed: true });
+    } finally {
+      await world.connect(true);
+    }
+  });
+
+  it('does not take the acknowledgement as a licence to skip the question while a provider is connected', async () => {
+    const { prescriber, pending } = await pendingAfterOutage();
+    const key = (await world.rowOf(pending.id))['idempotency_key'] as string;
+    await world.provider.issue(
+      {
+        matricula: { jurisdiction: 'AR-B', number: 'MP 12345' },
+        patientDocument: { type: 'dni', number: '30123456' },
+        items: ['Amoxicilina 500 mg, comprimidos, 1 cada 8 horas durante 7 dias, 21 comprimidos'],
+      },
+      key,
+    );
+
+    const response = await world.api.post(
+      `/prescriptions/${pending.id}/cancel`,
+      prescriber.session,
+      {
+        reason: 'Ya no hace falta',
+        acknowledgeUnknownOutcome: true,
+      },
+    );
+
+    expect(response.statusCode, response.body).toBe(409);
+    expect(problemOf(response).code).toBe('prescription_awaiting_reconciliation');
+    expect((await world.rowOf(pending.id))['status']).toBe('pending_submission');
+  });
+});
+
+describe('B-S3: the list of the prescriptions of a professional names the patients it showed', () => {
+  it('writes the patient ids, each once, in the one entry of the list', async () => {
+    const prescriber = await world.verifiedProfessional();
+    const patients = [
+      await world.patientWithDocument([prescriber]),
+      await world.patientWithDocument([prescriber]),
+    ];
+    for (const patientId of [...patients, patients[0] ?? '']) {
+      const made = await world.issue(prescriber, { patientId });
+      expect(made.statusCode, made.body).toBe(201);
+    }
+
+    const listed = await world.api.get('/prescriptions', prescriber.session);
+    expect(listed.statusCode, listed.body).toBe(200);
+
+    const entries = await asTenant(runtime, world.tenant.id, (tx) =>
+      tx.select().from(auditEvent).where(eq(auditEvent.action, 'prescription.read')),
+    );
+    const entry = entries.filter((candidate) => candidate.metadata['via'] === 'mine').at(-1);
+    expect(entry?.metadata['count']).toBe(3);
+    expect([...(entry?.metadata['patientIds'] as string[])].sort()).toEqual([...patients].sort());
   });
 });
 
