@@ -18,6 +18,10 @@ export const PORTAL_ERRORS = {
   portal_already_linked: { status: 409, i18nKey: 'errors.portal_already_linked' },
   // The account or the link is already deactivated, or the patient cannot be invited.
   portal_state_conflict: { status: 409, i18nKey: 'errors.portal_state_conflict' },
+  // The visitor did not solve the bot challenge (missing, wrong, expired or used twice).
+  portal_challenge_failed: { status: 400, i18nKey: 'errors.portal_challenge_failed' },
+  // The code is wrong, expired, spent, or there never was one. One answer for all of them.
+  portal_code_invalid: { status: 400, i18nKey: 'errors.portal_code_invalid' },
 } as const satisfies Record<string, { status: number; i18nKey: string }>;
 
 /**

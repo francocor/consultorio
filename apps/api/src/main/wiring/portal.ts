@@ -1,4 +1,5 @@
-import { createPortal } from '../../modules/portal/index.js';
+import { createPortal, createPortalCodeSendJob } from '../../modules/portal/index.js';
+import { createTenantRoutedEmail } from '../adapter-resolver.js';
 
 import type { ModuleWiring } from './types.js';
 
@@ -13,6 +14,18 @@ import type { ModuleWiring } from './types.js';
  */
 export const portalWiring: ModuleWiring = {
   name: 'portal',
+  // The sign-in code goes out by a job (queue `portal.code_send`, category `auth`), so the API
+  // process holds a queue client.
+  needsJobs: true,
+  worker: (context) => {
+    // The tenant-routed sender: a demo organization's codes never reach the real provider.
+    const email = createTenantRoutedEmail(context.adapters);
+    return {
+      jobs: () => [
+        createPortalCodeSendJob({ email, ...(context.clock ? { clock: context.clock } : {}) }),
+      ],
+    };
+  },
   create: (context) =>
     createPortal({
       withTenant: context.withTenant,

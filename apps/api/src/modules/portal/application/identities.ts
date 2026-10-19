@@ -4,7 +4,7 @@ import type {
   PortalLinkDto,
   PortalRelation,
 } from '@consultorio/contracts';
-import { and, asc, eq, inArray, isNull, ne, or, sql, type SQL } from 'drizzle-orm';
+import { and, asc, eq, inArray, isNull, ne, or, sql } from 'drizzle-orm';
 
 import { actionToken } from '../../../db/schema/action-token.js';
 import {
@@ -149,7 +149,7 @@ export interface PreparedInvitation {
   expiresAt: Date;
 }
 
-async function liveSelfLink(tx: Tx, patientId: string): Promise<boolean> {
+export async function liveSelfLink(tx: Tx, patientId: string): Promise<boolean> {
   const [row] = await tx
     .select({ id: portalLink.id })
     .from(portalLink)
@@ -538,5 +538,31 @@ export async function changeIdentityEmail(
   return identityDto(tx, identity.id);
 }
 
-/** For the callers that need the same filter as the reads above, without exposing the table. */
-export type IdentityFilter = SQL;
+/** Ends every session of an identity (an administrator did it), and says so in the trail. */
+export async function revokeIdentitySessions(
+  tx: Tx,
+  deps: IdentityDeps,
+  input: { actor: StaffAuditActor; identityId: string },
+): Promise<PortalIdentityDto> {
+  const [identity] = await tx
+    .select({ id: portalIdentity.id })
+    .from(portalIdentity)
+    .where(eq(portalIdentity.id, input.identityId));
+  if (!identity) throw new AppError('not_found');
+  const ended = await deps.sessions.revokeAllForIdentity(
+    tx,
+    identity.id,
+    'revoked_by_staff',
+    deps.clock(),
+    { by: input.actor.userId },
+  );
+  await audit(tx, {
+    action: 'auth.session.revoked',
+    outcome: 'allow',
+    actor: input.actor,
+    resourceType: 'portal_identity',
+    resourceId: identity.id,
+    metadata: { scope: 'portal', count: ended },
+  });
+  return identityDto(tx, identity.id);
+}

@@ -2,5 +2,7 @@
   "portal_patient_has_no_email": "Este paciente no tiene un correo registrado, así que no hay adónde enviar la invitación. Cargue su correo en la ficha y vuelva a intentar.",
   "portal_email_in_use": "Ese correo ya se usa en el portal de otra persona o tiene una invitación pendiente. Pida a la persona un correo distinto.",
   "portal_already_linked": "Esta persona ya tiene acceso al portal con ese vínculo.",
-  "portal_state_conflict": "La cuenta o el vínculo ya estaba dado de baja, o el paciente no se puede invitar en este momento."
+  "portal_state_conflict": "La cuenta o el vínculo ya estaba dado de baja, o el paciente no se puede invitar en este momento.",
+  "portal_challenge_failed": "No pudimos comprobar que sea una persona. Vuelva a intentar.",
+  "portal_code_invalid": "El código no es válido o ya venció. Pida uno nuevo e inténtelo otra vez."
 }

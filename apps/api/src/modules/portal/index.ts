@@ -12,7 +12,9 @@ import type { PortalActor } from '../../platform/authz/actor.js';
 import type { AuthzOptions } from '../../platform/authz/guard.js';
 import type { TenantKeys } from '../../platform/crypto/tenant-keys.js';
 import type { WithTenant } from '../../platform/db/tenant-context.js';
+import { SYSTEM_USER_ID } from '../../platform/db/tenant-context.js';
 import type { FileResourceRegistry } from '../../platform/files/file-resources.js';
+import { registerPortalGuard } from '../../platform/http/portal-guard.js';
 import type { PublicOrigins } from '../../platform/http/public-origin.js';
 import type { RateLimitStore } from '../../platform/http/rate-limit.js';
 import type { JobClient } from '../../platform/jobs/boss.js';
@@ -22,11 +24,18 @@ import { createActionTokens } from '../../platform/tokens/index.js';
 import type { ExportRegistry } from '../tenancy/index.js';
 
 import { createActivationHandler } from './application/activation-handler.js';
+import { PORTAL_CODE_JOB } from './application/codes.js';
 import { majorityAgeOf } from './application/country.js';
 import { exportPortal } from './application/export-contributor.js';
 import type { IdentityDeps } from './application/identities.js';
 import { createPortalSessions } from './application/sessions.js';
+import type { SignInDeps } from './application/sign-in.js';
+import { publicRoutes } from './http/public-routes.js';
+import { sessionRoutes } from './http/session-routes.js';
 import { staffRoutes } from './http/staff-routes.js';
+
+export { createPortalCodeSendJob } from './application/code-job.js';
+export { PORTAL_CODE_JOB };
 
 /** Registers what the portal takes with an organization that leaves: identities and links. */
 export function registerPortalExportContributors(registry: ExportRegistry): void {
@@ -74,17 +83,60 @@ export function createPortal(options: PortalOptions): Portal {
     'portal_activation',
     createActivationHandler({ ...identities, origins: options.origins }),
   );
+  const signIn: SignInDeps = {
+    sessions: identities.sessions,
+    tokens,
+    jobs: options.jobs,
+    store: options.rateLimitStore,
+    clock,
+  };
+  // Whether the deployment serves over https is one fact for all organizations: the cookie has the
+  // same name everywhere.
+  const cookieSecure = options.origins('probe').startsWith('https:');
+
   const staff = staffRoutes({
     withTenant: options.withTenant,
     identities,
     email: options.email,
     origins: options.origins,
   });
+  const pages = publicRoutes({
+    withTenant: options.withTenant,
+    adapters: options.adapters,
+    origins: options.origins,
+    signIn,
+  });
+  const sessions = sessionRoutes({
+    withTenant: options.withTenant,
+    sessions: identities.sessions,
+    clock,
+    cookieSecure,
+  });
 
   return {
     options,
     routes: (app) => {
+      // The guard of the portal routes lives in this scope only; the staff routes next to them are
+      // left to the staff guard.
+      registerPortalGuard(app, {
+        cookieSecure,
+        auditDeny: options.auditDeny,
+        authenticate: (token, tenantId) =>
+          options.withTenant({ tenantId, userId: SYSTEM_USER_ID }, async (tx) => {
+            const resolved = await identities.sessions.resolve(tx, token, clock());
+            return resolved === null
+              ? null
+              : {
+                  sessionId: resolved.sessionId,
+                  identityId: resolved.identityId,
+                  tenantId: resolved.tenantId,
+                  linkId: resolved.linkId,
+                };
+          }),
+      });
       staff(app);
+      pages(app);
+      sessions(app);
     },
   };
 }

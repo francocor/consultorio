@@ -4,6 +4,10 @@ import { AUDIT_ACTIONS } from './audit-actions.js';
 import { ERROR_CATALOG } from './errors.js';
 import {
   CreatePortalLinkRequest,
+  PortalCodeRequest,
+  PortalCodeVerifyRequest,
+  PortalRegisterRequest,
+  PortalRegisterVerifyRequest,
   PORTAL_AUDIT_ACTIONS,
   PORTAL_ERRORS,
   PORTAL_IDENTITY_STATUSES,
@@ -88,5 +92,55 @@ describe('the staff requests of the portal accounts', () => {
     expect(ChangePortalEmailRequest.safeParse({ ...body, email: 'no-es-un-correo' }).success).toBe(
       false,
     );
+  });
+});
+
+describe('the public requests of the portal', () => {
+  const proof = 'x'.repeat(40);
+
+  it('registers with the document and the email on the record, and the proof of the challenge', () => {
+    expect(
+      PortalRegisterRequest.parse({
+        nationalId: ' 30.123.456 ',
+        email: 'Ana@Example.test',
+        challengeProof: proof,
+      }),
+    ).toEqual({ nationalId: '30.123.456', email: 'ana@example.test', challengeProof: proof });
+    expect(
+      PortalRegisterRequest.safeParse({ nationalId: '30123456', email: 'ana@example.test' })
+        .success,
+    ).toBe(false);
+    expect(
+      PortalRegisterRequest.safeParse({
+        nationalId: '',
+        email: 'ana@example.test',
+        challengeProof: proof,
+      }).success,
+    ).toBe(false);
+  });
+
+  it('asks for a code with an email and the proof, and verifies with six digits', () => {
+    expect(PortalCodeRequest.parse({ email: 'ana@example.test', challengeProof: proof })).toEqual({
+      email: 'ana@example.test',
+      challengeProof: proof,
+    });
+    expect(PortalCodeVerifyRequest.parse({ email: 'ana@example.test', code: '048213' })).toEqual({
+      email: 'ana@example.test',
+      code: '048213',
+    });
+    for (const code of ['12345', '1234567', 'abcdef', '12 456']) {
+      expect(PortalCodeVerifyRequest.safeParse({ email: 'ana@example.test', code }).success).toBe(
+        false,
+      );
+    }
+  });
+
+  it('verifies a registration with the document again, because the code names no patient', () => {
+    const body = { nationalId: '30123456', email: 'ana@example.test', code: '048213' };
+
+    expect(PortalRegisterVerifyRequest.parse(body)).toEqual(body);
+    expect(
+      PortalRegisterVerifyRequest.safeParse({ email: body.email, code: body.code }).success,
+    ).toBe(false);
   });
 });

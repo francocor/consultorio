@@ -20,6 +20,7 @@ import {
   linkDependent,
   listPortalOfPatient,
   prepareInvitation,
+  revokeIdentitySessions,
   revokeLink,
   type IdentityDeps,
   type StaffAuditActor,
@@ -239,6 +240,34 @@ export function staffRoutes(deps: StaffRoutesDeps) {
               actor: audit,
               identityId: request.params.id,
               email: request.body.email,
+            }),
+        );
+        return { identity };
+      },
+    );
+
+    typed.post(
+      '/portal-identities/:id/sessions/revoke',
+      {
+        config: {
+          readOnly: 'write',
+          permission: 'portal.manage',
+          audits: ['auth.session.revoked'],
+        },
+        schema: {
+          params: IdParams,
+          body: z.strictObject({}),
+          response: { 200: PortalIdentityResponse },
+        },
+      },
+      async (request) => {
+        const { actor, audit } = staffOf(request);
+        const identity = await deps.withTenant(
+          { tenantId: actor.tenantId, userId: actor.userId },
+          (tx) =>
+            revokeIdentitySessions(tx, deps.identities, {
+              actor: audit,
+              identityId: request.params.id,
             }),
         );
         return { identity };

@@ -104,3 +104,64 @@ export const ChangePortalEmailRequest = z.strictObject({
   verificationNote: VerificationNote,
 });
 export type ChangePortalEmailRequest = z.infer<typeof ChangePortalEmailRequest>;
+
+// Public: registering and signing in ---------------------------------------------------------------
+
+const ChallengeProof = z.string().min(1).max(512);
+const PortalCode = z.string().regex(/^\d{6}$/);
+/** What a visitor types as their document: the country's rules decide what a valid one looks like. */
+const NationalIdInput = z.string().trim().min(1).max(32);
+
+/**
+ * Registration: the document AND the email on the record, and the proof of the bot challenge. It is
+ * answered the same way whatever the data (the answer never says whether the document exists).
+ */
+export const PortalRegisterRequest = z.strictObject({
+  nationalId: NationalIdInput,
+  email: PortalEmail,
+  challengeProof: ChallengeProof,
+});
+export type PortalRegisterRequest = z.infer<typeof PortalRegisterRequest>;
+
+/** The code that arrived at the address on the record. The document is asked again. */
+export const PortalRegisterVerifyRequest = z.strictObject({
+  nationalId: NationalIdInput,
+  email: PortalEmail,
+  code: PortalCode,
+});
+export type PortalRegisterVerifyRequest = z.infer<typeof PortalRegisterVerifyRequest>;
+
+/** Asks for the code to sign in. Answered the same way for any email. */
+export const PortalCodeRequest = z.strictObject({
+  email: PortalEmail,
+  challengeProof: ChallengeProof,
+});
+export type PortalCodeRequest = z.infer<typeof PortalCodeRequest>;
+
+export const PortalCodeVerifyRequest = z.strictObject({ email: PortalEmail, code: PortalCode });
+export type PortalCodeVerifyRequest = z.infer<typeof PortalCodeVerifyRequest>;
+
+/** The only thing a request for a code says: it was received. */
+export const PortalAcceptedResponse = z.strictObject({ accepted: z.literal(true) });
+export type PortalAcceptedResponse = z.infer<typeof PortalAcceptedResponse>;
+
+/** The session itself travels in the cookie; the answer only says it started. */
+export const PortalSignedInResponse = z.strictObject({ signedIn: z.literal(true) });
+export type PortalSignedInResponse = z.infer<typeof PortalSignedInResponse>;
+
+// Portal: the sessions of the person ---------------------------------------------------------------
+
+export const PortalSessionDto = z.strictObject({
+  id: Id,
+  createdAt: Instant,
+  lastSeenAt: Instant,
+  expiresAt: Instant,
+  /** The browser, as it said it was. Null when it did not say. */
+  userAgent: z.string().nullable(),
+  /** The session that asked. */
+  current: z.boolean(),
+});
+export type PortalSessionDto = z.infer<typeof PortalSessionDto>;
+
+export const PortalSessionsResponse = z.strictObject({ sessions: z.array(PortalSessionDto) });
+export type PortalSessionsResponse = z.infer<typeof PortalSessionsResponse>;

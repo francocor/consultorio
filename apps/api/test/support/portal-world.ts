@@ -6,8 +6,10 @@ import type { LightMyRequestResponse } from 'fastify';
 import { expect } from 'vitest';
 
 import type { patient } from '../../src/db/schema/patients.js';
+import { createPortalCodeSendJob } from '../../src/modules/portal/index.js';
 
 import { createBookingWorld, type BookingWorld, type Visitor } from './booking-world.js';
+import { runPending } from './jobs.js';
 import { createTestPatient } from './patients.js';
 import type { TestSession } from './session.js';
 
@@ -52,6 +54,10 @@ export async function createPortalWorld(
   options: { slug: string; now?: Date },
 ): Promise<PortalWorld> {
   const base = await createBookingWorld(runtime, options);
+  const jobDefinitions = [
+    ...base.jobDefinitions,
+    createPortalCodeSendJob({ email: base.email, clock: () => base.now() }),
+  ];
   const patientWith: PortalWorld['patientWith'] = (values = {}) => {
     patients += 1;
     return createTestPatient(runtime, base.tenant.id, {
@@ -88,6 +94,8 @@ export async function createPortalWorld(
 
   return {
     ...base,
+    jobDefinitions,
+    runJobs: () => runPending(runtime.db, base.jobs, jobDefinitions),
     patientWith,
     invite,
     inviteOk,
