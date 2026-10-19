@@ -7,6 +7,7 @@ import {
 } from '@consultorio/contracts';
 import { and, asc, desc, eq, sql } from 'drizzle-orm';
 import type { FastifyInstance } from 'fastify';
+import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, inject, it } from 'vitest';
 
 import { auditEvent } from '../../src/db/schema/audit.js';
@@ -57,7 +58,33 @@ beforeAll(async () => {
     theme: { displayName: 'Centro Norte' },
   });
   await app.ready();
+  await settleStrangers();
 });
+
+/**
+ * The queue of the operator lists the OLDEST two hundred unverified registrations of every
+ * organization, and the database of the whole run is shared by every file: the registrations that
+ * the files before this one left unverified would push the ones this file creates out of the first
+ * two hundred (they did once the portal and e-prescription files added theirs). Those registrations
+ * are marked verified here, with the triggers off (nobody reads them again), so this file sees the
+ * queue it makes.
+ */
+async function settleStrangers(): Promise<void> {
+  const admin = new pg.Client({ connectionString: inject('adminUrl') });
+  await admin.connect();
+  try {
+    await admin.query(
+      `BEGIN;
+       set local session_replication_role = replica;
+       update professional
+          set matricula_status = 'verified', verified_by_operator = gen_random_uuid(), verified_at = now()
+        where matricula_status = 'unverified';
+       COMMIT;`,
+    );
+  } finally {
+    await admin.end();
+  }
+}
 
 afterAll(async () => {
   await app.close();
