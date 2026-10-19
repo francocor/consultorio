@@ -575,6 +575,13 @@
       "when": 1792368208373,
       "tag": "0496_invoice_cae_unique",
       "breakpoints": true
+    },
+    {
+      "idx": 82,
+      "version": "7",
+      "when": 1792384681517,
+      "tag": "0505_matricula_operator_note",
+      "breakpoints": true
     }
   ]
 }
