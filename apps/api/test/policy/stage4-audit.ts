@@ -35,6 +35,8 @@ export const WRITTEN_OUTSIDE_ROUTES: Readonly<Record<string, string>> = {
     'The afip.issue job: the authority answered with a voucher the system cannot record.',
   'invoice.voucher_orphaned':
     'The afip.issue job: a voucher arrived for an invoice somebody had closed meanwhile.',
+  'invoice.voucher_adopted':
+    'The afip.issue job: a reconciliation adopted a voucher at a number that was remembered for another invoice.',
 };
 
 /**

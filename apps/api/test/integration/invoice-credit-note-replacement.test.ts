@@ -1,7 +1,7 @@
 import type { InvoiceDto, Problem } from '@consultorio/contracts';
 import { describe, expect, it, vi } from 'vitest';
 
-import { auditOf, drain, useWorld } from '../support/invoice-series.js';
+import { auditRows, drain, useWorld } from '../support/invoice-series.js';
 
 /**
  * Judgment day, Stage 4, round 5, suspect B-W2: a credit note that was parked for a person had no way
@@ -97,7 +97,7 @@ describe('a credit note that needs a person (JD-S4 R5-B-W2)', () => {
       creditedCents: parked.note.totalCents,
     });
     expect((await world.chargeOf(parked.charge.id)).invoicedCents).toBe(0);
-    const [entry] = await auditOf(world, saved.id, 'invoice.manual');
+    const [entry] = await auditRows(world, saved.id, 'invoice.manual');
     expect(entry?.metadata).toMatchObject({ type: 'NCC', replacedInvoiceId: parked.note.id });
   });
 

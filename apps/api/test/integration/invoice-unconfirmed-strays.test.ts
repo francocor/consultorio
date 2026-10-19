@@ -4,7 +4,7 @@ import {
   DNI,
   MINUTE,
   after,
-  auditOf,
+  auditRows,
   authorityLast,
   create,
   drain,
@@ -135,7 +135,7 @@ describe('a voucher that collides with one of ours (JD-S4 R4-3)', () => {
     await world.runIssue(after(t0, 0));
 
     expect(await world.rowOf(b.created.id)).toMatchObject({ deliveryState: 'needs_attention' });
-    const [parked] = await auditOf(world, b.created.id, 'invoice.needs_attention');
+    const [parked] = await auditRows(world, b.created.id, 'invoice.needs_attention');
     expect(parked?.metadata).toMatchObject({ reason: 'cae_taken' });
     const remembered = (await strayRows(world)).filter((stray) => stray.invoiceId === b.created.id);
     expect(remembered).toMatchObject([{ number, reason: 'unmatched' }]);

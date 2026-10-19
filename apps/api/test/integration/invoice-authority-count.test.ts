@@ -6,7 +6,7 @@ import { invoice as invoiceTable } from '../../src/db/schema/index.js';
 import {
   DNI,
   after,
-  auditOf,
+  auditRows,
   authorityLast,
   create,
   cuitOf,
@@ -111,7 +111,7 @@ describe('a voucher registered by hand in the same series while an invoice waits
 
     expect(issue).not.toHaveBeenCalled();
     expect(results).toContainEqual({ invoiceId: b.created.id, outcome: 'attention' });
-    const [parked] = await auditOf(world, b.created.id, 'invoice.needs_attention');
+    const [parked] = await auditRows(world, b.created.id, 'invoice.needs_attention');
     expect(parked?.metadata).toMatchObject({ reason: 'voucher_ambiguous', outcomeUnknown: true });
   });
 });
@@ -211,7 +211,7 @@ describe('the lowest number goes first (JD-S4 R5-2)', () => {
       status: 'pending',
       deliveryState: 'needs_attention',
     });
-    const [parked] = await auditOf(world, b.created.id, 'invoice.needs_attention');
+    const [parked] = await auditRows(world, b.created.id, 'invoice.needs_attention');
     expect(parked?.metadata).toMatchObject({
       reason: 'voucher_ambiguous',
       outcomeUnknown: true,
@@ -404,7 +404,7 @@ describe('what the authority says decides whether to send (JD-S4 R5-1)', () => {
 
     expect(issue).not.toHaveBeenCalled();
     expect(results).toContainEqual({ invoiceId: b.created.id, outcome: 'attention' });
-    const [parked] = await auditOf(world, b.created.id, 'invoice.needs_attention');
+    const [parked] = await auditRows(world, b.created.id, 'invoice.needs_attention');
     expect(parked?.metadata).toMatchObject({ reason: 'voucher_ambiguous', outcomeUnknown: true });
   });
 
@@ -452,7 +452,7 @@ describe('how many numbers are examined (JD-S4 R5-1)', () => {
     expect(issue).not.toHaveBeenCalled();
     expect(probe).not.toHaveBeenCalled();
     expect(results).toContainEqual({ invoiceId: b.created.id, outcome: 'attention' });
-    const [parked] = await auditOf(world, b.created.id, 'invoice.needs_attention');
+    const [parked] = await auditRows(world, b.created.id, 'invoice.needs_attention');
     expect(parked?.metadata).toMatchObject({
       reason: 'voucher_ambiguous',
       outcomeUnknown: true,
@@ -512,7 +512,7 @@ describe('a voucher adopted at a number remembered for another invoice (JD-S4 R5
 
     expect(await world.rowOf(b.created.id)).toMatchObject({ status: 'issued', number: floor + 1 });
     expect(await openItems(world, a.created.id)).toEqual([]);
-    const [adopted] = await auditOf(world, b.created.id, 'invoice.voucher_adopted');
+    const [adopted] = await auditRows(world, b.created.id, 'invoice.voucher_adopted');
     expect(adopted?.metadata).toMatchObject({
       number: floor + 1,
       strayInvoiceId: a.created.id,

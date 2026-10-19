@@ -229,7 +229,7 @@ export async function registerManualVoucher(
 export const strayRows = (world: InvoicingWorld) =>
   world.inTenant((tx) => tx.select().from(invoiceStrayVoucher));
 
-export const auditOf = (world: InvoicingWorld, invoiceId: string, action: string) =>
+export const auditRows = (world: InvoicingWorld, invoiceId: string, action: string) =>
   world.inTenant((tx) =>
     tx
       .select()
