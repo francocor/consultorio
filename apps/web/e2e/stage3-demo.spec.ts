@@ -446,12 +446,19 @@ test('a patient books online, is reminded and confirms, has a video visit, and a
         mode: 'virtual',
       });
       expect(virtualType.status, JSON.stringify(virtualType.body)).toBe(201);
-      const patients = await org.owner.call<{ patients: { id: string }[] }>(
-        'GET',
-        `/patients?q=${family}&status=active`,
-      );
-      const patientId = patients.body.patients[0]?.id;
-      if (!patientId) throw new Error('The patient of the booking is not in the list');
+      // Another patient, with an email and no WhatsApp: the one of the booking wrote BAJA above, which
+      // opted them out of every channel (owner decision B7), so nothing would reach them now.
+      const videoEmail = `video.etapa.${suffix}@demo.invalid`;
+      const videoPatient = await org.owner.call<{ patient: { id: string } }>('POST', '/patients', {
+        familyName: `Video${suffix.slice(-5)}`,
+        givenNames: 'Elena',
+        birthDate: '1983-03-03',
+        document: { type: 'dni', number: `91${suffix.slice(-6)}` },
+        email: videoEmail,
+        dataProcessingConsent: true,
+      });
+      expect(videoPatient.status, JSON.stringify(videoPatient.body)).toBe(201);
+      const patientId = videoPatient.body.patient.id;
 
       // The video integration is off while the appointment is made, so it has no room: the
       // confirmation says the link follows.
@@ -484,7 +491,7 @@ test('a patient books online, is reminded and confirms, has a video visit, and a
       const visit = virtual;
 
       // The confirmation reaches the patient, and tells them the link will be sent separately.
-      const confirmations = await mailbox(email, /está confirmado/, {
+      const confirmations = await mailbox(videoEmail, /está confirmado/, {
         ready: (text) => text.includes('le enviaremos el enlace por separado'),
       });
       expect(confirmations.some((text) => text.includes('Modalidad: Videollamada'))).toBe(true);
@@ -503,7 +510,7 @@ test('a patient books online, is reminded and confirms, has a video visit, and a
       await expect(panel.getByText('Manual', { exact: true })).toBeVisible();
 
       // The message that keeps the promise arrives, with the address of the platform.
-      const [followUp] = await mailbox(email, /El enlace de su videoconsulta/);
+      const [followUp] = await mailbox(videoEmail, /El enlace de su videoconsulta/);
       expect(followUp).toContain('Modalidad: Videollamada');
       expect(followUp).not.toContain(MANUAL_CALL);
       return { visit, link: localLink(linkIn(followUp ?? '', '/public/v/')) };
