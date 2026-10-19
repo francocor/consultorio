@@ -6,7 +6,7 @@ import type {
   PortalInvoiceDto,
   PortalPrescriptionDto,
 } from '@consultorio/contracts';
-import { screen, within } from '@testing-library/react';
+import { fireEvent, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -357,7 +357,9 @@ describe('the documents shared with the patient', () => {
       await screen.findByRole('button', { name: 'Descargar Análisis de sangre.pdf' }),
     );
 
-    expect(await screen.findByRole('alert')).toBeInTheDocument();
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      'Este documento no está disponible para descargar.',
+    );
     expect(downloaded).toEqual([]);
   });
 
@@ -492,6 +494,29 @@ const detail = (overrides: Partial<PortalConsentDetailDto> = {}): PortalConsentD
   ...overrides,
 });
 
+/** Leaves the signature as the keyboard does: the pad's typed-name alternative. */
+async function typeSignature(user: ReturnType<typeof userEvent.setup>, name: string) {
+  await user.click(screen.getByRole('button', { name: 'Escribir el nombre' }));
+  await user.type(screen.getByLabelText('Nombre completo, como firma'), name);
+}
+
+const IMAGE = 'data:image/png;base64,iVBORw0KGgo=';
+
+/** A canvas jsdom can draw on, answering with a small image. */
+function stubCanvas() {
+  const context = {
+    beginPath: vi.fn(),
+    moveTo: vi.fn(),
+    lineTo: vi.fn(),
+    stroke: vi.fn(),
+    clearRect: vi.fn(),
+  };
+  vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockImplementation(
+    () => context as unknown as CanvasRenderingContext2D,
+  );
+  vi.spyOn(HTMLCanvasElement.prototype, 'toDataURL').mockReturnValue(IMAGE);
+}
+
 describe('the consents of the patient', () => {
   it('shows the empty state while no module serves them', async () => {
     open('/portal/consentimientos', {
@@ -556,6 +581,7 @@ describe('the consents of the patient', () => {
 
     // Without the box: refused on the screen, no request.
     await user.type(screen.getByLabelText('Escriba su nombre completo'), 'Ana Pérez');
+    await typeSignature(user, 'Ana Pérez');
     await user.click(screen.getByRole('button', { name: 'Firmar el documento' }));
     expect(await screen.findByText('Marque la casilla para poder firmar.')).toBeInTheDocument();
     expect(bodies).toEqual([]);
@@ -571,6 +597,59 @@ describe('the consents of the patient', () => {
           accepted: true,
           signerName: 'Ana Pérez',
           signature: { kind: 'typed', value: 'Ana Pérez' },
+        },
+      ]);
+    });
+  });
+
+  it('asks for a signature, drawn or typed, before signing', async () => {
+    const user = userEvent.setup();
+    const bodies: unknown[] = [];
+    open(`/portal/consentimientos/${CONSENT.id}`, {
+      [`GET /api/portal/consents/${CONSENT.id}`]: jsonResponse(detail()),
+      [`POST /api/portal/consents/${CONSENT.id}/sign`]: (_url, init) => {
+        bodies.push(jsonBody(init));
+        return problemResponse(500, 'internal_error');
+      },
+    });
+
+    await user.type(await screen.findByLabelText('Escriba su nombre completo'), 'Ana Pérez');
+    await user.click(screen.getByRole('checkbox', { name: /Leí el documento completo/ }));
+    await user.click(screen.getByRole('button', { name: 'Firmar el documento' }));
+
+    expect(
+      await screen.findByText('Dibuje su firma o escriba su nombre en el recuadro de la firma.'),
+    ).toBeInTheDocument();
+    expect(bodies).toEqual([]);
+  });
+
+  it('signs with the drawing the person made on the pad', async () => {
+    stubCanvas();
+    const user = userEvent.setup();
+    const bodies: unknown[] = [];
+    open(`/portal/consentimientos/${CONSENT.id}`, {
+      [`GET /api/portal/consents/${CONSENT.id}`]: jsonResponse(detail()),
+      [`POST /api/portal/consents/${CONSENT.id}/sign`]: (_url, init) => {
+        bodies.push(jsonBody(init));
+        return jsonResponse({ consent: { ...CONSENT, status: 'signed', canSign: false } });
+      },
+      'GET /api/portal/consents': jsonResponse({ available: true, consents: [] }),
+    });
+
+    await user.type(await screen.findByLabelText('Escriba su nombre completo'), 'Ana Pérez');
+    const canvas = screen.getByRole('img', { name: /Espacio para dibujar la firma/ });
+    fireEvent.pointerDown(canvas, { clientX: 10, clientY: 10, pointerId: 1 });
+    fireEvent.pointerMove(canvas, { clientX: 40, clientY: 30, pointerId: 1 });
+    fireEvent.pointerUp(canvas, { pointerId: 1 });
+    await user.click(screen.getByRole('checkbox', { name: /Leí el documento completo/ }));
+    await user.click(screen.getByRole('button', { name: 'Firmar el documento' }));
+
+    await vi.waitFor(() => {
+      expect(bodies).toEqual([
+        {
+          accepted: true,
+          signerName: 'Ana Pérez',
+          signature: { kind: 'drawn', value: IMAGE },
         },
       ]);
     });
@@ -613,6 +692,7 @@ describe('the consents of the patient', () => {
     );
 
     await user.type(await screen.findByLabelText('Nombre completo de quien firma'), 'María Pérez');
+    await typeSignature(user, 'María Pérez');
     await user.click(screen.getByRole('checkbox', { name: /Leí el documento completo/ }));
     await user.click(screen.getByRole('button', { name: 'Firmar el documento' }));
     expect(

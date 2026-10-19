@@ -1,5 +1,6 @@
 import {
   PORTAL_RELATIONS,
+  type ConsentMarkInput,
   type PortalConsentDetailDto,
   type PortalConsentSignRequest,
   type PortalLinkDto,
@@ -25,18 +26,16 @@ import {
   AlertDialogTrigger,
 } from '../../../shared/ui/alert-dialog.js';
 import { Alert, AlertDescription } from '../../../shared/ui/alert.js';
-import { Badge } from '../../../shared/ui/badge.js';
 import { Button } from '../../../shared/ui/button.js';
 import { Checkbox } from '../../../shared/ui/checkbox.js';
 import { Input, Select, Textarea } from '../../../shared/ui/input.js';
 import { Label } from '../../../shared/ui/label.js';
 import { PageHeader } from '../../../shared/ui/page-header.js';
 import { toast } from '../../../shared/ui/toaster.js';
+import { ConsentStatusBadge, SignaturePad } from '../../consent/index.js';
 import { portalApi, portalKeys } from '../api/portal-api.js';
 import { DownloadButton } from '../components/DownloadButton.js';
 import { QueryState } from '../components/QueryState.js';
-
-import { CONSENT_TONES } from './ConsentsSection.js';
 
 /**
  * Signing: the full text of the version shown, the explicit acceptance, the name written as the
@@ -44,9 +43,9 @@ import { CONSENT_TONES } from './ConsentsSection.js';
  * the version the person was shown and refuses a request without the acceptance; the screen does not
  * enable the button before it either.
  *
- * The signature is typed (a name, keyboard and screen reader friendly). A drawn signature belongs to
- * the consent module's `SignaturePad`, which the integrator can offer here without touching the
- * rest of the screen.
+ * The signature is the consent module's `SignaturePad`, the one the staff use at reception: a
+ * drawing, or the typed name for whoever cannot draw (keyboard and screen reader). The full name of
+ * the person who signs is asked apart, because a drawing does not say who made it.
  */
 function SigningForm({
   consent,
@@ -69,7 +68,10 @@ function SigningForm({
     nationalId: '',
     relation: 'mother' as (typeof PORTAL_RELATIONS)[number],
   });
-  const [problem, setProblem] = useState<'accept' | 'name' | 'representative' | null>(null);
+  const [mark, setMark] = useState<ConsentMarkInput | null>(null);
+  const [problem, setProblem] = useState<'accept' | 'name' | 'representative' | 'mark' | null>(
+    null,
+  );
   const failure = error ? describeError(t, error) : null;
 
   function submit(event: SyntheticEvent) {
@@ -87,11 +89,18 @@ function SigningForm({
       setProblem('representative');
       return;
     }
+    if (mark === null) {
+      setProblem('mark');
+      return;
+    }
     setProblem(null);
     onSign({
       accepted: true,
       signerName: signer.trim(),
-      signature: { kind: 'typed', value: signer.trim() },
+      signature:
+        mark.kind === 'typed'
+          ? { kind: 'typed', value: mark.name.trim() }
+          : { kind: 'drawn', value: mark.imageDataUrl },
       ...(consent.requiresRepresentative
         ? {
             representative: {
@@ -190,6 +199,21 @@ function SigningForm({
           ) : null}
         </div>
       )}
+
+      <fieldset className="grid gap-2">
+        <legend className="text-sm font-medium">{t('consents.sign.mark')}</legend>
+        <SignaturePad
+          onChange={(next) => {
+            setMark(next);
+            setProblem(null);
+          }}
+        />
+        {problem === 'mark' ? (
+          <p role="alert" className="text-sm font-medium text-destructive">
+            {t('consents.sign.markRequired')}
+          </p>
+        ) : null}
+      </fieldset>
 
       <div className="flex items-start gap-3">
         <Checkbox
@@ -314,11 +338,7 @@ export function ConsentDetail({ link, consentId }: { link: PortalLinkDto; consen
                   ? t('consents.signedOn', { date: formatDate(consent.signedAt) })
                   : t('consents.requestedOn', { date: formatDate(consent.requestedAt) })
               }
-              actions={
-                <Badge tone={CONSENT_TONES[consent.status]}>
-                  {t(`consents.status.${consent.status}`)}
-                </Badge>
-              }
+              actions={<ConsentStatusBadge status={consent.status} />}
             />
             {consent.expiresAt && consent.canSign ? (
               <Alert tone="warning">

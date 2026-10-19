@@ -13,7 +13,7 @@ import { EmptyState } from '../../../shared/ui/states/empty-state.js';
 import { portalApi, portalKeys } from '../api/portal-api.js';
 import { QueryState } from '../components/QueryState.js';
 
-export const CONSENT_TONES: Record<PortalConsentDto['status'], BadgeTone> = {
+const CONSENT_TONES: Record<PortalConsentDto['status'], BadgeTone> = {
   pending: 'warning',
   signed: 'success',
   revoked: 'neutral',

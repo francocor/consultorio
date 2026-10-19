@@ -53,6 +53,7 @@
   "frame.noAccess.description": "El acceso a las fichas de esta cuenta está terminado o en pausa. Comuníquese con el consultorio para recuperarlo.",
 
   "download.action": "Descargar",
+  "download.unavailable": "Este documento no está disponible para descargar. Actualice la pantalla o consulte en el consultorio.",
 
   "appointments.title": "Mis turnos",
   "appointments.description": "Sus próximos turnos y los últimos que tuvo.",
@@ -149,7 +150,9 @@
   "consents.downloadLabel": "Descargar el consentimiento firmado: {{title}}",
   "consents.sign.title": "Firmar este documento",
   "consents.sign.name": "Escriba su nombre completo",
-  "consents.sign.nameHint": "Su nombre escrito es su firma.",
+  "consents.sign.nameHint": "Escriba su nombre como figura en su documento.",
+  "consents.sign.mark": "Su firma",
+  "consents.sign.markRequired": "Dibuje su firma o escriba su nombre en el recuadro de la firma.",
   "consents.sign.nameInvalid": "Escriba su nombre completo para firmar.",
   "consents.sign.representativeHint": "La persona es menor de edad: firma quien la representa.",
   "consents.sign.representativeName": "Nombre completo de quien firma",
