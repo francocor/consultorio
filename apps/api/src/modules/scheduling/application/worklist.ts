@@ -74,7 +74,12 @@ export interface WorklistService {
 const FIELD = { table: 'worklist_item', column: 'detail_enc' } as const;
 
 function actionsOf(kind: WorklistKind, subjectType: WorklistSubjectType): WorklistAction[] {
-  const open: WorklistAction[] = subjectType === 'appointment' ? ['open_appointment'] : [];
+  const open: WorklistAction[] =
+    subjectType === 'appointment'
+      ? ['open_appointment']
+      : subjectType === 'invoice'
+        ? ['open_invoice']
+        : [];
   switch (kind) {
     case 'pending_approval':
       // Approving (or cancelling) the appointment closes it; a plain close would skip the decision.

@@ -16,8 +16,18 @@ export type InvoiceStatus = (typeof INVOICE_STATUSES)[number];
 /**
  * The internal sub-state of a PENDING invoice. It is never shown or reported as a state of the
  * invoice: the screens show "pending" and, past the threshold, a flag computed from its age.
+ *
+ * - `awaiting_reconciliation`: the request may have reached the authority and its answer is not
+ *   known (the mark is written BEFORE the call and cleared by a definite answer).
+ * - `needs_attention`: the authority answered with a voucher that cannot be recorded (its number is
+ *   already one of ours). No automatic attempt touches it again; a person decides, from the worklist.
  */
-export const INVOICE_DELIVERY_STATES = ['queued', 'retrying', 'awaiting_reconciliation'] as const;
+export const INVOICE_DELIVERY_STATES = [
+  'queued',
+  'retrying',
+  'awaiting_reconciliation',
+  'needs_attention',
+] as const;
 export type InvoiceDeliveryState = (typeof INVOICE_DELIVERY_STATES)[number];
 
 /** Voucher types, as the `InvoiceIssuer` port names them: invoices (F) and credit notes (NC) A, B, C. */

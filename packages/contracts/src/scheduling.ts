@@ -245,8 +245,8 @@ export type AppointmentHistoryResponse = z.infer<typeof AppointmentHistoryRespon
 // Reception worklist --------------------------------------------------------------------------
 
 /**
- * The six kinds of item that need a person (scheduling, "Reception worklist"). Other capabilities
- * add their items here instead of keeping queues of their own.
+ * The kinds of item that need a person (scheduling, "Reception worklist"). Other capabilities add
+ * their items here instead of keeping queues of their own.
  */
 export const WORKLIST_KINDS = [
   'pending_approval',
@@ -255,10 +255,17 @@ export const WORKLIST_KINDS = [
   'reminder_not_delivered',
   'reply_to_review',
   'waitlist_manual_contact',
+  // An invoice that needs a person: a voucher the authority issued that the system could not record.
+  'invoice_attention',
 ] as const;
 export type WorklistKind = (typeof WORKLIST_KINDS)[number];
 
-export const WORKLIST_SUBJECT_TYPES = ['appointment', 'waitlist_entry', 'inbound_message'] as const;
+export const WORKLIST_SUBJECT_TYPES = [
+  'appointment',
+  'waitlist_entry',
+  'inbound_message',
+  'invoice',
+] as const;
 export type WorklistSubjectType = (typeof WORKLIST_SUBJECT_TYPES)[number];
 
 export const WORKLIST_STATUSES = ['open', 'resolved', 'dismissed'] as const;
@@ -272,6 +279,8 @@ export const WORKLIST_ACTIONS = [
   'detach_patient',
   'resolve',
   'dismiss',
+  // An invoice item: the screen of the invoices.
+  'open_invoice',
 ] as const;
 export type WorklistAction = (typeof WORKLIST_ACTIONS)[number];
 

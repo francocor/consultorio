@@ -75,7 +75,7 @@ export async function runDueAttempts(
     for (const row of due) {
       try {
         const outcome = await withTenant({ tenantId, userId: SYSTEM_USER_ID }, (tx) =>
-          attemptIssue(tx, deps, row.id),
+          attemptIssue(tx, { ...deps, db: deps.db ?? db }, row.id),
         );
         results.push({ invoiceId: row.id, outcome });
       } catch (error) {

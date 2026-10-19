@@ -118,7 +118,7 @@ async function invoice(
                   ${settings.number === undefined ? (issued ? numbering : null) : settings.number},
                   ${status},
                   ${settings.deliveryState === undefined ? (status === 'pending' ? 'queued' : null) : settings.deliveryState},
-                  ${settings.cae === undefined ? (issued ? '70000000000001' : null) : settings.cae},
+                  ${settings.cae === undefined ? (issued ? String(70_000_000_100_000 + numbering) : null) : settings.cae},
                   ${status === 'issued' ? sql`date '2031-02-01'` : null},
                   date '2031-01-02', 'homologation', true, ${randomUUID()}, 'hash', 'patient',
                   ${patientId}, 'Paciente de prueba', 'consumidor_final', ${total},

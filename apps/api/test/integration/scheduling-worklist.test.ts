@@ -205,6 +205,29 @@ describe('GET /worklist', () => {
     expect(approval?.actions).toEqual(['open_appointment', 'approve']);
   });
 
+  it('takes the item of an invoice that needs a person, for the whole organization, with the way to the invoices', async () => {
+    const subjectId = uuidv7();
+    await open({
+      kind: 'invoice_attention',
+      subjectType: 'invoice',
+      subjectId,
+      locationId: undefined,
+      detail: { reason: 'number_taken', number: 12 },
+    });
+
+    const item = (await list(world.reception, '?kind=invoice_attention')).items.find(
+      (entry) => entry.subjectId === subjectId,
+    );
+
+    expect(item).toMatchObject({
+      subjectType: 'invoice',
+      locationId: null,
+      appointment: null,
+      detail: { reason: 'number_taken', number: 12 },
+      actions: ['open_invoice', 'resolve', 'dismiss'],
+    });
+  });
+
   it('shows only administrative data of the appointment an item is about', async () => {
     const created = await world.book(2, '10:00');
     await open({ kind: 'pending_approval', subjectId: created.id });

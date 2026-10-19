@@ -8,7 +8,7 @@ import { createInvoicingWorld, type InvoicingWorld } from '../support/invoicing-
  * The generic wording of a service on an invoice (S4.12, task 4.51; spec "Invoice document and
  * delivery": "the invoice description MUST use generic service wording ... and MUST NOT contain
  * diagnoses or clinical details"). An appointment type may carry an invoice description; without one
- * the invoice shows the name of the type.
+ * the invoice shows the generic "Servicios de salud", never the name of the type (JD-S4 R1-C9).
  */
 
 let runtime: DbHandle;
@@ -94,11 +94,13 @@ describe('the invoice description of an appointment type', () => {
     expect(JSON.stringify(lines)).not.toMatch(/Psicoterapia/);
   });
 
-  it('falls back to the name of the type when the type has no description', async () => {
+  it('falls back to the generic wording, never the name of the type, when the type has no description', async () => {
     const charge = await world.charge();
 
     const response = await world.invoiceCharge(charge);
 
-    expect(response.json<InvoiceDto>().lines.map((line) => line.description)).toEqual(['Consulta']);
+    const lines = response.json<InvoiceDto>().lines;
+    expect(lines.map((line) => line.description)).toEqual(['Servicios de salud']);
+    expect(JSON.stringify(lines)).not.toMatch(/Consulta/);
   });
 });

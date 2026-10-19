@@ -30,6 +30,8 @@ import {
  */
 
 export interface FakeVoucher {
+  /** The organization the voucher belongs to (`''` when the request names none). */
+  tenantRef: string;
   issuerCuit: string;
   pointOfSale: number;
   type: string;
@@ -72,6 +74,7 @@ export function createFakeInvoiceIssuer(options: FakeInvoiceIssuerOptions = {}):
     vouchers
       .filter(
         (voucher) =>
+          voucher.tenantRef === (request.tenantRef ?? '') &&
           voucher.issuerCuit === request.issuerCuit &&
           voucher.pointOfSale === request.pointOfSale &&
           voucher.type === request.type,
@@ -83,6 +86,8 @@ export function createFakeInvoiceIssuer(options: FakeInvoiceIssuerOptions = {}):
     number: voucher.number,
     cae: voucher.cae,
     caeExpiresOn: voucher.caeExpiresOn,
+    totalCents: voucher.totalCents,
+    issueDate: voucher.issueDate,
   });
 
   return {
@@ -103,7 +108,10 @@ export function createFakeInvoiceIssuer(options: FakeInvoiceIssuerOptions = {}):
         return { status: 'retryable', message: SERVICE_DOWN_MESSAGE, outcomeUnknown: false };
       }
       const fingerprint = requestFingerprint(request);
-      const known = requests.get(idempotencyKey);
+      const tenantRef = request.tenantRef ?? '';
+      // An answer is remembered per organization: the same key from another one is a new request.
+      const requestKey = `${tenantRef}|${idempotencyKey}`;
+      const known = requests.get(requestKey);
       if (known) {
         return known.fingerprint === fingerprint
           ? known.result
@@ -116,11 +124,12 @@ export function createFakeInvoiceIssuer(options: FakeInvoiceIssuerOptions = {}):
       if (mode === 'reject_next') mode = 'ok';
       if (rejection !== null) {
         const result: Decided = { status: 'rejected', message: rejection };
-        requests.set(idempotencyKey, { fingerprint, result });
+        requests.set(requestKey, { fingerprint, result });
         return result;
       }
 
       const identity = {
+        tenantRef,
         issuerCuit: request.issuerCuit ?? '',
         pointOfSale: request.pointOfSale,
         type: request.type,
@@ -138,7 +147,7 @@ export function createFakeInvoiceIssuer(options: FakeInvoiceIssuerOptions = {}):
       };
       vouchers.push(voucher);
       const result = issuedResult(voucher);
-      requests.set(idempotencyKey, { fingerprint, result });
+      requests.set(requestKey, { fingerprint, result });
 
       if (mode === 'timeout_after_authorize') {
         mode = 'ok';
@@ -157,6 +166,7 @@ export function createFakeInvoiceIssuer(options: FakeInvoiceIssuerOptions = {}):
       }
       const found = vouchers.find(
         (voucher) =>
+          voucher.tenantRef === (ref.tenantRef ?? '') &&
           voucher.issuerCuit === ref.issuerCuit &&
           voucher.pointOfSale === ref.pointOfSale &&
           voucher.type === ref.type &&

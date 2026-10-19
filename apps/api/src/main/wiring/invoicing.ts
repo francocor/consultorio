@@ -17,12 +17,15 @@ import {
   createInvoicing,
   runDueAttempts,
 } from '../../modules/invoicing/index.js';
+import { createWorklistService } from '../../modules/scheduling/index.js';
+import { createTenantKeys } from '../../platform/crypto/tenant-keys.js';
 import { createRuntimeDb } from '../../platform/db/pool.js';
 import { fanOut } from '../../platform/jobs/worker.js';
 import { adapterOfSetting } from '../../platform/local-providers/dev-routes.js';
 import type { ObjectStorage } from '../../platform/storage/object-storage.js';
 import { fake } from '../adapter-resolver.js';
 import type { Config } from '../config.js';
+import { createKeyManagement } from '../key-management.js';
 
 import type { ModuleWiring } from './types.js';
 
@@ -142,12 +145,19 @@ export const invoicingWiring: ModuleWiring = {
       if (!storage && config.storage) storage = createS3ObjectStorage(config.storage);
       return storage;
     };
+    // An invoice that needs a person goes to the worklist of reception (its queue belongs to
+    // scheduling; the detail is encrypted with the key of the organization).
+    const worklist = createWorklistService({
+      keys: createTenantKeys({ kms: createKeyManagement(config.kms) }),
+    });
     return {
-      jobs: ({ client }) => {
+      jobs: ({ client, db, log }) => {
         const found = bucket();
         return [
           createCredentialWatchJob({ email, clock: now }),
-          createAfipIssueJob({ adapters, clock: now, jobs: client }),
+          // `db` gives the attempt a connection of its own for the mark it commits before it calls
+          // the authority (JD-S4 R1-C4).
+          createAfipIssueJob({ adapters, clock: now, jobs: client, db, worklist, log }),
           createInvoiceDeliverJob({ email, clock: now }),
           // Without a bucket there is nowhere to put a PDF: the job is not registered, an invoice
           // has no document, and the API answers "not ready" to the link.
@@ -160,7 +170,11 @@ export const invoicingWiring: ModuleWiring = {
           name: 'afip.issue retries',
           intervalMs: RETRY_EVERY_MS,
           run: async () => {
-            await runDueAttempts(db, { adapters, clock: now, jobs: client }, log);
+            await runDueAttempts(
+              db,
+              { adapters, clock: now, jobs: client, db, worklist, log },
+              log,
+            );
           },
         },
         {

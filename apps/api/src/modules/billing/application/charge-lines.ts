@@ -190,7 +190,7 @@ export interface ChargeForInvoicing {
   locationId: string;
   professionalId: string;
   payer: ChargePayer | null;
-  /** What the invoice prints as the service (the name of the appointment type). */
+  /** The name of the appointment type, for screens. An invoice never prints it (JD-S4 R1-C9). */
   appointmentTypeName: string;
   /** The day of the service in the time zone of the location (`YYYY-MM-DD`). */
   serviceDate: string;

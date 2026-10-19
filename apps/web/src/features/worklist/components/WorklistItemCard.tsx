@@ -40,6 +40,24 @@ import { ConfirmIdentityDialog } from './ConfirmIdentityDialog.js';
 import { DetachPatientDialog } from './DetachPatientDialog.js';
 import { KIND_ICONS } from './kinds.js';
 
+const INVOICE_REASONS = new Set([
+  'number_taken',
+  'cae_taken',
+  'voucher_mismatch',
+  'orphaned_voucher',
+]);
+
+/** Why an invoice needs a person, in words (the reason travels in the administrative detail). */
+function invoiceAttentionText(
+  t: (key: string) => string,
+  detail: Record<string, unknown> | null,
+): string {
+  const reason = detail?.['reason'];
+  return typeof reason === 'string' && INVOICE_REASONS.has(reason)
+    ? t(`scheduling:worklist.invoiceAttention.${reason}`)
+    : t('scheduling:worklist.invoiceAttention.generic');
+}
+
 /** One thing that needs a person: what it is about, what differs, and the ways to settle it. */
 export function WorklistItemCard({
   item,
@@ -128,6 +146,8 @@ export function WorklistItemCard({
             ) : null}
           </p>
         </div>
+      ) : item.subjectType === 'invoice' ? (
+        <p className="text-sm">{invoiceAttentionText(t, item.detail)}</p>
       ) : (
         <p className="text-sm text-muted-foreground">{t('scheduling:worklist.noAppointment')}</p>
       )}
@@ -185,6 +205,12 @@ export function WorklistItemCard({
                     </Link>
                   </Button>
                 ) : null;
+              case 'open_invoice':
+                return (
+                  <Button key={action} asChild variant="outline">
+                    <Link to="/invoices">{t('scheduling:worklist.action.open_invoice')}</Link>
+                  </Button>
+                );
               case 'approve':
                 return (
                   <Button

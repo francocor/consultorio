@@ -39,6 +39,19 @@ export const INVOICING_ERRORS = {
   invoice_not_rejected: { status: 409, i18nKey: 'errors.invoice_not_rejected' },
   // The PDF of an invoice exists once it is issued and has been rendered.
   invoice_pdf_not_ready: { status: 409, i18nKey: 'errors.invoice_pdf_not_ready' },
+  // The request to the authority may have been answered and the answer is not known yet: a manual
+  // voucher does not replace the invoice until it is reconciled.
+  invoice_awaiting_reconciliation: {
+    status: 409,
+    i18nKey: 'errors.invoice_awaiting_reconciliation',
+  },
+  // The voucher that replaces a pending invoice must cover its lines and be for its recipient.
+  invoice_replacement_mismatch: { status: 409, i18nKey: 'errors.invoice_replacement_mismatch' },
+  // A CAE belongs to one voucher of the organization.
+  invoice_cae_taken: { status: 409, i18nKey: 'errors.invoice_cae_taken' },
+  // The environment of a point of sale does not change once invoices went through it: the numbers
+  // of the other environment start again and would collide with the vouchers that exist.
+  point_of_sale_has_invoices: { status: 409, i18nKey: 'errors.point_of_sale_has_invoices' },
 } as const satisfies Record<string, { status: number; i18nKey: string }>;
 
 /** Audit actions of invoicing. They are registered in the shared catalogue. */
@@ -49,6 +62,9 @@ export const INVOICING_AUDIT_ACTIONS = [
   'invoice.retried',
   'invoice.manual',
   'invoice.credit_note',
+  'invoice.attempted',
+  'invoice.needs_attention',
+  'invoice.voucher_orphaned',
   'invoicing.config.changed',
   'invoicing.credential.changed',
 ] as const;

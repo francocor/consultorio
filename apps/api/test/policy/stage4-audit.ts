@@ -29,6 +29,12 @@ export const WRITTEN_OUTSIDE_ROUTES: Readonly<Record<string, string>> = {
     'The listener of billing on the appointment events (a no-show or a late cancellation flags the charge; it never voids it).',
   'invoice.issued':
     'The afip.issue job: the voucher is issued by the worker, not by the request that asked for it.',
+  'invoice.attempted':
+    'The afip.issue job and the sweeper of the worker: an attempt that ended without an answer.',
+  'invoice.needs_attention':
+    'The afip.issue job: the authority answered with a voucher the system cannot record.',
+  'invoice.voucher_orphaned':
+    'The afip.issue job: a voucher arrived for an invoice somebody had closed meanwhile.',
 };
 
 /**

@@ -16,6 +16,9 @@ export const INVOICING_SCENARIOS: Record<(typeof INVOICING_AUDIT_ACTIONS)[number
     'invoice.retried': t('invoice-rejection.test.ts'),
     'invoice.manual': t('invoice-manual.test.ts'),
     'invoice.credit_note': t('credit-note.test.ts'),
+    'invoice.attempted': t('invoice-reconciliation.test.ts'),
+    'invoice.needs_attention': t('invoice-reconciliation.test.ts'),
+    'invoice.voucher_orphaned': t('invoice-reconciliation.test.ts'),
     'invoicing.config.changed': t('fiscal-config.test.ts'),
     'invoicing.credential.changed': t('fiscal-config.test.ts'),
   };

@@ -55,7 +55,7 @@ describe('countByKind and filterItems', () => {
     item({ id: ID(13), kind: 'reminder_not_sent', locationId: null }),
   ];
 
-  it('counts the items of each of the six kinds, including the ones with none', () => {
+  it('counts the items of each kind, including the ones with none', () => {
     const counts = countByKind(items);
 
     expect(counts).toEqual({
@@ -65,6 +65,7 @@ describe('countByKind and filterItems', () => {
       reminder_not_delivered: 0,
       reply_to_review: 0,
       waitlist_manual_contact: 0,
+      invoice_attention: 0,
     });
     expect(Object.keys(counts)).toEqual([...WORKLIST_KINDS]);
   });

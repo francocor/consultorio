@@ -4,7 +4,7 @@ import { check, foreignKey, index, text, timestamp, uniqueIndex, uuid } from 'dr
 import { bytea, tenantTable } from './_helpers.js';
 import { location, tenant } from './tenant.js';
 
-/** The six kinds of reception worklist item (scheduling, "Reception worklist"). No others exist. */
+/** The kinds of reception worklist item (scheduling, "Reception worklist"). No others exist. */
 export const WORKLIST_KINDS = [
   'pending_approval',
   'identity_review',
@@ -12,6 +12,8 @@ export const WORKLIST_KINDS = [
   'reminder_not_delivered',
   'reply_to_review',
   'waitlist_manual_contact',
+  // An invoice a person has to look at (invoicing, JD-S4 R1-C3 and C8).
+  'invoice_attention',
 ] as const;
 
 const KIND_LIST = WORKLIST_KINDS.map((kind) => `'${kind}'`).join(', ');
@@ -22,7 +24,7 @@ const KIND_LIST = WORKLIST_KINDS.map((kind) => `'${kind}'`).join(', ');
  * what a booking submitted and what the record holds) is encrypted. An item is resolved or
  * dismissed with a recorded actor and time, and never deleted.
  *
- * `subject_id` points at an appointment, a waitlist entry or an inbound message, so it has no
+ * `subject_id` points at an appointment, a waitlist entry, an inbound message or an invoice, so it has no
  * foreign key (the subject lives in another capability). At most one item per kind and subject is
  * open at a time: opening it again is a no-op.
  */
@@ -55,7 +57,7 @@ export const worklistItem = tenantTable(
     check('worklist_item_kind_check', sql.raw(`"kind" in (${KIND_LIST})`)),
     check(
       'worklist_item_subject_type_check',
-      sql`${table.subjectType} in ('appointment', 'waitlist_entry', 'inbound_message')`,
+      sql`${table.subjectType} in ('appointment', 'waitlist_entry', 'inbound_message', 'invoice')`,
     ),
     check('worklist_item_status_check', sql`${table.status} in ('open', 'resolved', 'dismissed')`),
     check(

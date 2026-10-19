@@ -29,6 +29,8 @@ export {
   type CareSourceAppointment,
 } from './application/care-source.js';
 export type { OpenItemInput, WorklistService } from './application/worklist.js';
+// The worklist service itself, for a process that holds no scheduling module (the worker).
+export { createWorklistService } from './application/worklist.js';
 // Billing (Stage 4, track A): read an appointment to charge for it.
 export {
   readAppointmentForCharge,

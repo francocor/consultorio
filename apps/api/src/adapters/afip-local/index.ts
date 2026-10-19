@@ -33,8 +33,9 @@ import {
  * and its mode in Postgres, so the API and the worker see the same one. It behaves like the
  * authority where it matters to the product:
  *
- * - numbers are sequential per issuer CUIT, point of sale and voucher type, with no gaps even when
- *   requests arrive together;
+ * - numbers are sequential per organization, issuer CUIT, point of sale and voucher type, with no
+ *   gaps even when requests arrive together (two organizations that name the same CUIT do not share
+ *   a series, an answer or a lookup);
  * - the same idempotency key gets the same voucher (or the same rejection) however many times it
  *   arrives, and a different request under a used key is refused;
  * - it refuses what AFIP refuses (bad buyer CUIT, a total that is not the sum of its parts, a
@@ -70,6 +71,8 @@ const issuedResult = (voucher: LocalAfipVoucherRow): Decided => ({
   number: voucher.number,
   cae: voucher.cae,
   caeExpiresOn: voucher.caeExpiresOn,
+  totalCents: voucher.totalCents,
+  issueDate: voucher.issueDate,
 });
 
 const lock = (name: string) => sql`select pg_advisory_xact_lock(hashtextextended(${name}, 0))`;
@@ -100,16 +103,19 @@ export function createLocalInvoiceIssuer(options: LocalInvoiceIssuerOptions): Lo
 
       const { epoch } = control;
       const fingerprint = requestFingerprint(request);
+      // Numbers and answers are per organization: the CUIT alone does not tell two of them apart.
+      const tenantRef = request.tenantRef ?? '';
 
       return db.transaction(async (tx): Promise<IssueResult> => {
         // The same key never runs twice at once: the second waits and then reads the first's answer.
-        await tx.execute(lock(`afip-key|${String(epoch)}|${idempotencyKey}`));
+        await tx.execute(lock(`afip-key|${String(epoch)}|${tenantRef}|${idempotencyKey}`));
         const [known] = await tx
           .select()
           .from(localAfipRequest)
           .where(
             and(
               eq(localAfipRequest.epoch, epoch),
+              eq(localAfipRequest.tenantRef, tenantRef),
               eq(localAfipRequest.idempotencyKey, idempotencyKey),
             ),
           );
@@ -133,6 +139,7 @@ export function createLocalInvoiceIssuer(options: LocalInvoiceIssuerOptions): Lo
         if (rejection !== null) {
           await tx.insert(localAfipRequest).values({
             epoch,
+            tenantRef,
             idempotencyKey,
             fingerprint,
             outcome: 'rejected',
@@ -144,7 +151,7 @@ export function createLocalInvoiceIssuer(options: LocalInvoiceIssuerOptions): Lo
         const issuerCuit = request.issuerCuit ?? '';
         await tx.execute(
           lock(
-            `afip-series|${String(epoch)}|${issuerCuit}|${String(request.pointOfSale)}|${request.type}`,
+            `afip-series|${String(epoch)}|${tenantRef}|${issuerCuit}|${String(request.pointOfSale)}|${request.type}`,
           ),
         );
         const [last] = await tx
@@ -153,6 +160,7 @@ export function createLocalInvoiceIssuer(options: LocalInvoiceIssuerOptions): Lo
           .where(
             and(
               eq(localAfipVoucher.epoch, epoch),
+              eq(localAfipVoucher.tenantRef, tenantRef),
               eq(localAfipVoucher.issuerCuit, issuerCuit),
               eq(localAfipVoucher.pointOfSale, request.pointOfSale),
               eq(localAfipVoucher.type, request.type),
@@ -165,11 +173,13 @@ export function createLocalInvoiceIssuer(options: LocalInvoiceIssuerOptions): Lo
           .insert(localAfipVoucher)
           .values({
             epoch,
+            tenantRef,
             issuerCuit,
             pointOfSale: request.pointOfSale,
             type: request.type,
             number,
             cae: caeFor({
+              tenantRef,
               issuerCuit,
               pointOfSale: request.pointOfSale,
               type: request.type,
@@ -184,6 +194,7 @@ export function createLocalInvoiceIssuer(options: LocalInvoiceIssuerOptions): Lo
         if (!voucher) throw new Error('the simulator could not store a voucher');
         await tx.insert(localAfipRequest).values({
           epoch,
+          tenantRef,
           idempotencyKey,
           fingerprint,
           outcome: 'authorized',
@@ -212,6 +223,7 @@ export function createLocalInvoiceIssuer(options: LocalInvoiceIssuerOptions): Lo
         .where(
           and(
             eq(localAfipVoucher.epoch, control.epoch),
+            eq(localAfipVoucher.tenantRef, ref.tenantRef ?? ''),
             eq(localAfipVoucher.issuerCuit, ref.issuerCuit ?? ''),
             eq(localAfipVoucher.pointOfSale, ref.pointOfSale),
             eq(localAfipVoucher.type, ref.type),

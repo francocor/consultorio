@@ -13,11 +13,19 @@ export interface InvoiceRef {
   /** Voucher type, for example "FA", "FB", "NCA". */
   type: string;
   number: number;
+  /**
+   * An opaque reference to the organization that asks, derived by the server. The real authority
+   * identifies the issuer by its CUIT and ignores it; a simulator serves many organizations and uses
+   * it to keep their series and their answers apart, even when two of them name the same CUIT.
+   */
+  tenantRef?: string;
 }
 
 export interface InvoiceRequest {
   /** CUIT of the issuer (11 digits). The adapter serves every organization, so the request names it. */
   issuerCuit?: string;
+  /** The organization that asks: see `InvoiceRef.tenantRef`. */
+  tenantRef?: string;
   /** The AFIP environment of the point of sale; an adapter that has only one ignores it. */
   environment?: 'homologation' | 'production';
   pointOfSale: number;
@@ -51,7 +59,18 @@ export interface InvoiceRequest {
 }
 
 export type IssueResult =
-  | { status: 'issued'; number: number; cae: string; caeExpiresOn: string }
+  | {
+      status: 'issued';
+      number: number;
+      cae: string;
+      caeExpiresOn: string;
+      /**
+       * What the authority holds for the voucher, when it says (a lookup always does): the caller
+       * compares them with its own invoice before it adopts a voucher it did not just request.
+       */
+      totalCents?: number;
+      issueDate?: string;
+    }
   | { status: 'rejected'; message: string }
   | { status: 'retryable'; message: string; outcomeUnknown: boolean };
 

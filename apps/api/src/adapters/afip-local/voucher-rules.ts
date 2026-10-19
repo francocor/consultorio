@@ -54,8 +54,13 @@ export function rejectionFor(request: InvoiceRequest): string | null {
   return null;
 }
 
-/** Deterministic 14 digit CAE of a voucher: the same voucher always gets the same one. */
+/**
+ * Deterministic 14 digit CAE of a voucher: the same voucher always gets the same one. The
+ * organization is part of it when there is one, so two organizations that name the same CUIT never
+ * hold the same CAE.
+ */
 export function caeFor(voucher: {
+  tenantRef?: string;
   issuerCuit: string;
   pointOfSale: number;
   type: string;
@@ -63,7 +68,7 @@ export function caeFor(voucher: {
 }): string {
   const hash = createHash('sha256')
     .update(
-      `${voucher.issuerCuit}|${String(voucher.pointOfSale)}|${voucher.type}|${String(voucher.number)}`,
+      `${voucher.tenantRef ? `${voucher.tenantRef}|` : ''}${voucher.issuerCuit}|${String(voucher.pointOfSale)}|${voucher.type}|${String(voucher.number)}`,
     )
     .digest();
   let digits = '';

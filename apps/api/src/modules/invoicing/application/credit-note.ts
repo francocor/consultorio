@@ -23,6 +23,7 @@ import {
 } from './create-invoice.js';
 import { effectiveEnvironment } from './fiscal-config.js';
 import { loadInvoice } from './invoice-view.js';
+import { currentIssuer } from './issuer-snapshot.js';
 import { isSimulatedIssuer, issuerFor } from './issuer.js';
 import { loadOrganization } from './settings.js';
 
@@ -141,6 +142,8 @@ export async function createCreditNote(
         recipient,
         totalCents: noteCents,
         locationIds: original.locationIds,
+        // The note is issued by the one who issued the invoice it cancels.
+        issuer: original.issuerSnapshot ?? (await currentIssuer(tx)),
         creditNote: { originalId: original.id, reason: input.request.reason },
       },
     });

@@ -27,6 +27,7 @@ import { visibleLocationIds } from '../../access/index.js';
 
 import { CURRENT_TENANT } from './common.js';
 import { scopeOf, type InvoiceScope } from './invoice-view.js';
+import { snapshotOfProfile } from './issuer-snapshot.js';
 import { INVOICE_DELIVER_JOB } from './job-names.js';
 import { renderInvoice, type InvoiceDocumentData } from './render-invoice.js';
 
@@ -39,8 +40,9 @@ export async function loadDocumentData(tx: Tx, row: InvoiceRow): Promise<Invoice
     .from(invoiceLine)
     .where(eq(invoiceLine.invoiceId, row.id))
     .orderBy(asc(invoiceLine.position));
-  const [profile] = await tx.select().from(fiscalProfile);
-  if (!profile) throw new Error('the fiscal profile is missing');
+  const [profile] = row.issuerSnapshot ? [] : await tx.select().from(fiscalProfile);
+  const issuer = row.issuerSnapshot ?? (profile ? snapshotOfProfile(profile) : null);
+  if (!issuer) throw new Error('the issuer of the invoice is missing');
   const [original] =
     row.creditNoteOfId === null
       ? []
@@ -53,12 +55,14 @@ export async function loadDocumentData(tx: Tx, row: InvoiceRow): Promise<Invoice
     cae: row.cae,
     caeExpiresOn: row.caeExpiresOn,
     issuedAt: row.issuedAt ?? row.createdAt,
+    // The issuer is the one the invoice was requested with; the profile only serves an invoice that
+    // predates the snapshot. A later edit of the profile never changes a fiscal document.
     issuer: {
-      businessName: profile.businessName,
-      cuit: profile.cuit,
-      taxCondition: profile.taxCondition as TaxCondition,
-      address: profile.address,
-      activityStartedOn: profile.activityStartedOn,
+      businessName: issuer.businessName,
+      cuit: issuer.cuit,
+      taxCondition: issuer.taxCondition as TaxCondition,
+      address: issuer.address,
+      activityStartedOn: issuer.activityStartedOn,
     },
     recipient: {
       name: row.recipientName,

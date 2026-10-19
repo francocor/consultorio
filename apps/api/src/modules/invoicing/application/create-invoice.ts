@@ -9,7 +9,6 @@ import type {
 import { eq } from 'drizzle-orm';
 
 import {
-  fiscalProfile,
   invoice,
   invoiceLine,
   pointOfSale,
@@ -44,6 +43,7 @@ import {
 import { packFor } from './country-rules.js';
 import { effectiveEnvironment } from './fiscal-config.js';
 import { loadInvoice, scopeOf } from './invoice-view.js';
+import { currentIssuer, type IssuerSnapshot } from './issuer-snapshot.js';
 import { isSimulatedIssuer, issuerFor } from './issuer.js';
 import { AFIP_ISSUE_JOB } from './job-names.js';
 import { invoicingReadiness } from './readiness.js';
@@ -189,16 +189,16 @@ async function describeLines(
   const charges = await readChargesForInvoicing(tx, [
     ...new Set(lines.map((line) => line.chargeId)),
   ]);
-  // The invoice description of the appointment type, or the name of the type when it has none.
+  // The invoice description of the appointment type. A type without one says nothing of its own:
+  // the line reads the generic "Servicios de salud". The name of the type is never used, because
+  // it can say what the service is (a speciality, a treatment) and the line reaches the authority,
+  // the PDF and the payer (JD-S4 R1-C9; e-invoicing-afip, "Invoice document and delivery").
   const wording = await readInvoiceWording(
     tx,
     charges.map((charge) => charge.appointmentId),
   );
   const service = new Map(
-    charges.map((charge) => [
-      charge.id,
-      wording.get(charge.appointmentId) ?? charge.appointmentTypeName,
-    ]),
+    charges.map((charge) => [charge.id, wording.get(charge.appointmentId) ?? '']),
   );
   return new Map(
     lines.map((line) => [
@@ -220,6 +220,8 @@ export interface NewInvoiceValues {
   recipient: Recipient;
   totalCents: number;
   locationIds: string[];
+  /** Who issues it, as the fiscal profile says now (null: a manual voucher with no profile). */
+  issuer: IssuerSnapshot | null;
   previousAttemptId?: string | undefined;
   manual?: { number: number; cae: string; caeExpiresOn: string | null } | undefined;
   creditNote?: { originalId: string; reason: string } | undefined;
@@ -264,6 +266,7 @@ export async function insertInvoice(
         vatCents: split.vatCents,
         exemptCents: split.exemptCents,
         locationIds: values.locationIds,
+        issuerSnapshot: values.issuer,
         creditNoteOfId: values.creditNote?.originalId ?? null,
         reason: values.creditNote?.reason ?? null,
         previousAttemptId: values.previousAttemptId ?? null,
@@ -279,6 +282,7 @@ export async function insertInvoice(
       const constraint = constraintOf(error);
       if (constraint === 'invoice_previous_attempt_key') throw new AppError('invoice_not_rejected');
       if (constraint === 'invoice_number_key') throw new AppError('invoice_number_taken');
+      if (constraint === 'invoice_cae_key') throw new AppError('invoice_cae_taken');
       // Two submissions with the same key met at the index: the key was used for another request.
       if (constraint === 'invoice_idempotency_key') throw new AppError('idempotency_key_reused');
     }
@@ -319,11 +323,11 @@ export async function queueIssue(
   await deps.jobs?.enqueue(tx, AFIP_ISSUE_JOB, { tenantId, invoiceId });
 }
 
-/** The fiscal facts the type rules need: the tax condition of the issuer. */
-async function issuerCondition(tx: Tx): Promise<TaxCondition> {
-  const [profile] = await tx.select().from(fiscalProfile);
-  if (!profile) throw new AppError('invoicing_not_ready');
-  return profile.taxCondition as TaxCondition;
+/** The issuer the invoice is requested with: the fiscal profile now, which the invoice then keeps. */
+async function requireIssuer(tx: Tx): Promise<IssuerSnapshot> {
+  const issuer = await currentIssuer(tx);
+  if (!issuer) throw new AppError('invoicing_not_ready');
+  return issuer;
 }
 
 /** Whether invoicing can run now; if not, why (the reasons travel as field errors). */
@@ -391,9 +395,9 @@ export async function createInvoice(
 
   // The type comes from the rules of the country; a type asked for is only checked against them.
   const pack = packFor(organization.country);
-  const issuer = await issuerCondition(tx);
+  const issuerSnapshot = await requireIssuer(tx);
   const typed = pack.invoiceRules.resolveInvoiceType({
-    issuer,
+    issuer: issuerSnapshot.taxCondition as TaxCondition,
     recipient: recipient.taxCondition,
     ...(request.type ? { requested: request.type } : {}),
   });
@@ -443,6 +447,7 @@ export async function createInvoice(
       recipient: normalized,
       totalCents: plan.totalCents,
       locationIds: [...new Set(lines.map((line) => line.locationId))].sort(),
+      issuer: issuerSnapshot,
       previousAttemptId: request.previousAttemptId,
     },
   });
@@ -477,6 +482,9 @@ export async function createInvoice(
       lineCount: plan.parts.length,
       pointOfSale: point.number,
       recipientKind: normalized.kind,
+      chargeIds: [...new Set(plan.parts.map((part) => byId.get(part.chargeLineId)?.chargeId ?? ''))]
+        .filter((id) => id !== '')
+        .slice(0, 50),
     },
   });
   if (request.previousAttemptId) {

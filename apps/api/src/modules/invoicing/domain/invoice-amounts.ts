@@ -95,9 +95,15 @@ export function allocateCredit(leftCents: readonly number[], noteCents: number):
   return allocateProportional(money(noteCents), leftCents);
 }
 
+/** What a line says when the appointment type gave no invoice description. */
+export const GENERIC_SERVICE_WORDING = 'Servicios de salud';
+
 export interface LineWordingInput {
   kind: ChargeLineKind;
-  /** The generic wording of the service (the appointment type's invoice description or its name). */
+  /**
+   * The generic wording of the service: the invoice description of the appointment type, or empty
+   * when it has none (the line then reads the generic wording). Never the name of the type.
+   */
   serviceName: string;
 }
 
@@ -107,7 +113,8 @@ export interface LineWordingInput {
  * anything there). The wording is a snapshot: it is stored on the invoice line.
  */
 export function lineWording(input: LineWordingInput): string {
-  const service = input.serviceName.trim() === '' ? 'Servicios de salud' : input.serviceName.trim();
+  const service =
+    input.serviceName.trim() === '' ? GENERIC_SERVICE_WORDING : input.serviceName.trim();
   switch (input.kind) {
     case 'copago':
       return 'Copago';

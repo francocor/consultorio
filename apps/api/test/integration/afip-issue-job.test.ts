@@ -9,6 +9,7 @@ import { afterAll, beforeAll, describe, expect, inject, it, vi } from 'vitest';
 import { auditEvent } from '../../src/db/schema/audit.js';
 import { fiscalCredential } from '../../src/db/schema/index.js';
 import { tenant as tenantTable } from '../../src/db/schema/tenant.js';
+import { issuerKeyOf } from '../../src/modules/invoicing/application/issue-attempt.js';
 import { createRuntimeDb, type DbHandle } from '../../src/platform/db/pool.js';
 import { runJob } from '../../src/platform/jobs/define-job.js';
 import { generateDevCertificate } from '../../src/testing/dev-afip-certificate.js';
@@ -65,6 +66,9 @@ const sweepOf = async (invoiceId: string, clock: () => Date) =>
 /** A clock `minutes` after `base`. */
 const after = (base: number, minutes: number) => () => new Date(base + minutes * 60_000);
 
+/** The key the authority sees for an invoice: derived from the organization and the invoice. */
+const keyOf = (row: { id: string }) => issuerKeyOf(world.tenant.id, row.id);
+
 const vouchersOf = (key: string) =>
   world.issuer.vouchers().filter((voucher) => voucher.idempotencyKey === key);
 
@@ -88,7 +92,7 @@ describe('an invoice the authority authorizes', () => {
     expect(issued.issuedAt).not.toBeNull();
     const row = await world.rowOf(created.id);
     expect(row).toMatchObject({ deliveryState: null, attempts: 1, nextAttemptAt: null });
-    expect(vouchersOf(row.idempotencyKey)).toEqual([
+    expect(vouchersOf(keyOf(row))).toEqual([
       expect.objectContaining({
         issuerCuit: '20123456786',
         pointOfSale: 1,
@@ -149,11 +153,11 @@ describe('an invoice the authority authorizes', () => {
 
     const row = await world.rowOf(created.id);
     expect(row.status).toBe('issued');
-    expect(vouchersOf(row.idempotencyKey)).toHaveLength(1);
+    expect(vouchersOf(keyOf(row))).toHaveLength(1);
     expect(row.attempts).toBe(1);
     // Delivered again later, nothing happens.
     await delivery();
-    expect(vouchersOf(row.idempotencyKey)).toHaveLength(1);
+    expect(vouchersOf(keyOf(row))).toHaveLength(1);
   });
 });
 
@@ -174,7 +178,7 @@ describe('an outage of the authority (mode down)', () => {
     expect(waiting.ageMinutes).toBeGreaterThanOrEqual(0);
     expect(Object.keys(waiting)).not.toContain('deliveryState');
     const waitingRow = await world.rowOf(created.id);
-    expect(vouchersOf(waitingRow.idempotencyKey)).toHaveLength(0);
+    expect(vouchersOf(keyOf(waitingRow))).toHaveLength(0);
     expect(waitingRow).toMatchObject({ status: 'pending', deliveryState: 'retrying', attempts: 1 });
     // The charge is not released, and nothing about money is blocked.
     expect((await world.chargeOf(charge.id)).invoicedCents).toBe(2_000_000);
@@ -195,7 +199,7 @@ describe('an outage of the authority (mode down)', () => {
     ]);
     const issued = await world.getInvoice(created.id);
     expect(issued.status).toBe('issued');
-    expect(vouchersOf((await world.rowOf(created.id)).idempotencyKey)).toHaveLength(1);
+    expect(vouchersOf(keyOf(await world.rowOf(created.id)))).toHaveLength(1);
   });
 
   it('waits 1 minute, then doubles up to 6 hours, and never longer', async () => {
@@ -246,8 +250,8 @@ describe('a timeout after the authority authorized (mode timeout_after_authorize
       attempts: 1,
     });
     expect(row.expectedNumber).toBeGreaterThan(0);
-    expect(vouchersOf(row.idempotencyKey)).toHaveLength(1);
-    const authorized = vouchersOf(row.idempotencyKey)[0];
+    expect(vouchersOf(keyOf(row))).toHaveLength(1);
+    const authorized = vouchersOf(keyOf(row))[0];
 
     const outcome = await sweepOf(created.id, after(t0, 1));
 
@@ -258,14 +262,14 @@ describe('a timeout after the authority authorized (mode timeout_after_authorize
       number: authorized?.number,
       cae: authorized?.cae,
     });
-    expect(vouchersOf(row.idempotencyKey)).toHaveLength(1);
+    expect(vouchersOf(keyOf(row))).toHaveLength(1);
   });
 
   it('asks the authority first and sends nothing while it does not answer', async () => {
     const { created, t0 } = await requested();
     world.issuer.setMode('timeout_after_authorize');
     await world.runIssue(after(t0, 0));
-    const key = (await world.rowOf(created.id)).idempotencyKey;
+    const key = keyOf(await world.rowOf(created.id));
     const issue = vi.spyOn(world.issuer, 'issue');
     world.issuer.setMode('down');
 
@@ -334,7 +338,7 @@ describe('what keeps an invoice waiting without sending it', () => {
 
       const waiting = await world.rowOf(created.id);
       expect(waiting).toMatchObject({ status: 'pending', attempts: 1 });
-      expect(vouchersOf(waiting.idempotencyKey)).toHaveLength(0);
+      expect(vouchersOf(keyOf(waiting))).toHaveLength(0);
     } finally {
       await expire(false);
     }

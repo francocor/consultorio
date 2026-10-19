@@ -281,6 +281,56 @@ export function describeInvoiceIssuerContract(target: InvoiceIssuerContractTarge
       });
     });
 
+    it('says what it holds for a voucher it finds: the total and the date, so a caller can compare them', async () => {
+      const { issuer } = await target.make();
+      const cuit = nextCuit();
+      expectIssued(
+        await issuer.issue(
+          requestFor(cuit, { totalCents: 3_300_000, issueDate: '2026-10-16' }),
+          key(),
+        ),
+      );
+
+      const found = await issuer.findIssued({
+        issuerCuit: cuit,
+        pointOfSale: 1,
+        type: 'FC',
+        number: 1,
+      });
+
+      expect(found).toMatchObject({
+        status: 'issued',
+        totalCents: 3_300_000,
+        issueDate: '2026-10-16',
+      });
+    });
+
+    it('keeps the series, the answers and the lookups of two organizations apart even when they name the same CUIT', async () => {
+      const { issuer } = await target.make();
+      const cuit = nextCuit();
+      const sharedKey = key();
+
+      const first = expectIssued(
+        await issuer.issue(requestFor(cuit, { tenantRef: 'organization-a' }), sharedKey),
+      );
+      // The same key and the same CUIT from another organization is a request of its own.
+      const second = expectIssued(
+        await issuer.issue(requestFor(cuit, { tenantRef: 'organization-b' }), sharedKey),
+      );
+      const secondAgain = expectIssued(
+        await issuer.issue(requestFor(cuit, { tenantRef: 'organization-b' }), key()),
+      );
+      const lookup = (tenantRef: string, number: number) =>
+        issuer.findIssued({ issuerCuit: cuit, tenantRef, pointOfSale: 1, type: 'FC', number });
+
+      expect([first.number, second.number, secondAgain.number]).toEqual([1, 1, 2]);
+      expect(second.cae).not.toBe(first.cae);
+      expect(await lookup('organization-a', 1)).toMatchObject({ number: 1, cae: first.cae });
+      expect(await lookup('organization-a', 2)).toBeNull();
+      expect(await lookup('organization-b', 2)).toMatchObject({ number: 2 });
+      expect(await lookup('organization-c', 1)).toBeNull();
+    });
+
     it('refuses a key that is reused for a different request', async () => {
       const { issuer } = await target.make();
       const cuit = nextCuit();

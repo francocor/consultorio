@@ -11,5 +11,9 @@
   "invoice_credit_note_not_applicable": "Solo una factura emitida o registrada puede tener nota de crédito, y una nota de crédito no tiene otra nota.",
   "invoice_number_taken": "Ya hay un comprobante registrado con ese tipo, punto de venta y número.",
   "invoice_not_rejected": "Solo se puede reintentar un intento rechazado que todavía no se haya reintentado.",
-  "invoice_pdf_not_ready": "El PDF de la factura todavía no está listo. Intente de nuevo en unos minutos."
+  "invoice_pdf_not_ready": "El PDF de la factura todavía no está listo. Intente de nuevo en unos minutos.",
+  "invoice_awaiting_reconciliation": "Esta factura se envió a ARCA y todavía no sabemos si fue emitida. Espere a que se confirme antes de registrar una factura manual en su lugar.",
+  "invoice_replacement_mismatch": "La factura manual tiene que cubrir las mismas líneas y el mismo destinatario que la factura pendiente que reemplaza.",
+  "invoice_cae_taken": "Ya hay un comprobante registrado con ese CAE.",
+  "point_of_sale_has_invoices": "Este punto de venta ya tiene facturas: no se puede cambiar su ambiente. Cree otro punto de venta para el otro ambiente."
 }

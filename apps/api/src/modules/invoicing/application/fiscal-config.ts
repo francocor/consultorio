@@ -14,6 +14,7 @@ import { DateTime } from 'luxon';
 import {
   fiscalCredential,
   fiscalProfile,
+  invoice,
   pointOfSale,
   type FiscalCredentialRow,
   type FiscalProfileRow,
@@ -260,6 +261,18 @@ export async function updatePointOfSale(
     changedFields.push('active');
   }
   if (changedFields.length === 0) return pointOfSaleDto(current, simulated);
+
+  // The numbers of the other environment start again at 1: once invoices went through this point of
+  // sale they would collide with the vouchers that exist (JD-S4 R1-C8). A new point of sale has the
+  // other environment.
+  if (patch.environment !== undefined) {
+    const [used] = await tx
+      .select({ id: invoice.id })
+      .from(invoice)
+      .where(eq(invoice.pointOfSale, current.number))
+      .limit(1);
+    if (used) throw new AppError('point_of_sale_has_invoices');
+  }
 
   const [updated] = await tx
     .update(pointOfSale)

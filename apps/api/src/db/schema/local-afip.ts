@@ -54,6 +54,12 @@ export const localAfipVoucher = pgTable(
       .primaryKey()
       .default(sql`app.uuid_v7()`),
     epoch: integer('epoch').notNull(),
+    /**
+     * The organization the voucher belongs to (an opaque reference the issuing side derives; `''`
+     * for the rows that predate it). Numbering is per organization: two organizations with the same
+     * CUIT string do not share a series nor read each other's vouchers (JD-S4 R1-C12).
+     */
+    tenantRef: text('tenant_ref').notNull().default(''),
     issuerCuit: text('issuer_cuit').notNull(),
     pointOfSale: integer('point_of_sale').notNull(),
     type: text('type').notNull(),
@@ -68,6 +74,7 @@ export const localAfipVoucher = pgTable(
   (table) => [
     uniqueIndex('local_afip_voucher_number_key').on(
       table.epoch,
+      table.tenantRef,
       table.issuerCuit,
       table.pointOfSale,
       table.type,
@@ -91,6 +98,8 @@ export const localAfipRequest = pgTable(
       .primaryKey()
       .default(sql`app.uuid_v7()`),
     epoch: integer('epoch').notNull(),
+    /** As in `local_afip_voucher`: a key is only the same key inside one organization. */
+    tenantRef: text('tenant_ref').notNull().default(''),
     idempotencyKey: text('idempotency_key').notNull(),
     fingerprint: text('fingerprint').notNull(),
     outcome: text('outcome').notNull(),
@@ -99,7 +108,7 @@ export const localAfipRequest = pgTable(
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => [
-    uniqueIndex('local_afip_request_key').on(table.epoch, table.idempotencyKey),
+    uniqueIndex('local_afip_request_key').on(table.epoch, table.tenantRef, table.idempotencyKey),
     check('local_afip_request_outcome_check', sql`${table.outcome} in ('authorized', 'rejected')`),
     check(
       'local_afip_request_shape_check',

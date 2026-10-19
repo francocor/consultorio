@@ -25,12 +25,14 @@ import { invoice as invoiceTable, type InvoiceRow } from '../../src/db/schema/in
 import type { AdapterResolver } from '../../src/main/adapter-resolver.js';
 import type { ApplicationOptions } from '../../src/main/application.js';
 import {
+  type IssueDeps,
   createAfipIssueJob,
   createInvoiceDeliverJob,
   createInvoicePdfJob,
   runDueAttempts,
   type AttemptOutcome,
 } from '../../src/modules/invoicing/index.js';
+import { createWorklistService } from '../../src/modules/scheduling/index.js';
 import type { DbHandle } from '../../src/platform/db/pool.js';
 import type { JobRunResult } from '../../src/platform/jobs/define-job.js';
 import type { EmailSender } from '../../src/platform/mail/email-sender.js';
@@ -42,6 +44,8 @@ import type { TestSession } from './session.js';
 export interface InvoicingWorld extends BillingWorld {
   /** The in-memory issuer of this world: the test sets its mode and reads its vouchers. */
   issuer: FakeInvoiceIssuer;
+  /** What the issue job and the sweeper are built with, so a test builds its own variation of them. */
+  issueDeps(clock?: () => Date): IssueDeps;
   /** What the application enqueued. */
   recorded: RecordingJobClient;
   storage: MemoryObjectStorage;
@@ -134,6 +138,16 @@ export async function createInvoicingWorld(
     });
     expect(response.statusCode, response.body).toBe(200);
   };
+  // The worker's wiring: a connection of its own for the mark written before the call, and the
+  // worklist where an invoice that needs a person is put.
+  const worklist = createWorklistService({ keys: world.keys });
+  const issueDeps = (clock: () => Date = () => new Date()): IssueDeps => ({
+    adapters,
+    clock,
+    jobs: recorded,
+    db: runtime.db,
+    worklist,
+  });
   await profile(options.taxCondition ?? 'monotributo');
   const point = await world.api.post('/invoicing/points-of-sale', world.owner, { number: 1 });
   expect(point.statusCode, point.body).toBe(201);
@@ -153,7 +167,7 @@ export async function createInvoicingWorld(
     world.api.post('/invoices', by, { idempotencyKey: submissionKey(), ...body });
 
   const runIssue: InvoicingWorld['runIssue'] = (clock = () => new Date()) =>
-    runPending(runtime.db, recorded, [createAfipIssueJob({ adapters, clock, jobs: recorded })]);
+    runPending(runtime.db, recorded, [createAfipIssueJob(issueDeps(clock))]);
 
   const documentJobs: InvoicingWorld['documentJobs'] = (settings = {}) => {
     const clock = settings.clock ?? (() => new Date());
@@ -197,11 +211,12 @@ export async function createInvoicingWorld(
     runIssue,
     documentJobs,
     runDocuments,
-    issueJob: (clock = () => new Date()) => createAfipIssueJob({ adapters, clock, jobs: recorded }),
+    issueDeps,
+    issueJob: (clock = () => new Date()) => createAfipIssueJob(issueDeps(clock)),
     sweep: (clock) =>
       runDueAttempts(
         runtime.db,
-        { adapters, clock, jobs: recorded },
+        issueDeps(clock),
         { error: () => undefined },
         { tenantIds: [world.tenant.id] },
       ),

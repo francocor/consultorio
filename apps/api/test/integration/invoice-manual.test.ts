@@ -44,12 +44,14 @@ const nextNumber = () => (numbers += 1);
 /** The body of a manual entry over the patient lines of a charge. */
 async function manualBody(charge: ChargeDto, extra: Record<string, unknown> = {}) {
   const lines = (await world.linesOf(charge.id)).filter((line) => line.portion === 'patient');
+  const number = nextNumber();
   return {
     idempotencyKey: `0190a000-0000-7000-8000-${String(nextNumber()).padStart(12, '0')}`,
     type: 'FC',
     pointOfSale: 5,
-    number: nextNumber(),
-    cae: '70123456789012',
+    number,
+    // A CAE belongs to one voucher: every entry has its own.
+    cae: String(70_123_000_000_000 + number),
     issueDate: '2031-05-20',
     caeExpiresOn: '2031-05-30',
     totalCents: lines.reduce((sum, line) => sum + line.amountCents, 0),
@@ -80,7 +82,7 @@ describe('an invoice issued outside the system', () => {
         status: 'manual',
         pointOfSale: 5,
         number: body.number,
-        cae: '70123456789012',
+        cae: body.cae,
         caeExpiresOn: '2031-05-30',
         issueDate: '2031-05-20',
         totalCents: 2_000_000,
@@ -125,7 +127,8 @@ describe('an invoice issued outside the system', () => {
 
   it('is immutable once saved: the database refuses to change it', async () => {
     const charge = await world.charge();
-    const saved = (await register(await manualBody(charge))).json<InvoiceDto>();
+    const body = await manualBody(charge);
+    const saved = (await register(body)).json<InvoiceDto>();
 
     const change = await world
       .inTenant((tx) =>
@@ -139,7 +142,7 @@ describe('an invoice issued outside the system', () => {
       );
 
     expect(change).toBe('42501');
-    expect((await world.getInvoice(saved.id)).cae).toBe('70123456789012');
+    expect((await world.getInvoice(saved.id)).cae).toBe(body.cae);
   });
 
   it('counts for the credit note and is readable like any other invoice', async () => {
@@ -261,6 +264,35 @@ describe('uniqueness and format', () => {
     const refused = await register(await manualBody(voided));
     expect(refused.statusCode).toBe(409);
     expect(problem(refused).code).toBe('invoice_charge_voided');
+  });
+
+  it('refuses a CAE that another voucher of the organization already holds', async () => {
+    const first = await manualBody(await world.charge());
+    const second = await manualBody(await world.charge(), { cae: first.cae });
+    expect((await register(first)).statusCode).toBe(201);
+
+    const response = await register(second);
+
+    expect(response.statusCode, response.body).toBe(409);
+    expect(problem(response).code).toBe('invoice_cae_taken');
+  });
+
+  it('is one invoice for one key even when the lines come in another order', async () => {
+    const charge = await world.charge();
+    await world.api.post(`/billing/charges/${charge.id}/lines`, world.reception, {
+      description: 'Material',
+      amountCents: 500_000,
+    });
+    const body = await manualBody(charge);
+    const reversed = { ...body, lines: [...body.lines].reverse() };
+
+    const first = await register(body);
+    const replay = await register(reversed);
+
+    expect(body.lines).toHaveLength(2);
+    expect(first.statusCode, first.body).toBe(201);
+    expect(replay.statusCode, replay.body).toBe(201);
+    expect(replay.json<InvoiceDto>().id).toBe(first.json<InvoiceDto>().id);
   });
 
   it('is one invoice for one key and refuses the key for another entry', async () => {

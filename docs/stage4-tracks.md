@@ -114,7 +114,7 @@ Declared exceptions, each one a small and named edit:
 1. `platform/country/country-pack.ts`, `country/ar/index.ts`, `country/ar/legal-adapters.ts` and `country/ar/ar-pack.test.ts`: the invoice type rules go through the pack and `InvoiceIssuer` becomes `implemented: true`. Nobody else edits them.
 2. `packages/contracts/src/ports.ts`: the `InvoiceRequest` of Stage 1 may gain **optional** fields (recipient name, concept, VAT breakdown) that the real adapter needs. Optional only, so the other adapters keep compiling.
 3. `apps/api/package.json` and the root `package.json`: the one `dev:afip-cert` script line each.
-4. The appointment type needs a generic invoice description (task 4.51). Track C adds a nullable `invoice_description` to `db/schema/scheduling-config.ts` with a `4c` migration and exposes it in the appointment type DTO of scheduling (new lines only); without a value the invoice shows the name of the type.
+4. The appointment type needs a generic invoice description (task 4.51). Track C adds a nullable `invoice_description` to `db/schema/scheduling-config.ts` with a `4c` migration and exposes it in the appointment type DTO of scheduling (new lines only); without a value the invoice shows the generic wording "Servicios de salud" (never the name of the type: judgment day round 1, finding C9).
 5. `modules/billing/index.ts` is Track A's: C reads charge lines through the exports that Track A adds (S4.10 waits for S4.02).
 
 Must not: edit the billing module's internals, scheduling beyond the lines above, `platform/files/*` (register a resource instead), add a queue, a permission or an audit action, call a real fiscal service (the real adapter is the deferred S4.D).

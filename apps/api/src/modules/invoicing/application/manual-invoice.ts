@@ -1,7 +1,7 @@
 import type { CreateManualInvoiceRequest, FieldError, InvoiceDto } from '@consultorio/contracts';
-import { and, eq } from 'drizzle-orm';
+import { and, asc, eq, sql } from 'drizzle-orm';
 
-import { fiscalProfile, invoice } from '../../../db/schema/index.js';
+import { fiscalProfile, invoice, invoiceLine } from '../../../db/schema/index.js';
 import { audit } from '../../../platform/audit/writer.js';
 import type { Tx } from '../../../platform/db/tenant-context.js';
 import { AppError } from '../../../platform/http/problem.js';
@@ -21,6 +21,7 @@ import {
   type Viewer,
 } from './create-invoice.js';
 import { loadInvoice } from './invoice-view.js';
+import { snapshotOfProfile } from './issuer-snapshot.js';
 import { loadOrganization } from './settings.js';
 
 export interface RegisterManualInput {
@@ -36,6 +37,79 @@ const validation = (path: string, i18nKey: string): AppError =>
 /** What a pending invoice that a manual voucher stands in for says about itself afterwards. */
 const REPLACED_MESSAGE =
   'Reemplazada por un comprobante registrado manualmente (emitido fuera del sistema).';
+
+interface Replacement {
+  id: string;
+  lineIds: string[];
+}
+
+/** The pending invoice a manual voucher is said to replace, with the charge lines it covers. */
+async function readReplacement(tx: Tx, id: string): Promise<Replacement> {
+  const [pending] = await tx.select({ id: invoice.id }).from(invoice).where(eq(invoice.id, id));
+  if (!pending) throw new AppError('not_found');
+  const lines = await tx
+    .select({ chargeLineId: invoiceLine.chargeLineId })
+    .from(invoiceLine)
+    .where(eq(invoiceLine.invoiceId, id))
+    .orderBy(asc(invoiceLine.chargeLineId));
+  return { id, lineIds: lines.map((line) => line.chargeLineId) };
+}
+
+/**
+ * Closes the pending invoice that the manual voucher replaces, as rejected, in the same transaction.
+ *
+ * - No attempt may be working on it: the advisory lock of the attempts is tried, and a replacement
+ *   that finds it held answers `conflict` (the attempt could be about to receive a voucher; the
+ *   other way round, an attempt that finds the invoice closed records what it got as an orphan).
+ * - Its outcome must not be in doubt: while the request to the authority may have been answered
+ *   (`awaiting_reconciliation`) the voucher may exist, and registering another one would bill the
+ *   service twice. A person waits for the reconciliation.
+ * - It must be the same invoice: it covers lines the voucher covers and has the same recipient.
+ */
+async function closeReplaced(
+  tx: Tx,
+  input: RegisterManualInput,
+  target: Replacement,
+  requestedIds: readonly string[],
+  recipient: Recipient,
+): Promise<void> {
+  const taken = await tx.execute<{ locked: boolean }>(
+    sql`select pg_try_advisory_xact_lock(hashtextextended(${'afip-invoice|' + target.id}, 0)) as locked`,
+  );
+  if (taken.rows[0]?.locked !== true) throw new AppError('conflict');
+  const [pending] = await tx.select().from(invoice).where(eq(invoice.id, target.id)).for('update');
+  if (!pending) throw new AppError('not_found');
+  if (pending.status !== 'pending') throw new AppError('conflict');
+  if (pending.deliveryState === 'awaiting_reconciliation') {
+    throw new AppError('invoice_awaiting_reconciliation');
+  }
+  const covered = new Set(requestedIds);
+  const sameRecipient =
+    pending.recipientKind === recipient.kind &&
+    pending.patientId === recipient.patientId &&
+    pending.tenantPayerId === recipient.tenantPayerId;
+  if (target.lineIds.some((id) => !covered.has(id)) || !sameRecipient) {
+    throw new AppError('invoice_replacement_mismatch');
+  }
+  await tx
+    .update(invoice)
+    .set({
+      status: 'rejected',
+      deliveryState: null,
+      rejectionMessage: REPLACED_MESSAGE,
+      nextAttemptAt: null,
+    })
+    .where(eq(invoice.id, pending.id));
+  await audit(tx, {
+    action: 'invoice.rejected',
+    outcome: 'allow',
+    actor: input.actor,
+    resourceType: 'invoice',
+    resourceId: pending.id,
+    ...(pending.patientId ? { patientId: pending.patientId } : {}),
+    metadata: { type: pending.type, replacedByManual: true },
+  });
+}
 
 /**
  * Registers a voucher that was issued outside the system (e-invoicing-afip, "Manual invoice entry
@@ -54,14 +128,25 @@ export async function registerManualInvoice(
   input: RegisterManualInput,
 ): Promise<InvoiceDto> {
   const { request } = input;
-  const lines = await lockLines(
+  const requestedIds = request.lines.map((line) => line.chargeLineId);
+  if (new Set(requestedIds).size !== requestedIds.length) {
+    throw validation('lines', 'validation.duplicate');
+  }
+  // The invoice this one replaces is read first, without a lock, only to know its lines: they are
+  // locked together with the ones of the request, in the order of their ids, like every other writer.
+  const target = request.replacesInvoiceId
+    ? await readReplacement(tx, request.replacesInvoiceId)
+    : undefined;
+  const locked = await lockLines(
     tx,
-    request.lines.map((line) => line.chargeLineId),
+    [...new Set([...requestedIds, ...(target?.lineIds ?? [])])],
     input.viewer,
   );
+  const lines = locked.filter((line) => requestedIds.includes(line.id));
   const locations = await visibleLocationIds(tx, input.viewer);
+  // The lines are sorted apart: the same request with its lines in another order is the same request.
   const requestHash = hashOf({
-    request: { ...request, idempotencyKey: null },
+    request: { ...request, lines: null, idempotencyKey: null },
     lines: [...request.lines].sort((a, b) => a.chargeLineId.localeCompare(b.chargeLineId)),
   });
   const replay = await findReplay(tx, deps, request.idempotencyKey, requestHash, locations);
@@ -71,41 +156,16 @@ export async function registerManualInvoice(
     throw new AppError('invoice_charge_voided');
   }
 
-  // The pending invoice this one replaces gives its lines back first.
-  if (request.replacesInvoiceId) {
-    const [pending] = await tx
-      .select()
-      .from(invoice)
-      .where(eq(invoice.id, request.replacesInvoiceId))
-      .for('update');
-    if (!pending) throw new AppError('not_found');
-    if (pending.status !== 'pending') throw new AppError('conflict');
-    await tx
-      .update(invoice)
-      .set({
-        status: 'rejected',
-        deliveryState: null,
-        rejectionMessage: REPLACED_MESSAGE,
-        nextAttemptAt: null,
-      })
-      .where(eq(invoice.id, pending.id));
-    await audit(tx, {
-      action: 'invoice.rejected',
-      outcome: 'allow',
-      actor: input.actor,
-      resourceType: 'invoice',
-      resourceId: pending.id,
-      ...(pending.patientId ? { patientId: pending.patientId } : {}),
-      metadata: { type: pending.type, replacedByManual: true },
-    });
-  }
+  const organization = await loadOrganization(tx);
+  const pack = packFor(organization.country);
+  const recipient = await resolveRecipient(tx, lines, request.recipient);
+
+  // The pending invoice this one replaces gives its lines back first. Only one that no attempt is
+  // working on, whose outcome is not in doubt, and that is the same invoice (JD-S4 R1-C3).
+  if (target) await closeReplaced(tx, input, target, requestedIds, recipient);
 
   // Lines of the invoice that were freed above are read again by the plan.
-  const fresh = await lockLines(
-    tx,
-    request.lines.map((line) => line.chargeLineId),
-    input.viewer,
-  );
+  const fresh = await lockLines(tx, requestedIds, input.viewer);
   const plan = planParts(fresh, request.lines);
   if (!plan.ok) {
     if (plan.reason === 'over_invoiced') throw new AppError('invoice_line_over_invoiced');
@@ -127,9 +187,6 @@ export async function registerManualInvoice(
     );
   if (taken) throw new AppError('invoice_number_taken');
 
-  const organization = await loadOrganization(tx);
-  const pack = packFor(organization.country);
-  const recipient = await resolveRecipient(tx, fresh, request.recipient);
   // The voucher is whatever the external tool made, but its data must still be well formed, and the
   // type must be one the issuer could have made (when the fiscal profile is known).
   const [profile] = await tx.select().from(fiscalProfile);
@@ -174,6 +231,7 @@ export async function registerManualInvoice(
       recipient: normalized,
       totalCents: plan.totalCents,
       locationIds: [...new Set(fresh.map((line) => line.locationId))].sort(),
+      issuer: profile ? snapshotOfProfile(profile) : null,
       manual: {
         number: request.number,
         cae: request.cae,

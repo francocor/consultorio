@@ -234,6 +234,41 @@ describe('the worklist', () => {
   });
 });
 
+describe('an invoice that needs a person (JD-S4 R1-C3, C8)', () => {
+  const INVOICE = item({
+    id: ITEM(5),
+    kind: 'invoice_attention',
+    subjectType: 'invoice',
+    subjectId: ITEM(50),
+    locationId: null,
+    appointment: null,
+    detail: { reason: 'number_taken', number: 77 },
+    actions: ['open_invoice', 'resolve', 'dismiss'],
+  });
+
+  it('says why in words and links to the invoices, with no appointment to show', async () => {
+    const app = open({ items: [INVOICE] });
+
+    const found = await card('Factura para revisar');
+
+    expect(
+      found.getByText(/ARCA emitió un comprobante con un número que ya tenemos/),
+    ).toBeInTheDocument();
+    expect(found.getByText('Toda la organización')).toBeInTheDocument();
+    expect(found.getByRole('link', { name: 'Ver facturas' })).toHaveAttribute('href', '/invoices');
+    expect(found.queryByText('Sin turno asociado.')).not.toBeInTheDocument();
+    expect(app.missingKeys).toEqual([]);
+  });
+
+  it('falls back to a plain sentence for a reason it does not know', async () => {
+    open({ items: [{ ...INVOICE, detail: { reason: 'something_new' } }] });
+
+    const found = await card('Factura para revisar');
+
+    expect(found.getByText('Esta factura necesita que una persona la revise.')).toBeInTheDocument();
+  });
+});
+
 describe('working an item', () => {
   it('links to the appointment in the agenda', async () => {
     open();

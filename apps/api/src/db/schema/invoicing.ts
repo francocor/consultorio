@@ -15,6 +15,7 @@ import {
   foreignKey,
   index,
   integer,
+  jsonb,
   smallint,
   text,
   timestamp,
@@ -35,6 +36,20 @@ import { tenant } from './tenant.js';
 const list = (values: readonly string[]) => values.map((value) => `'${value}'`).join(', ');
 
 const CREDIT_NOTE_TYPES = "'NCA', 'NCB', 'NCC'";
+
+/**
+ * Who issued the voucher, as the organization's fiscal profile said when the invoice was requested.
+ * The profile can be edited later; the voucher (the request to the authority, its fingerprint and the
+ * PDF) is always the one of this snapshot (JD-S4 R1-C7). `null` only on a manual voucher of an
+ * organization with no fiscal profile.
+ */
+export interface IssuerSnapshot {
+  cuit: string;
+  businessName: string;
+  taxCondition: string;
+  address: string;
+  activityStartedOn: string;
+}
 
 /**
  * An electronic invoice or a credit note, and every attempt at one (e-invoicing-afip). One row per
@@ -95,6 +110,8 @@ export const invoice = tenantTable(
     /** After an unknown outcome: the number the authority is expected to have given. */
     expectedNumber: bigint('expected_number', { mode: 'number' }),
     issuedAt: timestamp('issued_at', { withTimezone: true }),
+    /** The issuer as the fiscal profile said at the time of the request; never changes. */
+    issuerSnapshot: jsonb('issuer_snapshot').$type<IssuerSnapshot>(),
     createdBy: uuid('created_by').notNull(),
   },
   (table) => [
@@ -180,6 +197,10 @@ export const invoice = tenantTable(
     uniqueIndex('invoice_number_key')
       .on(table.tenantId, table.pointOfSale, table.type, table.number)
       .where(sql`${table.number} is not null`),
+    // A CAE is the answer of the authority to one voucher: two vouchers of an organization never share it.
+    uniqueIndex('invoice_cae_key')
+      .on(table.tenantId, table.cae)
+      .where(sql`${table.cae} is not null`),
     // A rejected attempt is retried once: the new attempt is the only successor.
     uniqueIndex('invoice_previous_attempt_key')
       .on(table.tenantId, table.previousAttemptId)
