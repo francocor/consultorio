@@ -297,6 +297,11 @@ export function createOperatorMatricula(deps: OperatorMatriculaDeps): OperatorMa
         if (request.note !== undefined) {
           await writeNote(tx, tenantId, professionalId, operator, request.note);
         }
+        const metadata = {
+          jurisdiction: current.jurisdiction,
+          matricula: current.number,
+          noteChanged: request.note !== undefined,
+        };
         await writePlatformAudit(tx, {
           action: 'operator.matricula.unverified',
           outcome: 'allow',
@@ -304,11 +309,17 @@ export function createOperatorMatricula(deps: OperatorMatriculaDeps): OperatorMa
           targetTenantId: tenantId,
           resourceType: 'professional',
           resourceId: professionalId,
-          metadata: {
-            jurisdiction: current.jurisdiction,
-            matricula: current.number,
-            noteChanged: request.note !== undefined,
-          },
+          metadata,
+        });
+        // The owner sees the withdrawal in the organization's own trail, next to the verification
+        // (JD-S5 R1: the operator's scope on `audit_event` allows it since migration 0593).
+        await audit(tx, {
+          action: 'matricula.unverified',
+          outcome: 'allow',
+          actor: { ...meta, userId: operator.id, actingRole: null },
+          resourceType: 'professional',
+          resourceId: professionalId,
+          metadata: { ...metadata, operator: operator.displayName },
         });
         return toDto(label, await load(tx, professionalId));
       });

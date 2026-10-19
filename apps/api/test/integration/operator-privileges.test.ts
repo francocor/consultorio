@@ -216,10 +216,15 @@ describe('the operator role reaches no more than it needs (security review, find
     const entry = (action: string) =>
       sql`INSERT INTO audit_event (tenant_id, action, outcome) VALUES (${audited.id}, ${action}, 'allow')`;
 
-    for (const action of ['tenant.created', 'support.access', 'matricula.verified']) {
+    for (const action of [
+      'tenant.created',
+      'support.access',
+      'matricula.verified',
+      'matricula.unverified',
+    ]) {
       expect((await asOperatorOf(audited.id, entry(action))).rowCount, action).toBe(1);
     }
-    for (const action of ['patient.created', 'matricula.unverified', 'staff.profile_updated']) {
+    for (const action of ['patient.created', 'matricula.revoked', 'staff.profile_updated']) {
       await expectPrivilegeError(asOperatorOf(audited.id, entry(action)), action);
     }
   });

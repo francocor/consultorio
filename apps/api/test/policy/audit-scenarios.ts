@@ -118,6 +118,7 @@ const PLATFORM_SCENARIOS: Record<Exclude<AuditAction, ModuleAuditAction>, AuditS
   'assignment.removed': t('care-assignment-api.test.ts'),
   'assignment.review_flag': t('care-assignment-api.test.ts'),
   'matricula.verified': t('matricula-verification.test.ts'),
+  'matricula.unverified': t('matricula-verification.test.ts'),
   'setting.reception_sees_clinical_metadata.changed': t('access-settings.test.ts'),
   'setting.changed': t('access-settings.test.ts'),
   'branding.updated': t('branding-api.test.ts'),

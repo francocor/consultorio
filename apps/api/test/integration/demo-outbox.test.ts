@@ -9,9 +9,11 @@ import { demoOutboxDevProvider } from '../../src/adapters/demo-outbox/dev-routes
 import {
   createDemoOutboxEmailSender,
   createDemoOutboxReader,
+  purgeDemoOutbox,
 } from '../../src/adapters/demo-outbox/index.js';
 import { createFakeEmailSender } from '../../src/adapters/fake-email/index.js';
 import { createLocalKeyManagement } from '../../src/adapters/local-kek/index.js';
+import { demoOutbox } from '../../src/db/schema/demo-outbox.js';
 import { createAdapterResolver, createTenantRoutedEmail } from '../../src/main/adapter-resolver.js';
 import { buildAdapterRegistry } from '../../src/main/adapters.js';
 import { loadConfig } from '../../src/main/config.js';
@@ -279,5 +281,40 @@ describe('the demo outbox in the provider console', () => {
     expect(
       response.json<{ providers: { id: string; adapter: string }[] }>().providers,
     ).toContainEqual(expect.objectContaining({ id: 'demo-outbox', adapter: 'local' }));
+  });
+});
+
+describe('the retention of the outbox (JD-S5 R1-A-S)', () => {
+  const insertAged = (to: string, ageMs: number) =>
+    runtime.db.insert(demoOutbox).values({
+      targetTenantId: demoId,
+      toAddress: to,
+      subject: 'Retención',
+      bodyText: 'Código 000000',
+      createdAt: new Date(Date.now() - ageMs),
+    });
+  const present = async (to: string) =>
+    (await createDemoOutboxReader(runtime.db).list({ limit: 50, to })).length;
+  const HOUR = 3_600_000;
+
+  it('removes what is older than a day and keeps the rest', async () => {
+    await insertAged('vieja@retention.invalid', 25 * HOUR);
+    await insertAged('reciente@retention.invalid', 2 * HOUR);
+
+    const removed = await purgeDemoOutbox(runtime.db, new Date());
+
+    expect(removed).toBeGreaterThanOrEqual(1);
+    expect(await present('vieja@retention.invalid')).toBe(0);
+    expect(await present('reciente@retention.invalid')).toBe(1);
+  });
+
+  it('never touches the last hour, whatever the cutoff it is given', async () => {
+    await insertAged('hace-una-hora@retention.invalid', 2 * HOUR);
+    await insertAged('hace-minutos@retention.invalid', 5 * 60_000);
+
+    await purgeDemoOutbox(runtime.db, new Date(), 0);
+
+    expect(await present('hace-una-hora@retention.invalid')).toBe(0);
+    expect(await present('hace-minutos@retention.invalid')).toBe(1);
   });
 });

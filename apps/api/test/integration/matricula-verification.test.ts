@@ -385,6 +385,14 @@ describe('the operator withdraws a verification', () => {
     const events = await platformEvents('operator.matricula.unverified', who.professionalId);
     expect(events).toHaveLength(1);
     expect(events[0]).toMatchObject({ operatorId, targetTenantId: south.id, outcome: 'allow' });
+    // The owner sees the withdrawal in the organization's own trail too (JD-S5 R1).
+    const [tenantEvent, ...others] = await tenantEvents(
+      south,
+      'matricula.unverified',
+      who.professionalId,
+    );
+    expect(others).toEqual([]);
+    expect(tenantEvent).toMatchObject({ actorUserId: operatorId, outcome: 'allow' });
   });
 
   it('refuses to withdraw what is not verified', async () => {

@@ -87,6 +87,27 @@ export function createDemoOutboxReader(db: Db): DemoOutboxReader {
   };
 }
 
+/** How long the outbox keeps what a demo organization sent. */
+export const DEMO_OUTBOX_TTL_MS = 24 * 3_600_000;
+
+/**
+ * Removes what the outbox kept for longer than `ttlMs` (JD-S5 R1-A-S): the rows are fictitious email
+ * read in the provider console, and a demo that is never reset would otherwise keep them for good.
+ * The runtime role cannot delete from the table; the function of the database does, and never
+ * touches a row younger than an hour. Returns how many rows it removed.
+ */
+export async function purgeDemoOutbox(
+  db: Db,
+  now: Date,
+  ttlMs: number = DEMO_OUTBOX_TTL_MS,
+): Promise<number> {
+  const cutoff = new Date(now.getTime() - ttlMs).toISOString();
+  const result = await db.execute<{ removed: number }>(
+    sql`select app.demo_outbox_purge(${cutoff}::timestamptz) as removed`,
+  );
+  return result.rows[0]?.removed ?? 0;
+}
+
 /** What a deployment does with the email of a demo organization (see `demoEmailPolicy`). */
 export interface DemoEmailPolicy {
   /** Keep what the demo sends in `demo_outbox`. */
