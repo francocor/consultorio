@@ -27,7 +27,8 @@ You do not write these again; the real adapter plugs into them.
   and the simulator already do. The real adapter must pass it too.
 - **Outage and double issue.** An invoice is requested in one transaction and submitted by a job
   (`afip.issue`, category `afip_submission`, so it also runs for a read-only organization). A retry
-  clock (`runDueAttempts`, every 30 seconds) waits 1 minute, doubling up to 6 hours. BEFORE every call
+  clock (`runDueAttempts`, every 30 seconds) waits 1 minute, doubling up to 6 hours (an invoice that is
+  `awaiting_reconciliation` waits at most 5 minutes: see "A held series does not wait"). BEFORE every call
   to the authority the invoice is marked `awaiting_reconciliation` with the number it is expected to
   get, in a commit of its own on a connection of its own (`markIntent`); only a definite answer
   (issued, rejected, or "nothing was issued") clears the mark. If the process dies after the authority
@@ -52,8 +53,29 @@ You do not write these again; the real adapter plugs into them.
   and tried again after the first one was adopted, parked or replaced. A long outage therefore holds
   the whole series, which is the point: the authority numbers by itself and nothing can be sent until
   the unknown one is settled. When the number an invoice was expecting turns out to be the voucher
-  of another invoice of ours, the attempt asks about the numbers that follow (up to five) and judges
-  each one the same way before it sends: it sends only when the authority holds nothing there.
+  of another invoice of ours, the attempt asks about ONE more number, the one after the highest the
+  organization holds (at most two questions in all: that number is above everything we record, so it
+  cannot be taken, and a second hop has nothing left to ask), and judges it the same way before it
+  sends: it sends only when the authority holds nothing there. If that second number were taken
+  anyway (a manual entry racing the attempt) the invoice is parked (`number_taken`), never sent.
+- **A held series does not wait for a long backoff (JD-S4 R3-1).** An invoice that is
+  `awaiting_reconciliation` is only ever ASKED about (a lookup sends nothing), so its backoff is capped
+  at 5 minutes (1, 2, 4, 5, 5 ...) instead of 6 hours: the whole series waits for it, and a probe is
+  cheap. An invoice that is held back writes only its own next attempt (one minute) and does NOT lock
+  its charge lines; it also brings the blocker (the oldest invoice of the series that waits for
+  reconciliation) forward, setting its next attempt to now, at most once a minute (the blocker's own
+  `last_attempt_at` decides), with `FOR UPDATE SKIP LOCKED` so it never waits for a row somebody holds.
+  After an outage ends the series therefore moves within minutes. A lookup that keeps answering
+  `rejected` (a bad token, a wrong environment) keeps the blocker probing every 5 minutes: that is
+  visible, see the next point.
+- **A stalled series is surfaced (JD-S4 R3-2).** After the blocker has been tried 6 times, or was
+  requested 2 hours ago, and while it holds at least one invoice, ONE `invoice_attention` item is
+  opened on it (reason `outcome_unknown`, with the number of invoices held; reception sees it). The
+  invoice stays as it is. The item is resolved (`outcome_settled`) when the blocker is issued,
+  rejected or parked, and a replacement closes it (`replaced_by_manual`). `InvoiceDto` carries
+  `heldBy` (`{ id, requestedAt }` of the blocker, only when the reader may see it) on a held invoice
+  and `blocksSeries` (how many wait) on the blocker; the web says "espera a otra factura" with a link,
+  and the blocker says how many wait behind it and offers the manual path.
 - **Who the issuer is.** The invoice keeps the issuer (CUIT, business name, tax condition, address,
   start of the activity) as it was when it was requested (`invoice.issuer_snapshot`). The request to
   the authority, its fingerprint and the PDF use that snapshot, so editing the fiscal profile while an
@@ -173,7 +195,9 @@ loaded.
   profile. If the organization changed its CUIT, an invoice that waits is parked (`needs_attention`,
   worklist reason `issuer_mismatch`) and a credit note over an older invoice is refused
   (`invoice_issuer_mismatch`) instead of signing for one CUIT and naming another. Retried invoices
-  take the live issuer, so they are not affected.
+  take the live issuer, so they are not affected. Nothing resumes a parked invoice: loading the
+  certificate of the original CUIT does not make it go on. The only way out is to register the voucher
+  by hand (`replacesInvoiceId`), and the worklist text says so (JD-S4 R3-4).
 - **Numbers are the authority's.** A manual voucher (made in ARCA's web tool during an outage) takes a
   number in the same series. The module registers it as `manual` and refuses a collision. When the
   authority answers an invoice with a number (or a CAE) that is already one of ours, the invoice is
@@ -202,7 +226,18 @@ loaded.
   rejected and opens an `invoice_attention` item (reason `replaced_unresolved`) asking a person to
   look in ARCA for a voucher at that number: if it exists the organization holds two vouchers for one
   service and one is cancelled with a credit note in ARCA. The product does not look for it by itself
-  afterwards (a closed invoice has no mark). An attempt that finds the mark after a definite "down"
+  afterwards (a closed invoice has no mark), but it REMEMBERS the number (`invoice_stray_voucher`,
+  migration 0480): no later lookup ever adopts a voucher at a remembered number (an anonymous consumer
+  with the same fee on the same day looks exactly like the ghost), and the number expected next is
+  counted after the highest remembered one. The same table keeps the number of a voucher that arrived
+  for an invoice somebody had closed (`orphaned`). Residual risk, on purpose: if the replaced invoice
+  was in fact never issued, the number it expected is skipped, and an invoice that loses its answer
+  right after is looked up one number too far; ARCA then shows nothing there and the request goes out
+  again. Because ARCA has no idempotency key, the real adapter must make that second `issue` safe
+  (it can compare `FECompUltimoAutorizado` with the number it expects before it sends).
+  A replacement of an invoice that was PARKED with its outcome still unknown (reasons
+  `issuer_mismatch` and `voucher_mismatch` after a lost answer; the audit entry and the item say
+  `outcomeUnknown: true`, and the row keeps the number it expected) needs the same acknowledgement. An attempt that finds the mark after a definite "down"
   (the authority was asked, held nothing, and then refused the request for certain) clears it, and
   the replacement then needs no acknowledgement. A manual voucher may replace only the same invoice:
   not a credit note, the same voucher type, total, lines, recipient and recipient document
@@ -210,8 +245,14 @@ loaded.
 - **The connection of the mark.** The mark is committed on a second connection while the attempt
   holds its own, so the runtime pool is opened with a connection timeout (10 seconds) and the mark
   gives up after a lock timeout (`markLockTimeoutMs`, 5 seconds): a pool full of attempts fails and
-  the sweeper retries, it does not wait on itself. Size the pool for the number of attempts the worker
-  runs at once plus one connection each.
+  the sweeper retries, it does not wait on itself. The mark's timeout is at least 1 millisecond (a
+  zero would switch the lock timeout off). A mark that gives up on a lock logs it. Size the pool for the
+  number of attempts the worker runs at once plus one connection each with `DB_POOL_MAX` (2 to 100,
+  default 10; the API and the worker both read it).
+- **A foreign voucher at the expected number (INFO, JD-S4 R3-B-T3).** If somebody issues a voucher
+  outside the product at the number an invoice that lost its answer expects, the lookup finds a
+  voucher that is not that invoice's (another recipient or total) and parks it as `voucher_mismatch`.
+  It is loud and safe, never a double issue; a person registers or cancels the voucher that exists.
 - **Rate limits and timeouts.** Keep a timeout shorter than the job lock so a hung call becomes an
   unknown outcome, not a stuck job.
 
