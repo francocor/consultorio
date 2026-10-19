@@ -124,6 +124,19 @@ export const invoice = tenantTable(
      * column existed (JD-S4 R5-1).
      */
     authorityLastAtMark: bigint('authority_last_at_mark', { mode: 'number' }),
+    /**
+     * When the last request of the wait was sent: written by the mark, BEFORE the authority is called,
+     * so a crash between the mark and the call leaves it set as if the request had gone. "Nothing was
+     * issued for this invoice" is believed only after `SETTLE` has passed since then, because a request
+     * the caller gave up on may still be being processed (JD-S4 R6-1). Cleared with the wait.
+     */
+    lastSentAt: timestamp('last_sent_at', { withTimezone: true }),
+    /**
+     * How many times in a row the authority answered "no voucher" at a number at or below its own last
+     * one. A lookup may lag behind an authorization for a moment, so the invoice waits for a few rounds
+     * before it is parked for a person (JD-S4 R6-A-S1). Zero outside a wait.
+     */
+    lookupMisses: integer('lookup_misses').notNull().default(0),
     issuedAt: timestamp('issued_at', { withTimezone: true }),
     /** The issuer as the fiscal profile said at the time of the request; never changes. */
     issuerSnapshot: jsonb('issuer_snapshot').$type<IssuerSnapshot>(),
@@ -208,6 +221,7 @@ export const invoice = tenantTable(
       'invoice_attempts_check',
       sql`${table.attempts} >= 0 and (${table.expectedNumber} is null or ${table.expectedNumber} > 0)`,
     ),
+    check('invoice_lookup_misses_check', sql`${table.lookupMisses} >= 0`),
     check(
       'invoice_authority_last_check',
       sql`${table.authorityLastAtMark} is null or ${table.authorityLastAtMark} >= 0`,

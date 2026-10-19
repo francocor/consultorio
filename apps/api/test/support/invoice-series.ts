@@ -27,6 +27,8 @@ export const DNI = { type: 'dni', number: '30111222' } as const;
 /** One organization per group of scenarios, so what one leaves in the series never reaches another. */
 export function useWorld(slug: string): {
   readonly world: InvoicingWorld;
+  /** The runtime connection of the world, for what a test wires by hand. */
+  readonly db: DbHandle['db'];
   /** Runs the pending `afip.issue` job of an invoice by hand, with the deps the test chooses. */
   runIssueWith(invoiceId: string, deps: Parameters<typeof createAfipIssueJob>[0]): Promise<unknown>;
 } {
@@ -38,6 +40,7 @@ export function useWorld(slug: string): {
   afterEach(() => {
     state.world?.issuer.setIdempotent(true);
     state.world?.issuer.setMode('ok');
+    state.world?.issuer.dropHeld();
     vi.restoreAllMocks();
   });
   afterAll(async () => {
@@ -48,6 +51,10 @@ export function useWorld(slug: string): {
     get world() {
       if (!state.world) throw new Error('the world is not ready');
       return state.world;
+    },
+    get db() {
+      if (!state.runtime) throw new Error('the world is not ready');
+      return state.runtime.db;
     },
     runIssueWith: (invoiceId, deps) => {
       if (!state.world || !state.runtime) throw new Error('the world is not ready');
@@ -138,20 +145,32 @@ export const markAwaiting = (
         expectedNumber: authorityLastNumber + 1,
         authorityLastAtMark: authorityLastNumber,
         awaitingSince: new Date(t0),
+        lastSentAt: new Date(t0),
         nextAttemptAt: new Date(t0),
       })
       .where(eq(invoiceTable.id, invoiceId)),
   );
 
 /**
- * The authority as it really is: it ignores the hint of the highest number we hold, and numbers after
- * what it holds itself. Returns the spy on `issue`, to count what was sent.
+ * The spy on `issue`, to count what was sent. The authority answers as it is: it serves the number a
+ * request is pinned to or refuses it.
  */
 export function realAuthority(world: InvoicingWorld): MockInstance<FakeInvoiceIssuer['issue']> {
   const original = world.issuer.issue.bind(world.issuer);
+  return vi
+    .spyOn(world.issuer, 'issue')
+    .mockImplementation((request, key) => original(request, key));
+}
+
+/**
+ * An authority that does NOT pin: it ignores the number a request is for and numbers after what it
+ * holds. The settle time is the only thing left between an invoice and a second voucher.
+ */
+export function unpinnedAuthority(world: InvoicingWorld): MockInstance<FakeInvoiceIssuer['issue']> {
+  const original = world.issuer.issue.bind(world.issuer);
   return vi.spyOn(world.issuer, 'issue').mockImplementation((request, key) => {
     const asked = { ...request };
-    delete asked.lastKnownNumber;
+    delete asked.expectedNumber;
     return original(asked, key);
   });
 }

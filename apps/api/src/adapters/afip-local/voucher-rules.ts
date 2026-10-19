@@ -29,7 +29,7 @@ export function rejectionFor(request: InvoiceRequest): string | null {
     return '(10003) La moneda del comprobante no es válida.';
   }
   if (!ISO_DATE.test(request.issueDate) || Number.isNaN(Date.parse(request.issueDate))) {
-    return '(10016) La fecha del comprobante no es válida.';
+    return '(10017) La fecha del comprobante no es válida.';
   }
   if (!Number.isInteger(request.totalCents) || request.totalCents <= 0) {
     return '(10001) El importe total debe ser mayor a cero.';
@@ -91,8 +91,9 @@ export function caeExpiresOn(issueDate: string): string {
 export function requestFingerprint(request: InvoiceRequest): string {
   const ordered = Object.fromEntries(
     Object.entries(request)
-      // The hint of the numbering is not what the authority is asked to authorize.
-      .filter(([key, value]) => value !== undefined && key !== 'lastKnownNumber')
+      // The number a request is pinned to is not what the authority is asked to authorize: a key
+      // stands for the same request whatever the pin says now (JD-S4 R6-1).
+      .filter(([key, value]) => value !== undefined && key !== 'expectedNumber')
       .sort(([a], [b]) => a.localeCompare(b)),
   );
   return createHash('sha256').update(JSON.stringify(ordered)).digest('hex');
@@ -104,4 +105,16 @@ export const SERVICE_DOWN_MESSAGE = 'El servicio de facturación no responde. Se
 export const TIMEOUT_MESSAGE =
   'El servicio de facturación no respondió a tiempo. Resultado desconocido.';
 export const SIMULATED_REJECTION_MESSAGE =
-  '(10016) Rechazo simulado: el comprobante fue rechazado a pedido del simulador.';
+  '(10098) Rechazo simulado: el comprobante fue rechazado a pedido del simulador.';
+
+/**
+ * What the authority answers to a request pinned to a number that is not the next one of the series
+ * (ARCA error 10016, FECAESolicitar): the request issued nothing.
+ */
+export const NOT_NEXT_MESSAGE =
+  '(10016) El número del comprobante no es el próximo a autorizar. Consulte el último autorizado.';
+
+/** Whether a request pinned to a number may be served now: it is the next one, or it is not pinned. */
+export function isNextNumber(request: InvoiceRequest, last: number): boolean {
+  return request.expectedNumber === undefined || request.expectedNumber === last + 1;
+}

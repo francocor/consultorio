@@ -308,7 +308,7 @@ describe('a manual voucher in place of an invoice whose outcome is unknown (JD-S
     world.issuer.setMode('down');
 
     try {
-      const results = await world.sweep(after(t0, 1));
+      const results = await world.sweep(after(t0, 11));
 
       expect(results).toContainEqual({ invoiceId: created.id, outcome: 'retry' });
     } finally {

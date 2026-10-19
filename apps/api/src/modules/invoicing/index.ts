@@ -40,6 +40,7 @@ export type { InvoicedLinesFilter } from './application/invoiced-lines.js';
 export { PRIVATE_PAYER_KEY, summarizeInvoiced } from './domain/invoiced-summary.js';
 export type { InvoicedGroup, InvoicedGroupBy, InvoicedLine } from './domain/invoiced-summary.js';
 export { runDueAttempts } from './application/due-invoices.js';
+export { highestNumberRecorded } from './application/numbers-held.js';
 export type { DueLog } from './application/due-invoices.js';
 export type { IssueDeps, AttemptOutcome } from './application/issue-attempt.js';
 

@@ -31,6 +31,30 @@ export function awaitingBackoffMs(attempts: number): number {
   return Math.min(backoffMs(attempts), MAX_AWAITING_BACKOFF_MS);
 }
 
+/**
+ * How long "nothing was issued for this request" waits for proof after the request was sent. A request the
+ * caller gave up on (a timeout, a process that died) may still be being processed by the authority and finish
+ * after the lookup that found nothing; sending again before this time could issue a second voucher. It is
+ * longer than the timeout of the adapter plus the tail of the authority (JD-S4 R6-1).
+ */
+export const DEFAULT_SETTLE_MS = 10 * MINUTE_MS;
+
+/**
+ * Whether enough time has passed since a request was sent for the lookup to be believed when it finds
+ * nothing. A request with no known time (an invoice marked before the time was kept) counts as settled: the
+ * pin of the request is then the only guard, and nothing better is known.
+ */
+export function isSettled(input: { sentAt: Date | null; now: Date; settleMs: number }): boolean {
+  return input.sentAt === null || input.now.getTime() - input.sentAt.getTime() >= input.settleMs;
+}
+
+/** The settle time of a setting: a finite number of milliseconds, never negative; otherwise the default. */
+export function settleMsOf(configured: number | undefined): number {
+  return configured !== undefined && Number.isFinite(configured) && configured >= 0
+    ? Math.floor(configured)
+    : DEFAULT_SETTLE_MS;
+}
+
 /** After this long, an unknown outcome is no longer something to wait out. */
 export const STALL_AFTER_MS = 2 * 60 * MINUTE_MS;
 

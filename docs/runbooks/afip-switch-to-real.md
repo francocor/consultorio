@@ -128,9 +128,15 @@ You do not write these again; the real adapter plugs into them.
 - **The voucher rules of Argentina** (`country/ar/afip`): type by issuer and recipient condition,
   credit notes with the letter of the invoice, recipient identification, the QR of the voucher
   (`invoice-qr.ts`), and the numbering a credit note needs.
-- **A hint for simulators.** `InvoiceRequest.lastKnownNumber` is the highest voucher number the
-  organization holds for the point of sale and type. A simulator that lost its memory numbers after
-  it. The real adapter ignores it: the authority decides the number.
+- **The number a request is for (JD-S4 R6-1).** `InvoiceRequest.expectedNumber` is the number after
+  the last one the authority had authorized when the invoice was marked (`lastAuthorized`). It replaces
+  the old `lastKnownNumber` hint, which is gone. The issuer issues EXACTLY that number or refuses with
+  `{ status: 'not_next' }` and issues nothing; both simulators do it. The in-memory fake of the demo has
+  no memory after a restart, so the wiring tells it where to learn what the organization holds
+  (`FakeInvoiceIssuer.rememberFrom`, the highest number the invoices record per point of sale and
+  type): that is for the simulator only, the real authority never needs it. The local (Postgres)
+  simulator keeps its numbering across restarts, but a console "reset" starts it again at 1: the next
+  invoice then collides with the numbers the organization holds and is parked (`number_taken`).
 
 ## What the owner must obtain (per organization that will issue)
 
@@ -337,10 +343,44 @@ loaded.
   (`unmatched`) and goes on: the invoice is NOT parked for it. If the invoice's own voucher is among the
   candidates it is adopted; if none is, the invoice was not issued and is sent with the new count of the
   authority. A foreign voucher that looks exactly like the invoice (same facts) cannot be told from it
-  by the facts alone: the lowest candidate wins, which is why the real adapter should compare a CAE or
-  an issuer reference when it has one.
+  by the facts alone: since round 6 the invoice is parked (`voucher_ambiguous`, with both candidates)
+  instead of the lowest one winning, which is why the real adapter should compare a CAE or an issuer
+  reference when it has one (JD-S4 R6-4).
+- **The pin: `CbteDesde` and error 10016 (JD-S4 R6-1).** A request that the caller gave up on (a
+  timeout, a process that died) may still be processed by ARCA and finish AFTER the lookup that found
+  nothing; sending again would then issue two vouchers for one invoice. ARCA has no idempotency key, so
+  the number is the key. The real adapter MUST send the request with `CbteDesde` = `CbteHasta` =
+  `request.expectedNumber` (never a number it computes itself) and map ARCA's refusal of a number that
+  is not the next one (error **10016**, "El numero o fecha del comprobante no se corresponde con el
+  proximo a autorizar") to `{ status: 'not_next', message }`. Of two requests for one number only one can
+  win; the other is refused and issued nothing. After a `not_next` the module asks for the last number
+  again and examines the numbers in between, so the voucher of the first request is found and adopted. Two
+  traps: 10016 also covers a date that is not acceptable (ARCA ties both to "the next one to authorize"),
+  so validate `issueDate` against the allowed window BEFORE sending, or a bad date would answer
+  `not_next` for ever (the stall item opens after two hours of waiting); and a `not_next` is NEVER a
+  `rejected` (that closes the invoice) nor a `retryable` with `outcomeUnknown: false` (that clears the
+  mark and forgets the window).
+- **SETTLE: "nothing was issued" is believed late (JD-S4 R6-1).** Defence in depth for an adapter that
+  does not pin, and for the pin itself. After a request is sent (the mark is committed BEFORE the call,
+  and stamps `invoice.last_sent_at`, migration 0484) the module does not send again until `SETTLE`
+  has passed since then, whatever the lookup says; until then it only asks and adopts a voucher that
+  appeared (`IssueDeps.settleMs`, default 10 minutes). It must be longer than the timeout of the
+  adapter plus the tail of ARCA: set the adapter timeout well under it. The pull-forward of a blocker
+  never goes earlier than that. A crash between the mark and the call leaves the mark with the time, and
+  the sweeper looks again a minute later: it asks, it does not send. The wait of an invoice
+  (`awaiting_since`) is NOT restarted by a resend, so a request that keeps timing out opens the stall
+  item after two hours.
+- **The fixture round trip is a requirement (JD-S4 R6-6).** A false "this voucher is foreign" makes the
+  module send its own invoice again. Before the real adapter is registered it must pass tests that feed
+  it RECORDED responses of `FECompConsultar` and `FECompUltimoAutorizado` (taken from homologation) for
+  an anonymous buyer (`DocTipo` 99, `DocNro` 0, which the module reads as "no buyer"), a buyer with a
+  DNI, a buyer with a CUIT, the CUIT of the issuer and a credit note with `CbtesAsoc`, and assert that
+  each voucher it returns matches the facts of the request that made it (`voucherMatches`): the contract
+  suite has the cases, and the recorded fixtures must pass them with the real parser. A voucher that is
+  different ONLY in the buyer is `unclear` and parks the invoice; anything else that differs (total,
+  date, issuer, the voucher a note cancels) makes it foreign.
 - **Rate limits and timeouts.** Keep a timeout shorter than the job lock so a hung call becomes an
-  unknown outcome, not a stuck job.
+  unknown outcome, not a stuck job, and shorter than SETTLE.
 
 ## Before you switch an organization from the simulator
 
@@ -351,7 +391,7 @@ loaded.
   left.
 - **A mistyped manual number moves the series of a simulator.** The number of a manual voucher is
   whatever the person typed; a very high one makes the simulator number after it
-  (`lastKnownNumber`). The real adapter must validate the number against
+  (the fake learns from the recorded numbers). The real adapter must validate the number against
   `FECompUltimoAutorizado` before it accepts a manual entry; the simulator does not.
 - **The certificate chain is not validated.** `parseCredential` checks the key, the CUIT of the
   subject and the dates, not that the certificate was issued by the ARCA CA. It only matters once the
@@ -390,6 +430,24 @@ loaded.
   touches development data.
 - **The real adapter must implement `lastAuthorized`** (`FECompUltimoAutorizado`) before it is
   registered; see "What `lastAuthorized` must say".
+
+## Upgrade notes (judgment day, Stage 4, round 6)
+
+- **Migrations 0484 and 0485** (track `4jd`): `invoice.last_sent_at` (when the last request of a wait
+  was sent) and `invoice.lookup_misses` (how many times in a row a number the authority says it issued
+  had no voucher). An invoice `awaiting_reconciliation` when the code arrives has no `last_sent_at`; the
+  module falls back to its last attempt, so it is not sent again before SETTLE either.
+- **`InvoiceRequest.lastKnownNumber` is gone**, replaced by `expectedNumber` (a pin), and `IssueResult`
+  has a new `not_next` status. An adapter written against round 5 must implement both: see "The pin".
+- **A very rare change in what is parked.** A voucher that is the same in everything but the recipient
+  document is `voucher_ambiguous` (parked) instead of foreign (sent again); two vouchers that both fit
+  are parked instead of the lowest one being adopted; a lookup that answers nothing at a number it says
+  it issued is asked again three times before the invoice is parked.
+- **Changing the CUIT of the fiscal profile is not blocked.** Invoices keep the issuer they were
+  requested with. The unique index of the numbers (organization, point of sale, type) does not know the
+  CUIT: a point of sale belongs to one CUIT on the website of the authority, so a CUIT change needs a new
+  point of sale; if the old one is used the authority repeats numbers and the invoice is parked
+  (`number_taken`) with a person alerted. Nothing is recorded twice.
 
 ## Rollback
 

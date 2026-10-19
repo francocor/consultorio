@@ -260,7 +260,7 @@ describe('a number that moved while the invoice waited (JD-S4 R2-1)', () => {
     const issue = vi.spyOn(world.issuer, 'issue');
 
     try {
-      const results = await world.sweep(after(t0, 1));
+      const results = await world.sweep(after(t0, 11));
 
       expect(results).toContainEqual({ invoiceId: waiting.id, outcome: 'issued' });
       expect(issue).toHaveBeenCalledTimes(1);
@@ -499,7 +499,7 @@ describe('a crash and a race around the call (JD-S4 R2-7)', () => {
     const sent = vi.spyOn(world.issuer, 'issue');
 
     try {
-      const results = await world.sweep(after(t0, 1));
+      const results = await world.sweep(after(t0, 11));
 
       expect(results).toContainEqual({ invoiceId: created.id, outcome: 'issued' });
       // The authority has issued nothing since the mark: there is no number to ask about.

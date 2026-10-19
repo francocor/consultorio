@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { nextCuit } from '../../src/adapters/invoice-issuer.contract.js';
 import { invoice as invoiceTable } from '../../src/db/schema/index.js';
+import { invoiceNumbersHeldBy } from '../../src/main/wiring/invoicing.js';
 import {
   DNI,
   after,
@@ -119,7 +120,7 @@ describe('a voucher registered by hand in the same series while an invoice waits
 describe('the lowest number goes first (JD-S4 R5-2)', () => {
   const ctx = useWorld('s4r5-order');
 
-  it('adopts its own voucher, not a look-alike above it', async () => {
+  it('parks, and sends nothing, when a look-alike above its own voucher fits as well (JD-S4 R6-4)', async () => {
     const { world } = ctx;
     await drain(world);
     const issue = realAuthority(world);
@@ -145,10 +146,21 @@ describe('the lowest number goes first (JD-S4 R5-2)', () => {
     expect(lookAlike.number).toBe(floor + 2);
     issue.mockClear();
 
-    await world.sweep(after(t0, 10));
+    const results = await world.sweep(after(t0, 10));
 
+    // Two vouchers fit: the lowest does not win just because it is the lowest. A person decides.
     expect(issue).not.toHaveBeenCalled();
-    expect(await world.rowOf(b.created.id)).toMatchObject({ status: 'issued', number: floor + 1 });
+    expect(results).toContainEqual({ invoiceId: b.created.id, outcome: 'attention' });
+    expect(await world.rowOf(b.created.id)).toMatchObject({
+      status: 'pending',
+      deliveryState: 'needs_attention',
+    });
+    const [parked] = await auditRows(world, b.created.id, 'invoice.needs_attention');
+    expect(parked?.metadata).toMatchObject({
+      reason: 'voucher_ambiguous',
+      outcomeUnknown: true,
+      candidates: [floor + 1, floor + 2],
+    });
   });
 
   it('remembers the foreign vouchers it passes on the way, and then adopts its own', async () => {
@@ -239,7 +251,8 @@ describe('what the authority says decides whether to send (JD-S4 R5-1)', () => {
     world.issuer.setIdempotent(false);
     const issue = vi.spyOn(world.issuer, 'issue');
 
-    await world.sweep(after(t0, 1));
+    // Sent only once the settle time since the mark has passed (JD-S4 R6-1).
+    await world.sweep(after(t0, 11));
 
     expect(issue).toHaveBeenCalledTimes(1);
     expect(vouchersOf(world, b.created.id)).toHaveLength(1);
@@ -473,7 +486,7 @@ describe('how many numbers are examined (JD-S4 R5-1)', () => {
     const probe = vi.spyOn(world.issuer, 'findIssued');
     const issue = vi.spyOn(world.issuer, 'issue');
 
-    await world.sweep(after(t0, 1));
+    await world.sweep(after(t0, 11));
 
     expect(probe).toHaveBeenCalledTimes(20);
     expect(issue).toHaveBeenCalledTimes(1);
@@ -523,9 +536,12 @@ describe('a voucher adopted at a number remembered for another invoice (JD-S4 R5
 describe('the series of the authority is the one of the issuer (JD-S4 R5-B-T2)', () => {
   const ctx = useWorld('s4r5-issuer');
 
-  it('still hints a simulator past every number recorded for the point of sale and type, whatever the CUIT: the unique index does not know it', async () => {
+  it('lets a simulator that rebuilds its memory number past every number recorded for the point of sale and type, whatever the CUIT: the unique index does not know it', async () => {
     const { world } = ctx;
     await drain(world);
+    // Another CUIT is another series for the authority, which starts again at 1: the in-memory simulator
+    // learns from the invoices what the organization holds (the real authority has no such need).
+    world.issuer.rememberFrom(invoiceNumbersHeldBy(ctx.db));
     const profile = (await world.api.get('/invoicing/config', world.owner)).json<{
       profile: { cuit: string; businessName: string; address: string; activityStartedOn: string };
     }>().profile;
@@ -545,13 +561,12 @@ describe('the series of the authority is the one of the issuer (JD-S4 R5-B-T2)',
       expect((await put(nextCuit())).statusCode).toBe(200);
       const other = await create(world);
 
-      // Another CUIT is another series for the authority, which starts again at 1: the number it gives
-      // would collide with the vouchers recorded here without the hint.
       await world.sweep(after(Date.now(), 1));
 
       expect(await world.rowOf(other.created.id)).toMatchObject({ status: 'issued' });
       expect((await world.rowOf(other.created.id)).number).toBeGreaterThan(second.number ?? 0);
     } finally {
+      world.issuer.rememberFrom(undefined);
       await put(profile.cuit);
     }
   });
@@ -559,6 +574,7 @@ describe('the series of the authority is the one of the issuer (JD-S4 R5-B-T2)',
   it('does not hold back an invoice of another issuer CUIT behind one that waits', async () => {
     const { world } = ctx;
     await drain(world);
+    world.issuer.rememberFrom(invoiceNumbersHeldBy(ctx.db));
     const waiting = await create(world, DNI);
     const t0 = Date.now();
     await markAwaiting(
@@ -606,6 +622,7 @@ describe('the series of the authority is the one of the issuer (JD-S4 R5-B-T2)',
         deliveryState: 'awaiting_reconciliation',
       });
     } finally {
+      world.issuer.rememberFrom(undefined);
       await put(profile.cuit);
     }
   });

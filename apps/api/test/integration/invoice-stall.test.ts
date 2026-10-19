@@ -187,7 +187,8 @@ describe('a held series does not wait for the long backoff of its blocker (JD-S4
     await world.sweep(after(t0, 6));
 
     const pulled = await world.rowOf(blocker.created.id);
-    expect(pulled.nextAttemptAt).toEqual(new Date(t0 + 6 * MINUTE));
+    // Not before the settle time since its request was sent: it cannot send earlier anyway (JD-S4 R6-1).
+    expect(pulled.nextAttemptAt).toEqual(new Date(t0 + 10 * MINUTE));
     // And the held invoice itself waits a minute, nothing more.
     const heldRow = await world.rowOf(held.created.id);
     expect(heldRow.status).toBe('pending');

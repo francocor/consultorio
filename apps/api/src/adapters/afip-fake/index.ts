@@ -2,6 +2,7 @@ import type {
   AfipSimulatorMode,
   InvoiceIssuer,
   InvoiceRef,
+  InvoiceRequest,
   InvoiceSeriesRef,
   IssueResult,
   LastAuthorizedResult,
@@ -10,11 +11,13 @@ import type {
 import {
   DEFAULT_SLOW_MS,
   KEY_REUSED_MESSAGE,
+  NOT_NEXT_MESSAGE,
   SERVICE_DOWN_MESSAGE,
   SIMULATED_REJECTION_MESSAGE,
   TIMEOUT_MESSAGE,
   caeExpiresOn,
   caeFor,
+  isNextNumber,
   rejectionFor,
   requestFingerprint,
 } from '../afip-local/voucher-rules.js';
@@ -26,6 +29,9 @@ import {
  * in the simulator modes (`down`, `slow`, `timeout_after_authorize`, `reject_next`) so the issue
  * job can be exercised without a database. The local simulator (`afip-local`) keeps the same state
  * in Postgres; both pass the shared contract suite (`adapters/invoice-issuer.contract.ts`).
+ *
+ * A request pinned to a number (`expectedNumber`) is served only if that is the next number of its series,
+ * like the authority does (JD-S4 R6-1); otherwise it answers `not_next` and issues nothing.
  *
  * It carries `simulated: true`: the invoicing module reads it to say "simulated" on every screen.
  */
@@ -61,7 +67,32 @@ export interface FakeInvoiceIssuer extends InvoiceIssuer {
   setIdempotent(idempotent: boolean): void;
   /** Forgets every voucher and goes back to the `ok` mode, idempotent. */
   reset(): void;
+  /**
+   * Test only: the next request that reaches the authority is still being processed when the caller gives
+   * up on it. The caller is told "timed out, outcome unknown" at once and the voucher appears only when
+   * `releaseHeld` runs, which models a request that finishes AFTER the caller looked for it
+   * (JD-S4 R6-1).
+   */
+  holdNext(): void;
+  /** Finishes the requests held, in the order they arrived, and returns what the authority answered each. */
+  releaseHeld(): Promise<IssueResult[]>;
+  /** Forgets the requests held without finishing them (a request the authority never processed). */
+  dropHeld(): void;
+  /**
+   * Tells the fake where to learn what the organization holds when its own memory is empty (a restart
+   * of the process): the first time it is asked about a series it numbers after `held(series)` as well.
+   * The real authority has no such need; this is only so the in-memory issuer of the demo does not
+   * restart its numbering below vouchers that exist. `reset()` keeps it: it is wiring, not memory.
+   */
+  rememberFrom(held: HeldNumbers | undefined): void;
 }
+
+/** The highest number the organization records for a point of sale and type, or 0. */
+export type HeldNumbers = (series: {
+  tenantRef: string;
+  pointOfSale: number;
+  type: string;
+}) => Promise<number>;
 
 export interface FakeInvoiceIssuerOptions {
   /** How long the `slow` mode keeps a request waiting. */
@@ -80,10 +111,32 @@ export function createFakeInvoiceIssuer(options: FakeInvoiceIssuerOptions = {}):
   let idempotent = true;
   let vouchers: FakeVoucher[] = [];
   let requests = new Map<string, Stored>();
+  let holdNext = false;
+  let held: (() => Promise<IssueResult>)[] = [];
+  let heldNumbers: HeldNumbers | undefined;
+  /** What the organization held, per series, the first time this process was asked about it. */
+  let baselines = new Map<string, number>();
 
-  const lastNumber = (
-    series: Pick<InvoiceSeriesRef, 'tenantRef' | 'issuerCuit' | 'pointOfSale' | 'type'>,
-  ) =>
+  type Series = Pick<InvoiceSeriesRef, 'tenantRef' | 'issuerCuit' | 'pointOfSale' | 'type'>;
+  const seriesKey = (series: Series) =>
+    [series.tenantRef ?? '', series.issuerCuit ?? '', series.pointOfSale, series.type].join('|');
+
+  /** Loads, once per series, the numbers the organization holds that this process does not remember. */
+  const remember = async (series: Series): Promise<void> => {
+    const key = seriesKey(series);
+    if (!heldNumbers || baselines.has(key)) return;
+    baselines.set(
+      key,
+      await heldNumbers({
+        tenantRef: series.tenantRef ?? '',
+        pointOfSale: series.pointOfSale,
+        type: series.type,
+      }),
+    );
+  };
+
+  /** Synchronous: `remember` has run before it, so nothing can interleave between reading and writing. */
+  const lastNumber = (series: Series) =>
     vouchers
       .filter(
         (voucher) =>
@@ -92,7 +145,10 @@ export function createFakeInvoiceIssuer(options: FakeInvoiceIssuerOptions = {}):
           voucher.pointOfSale === series.pointOfSale &&
           voucher.type === series.type,
       )
-      .reduce((highest, voucher) => Math.max(highest, voucher.number), 0);
+      .reduce(
+        (highest, voucher) => Math.max(highest, voucher.number),
+        baselines.get(seriesKey(series)) ?? 0,
+      );
 
   const issuedResult = (voucher: FakeVoucher): Decided => ({
     status: 'issued',
@@ -105,6 +161,63 @@ export function createFakeInvoiceIssuer(options: FakeInvoiceIssuerOptions = {}):
     buyerDocument: voucher.buyerDocument,
     associatedVoucher: voucher.associatedVoucher,
   });
+
+  /** What the authority does with a request once it reaches it. */
+  const handle = async (request: InvoiceRequest, idempotencyKey: string): Promise<IssueResult> => {
+    const fingerprint = requestFingerprint(request);
+    const tenantRef = request.tenantRef ?? '';
+    // An answer is remembered per organization: the same key from another one is a new request.
+    const requestKey = `${tenantRef}|${idempotencyKey}`;
+    const known = idempotent ? requests.get(requestKey) : undefined;
+    if (known) {
+      return known.fingerprint === fingerprint
+        ? known.result
+        : { status: 'rejected', message: KEY_REUSED_MESSAGE };
+    }
+    if (mode === 'slow') await new Promise((resolve) => setTimeout(resolve, slowMs));
+
+    const rejection = mode === 'reject_next' ? SIMULATED_REJECTION_MESSAGE : rejectionFor(request);
+    if (mode === 'reject_next') mode = 'ok';
+    if (rejection !== null) {
+      const result: Decided = { status: 'rejected', message: rejection };
+      requests.set(requestKey, { fingerprint, result });
+      return result;
+    }
+
+    await remember(request);
+    // A request pinned to a number is served only if it is the next one: nothing is issued, and nothing
+    // is remembered under the key (the refusal is not an answer to the request).
+    const last = lastNumber(request);
+    if (!isNextNumber(request, last)) {
+      return { status: 'not_next', message: NOT_NEXT_MESSAGE };
+    }
+    const identity = {
+      tenantRef,
+      issuerCuit: request.issuerCuit ?? '',
+      pointOfSale: request.pointOfSale,
+      type: request.type,
+      number: last + 1,
+    };
+    const voucher: FakeVoucher = {
+      ...identity,
+      cae: caeFor(identity),
+      caeExpiresOn: caeExpiresOn(request.issueDate),
+      issueDate: request.issueDate,
+      totalCents: request.totalCents,
+      buyerDocument: request.buyerDocument ?? null,
+      associatedVoucher: request.associatedVoucher ?? null,
+      idempotencyKey,
+    };
+    vouchers.push(voucher);
+    const result = issuedResult(voucher);
+    requests.set(requestKey, { fingerprint, result });
+
+    if (mode === 'timeout_after_authorize') {
+      mode = 'ok';
+      return { status: 'retryable', message: TIMEOUT_MESSAGE, outcomeUnknown: true };
+    }
+    return result;
+  };
 
   return {
     simulated: true,
@@ -121,61 +234,40 @@ export function createFakeInvoiceIssuer(options: FakeInvoiceIssuerOptions = {}):
       idempotent = true;
       vouchers = [];
       requests = new Map();
+      baselines = new Map();
+      held = [];
+      holdNext = false;
+    },
+    holdNext() {
+      holdNext = true;
+    },
+    async releaseHeld() {
+      const pending = held;
+      held = [];
+      const results: IssueResult[] = [];
+      for (const finish of pending) results.push(await finish());
+      return results;
+    },
+    dropHeld() {
+      held = [];
+      holdNext = false;
+    },
+    rememberFrom(next) {
+      heldNumbers = next;
+      baselines = new Map();
     },
 
     async issue(request, idempotencyKey): Promise<IssueResult> {
       if (mode === 'down') {
         return { status: 'retryable', message: SERVICE_DOWN_MESSAGE, outcomeUnknown: false };
       }
-      const fingerprint = requestFingerprint(request);
-      const tenantRef = request.tenantRef ?? '';
-      // An answer is remembered per organization: the same key from another one is a new request.
-      const requestKey = `${tenantRef}|${idempotencyKey}`;
-      const known = idempotent ? requests.get(requestKey) : undefined;
-      if (known) {
-        return known.fingerprint === fingerprint
-          ? known.result
-          : { status: 'rejected', message: KEY_REUSED_MESSAGE };
-      }
-      if (mode === 'slow') await new Promise((resolve) => setTimeout(resolve, slowMs));
-
-      const rejection =
-        mode === 'reject_next' ? SIMULATED_REJECTION_MESSAGE : rejectionFor(request);
-      if (mode === 'reject_next') mode = 'ok';
-      if (rejection !== null) {
-        const result: Decided = { status: 'rejected', message: rejection };
-        requests.set(requestKey, { fingerprint, result });
-        return result;
-      }
-
-      const identity = {
-        tenantRef,
-        issuerCuit: request.issuerCuit ?? '',
-        pointOfSale: request.pointOfSale,
-        type: request.type,
-        // After what this process issued and after what the organization says it holds: a fake
-        // that restarted does not number a voucher that already exists.
-        number: Math.max(lastNumber(request), request.lastKnownNumber ?? 0) + 1,
-      };
-      const voucher: FakeVoucher = {
-        ...identity,
-        cae: caeFor(identity),
-        caeExpiresOn: caeExpiresOn(request.issueDate),
-        issueDate: request.issueDate,
-        totalCents: request.totalCents,
-        buyerDocument: request.buyerDocument ?? null,
-        associatedVoucher: request.associatedVoucher ?? null,
-        idempotencyKey,
-      };
-      vouchers.push(voucher);
-      const result = issuedResult(voucher);
-      requests.set(requestKey, { fingerprint, result });
-
-      if (mode === 'timeout_after_authorize') {
-        mode = 'ok';
+      if (holdNext) {
+        // The caller gives up while the authority is still working on the request.
+        holdNext = false;
+        held.push(() => handle(request, idempotencyKey));
         return { status: 'retryable', message: TIMEOUT_MESSAGE, outcomeUnknown: true };
       }
-      return result;
+      return handle(request, idempotencyKey);
     },
 
     findIssued(ref: InvoiceRef): Promise<IssueResult | null> {
@@ -197,16 +289,13 @@ export function createFakeInvoiceIssuer(options: FakeInvoiceIssuerOptions = {}):
       return Promise.resolve(found ? issuedResult(found) : null);
     },
 
-    lastAuthorized(series: InvoiceSeriesRef): Promise<LastAuthorizedResult> {
+    async lastAuthorized(series: InvoiceSeriesRef): Promise<LastAuthorizedResult> {
       if (mode === 'down') {
-        return Promise.resolve({
-          status: 'retryable',
-          message: SERVICE_DOWN_MESSAGE,
-          outcomeUnknown: false,
-        });
+        return { status: 'retryable', message: SERVICE_DOWN_MESSAGE, outcomeUnknown: false };
       }
+      await remember(series);
       // Whatever was issued in the series counts, whoever asked for it; an empty series is 0.
-      return Promise.resolve({ status: 'ok', number: lastNumber(series) });
+      return { status: 'ok', number: lastNumber(series) };
     },
   };
 }

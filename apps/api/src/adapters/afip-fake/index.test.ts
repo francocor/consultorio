@@ -84,3 +84,77 @@ describe('the in-memory invoice issuer (task 4.41)', () => {
     expect(await issuer.issue(request(cuit), 'same')).toMatchObject({ number: 1 });
   });
 });
+
+describe('a request that finishes after the caller gave up (JD-S4 R6-1)', () => {
+  it('answers "timed out" at once and issues the voucher only when the held request is released', async () => {
+    const issuer = createFakeInvoiceIssuer();
+    const cuit = nextCuit();
+    issuer.holdNext();
+
+    const timedOut = await issuer.issue({ ...request(cuit), expectedNumber: 1 }, 'a');
+
+    expect(timedOut).toMatchObject({ status: 'retryable', outcomeUnknown: true });
+    expect(issuer.vouchers()).toEqual([]);
+    expect(await issuer.lastAuthorized({ issuerCuit: cuit, pointOfSale: 1, type: 'FC' })).toEqual({
+      status: 'ok',
+      number: 0,
+    });
+    // The next request is not held: only the one after `holdNext`.
+    const [late] = await issuer.releaseHeld();
+    expect(late).toMatchObject({ status: 'issued', number: 1 });
+    expect(issuer.vouchers()).toHaveLength(1);
+  });
+
+  it('refuses a held request whose number was taken in the meantime, and issues nothing for it', async () => {
+    const issuer = createFakeInvoiceIssuer();
+    const cuit = nextCuit();
+    issuer.holdNext();
+    await issuer.issue({ ...request(cuit), expectedNumber: 1 }, 'a');
+    await issuer.issue({ ...request(cuit), expectedNumber: 1 }, 'b');
+
+    const [late] = await issuer.releaseHeld();
+
+    expect(late).toMatchObject({ status: 'not_next' });
+    expect(issuer.vouchers()).toHaveLength(1);
+  });
+
+  it('forgets the held requests when told to', async () => {
+    const issuer = createFakeInvoiceIssuer();
+    issuer.holdNext();
+    await issuer.issue(request(nextCuit()), 'a');
+
+    issuer.dropHeld();
+
+    expect(await issuer.releaseHeld()).toEqual([]);
+    expect(issuer.vouchers()).toEqual([]);
+  });
+});
+
+describe('a fake that learns what the organization holds (JD-S4 R6-1)', () => {
+  it('numbers after what it is told, once per series, and keeps doing so after a reset', async () => {
+    const issuer = createFakeInvoiceIssuer();
+    const cuit = nextCuit();
+    const asked: unknown[] = [];
+    issuer.rememberFrom((series) => {
+      asked.push(series);
+      return Promise.resolve(41);
+    });
+
+    expect(await issuer.lastAuthorized({ issuerCuit: cuit, pointOfSale: 1, type: 'FC' })).toEqual({
+      status: 'ok',
+      number: 41,
+    });
+    // A pin below what the organization holds is refused: the number is taken.
+    expect(await issuer.issue({ ...request(cuit), expectedNumber: 1 }, 'a')).toMatchObject({
+      status: 'not_next',
+    });
+    expect(await issuer.issue({ ...request(cuit), expectedNumber: 42 }, 'b')).toMatchObject({
+      status: 'issued',
+      number: 42,
+    });
+    expect(asked).toHaveLength(1);
+
+    issuer.reset();
+    expect(await issuer.issue(request(cuit), 'c')).toMatchObject({ status: 'issued', number: 42 });
+  });
+});

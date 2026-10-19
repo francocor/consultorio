@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  DEFAULT_SETTLE_MS,
   MAX_AWAITING_BACKOFF_MS,
   MAX_BACKOFF_MS,
   MIN_BACKOFF_MS,
@@ -9,7 +10,9 @@ import {
   backoffMs,
   isOutageFlagged,
   isAttemptAudited,
+  isSettled,
   isStalled,
+  settleMsOf,
 } from './retry-schedule.js';
 
 const MINUTE = 60_000;
@@ -117,5 +120,28 @@ describe('which attempts are audited (JD-S4 R4)', () => {
 
   it('audits an attempt that has no earlier one to compare with', () => {
     expect(isAttemptAudited({ attempt: 9, previousAttemptAt: null, now: at(10, 0) })).toBe(true);
+  });
+});
+
+describe('when "nothing was issued" is believed (JD-S4 R6-1)', () => {
+  const sent = new Date(Date.UTC(2031, 4, 20, 10, 0));
+  const later = (minutes: number) => new Date(sent.getTime() + minutes * 60_000);
+
+  it('is not believed before the settle time has passed since the request was sent', () => {
+    expect(isSettled({ sentAt: sent, now: later(9), settleMs: DEFAULT_SETTLE_MS })).toBe(false);
+    expect(isSettled({ sentAt: sent, now: later(10), settleMs: DEFAULT_SETTLE_MS })).toBe(true);
+  });
+
+  it('counts a request with no known time as settled: the pin is then the only guard', () => {
+    expect(isSettled({ sentAt: null, now: sent, settleMs: DEFAULT_SETTLE_MS })).toBe(true);
+  });
+
+  it('takes the default for a setting that is not a finite, non-negative number', () => {
+    expect(settleMsOf(undefined)).toBe(DEFAULT_SETTLE_MS);
+    expect(settleMsOf(Number.NaN)).toBe(DEFAULT_SETTLE_MS);
+    expect(settleMsOf(-5)).toBe(DEFAULT_SETTLE_MS);
+    expect(settleMsOf(0)).toBe(0);
+    expect(settleMsOf(90_000)).toBe(90_000);
+    expect(DEFAULT_SETTLE_MS).toBe(10 * 60_000);
   });
 });

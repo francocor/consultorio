@@ -182,7 +182,7 @@ describe('the mark written before the call (JD-S4 R1-C4)', () => {
 
     try {
       issue.mockClear();
-      const outcome = await sweepOf(created.id, after(t0, 1));
+      const outcome = await sweepOf(created.id, after(t0, 11));
 
       expect(outcome).toEqual([{ invoiceId: created.id, outcome: 'issued' }]);
       expect(issue).toHaveBeenCalledTimes(1);

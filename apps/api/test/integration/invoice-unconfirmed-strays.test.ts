@@ -81,7 +81,7 @@ describe('a parked invoice remembers the vouchers it knows of (JD-S4 R4-3, R5-1)
     expect(foreign.number).toBe(floor + 1);
     world.issuer.setIdempotent(false);
 
-    await world.sweep(after(t0, 1));
+    await world.sweep(after(t0, 11));
 
     // Its own request was not answered: it was sent, and it got the number after the foreign one.
     expect(await world.rowOf(first.created.id)).toMatchObject({

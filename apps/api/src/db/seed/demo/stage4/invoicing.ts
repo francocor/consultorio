@@ -66,8 +66,9 @@ import {
  * written. The flag is shown live: the provider console puts the issuer in an outage and the
  * threshold of the organization decides when a waiting invoice is flagged.
  *
- * The numbers continue after the vouchers the organization holds, so the fake that serves the demo
- * (which numbers from its own memory) never collides with them (see `lastKnownNumber`).
+ * The numbers continue after the vouchers the organization holds: the fake that serves the demo in the
+ * running application learns them from the invoices when it starts (`rememberFrom`), and asks for the
+ * number it expects like any issuer (`expectedNumber`).
  */
 
 /** The hour of the day at which the vouchers of a day are issued. */

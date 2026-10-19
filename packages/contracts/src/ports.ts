@@ -71,13 +71,16 @@ export interface InvoiceRequest {
   vatCents?: number;
   exemptCents?: number;
   /**
-   * The highest number the organization already holds for this point of sale and type (its own
-   * vouchers and the registered ones). A simulator that lost its memory (a restart, a reset)
-   * numbers after it, so a new voucher never collides with an earlier one. The real authority
-   * decides the number by itself and ignores it. It is not part of the request that an idempotency
-   * key stands for: a retry whose hint has moved gets the same voucher.
+   * The number this request is for: the one after the last voucher the authority had authorized in
+   * the series when the caller asked (`lastAuthorized`). The issuer MUST issue exactly this number, or
+   * refuse with `not_next` and issue nothing (FECAESolicitar carries it as `CbteDesde`/`CbteHasta`,
+   * and error 10016 says that it is not the next one). It is what makes a request that is still in
+   * flight harmless when the caller, believing it lost, sends again: only one of the two can take the
+   * number, the other is refused (JD-S4 R6-1). It is not part of the request that an idempotency key
+   * stands for: a retry whose pin has moved gets the same voucher. A request without it takes the next
+   * number.
    */
-  lastKnownNumber?: number;
+  expectedNumber?: number;
   /** For a credit note: the voucher it cancels (the authority wants it associated). */
   associatedVoucher?: { type: string; pointOfSale: number; number: number };
 }
@@ -107,6 +110,15 @@ export type IssueResult =
       associatedVoucher?: { type: string; pointOfSale: number; number: number } | null;
     }
   | { status: 'rejected'; message: string }
+  /**
+   * The request was refused because `expectedNumber` is not the next number of the series (ARCA error
+   * 10016). A definite answer: THIS request issued nothing. It says that the last number of the
+   * authority is not the one the caller asked with (another voucher took the number, possibly the
+   * voucher of an earlier request of the same invoice that was answered late), so the caller asks the
+   * authority for its last number again and looks at the numbers in between before it sends anything
+   * (JD-S4 R6-1).
+   */
+  | { status: 'not_next'; message: string }
   | { status: 'retryable'; message: string; outcomeUnknown: boolean };
 
 export interface InvoiceIssuer {

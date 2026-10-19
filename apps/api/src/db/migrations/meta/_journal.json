@@ -610,6 +610,20 @@
       "when": 1792406513066,
       "tag": "0483_manual_credit_note_invoiced",
       "breakpoints": true
+    },
+    {
+      "idx": 87,
+      "version": "7",
+      "when": 1792416032718,
+      "tag": "0484_invoice_last_sent_at",
+      "breakpoints": true
+    },
+    {
+      "idx": 88,
+      "version": "7",
+      "when": 1792416299890,
+      "tag": "0485_invoice_lookup_misses",
+      "breakpoints": true
     }
   ]
 }

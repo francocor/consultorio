@@ -20,11 +20,13 @@ import type { Db } from '../../platform/db/pool.js';
 import {
   DEFAULT_SLOW_MS,
   KEY_REUSED_MESSAGE,
+  NOT_NEXT_MESSAGE,
   SERVICE_DOWN_MESSAGE,
   SIMULATED_REJECTION_MESSAGE,
   TIMEOUT_MESSAGE,
   caeExpiresOn,
   caeFor,
+  isNextNumber,
   rejectionFor,
   requestFingerprint,
 } from './voucher-rules.js';
@@ -45,6 +47,8 @@ import {
  * - the CAE has 14 digits and ends 10 days after the date of the voucher;
  * - `findIssued` reconciles: it answers with the voucher of a number, if there is one, and
  *   `lastAuthorized` says the last number of a series (0 when it is empty);
+ * - a request pinned to a number (`expectedNumber`) is served only when that is the next number of its
+ *   series; otherwise it is refused with `not_next` and nothing is issued (JD-S4 R6-1);
  * - modes: `ok`, `down` (retryable, nothing issued), `slow` (answers late), `timeout_after_authorize`
  *   (authorizes, then answers "unknown outcome"; fires once) and `reject_next` (fires once).
  */
@@ -185,9 +189,14 @@ export function createLocalInvoiceIssuer(options: LocalInvoiceIssuerOptions): Lo
               eq(localAfipVoucher.type, request.type),
             ),
           );
-        // After what the simulator holds and after what the organization says it holds: a reset of
-        // the simulator starts its numbering again, and the vouchers of the organization stay.
-        const number = Math.max(last?.highest ?? 0, request.lastKnownNumber ?? 0) + 1;
+        const lastNumber = last?.highest ?? 0;
+        // A request pinned to a number is served only if it is the next one of the series, as the
+        // authority does (ARCA error 10016): nothing is issued and nothing is remembered under the key
+        // (JD-S4 R6-1). The series is locked, so no other request can take the number in between.
+        if (!isNextNumber(request, lastNumber)) {
+          return { status: 'not_next', message: NOT_NEXT_MESSAGE };
+        }
+        const number = lastNumber + 1;
         const [voucher] = await tx
           .insert(localAfipVoucher)
           .values({
