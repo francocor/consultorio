@@ -7,8 +7,24 @@ import { createHash, randomInt, timingSafeEqual } from 'node:crypto';
  * other.
  */
 export const PORTAL_CODE_LIFETIME_MS = 10 * 60_000;
+/**
+ * The wrong tries one CLIENT has at a code (JD-S5 R2-4). A try is counted for the challenge and the
+ * client that made it, so a stranger who knows an address and spends its five tries burns nothing
+ * for the patient, who tries from somewhere else.
+ */
 export const PORTAL_CODE_ATTEMPTS = 5;
+/**
+ * The wrong tries a code takes from ALL clients together, after which it is spent. Without a cap
+ * a crowd of clients (or one that changes address) could guess a six digit code within its life.
+ */
+export const PORTAL_CODE_ATTEMPTS_PER_CHALLENGE = 20;
 export const PORTAL_CODE_SENDS_PER_HOUR = 3;
+/**
+ * The codes one client may ask for in an hour, whatever the addresses (JD-S5 R2-4). A person asks for
+ * at most three (the sends of an address); a household behind one address asks for a few more.
+ */
+export const PORTAL_CODE_REQUESTS_PER_CLIENT = 6;
+export const PORTAL_CODE_REQUESTS_WINDOW_MS = 3_600_000;
 
 /**
  * How many times one address may try codes in a window, whatever the codes were, before the portal
@@ -45,6 +61,24 @@ export function addressKey(tenantId: string, email: string): string {
   return createHash('sha256').update(`${tenantId}|${email.trim().toLowerCase()}`).digest('hex');
 }
 
+/** Who a client is, as a counter key: a hash, so no address of a visitor sits in the counter store. */
+function clientKey(client: string | null): string {
+  return createHash('sha256')
+    .update(client ?? 'unknown')
+    .digest('hex')
+    .slice(0, 24);
+}
+
+/** The key of the tries ONE client has at ONE challenge (JD-S5 R2-4). */
+export function challengeTriesKey(challengeId: string, client: string | null): string {
+  return `${challengeId}|${clientKey(client)}`;
+}
+
+/** The key of the codes one client asks for in an organization (JD-S5 R2-4). */
+export function requestsKey(tenantId: string, client: string | null): string {
+  return `${tenantId}|${clientKey(client)}`;
+}
+
 /**
  * The key of the lock on the tries to use a code: the address AND who is trying (JD-S5 R1-S5-9).
  * Keyed by the address alone, anyone who knows an email could spend its tries and lock the patient
@@ -54,9 +88,5 @@ export function addressKey(tenantId: string, email: string): string {
  * address has an account.
  */
 export function triesKey(tenantId: string, email: string, client: string | null): string {
-  const who = createHash('sha256')
-    .update(client ?? 'unknown')
-    .digest('hex')
-    .slice(0, 24);
-  return `${addressKey(tenantId, email)}|${who}`;
+  return `${addressKey(tenantId, email)}|${clientKey(client)}`;
 }

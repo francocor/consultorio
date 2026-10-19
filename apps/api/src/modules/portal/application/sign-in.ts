@@ -3,11 +3,19 @@ import { and, eq, sql } from 'drizzle-orm';
 import { portalIdentity, portalLink } from '../../../db/schema/portal.js';
 import { audit, type AuditActor } from '../../../platform/audit/writer.js';
 import type { Tx } from '../../../platform/db/tenant-context.js';
+import { AppError } from '../../../platform/http/problem.js';
 import type { RateLimitStore } from '../../../platform/http/rate-limit.js';
 import type { JobClient } from '../../../platform/jobs/boss.js';
 import type { ActionTokens } from '../../../platform/tokens/index.js';
 import { findPatientByDocument } from '../../patients/index.js';
-import { PORTAL_VERIFY_ATTEMPTS, PORTAL_VERIFY_WINDOW_MS, triesKey } from '../domain/code.js';
+import {
+  PORTAL_CODE_REQUESTS_PER_CLIENT,
+  PORTAL_CODE_REQUESTS_WINDOW_MS,
+  PORTAL_VERIFY_ATTEMPTS,
+  PORTAL_VERIFY_WINDOW_MS,
+  requestsKey,
+  triesKey,
+} from '../domain/code.js';
 
 import { checkCode, openChallenge, type PortalCodePurpose } from './codes.js';
 import { normalizeDocument } from './country.js';
@@ -93,6 +101,7 @@ export async function requestRegistrationCode(
   ctx: SignInContext,
   input: { nationalId: string; email: string },
 ): Promise<void> {
+  await withinRequests(deps, ctx);
   const candidate = await registrationCandidate(tx, deps, ctx, input);
   await openChallenge(tx, {
     tenantId: ctx.tenant.id,
@@ -114,6 +123,7 @@ export async function requestSignInCode(
   ctx: SignInContext,
   input: { email: string },
 ): Promise<void> {
+  await withinRequests(deps, ctx);
   const [identity] = await tx
     .select({ id: portalIdentity.id })
     .from(portalIdentity)
@@ -126,6 +136,26 @@ export async function requestSignInCode(
     jobs: deps.jobs,
     decoy: identity === undefined,
   });
+}
+
+/**
+ * Counts one request for a code from a CLIENT and refuses the ones past its allowance in the hour
+ * (JD-S5 R2-4), whatever the address it asks for and whether or not the address has an account, so
+ * the refusal tells nothing about anyone. The sends of an address stay capped at three an hour
+ * apart from this (a stranger can still use them up by asking: documented residual).
+ */
+async function withinRequests(deps: SignInDeps, ctx: SignInContext): Promise<void> {
+  let allowed = true;
+  try {
+    const state = await deps.store.hit(
+      `portal|request|${requestsKey(ctx.tenant.id, ctx.ip)}`,
+      PORTAL_CODE_REQUESTS_WINDOW_MS,
+    );
+    allowed = state.count <= PORTAL_CODE_REQUESTS_PER_CLIENT;
+  } catch {
+    // Best effort, like the rest of the counters.
+  }
+  if (!allowed) throw new AppError('rate_limited');
 }
 
 // Using the code ---------------------------------------------------------------------------------
@@ -224,6 +254,7 @@ export async function verifySignInCode(
     email: input.email,
     code: input.code,
     now: deps.clock(),
+    client: { ip: ctx.ip, store: deps.store },
   });
   // A deactivated account has no sign-in even with a code asked for before it was deactivated.
   if (checked !== 'ok' || accountId === null) {
@@ -250,6 +281,7 @@ export async function verifyRegistrationCode(
     email: input.email,
     code: input.code,
     now: deps.clock(),
+    client: { ip: ctx.ip, store: deps.store },
   });
   if (checked !== 'ok') return { outcome: 'invalid' };
 

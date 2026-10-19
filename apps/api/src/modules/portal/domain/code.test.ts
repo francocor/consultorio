@@ -2,9 +2,12 @@ import { describe, expect, it } from 'vitest';
 
 import {
   PORTAL_CODE_ATTEMPTS,
+  PORTAL_CODE_ATTEMPTS_PER_CHALLENGE,
   PORTAL_CODE_LIFETIME_MS,
+  PORTAL_CODE_REQUESTS_PER_CLIENT,
   PORTAL_CODE_SENDS_PER_HOUR,
   addressKey,
+  challengeTriesKey,
   codeMatches,
   generateCode,
   hashCode,
@@ -15,6 +18,22 @@ describe('the code of the portal', () => {
     expect(PORTAL_CODE_LIFETIME_MS).toBe(600_000);
     expect(PORTAL_CODE_ATTEMPTS).toBe(5);
     expect(PORTAL_CODE_SENDS_PER_HOUR).toBe(3);
+  });
+
+  it('counts five tries per client, twenty per challenge and six requests an hour per client (R2-4)', () => {
+    expect(PORTAL_CODE_ATTEMPTS).toBe(5);
+    expect(PORTAL_CODE_ATTEMPTS_PER_CHALLENGE).toBe(20);
+    expect(PORTAL_CODE_REQUESTS_PER_CLIENT).toBe(6);
+    expect(PORTAL_CODE_ATTEMPTS_PER_CHALLENGE).toBeGreaterThan(PORTAL_CODE_ATTEMPTS);
+  });
+
+  it('keys the tries of a client by challenge and by a hash of the client', () => {
+    const key = challengeTriesKey('challenge-1', '10.0.0.1');
+
+    expect(key).toBe(challengeTriesKey('challenge-1', '10.0.0.1'));
+    expect(key).not.toBe(challengeTriesKey('challenge-1', '10.0.0.2'));
+    expect(key).not.toBe(challengeTriesKey('challenge-2', '10.0.0.1'));
+    expect(key).not.toContain('10.0.0.1');
   });
 
   it('is six digits and keeps its leading zeros', () => {
