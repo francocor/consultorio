@@ -6,14 +6,13 @@ import { dirname, join } from 'node:path';
 import { pipeline } from 'node:stream/promises';
 
 import {
-  CreateBucketCommand,
   GetObjectCommand,
-  HeadBucketCommand,
   ListObjectsV2Command,
   PutObjectCommand,
   S3Client,
 } from '@aws-sdk/client-s3';
 
+import { ensureBucket } from './bucket.js';
 import {
   BackupCorrupt,
   MANIFEST_FILE,
@@ -381,15 +380,7 @@ export async function restoreBackup(options: RestoreOptions): Promise<RestoreRep
   log('restoring the document bucket');
   const client = s3Client(options.bucket);
   try {
-    try {
-      await withTransientRetry(() =>
-        client.send(new HeadBucketCommand({ Bucket: options.bucket.bucket })),
-      );
-    } catch {
-      await withTransientRetry(() =>
-        client.send(new CreateBucketCommand({ Bucket: options.bucket.bucket })),
-      );
-    }
+    await ensureBucket(client, options.bucket.bucket);
     for (const entry of index) {
       assertSafeKey(entry.key);
       const body = await readFile(join(options.dir, OBJECTS_DIR, ...entry.key.split('/')));
