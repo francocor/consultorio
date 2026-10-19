@@ -523,6 +523,39 @@ describe('a voucher adopted at a number remembered for another invoice (JD-S4 R5
 describe('the series of the authority is the one of the issuer (JD-S4 R5-B-T2)', () => {
   const ctx = useWorld('s4r5-issuer');
 
+  it('still hints a simulator past every number recorded for the point of sale and type, whatever the CUIT: the unique index does not know it', async () => {
+    const { world } = ctx;
+    await drain(world);
+    const profile = (await world.api.get('/invoicing/config', world.owner)).json<{
+      profile: { cuit: string; businessName: string; address: string; activityStartedOn: string };
+    }>().profile;
+    const put = (cuit: string) =>
+      world.api.put('/invoicing/profile', world.owner, {
+        cuit,
+        taxCondition: 'monotributo',
+        businessName: profile.businessName,
+        address: profile.address,
+        activityStartedOn: profile.activityStartedOn,
+      });
+    // Two vouchers are recorded under the CUIT of the profile.
+    const first = await world.issueInvoiceOf(await world.charge());
+    const second = await world.issueInvoiceOf(await world.charge());
+    expect(second.number).toBe((first.number ?? 0) + 1);
+    try {
+      expect((await put(nextCuit())).statusCode).toBe(200);
+      const other = await create(world);
+
+      // Another CUIT is another series for the authority, which starts again at 1: the number it gives
+      // would collide with the vouchers recorded here without the hint.
+      await world.sweep(after(Date.now(), 1));
+
+      expect(await world.rowOf(other.created.id)).toMatchObject({ status: 'issued' });
+      expect((await world.rowOf(other.created.id)).number).toBeGreaterThan(second.number ?? 0);
+    } finally {
+      await put(profile.cuit);
+    }
+  });
+
   it('does not hold back an invoice of another issuer CUIT behind one that waits', async () => {
     const { world } = ctx;
     await drain(world);

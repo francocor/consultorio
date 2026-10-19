@@ -122,19 +122,24 @@ function cleanMessage(message: string): string {
 }
 
 /**
- * The highest number that an invoice of the same series records, or 0 when there is none: what a
- * simulator that restarted must be told to number after. It is a hint for a simulator, nothing more:
- * what the authority itself has authorized is asked of the authority (`lastAuthorized`, JD-S4 R5-1).
+ * The highest number that an invoice of the same point of sale and type records, or 0 when there is
+ * none: what a simulator that restarted must be told to number after. It is a hint for a simulator,
+ * nothing more: what the authority itself has authorized is asked of the authority (`lastAuthorized`,
+ * JD-S4 R5-1). It has the scope of the unique index of the numbers (organization, point of sale, type),
+ * NOT the series of the authority: an organization that changed its CUIT starts again at 1 for the
+ * authority, and the number it gets must still be free here.
  */
-async function highestRecordedNumberFor(
-  tx: Tx,
-  row: InvoiceRow,
-  issuerCuit: string,
-): Promise<number> {
+async function highestRecordedNumberFor(tx: Tx, row: InvoiceRow): Promise<number> {
   const [found] = await tx
     .select({ highest: sql<number>`coalesce(max(${invoice.number}), 0)::int` })
     .from(invoice)
-    .where(and(inSeries(row, issuerCuit), sql`${invoice.number} is not null`));
+    .where(
+      and(
+        eq(invoice.pointOfSale, row.pointOfSale),
+        eq(invoice.type, row.type),
+        sql`${invoice.number} is not null`,
+      ),
+    );
   return found?.highest ?? 0;
 }
 
@@ -169,7 +174,7 @@ async function buildRequest(
   issuer: IssuerSnapshot,
   tenantRef: string,
 ): Promise<InvoiceRequest> {
-  const lastKnownNumber = await highestRecordedNumberFor(tx, row, issuer.cuit);
+  const lastKnownNumber = await highestRecordedNumberFor(tx, row);
   const lines = await tx
     .select()
     .from(invoiceLine)
@@ -783,9 +788,10 @@ async function settleStall(
  *   (`needs_attention`), is left alone;
  * - the request is the one the invoice was made with: the issuer is the snapshot taken when it was
  *   requested, and the key the authority sees is derived from the organization and the invoice;
- * - after an unknown outcome, or after a crash, the authority is asked about the expected number
- *   BEFORE anything is sent; a voucher that is this invoice's is adopted, never issued twice. The
- *   mark that makes this possible is committed before every call (`markIntent`);
+ * - before every first request the authority is asked for its last number, and the invoice is
+ *   marked with it (`markIntent`, committed before the call); after an unknown outcome, or after a
+ *   crash, the numbers the authority has issued since are examined BEFORE anything is sent, and a
+ *   voucher that is this invoice's is adopted, never issued twice (`reconcile`);
  * - a rejection is final for the attempt: the message is kept, there is no CAE, the lines are
  *   released (the database does it when the status changes);
  * - an outage or an unknown outcome keeps it pending with a longer wait each time;
