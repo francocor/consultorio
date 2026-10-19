@@ -317,4 +317,15 @@ describe('the retention of the outbox (JD-S5 R1-A-S)', () => {
     expect(await present('hace-una-hora@retention.invalid')).toBe(0);
     expect(await present('hace-minutos@retention.invalid')).toBe(1);
   });
+
+  it('does nothing for a cutoff it was not given (JD-S5 R2)', async () => {
+    await insertAged('sin-corte@retention.invalid', 3 * HOUR);
+
+    const result = await runtime.db.execute<{ removed: number | null }>(
+      sql`select app.demo_outbox_purge(NULL::timestamptz) as removed`,
+    );
+
+    expect(result.rows[0]?.removed).toBeNull();
+    expect(await present('sin-corte@retention.invalid')).toBe(1);
+  });
 });
