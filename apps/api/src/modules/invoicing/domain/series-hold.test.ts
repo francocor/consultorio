@@ -36,4 +36,14 @@ describe('heldCount', () => {
     expect(heldCount('a', series)).toBe(3);
     expect(heldCount('b', series)).toBe(0);
   });
+
+  it('counts only the invoices the reader may see, so the counts of other locations stay hidden (JD-S4 R4-4)', () => {
+    const series = [member('a', true), member('b'), member('c'), member('d')];
+    const visible = new Set(['a', 'b']);
+
+    expect(heldCount('a', series, (held) => visible.has(held.id))).toBe(1);
+    expect(heldCount('a', series, () => false)).toBe(0);
+    // Without a filter every one counts.
+    expect(heldCount('a', series)).toBe(3);
+  });
 });

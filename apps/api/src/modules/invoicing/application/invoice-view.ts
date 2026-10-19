@@ -196,6 +196,7 @@ async function seriesHolds(
       .map((member) => ({
         id: member.id,
         awaiting: member.deliveryState === 'awaiting_reconciliation',
+        visible: visible(member.locationIds),
       }));
     const blocker = blockerOf(
       { id: row.id, awaiting: row.deliveryState === 'awaiting_reconciliation' },
@@ -207,7 +208,11 @@ async function seriesHolds(
         named && visible(named.locationIds)
           ? { id: named.id, requestedAt: named.createdAt.toISOString() }
           : null,
-      blocksSeries: row.deliveryState === 'awaiting_reconciliation' ? heldCount(row.id, series) : 0,
+      // Only what the reader may see is counted: the pending invoices of other locations stay unknown.
+      blocksSeries:
+        row.deliveryState === 'awaiting_reconciliation'
+          ? heldCount(row.id, series, (held) => held.visible)
+          : 0,
     });
   }
   return holds;

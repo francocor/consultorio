@@ -31,7 +31,16 @@ export function blockerOf(
   return oldest !== undefined && oldest.id !== member.id ? oldest : undefined;
 }
 
-/** How many of the members the given blocker holds back. */
-export function heldCount(blockerId: string, members: readonly SeriesMember[]): number {
-  return members.filter((member) => blockerOf(member, members)?.id === blockerId).length;
+/**
+ * How many of the members the given blocker holds back. `counts` says which of them the reader may
+ * know about: the blocker is found among all of the series, but a member the reader may not see (an
+ * invoice of another location) is not counted (JD-S4 R4-4).
+ */
+export function heldCount<T extends SeriesMember>(
+  blockerId: string,
+  members: readonly T[],
+  counts: (member: T) => boolean = () => true,
+): number {
+  return members.filter((member) => counts(member) && blockerOf(member, members)?.id === blockerId)
+    .length;
 }
