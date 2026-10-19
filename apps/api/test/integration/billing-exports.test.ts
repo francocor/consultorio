@@ -208,6 +208,72 @@ describe('the payments export', () => {
   });
 });
 
+describe('an export with more rows than a file takes (JD-S4 R1-A-T7)', () => {
+  it.each(['charges', 'payments', 'payer_settlement'] as const)(
+    'fails the %s export with export_too_large instead of listing a truncated file with totals that look right',
+    async (kind) => {
+      const small = createBillingExportJob({
+        storage,
+        clock: () => new Date('2031-05-31T18:00:00.000Z'),
+        maxRows: 1,
+      });
+      const response = await world.api.post('/billing/exports', world.owner, {
+        ...MAY,
+        ...(kind === 'payments' ? AROUND_TODAY : {}),
+        kind,
+        format: 'csv',
+      });
+      expect(response.statusCode, response.body).toBe(202);
+      const created = response.json<ExportRequestDto>();
+
+      await runPending(runtime.db, jobs, [small]);
+
+      const finished = (
+        await world.api.get(`/billing/exports/${created.id}`, world.owner)
+      ).json<ExportRequestDto>();
+      expect(finished).toMatchObject({
+        status: 'failed',
+        failureCode: 'export_too_large',
+        fileName: null,
+      });
+    },
+  );
+
+  it('still lists everything when the rows fit', async () => {
+    const made = await exportAs({ kind: 'charges', format: 'csv' });
+
+    expect(made.request).toMatchObject({ status: 'ready', rowCount: 3 });
+  });
+});
+
+describe('the day a movement is printed on (JD-S4 R1-A-W5)', () => {
+  it('is the local day of the location, the same one the period is filtered by', async () => {
+    const charge = await world.charge();
+    // 23:30 of May 9th in Buenos Aires is already May 10th in UTC.
+    await asTenant(runtime, world.tenant.id, async (tx) => {
+      await tx.execute(
+        sql`INSERT INTO payment (tenant_id, charge_id, location_id, method, amount_cents, paid_at,
+                                 recorded_by, idempotency_key, request_hash)
+              VALUES (${world.tenant.id}, ${charge.id}, ${world.centro}, 'debit', 123400,
+                      '2031-05-10T02:30:00Z', ${world.owner.user.id}, '0190a000-0000-7000-8000-0000000000e1', 'late')`,
+      );
+    });
+
+    const made = await exportAs({
+      kind: 'payments',
+      format: 'csv',
+      from: '2031-05-09',
+      to: '2031-05-09',
+    });
+    const text = (await made.download()).bytes.toString('utf8');
+
+    expect(made.request).toMatchObject({ status: 'ready', rowCount: 1 });
+    expect(text).toContain('"1234,00"');
+    expect(text).toMatch(/09.05.2031|2031-05-09/);
+    expect(text).not.toMatch(/10.05.2031|2031-05-10/);
+  });
+});
+
 describe('the payer settlement', () => {
   it('groups the payer portions by payer with the DNI of the patient, the date, the service and the amount', async () => {
     const made = await exportAs({ kind: 'payer_settlement', format: 'csv' });

@@ -19,7 +19,7 @@ import { invoiceLookup, type InvoiceLookup } from '../invoicing/index.js';
 import type { ExportRegistry } from '../tenancy/index.js';
 
 import { exportBilling } from './application/export-contributor.js';
-import { BILLING_EXPORT_SOURCES } from './application/export-sources.js';
+import { createBillingExportSources } from './application/export-sources.js';
 import {
   createExportFileResource,
   exportStore,
@@ -84,9 +84,16 @@ export function registerBillingExportContributors(registry: ExportRegistry): voi
  * The `export.build` job of billing: builds the file of an export request (charges, payments, payer
  * settlement) and stores it. The worker registers it; the tests run it by hand.
  */
-export function createBillingExportJob(deps: { storage: ObjectStorage; clock?: () => Date }) {
+export function createBillingExportJob(deps: {
+  storage: ObjectStorage;
+  clock?: () => Date;
+  /** Rows after which an export fails with `export_too_large` (20.000 unless a test says less). */
+  maxRows?: number;
+}) {
   return createExportJob({
-    sources: BILLING_EXPORT_SOURCES,
+    sources: createBillingExportSources(
+      deps.maxRows === undefined ? {} : { maxRows: deps.maxRows },
+    ),
     store: exportStore,
     storage: deps.storage,
     branding: organizationBranding,

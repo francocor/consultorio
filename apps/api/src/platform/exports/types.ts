@@ -48,3 +48,18 @@ export const EXPORT_CONTENT_TYPES = {
 } as const;
 
 export type ExportFileFormat = keyof typeof EXPORT_CONTENT_TYPES;
+
+/**
+ * A source that cannot build its table says why with a code of its own (for example
+ * `export_too_large`). The job stores the code on the request, so a person is told what to change;
+ * any other failure is stored as `build_failed`.
+ */
+export class ExportBuildError extends Error {
+  readonly code: string;
+
+  constructor(code: string) {
+    super(code);
+    this.name = 'ExportBuildError';
+    this.code = code;
+  }
+}

@@ -73,7 +73,9 @@ function ExportStatus({ id }: { id: string }) {
   if (entry.status === 'failed') {
     return (
       <Alert tone="danger">
-        <AlertDescription>{t('export.failed')}</AlertDescription>
+        <AlertDescription>
+          {entry.failureCode === 'export_too_large' ? t('export.tooLarge') : t('export.failed')}
+        </AlertDescription>
       </Alert>
     );
   }

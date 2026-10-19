@@ -239,6 +239,21 @@ describe('the charges screen', () => {
     expect(screen.queryByRole('button', { name: /Descargar/ })).toBeNull();
   });
 
+  it('asks for a shorter period when the export has too many rows, instead of a vague failure (JD-S4 R1-A-T7)', async () => {
+    const user = userEvent.setup();
+    open([charge()], ['reception'], {
+      'POST /api/billing/exports': () => jsonResponse(exportOf({ status: 'queued' }), 202),
+      [`GET /api/billing/exports/${exportOf().id}`]: () =>
+        jsonResponse(exportOf({ status: 'failed', failureCode: 'export_too_large' })),
+    });
+
+    await user.click(await screen.findByRole('tab', { name: 'Exportar' }));
+    await user.click(await screen.findByRole('button', { name: 'Pedir la exportación' }));
+
+    expect(await screen.findByText(/demasiados movimientos para un solo archivo/)).toBeVisible();
+    expect(screen.queryByRole('button', { name: /Descargar/ })).toBeNull();
+  });
+
   it('is not for a role that cannot read payments', async () => {
     const app = open([charge()], ['patient']);
 

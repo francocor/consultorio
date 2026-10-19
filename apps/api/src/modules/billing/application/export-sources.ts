@@ -12,7 +12,12 @@ import { location } from '../../../db/schema/tenant.js';
 import type { Tx } from '../../../platform/db/tenant-context.js';
 import type { ExportSource } from '../../../platform/exports/export-job.js';
 import { dayAsText } from '../../../platform/exports/format.js';
-import type { ExportColumn, ExportRow, ExportTable } from '../../../platform/exports/types.js';
+import {
+  ExportBuildError,
+  type ExportColumn,
+  type ExportRow,
+  type ExportTable,
+} from '../../../platform/exports/types.js';
 import {
   EXPORT_FILE_BASES,
   EXPORT_TITLES,
@@ -53,7 +58,16 @@ export const ExportFilters = z.strictObject({
 });
 export type ExportFilters = z.infer<typeof ExportFilters>;
 
-const MAX_ROWS = 20_000;
+/**
+ * The most rows one export lists. A file that would be longer is not cut: it fails with
+ * `export_too_large`, because a total over the truncated rows would be a wrong figure that looks right
+ * (JD-S4 R1-A-T7). The source reads one row more than this to know.
+ */
+export const DEFAULT_EXPORT_MAX_ROWS = 20_000;
+
+function tooLarge(count: number, maxRows: number): void {
+  if (count > maxRows) throw new ExportBuildError('export_too_large');
+}
 
 /** What a scope looks like once stored with the request. */
 export function storedScope(scope: BillingScope): ExportFilters['scope'] {
@@ -139,7 +153,7 @@ const CHARGE_COLUMNS: readonly ExportColumn[] = [
   money('outstanding', 'Falta cobrar', 3),
 ];
 
-async function chargesTable(tx: Tx, filters: ExportFilters): Promise<ExportTable> {
+async function chargesTable(tx: Tx, filters: ExportFilters, maxRows: number): Promise<ExportTable> {
   const charges = await loadCharges(
     tx,
     [
@@ -150,8 +164,9 @@ async function chargesTable(tx: Tx, filters: ExportFilters): Promise<ExportTable
       gte(serviceDay, filters.from),
       lte(serviceDay, filters.to),
     ],
-    { limit: MAX_ROWS },
+    { limit: maxRows + 1 },
   );
+  tooLarge(charges.length, maxRows);
   const rows: ExportRow[] = charges.reverse().map((entry) => ({
     cells: {
       date: entry.snapshot.serviceDate,
@@ -209,7 +224,11 @@ function isMethod(value: string): value is PaymentMethod {
   return PAYMENT_METHODS.some((method) => method === value);
 }
 
-async function paymentsTable(tx: Tx, filters: ExportFilters): Promise<ExportTable> {
+async function paymentsTable(
+  tx: Tx,
+  filters: ExportFilters,
+  maxRows: number,
+): Promise<ExportTable> {
   const where = (day: SQL) =>
     and(
       chargeScope(filters),
@@ -221,6 +240,9 @@ async function paymentsTable(tx: Tx, filters: ExportFilters): Promise<ExportTabl
     );
   const paidDay = sql<string>`(${payment.paidAt} at time zone ${location.timeZone})::date`;
   const reversedDay = sql<string>`(${paymentReversal.reversedAt} at time zone ${location.timeZone})::date`;
+  // The same local day, as text: the day printed is the day the period was filtered by (JD-S4 R1-A-W5),
+  // not the UTC date of the instant.
+  const asText = (day: SQL) => sql<string>`to_char(${day}, 'YYYY-MM-DD')`;
 
   const common = {
     givenNames: patient.givenNames,
@@ -237,6 +259,7 @@ async function paymentsTable(tx: Tx, filters: ExportFilters): Promise<ExportTabl
       .select({
         ...common,
         at: payment.paidAt,
+        day: asText(paidDay),
         method: payment.method,
         reference: payment.externalRef,
         amountCents: payment.amountCents,
@@ -249,11 +272,12 @@ async function paymentsTable(tx: Tx, filters: ExportFilters): Promise<ExportTabl
       .leftJoin(payer, eq(payer.id, tenantPayer.payerId))
       .where(where(paidDay))
       .orderBy(asc(payment.paidAt), asc(payment.id))
-      .limit(MAX_ROWS),
+      .limit(maxRows + 1),
     tx
       .select({
         ...common,
         at: paymentReversal.reversedAt,
+        day: asText(reversedDay),
         kind: paymentReversal.kind,
         method: payment.method,
         reference: payment.externalRef,
@@ -268,8 +292,9 @@ async function paymentsTable(tx: Tx, filters: ExportFilters): Promise<ExportTabl
       .leftJoin(payer, eq(payer.id, tenantPayer.payerId))
       .where(where(reversedDay))
       .orderBy(asc(paymentReversal.reversedAt), asc(paymentReversal.id))
-      .limit(MAX_ROWS),
+      .limit(maxRows + 1),
   ]);
+  tooLarge(paid.length + reversed.length, maxRows);
 
   const typeName = (snapshot: unknown) => {
     const value = (snapshot as { appointmentTypeName?: unknown } | null)?.appointmentTypeName;
@@ -286,7 +311,7 @@ async function paymentsTable(tx: Tx, filters: ExportFilters): Promise<ExportTabl
 
   const rows: ExportRow[] = entries.map(({ row, movement, sign }) => ({
     cells: {
-      date: row.at.toISOString().slice(0, 10),
+      date: row.day,
       patient: `${row.givenNames} ${row.familyName}`.trim(),
       location: row.locationName,
       service: typeName(row.snapshot),
@@ -329,7 +354,11 @@ const DOCUMENT_TYPES: Readonly<Record<string, string>> = {
   cuit: 'CUIT',
 };
 
-async function settlementTable(tx: Tx, filters: ExportFilters): Promise<ExportTable> {
+async function settlementTable(
+  tx: Tx,
+  filters: ExportFilters,
+  maxRows: number,
+): Promise<ExportTable> {
   const found = await tx
     .select({
       tenantPayerId: charge.tenantPayerId,
@@ -368,7 +397,8 @@ async function settlementTable(tx: Tx, filters: ExportFilters): Promise<ExportTa
       asc(charge.id),
       asc(chargeLine.position),
     )
-    .limit(MAX_ROWS);
+    .limit(maxRows + 1);
+  tooLarge(found.length, maxRows);
 
   const rows: ExportRow[] = [];
   let group: ExportRow[] = [];
@@ -425,20 +455,27 @@ async function settlementTable(tx: Tx, filters: ExportFilters): Promise<ExportTa
 }
 
 /** The sources of the export job for billing, one per kind of export. */
-export const BILLING_EXPORT_SOURCES: readonly (ExportSource & { kind: ExportKind })[] = [
-  {
-    kind: 'charges',
-    fileBase: EXPORT_FILE_BASES.charges,
-    build: (tx, filters) => chargesTable(tx, ExportFilters.parse(filters)),
-  },
-  {
-    kind: 'payments',
-    fileBase: EXPORT_FILE_BASES.payments,
-    build: (tx, filters) => paymentsTable(tx, ExportFilters.parse(filters)),
-  },
-  {
-    kind: 'payer_settlement',
-    fileBase: EXPORT_FILE_BASES.payer_settlement,
-    build: (tx, filters) => settlementTable(tx, ExportFilters.parse(filters)),
-  },
-];
+export function createBillingExportSources(
+  options: { maxRows?: number } = {},
+): readonly (ExportSource & { kind: ExportKind })[] {
+  const maxRows = options.maxRows ?? DEFAULT_EXPORT_MAX_ROWS;
+  return [
+    {
+      kind: 'charges',
+      fileBase: EXPORT_FILE_BASES.charges,
+      build: (tx, filters) => chargesTable(tx, ExportFilters.parse(filters), maxRows),
+    },
+    {
+      kind: 'payments',
+      fileBase: EXPORT_FILE_BASES.payments,
+      build: (tx, filters) => paymentsTable(tx, ExportFilters.parse(filters), maxRows),
+    },
+    {
+      kind: 'payer_settlement',
+      fileBase: EXPORT_FILE_BASES.payer_settlement,
+      build: (tx, filters) => settlementTable(tx, ExportFilters.parse(filters), maxRows),
+    },
+  ];
+}
+
+export const BILLING_EXPORT_SOURCES = createBillingExportSources();

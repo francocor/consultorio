@@ -144,6 +144,7 @@
   "exports.empty.title": "No hay nada para exportar",
   "exports.empty.description": "Con esas fechas y esos filtros no hay movimientos, así que no se generó ningún archivo.",
   "exports.failed": "No se pudo preparar el archivo. Vuelva a pedirlo.",
+  "exports.tooLarge": "El período tiene demasiados movimientos para un solo archivo. Elija un período más corto y vuelva a pedirlo.",
   "settings.title": "Precios y obras sociales",
   "settings.description": "Las obras sociales y prepagas con las que trabaja la organización y lo que se cobra por cada tipo de turno.",
   "settings.payers": "Obras sociales y prepagas",

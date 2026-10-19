@@ -463,6 +463,13 @@ describe('drilling down from a figure to its records', () => {
     },
   );
 
+  it('gives every record of the invoiced figure an id of its own, though two lines share a voucher (JD-S4 R1-A-S4)', async () => {
+    const { rows } = await allRecords(world.owner, 'invoiced');
+
+    expect(rows.length).toBeGreaterThanOrEqual(4);
+    expect(new Set(rows.map((row) => row.id)).size).toBe(rows.length);
+  });
+
   it('lists the refund as a negative entry of the collected records, with its method', async () => {
     const { rows } = await allRecords(world.owner, 'collected');
 
@@ -610,6 +617,8 @@ describe('what each role is allowed to read', () => {
 
     expect(rows.length).toBe(3);
     expect(rows.every((row) => row.professionalName === null)).toBe(true);
+    // Nor does the id say it: ids would group the revenue by professional all the same (JD-S4 R1-A-T6).
+    expect(rows.every((row) => row.professionalId === null)).toBe(true);
     expect(rows.every((row) => row.locationId === world.centro)).toBe(true);
   });
 

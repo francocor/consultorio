@@ -56,7 +56,7 @@ function voucherLines(cohort: MoneyCohort): SQL {
     parts.push(sql`ch.tenant_payer_id = ${cohort.tenantPayerId}::uuid`);
   }
   return sql`
-    SELECT i.id AS invoice_id, i.type, i.issue_date, il.charge_line_id,
+    SELECT i.id AS invoice_id, il.id AS line_id, i.type, i.issue_date, il.charge_line_id,
            ch.location_id, ch.professional_id, ch.tenant_payer_id,
            CASE WHEN i.type IN (${CREDIT_NOTES}) THEN -il.amount_cents ELSE il.amount_cents END
              AS net_cents
@@ -154,6 +154,8 @@ export async function invoicedFacts(tx: Tx, cohort: MoneyCohort): Promise<Invoic
 /** One line of a voucher, as the drill-down lists it. */
 export interface VoucherLine {
   invoiceId: string;
+  /** The line of the voucher (`invoice_line.id`): unique, unlike the voucher. */
+  lineId: string;
   type: string;
   issueDate: string;
   locationId: string;
@@ -164,6 +166,7 @@ export interface VoucherLine {
 
 interface LineRow extends Record<string, unknown> {
   invoice_id: string;
+  line_id: string;
   type: string;
   issue_date: string;
   location_id: string;
@@ -187,19 +190,20 @@ export async function voucherLinesPage(
     SELECT count(*)::int AS total, coalesce(sum(net_cents), 0)::text AS sum_cents FROM v`);
   const found = await tx.execute<LineRow>(sql`
     WITH v AS MATERIALIZED (${voucherLines(cohort)})
-    SELECT v.invoice_id::text, v.type, v.issue_date::text, v.location_id::text,
+    SELECT v.invoice_id::text, v.line_id::text, v.type, v.issue_date::text, v.location_id::text,
            v.professional_id::text, coalesce(py.name, tp.custom_name) AS payer_name,
            v.net_cents::text
       FROM v
       LEFT JOIN tenant_payer tp ON tp.id = v.tenant_payer_id
       LEFT JOIN payer py ON py.id = tp.payer_id
-     ORDER BY v.issue_date, v.invoice_id, v.charge_line_id
+     ORDER BY v.issue_date, v.invoice_id, v.charge_line_id, v.line_id
      LIMIT ${page.limit} OFFSET ${page.offset}`);
   return {
     total: totals.rows[0]?.total ?? 0,
     sumCents: Number(totals.rows[0]?.sum_cents ?? 0),
     lines: found.rows.map((row) => ({
       invoiceId: row.invoice_id,
+      lineId: row.line_id,
       type: row.type,
       issueDate: row.issue_date,
       locationId: row.location_id,

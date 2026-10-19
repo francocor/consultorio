@@ -323,7 +323,7 @@ export type FinancialRecordsQuery = z.infer<typeof FinancialRecordsQuery>;
  * money only; never a note, a diagnosis or a prescription.
  */
 export const FinancialRecordDto = z.strictObject({
-  /** The charge, the payment or refund entry, or the voucher. */
+  /** The charge, the payment or refund entry, or the line of a voucher (one record per line). */
   id: Id,
   /** The day of the service, of the movement, or on the voucher. */
   date: z.iso.date(),
@@ -331,7 +331,8 @@ export const FinancialRecordDto = z.strictObject({
   patientName: z.string().nullable(),
   locationId: Id,
   locationName: z.string(),
-  professionalId: Id,
+  /** Null where the viewer reads no revenue by professional (reception): an id would group it. */
+  professionalId: Id.nullable(),
   professionalName: z.string().nullable(),
   /** Null for a private patient. */
   payerName: z.string().nullable(),

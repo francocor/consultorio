@@ -9,7 +9,7 @@ import type { PdfBranding } from '../pdf/render.js';
 import { tenantKey, type ObjectStorage } from '../storage/object-storage.js';
 
 import { buildExportFile } from './build-file.js';
-import type { ExportFileFormat, ExportTable } from './types.js';
+import { ExportBuildError, type ExportFileFormat, type ExportTable } from './types.js';
 
 /** The queue of the export job (classified `export` in the read-only policy: it runs for a read-only tenant). */
 export const EXPORT_BUILD_JOB = 'export.build';
@@ -88,8 +88,10 @@ export function createExportJob(deps: ExportJobDeps): JobDefinition<z.infer<type
       let table: ExportTable;
       try {
         table = await source.build(tx, request.filters);
-      } catch {
-        await deps.store.failed(tx, request.id, 'build_failed', now);
+      } catch (error) {
+        // A source that knows why it cannot build says so; anything else is a plain failure.
+        const code = error instanceof ExportBuildError ? error.code : 'build_failed';
+        await deps.store.failed(tx, request.id, code, now);
         return;
       }
       if (table.rows.length === 0) {

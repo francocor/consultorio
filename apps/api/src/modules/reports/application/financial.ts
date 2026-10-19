@@ -143,7 +143,9 @@ function toRecordDto(record: MoneyRecord, scope: ReportScope): FinancialRecordDt
     patientName: record.patientName,
     locationId: record.locationId,
     locationName: record.locationName,
-    professionalId: record.professionalId,
+    // Reception reads no revenue by professional: neither the name nor the id leaves, because the
+    // ids would group the revenue by professional all the same (JD-S4 R1-A-T6).
+    professionalId: canSeeRevenueByProfessional(scope) ? record.professionalId : null,
     // Reception reads no revenue by professional, so a record does not name the professional either.
     professionalName: canSeeRevenueByProfessional(scope) ? record.professionalName : null,
     payerName: record.payerName,
@@ -171,7 +173,8 @@ async function invoicedRecords(
     total: page.total,
     sumCents: page.sumCents,
     records: page.lines.map((line) => ({
-      id: line.invoiceId,
+      // One record per line of the voucher: the id is the one of the line, not of the voucher.
+      id: line.lineId,
       date: line.issueDate,
       // A voucher line names no patient.
       patientName: null,

@@ -267,6 +267,7 @@
   "export.ready": "Archivo listo: {{count}} filas.",
   "export.download": "Descargar {{name}}",
   "export.failed": "No se pudo armar el archivo. Intente de nuevo.",
+  "export.tooLarge": "El período tiene demasiados movimientos para un solo archivo. Elija un período más corto y vuelva a pedirlo.",
   "export.empty.title": "No hay nada para exportar",
   "export.empty.description": "Con estos filtros no hay filas. Pruebe con otro período u otros filtros.",
   "export.filters": "Se exporta: {{filters}}",
