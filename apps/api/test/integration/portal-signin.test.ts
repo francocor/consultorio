@@ -489,7 +489,13 @@ describe('every route of the portal, by who calls it', () => {
       }
       const patient = await signedIn();
       const answer = await send(patient.visitor.cookie());
-      expect([401, 403], `${route} patient`).not.toContain(answer.statusCode);
+      // Signed in, the patient gets past the guard: 401 would be the guard refusing them. The door of
+      // the files answers a link that is not theirs with the uniform 403 (a refusal of the file, not
+      // of the session), so it is the one route where 403 is the expected answer.
+      expect(answer.statusCode, `${route} patient`).not.toBe(401);
+      if (route !== 'GET /portal/files/:token') {
+        expect(answer.statusCode, `${route} patient`).not.toBe(403);
+      }
     }
   }, 120_000);
 });

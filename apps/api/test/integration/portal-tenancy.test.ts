@@ -82,14 +82,15 @@ describe('one person in two organizations', () => {
     expect((await onOther(north, northVisitor.cookie())).statusCode).toBe(200);
   });
 
-  it('asks for a code only for the organization of the host, and the path cannot name another', async () => {
+  it('asks for a code only for the organization of the host: the slug of the path is never read', async () => {
     const email = `codigo-${crypto.randomUUID().slice(0, 6)}@example.test`;
     await south.onboard(await south.patientWith({ email }));
     north.email.clear();
     south.email.clear();
     const visitor = north.visitor();
 
-    // The host is north, the path names south: a 404, and nothing is sent anywhere.
+    // The host is north, the path names south: it is north's portal that answers, and north has
+    // no such account.
     const crossed = await visitor.post(`/public/${south.slug}/portal/otp`, {
       email,
       challengeProof: await visitor.solve(),
@@ -102,7 +103,7 @@ describe('one person in two organizations', () => {
     await north.runJobs();
     await south.runJobs();
 
-    expect(crossed.statusCode).toBe(404);
+    expect(crossed.statusCode).toBe(200);
     expect(own.statusCode).toBe(200);
     expect(north.email.sent).toEqual([]);
     expect(south.email.sent).toEqual([]);

@@ -56,8 +56,8 @@ const AUDITS = [
  * - A wrong code, an expired one, none at all and an unknown address answer the same 400.
  * - The bot challenge comes first, then the per-address counters; the routes also carry a limit per
  *   client.
- * - The organization is the host's. The `:slug` of the path must be that organization's, and nothing
- *   else in the path, the query or the body can name another one.
+ * - The organization is the host's. The `:slug` of the path is never read, and nothing else in
+ *   the path, the query or the body can name another organization.
  * - They are `auth` routes for the read-only policy: signing in stays open in a read-only
  *   organization.
  */
@@ -67,9 +67,9 @@ export function publicRoutes(deps: PublicRoutesDeps) {
 
     function tenantOf(request: FastifyRequest<{ Params: { slug: string } }>): ResolvedTenant {
       const context = request.hostContext;
-      if (context?.kind !== 'tenant' || context.tenant.slug !== request.params.slug) {
-        throw new AppError('not_found');
-      }
+      // The organization is the host's. The `:slug` of the path is there for the shape of the
+      // public prefix (design 4.5) and is never read: nothing in the path can name an organization.
+      if (context?.kind !== 'tenant') throw new AppError('not_found');
       return context.tenant;
     }
 
