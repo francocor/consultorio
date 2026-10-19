@@ -21,6 +21,11 @@ export function isTransientNetworkError(error: unknown, depth = 0): boolean {
   const { code } = error as { code?: unknown };
   if (typeof code === 'string' && TRANSIENT_CODES.has(code)) return true;
   if (/socket hang up/i.test(error.message)) return true;
+  // The AWS SDK reports a connection that dies mid-request as a `TimeoutError` ("read ECONNRESET"), often
+  // with no `code` of its own, and marks the errors it would retry itself with `$retryable`.
+  if (error.name === 'TimeoutError') return true;
+  if (/\b(ECONNRESET|ETIMEDOUT|EPIPE)\b/.test(error.message)) return true;
+  if ((error as { $retryable?: unknown }).$retryable !== undefined) return true;
   const status = (error as { $metadata?: { httpStatusCode?: number } }).$metadata?.httpStatusCode;
   if (status !== undefined && status >= 500) return true;
   return isTransientNetworkError((error as { cause?: unknown }).cause, depth + 1);
