@@ -26,8 +26,15 @@ export type RouteMount =
   | 'authed'
   /** A section of Settings, under `/settings`. */
   | 'settings'
-  /** The minimal frame of the public pages and the patient portal. */
-  | 'minimal';
+  /** The minimal frame of the public pages (public booking, the waitlist offer). */
+  | 'minimal'
+  /**
+   * The shell of the patient portal (Stage 5): the organization's brand and the portal's name, no
+   * staff navigation and no staff session. It is a shell apart from `authed` (the staff `AppShell`)
+   * and from `minimal`, so the portal can grow its own frame (the subject picker, the installable
+   * scope) without touching either.
+   */
+  | 'portal';
 
 export interface FeatureRoute {
   mount: RouteMount;

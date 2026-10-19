@@ -367,17 +367,18 @@ function buildRouteTree(registry: AppRegistry) {
     component: NotFoundPage,
   });
 
-  // The patient portal and public booking have their own minimal shell.
+  // Public booking has its own minimal shell.
   const minimalRoute = createRoute({
     getParentRoute: () => rootRoute,
     id: 'minimal',
     component: MinimalShell,
   });
 
-  const portalRoute = createRoute({
-    getParentRoute: () => minimalRoute,
-    path: '/portal',
-    component: lazyRouteComponent(() => import('../features/portal/PortalPage.js'), 'PortalPage'),
+  // The patient portal has a shell of its own; the portal feature mounts its routes in it.
+  const portalShellRoute = createRoute({
+    getParentRoute: () => rootRoute,
+    id: 'portal-shell',
+    component: lazyRouteComponent(() => import('./PortalShell.js'), 'PortalShell'),
   });
 
   return rootRoute.addChildren([
@@ -409,7 +410,8 @@ function buildRouteTree(registry: AppRegistry) {
       ...contributed('authed', authedRoute),
       unknownRoute,
     ]),
-    minimalRoute.addChildren([portalRoute, ...contributed('minimal', minimalRoute)]),
+    minimalRoute.addChildren(contributed('minimal', minimalRoute)),
+    portalShellRoute.addChildren(contributed('portal', portalShellRoute)),
   ]);
 }
 
