@@ -14,6 +14,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '../../shared/ui/tabs.j
 import { operatorApi, operatorKeys } from './api/operator-api.js';
 import { ProvidersPage } from './dev/ProvidersPage.js';
 import { HolidayCatalog } from './holidays/HolidayCatalog.js';
+import { MatriculaQueue } from './matricula/MatriculaQueue.js';
 import { OperatorLogin } from './OperatorLogin.js';
 import { TenantsPanel } from './TenantsPanel.js';
 
@@ -132,6 +133,7 @@ function Console({ operator, onSignedOut }: { operator: OperatorDto; onSignedOut
           <TabsList aria-label={t('nav.label')} className="justify-start">
             <TabsTrigger value="tenants">{t('nav.tenants')}</TabsTrigger>
             <TabsTrigger value="holidays">{t('nav.holidays')}</TabsTrigger>
+            <TabsTrigger value="matricula">{t('matricula.nav')}</TabsTrigger>
             {providers.data ? (
               <TabsTrigger value="providers">{t('nav.providers')}</TabsTrigger>
             ) : null}
@@ -141,6 +143,9 @@ function Console({ operator, onSignedOut }: { operator: OperatorDto; onSignedOut
           </TabsContent>
           <TabsContent value="holidays">
             <HolidayCatalog />
+          </TabsContent>
+          <TabsContent value="matricula">
+            <MatriculaQueue />
           </TabsContent>
           {providers.data ? (
             <TabsContent value="providers">
