@@ -16,20 +16,15 @@ function contributors(deps?: { keys?: TenantKeys }) {
   return registry.list();
 }
 
-describe('the prescriptions export contributor (seam skeleton)', () => {
+describe('the prescriptions export contributor', () => {
   it('is clinical only: each professional receives their own prescriptions', () => {
     expect(contributors().map((entry) => [entry.kind, entry.name])).toEqual([
       ['clinical', 'prescriptions'],
     ]);
   });
 
-  it('hands a professional the prescriptions they issued', async () => {
-    const [clinical] = contributors({ keys });
-
-    await expect(
-      clinical?.contribute({ tx, tenantId: TENANT, professionalId: PROFESSIONAL }),
-    ).resolves.toEqual({ prescriptions: [] });
-  });
+  // What a professional receives (the prescriptions, decrypted, with their state) needs a database:
+  // `test/integration/prescription-access.test.ts` proves it.
 
   it('refuses to deliver a part it cannot decrypt, or one that is not for a professional', async () => {
     const [withoutKeys] = contributors();

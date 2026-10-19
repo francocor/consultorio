@@ -148,6 +148,8 @@ export type PrescriptionExistenceResponse = z.infer<typeof PrescriptionExistence
 export const PrescriptionCapabilityDto = z.strictObject({
   /** The deployment serves a provider for this organization. */
   providerAvailable: z.boolean(),
+  /** The professional the answer is about: the screen compares it with the prescriber of each prescription. */
+  professionalId: z.uuid(),
   /** The owner or an admin switched e-prescription on for the organization. */
   enabled: z.boolean(),
   /** The provider is a simulator. */

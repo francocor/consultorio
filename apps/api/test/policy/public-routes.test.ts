@@ -201,6 +201,12 @@ const DECLARED: Record<string, Declaration> = {
     guards: ['signature'],
     probes: ['test/integration/whatsapp-webhook.test.ts'],
   },
+  // The e-prescription provider tells us a prescription changed state; the signature is checked over
+  // the raw bytes, the state is whatever the provider says when asked.
+  'POST /webhooks/erx': {
+    guards: ['signature'],
+    probes: ['test/integration/prescription-lifecycle.test.ts'],
+  },
 };
 
 /** The routes under the prefixes of the surface; HEAD is the same handler as GET. */

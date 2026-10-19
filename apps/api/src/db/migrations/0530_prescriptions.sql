@@ -263,3 +263,24 @@ $$;
 REVOKE ALL ON FUNCTION app.reception_prescription_existence(uuid) FROM PUBLIC;
 --> statement-breakpoint
 GRANT EXECUTE ON FUNCTION app.reception_prescription_existence(uuid) TO app_rw;
+--> statement-breakpoint
+-- Tells a prescription the caller may not read apart from one that does not exist. Row level
+-- security hides the first from every professional who neither wrote it nor treats the patient, so
+-- without this the API could only answer "not found" to both, and the trail would never show who
+-- asked for a prescription they must not see (e-prescription, "Sharing enabled and no
+-- relationship": deny and audit). It answers the patient of a prescription of THIS organization and
+-- nothing else, to the server, which writes it to the audit trail and never to the caller.
+CREATE FUNCTION app.prescription_probe(p_id uuid)
+RETURNS uuid
+LANGUAGE sql STABLE SECURITY DEFINER
+SET search_path = pg_catalog, public, pg_temp
+AS $$
+  SELECT p.patient_id
+    FROM public.prescription p
+   WHERE p.id = p_id
+     AND p.tenant_id = current_setting('app.tenant_id')::uuid
+$$;
+--> statement-breakpoint
+REVOKE ALL ON FUNCTION app.prescription_probe(uuid) FROM PUBLIC;
+--> statement-breakpoint
+GRANT EXECUTE ON FUNCTION app.prescription_probe(uuid) TO app_rw;

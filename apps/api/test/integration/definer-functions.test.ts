@@ -41,6 +41,8 @@ const ALLOWED: Record<string, readonly string[]> = {
   // exists when the organization allows it (id, status, day: no content).
   'app.erx_prescription_by_external_id(text)': ['app_rw'],
   'app.reception_prescription_existence(uuid)': ['app_rw'],
+  // Tells a prescription the caller may not read from one that does not exist (the trail names who asked).
+  'app.prescription_probe(uuid)': ['app_rw'],
   // Called only by triggers, never directly.
   'app.care_adjust(uuid,uuid,uuid,integer,integer)': [],
   'app.care_assignment_sync()': [],
