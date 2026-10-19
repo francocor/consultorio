@@ -671,6 +671,9 @@ describe('who opens a signed consent', () => {
         method: 'in_person',
         signedAt: record.signedAt,
         mark: { kind: 'typed', value: 'Ana Pérez' },
+        // A record signed now is of the second version, which covers the name the signer typed (here, none).
+        version: 2,
+        signerName: null,
       }),
     ).toBe(record.contentFingerprint);
     const reads = await auditRows('consent.read', requestId);
