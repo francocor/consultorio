@@ -85,6 +85,9 @@ beforeAll(async () => {
     consentText: { textKey: 'consent.data_processing', version: '1' },
     clock,
     documents: { storage, scanner: createFakeScanner() },
+    // The platform operator verifies the cardiologist, who then prescribes: the prescription PDFs are
+    // files of the organization too.
+    operatorDb: operator.db.db,
   };
 }, 120_000);
 

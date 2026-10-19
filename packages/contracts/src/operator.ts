@@ -177,6 +177,29 @@ export type DevProviderDto = z.infer<typeof DevProviderDto>;
 export const DevProvidersResponse = z.strictObject({ providers: z.array(DevProviderDto) });
 export type DevProvidersResponse = z.infer<typeof DevProvidersResponse>;
 
+/**
+ * What a demo organization "sent" (Stage 5 integration, task 5.48): the console lists it so the
+ * sign-in code of the patient portal and the other emails of the demo can be read without a
+ * mailbox. Demo organizations only; fictitious addresses.
+ */
+export const DemoOutboxMessageDto = z.strictObject({
+  id: z.uuid(),
+  to: z.string().min(1).max(320),
+  subject: z.string().max(998),
+  text: z.string(),
+  createdAt: z.iso.datetime(),
+});
+export type DemoOutboxMessageDto = z.infer<typeof DemoOutboxMessageDto>;
+
+export const DemoOutboxQuery = z.strictObject({
+  /** Only the messages sent to this address. */
+  to: z.string().trim().min(1).max(320).optional(),
+});
+export type DemoOutboxQuery = z.infer<typeof DemoOutboxQuery>;
+
+export const DemoOutboxResponse = z.strictObject({ messages: z.array(DemoOutboxMessageDto) });
+export type DemoOutboxResponse = z.infer<typeof DemoOutboxResponse>;
+
 // Matricula verification (Stage 5, S5.01) -------------------------------------------------
 
 /** The operator's working note on a registration: plain text, never a document. */

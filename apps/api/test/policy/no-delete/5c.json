@@ -1,0 +1,11 @@
+{
+  "description": "Stage 5 integration (track C). The demo reset also removes the demo outbox of the organization it resets.",
+  "code": [],
+  "sql": [
+    {
+      "file": "src/db/migrations/0590_demo_outbox.sql",
+      "why": "app.demo_reset, replaced with one more step: it removes the demo_outbox rows (the email a demo organization 'sent') of the organization it resets. Same guard as 0018: it refuses unless the organization is flagged is_demo and only the operator console's role can run it. The application role cannot delete from demo_outbox."
+    }
+  ],
+  "ephemeralTables": []
+}

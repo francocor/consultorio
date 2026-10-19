@@ -16,7 +16,7 @@ import { loadConfig } from '../src/main/config.js';
 import { createKeyManagement } from '../src/main/key-management.js';
 import { createPasswordHasher } from '../src/modules/identity/index.js';
 import { createTenantKeys } from '../src/platform/crypto/tenant-keys.js';
-import { createOwnerDb, createRuntimeDb } from '../src/platform/db/pool.js';
+import { createOperatorDb, createOwnerDb, createRuntimeDb } from '../src/platform/db/pool.js';
 import { createWithTenant } from '../src/platform/db/tenant-context.js';
 
 /**
@@ -27,7 +27,8 @@ import { createWithTenant } from '../src/platform/db/tenant-context.js';
  *   pnpm demo:seed                       # organization "aillu"
  *   pnpm demo:seed --slug clinica-demo   # another slug
  *
- * Development only: it refuses to run when NODE_ENV=production. Run `pnpm db:migrate` first.
+ * With OPERATOR_DATABASE_URL set it also has the platform verify the demo cardiologist's matricula
+ * (the only professional who can prescribe). Development only: it refuses to run when NODE_ENV=production. Run `pnpm db:migrate` first.
  * It is safe to run twice: an organization that already has data is left alone.
  */
 async function main(): Promise<void> {
@@ -48,6 +49,11 @@ async function main(): Promise<void> {
 
   const owner = createOwnerDb(ownerUrl);
   const runtime = createRuntimeDb(config.databaseUrl);
+  // With the operator's role (OPERATOR_DATABASE_URL) the platform verifies the matricula of the demo's
+  // cardiologist, who then has prescriptions; without it nobody can prescribe in the demo.
+  const operator = config.operatorDatabaseUrl
+    ? createOperatorDb(config.operatorDatabaseUrl)
+    : undefined;
   // With a bucket configured (S3_BUCKET) the demo gets its files too, scanned by the fake scanner.
   const storage = config.storage ? createS3ObjectStorage(config.storage) : undefined;
   try {
@@ -65,6 +71,7 @@ async function main(): Promise<void> {
         clock: () => new Date(),
         environment: config.nodeEnv,
         ...(storage ? { documents: { storage, scanner: createFakeScanner() } } : {}),
+        ...(operator ? { operatorDb: operator.db } : {}),
       },
       tenant.id,
     ).catch((error: unknown) => {
@@ -92,7 +99,7 @@ async function main(): Promise<void> {
     );
   } finally {
     storage?.close();
-    await Promise.all([owner.close(), runtime.close()]);
+    await Promise.all([owner.close(), runtime.close(), operator?.close()]);
   }
 }
 

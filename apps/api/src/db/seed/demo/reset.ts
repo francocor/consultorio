@@ -10,6 +10,7 @@ import { SYSTEM_USER_ID } from '../../../platform/db/tenant-context.js';
 import { exportRequest } from '../../schema/billing-payments.js';
 import { document } from '../../schema/documents.js';
 import { invoiceDocument } from '../../schema/invoicing.js';
+import { prescription } from '../../schema/prescriptions.js';
 
 import type { DemoStaff } from './dataset.js';
 import { DemoSeedError, seedDemoTenant, type DemoSeedDeps, type SeededCredential } from './seed.js';
@@ -79,13 +80,17 @@ export async function resetDemoTenant(
 
   // The files of the demo are listed BEFORE their rows go; they leave the bucket after the reset has
   // succeeded, so a refused or failed reset never costs a download.
-  // The documents of patients, the PDF of every invoice and the files of the exports all live in the
-  // bucket of the organization.
+  // The documents of patients, the PDF of every invoice and of every prescription and the files of the
+  // exports all live in the bucket of the organization.
   const files = deps.documents
     ? await deps.withTenant({ tenantId, userId: SYSTEM_USER_ID }, async (tx) => [
         ...(await tx.select({ key: document.objectKey }).from(document)),
         ...(await tx.select({ key: invoiceDocument.objectKey }).from(invoiceDocument)),
         ...(await tx.select({ key: exportRequest.objectKey }).from(exportRequest)).flatMap((row) =>
+          row.key === null ? [] : [{ key: row.key }],
+        ),
+        // The PDF of each prescription the provider confirmed.
+        ...(await tx.select({ key: prescription.documentKey }).from(prescription)).flatMap((row) =>
           row.key === null ? [] : [{ key: row.key }],
         ),
       ])
@@ -120,6 +125,10 @@ export async function resetDemoTenant(
     environment: deps.environment,
     ...(deps.emailFor ? { emailFor: deps.emailFor } : {}),
     ...(deps.documents ? { documents: deps.documents } : {}),
+    // The professional the platform verified is back after a reset, and the provider the process
+    // holds learns the prescriptions again.
+    operatorDb: deps.operatorDb,
+    ...(deps.prescriptionProvider ? { prescriptionProvider: deps.prescriptionProvider } : {}),
   };
   const seeded = await seedDemoTenant(
     {

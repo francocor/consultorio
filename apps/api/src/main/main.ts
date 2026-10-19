@@ -27,6 +27,7 @@ import { buildLoggerOptions } from './logger.js';
 import { loadPasswordValidator } from './password-validator.js';
 import { createConfiguredScanner } from './scanner.js';
 import { MODULE_WIRINGS, combineWorkerContributions } from './wiring/index.js';
+import { demoPrescriptionProviderOf } from './wiring/prescriptions.js';
 
 const ROLES = ['api', 'worker'] as const;
 type Role = (typeof ROLES)[number];
@@ -122,6 +123,9 @@ async function runApi(config: Config): Promise<void> {
               // fake scanner (EICAR only) is what checks it.
               ...(storage ? { documents: { storage, scanner: createFakeScanner() } } : {}),
               rotateCredentials: config.nodeEnv === 'production',
+              // The prescriptions of the demo are issued by the fake the demo organizations use, so the
+              // provider console knows them; the operator's role verifies the demo's matricula.
+              prescriptionProvider: demoPrescriptionProviderOf(config),
             }),
           },
         }

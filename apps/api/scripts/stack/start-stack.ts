@@ -4,7 +4,7 @@ import { dirname } from 'node:path';
 
 import { CreateBucketCommand, S3Client } from '@aws-sdk/client-s3';
 import { PostgreSqlContainer } from '@testcontainers/postgresql';
-import { eq, sql } from 'drizzle-orm';
+import { eq } from 'drizzle-orm';
 import pino from 'pino';
 import { GenericContainer, Wait } from 'testcontainers';
 
@@ -29,6 +29,7 @@ import { documentWorker } from '../../src/main/document-jobs.js';
 import { createConfiguredEmail } from '../../src/main/email.js';
 import { loadPasswordValidator } from '../../src/main/password-validator.js';
 import { MODULE_WIRINGS, combineWorkerContributions } from '../../src/main/wiring/index.js';
+import { demoPrescriptionProviderOf } from '../../src/main/wiring/prescriptions.js';
 import { createPasswordHasher } from '../../src/modules/identity/index.js';
 import { createVideoJoinRegistry } from '../../src/modules/notifications/index.js';
 import { createOperatorAdminFor, createOperatorSecrets } from '../../src/modules/operator/index.js';
@@ -206,6 +207,24 @@ export async function startStack(options: StackOptions): Promise<Stack> {
     const hasher = createPasswordHasher();
     const withTenant = createWithTenant(runtime.db);
 
+    // The same composition as `main`: the modules, their adapters (the local simulators), the
+    // provider console and the jobs of the worker, so a browser journey runs the real thing.
+    const config = loadConfig({
+      DATABASE_URL: runtimeUrl,
+      BASE_DOMAIN: baseDomain,
+      PLATFORM_HOST: platformHost,
+      KMS_LOCAL_KEK_BASE64: kek,
+      LOCAL_PROVIDERS_CONSOLE: 'true',
+      // The worker wiring (exports, invoice PDFs) builds its storage from this configuration, the
+      // same bucket and credentials the API got above.
+      S3_BUCKET: BUCKET,
+      S3_REGION: 'us-east-1',
+      S3_ENDPOINT: storageUrl,
+      S3_FORCE_PATH_STYLE: 'true',
+      S3_ACCESS_KEY_ID: MINIO_USER,
+      S3_SECRET_ACCESS_KEY: MINIO_PASSWORD,
+    });
+
     // Two demo organizations with different looks.
     log('Seeding demo organizations');
     const deps = {
@@ -215,6 +234,13 @@ export async function startStack(options: StackOptions): Promise<Stack> {
       consentText: consentTextFor(runtime.db),
       clock: () => new Date(),
       documents: { storage, scanner },
+      // The platform operator verifies the matricula of the cardiologist of each demo organization
+      // (the only professional who may prescribe, like an organization that went through the
+      // operator's queue); the other professionals stay unverified. Only the operator's role can.
+      operatorDb: operatorDb.db,
+      // What the demo issues is held by the fake the application serves the demo with, so the
+      // provider console knows it.
+      prescriptionProvider: demoPrescriptionProviderOf(config),
     };
     const aillu = await ensureDemoTenant(runtime.db, withTenant, 'aillu');
     await seedDemoTenant(deps, aillu.id);
@@ -240,43 +266,11 @@ export async function startStack(options: StackOptions): Promise<Stack> {
       password: OPERATOR.password,
     });
 
-    // One professional of each demo organization has a matricula the platform operator verified, like
-    // an organization that went through the operator's queue: the cardiologist. Only e-prescription
-    // reads the verification, so the journey of a prescription has someone who may prescribe while
-    // the other professionals stay unverified (and are refused). Done as the operator, the only role
-    // the database lets verify.
-    for (const tenantId of [aillu.id, norte.id]) {
-      await createWithTenant(operatorDb.db)({ tenantId, userId: SYSTEM_USER_ID }, (tx) =>
-        tx.execute(
-          sql`UPDATE professional
-                 SET matricula_status = 'verified', verified_by_operator = ${operator.id}, verified_at = now()
-               WHERE matricula = '41258' AND matricula_jurisdiction = 'AR-C'`,
-        ),
-      );
-    }
-
     const jobsBoss = createBoss(runtimeUrl, 'api');
     await jobsBoss.start();
     closers.unshift(() => jobsBoss.stop({ graceful: false }));
 
     const passwordValidator = await loadPasswordValidator({ breachCheck: false });
-    // The same composition as `main`: the modules, their adapters (the local simulators), the
-    // provider console and the jobs of the worker, so a browser journey runs the real thing.
-    const config = loadConfig({
-      DATABASE_URL: runtimeUrl,
-      BASE_DOMAIN: baseDomain,
-      PLATFORM_HOST: platformHost,
-      KMS_LOCAL_KEK_BASE64: kek,
-      LOCAL_PROVIDERS_CONSOLE: 'true',
-      // The worker wiring (exports, invoice PDFs) builds its storage from this configuration, the
-      // same bucket and credentials the API got above.
-      S3_BUCKET: BUCKET,
-      S3_REGION: 'us-east-1',
-      S3_ENDPOINT: storageUrl,
-      S3_FORCE_PATH_STYLE: 'true',
-      S3_ACCESS_KEY_ID: MINIO_USER,
-      S3_SECRET_ACCESS_KEY: MINIO_PASSWORD,
-    });
     const adapters = createAdapterResolver(
       buildAdapterRegistry({
         config,

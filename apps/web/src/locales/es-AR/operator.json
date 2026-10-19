@@ -127,5 +127,12 @@
   "matricula.empty.unverified.title": "No hay matrículas pendientes",
   "matricula.empty.unverified.description": "Cuando un profesional cargue o modifique su matrícula, aparecerá aquí para verificarla.",
   "matricula.empty.verified.title": "Todavía no hay matrículas verificadas",
-  "matricula.empty.verified.description": "Las que verifique aparecerán aquí, desde donde también puede retirar una verificación."
+  "matricula.empty.verified.description": "Las que verifique aparecerán aquí, desde donde también puede retirar una verificación.",
+  "demoOutbox.tab": "Correo de la demo",
+  "demoOutbox.title": "Correo de las organizaciones de demostración",
+  "demoOutbox.description": "Una organización de demostración nunca envía correos reales: lo que habría enviado queda aquí, con el texto completo. Sirve para leer el código de ingreso al portal de pacientes sin abrir una casilla. Se vacía al restablecer la demostración.",
+  "demoOutbox.filter.label": "Filtrar por dirección",
+  "demoOutbox.filter.placeholder": "paciente@demo.invalid",
+  "demoOutbox.filter.apply": "Filtrar",
+  "demoOutbox.none": "La demo todavía no envió ningún correo."
 }
