@@ -3,9 +3,10 @@ import { parseEnv } from 'node:util';
 
 import { describe, expect, it } from 'vitest';
 
+import { JOB_LOCAL_CONCURRENCY } from '../platform/jobs/concurrency.js';
 import { omit } from '../testing/omit.js';
 
-import { ConfigError, ENV_VARIABLES, loadConfig } from './config.js';
+import { ConfigError, ENV_VARIABLES, MIN_DB_POOL_MAX, loadConfig } from './config.js';
 
 const validEnv = {
   DATABASE_URL: 'postgres://app_rw:placeholder@localhost:5432/app',
@@ -34,6 +35,21 @@ describe('loadConfig', () => {
     for (const bad of ['0', '1', '-4', '2.5', 'many', '1000']) {
       expect(() => loadConfig({ ...validEnv, DB_POOL_MAX: bad }), bad).toThrow(/DB_POOL_MAX/);
     }
+  });
+
+  it('refuses a pool too small for the attempts the worker runs at once, and says how many it needs (JD-S4 R4-B-T5)', () => {
+    // An attempt holds one connection for the whole call to the authority and asks for a second one for
+    // its mark. The worker runs two attempts at once (JOB_LOCAL_CONCURRENCY), and the sweeper and the
+    // other jobs need two more: with fewer, attempts wait on each other for the second connection.
+    expect(MIN_DB_POOL_MAX).toBe(2 * JOB_LOCAL_CONCURRENCY + 2);
+    for (const small of ['2', '3', '4', '5']) {
+      expect(() => loadConfig({ ...validEnv, DB_POOL_MAX: small }), small).toThrow(
+        new RegExp(`DB_POOL_MAX.*${String(MIN_DB_POOL_MAX)}`),
+      );
+    }
+    expect(loadConfig({ ...validEnv, DB_POOL_MAX: String(MIN_DB_POOL_MAX) }).dbPoolMax).toBe(
+      MIN_DB_POOL_MAX,
+    );
   });
 
   it('accepts explicit values', () => {
