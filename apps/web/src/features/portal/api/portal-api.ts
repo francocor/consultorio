@@ -75,7 +75,8 @@ export function portalApi(api: ApiClient) {
     me: () => api.get('/portal/me', { schema: PortalMeResponse }),
     selectSubject: (linkId: string) =>
       api.post('/portal/subject', { body: { linkId }, schema: PortalMeResponse }),
-    logout: () => api.post('/portal/logout'),
+    // An empty JSON object, not an empty body: the server refuses a JSON request with no body.
+    logout: () => api.post('/portal/logout', { body: {} }),
     sessions: () => api.get('/portal/sessions', { schema: PortalSessionsResponse }),
     endSession: (id: string) => api.delete(`/portal/sessions/${enc(id)}`),
 

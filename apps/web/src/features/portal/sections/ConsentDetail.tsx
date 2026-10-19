@@ -327,12 +327,15 @@ export function ConsentDetail({ link, consentId }: { link: PortalLinkDto; consen
                 </AlertDescription>
               </Alert>
             ) : null}
-            <article
-              aria-label={t('consents.textLabel')}
-              className="whitespace-pre-wrap break-words rounded-lg border bg-card p-4 text-sm leading-relaxed"
-            >
-              {consent.body}
-            </article>
+            {/* The text is shown while the consent waits for a signature; afterwards its record is the PDF. */}
+            {consent.body === '' ? null : (
+              <article
+                aria-label={t('consents.textLabel')}
+                className="whitespace-pre-wrap break-words rounded-lg border bg-card p-4 text-sm leading-relaxed"
+              >
+                {consent.body}
+              </article>
+            )}
             {consent.canSign ? (
               <SigningForm
                 consent={consent}

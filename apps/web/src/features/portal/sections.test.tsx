@@ -671,6 +671,21 @@ describe('the consents of the patient', () => {
     });
   });
 
+  it('shows no text for a consent that is signed, only what can be done with it', async () => {
+    open(`/portal/consentimientos/${CONSENT.id}`, {
+      [`GET /api/portal/consents/${CONSENT.id}`]: jsonResponse(
+        detail({ status: 'signed', canSign: false, canRevoke: true, hasDocument: true, body: '' }),
+      ),
+    });
+
+    expect(
+      await screen.findByRole('button', { name: /Descargar el consentimiento firmado/ }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole('article', { name: 'Texto del consentimiento' }),
+    ).not.toBeInTheDocument();
+  });
+
   it('sends no reason when the person writes none', async () => {
     const user = userEvent.setup();
     const bodies: unknown[] = [];

@@ -63,13 +63,15 @@ describe('the header of the portal', () => {
   it('signs out and goes back to the sign-in', async () => {
     const user = userEvent.setup();
     let out = false;
+    const logoutBodies: unknown[] = [];
     const app = open(
       signedInRoutes(undefined, {
         'GET /api/portal/me': () =>
           out
             ? problemResponse(401, 'unauthenticated')
             : jsonResponse(meOf([SELF_LINK], SELF_LINK.id)),
-        'POST /api/portal/logout': () => {
+        'POST /api/portal/logout': (_url, init) => {
+          logoutBodies.push(jsonBody(init));
           out = true;
           return new Response(null, { status: 204 });
         },
@@ -83,6 +85,8 @@ describe('the header of the portal', () => {
       await screen.findByRole('heading', { level: 1, name: 'Ingresar al portal de pacientes' }),
     ).toBeInTheDocument();
     expect(app.requests).toContain('POST /api/portal/logout');
+    // The server refuses a JSON request that carries no body at all.
+    expect(logoutBodies).toEqual([{}]);
   });
 
   it('sends a session that ended while the page was open back to the sign-in', async () => {

@@ -197,7 +197,7 @@ export function SignIn() {
         {t(mode === 'register' ? 'portal:register.switchPrompt' : 'portal:signIn.switchPrompt')}{' '}
         <Button
           variant="link"
-          className="inline h-auto p-0 align-baseline"
+          className="inline h-auto p-0 align-baseline font-medium text-foreground underline"
           onClick={() => {
             switchTo(mode === 'register' ? 'signIn' : 'register');
           }}

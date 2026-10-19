@@ -64,8 +64,11 @@ export function PortalFrame({
   const logout = useMutation({
     mutationFn: () => api.logout(),
     onSettled: async () => {
-      queryClient.removeQueries({ queryKey: portalKeys.all });
-      await queryClient.invalidateQueries({ queryKey: portalKeys.me });
+      // What was read for the person who left goes with them; who is signed in is asked again, and
+      // the answer (nobody) brings back the sign-in.
+      queryClient.removeQueries({ queryKey: ['portal', 'subject'] });
+      queryClient.removeQueries({ queryKey: portalKeys.sessions });
+      await queryClient.refetchQueries({ queryKey: portalKeys.me });
     },
   });
 
