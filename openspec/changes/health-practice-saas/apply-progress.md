@@ -2545,3 +2545,35 @@ Also: new es-AR texts for `authority_refuses_number` and `pin_not_honoured`, and
 - Docker: `infra/Dockerfile` built (`consultorio-api:jd4r7`, image `b88a24e370ad`); a fresh `postgres:17` (`819f1c7892ac`) with `infra/postgres/init/01-roles.sql`; `db:migrate` run twice from the repository (both: migrations applied, platform catalogs loaded; 90 migrations recorded; `invoice.refused_not_next`, `lookup_misses` and `last_sent_at` exist); the image started as `api` (`b3dd975b6a63`; `NODE_ENV=production`, multi-tenant, KMS `aws`, `S3_BUCKET`, `CLAMAV_HOST`, SMTP starttls, `ADDRESS_HASH_PEPPER`): `GET /health` answered `{"status":"ok"}`. Removed by id: the two containers and the image. Nothing else was touched; four containers that appeared during the e2e belong to another agent and were left.
 - Kept green (inside the runs above): `boot.test.ts`, the determinism of the demonstration, the money-invariants tests, the shared invoice-issuer contract suite for both adapters, and the isolation, policy and demo-coverage suites.
 - Incident: none. Logs are in `$TEMP/jd4r7-*.log`.
+
+## Judgment Day Stage 4, round 8
+
+Both judges found the same single defect; the three hygiene items came with it. Commit `677504a` on `feat/stage-4-revenue`.
+
+### Finding
+
+| Id | Fix | Test |
+| -- | --- | ---- |
+| R8-1 | The last look before a rejected re-send is closed (B-T4, R7) called `reconcile(..., { now, settleMs: 0 })` with the start of the attempt. Since R7-3 `markIntent` stamps `last_sent_at = max(clock(), now)`, which is later than `now` once the clock advances, so `isSettled` computed a negative elapsed time against 0, said "not settled" and the look answered `retry unknown`: the rejection became a retry, the invoice never reached `rejected` and kept its lines locked until the stall item two hours later. `reconcile` takes an explicit `ignoreSettle` option, used by the last look; `isSettled` also counts `settleMs <= 0` as settled whatever the sign of the elapsed time. | `invoice-r8.test.ts` (an awaiting invoice whose re-send is rejected, once with a frozen clock and once with a clock that moves a second per read: the invoice ends `rejected`, nothing is left in the authority, and another invoice can be asked for the same charge; and a first request that landed meanwhile is still adopted with the moving clock), `retry-schedule.test.ts` (`settleMs: 0` is settled with a negative elapsed time) |
+
+Hygiene:
+
+| Item | Outcome |
+| ---- | ------- |
+| `manual-invoice.ts` | The manual replacement of a pending invoice also resets `refused_not_next` (it reset every other piece of the wait). Test: `invoice-r8.test.ts`. |
+| Judge A, finding 2 | On a FIRST send (`!wasAwaiting`) that the authority refuses with `not_next`, no earlier request of the episode exists, so a voucher found by the follow-up lookup is foreign by construction. A match there is now `voucher_ambiguous` (the invoice is parked), never adopted. Test: `invoice-r8.test.ts` (a look-alike takes the number after the last-number question). |
+| Frozen plus advancing clock | `invoice-r8.test.ts` runs the R8-1 scenario with both clocks (`it.each`). |
+
+### Deviations from the instructions
+
+- Strict TDD: red first for the moving-clock case, the first-send case and the replacement case (3 of the 5 tests of `invoice-r8.test.ts` failed before the code; the frozen-clock case and the adoption control passed, as controls). The replacement test was red for a mistake in the test (a recipient with a document) and then for the right reason (checked by removing the line temporarily). The unit test of `isSettled` was added with the fix.
+- No migration. No `prettier --write` on a directory.
+
+### Verification (tip after the fix, Node v24, pnpm via corepack, a Docker shared with other agents)
+
+- `pnpm typecheck`, `pnpm lint`, `pnpm format:check`: clean. `pnpm test` (unit): 386 files, 4955 tests passed, 1 skipped.
+- Invoicing integration (`invoice-*`, `afip-*`, `demo-*`): 31 files, 379 tests passed.
+- Full integration (Testcontainers, Postgres 17): 248 files passed and 1 skipped, 3728 tests passed, 4 skipped, no failure.
+- E2E `stage4-invoicing` and `stage4-demo` (`E2E_WEB_PORT=4890 E2E_API_PORT=3890 E2E_MINIO_PORT=9890`, `--workers=2`): 5 passed (4.5 minutes).
+- Docker: the three containers of the e2e stack (`aef05f034468`, `2d99deeee81b`, `7adb863391a2`) were removed by id. A `postgres:17` (`636bfd41431e`) that appeared during the integration run was still receiving queries from someone else, so it was left.
+- Incident: none. Logs are in `$TEMP/jd4r8-*.log`.
