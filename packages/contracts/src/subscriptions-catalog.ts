@@ -36,6 +36,17 @@ export const SUBSCRIPTION_ERRORS = {
     status: 409,
     i18nKey: 'errors.subscription_already_subscribed',
   },
+  // The plan chosen has room for fewer professionals than are active now.
+  subscription_plan_too_small: { status: 409, i18nKey: 'errors.subscription_plan_too_small' },
+  // The authorization is gone at the provider: the owner authorizes again to take the cancellation back.
+  subscription_reauthorization_required: {
+    status: 409,
+    i18nKey: 'errors.subscription_reauthorization_required',
+  },
+  // There is nothing overdue to pay.
+  subscription_nothing_due: { status: 409, i18nKey: 'errors.subscription_nothing_due' },
+  // The subscription is not being cancelled, so there is nothing to take back.
+  subscription_not_cancelling: { status: 409, i18nKey: 'errors.subscription_not_cancelling' },
 } as const satisfies Record<string, { status: number; i18nKey: string }>;
 
 /**

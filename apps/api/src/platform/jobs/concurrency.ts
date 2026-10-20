@@ -13,8 +13,9 @@ export const JOB_LOCAL_CONCURRENCY = 2;
  * - `afip.issue`: the call to the authority; the mark of the attempt is committed on the second one;
  * - `erx.reconcile`: the questions to the e-prescription provider, one short transaction at a time;
  * - `portal.notice_sweep`: the messages of the notices, with the claim and the mark in short ones;
- * - `subscription.reconcile`: the questions to the payments provider, asked between two short
- *   transactions, with the mark of every write committed before its call (Stage 6, track A).
+ * - `subscription.reconcile` and `dunning.step`: the questions to the payments provider, asked
+ *   between two short transactions, with the mark of every write committed before its call (Stage 6,
+ *   track A).
  *
  * Each family runs `JOB_LOCAL_CONCURRENCY` jobs at once, so the worker needs two connections for each
  * (`MIN_DB_POOL_MAX`). A new job that waits like these inside `defineJob` must be added here.
@@ -24,6 +25,7 @@ export const CONNECTION_HOLDING_JOBS = [
   'erx.reconcile',
   'portal.notice_sweep',
   'subscription.reconcile',
+  'dunning.step',
 ] as const;
 
 /**
@@ -44,7 +46,6 @@ export const CONNECTION_HOLDING_JOBS = [
  * `archive.release` runs only in the `releaser` process, which has a pool of its own.
  */
 export const PENDING_CONNECTION_HOLDING_JOBS = [
-  'dunning.step',
   'archive.write',
   'archive.verify',
   'archive.release',

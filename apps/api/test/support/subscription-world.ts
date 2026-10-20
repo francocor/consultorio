@@ -38,7 +38,11 @@ export interface SubscriptionOrganization {
   owner: TestSession;
   /** A member of the organization with another role, signed in. */
   member(role: 'professional' | 'reception' | 'admin'): Promise<TestSession>;
+  /** A professional with a complete profile (an active seat of the plan), signed in. */
+  professional(): Promise<TestSession>;
   api: ReturnType<typeof clientFor>;
+  /** Signs the owner in again at the current instant of the clock (a session ends when the clock goes on). */
+  refresh(): Promise<void>;
   /** `GET /subscription` as the owner. */
   view(): Promise<LightMyRequestResponse>;
   /** `POST /subscription/checkout` as the owner. */
@@ -82,6 +86,7 @@ export interface SubscriptionWorld {
 }
 
 let organizations = 0;
+let professionals = 0;
 
 export async function createSubscriptionWorld(
   runtime: DbHandle,
@@ -149,7 +154,11 @@ export async function createSubscriptionWorld(
       });
       const api = clientFor(app, slug);
       const signedIn = async (roles: ('owner' | 'professional' | 'reception' | 'admin')[]) => {
-        const user = await createTestUser(runtime, tenant.id, { roles, password: TEST_PASSWORD });
+        const user = await createTestUser(runtime, tenant.id, {
+          roles,
+          password: TEST_PASSWORD,
+          firstSignInAt: clock.now,
+        });
         return signInAs(app, slug, user);
       };
       const owner = await signedIn(['owner']);
@@ -159,13 +168,44 @@ export async function createSubscriptionWorld(
       const run = async (statement: ReturnType<typeof sql>) =>
         (await asTenant(runtime, tenant.id, (tx) => tx.execute(statement))).rows;
       const read = (table: string) => run(sql`SELECT * FROM ${sql.identifier(table)}`);
-      return {
+      const org: SubscriptionOrganization = {
         tenant,
         owner,
+        async refresh() {
+          // The grace to enroll the second factor counts from the first sign-in: a person who signs in
+          // again weeks later on the clock of the test is the same person, not a late newcomer.
+          await createWithTenant(runtime.db)({ tenantId: tenant.id, userId: owner.user.id }, (tx) =>
+            tx.execute(
+              sql`update user_account set first_sign_in_at = ${clock.now.toISOString()}::timestamptz`,
+            ),
+          );
+          org.owner = await signInAs(app, slug, owner.user);
+        },
         member: (role) => signedIn([role]),
+        async professional() {
+          professionals += 1;
+          const user = await createTestUser(runtime, tenant.id, {
+            roles: ['professional'],
+            password: TEST_PASSWORD,
+          });
+          const session = await signInAs(app, slug, user);
+          const profile = await api.put(
+            `/staff/${user.membershipId}/professional-profile`,
+            session,
+            {
+              fullName: `Dr. Prueba ${String(professionals)}`,
+              specialties: ['Medicina general'],
+              matricula: { jurisdiction: 'AR-B', number: String(900_000 + professionals) },
+            },
+          );
+          if (profile.statusCode !== 200) {
+            throw new Error(`could not create the professional profile: ${profile.body}`);
+          }
+          return session;
+        },
         api,
-        view: () => api.get('/subscription', owner),
-        checkout: () => api.post('/subscription/checkout', owner),
+        view: () => api.get('/subscription', org.owner),
+        checkout: () => api.post('/subscription/checkout', org.owner),
         async subscription() {
           const [row] = await read('subscription');
           if (!row) throw new Error('the organization has no subscription');
@@ -174,6 +214,7 @@ export async function createSubscriptionWorld(
         rows: read,
         run,
       };
+      return org;
     },
     advance(ms) {
       clock.now = new Date(clock.now.getTime() + ms);

@@ -78,4 +78,14 @@ export const fixtures: Record<string, TenantTableFixture> = {
               RETURNING id`,
       ),
   },
+  subscription_notice: {
+    insert: async (tx, tenantId, overrides) =>
+      returningId(
+        tx,
+        sql`INSERT INTO subscription_notice (tenant_id, subscription_id, kind, key)
+              VALUES (${tenantId}, ${overrides?.['subscription_id'] ?? (await subscriptionOf(tx, tenantId))},
+                      'past_due_started', ${unique('2026-10-27T15:00:00.000Z')})
+              RETURNING id`,
+      ),
+  },
 };

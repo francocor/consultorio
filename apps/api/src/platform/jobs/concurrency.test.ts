@@ -25,8 +25,8 @@ describe('the job families that wait for an outside service', () => {
   });
 
   it('lists the Stage 6 jobs that call the payments gateway or the archive store, so a track cannot forget them', () => {
-    // The reconcile of the payments moved to the list that sets the floor of the pool when its
-    // handler landed (task 6.17); the others move when theirs do.
+    // The reconcile and the dunning of the payments moved to the list that sets the floor of the
+    // pool when their handlers landed (tasks 6.17 and 6.18); the others move when theirs do.
     expect([...PENDING_CONNECTION_HOLDING_JOBS, ...CONNECTION_HOLDING_JOBS].sort()).toEqual(
       expect.arrayContaining([
         'archive.release',
@@ -37,5 +37,6 @@ describe('the job families that wait for an outside service', () => {
       ]),
     );
     expect(CONNECTION_HOLDING_JOBS).toContain('subscription.reconcile');
+    expect(CONNECTION_HOLDING_JOBS).toContain('dunning.step');
   });
 });

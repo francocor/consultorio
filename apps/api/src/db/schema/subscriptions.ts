@@ -461,3 +461,55 @@ export const subscriptionRefund = tenantTable(
 );
 
 export type SubscriptionRefundRow = typeof subscriptionRefund.$inferSelect;
+
+/** What the owner is told about the subscription, by email, once each. */
+export const NOTICE_KINDS = [
+  'past_due_started',
+  'dunning_1',
+  'dunning_3',
+  'dunning_5',
+  'read_only_started',
+  'recovered',
+] as const;
+export type NoticeKind = (typeof NOTICE_KINDS)[number];
+
+/**
+ * A notice to the owner (subscriptions, "Failed payment and dunning"). The row IS the "already told":
+ * the unique key on the kind and the moment it is about (the grace it announces, the failure it
+ * follows) makes a second notice for the same thing impossible, however many times a job runs. It is
+ * written in the transaction that changed the state, and the email is sent after that commits:
+ * `sent_at` stays empty until the mail server accepted it, and a claim (`last_attempt_at`) keeps two
+ * workers from sending the same one at the same time. Nothing here names a patient.
+ */
+export const subscriptionNotice = tenantTable(
+  'subscription_notice',
+  {
+    subscriptionId: uuid('subscription_id').notNull(),
+    kind: text('kind').notNull(),
+    /** The moment the notice is about, as text: the end of the grace, the date of the failure. */
+    key: text('key').notNull(),
+    attempts: smallint('attempts').notNull().default(0),
+    lastAttemptAt: timestamp('last_attempt_at', { withTimezone: true }),
+    sentAt: timestamp('sent_at', { withTimezone: true }),
+  },
+  (table) => [
+    foreignKey({
+      name: 'subscription_notice_tenant_id_fkey',
+      columns: [table.tenantId],
+      foreignColumns: [tenant.id],
+    }),
+    foreignKey({
+      name: 'subscription_notice_subscription_fkey',
+      columns: [table.tenantId, table.subscriptionId],
+      foreignColumns: [subscription.tenantId, subscription.id],
+    }),
+    unique('subscription_notice_key').on(table.subscriptionId, table.kind, table.key),
+    check('subscription_notice_kind_check', sql`${table.kind} in (${list(NOTICE_KINDS)})`),
+    check('subscription_notice_attempts_check', sql`${table.attempts} >= 0`),
+    index('subscription_notice_unsent_idx')
+      .on(table.tenantId, table.createdAt)
+      .where(sql`${table.sentAt} is null`),
+  ],
+);
+
+export type SubscriptionNoticeRow = typeof subscriptionNotice.$inferSelect;

@@ -6,5 +6,9 @@
   "subscription_checkout_rejected": "Mercado Pago no aceptó la solicitud de suscripción. Revise el correo del titular y vuelva a intentar.",
   "subscription_exempt": "Esta cuenta no tiene facturación: no hay suscripción para administrar.",
   "subscription_cancelled": "La suscripción de esta organización ya terminó.",
-  "subscription_already_subscribed": "La suscripción ya está activa con un medio de pago autorizado."
+  "subscription_already_subscribed": "La suscripción ya está activa con un medio de pago autorizado.",
+  "subscription_plan_too_small": "El plan elegido admite menos profesionales activos de los que hay hoy. Desactive profesionales o elija un plan más amplio.",
+  "subscription_reauthorization_required": "Mercado Pago ya no tiene vigente la autorización de pago. Autorice el pago nuevamente para retomar la suscripción: la cancelación se deja sin efecto cuando Mercado Pago lo confirme.",
+  "subscription_nothing_due": "No hay ningún pago atrasado para realizar.",
+  "subscription_not_cancelling": "La suscripción no está en proceso de cancelación."
 }

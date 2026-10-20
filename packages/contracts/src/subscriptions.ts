@@ -250,3 +250,19 @@ export type PaymentsSimulatorCycleResponse = z.infer<typeof PaymentsSimulatorCyc
 /** `POST /subscription/checkout`: where the owner authorizes the monthly payment (the provider's page). */
 export const CheckoutResponse = z.strictObject({ checkoutUrl: z.url() });
 export type CheckoutResponse = z.infer<typeof CheckoutResponse>;
+
+// Plan, cancellation, reactivation and what is overdue -----------------------------------------
+
+/** `GET /subscription/plans`: the plans the owner can choose from. */
+export const PlansResponse = z.strictObject({ plans: z.array(PlanDto) });
+export type PlansResponse = z.infer<typeof PlansResponse>;
+
+/** `POST /subscription/plan`. */
+export const ChangePlanRequest = z.strictObject({
+  planKey: z.string().regex(/^[a-z][a-z0-9-]{0,39}$/),
+});
+export type ChangePlanRequest = z.infer<typeof ChangePlanRequest>;
+
+/** `POST /subscription/retry-payment`: a one-off link for the overdue amount. */
+export const RetryPaymentResponse = z.strictObject({ paymentUrl: z.url() });
+export type RetryPaymentResponse = z.infer<typeof RetryPaymentResponse>;

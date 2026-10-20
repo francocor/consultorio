@@ -17,6 +17,7 @@ import {
 } from '../domain/subscription-state.js';
 
 import { DAY_MS, SYSTEM_ACTOR } from './common.js';
+import { claimNotice } from './notices.js';
 import { CURRENT_TENANT } from './store.js';
 
 /** What `applyEvent` needs besides the event: the locked row, its plan and the instant. */
@@ -105,6 +106,23 @@ export async function applyEvent(input: ApplyEventInput): Promise<ApplyEventResu
       resourceId: row.id,
       metadata: { from: result.from, to: result.to, event: input.event.type, plan: plan.key },
     });
+    // The owner is told, once each, of the three changes that need them: the grace begins, the
+    // account turns read-only, and the debt is settled. The email goes out after this commits.
+    if (result.to === 'past_due') {
+      const cause = input.event.type === 'trial_ended' ? 'trial_ended' : 'payment_failed';
+      await claimNotice(
+        tx,
+        row.id,
+        'past_due_started',
+        `${(result.graceEndsAt ?? now).toISOString()}:${cause}`,
+      );
+    }
+    if (result.to === 'read_only') {
+      await claimNotice(tx, row.id, 'read_only_started', (row.graceEndsAt ?? now).toISOString());
+    }
+    if ((row.status === 'past_due' || row.status === 'read_only') && result.to === 'active') {
+      await claimNotice(tx, row.id, 'recovered', now.toISOString());
+    }
     if (result.publishCancelled) {
       await audit(tx, {
         action: 'tenant.cancelled',

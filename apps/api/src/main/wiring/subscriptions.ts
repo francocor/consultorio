@@ -10,7 +10,9 @@ import {
   type LocalPaymentsGateway,
 } from '../../adapters/mercadopago-local/index.js';
 import {
+  DUNNING_STEP_JOB,
   SUBSCRIPTION_RECONCILE_JOB,
+  TRIAL_END_JOB,
   createSubscriptionJobs,
   createSubscriptions,
   subscriptionOperatorRoutes,
@@ -23,6 +25,7 @@ import { adapterOfSetting } from '../../platform/local-providers/dev-routes.js';
 import { fake } from '../adapter-resolver.js';
 import type { Config } from '../config.js';
 
+import { originsFromConfig } from './origins.js';
 import type { ModuleWiring } from './types.js';
 
 /**
@@ -82,6 +85,9 @@ const PLATFORM = { id: '00000000-0000-0000-0000-000000000000', isDemo: false } a
 
 /** How often every organization is asked where its subscription stands when no notice arrives (5 minutes). */
 const RECONCILE_EVERY_MS = 300_000;
+
+/** How often the dates of every subscription are looked at (10 minutes). */
+const DATES_EVERY_MS = 600_000;
 
 const isLocalGateway = (gateway: unknown): gateway is LocalPaymentsGateway => {
   const candidate = gateway as Partial<LocalPaymentsGateway> | undefined;
@@ -177,6 +183,7 @@ export const subscriptionsWiring: ModuleWiring = {
           adapters,
           jobs: client,
           email,
+          origins: originsFromConfig(config),
           clock: now,
           // The end of a subscription is announced to retention through this bus.
           tenantCancelled: createTenantLifecycle(),
@@ -191,6 +198,15 @@ export const subscriptionsWiring: ModuleWiring = {
             await fanOut(db, client, SUBSCRIPTION_RECONCILE_JOB, {
               singletonSeconds: RECONCILE_EVERY_MS / 2000,
             });
+          },
+        },
+        {
+          // The clock of the dates: the end of a trial, the reminders and the end of a grace.
+          name: `${TRIAL_END_JOB} tick`,
+          intervalMs: DATES_EVERY_MS,
+          run: async () => {
+            await fanOut(db, client, TRIAL_END_JOB, { singletonSeconds: DATES_EVERY_MS / 2000 });
+            await fanOut(db, client, DUNNING_STEP_JOB, { singletonSeconds: DATES_EVERY_MS / 2000 });
           },
         },
       ],

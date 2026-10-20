@@ -7,6 +7,7 @@ import type {
 
 import type { PlanRow, SubscriptionRow } from '../../../db/schema/subscriptions.js';
 import type { Tx } from '../../../platform/db/tenant-context.js';
+import { coverageEnd } from '../domain/subscription-state.js';
 
 import {
   countActiveProfessionalsNow,
@@ -40,7 +41,8 @@ export function nextTransitionOf(row: SubscriptionRow): SubscriptionNextTransiti
     case 'past_due':
       return row.graceEndsAt ? { kind: 'read_only_at', at: row.graceEndsAt.toISOString() } : null;
     case 'cancelling':
-      return row.paidThrough ? { kind: 'service_ends', at: row.paidThrough.toISOString() } : null;
+      // Service lasts until the later of what was paid and the trial the owner was still in.
+      return { kind: 'service_ends', at: coverageEnd(row).toISOString() };
     default:
       return null;
   }

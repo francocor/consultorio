@@ -21,8 +21,10 @@ import {
 } from '../domain/attempt-decisions.js';
 
 import { openAttempts, parkSubscription, resolveAttempt } from './attempts.js';
+import { cancelAtProvider } from './cancel-at-provider.js';
 import { DAY_MS, SYSTEM_ACTOR } from './common.js';
 import { applyLedger } from './ledger-store.js';
+import { sendPendingNotices } from './notices.js';
 import type {
   PaymentDescription,
   PaymentLinkDescription,
@@ -428,6 +430,10 @@ export async function reconcileSubscription(
       to: fromStatus === toStatus ? null : toStatus,
     };
   });
+  // The owner is told what the changes above owe them: after the commit, outside any transaction.
+  await sendPendingNotices(deps, tenantId).catch(() => 0);
+  // A cancelling subscription whose authorization is still in force is told to the provider again.
+  if (result.outcome === 'done') await cancelAtProvider(deps, tenantId).catch(() => 'unavailable');
   return result;
 }
 

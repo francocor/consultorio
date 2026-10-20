@@ -33,7 +33,12 @@ export { assertProfessionalSeatAvailable } from './application/seats.js';
 export { createTrialStarter } from './application/trial.js';
 export type { StartTrialResult, TrialStarter } from './application/trial.js';
 export { subscriptionOperatorRoutes } from './http/operator-routes.js';
-export { createSubscriptionJobs, SUBSCRIPTION_RECONCILE_JOB } from './jobs/subscription-jobs.js';
+export {
+  createSubscriptionJobs,
+  DUNNING_STEP_JOB,
+  SUBSCRIPTION_RECONCILE_JOB,
+  TRIAL_END_JOB,
+} from './jobs/subscription-jobs.js';
 export type { SubscriptionDeps } from './application/provider.js';
 export { isSimulated } from './application/provider.js';
 export type * from './application/ports.js';

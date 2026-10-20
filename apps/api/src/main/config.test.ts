@@ -50,9 +50,10 @@ describe('loadConfig', () => {
       'erx.reconcile',
       'portal.notice_sweep',
       'subscription.reconcile',
+      'dunning.step',
     ]);
     expect(MIN_DB_POOL_MAX).toBe(CONNECTION_HOLDING_JOBS.length * JOB_LOCAL_CONCURRENCY * 2 + 2);
-    expect(MIN_DB_POOL_MAX).toBe(18);
+    expect(MIN_DB_POOL_MAX).toBe(22);
     for (const small of ['2', '6', '10', String(MIN_DB_POOL_MAX - 1)]) {
       expect(() => loadConfig({ ...validEnv, DB_POOL_MAX: small }), small).toThrow(
         new RegExp(`DB_POOL_MAX.*${String(MIN_DB_POOL_MAX)}`),
