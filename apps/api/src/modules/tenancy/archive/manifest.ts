@@ -27,6 +27,17 @@ export const ManifestPart = z.strictObject({
   kind: z.enum(['administrative', 'clinical']),
   /** The professional whose patients the part holds; null for the administrative one. */
   professionalId: z.uuid().nullable(),
+  /**
+   * Who that professional is by registration, so a release finds their part without opening the
+   * archive (the registration of a professional is public; no name, no content).
+   */
+  professional: z
+    .strictObject({
+      matriculaJurisdiction: z.string().nullable(),
+      matricula: z.string().nullable(),
+      matriculaStatus: z.string(),
+    })
+    .nullable(),
   /** The package (a zip) the objects are the encrypted pieces of, in order. */
   zipBytes: z.number().int().nonnegative(),
   zipSha256: Sha256,

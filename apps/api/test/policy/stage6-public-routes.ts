@@ -13,4 +13,16 @@ import type { Declaration } from './public-route-declaration.js';
  * Every entry names test files that exist (the test checks it), and a route under `/public/` or
  * `/webhooks/` with no entry fails the test: that is the point.
  */
-export const STAGE6_PUBLIC_ROUTES: Readonly<Record<string, Declaration>> = {};
+export const STAGE6_PUBLIC_ROUTES: Readonly<Record<string, Declaration>> = {
+  // Retention (track C): the single-use link of a break-glass release, 72 hours. Looking at it spends
+  // nothing; the POST spends it and hands the package over once. Unknown, expired, spent and foreign
+  // links all answer the same.
+  'GET /public/:slug/archive-release/:token': {
+    guards: ['token', 'rate-limit'],
+    probes: ['test/integration/archive-release.test.ts'],
+  },
+  'POST /public/:slug/archive-release/:token': {
+    guards: ['token', 'rate-limit'],
+    probes: ['test/integration/archive-release.test.ts'],
+  },
+};

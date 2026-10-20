@@ -14,6 +14,8 @@ import {
   enqueueDueVerifications,
   enqueuePendingExports,
   operatorCancelRoutes,
+  releaseRoutes,
+  createReleaseRequests,
 } from '../../modules/tenancy/index.js';
 import { createTenantKeys } from '../../platform/crypto/tenant-keys.js';
 import { createWithTenant } from '../../platform/db/tenant-context.js';
@@ -102,6 +104,7 @@ export const tenancyWiring: ModuleWiring = {
       adapters: context.adapters,
       email: context.email,
       jobs: context.jobs,
+      storage: context.storage,
       ...(context.clock ? { clock: context.clock } : {}),
     });
     return {
@@ -112,12 +115,23 @@ export const tenancyWiring: ModuleWiring = {
     };
   },
   // The operator cancels an organization: single-tenant deployments and local testing (task 6.36).
-  operatorRoutes: (context) =>
-    operatorCancelRoutes({
+  operatorRoutes: (context) => {
+    const cancel = operatorCancelRoutes({
       run: context.run,
       tenantCancelled: context.tenantCancelled,
       clock: context.clock,
-    }),
+    });
+    const releases = releaseRoutes({
+      releases: createReleaseRequests({
+        run: context.run,
+        ...(context.clock ? { clock: context.clock } : {}),
+      }),
+    });
+    return (app) => {
+      cancel(app);
+      releases(app);
+    };
+  },
   worker: ({ config, email, clock, adapters }) => {
     // The bucket of the packages is the one of the documents. It is opened when the first job needs it.
     let storage: ObjectStorage | undefined;

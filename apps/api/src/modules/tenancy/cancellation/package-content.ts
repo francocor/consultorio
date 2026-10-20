@@ -101,6 +101,16 @@ function safeFileName(text: string): string {
   return trimmed === '' ? 'archivo' : trimmed;
 }
 
+/** Where an attached file goes in the zip of its module (`documents/files/<id>-<name>`). */
+export function attachmentPath(contributor: string, id: string, name: string): string {
+  return `${safeSegment(contributor, 'modulo')}/files/${safeSegment(id, 'archivo')}-${safeFileName(name)}`;
+}
+
+/** The folder of a module in the zip, and the file of one of its sections. */
+export function sectionPath(contributor: string, section: string): string {
+  return `${safeSegment(contributor, 'modulo')}/${safeSegment(section, 'seccion')}.json`;
+}
+
 function isRowSource(value: unknown): value is Iterable<unknown> | AsyncIterable<unknown> {
   if (value === null || typeof value !== 'object' || value instanceof Uint8Array) return false;
   return Array.isArray(value) || Symbol.asyncIterator in value || Symbol.iterator in value;
@@ -282,7 +292,7 @@ export async function* packageEntries(input: PackageBuildInput): AsyncGenerator<
       for (const attachment of attachments) {
         if (seenObjects.has(attachment.objectKey)) continue;
         seenObjects.add(attachment.objectKey);
-        const base = `${contributor}/files/${safeSegment(attachment.id, 'archivo')}-${safeFileName(attachment.name)}`;
+        const base = attachmentPath(source.name, attachment.id, attachment.name);
         let path = base;
         for (let copy = 2; seenPaths.has(path); copy += 1) path = `${base}-${String(copy)}`;
         seenPaths.add(path);

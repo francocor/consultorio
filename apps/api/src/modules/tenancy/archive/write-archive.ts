@@ -104,6 +104,7 @@ interface PlannedPart {
   part: string;
   kind: 'administrative' | 'clinical';
   professionalId: string | null;
+  professional: ManifestPart['professional'];
   context: RequestContext;
   professionalName: string | null;
 }
@@ -230,6 +231,9 @@ async function plan(
       id: professional.id,
       userId: membership.userId,
       name: membership.displayName,
+      matricula: professional.matricula,
+      matriculaJurisdiction: professional.matriculaJurisdiction,
+      matriculaStatus: professional.matriculaStatus,
     })
     .from(professional)
     .innerJoin(membership, eq(membership.id, professional.membershipId))
@@ -239,6 +243,7 @@ async function plan(
       part: 'administrative',
       kind: 'administrative',
       professionalId: null,
+      professional: null,
       context: { tenantId, userId: SYSTEM_USER_ID },
       professionalName: null,
     },
@@ -246,6 +251,11 @@ async function plan(
       part: `clinical-${entry.id}`,
       kind: 'clinical',
       professionalId: entry.id,
+      professional: {
+        matriculaJurisdiction: entry.matriculaJurisdiction,
+        matricula: entry.matricula,
+        matriculaStatus: entry.matriculaStatus,
+      },
       // Acting as the professional, active or not: the clinical policies of the database decide
       // what they may read, and what they wrote is theirs.
       context: { tenantId, userId: entry.userId, actingProfessionalId: entry.id },
@@ -287,6 +297,7 @@ async function writeAttempt(deps: ArchiveWriteDeps, input: AttemptInput): Promis
         part: part.part,
         kind: part.kind,
         professionalId: part.professionalId,
+        professional: part.professional,
         zipBytes: file.sizeBytes,
         zipSha256: file.sha256,
         objects,
