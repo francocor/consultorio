@@ -343,8 +343,11 @@ describe('when the email provider is down', () => {
     );
     expect(stored.rows[0]).toMatchObject({ verification_sent_at: null, send_attempts: 1 });
 
-    // Before the backoff of the first attempt nothing is retried; after it, the pass sends it.
-    expect(await world.worker.retryVerifications()).toBe(0);
+    // Before the backoff of the first attempt this signup is not retried (the pass is global: other
+    // files leave signups of their own in the database, so what is checked is this address); after
+    // it, the pass sends it.
+    await world.worker.retryVerifications();
+    expect(world.email.lastTo(form.email)).toBeUndefined();
     await world.admin.query(
       `UPDATE signup_pending SET last_send_attempt_at = now() - interval '5 minutes' WHERE owner_email = $1`,
       [form.email],
@@ -367,8 +370,10 @@ describe('when the email provider is down', () => {
       [form.email],
     );
 
-    expect(await world.worker.retryVerifications()).toBe(0);
+    // The provider is back, and still the pass does not try this signup again: it used its attempts.
     world.email.down = false;
+    await world.worker.retryVerifications();
+    expect(world.email.lastTo(form.email)).toBeUndefined();
     const resent = await world.resend(form.email);
     await world.idle();
 
