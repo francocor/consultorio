@@ -2400,7 +2400,7 @@ INFO notes, in `docs/security/asvs-l2-portal.md`: the fingerprints are an unkeye
 
 ### Deviations and notes
 
-- TODO (Stage 4 merge): this branch does not carry `connectionTimeoutMillis` and `DB_POOL_MAX` of the Stage 4 fix branch; they arrive on merge and are NOT duplicated here. S5-1 was fixed at the cause (no second connection while holding one), not by pool settings.
+- Resolved in "Stage 5 integration 2": `connectionTimeoutMillis` and `DB_POOL_MAX` of the Stage 4 fix branch arrived with the merge and were not duplicated here. S5-1 was fixed at the cause (no second connection while holding one), not by pool settings.
 - B-T2: not changed (see above).
 - A-T5: the webhook is bound to the tenant of the signed notice, not to the provider; accepted risk, documented.
 
@@ -2984,3 +2984,35 @@ None needed: the merge was green without a fix commit.
 - Full e2e (`E2E_WEB_PORT=4890 E2E_API_PORT=3890 E2E_MINIO_PORT=9890`, `--workers=2`): 214 passed, 0 failed (7.8 minutes).
 - Docker: `infra/Dockerfile` built; a fresh `postgres:17` with `infra/postgres/init/01-roles.sql`; `db:migrate` run twice (both: migrations applied, platform catalogs loaded; 90 migrations recorded; the three invoice wait columns exist); the image started as `api` with `NODE_ENV=production`, multi-tenant, KMS `aws`, `S3_BUCKET`, `CLAMAV_HOST`, SMTP starttls and `ADDRESS_HASH_PEPPER`: `GET /health` answered `{"status":"ok"}`. Removed by id: the postgres and api containers, the image, and the three containers of the e2e stack (postgres, MinIO, Mailpit). A `postgres:17` (`06078eadeeb1`) that appeared during the run belongs to another agent and was left.
 - Incident: none. Logs are in `$TEMP/s4close-*.log`.
+
+## Stage 5 integration 2 (Stage 4 final merged)
+
+Merge of `origin/feat/stage-4-revenue` at `b3e47fd` (Stage 4 Judgment Day approved in round 9, B7 merged) into `feat/stage-5-compliance-portal` (from `703b00c`). Merge-base was `7abca49`. Merge commit `ee4fb48`; no fix commit was needed.
+
+### Conflicts and how they were resolved
+
+- `apps/api/src/db/migrations/meta/_journal.json` (eight hunks): rebuilt, not hand-merged. The 82 entries both sides share keep their position; then the eight Stage 4 entries that were missing (`0497`, `0480` to `0486`), in the order Stage 4 lists them; then the 17 Stage 5 entries (`0505` to `0599`). Every tag appears once. `pnpm db:restamp` renumbered `idx`, raised the Stage 5 stamps that no longer rose (`0505` to `0598`), re-chained snapshot `0505` to the one before it and rebuilt snapshot `0599` from the schema. `pnpm db:check`: no drift. Result: 107 entries, `idx` 0 to 106 unique and contiguous, `when` strictly rising.
+- `openspec/changes/health-practice-saas/apply-progress.md`: both histories kept (the Stage 5 sections, then the Stage 4 rounds 2 to 9 and the close). The S5 note that waited for `connectionTimeoutMillis` and `DB_POOL_MAX` is marked resolved.
+- Auto-merged with no conflict and checked: `tasks.md`, contracts (`InvoiceIssuer` and `PrescriptionProvider` ports, roles, permissions, audit actions, `reply_to_review` and the Stage 5 worklist kinds), locale files, `WorklistItemCard.tsx`, policy tables, definer-functions allowlist, demo contributors and exemptions, queues, `start-stack.ts`, `docs/migration-ranges.md`.
+- `platform/db/pool.ts` and `main/config.ts`: Stage 4's version (`connectionTimeoutMillis`, `DB_POOL_MAX`, floor `MIN_DB_POOL_MAX`) came in as is; Stage 5 had no pool code. The `DB_POOL_MAX` text of `.env.example` is Stage 4's.
+- `shared/ui/tabs.tsx` keeps both behaviours (`min-w-0` default of Stage 4 and the `shrink-0` tab with scroll of Stage 5); `button.tsx` has `WRAPPING_LABEL`.
+- Notifications: no caller of the removed `optOutChannel` exists in Stage 5 code (typecheck is clean), so nothing had to be adapted.
+
+### Migration order (journal positions 78 to 106)
+
+`0493`, `0494`, `0495`, `0496`, `0497`, `0480`, `0481`, `0482`, `0483`, `0484`, `0485`, `0486` (Stage 4), then `0505`, `0510`, `0512`, `0530`, `0532`, `0550`, `0552`, `0590` to `0599` (Stage 5). A fresh database applies all 107 in this order, twice in a row, without error (Docker smoke and the integration suite).
+
+### Verification (tip before this note, Node v24.22.0, pnpm 10.34.7, machine shared with the judges)
+
+- `pnpm install --frozen-lockfile`, `pnpm typecheck`, `pnpm lint`, `pnpm format:check`: green.
+- Unit (`pnpm test`): 424 of 435 files and 5520 of 5532 tests passed in the full run; the 11 failures were timeouts under load (`check-migration-drift`, `boot`, `render-invoice`, `module-boundaries`, `country-isolation`, `auth-guard`, `pdf/render`, `read-only/index`, `clinical-chart`, `documents`, `reports-page`). Re-run: ten files passed together; `pdf/render.test.ts` passed alone. Net: 5531 passed, 1 skipped, 0 failed.
+- Integration (Testcontainers, Postgres 17): 282 files passed, 1 skipped; 4424 tests passed, 4 skipped; 2 failed in the full run. `worker.test.ts` (known sealing load flake) and `prescription-issue.test.ts` (patient creation answered 409: `patientWithDocument` draws a DNI as `30000000 + counter + random(9000)`, so two patients of one tenant can collide) both passed on re-run (36 tests). Net: 4426 passed, 0 failed.
+- `pnpm build`: green. `pnpm db:check`: no drift.
+- Full e2e (`E2E_WEB_PORT=4960 E2E_API_PORT=3960 E2E_MINIO_PORT=9960`, `--workers=2`): 229 passed, 0 failed (10.7 minutes). The `stage4-demo` layout specs now pass.
+- Docker: `infra/Dockerfile` built (`consultorio-api:s45m`, image `1e495b0d3aca`); a fresh `postgres:17` (`9eeaa622e733`) with `infra/postgres/init/01-roles.sql`; `db:migrate` run twice from the repository (both: migrations applied, platform catalogs loaded; 107 migrations recorded; `invoice.refused_not_next`, `lookup_misses`, `last_sent_at`, `prescription` and `portal_identity` exist); the image started as `api` (`4247013449a5`; `NODE_ENV=production`, multi-tenant, KMS `aws`, `S3_BUCKET`, `CLAMAV_HOST`, SMTP starttls, `ADDRESS_HASH_PEPPER` of 32+ characters, `ERX_PROVIDER=off`): `GET /health` answered `{"status":"ok"}`. Removed by id: the two containers, the network `8a4aec337bc4` and the image. The e2e stack containers were reaped by Testcontainers; no other container was touched.
+- Incident: none. Logs are in `$TEMP/s45merge-*.log`.
+
+### Risks
+
+- The Stage 4 entries `0480` to `0486`/`0497` now sit before Stage 5's `0505` and later, so a development database that applied Stage 5 before this merge would not re-run them in order; fresh databases (CI, Docker, tests) are unaffected. Nothing of Stage 5 is released.
+- `prescription-issue.test.ts` has a rare birthday collision in its generated DNI (see above); not caused by the merge, not fixed here.
