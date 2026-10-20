@@ -299,6 +299,7 @@ export async function startStack(options: StackOptions): Promise<Stack> {
         simulated: {
           afip: config.providers.afip === 'local',
           erx: config.providers.erx === 'local',
+          payments: config.providers.payments === 'local',
         },
       },
       passwordValidator,

@@ -98,6 +98,7 @@ async function runApi(config: Config): Promise<void> {
       simulated: {
         afip: config.providers.afip === 'local',
         erx: config.providers.erx === 'local',
+        payments: config.providers.payments === 'local',
       },
     },
     passwordValidator,

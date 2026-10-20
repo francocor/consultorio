@@ -12,7 +12,10 @@ import {
  * variables here, so the shared `config.ts` stays untouched. `AFIP_PROVIDER` (Stage 4) is the
  * electronic-invoicing issuer: the local simulator, the real ARCA adapter (deferred) or none.
  * `ERX_PROVIDER` (Stage 5) is the e-prescription platform: the local simulator or none; the key of
- * the real provider is added with its adapter (task 5.53).
+ * the real provider is added with its adapter (task 5.53). `PAYMENTS_PROVIDER` (Stage 6) is the
+ * payments gateway of the platform subscriptions: the local Mercado Pago simulator or none; the key
+ * of the real gateway is added with its adapter (task 6.50). `MP_WEBHOOK_SECRET` signs its
+ * webhook and `MP_PUBLIC_BASE_URL` is the address the hosted checkout and the webhook are reached on.
  */
 export const PROVIDER_ENV_VARIABLES = [
   'WHATSAPP_PROVIDER',
@@ -20,8 +23,11 @@ export const PROVIDER_ENV_VARIABLES = [
   'BOT_CHALLENGE',
   'AFIP_PROVIDER',
   'ERX_PROVIDER',
+  'PAYMENTS_PROVIDER',
   'WHATSAPP_APP_SECRET',
   'ERX_WEBHOOK_SECRET',
+  'MP_WEBHOOK_SECRET',
+  'MP_PUBLIC_BASE_URL',
   'VIDEO_ALLOWED_DOMAINS',
   'VIDEO_LOCAL_BASE_URL',
   'ALLOW_LOCAL_PROVIDERS',
@@ -53,6 +59,25 @@ function isServerAddress(value: string): boolean {
   }
 }
 
+/**
+ * The address the payments checkout and webhook are reached on: http or https, no credentials, no
+ * query or fragment. Production wants https on top of it (checked where the environment is known).
+ */
+function isPublicAddress(value: string): boolean {
+  try {
+    const url = new URL(value);
+    return (
+      (url.protocol === 'https:' || url.protocol === 'http:') &&
+      url.username === '' &&
+      url.password === '' &&
+      url.search === '' &&
+      url.hash === ''
+    );
+  } catch {
+    return false;
+  }
+}
+
 const booleanFlag = z.enum(['true', 'false']).transform((value) => value === 'true');
 
 const providerEnv = z.object({
@@ -61,10 +86,20 @@ const providerEnv = z.object({
   BOT_CHALLENGE: z.enum(['local', 'turnstile']).optional(),
   AFIP_PROVIDER: z.enum(['local', 'afip', 'off']).optional(),
   ERX_PROVIDER: z.enum(['local', 'off']).optional(),
+  PAYMENTS_PROVIDER: z.enum(['local', 'off']).optional(),
   /** Signs the WhatsApp webhook (`X-Hub-Signature-256`). Only a secret, never a default. */
   WHATSAPP_APP_SECRET: z.string().min(MIN_APP_SECRET_LENGTH).optional(),
   /** Signs the webhook of the e-prescription provider (HMAC). Only a secret, never a default. */
   ERX_WEBHOOK_SECRET: z.string().min(MIN_WEBHOOK_SECRET_LENGTH).optional(),
+  /** Signs the webhook of the payments gateway (HMAC, Mercado Pago's manifest). Only a secret, never a default. */
+  MP_WEBHOOK_SECRET: z.string().min(MIN_WEBHOOK_SECRET_LENGTH).optional(),
+  /** Where the hosted checkout and the webhook are reached from outside (the platform host). */
+  MP_PUBLIC_BASE_URL: z
+    .string()
+    .refine(isPublicAddress, {
+      message: 'must be an http or https address with no credentials, query or fragment',
+    })
+    .optional(),
   /** Comma-separated host names a professional's manual video link may point at. */
   VIDEO_ALLOWED_DOMAINS: z
     .string()
@@ -97,6 +132,10 @@ export interface ProviderConfig extends ProviderSelection {
   readonly whatsappAppSecret?: string;
   /** Set when `ERX_WEBHOOK_SECRET` is. The provider webhook is refused without it. */
   readonly erxWebhookSecret?: string;
+  /** Set when `MP_WEBHOOK_SECRET` is. The payments webhook is refused without it. */
+  readonly mpWebhookSecret?: string;
+  /** Set when `MP_PUBLIC_BASE_URL` is; without it the gateway builds addresses on the platform host. */
+  readonly mpPublicBaseUrl?: string;
   /** Keys the address hashes of the message log; set in production, optional elsewhere. */
   readonly addressHashPepper?: string;
   readonly videoAllowedDomains: readonly string[];
@@ -137,6 +176,7 @@ export function readProviderConfig(
     botChallenge: value.BOT_CHALLENGE ?? (production ? 'turnstile' : 'local'),
     afip: value.AFIP_PROVIDER ?? (production ? 'off' : 'local'),
     erx: value.ERX_PROVIDER ?? (production ? 'off' : 'local'),
+    payments: value.PAYMENTS_PROVIDER ?? (production ? 'off' : 'local'),
   };
 
   const problems: ProviderEnvProblem[] = checkLocalProviders({
@@ -149,6 +189,16 @@ export function readProviderConfig(
     problems.push({
       path: 'WHATSAPP_APP_SECRET',
       message: 'is required when WHATSAPP_PROVIDER is meta (the webhook is signed with it)',
+    });
+  }
+  if (
+    production &&
+    value.MP_PUBLIC_BASE_URL !== undefined &&
+    !value.MP_PUBLIC_BASE_URL.startsWith('https://')
+  ) {
+    problems.push({
+      path: 'MP_PUBLIC_BASE_URL',
+      message: 'must be an https address in production (the payments provider calls it back)',
     });
   }
   if (production && value.ADDRESS_HASH_PEPPER === undefined) {
@@ -168,6 +218,12 @@ export function readProviderConfig(
       ...(value.ERX_WEBHOOK_SECRET === undefined
         ? {}
         : { erxWebhookSecret: value.ERX_WEBHOOK_SECRET }),
+      ...(value.MP_WEBHOOK_SECRET === undefined
+        ? {}
+        : { mpWebhookSecret: value.MP_WEBHOOK_SECRET }),
+      ...(value.MP_PUBLIC_BASE_URL === undefined
+        ? {}
+        : { mpPublicBaseUrl: value.MP_PUBLIC_BASE_URL }),
       ...(value.ADDRESS_HASH_PEPPER === undefined
         ? {}
         : { addressHashPepper: value.ADDRESS_HASH_PEPPER }),

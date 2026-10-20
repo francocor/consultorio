@@ -8,6 +8,7 @@ const local: ProviderSelection = {
   botChallenge: 'local',
   afip: 'local',
   erx: 'local',
+  payments: 'local',
 };
 const real: ProviderSelection = {
   whatsapp: 'meta',
@@ -16,6 +17,8 @@ const real: ProviderSelection = {
   afip: 'afip',
   // The authorized e-prescription platform has no key yet (task 5.53): the real provider is none.
   erx: 'off',
+  // Mercado Pago has no key yet (task 6.50): the real provider is none.
+  payments: 'off',
 };
 const off: ProviderSelection = {
   whatsapp: 'off',
@@ -23,6 +26,7 @@ const off: ProviderSelection = {
   botChallenge: 'turnstile',
   afip: 'off',
   erx: 'off',
+  payments: 'off',
 };
 
 describe('localProvidersIn', () => {
@@ -33,10 +37,12 @@ describe('localProvidersIn', () => {
       'BOT_CHALLENGE',
       'AFIP_PROVIDER',
       'ERX_PROVIDER',
+      'PAYMENTS_PROVIDER',
     ]);
     expect(localProvidersIn({ ...real, video: 'local' })).toEqual(['VIDEO_PROVIDER']);
     expect(localProvidersIn({ ...real, afip: 'local' })).toEqual(['AFIP_PROVIDER']);
     expect(localProvidersIn({ ...real, erx: 'local' })).toEqual(['ERX_PROVIDER']);
+    expect(localProvidersIn({ ...real, payments: 'local' })).toEqual(['PAYMENTS_PROVIDER']);
   });
 
   it('names nothing when every provider is real or switched off', () => {
@@ -78,6 +84,7 @@ describe('checkLocalProviders (environment x provider x allow flag)', () => {
         'BOT_CHALLENGE',
         'AFIP_PROVIDER',
         'ERX_PROVIDER',
+        'PAYMENTS_PROVIDER',
       ],
     },
     // A fiscal simulator would pretend to issue invoices in production: the same refusal.
@@ -95,6 +102,21 @@ describe('checkLocalProviders (environment x provider x allow flag)', () => {
       allow: false,
       console: false,
       problems: ['ERX_PROVIDER'],
+    },
+    // A payments simulator would pretend to charge subscriptions in production: the same refusal.
+    {
+      nodeEnv: 'production',
+      selection: { ...real, payments: 'local' },
+      allow: false,
+      console: false,
+      problems: ['PAYMENTS_PROVIDER'],
+    },
+    {
+      nodeEnv: 'production',
+      selection: { ...off, payments: 'local' },
+      allow: true,
+      console: false,
+      problems: [],
     },
     {
       nodeEnv: 'production',

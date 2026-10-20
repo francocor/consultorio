@@ -31,6 +31,7 @@ describe('provider configuration', () => {
       botChallenge: 'local',
       afip: 'local',
       erx: 'local',
+      payments: 'local',
       videoAllowedDomains: [],
       allowLocalProviders: false,
       localProvidersConsole: false,
@@ -44,6 +45,7 @@ describe('provider configuration', () => {
       botChallenge: 'turnstile',
       afip: 'off',
       erx: 'off',
+      payments: 'off',
     });
   });
 
@@ -55,6 +57,69 @@ describe('provider configuration', () => {
     expect(() => loadConfig({ ...production, BOT_CHALLENGE: 'local' })).toThrow(/BOT_CHALLENGE/);
     expect(() => loadConfig({ ...production, AFIP_PROVIDER: 'local' })).toThrow(/AFIP_PROVIDER/);
     expect(() => loadConfig({ ...production, ERX_PROVIDER: 'local' })).toThrow(/ERX_PROVIDER/);
+    expect(() => loadConfig({ ...production, PAYMENTS_PROVIDER: 'local' })).toThrow(
+      /PAYMENTS_PROVIDER/,
+    );
+  });
+
+  it('runs the payments simulator in development, selects none by name, and refuses an unknown provider', () => {
+    expect(loadConfig({ ...base, PAYMENTS_PROVIDER: 'off' }).providers.payments).toBe('off');
+    expect(loadConfig({ ...base, PAYMENTS_PROVIDER: 'local' }).providers.payments).toBe('local');
+    expect(loadConfig({ ...production, PAYMENTS_PROVIDER: 'off' }).providers.payments).toBe('off');
+    // A real provider key is added by task 6.50, with its adapter: until then only these two exist.
+    expect(() => loadConfig({ ...base, PAYMENTS_PROVIDER: 'mercadopago' })).toThrow(
+      /PAYMENTS_PROVIDER/,
+    );
+  });
+
+  it('keeps the secret that signs the payments webhook, and never prints it', () => {
+    const secret = 'placeholder-mp-webhook-secret-0123';
+
+    expect(loadConfig({ ...base, MP_WEBHOOK_SECRET: secret }).providers.mpWebhookSecret).toBe(
+      secret,
+    );
+    expect(loadConfig(base).providers.mpWebhookSecret).toBeUndefined();
+    let message = '';
+    try {
+      loadConfig({ ...base, MP_WEBHOOK_SECRET: 'tiny' });
+    } catch (error) {
+      message = error instanceof Error ? error.message : '';
+    }
+    expect(message).toContain('MP_WEBHOOK_SECRET');
+    expect(message).not.toContain('tiny');
+  });
+
+  it('reads the public address the checkout and the webhook are reached on, and leaves it unset otherwise', () => {
+    expect(loadConfig(base).providers.mpPublicBaseUrl).toBeUndefined();
+    expect(
+      loadConfig({ ...base, MP_PUBLIC_BASE_URL: 'https://platform.consultorio.example' }).providers
+        .mpPublicBaseUrl,
+    ).toBe('https://platform.consultorio.example');
+    // A development tunnel or a local port may be plain http; production may not.
+    expect(
+      loadConfig({ ...base, MP_PUBLIC_BASE_URL: 'http://localhost:4010' }).providers
+        .mpPublicBaseUrl,
+    ).toBe('http://localhost:4010');
+  });
+
+  it.each([
+    ['platform.consultorio.example', 'not an address'],
+    ['ftp://platform.consultorio.example', 'not http or https'],
+    ['https://user:secret@platform.consultorio.example', 'carries credentials'],
+    ['https://platform.consultorio.example/?a=1', 'carries a query'],
+    ['https://platform.consultorio.example/#frag', 'carries a fragment'],
+  ])('rejects the payments public address %s (%s)', (value) => {
+    expect(() => loadConfig({ ...base, MP_PUBLIC_BASE_URL: value })).toThrow(/MP_PUBLIC_BASE_URL/);
+  });
+
+  it('wants https for the payments public address in production, since Mercado Pago will not call plain http', () => {
+    expect(() =>
+      loadConfig({ ...production, MP_PUBLIC_BASE_URL: 'http://platform.example' }),
+    ).toThrow(/MP_PUBLIC_BASE_URL/);
+    expect(
+      loadConfig({ ...production, MP_PUBLIC_BASE_URL: 'https://platform.example' }).providers
+        .mpPublicBaseUrl,
+    ).toBe('https://platform.example');
   });
 
   it('runs the prescription simulator in development, selects none by name, and refuses an unknown provider', () => {
@@ -97,6 +162,7 @@ describe('provider configuration', () => {
       BOT_CHALLENGE: 'local',
       AFIP_PROVIDER: 'local',
       ERX_PROVIDER: 'local',
+      PAYMENTS_PROVIDER: 'local',
       ALLOW_LOCAL_PROVIDERS: 'true',
       LOCAL_PROVIDERS_CONSOLE: 'true',
     });
@@ -105,6 +171,7 @@ describe('provider configuration', () => {
       whatsapp: 'local',
       afip: 'local',
       erx: 'local',
+      payments: 'local',
       allowLocalProviders: true,
       localProvidersConsole: true,
     });
@@ -195,6 +262,9 @@ describe('provider configuration', () => {
     expect(PROVIDER_ENV_VARIABLES).toContain('AFIP_PROVIDER');
     expect(PROVIDER_ENV_VARIABLES).toContain('ERX_PROVIDER');
     expect(PROVIDER_ENV_VARIABLES).toContain('ERX_WEBHOOK_SECRET');
+    expect(PROVIDER_ENV_VARIABLES).toContain('PAYMENTS_PROVIDER');
+    expect(PROVIDER_ENV_VARIABLES).toContain('MP_WEBHOOK_SECRET');
+    expect(PROVIDER_ENV_VARIABLES).toContain('MP_PUBLIC_BASE_URL');
     for (const name of PROVIDER_ENV_VARIABLES) expect(guide, name).toContain(name);
   });
 });
