@@ -127,12 +127,28 @@ describe('what the worker measures across the organizations', () => {
   });
 
   it('counts the audit events that are not sealed yet', async () => {
-    const unsealed = await ONE<{ n: number }>(
-      'select count(*)::int as n from audit_event where seq is null',
-    );
+    // The database is shared with the other test files, which write and seal audit events while this
+    // one runs, so one figure taken earlier cannot be compared with a later query. The comparison is
+    // made at a quiet moment: the oracle before and after a fresh measurement must agree, and then the
+    // measurement has to agree with both. A figure that counted something else never would.
+    const oracle = async () =>
+      (await ONE<{ n: number }>('select count(*)::int as n from audit_event where seq is null')).n;
+    let agreed: { unsealed: number; measured: number } | null = null;
+    let last = 'no attempt';
+    for (let attempt = 0; attempt < 40 && agreed === null; attempt += 1) {
+      const fresh = createMetrics({ catalog: METRIC_DESCRIPTIONS });
+      const before = await oracle();
+      await collectPlatformMetrics({ db: runtime.db, metrics: fresh });
+      const after = await oracle();
+      const measured = fresh.get('audit_unsealed_events');
+      last = `before ${String(before)}, measured ${String(measured)}, after ${String(after)}`;
+      if (before === after) agreed = { unsealed: before, measured };
+      else await new Promise((resolve) => setTimeout(resolve, 250));
+    }
 
-    expect(unsealed.n).toBeGreaterThan(10);
-    expect(metrics.get('audit_unsealed_events')).toBe(unsealed.n);
+    expect(agreed, `no quiet moment to compare at (${last})`).not.toBeNull();
+    expect(agreed?.unsealed).toBeGreaterThan(10);
+    expect(agreed?.measured).toBe(agreed?.unsealed);
     expect(metrics.get('audit_oldest_unsealed_seconds')).toBeGreaterThan(0);
   });
 
