@@ -107,8 +107,9 @@ describe('R2-2 (1): the previous address of the record is told, through the outb
 
     const notice = world.email.lastTo(before);
     expect(notice).toBeDefined();
-    expect(notice?.subject).toContain('ficha');
-    expect(notice?.text).toContain('contacto');
+    // Generic on purpose (JD-S5 R3): it is sent to an address that may not be the patient's.
+    expect(notice?.subject).toContain('Se registró un cambio');
+    expect(notice?.text).not.toMatch(/ficha|paciente/i);
     // A warning, never a way in: no link, no code, no new address, no name.
     expect(notice?.text).not.toMatch(/https?:/);
     expect(notice?.text).not.toContain(after);
@@ -137,7 +138,7 @@ describe('R2-2 (1): the previous address of the record is told, through the outb
     await world.sweepNotices();
 
     const notice = world.email.lastTo(record);
-    expect(notice?.text).toContain('nacimiento');
+    expect(notice?.text).toContain('Se registró un cambio');
     expect(notice?.text).not.toContain('1984');
     expect((await changesOf(patient)).rows[0]).toMatchObject({
       email_changed: false,

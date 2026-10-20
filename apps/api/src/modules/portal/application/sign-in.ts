@@ -21,7 +21,7 @@ import { checkCode, openChallenge, type PortalCodePurpose } from './codes.js';
 import { normalizeDocument } from './country.js';
 import { liveSelfLink, majorityStanding, patientAuditActor } from './identities.js';
 import type { PortalSessions } from './sessions.js';
-import { hasRecentRecordChange } from './staff-gate.js';
+import { hasRecentRecordChange, isRegistrationClosed } from './staff-gate.js';
 
 export interface SignInDeps {
   sessions: PortalSessions;
@@ -72,6 +72,10 @@ async function registrationCandidate(
   // one registering with the new address. An owner or an administrator invites the patient instead
   // (JD-S5 R2-2). Said like any other mismatch: the visitor learns nothing.
   if (await hasRecentRecordChange(tx, match.id)) return null;
+  // The record had no address (or the notice to the previous one could not be told) when this one was
+  // set, so nobody who knew the record was warned: only an owner or an administrator opens the
+  // registration, by inviting the patient (JD-S5 R3-4). Said like any other mismatch.
+  if (await isRegistrationClosed(tx, match.id)) return null;
   // A minor is reached only through a representative the organization verified: were the guardian
   // to register with the child's document and the address on their record, the guardian would
   // become the child's `self` and nothing would review the majority (JD-S5 R1-S5-6). Said like any
@@ -153,7 +157,7 @@ async function withinRequests(deps: SignInDeps, ctx: SignInContext): Promise<voi
   let allowed = true;
   try {
     const state = await deps.store.hit(
-      `portal|request|${requestsKey(ctx.tenant.id, ctx.ip)}`,
+      `portal|request|${requestsKey(ctx.tenant.id, ctx.ip, ctx.userAgent)}`,
       PORTAL_CODE_REQUESTS_WINDOW_MS,
     );
     allowed = state.count <= PORTAL_CODE_REQUESTS_PER_CLIENT;
@@ -179,7 +183,7 @@ async function withinTries(
 ): Promise<boolean> {
   try {
     const state = await deps.store.hit(
-      `portal|${flow}|${triesKey(ctx.tenant.id, email, ctx.ip)}`,
+      `portal|${flow}|${triesKey(ctx.tenant.id, email, ctx.ip, ctx.userAgent)}`,
       PORTAL_VERIFY_WINDOW_MS,
     );
     return state.count <= PORTAL_VERIFY_ATTEMPTS;
@@ -259,7 +263,7 @@ export async function verifySignInCode(
     email: input.email,
     code: input.code,
     now: deps.clock(),
-    client: { ip: ctx.ip, store: deps.store },
+    client: { ip: ctx.ip, userAgent: ctx.userAgent, store: deps.store },
   });
   // A deactivated account has no sign-in even with a code asked for before it was deactivated.
   if (checked !== 'ok' || accountId === null) {
@@ -286,7 +290,7 @@ export async function verifyRegistrationCode(
     email: input.email,
     code: input.code,
     now: deps.clock(),
-    client: { ip: ctx.ip, store: deps.store },
+    client: { ip: ctx.ip, userAgent: ctx.userAgent, store: deps.store },
   });
   if (checked !== 'ok') return { outcome: 'invalid' };
 

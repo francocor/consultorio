@@ -27,6 +27,8 @@ export const STAGE5_AUDIT_ACTIONS: readonly AuditAction[] = [
 export const STAGE5_WRITTEN_OUTSIDE_ROUTES: Readonly<Record<string, string>> = {
   'consent.read':
     'The door of the files and the portal entry point: opening a signed record writes it once, when the file is served (not when the link is asked for). The reads of the other modules declare theirs on the route.',
+  'portal.notice.expired':
+    'Written by the sweep of notices (a job, as the system) when a notice about a change to a record is given up: the week ended unsent, or it failed every time (JD-S5 R3-5).',
   'consent.integrity_failed':
     'Written next to consent.read by whoever opens a signed record whose stored facts no longer match its fingerprint: the door of the files, the portal entry point and the view of the record.',
 };

@@ -1,4 +1,4 @@
-import { and, eq, gt, sql } from 'drizzle-orm';
+import { and, eq, gt, isNull, sql } from 'drizzle-orm';
 
 import { patientRecordChange } from '../../../db/schema/portal.js';
 import type { Tx } from '../../../platform/db/tenant-context.js';
@@ -43,12 +43,55 @@ export async function hasRecentRecordChange(tx: Tx, patientId: string): Promise<
 }
 
 /**
+ * Whether the PUBLIC registration of the patient (document number plus e-mail, no invitation) is
+ * closed (JD-S5 R3-4): a change gave an e-mail to a record that had none, or the notice to the
+ * previous address could not be told, and no owner or administrator has invited the patient since.
+ * Nobody who knew the old record was warned, so the week of R2-2 is not enough.
+ */
+export async function isRegistrationClosed(tx: Tx, patientId: string): Promise<boolean> {
+  const [row] = await tx
+    .select({ id: patientRecordChange.id })
+    .from(patientRecordChange)
+    .where(
+      and(
+        eq(patientRecordChange.patientId, patientId),
+        eq(patientRecordChange.registrationRequiresInvitation, true),
+        isNull(patientRecordChange.invitationOpenedAt),
+      ),
+    )
+    .limit(1);
+  return row !== undefined;
+}
+
+/**
+ * An owner or an administrator invited the patient: the public registration is open again. The day
+ * is the clock of the database, like the rest of this table. It answers whether it opened anything.
+ */
+export async function openRegistration(tx: Tx, patientId: string): Promise<boolean> {
+  const opened = await tx
+    .update(patientRecordChange)
+    .set({ invitationOpenedAt: sql`now()` })
+    .where(
+      and(
+        eq(patientRecordChange.patientId, patientId),
+        eq(patientRecordChange.registrationRequiresInvitation, true),
+        isNull(patientRecordChange.invitationOpenedAt),
+      ),
+    )
+    .returning({ id: patientRecordChange.id });
+  return opened.length > 0;
+}
+
+/**
  * The gate every way of giving access to a patient goes through, for the staff:
  *
  * - for seven days after the e-mail or the birth date of the record changed, only an owner or an
  *   administrator may invite the patient or a representative, or link a representative;
  * - a representative for a patient whose record has no e-mail (nobody to tell) is for an owner or an
- *   administrator too.
+ *   administrator too, and so is one for a patient whose registration is closed (JD-S5 R3-4: the
+ *   address on the record was never confirmed by anybody);
+ * - while the registration of the patient is closed, inviting the patient is for an owner or an
+ *   administrator, and doing it opens the registration (`opensRegistration`).
  *
  * It answers whether an owner or an administrator used the exception, so the trail says so.
  */
@@ -61,14 +104,21 @@ export async function assertMayGiveAccess(
     representative: boolean;
     recordEmail: string | null;
   },
-): Promise<{ afterRecordChange: boolean }> {
+): Promise<{ afterRecordChange: boolean; opensRegistration: boolean }> {
   const recent = await hasRecentRecordChange(tx, input.patientId);
+  const closed = await isRegistrationClosed(tx, input.patientId);
   const nobodyToTell =
-    input.representative && (input.recordEmail === null || input.recordEmail.trim() === '');
+    input.representative &&
+    (input.recordEmail === null || input.recordEmail.trim() === '' || closed);
+  const needsOwnerOrAdmin = nobodyToTell || (!input.representative && closed);
   if (!input.ownerOrAdmin) {
     if (recent) throw new PortalStaffRefused('portal_recent_identity_change', input.patientId);
-    if (nobodyToTell)
+    if (needsOwnerOrAdmin) {
       throw new PortalStaffRefused('portal_owner_or_admin_required', input.patientId);
+    }
   }
-  return { afterRecordChange: recent || nobodyToTell };
+  return {
+    afterRecordChange: recent || nobodyToTell,
+    opensRegistration: !input.representative && closed && input.ownerOrAdmin,
+  };
 }

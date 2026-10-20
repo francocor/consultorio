@@ -24,6 +24,13 @@ import { asTenant, createTestTenant, type TestTenant } from '../support/tenants.
 const catalog = new pg.Client({ connectionString: inject('ownerUrl') });
 await catalog.connect();
 const TABLES = await listTenantTables(catalog);
+/**
+ * Tables whose rows only a trigger writes, as the owner (JD-S5 R3-6): the runtime role has no INSERT
+ * on them, so a row that points at another organization is refused by privilege before the foreign
+ * key is looked at. The key itself is proven with the owner role, in the test of the table
+ * (`portal-record-change-round3.test.ts`).
+ */
+const FOREIGN_KEY_REFUSED_BY_PRIVILEGE = new Set(['patient_record_change']);
 const COMPOSITE_FKS = await listCompositeTenantForeignKeys(catalog);
 /** Tables on which the runtime role has no UPDATE privilege (audit trail). */
 const APPEND_ONLY = new Set(
@@ -108,7 +115,11 @@ describe('tenant isolation, generated from the catalog', () => {
     it('rejects a row that points at a parent row of another tenant', async () => {
       const error = await insertAcrossTenants(runtime, fk, TENANT_FIXTURES, a.id, b.id);
 
-      expect(error).toEqual(expect.objectContaining({ code: '23503' }));
+      expect(error).toEqual(
+        expect.objectContaining({
+          code: FOREIGN_KEY_REFUSED_BY_PRIVILEGE.has(fk.table) ? '42501' : '23503',
+        }),
+      );
     });
   });
 });

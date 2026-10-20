@@ -180,15 +180,6 @@ export type PortalSecurityNoticeKind = 'email_changed' | 'representative_added' 
 export interface PortalSecurityNoticeEmailInput {
   organizationName: string;
   kind: PortalSecurityNoticeKind;
-  /** For `record_changed`: what changed in the record (the e-mail, the birth date, or both). */
-  fields?: { email: boolean; birthDate: boolean };
-}
-
-/** What the record says changed, as the notice names it. */
-function changedFacts(fields: { email: boolean; birthDate: boolean } | undefined): string {
-  if (fields?.email && fields.birthDate) return 'datos de contacto y de nacimiento';
-  if (fields?.birthDate) return 'datos de nacimiento';
-  return 'datos de contacto';
 }
 
 /**
@@ -219,13 +210,21 @@ export function renderPortalSecurityNoticeEmail(
       line = `${organization} dio acceso a su portal de pacientes a un representante legal, para ver la información de una persona menor de edad cuya ficha tiene este correo.`;
       break;
     case 'record_changed':
-      heading = 'Se modificaron datos de su ficha';
-      subject = `Se modificaron datos de su ficha en ${organization}`;
-      line = `Se modificaron ${changedFacts(input.fields)} en su ficha de ${organization}. El cambio lo hizo el personal de la organización y este correo es el que figuraba en la ficha antes del cambio.`;
+      // The address may belong to somebody who is not the patient (it was typed on a record by
+      // someone else), so the notice names neither a patient, nor a file, nor what changed (JD-S5 R3).
+      heading = 'Se registró un cambio';
+      subject = `Se registró un cambio en datos asociados a esta dirección en ${organization}`;
+      line = `Se registró un cambio en datos asociados a esta dirección en ${organization}. Si no lo reconoce, contacte a la institución.`;
       break;
   }
-  const advice = 'Si usted no lo esperaba, comuníquese con la organización.';
-  const footer = 'Este mensaje no incluye ningún enlace ni datos de la ficha.';
+  const advice =
+    input.kind === 'record_changed'
+      ? 'Si usted no lo esperaba, comuníquese con la institución.'
+      : 'Si usted no lo esperaba, comuníquese con la organización.';
+  const footer =
+    input.kind === 'record_changed'
+      ? 'Este mensaje no incluye ningún enlace ni datos personales.'
+      : 'Este mensaje no incluye ningún enlace ni datos de la ficha.';
   const text = [line, '', advice, '', footer].join('\n');
   const html = layout(heading, [escapeHtml(line), escapeHtml(advice)], footer);
   return { subject, text, html };

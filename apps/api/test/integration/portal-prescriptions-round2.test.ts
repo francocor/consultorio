@@ -146,6 +146,57 @@ describe('B-S5: the prescriptions of the portal are paged', () => {
     }
   });
 
+  it('refuses a cursor whose date cannot exist, instead of failing in the database (JD-S5 R3)', async () => {
+    const patient = await portalPatient();
+    await issuedTo(patient.patientId);
+
+    for (const at of [
+      '2026-13-01T10:00:00.000Z',
+      '2026-02-30T10:00:00.000Z',
+      '2026-10-19T25:00:00.000Z',
+      '2026-10-19T10:61:00.000Z',
+    ]) {
+      const cursor = Buffer.from(
+        JSON.stringify({ at, id: 'ffffffff-ffff-7fff-bfff-ffffffffffff' }),
+      ).toString('base64url');
+      const refused = await patient.visitor.get(`/portal/prescriptions?cursor=${cursor}`);
+      expect(refused.statusCode, `${at}: ${refused.body}`).toBe(400);
+    }
+  });
+
+  it('pages across prescriptions issued within the same millisecond (JD-S5 R3)', async () => {
+    const patient = await portalPatient();
+    const template = await issuedTo(patient.patientId);
+    // 104 more issued microseconds apart: one millisecond tells none of them from the next.
+    await admin.query(
+      `BEGIN;
+       set local session_replication_role = replica;
+       insert into prescription (tenant_id, patient_id, author_professional_id, client_key, status,
+                                 content_enc, prescription_date, idempotency_key, external_id,
+                                 issued_at, simulated, document_key)
+       select tenant_id, patient_id, author_professional_id, gen_random_uuid(), 'issued', content_enc,
+              prescription_date, 'micro-' || g || '-' || gen_random_uuid(),
+              'RXMICRO-' || g || '-' || substr(gen_random_uuid()::text, 1, 8),
+              date_trunc('milliseconds', now()) + interval '1 hour' + (g || ' microseconds')::interval,
+              simulated, document_key
+         from prescription, generate_series(1, 104) g
+        where id = '${template.id}';
+       COMMIT;`,
+    );
+
+    const first = await patient.visitor.get('/portal/prescriptions');
+    const page1 = first.json<PortalPrescriptionsResponse>();
+    const second = await patient.visitor.get(
+      `/portal/prescriptions?cursor=${encodeURIComponent(page1.nextCursor ?? '')}`,
+    );
+    const page2 = second.json<PortalPrescriptionsResponse>();
+
+    const ids = [...page1.prescriptions, ...page2.prescriptions].map((entry) => entry.id);
+    expect(ids).toHaveLength(105);
+    expect(new Set(ids).size).toBe(105);
+    expect(page2.nextCursor).toBeNull();
+  }, 120_000);
+
   it('never lets the cursor reach the prescriptions of somebody else', async () => {
     const mine = await portalPatient();
     const theirs = await portalPatient();

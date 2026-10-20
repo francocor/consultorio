@@ -1,5 +1,3 @@
-import { randomUUID } from 'node:crypto';
-
 import { effectivePermissions, type DownloadLinkResponse } from '@consultorio/contracts';
 import { and, eq, isNull, sql } from 'drizzle-orm';
 
@@ -70,28 +68,23 @@ export async function storeDocument(
     simulated: row.simulated,
     registeredManually: row.registeredManually,
   });
-  const objectKey = tenantKey(organization.id, 'prescriptions', `${randomUUID()}.pdf`);
+  // The key belongs to THIS prescription: the database lets a colleague record only that one (JD-S5
+  // R3), so a row can never point at the PDF of another. The same key is made by every attempt, which
+  // is why an object that was not recorded is not removed: it may be the one somebody else recorded.
+  const objectKey = tenantKey(organization.id, 'prescriptions', `${row.id}.pdf`);
   await deps.storage.put(organization.id, objectKey, {
     body: pdf,
     contentType: 'application/pdf',
     contentLength: pdf.length,
   });
-  try {
-    const recorded = await tx
-      .update(prescription)
-      .set({ documentKey: objectKey })
-      .where(and(eq(prescription.id, row.id), isNull(prescription.documentKey)))
-      .returning({ id: prescription.id });
-    if (recorded.length === 0) {
-      // Somebody recorded another document first: ours is an orphan nobody can reach.
-      await deps.storage.remove(organization.id, objectKey).catch(() => undefined);
-      return 'exists';
-    }
-  } catch (error) {
-    // The record was not written: the object is an orphan nobody can reach, so it is removed.
-    await deps.storage.remove(organization.id, objectKey).catch(() => undefined);
-    throw error;
-  }
+  // If the record is not written, the object stays: the next attempt makes the same key again.
+  const recorded = await tx
+    .update(prescription)
+    .set({ documentKey: objectKey })
+    .where(and(eq(prescription.id, row.id), isNull(prescription.documentKey)))
+    .returning({ id: prescription.id });
+  // Somebody recorded a document first: it is the same key, so there is nothing to remove.
+  if (recorded.length === 0) return 'exists';
   return 'stored';
 }
 

@@ -15,6 +15,8 @@ import {
   openPortalDocument,
   type PrescriptionDeps,
 } from '../../modules/prescriptions/index.js';
+import { createWithTenant } from '../../platform/db/tenant-context.js';
+import { fanOut } from '../../platform/jobs/worker.js';
 import { createTenantRoutedEmail } from '../adapter-resolver.js';
 
 import type { ModuleWiring, WiringContext } from './types.js';
@@ -24,6 +26,7 @@ const MAJORITY_REVIEW_EVERY_MS = 24 * 3_600_000;
 
 /** The notices of a changed record are delivered every minute (JD-S5 R2-2). */
 const NOTICE_SWEEP_EVERY_MS = 60_000;
+const NOTICE_SWEEP_QUEUE = 'portal.notice_sweep';
 
 /**
  * What the portal needs from the modules that are built in parallel: a port per module, from
@@ -83,17 +86,28 @@ export function createPortalWiring(source: PortalPortsSource = {}): ModuleWiring
       // The tenant-routed sender: a demo organization's codes never reach the real provider.
       const email = createTenantRoutedEmail(context.adapters);
       return {
-        jobs: () => [
+        jobs: ({ db, log }) => [
           createPortalCodeSendJob({ email, ...clock }),
           createPortalNoticeJob({ email }),
+          // Tells the address a record had that its e-mail or birth date changed. The pass opens
+          // short transactions of its own (nothing is held while a message is sent) and logs the
+          // notices that fail or expire (JD-S5 R3-5), so it is built with the database and the log.
+          createPortalNoticeSweepJob({ email, withTenant: createWithTenant(db), log, ...clock }),
         ],
         tenantJobs: [
           // Once a day, for every organization: the dependents who turned 18 stop being represented.
           { definition: createMajorityReviewJob(clock), everyMs: MAJORITY_REVIEW_EVERY_MS },
-          // Every minute: tells the address a record had that its e-mail or birth date changed.
+        ],
+        schedules: ({ client, db }) => [
           {
-            definition: createPortalNoticeSweepJob({ email, ...clock }),
-            everyMs: NOTICE_SWEEP_EVERY_MS,
+            // Every minute, for every organization: one sweep of notices is queued.
+            name: `${NOTICE_SWEEP_QUEUE} tick`,
+            intervalMs: NOTICE_SWEEP_EVERY_MS,
+            run: async () => {
+              await fanOut(db, client, NOTICE_SWEEP_QUEUE, {
+                singletonSeconds: Math.max(1, Math.floor(NOTICE_SWEEP_EVERY_MS / 2000)),
+              });
+            },
           },
         ],
       };

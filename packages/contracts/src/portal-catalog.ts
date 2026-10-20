@@ -71,4 +71,10 @@ export const PORTAL_AUDIT_ACTIONS = [
   // record, the address of an account was changed, the e-mail or the birth date of a record was
   // changed). The entry names the kind, never the address.
   'portal.notice.sent',
+  // A notice about a change to a record could not be told and was given up (the week ended, or it
+  // failed too many times): the previous address counts as never told (JD-S5 R3-5).
+  'portal.notice.expired',
+  // An owner or an administrator invited a patient whose public registration was closed because an
+  // address was given to a record that had none: the registration is open again (JD-S5 R3-4).
+  'portal.registration.opened',
 ] as const;

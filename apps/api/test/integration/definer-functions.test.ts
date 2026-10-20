@@ -59,6 +59,9 @@ const ALLOWED: Record<string, readonly string[]> = {
   // Tells a prescription the caller may not read from one that does not exist (the trail names who asked).
   'app.prescription_probe(uuid)': ['app_rw'],
   // Called only by triggers, never directly.
+  // The record changes of a patient (JD-S5 R3-6): the trigger of `patient` writes the row as the owner,
+  // because the runtime role has no INSERT on `patient_record_change`.
+  'app.patient_record_changed()': [],
   'app.care_adjust(uuid,uuid,uuid,integer,integer)': [],
   'app.care_assignment_sync()': [],
   'app.care_set_assigned(uuid,uuid,uuid,boolean)': [],

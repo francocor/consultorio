@@ -40,6 +40,8 @@ describe('portal catalogues', () => {
       'portal.profile.changed',
       'portal.denied',
       'portal.notice.sent',
+      'portal.notice.expired',
+      'portal.registration.opened',
     ]);
     for (const action of PORTAL_AUDIT_ACTIONS) expect(AUDIT_ACTIONS).toContain(action);
   });

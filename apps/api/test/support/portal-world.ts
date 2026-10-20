@@ -22,6 +22,7 @@ import {
   createPortalNoticeJob,
   createPortalNoticeSweepJob,
 } from '../../src/modules/portal/index.js';
+import { createWithTenant } from '../../src/platform/db/tenant-context.js';
 import { runJob } from '../../src/platform/jobs/define-job.js';
 
 import {
@@ -138,7 +139,11 @@ export async function createPortalWorld(
     ...base.jobDefinitions,
     createPortalCodeSendJob({ email: base.email, clock: () => base.now() }),
     createPortalNoticeJob({ email: base.email }),
-    createPortalNoticeSweepJob({ email: base.email, clock: () => base.now() }),
+    createPortalNoticeSweepJob({
+      email: base.email,
+      withTenant: createWithTenant(runtime.db),
+      clock: () => base.now(),
+    }),
   ];
   const patientWith: PortalWorld['patientWith'] = (values = {}) => {
     patients += 1;

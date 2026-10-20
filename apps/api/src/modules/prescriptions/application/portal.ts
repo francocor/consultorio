@@ -41,7 +41,25 @@ function encodeCursor(row: { issued_at: string | Date; id: string }): string {
   return Buffer.from(JSON.stringify({ at, id: row.id })).toString('base64url');
 }
 
-const CURSOR_TIME = /^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}(\.\d{1,6})?(Z|[+-]\d{2}(:?\d{2})?)$/;
+const CURSOR_TIME =
+  /^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2}):(\d{2})(\.\d{1,6})?(Z|[+-]\d{2}(:?\d{2})?)$/;
+
+/** Whether the date and the time of a cursor exist (month 13 or the 30th of February do not). */
+function existsAsDate(at: string): boolean {
+  const match = CURSOR_TIME.exec(at);
+  if (!match) return false;
+  const [year, month, day, hour, minute, second] = match.slice(1, 7).map(Number) as [
+    number,
+    number,
+    number,
+    number,
+    number,
+    number,
+  ];
+  if (hour > 23 || minute > 59 || second > 59) return false;
+  const date = new Date(Date.UTC(year, month - 1, day));
+  return date.getUTCMonth() === month - 1 && date.getUTCDate() === day;
+}
 const CURSOR_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 function decodeCursor(cursor: string): { at: string; id: string } {
@@ -53,7 +71,7 @@ function decodeCursor(cursor: string): { at: string; id: string } {
     if (
       typeof at === 'string' &&
       typeof id === 'string' &&
-      CURSOR_TIME.test(at) &&
+      existsAsDate(at) &&
       CURSOR_ID.test(id)
     ) {
       return { at, id };

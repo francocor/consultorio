@@ -222,6 +222,8 @@
   "action.portal.profile.changed": "Datos de contacto modificados desde el portal",
   "action.portal.denied": "Acceso denegado en el portal de pacientes",
   "action.portal.notice.sent": "Aviso enviado por un cambio en el acceso al portal",
+  "action.portal.notice.expired": "Aviso por un cambio en los datos de contacto que no pudo enviarse",
+  "action.portal.registration.opened": "Registro público en el portal habilitado al invitar a la persona",
   "action.access.denied": "Acceso denegado",
   "action.cross_tenant.denied": "Acceso entre organizaciones denegado"
 }

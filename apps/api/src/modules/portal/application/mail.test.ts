@@ -105,26 +105,24 @@ describe('the emails of the portal', () => {
     ).toThrow(/http/);
   });
 
-  it.each([
-    [{ email: true, birthDate: false }, 'datos de contacto', 'nacimiento'],
-    [{ email: false, birthDate: true }, 'datos de nacimiento', 'contacto'],
-    [{ email: true, birthDate: true }, 'datos de contacto y de nacimiento', 'nada'],
-  ] as const)(
-    'tells the address of a record that its data changed (%j), with no link and no value (JD-S5 R2-2)',
-    (fields, said, notSaid) => {
-      const mail = renderPortalSecurityNoticeEmail({
-        organizationName: ORGANIZATION,
-        kind: 'record_changed',
-        fields,
-      });
+  it('tells the address of a record that something changed, in words that confirm nothing to a stranger (JD-S5 R2-2, R3)', () => {
+    const mail = renderPortalSecurityNoticeEmail({
+      organizationName: ORGANIZATION,
+      kind: 'record_changed',
+    });
 
-      expect(mail.subject).toBe(`Se modificaron datos de su ficha en ${ORGANIZATION}`);
-      expect(mail.text).toContain(`Se modificaron ${said} en su ficha de ${ORGANIZATION}`);
-      if (notSaid !== 'nada') expect(mail.text).not.toContain(notSaid);
-      for (const part of [mail.subject, mail.text, mail.html]) {
-        expect(part).not.toMatch(/https?:/);
-        expect(part).not.toMatch(CLINICAL_WORDS);
-      }
-    },
-  );
+    // The mailbox may belong to somebody who is not the patient: the notice must not say that an
+    // address was on a patient file, nor what changed.
+    expect(mail.subject).toBe(
+      `Se registró un cambio en datos asociados a esta dirección en ${ORGANIZATION}`,
+    );
+    expect(mail.text).toContain(
+      `Se registró un cambio en datos asociados a esta dirección en ${ORGANIZATION}. Si no lo reconoce, contacte a la institución.`,
+    );
+    for (const part of [mail.subject, mail.text, mail.html]) {
+      expect(part).not.toMatch(/https?:/);
+      expect(part).not.toMatch(CLINICAL_WORDS);
+      expect(part).not.toMatch(/ficha|paciente|nacimiento|contacto/i);
+    }
+  });
 });

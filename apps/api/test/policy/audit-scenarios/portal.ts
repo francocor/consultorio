@@ -19,4 +19,6 @@ export const PORTAL_SCENARIOS: Record<(typeof PORTAL_AUDIT_ACTIONS)[number], Aud
   'portal.profile.changed': t('portal-sections.test.ts'),
   'portal.denied': t('portal-isolation.test.ts'),
   'portal.notice.sent': t('portal-staff-hardening.test.ts'),
+  'portal.notice.expired': t('portal-record-change-round3.test.ts'),
+  'portal.registration.opened': t('portal-record-change-round3.test.ts'),
 };

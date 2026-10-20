@@ -173,7 +173,7 @@ export function staffRoutes(deps: StaffRoutesDeps) {
         config: {
           readOnly: 'write',
           permission: 'portal.manage',
-          audits: ['portal.identity.created', 'portal.notice.sent'],
+          audits: ['portal.identity.created', 'portal.notice.sent', 'portal.registration.opened'],
         },
         schema: {
           params: PatientParams,
@@ -331,7 +331,7 @@ export function staffRoutes(deps: StaffRoutesDeps) {
         config: {
           readOnly: 'write',
           permission: 'portal.manage',
-          audits: ['portal.identity.linked'],
+          audits: ['portal.identity.linked', 'portal.notice.sent'],
         },
         schema: {
           params: IdParams,
@@ -343,13 +343,20 @@ export function staffRoutes(deps: StaffRoutesDeps) {
         const { actor, audit } = staffOf(request);
         const identity = await gated(request, () =>
           deps.withTenant({ tenantId: actor.tenantId, userId: actor.userId }, async (tx) => {
-            const identityId = await reverifyLink(tx, deps.identities, {
+            const restored = await reverifyLink(tx, deps.identities, {
               actor: audit,
               ownerOrAdmin: ownerOrAdminOf(actor),
               linkId: request.params.id,
               verificationNote: request.body.verificationNote,
             });
-            return identityDto(tx, identityId);
+            if (restored.recordEmail !== null) {
+              await queueNotice(tx, request, {
+                kind: 'representative_added',
+                to: restored.recordEmail,
+                resourceId: restored.identityId,
+              });
+            }
+            return identityDto(tx, restored.identityId);
           }),
         );
         return { identity };

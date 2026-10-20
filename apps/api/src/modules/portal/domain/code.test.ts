@@ -11,6 +11,8 @@ import {
   codeMatches,
   generateCode,
   hashCode,
+  requestsKey,
+  triesKey,
 } from './code.js';
 
 describe('the code of the portal', () => {
@@ -34,6 +36,28 @@ describe('the code of the portal', () => {
     expect(key).not.toBe(challengeTriesKey('challenge-1', '10.0.0.2'));
     expect(key).not.toBe(challengeTriesKey('challenge-2', '10.0.0.1'));
     expect(key).not.toContain('10.0.0.1');
+  });
+
+  it('keys a client without an address by its user agent too, so one NAT is not one bucket (R3-7)', () => {
+    const behindNat = requestsKey('tenant-1', null, 'Mozilla/5.0 (Android)');
+
+    expect(behindNat).toBe(requestsKey('tenant-1', null, 'Mozilla/5.0 (Android)'));
+    expect(behindNat).not.toBe(requestsKey('tenant-1', null, 'Mozilla/5.0 (iPhone)'));
+    expect(behindNat).not.toBe(requestsKey('tenant-1', null, null));
+    expect(behindNat).not.toBe(requestsKey('tenant-2', null, 'Mozilla/5.0 (Android)'));
+    expect(triesKey('tenant-1', 'a@b.test', null, 'UA-1')).not.toBe(
+      triesKey('tenant-1', 'a@b.test', null, 'UA-2'),
+    );
+    expect(challengeTriesKey('challenge-1', null, 'UA-1')).not.toBe(
+      challengeTriesKey('challenge-1', null, 'UA-2'),
+    );
+  });
+
+  it('ignores the user agent when the address of the client is known', () => {
+    expect(requestsKey('tenant-1', '10.0.0.1', 'UA-1')).toBe(
+      requestsKey('tenant-1', '10.0.0.1', 'UA-2'),
+    );
+    expect(requestsKey('tenant-1', '10.0.0.1', 'UA-1')).not.toContain('UA-1');
   });
 
   it('is six digits and keeps its leading zeros', () => {

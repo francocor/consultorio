@@ -622,7 +622,9 @@ describe('JD-S5 R1: the guard of the table after the first review', () => {
     const prefix = `t/${a.id}/prescriptions`;
 
     await asTreating((tx) =>
-      tx.execute(sql`UPDATE prescription SET document_key = ${prefix + '/a.pdf'} WHERE id = ${id}`),
+      tx.execute(
+        sql`UPDATE prescription SET document_key = ${`${prefix}/${id}.pdf`} WHERE id = ${id}`,
+      ),
     );
 
     await expect(
@@ -642,7 +644,7 @@ describe('JD-S5 R1: the guard of the table after the first review', () => {
         sql`SELECT document_key FROM prescription WHERE id = ${id}`,
       ),
     );
-    expect(stored.rows[0]?.document_key).toBe(`${prefix}/a.pdf`);
+    expect(stored.rows[0]?.document_key).toBe(`${prefix}/${id}.pdf`);
   });
 
   it('records a document only for an issued prescription, under the prefix of its own organization (R2-9)', async () => {
@@ -654,16 +656,21 @@ describe('JD-S5 R1: the guard of the table after the first review', () => {
     await expect(
       asTreating((tx) =>
         tx.execute(
-          sql`UPDATE prescription SET document_key = ${`t/${a.id}/prescriptions/p.pdf`} WHERE id = ${pending}`,
+          sql`UPDATE prescription SET document_key = ${`t/${a.id}/prescriptions/${pending}.pdf`} WHERE id = ${pending}`,
         ),
       ),
     ).rejects.toMatchObject({ cause: { code: '42501' } });
     // Issued, but a key that points anywhere else (another organization, another folder, nothing).
     for (const key of [
-      `t/${b.id}/prescriptions/x.pdf`,
-      `t/${a.id}/docs/x.pdf`,
-      't/x/prescriptions/x.pdf',
+      `t/${b.id}/prescriptions/${issued}.pdf`,
+      `t/${a.id}/docs/${issued}.pdf`,
+      `t/x/prescriptions/${issued}.pdf`,
       '../../etc/passwd',
+      // The key of ANOTHER prescription of the same organization (JD-S5 R3): its PDF is not this one's.
+      `t/${a.id}/prescriptions/${pending}.pdf`,
+      `t/${a.id}/prescriptions/x.pdf`,
+      `t/${a.id}/prescriptions/${issued}.pdf/../${pending}.pdf`,
+      `t/${a.id}/prescriptions/${issued}.html`,
     ]) {
       await expect(
         asTreating((tx) =>

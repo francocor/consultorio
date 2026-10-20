@@ -45,15 +45,29 @@ async function insertLink(
 export const fixtures: Record<string, TenantTableFixture> = {
   // A change to the e-mail of a record (JD-S5 R2-2); the isolation suite points the patient at
   // another organization's row to prove the composite foreign key refuses it.
+  // The runtime role has no INSERT on it (JD-S5 R3-6): the trigger of `patient` writes the row, so the
+  // fixture changes the e-mail of a patient. With another organization's patient (the override of the
+  // foreign key test) there is no trigger to go through, and the plain INSERT is refused by privilege.
   patient_record_change: {
-    insert: async (tx, tenantId, overrides) =>
-      returningId(
+    insert: async (tx, tenantId, overrides) => {
+      const foreign = overrides?.['patient_id'];
+      if (foreign !== undefined) {
+        return returningId(
+          tx,
+          sql`INSERT INTO patient_record_change (tenant_id, patient_id, email_changed, birth_date_changed)
+                VALUES (${tenantId}, ${foreign}, true, false)
+                RETURNING id`,
+        );
+      }
+      const patientId = await insertPatient(tx, tenantId);
+      await tx.execute(
+        sql`UPDATE patient SET email = ${`${unique('cambio')}@example.test`} WHERE id = ${patientId}`,
+      );
+      return returningId(
         tx,
-        sql`INSERT INTO patient_record_change (tenant_id, patient_id, email_changed, birth_date_changed)
-              VALUES (${tenantId}, ${overrides?.['patient_id'] ?? (await insertPatient(tx, tenantId))},
-                      true, false)
-              RETURNING id`,
-      ),
+        sql`SELECT id FROM patient_record_change WHERE patient_id = ${patientId}`,
+      );
+    },
   },
   portal_identity: { insert: insertIdentity },
   portal_link: { insert: insertLink },

@@ -68,22 +68,33 @@ export function addressKey(tenantId: string, email: string): string {
   return createHash('sha256').update(`${tenantId}|${email.trim().toLowerCase()}`).digest('hex');
 }
 
-/** Who a client is, as a counter key: a hash, so no address of a visitor sits in the counter store. */
-function clientKey(client: string | null): string {
-  return createHash('sha256')
-    .update(client ?? 'unknown')
-    .digest('hex')
-    .slice(0, 24);
+/**
+ * Who a client is, as a counter key: a hash, so no address of a visitor sits in the counter store.
+ * A client whose address is not known (no address reached the server) is told apart by its user
+ * agent (JD-S5 R3-7): without it every such client of an organization would share one bucket, and a
+ * clinic behind one NAT would run out of its six requests an hour at once.
+ */
+function clientKey(client: string | null, userAgent: string | null | undefined): string {
+  const who = client ?? `unknown|${userAgent ?? ''}`;
+  return createHash('sha256').update(who).digest('hex').slice(0, 24);
 }
 
 /** The key of the tries ONE client has at ONE challenge (JD-S5 R2-4). */
-export function challengeTriesKey(challengeId: string, client: string | null): string {
-  return `${challengeId}|${clientKey(client)}`;
+export function challengeTriesKey(
+  challengeId: string,
+  client: string | null,
+  userAgent?: string | null,
+): string {
+  return `${challengeId}|${clientKey(client, userAgent)}`;
 }
 
 /** The key of the codes one client asks for in an organization (JD-S5 R2-4). */
-export function requestsKey(tenantId: string, client: string | null): string {
-  return `${tenantId}|${clientKey(client)}`;
+export function requestsKey(
+  tenantId: string,
+  client: string | null,
+  userAgent?: string | null,
+): string {
+  return `${tenantId}|${clientKey(client, userAgent)}`;
 }
 
 /**
@@ -94,6 +105,11 @@ export function requestsKey(tenantId: string, client: string | null): string {
  * client that keeps trying, and that client is the one it locks. Nothing in it tells whether the
  * address has an account.
  */
-export function triesKey(tenantId: string, email: string, client: string | null): string {
-  return `${addressKey(tenantId, email)}|${clientKey(client)}`;
+export function triesKey(
+  tenantId: string,
+  email: string,
+  client: string | null,
+  userAgent?: string | null,
+): string {
+  return `${addressKey(tenantId, email)}|${clientKey(client, userAgent)}`;
 }

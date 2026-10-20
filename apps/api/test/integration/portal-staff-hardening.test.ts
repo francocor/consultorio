@@ -326,7 +326,7 @@ describe('S5-7: the age of majority is enforced where the data is read', () => {
     expect((await listed('2031-05-06')).rows).toHaveLength(0);
   });
 
-  it('moves the day of majority when the birth date of the patient is corrected', async () => {
+  it('brings the day of majority EARLIER when the birth date of the patient is corrected, and never later (JD-S5 R3 B-W2)', async () => {
     const { child } = await parentOf();
     const reviewDay = async () =>
       (
@@ -338,12 +338,13 @@ describe('S5-7: the age of majority is enforced where the data is read', () => {
       ).rows[0]?.majority_review_on;
     expect(await reviewDay()).toBe('2038-09-14');
 
-    // Corrected to another date in the database (the trigger is what moves the day, whoever writes).
+    // Corrected to a LATER date: the access of the representative is not extended (the trigger is
+    // what holds it, whoever writes).
     await world.inTenant((tx) =>
       tx.execute(sql`update patient set birth_date = '2022-03-01' where id = ${child}`),
     );
-    expect(await reviewDay()).toBe('2040-03-01');
-    // 29 February: the birthday is 1 March in a year that has no 29th.
+    expect(await reviewDay()).toBe('2038-09-14');
+    // Corrected to an EARLIER date. 29 February: the birthday is 1 March in a year that has no 29th.
     await world.inTenant((tx) =>
       tx.execute(sql`update patient set birth_date = '2020-02-29' where id = ${child}`),
     );

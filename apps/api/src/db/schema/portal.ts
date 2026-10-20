@@ -11,6 +11,7 @@ import {
   date,
   foreignKey,
   index,
+  smallint,
   text,
   timestamp,
   unique,
@@ -286,6 +287,26 @@ export const patientRecordChange = tenantTable(
     /** The address the record had, until the notice is sent (or the week is over). Null: nobody to tell. */
     noticeEmail: citext('notice_email'),
     noticeSentAt: timestamp('notice_sent_at', { withTimezone: true }),
+    /**
+     * The notice could not be told: the week ended, or it failed too many times (JD-S5 R3-5). The
+     * address is cleared with it, and the previous address counts as never told.
+     */
+    noticeExpiredAt: timestamp('notice_expired_at', { withTimezone: true }),
+    /** A pass took the notice to send it; another pass leaves it alone until the claim runs out. */
+    noticeClaimedAt: timestamp('notice_claimed_at', { withTimezone: true }),
+    noticeAttempts: smallint('notice_attempts').notNull().default(0),
+    noticeNextAttemptAt: timestamp('notice_next_attempt_at', { withTimezone: true }),
+    /**
+     * Public self-registration for this patient stays closed until an owner or an administrator
+     * invites the patient (JD-S5 R3-4): the change gave an address to a record that had none (or whose
+     * previous address could not be told), so nobody who knew the old record is warned, and whoever
+     * set the address could register with it and the document number.
+     */
+    registrationRequiresInvitation: boolean('registration_requires_invitation')
+      .notNull()
+      .default(false),
+    /** When an owner or an administrator invited the patient, which opens the registration again. */
+    invitationOpenedAt: timestamp('invitation_opened_at', { withTimezone: true }),
   },
   (table) => [
     foreignKey({
@@ -306,6 +327,11 @@ export const patientRecordChange = tenantTable(
     index('patient_record_change_pending_idx')
       .on(table.createdAt)
       .where(sql`${table.noticeEmail} is not null`),
+    check('patient_record_change_attempts_check', sql`${table.noticeAttempts} >= 0`),
+    // The registration of a patient is closed while one of these exists for them.
+    index('patient_record_change_closed_idx')
+      .on(table.tenantId, table.patientId)
+      .where(sql`${table.registrationRequiresInvitation} and ${table.invitationOpenedAt} is null`),
   ],
 );
 

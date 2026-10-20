@@ -110,7 +110,7 @@ export async function checkCode(
     code: string;
     now: Date;
     /** Who is trying and where their tries are counted. */
-    client: { ip: string | null; store: RateLimitStore };
+    client: { ip: string | null; userAgent?: string | null; store: RateLimitStore };
   },
 ): Promise<'ok' | 'invalid'> {
   const [challenge] = await tx
@@ -145,12 +145,12 @@ export async function checkCode(
 
 /** Counts one try of this client at this challenge, and says whether it is still within its five. */
 async function clientHasTries(
-  client: { ip: string | null; store: RateLimitStore },
+  client: { ip: string | null; userAgent?: string | null; store: RateLimitStore },
   challengeId: string,
 ): Promise<boolean> {
   try {
     const state = await client.store.hit(
-      `portal|code|${challengeTriesKey(challengeId, client.ip)}`,
+      `portal|code|${challengeTriesKey(challengeId, client.ip, client.userAgent)}`,
       PORTAL_CODE_LIFETIME_MS,
     );
     return state.count <= PORTAL_CODE_ATTEMPTS;

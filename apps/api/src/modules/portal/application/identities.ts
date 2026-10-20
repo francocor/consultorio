@@ -23,7 +23,7 @@ import { majorityReviewDate } from '../domain/majority.js';
 
 import { dayInZone, timeZoneOfCountry } from './country.js';
 import type { PortalSessions } from './sessions.js';
-import { assertMayGiveAccess } from './staff-gate.js';
+import { assertMayGiveAccess, openRegistration } from './staff-gate.js';
 
 const UNIQUE_VIOLATION = '23505';
 
@@ -261,6 +261,19 @@ export async function prepareInvitation(
     }
     email = patient.email.trim().toLowerCase();
     if (await liveSelfLink(tx, patient.id)) throw new AppError('portal_already_linked');
+  }
+  // An owner or an administrator inviting a patient whose registration was closed is the explicit act
+  // that opens it again (JD-S5 R3-4), and it is in the trail.
+  if (gate.opensRegistration && (await openRegistration(tx, patient.id))) {
+    await audit(tx, {
+      action: 'portal.registration.opened',
+      outcome: 'allow',
+      actor: input.actor,
+      resourceType: 'patient',
+      resourceId: patient.id,
+      patientId: patient.id,
+      metadata: { via: 'invitation' },
+    });
   }
 
   const [existing] = await tx.select().from(portalIdentity).where(eq(portalIdentity.email, email));

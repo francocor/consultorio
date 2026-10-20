@@ -205,7 +205,7 @@ export async function reverifyLink(
     linkId: string;
     verificationNote: string;
   },
-): Promise<string> {
+): Promise<{ identityId: string; recordEmail: string | null }> {
   const [link] = await tx
     .select()
     .from(portalLink)
@@ -248,5 +248,11 @@ export async function reverifyLink(
       ...(gate.afterRecordChange ? { afterRecordChange: true } : {}),
     },
   });
-  return link.portalIdentityId;
+  // The address on the record is told that a representative has access again, like the first time
+  // (JD-S5 R3): the caller queues the notice in this transaction.
+  const recordEmail = patient.email?.trim().toLowerCase() ?? '';
+  return {
+    identityId: link.portalIdentityId,
+    recordEmail: recordEmail === '' ? null : recordEmail,
+  };
 }
