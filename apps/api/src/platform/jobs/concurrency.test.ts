@@ -27,8 +27,6 @@ describe('the job families that wait for an outside service', () => {
   it('lists the Stage 6 jobs that call the payments gateway or the archive store, so a track cannot forget them', () => {
     expect([...PENDING_CONNECTION_HOLDING_JOBS].sort()).toEqual([
       'archive.release',
-      'archive.verify',
-      'archive.write',
       'dunning.step',
       'subscription.reconcile',
     ]);

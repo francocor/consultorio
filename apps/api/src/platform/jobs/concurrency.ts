@@ -12,7 +12,10 @@ export const JOB_LOCAL_CONCURRENCY = 2;
  *
  * - `afip.issue`: the call to the authority; the mark of the attempt is committed on the second one;
  * - `erx.reconcile`: the questions to the e-prescription provider, one short transaction at a time;
- * - `portal.notice_sweep`: the messages of the notices, with the claim and the mark in short ones.
+ * - `portal.notice_sweep`: the messages of the notices, with the claim and the mark in short ones;
+ * - `export.build`: the package of a cancelled organization, streamed to the files bucket while the
+ *   lock of the build is held on the transaction of the framework (the reads are short ones of their own);
+ * - `archive.write` and `archive.verify`: the write-once store, the same way.
  *
  * Each family runs `JOB_LOCAL_CONCURRENCY` jobs at once, so the worker needs two connections for each
  * (`MIN_DB_POOL_MAX`). A new job that waits like these inside `defineJob` must be added here.
@@ -21,14 +24,18 @@ export const CONNECTION_HOLDING_JOBS = [
   'afip.issue',
   'erx.reconcile',
   'portal.notice_sweep',
+  'export.build',
+  'archive.write',
+  'archive.verify',
 ] as const;
 
 /**
- * The Stage 6 families that WILL wait for an outside service the same way (the payments gateway and
- * the archive store), whose handlers do not exist yet. They are named now so that no track can add
- * one and forget the pool, but they are not in the list above because the floor of the pool rises
- * with every family (`MIN_DB_POOL_MAX`) and `.env.example` pins `DB_POOL_MAX=16`, a file the seam may
- * not edit. The track that writes one of these handlers:
+ * The Stage 6 families that WILL wait for an outside service the same way (the payments gateway), whose
+ * handlers do not exist yet. They are named now so that no track can add one and forget the pool, but
+ * they are not in the list above because the floor of the pool rises with every family
+ * (`MIN_DB_POOL_MAX`) and `.env.example` is the maintainer's file. The retention track (C) wrote its
+ * three handlers and moved them above: the floor is 26 with them, so `.env.example` must say
+ * `DB_POOL_MAX=26` or more. The track that writes one of these handlers:
  *
  * 1. writes it as the other families do: a short transaction for the mark before the call, none
  *    held while the call waits, a second one for the answer (never a provider call inside the
@@ -43,7 +50,5 @@ export const CONNECTION_HOLDING_JOBS = [
 export const PENDING_CONNECTION_HOLDING_JOBS = [
   'dunning.step',
   'subscription.reconcile',
-  'archive.write',
-  'archive.verify',
   'archive.release',
 ] as const;
