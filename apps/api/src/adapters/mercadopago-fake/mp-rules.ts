@@ -95,7 +95,7 @@ export function paymentLinkProblem(request: PaymentLinkRequest, now: Date): stri
  * never share a digest.
  */
 export function requestFingerprint(
-  kind: 'preapproval' | 'link' | 'amount' | 'refund',
+  kind: 'preapproval' | 'link' | 'amount' | 'refund' | 'cancel',
   parts: readonly (string | number)[],
 ): string {
   return createHash('sha256')
@@ -103,9 +103,17 @@ export function requestFingerprint(
     .digest('hex');
 }
 
-/** Deterministic, readable identifier of a simulated resource. */
-export function identifierFor(prefix: 'PRE' | 'PAY' | 'LNK' | 'RFD', sequence: number): string {
-  return `${prefix}-${String(sequence).padStart(6, '0')}`;
+/**
+ * Readable identifier of a simulated resource. `instance` tells one fake from another: the platform
+ * stores the ids the provider gives (a preapproval is unique across organizations), and two fakes in
+ * one test run must never give the same one.
+ */
+export function identifierFor(
+  prefix: 'PRE' | 'PAY' | 'LNK' | 'RFD',
+  sequence: number,
+  instance = '',
+): string {
+  return `${prefix}-${instance === '' ? '' : `${instance}-`}${String(sequence).padStart(6, '0')}`;
 }
 
 /** The hosted page of a simulated resource. */

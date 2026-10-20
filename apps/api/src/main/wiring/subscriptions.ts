@@ -1,10 +1,33 @@
+import { randomBytes } from 'node:crypto';
+
 import { createFakePaymentsGateway } from '../../adapters/mercadopago-fake/index.js';
 import type { FakePaymentsGateway } from '../../adapters/mercadopago-fake/index.js';
-import { createSubscriptions } from '../../modules/subscriptions/index.js';
+import { checkoutRoutes } from '../../adapters/mercadopago-local/checkout-routes.js';
+import { paymentsDevRoutes } from '../../adapters/mercadopago-local/dev-routes.js';
+import {
+  createLocalPaymentsControls,
+  createLocalPaymentsGateway,
+  type LocalPaymentsGateway,
+} from '../../adapters/mercadopago-local/index.js';
+import {
+  DUNNING_STEP_JOB,
+  STATEMENT_GENERATE_JOB,
+  SUBSCRIPTION_RECONCILE_JOB,
+  TRIAL_END_JOB,
+  USAGE_SNAPSHOT_JOB,
+  createSubscriptionJobs,
+  createSubscriptions,
+  subscriptionOperatorRoutes,
+} from '../../modules/subscriptions/index.js';
+import { createTenantLifecycle } from '../../modules/tenancy/index.js';
+import { createRuntimeDb, type Db } from '../../platform/db/pool.js';
+import { createWithTenant } from '../../platform/db/tenant-context.js';
+import { fanOut } from '../../platform/jobs/worker.js';
 import { adapterOfSetting } from '../../platform/local-providers/dev-routes.js';
 import { fake } from '../adapter-resolver.js';
 import type { Config } from '../config.js';
 
+import { originsFromConfig } from './origins.js';
 import type { ModuleWiring } from './types.js';
 
 /**
@@ -26,33 +49,106 @@ export function demoPaymentsGatewayOf(config: Config): FakePaymentsGateway {
 }
 
 /**
+ * Whether the payments run on the local simulator. A wiring context built by hand (the wiring tests)
+ * may carry no provider settings at all: that is "no simulator".
+ */
+const usesSimulator = (config: Config) =>
+  (config as { providers?: Config['providers'] }).providers?.payments === 'local';
+
+/**
+ * The secret that signs the simulator's webhook when none is configured. The API process both verifies
+ * the webhook and signs the simulated notices, so one secret per process is enough; the worker never
+ * verifies anything. It is not a default anyone could know.
+ */
+const PROCESS_SECRET = randomBytes(24).toString('hex');
+const webhookSecretOf = (config: Config) => config.providers.mpWebhookSecret ?? PROCESS_SECRET;
+
+/**
+ * Where the hosted checkout and the webhook are reached from outside: `MP_PUBLIC_BASE_URL`, else the
+ * platform host (the API is served under `/api` by the reverse proxy of the deployment).
+ */
+export function publicBaseUrlOf(config: Config): string {
+  if (config.providers.mpPublicBaseUrl !== undefined) return config.providers.mpPublicBaseUrl;
+  const scheme = config.cookieSecure ? 'https' : 'http';
+  const port = config.publicPort === undefined ? '' : `:${String(config.publicPort)}`;
+  return `${scheme}://${config.platformHost ?? 'localhost'}${port}/api`;
+}
+
+const localGatewayOf = (config: Config, db: Db): LocalPaymentsGateway =>
+  createLocalPaymentsGateway({
+    db,
+    webhookSecret: webhookSecretOf(config),
+    publicBaseUrl: publicBaseUrlOf(config),
+    hostedCheckout: config.providers.localProvidersConsole,
+  });
+
+/** Who the gateway belongs to: nobody. The resolver only needs to know it is not a demo. */
+const PLATFORM = { id: '00000000-0000-0000-0000-000000000000', isDemo: false } as const;
+
+/** How often every organization is asked where its subscription stands when no notice arrives (5 minutes). */
+const RECONCILE_EVERY_MS = 300_000;
+
+/** How often the dates of every subscription are looked at (10 minutes). */
+const DATES_EVERY_MS = 600_000;
+
+/** How often the activity of the professionals is metered, and the closed periods are looked at (1 hour). */
+const METERING_EVERY_MS = 3_600_000;
+
+const isLocalGateway = (gateway: unknown): gateway is LocalPaymentsGateway => {
+  const candidate = gateway as Partial<LocalPaymentsGateway> | undefined;
+  return candidate?.hostedCheckout === true && candidate.controls !== undefined;
+};
+
+/**
  * Everything the subscriptions module registers with the composition root (Track A). The track
  * edits this file, `modules/subscriptions/` and nothing shared: it fills the customer slot of the
- * `paymentsGateway` port when its local Mercado Pago exists (`adapters/mercadopago-local`, marked
- * `fake()`), adds the simulator controls to its console entry, adds its jobs to the worker
- * (`trial.end`, `dunning.step`, `usage.snapshot`, `statement.generate`, `subscription.reconcile`),
- * mounts its routes behind the `subscriptions` feature (`featureRoutes`) and its views in the
- * operator console (`operatorRoutes`). Its permission (`billing.manage`), audit actions, queues and
- * the doors the other modules call (`createQuotaPolicy`, `createSubscriptionPlanImpact`,
- * `createTrialStarter`) already exist.
+ * `paymentsGateway` port with its simulator (`adapters/mercadopago-local`, marked `fake()`), adds the
+ * simulator controls to its console entry, adds its jobs to the worker, mounts its routes behind the
+ * `subscriptions` feature (`featureRoutes`) and its views in the operator console
+ * (`operatorRoutes`). Its permission (`billing.manage`), audit actions, queues and the doors the
+ * other modules call (`createQuotaPolicy`, `createSubscriptionPlanImpact`, `createTrialStarter`)
+ * already exist.
  */
 export const subscriptionsWiring: ModuleWiring = {
   name: 'subscriptions',
-  // No customer gateway yet: nobody can subscribe; demo organizations get the fake.
-  adapters: ({ config }) => ({
-    paymentsGateway: { real: undefined, demo: fake(demoPaymentsGatewayOf(config)) },
-  }),
-  devProviders: ({ config }) => [
-    {
-      id: 'payments',
-      label: 'Mercado Pago',
-      // The simulator adds its mode (ok, down, refuse_amount_change, ...) when it exists.
-      status: () =>
-        Promise.resolve({ adapter: adapterOfSetting(config.providers.payments), mode: null }),
+  // Customers get the local simulator while `PAYMENTS_PROVIDER=local` (it reaches nothing outside the
+  // process, so it is registered as a fake); the real gateway is the deferred slice S6.D, so with
+  // `off` nobody can subscribe. Demo organizations always get the in-memory fake.
+  adapters: ({ config, db }) => ({
+    paymentsGateway: {
+      real: usesSimulator(config) ? fake(localGatewayOf(config, db)) : undefined,
+      demo: fake(demoPaymentsGatewayOf(config)),
     },
-  ],
+  }),
+  devProviders: ({ config }) => {
+    const local = usesSimulator(config);
+    // The simulator keeps its state in Postgres; the console reads it through a connection of its own.
+    const database = local ? createRuntimeDb(config.databaseUrl) : undefined;
+    const controls = database ? createLocalPaymentsControls(database.db) : undefined;
+    return [
+      {
+        id: 'payments',
+        label: 'Mercado Pago',
+        status: async () => ({
+          adapter: adapterOfSetting(config.providers.payments),
+          // The console lists the providers even when the database is not reachable.
+          mode: controls ? await controls.mode().catch(() => null) : null,
+        }),
+        ...(database && controls
+          ? {
+              routes: paymentsDevRoutes({
+                controls,
+                gateway: localGatewayOf(config, database.db),
+              }),
+            }
+          : {}),
+      },
+    ];
+  },
   // A checkout, a plan change and the cancellation are made in a request and followed up by jobs.
   needsJobs: true,
+  // The support view of the subscriptions, inside the operator console (behind its session).
+  operatorRoutes: (context) => subscriptionOperatorRoutes({ run: context.run }),
   create: (context) => {
     const subscriptions = createSubscriptions({
       withTenant: context.withTenant,
@@ -65,6 +161,91 @@ export const subscriptionsWiring: ModuleWiring = {
       tenantCancelled: context.tenantLifecycle,
       ...(context.clock ? { clock: context.clock } : {}),
     });
-    return { featureRoutes: { subscriptions: subscriptions.routes } };
+    // The hosted page of the local simulator: only while the provider console is on.
+    const gateway = context.adapters?.forTenant(PLATFORM, 'paymentsGateway');
+    const hosted = isLocalGateway(gateway)
+      ? checkoutRoutes({ controls: gateway.controls, gateway })
+      : undefined;
+    return {
+      featureRoutes: {
+        subscriptions: (app) => {
+          subscriptions.routes(app);
+          hosted?.(app);
+        },
+      },
+    };
+  },
+  worker: ({ config, adapters, email, clock }) => {
+    const now = clock ?? (() => new Date());
+    const billing = config.deploymentMode === 'multi';
+    return {
+      jobs: ({ client, db, log }) => {
+        const jobs = createSubscriptionJobs({
+          // Every step of a reconcile runs in short transactions of its own, with the mark of a write
+          // committed before its call; the transaction the framework opens stays idle meanwhile.
+          withTenant: createWithTenant(db),
+          adapters,
+          jobs: client,
+          email,
+          origins: originsFromConfig(config),
+          clock: now,
+          // The end of a subscription is announced to retention through this bus.
+          tenantCancelled: createTenantLifecycle(),
+          log,
+        });
+        // Billing exists only where organizations are billed. A single-tenant deployment still meters
+        // (the counts feed the contract invoicing of the operator) and runs nothing else.
+        return billing ? jobs.billing : jobs.metering;
+      },
+      schedules: ({ client, db }) => [
+        {
+          // The clock of the metering: the day each professional was active, the messages accepted.
+          name: `${USAGE_SNAPSHOT_JOB} tick`,
+          intervalMs: METERING_EVERY_MS,
+          run: async () => {
+            await fanOut(db, client, USAGE_SNAPSHOT_JOB, {
+              singletonSeconds: METERING_EVERY_MS / 2000,
+            });
+          },
+        },
+        ...(billing
+          ? [
+              {
+                // The clock that closes the periods: the statements of the periods that ended.
+                name: `${STATEMENT_GENERATE_JOB} tick`,
+                intervalMs: METERING_EVERY_MS,
+                run: async () => {
+                  await fanOut(db, client, STATEMENT_GENERATE_JOB, {
+                    singletonSeconds: METERING_EVERY_MS / 2000,
+                  });
+                },
+              },
+              {
+                // The clock that heals an outage: every organization is asked where its subscription stands.
+                name: `${SUBSCRIPTION_RECONCILE_JOB} tick`,
+                intervalMs: RECONCILE_EVERY_MS,
+                run: async () => {
+                  await fanOut(db, client, SUBSCRIPTION_RECONCILE_JOB, {
+                    singletonSeconds: RECONCILE_EVERY_MS / 2000,
+                  });
+                },
+              },
+              {
+                // The clock of the dates: the end of a trial, the reminders and the end of a grace.
+                name: `${TRIAL_END_JOB} tick`,
+                intervalMs: DATES_EVERY_MS,
+                run: async () => {
+                  await fanOut(db, client, TRIAL_END_JOB, {
+                    singletonSeconds: DATES_EVERY_MS / 2000,
+                  });
+                  await fanOut(db, client, DUNNING_STEP_JOB, {
+                    singletonSeconds: DATES_EVERY_MS / 2000,
+                  });
+                },
+              },
+            ]
+          : []),
+      ],
+    };
   },
 };

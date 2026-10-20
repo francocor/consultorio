@@ -3,6 +3,7 @@ import { randomBytes } from 'node:crypto';
 import type { PaymentsSimulatorMode } from '@consultorio/contracts';
 
 import type {
+  CancelPreapprovalResult,
   CreatePaymentLinkResult,
   CreatePreapprovalResult,
   PaymentDescription,
@@ -144,6 +145,7 @@ export function createFakePaymentsGateway(
   const secret = options.secret ?? randomBytes(24).toString('base64url');
   const clock = options.clock ?? (() => new Date());
   const settleWindowMs = options.settleWindowMs ?? 60_000;
+  const instance = randomBytes(3).toString('hex').toUpperCase();
 
   let mode: PaymentsSimulatorMode = 'ok';
   let sequence = 0;
@@ -274,7 +276,7 @@ export function createFakePaymentsGateway(
       const state = preapprovals.get(preapprovalId);
       if (state?.status !== 'authorized') throw new Error(NOT_AUTHORIZED_MESSAGE);
       const payment: PaymentDescription = {
-        paymentId: identifierFor('PAY', next()),
+        paymentId: identifierFor('PAY', next(), instance),
         externalReference: state.externalReference,
         preapprovalId,
         amountCents: state.amountCents,
@@ -293,7 +295,7 @@ export function createFakePaymentsGateway(
       const link = links.get(linkId);
       if (!link) throw new Error('El proveedor no tiene un enlace de pago con ese identificador.');
       const payment: PaymentDescription = {
-        paymentId: identifierFor('PAY', next()),
+        paymentId: identifierFor('PAY', next(), instance),
         externalReference: link.externalReference,
         linkId,
         amountCents: link.amountCents,
@@ -338,7 +340,7 @@ export function createFakePaymentsGateway(
           idempotencyKey,
           fingerprint,
           () => {
-            const preapprovalId = identifierFor('PRE', next());
+            const preapprovalId = identifierFor('PRE', next(), instance);
             const state: PreapprovalState = {
               preapprovalId,
               externalReference: request.externalReference,
@@ -419,6 +421,28 @@ export function createFakePaymentsGateway(
       return write(apply, signal);
     },
 
+    cancelPreapproval(
+      preapprovalId: string,
+      idempotencyKey: string,
+      signal?: AbortSignal,
+    ): Promise<CancelPreapprovalResult> {
+      const fingerprint = requestFingerprint('cancel', [preapprovalId]);
+      const apply = (): CancelPreapprovalResult =>
+        once<CancelPreapprovalResult>(
+          idempotencyKey,
+          fingerprint,
+          () => {
+            const state = preapprovals.get(preapprovalId);
+            if (!state) return { status: 'rejected', message: UNKNOWN_PREAPPROVAL_MESSAGE };
+            state.status = 'cancelled';
+            delete state.checkoutUrl;
+            return { status: 'cancelled', preapproval: describePreapproval(state) };
+          },
+          () => ({ status: 'rejected', message: KEY_REUSED_MESSAGE }),
+        );
+      return write(apply, signal);
+    },
+
     createPaymentLink(
       request: PaymentLinkRequest,
       idempotencyKey: string,
@@ -440,7 +464,7 @@ export function createFakePaymentsGateway(
           idempotencyKey,
           fingerprint,
           () => {
-            const linkId = identifierFor('LNK', next());
+            const linkId = identifierFor('LNK', next(), instance);
             const link: PaymentLinkDescription = {
               linkId,
               externalReference: request.externalReference,
@@ -517,7 +541,7 @@ export function createFakePaymentsGateway(
               return { status: 'rejected', message: REFUND_EXCEEDS_MESSAGE };
             }
             const refund: RefundDescription = {
-              refundId: identifierFor('RFD', next()),
+              refundId: identifierFor('RFD', next(), instance),
               amountCents: request.amountCents,
               createdAt: nowIso(),
             };

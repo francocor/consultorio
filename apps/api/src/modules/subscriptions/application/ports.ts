@@ -120,6 +120,12 @@ export type UpdatePreapprovalAmountResult =
   | { status: 'rejected'; message: string }
   | { status: 'retryable'; message: string; outcomeUnknown: boolean };
 
+export type CancelPreapprovalResult =
+  /** The preapproval is cancelled at the provider (also when it already was): nothing more is charged. */
+  | { status: 'cancelled'; preapproval: PreapprovalDescription }
+  | { status: 'rejected'; message: string }
+  | { status: 'retryable'; message: string; outcomeUnknown: boolean };
+
 export interface PaymentLinkRequest {
   externalReference: string;
   payerEmail: string;
@@ -275,6 +281,18 @@ export interface PaymentsGateway {
     idempotencyKey: string,
     signal?: AbortSignal,
   ): Promise<UpdatePreapprovalAmountResult>;
+
+  /**
+   * Stops the charges of a preapproval (the owner cancelled, or the period of a cancelled
+   * subscription ended). Cancelling is its own undo-proof: asking again for a preapproval that is
+   * cancelled gives the same answer, and after an unknown outcome `getPreapproval` says where it
+   * stands, so a resend is safe.
+   */
+  cancelPreapproval(
+    preapprovalId: string,
+    idempotencyKey: string,
+    signal?: AbortSignal,
+  ): Promise<CancelPreapprovalResult>;
 
   createPaymentLink(
     request: PaymentLinkRequest,

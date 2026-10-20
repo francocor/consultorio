@@ -12,6 +12,7 @@ import { audit, type AuditActor } from '../../../platform/audit/writer.js';
 import type { Tx } from '../../../platform/db/tenant-context.js';
 import { AppError } from '../../../platform/http/problem.js';
 import { AccessRefused, loadMember } from '../../access/index.js';
+import { assertProfessionalSeatAvailable } from '../../subscriptions/index.js';
 
 /** Format check of a registration for a jurisdiction, by the country pack of the organization. */
 export type MatriculaRules = (
@@ -136,6 +137,8 @@ export function createProfileService(deps: { rules: MatriculaRules }): ProfileSe
             .where(eq(professional.id, existing.id))
             .returning();
         } else {
+          // The first profile makes a member an active professional: it takes a seat of the plan.
+          await assertProfessionalSeatAvailable(tx);
           [row] = await tx
             .insert(professional)
             .values({

@@ -348,6 +348,64 @@ export function describePaymentsGatewayContract(target: PaymentsGatewayContractT
       });
     });
 
+    describe('cancelling a preapproval', () => {
+      it('stops it at the provider: it shows as cancelled, and cancelling again gives the same answer', async () => {
+        const { gateway, authorize } = await target.make();
+        const preapproval = created(
+          await gateway.createPreapproval(preapprovalRequest(), unique('key')),
+        );
+        await authorize(preapproval.preapprovalId);
+
+        const first = await gateway.cancelPreapproval(preapproval.preapprovalId, unique('key'));
+        const again = await gateway.cancelPreapproval(preapproval.preapprovalId, unique('key'));
+
+        expect(first.status).toBe('cancelled');
+        expect(first.status === 'cancelled' ? first.preapproval.status : '').toBe('cancelled');
+        expect(again.status).toBe('cancelled');
+        const lookup = await gateway.getPreapproval(preapproval.preapprovalId);
+        expect(lookup.status === 'found' ? lookup.preapproval.status : '').toBe('cancelled');
+      });
+
+      it('rejects a preapproval it does not know', async () => {
+        const { gateway } = await target.make();
+
+        const result = await gateway.cancelPreapproval('NOT-A-PREAPPROVAL', unique('key'));
+
+        expect(result.status).toBe('rejected');
+      });
+
+      it('asks to try again while it is down, and leaves the preapproval as it was', async () => {
+        const { gateway, authorize, setMode } = await target.make();
+        const preapproval = created(
+          await gateway.createPreapproval(preapprovalRequest(), unique('key')),
+        );
+        await authorize(preapproval.preapprovalId);
+        await setMode('down');
+
+        const result = await gateway.cancelPreapproval(preapproval.preapprovalId, unique('key'));
+
+        expect(result).toMatchObject({ status: 'retryable', outcomeUnknown: false });
+        await setMode('ok');
+        const lookup = await gateway.getPreapproval(preapproval.preapprovalId);
+        expect(lookup.status === 'found' ? lookup.preapproval.status : '').toBe('authorized');
+      });
+
+      it('can lose the answer after it cancelled: the lookup shows it, so a resend is not blind', async () => {
+        const { gateway, authorize, setMode } = await target.make();
+        const preapproval = created(
+          await gateway.createPreapproval(preapprovalRequest(), unique('key')),
+        );
+        await authorize(preapproval.preapprovalId);
+        await setMode('lose_answer');
+
+        const lost = await gateway.cancelPreapproval(preapproval.preapprovalId, unique('key'));
+
+        expect(lost).toMatchObject({ status: 'retryable', outcomeUnknown: true });
+        const lookup = await gateway.getPreapproval(preapproval.preapprovalId);
+        expect(lookup.status === 'found' ? lookup.preapproval.status : '').toBe('cancelled');
+      });
+    });
+
     describe('charges, payment links and refunds', () => {
       it('charges an authorized preapproval for its amount and shows the payment, found by the preapproval and by id', async () => {
         const { gateway, authorize, chargeCycle } = await target.make();

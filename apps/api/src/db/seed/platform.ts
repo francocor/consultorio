@@ -2,14 +2,15 @@ import type { Db } from '../../platform/db/pool.js';
 
 import { seedArHolidays } from './ar-holidays.js';
 import { seedArPayers } from './ar-payers.js';
+import { seedPlans } from './plans.js';
 
 /** Years of holidays kept loaded: last year (reports) up to two years ahead (scheduling). */
 const YEARS_BEFORE = 1;
 const YEARS_AFTER = 2;
 
 /**
- * Loads the platform catalogs every organization reads: the Argentine payers and the holidays of
- * the years around today. Idempotent. Platform tables are not writable by the runtime role, so this
+ * Loads the platform catalogs every organization reads: the Argentine payers, the holidays of
+ * the years around today and the starting plan. Idempotent. Platform tables are not writable by the runtime role, so this
  * runs on the owner connection, after the migrations (`pnpm db:migrate`).
  */
 export async function seedPlatformCatalogs(db: Db, now: Date = new Date()): Promise<void> {
@@ -20,4 +21,5 @@ export async function seedPlatformCatalogs(db: Db, now: Date = new Date()): Prom
   );
   await seedArPayers(db);
   await seedArHolidays(db, years);
+  await seedPlans(db);
 }

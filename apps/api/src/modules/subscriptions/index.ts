@@ -3,9 +3,8 @@
  * lifecycle from trial to cancelled, payments through the gateway, statements, usage and the
  * overage cap). Other modules and the composition root import from here only.
  *
- * This is the seam skeleton of Stage 6: the module is wired and registered, and does nothing yet.
- * The subscriptions track (Track A, S6.01 and S6.03 to S6.07) adds files under this folder and
- * edits this one. The gateway is the `paymentsGateway` port of the adapter resolver
+ * The subscriptions track (Track A, S6.01 and S6.03 to S6.07) fills the seam skeleton of Stage 6 in.
+ * The gateway is the `paymentsGateway` port of the adapter resolver
  * (`application/ports.ts` says how it must be called: it is not idempotent, and a request can still
  * be in flight after the caller gave up). The routes sit behind the `subscriptions` feature, so a
  * single-tenant deployment has none.
@@ -22,17 +21,29 @@ import type { EmailSender } from '../../platform/mail/email-sender.js';
 import type { ExportRegistry, TenantCancelledPort } from '../tenancy/index.js';
 
 import { exportSubscriptions } from './application/export-contributor.js';
-import { unbuiltTrialStarter, type TrialStarter } from './application/trial.js';
+import type { SubscriptionDeps } from './application/provider.js';
+import { gatewayOf, isSimulated } from './application/provider.js';
+import { subscriptionRoutes } from './http/subscription-routes.js';
+import { subscriptionWebhookRoutes } from './http/webhook-routes.js';
 
 export { createSubscriptionPlanImpact } from './application/plan-impact.js';
 export { createQuotaPolicy } from './application/quota-policy.js';
+export { takesProfessionalSeat } from './domain/active-professional.js';
+export { assertProfessionalSeatAvailable } from './application/seats.js';
+export { createTrialStarter } from './application/trial.js';
 export type { StartTrialResult, TrialStarter } from './application/trial.js';
+export { subscriptionOperatorRoutes } from './http/operator-routes.js';
+export {
+  createSubscriptionJobs,
+  DUNNING_STEP_JOB,
+  STATEMENT_GENERATE_JOB,
+  SUBSCRIPTION_RECONCILE_JOB,
+  TRIAL_END_JOB,
+  USAGE_SNAPSHOT_JOB,
+} from './jobs/subscription-jobs.js';
+export type { SubscriptionDeps } from './application/provider.js';
+export { isSimulated } from './application/provider.js';
 export type * from './application/ports.js';
-
-/** The trial door for the signup. Seam: refuses until S6.01 builds the real one. */
-export function createTrialStarter(): TrialStarter {
-  return unbuiltTrialStarter;
-}
 
 /** Registers what subscriptions takes with an organization that leaves: its statements. */
 export function registerSubscriptionsExportContributors(registry: ExportRegistry): void {
@@ -54,6 +65,8 @@ export interface SubscriptionsOptions {
   /** Says an organization was cancelled (the subscription reaching its end publishes through it). */
   tenantCancelled: TenantCancelledPort;
   clock?: () => Date;
+  /** How long a call to the provider is waited for before its outcome counts as unknown (20 s). */
+  providerTimeoutMs?: number | undefined;
 }
 
 export interface Subscriptions {
@@ -63,6 +76,38 @@ export interface Subscriptions {
   routes: (app: FastifyInstance) => void;
 }
 
+/** The services of the module are built with this: what the composition root offers. */
+export function depsOf(options: SubscriptionsOptions): SubscriptionDeps {
+  return {
+    withTenant: options.withTenant,
+    adapters: options.adapters,
+    jobs: options.jobs,
+    email: options.email,
+    origins: options.origins,
+    tenantCancelled: options.tenantCancelled,
+    clock: options.clock ?? (() => new Date()),
+    providerTimeoutMs: options.providerTimeoutMs,
+  };
+}
+
 export function createSubscriptions(options: SubscriptionsOptions): Subscriptions {
-  return { options, routes: () => undefined };
+  const deps = depsOf(options);
+  const registerOwnerRoutes = subscriptionRoutes({
+    deps,
+    simulated: () => isSimulated(gatewayOf(deps)),
+  });
+  const registerWebhook = subscriptionWebhookRoutes({
+    withTenant: options.withTenant,
+    gateway: () => gatewayOf(deps),
+    jobs: options.jobs,
+    clock: deps.clock,
+    providerTimeoutMs: options.providerTimeoutMs,
+  });
+  return {
+    options,
+    routes: (app) => {
+      registerOwnerRoutes(app);
+      registerWebhook(app);
+    },
+  };
 }

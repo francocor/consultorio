@@ -83,12 +83,21 @@ describe('the operator database role is an allowlist', () => {
       // The operator's own accounts, sessions and trail.
       'operator_session',
       'operator_user',
+      // The plans are platform data the operator maintains; the subscription is read for support
+      // (state, dates and counters, never a person; the provider's identifiers are not granted).
+      'plan',
+      'plan_entitlement',
       'platform_audit_event',
       // Matricula verification: the one write the operator makes on a professional.
       'professional',
+      'subscription',
+      'subscription_payment',
       'tenant',
       'tenant_feature',
       'tenant_key',
+      // The days of activity and the accepted messages per professional: counts, for the contract
+      // invoicing of a deployment that bills outside the platform and for support.
+      'usage_record',
     ]);
   });
 
