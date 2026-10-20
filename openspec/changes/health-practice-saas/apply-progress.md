@@ -2578,6 +2578,26 @@ Fresh-context review of `feat/stage-5-compliance-portal` at `f2d4f5f` (two judge
 - Docker: `infra/Dockerfile` built (`consultorio-api:jd5r4`, image `191d670bd1a5`); a fresh `postgres:17` (`76f2f5b7f6c7`) with `infra/postgres/init/01-roles.sql`; `db:migrate` twice (both: migrations applied, platform catalogs loaded; 109 migrations recorded); the image started with a production-like environment against that database (`de2f6ebb9243`): `/health` answered `{"status":"ok"}` and `/ready` 200. Both containers and the image were removed; nobody else's containers were touched.
 - Logs: `$TEMP/jd5r4-*.log`.
 
+## Judgment Day Stage 5, round 5
+
+Fresh-context review of `feat/stage-5-compliance-portal` at `d046962` (two judges, both found the same single real defect; everything else approved). Work started from `cef337b` (the e2e fix of another agent). No migration.
+
+### Items
+
+| Id | Fix | Test |
+| --- | --- | --- |
+| R5-1 | `expireNotices` set `invitation_opened_at` to the subquery maximum with no `IS NULL` filter. Since R4-1 an untold row can already carry an opening (row A opened at T1, a later row opened at T3, then A expires): the update moved A to T3 and the 0581 guard ("written once") raised 23000. `expireNotices` runs at the start of `sendRecordChangeNotices` with no try/catch, so the job threw on every tick and the notices of the whole organization stopped. Now the column is `coalesce(patient_record_change.invitation_opened_at, (select max(...)))`, and the two top-level give-up passes run in a try/catch that logs the error code (never an address) and goes on to the send loop. | `portal-record-change-round4.test.ts`, block "R5-1": (1) A untold and opened by an owner, a later row B opened by the owner, both aged 8 days, the sweep gives them up: no error, A and B keep their openings, another patient's recent notice is still sent, no address in the log. Red before: 23000 `what happened to a change is written once`. (2) `withTenant` that fails the first two transactions (the two give-up passes): the sweep does not throw, the notice is sent, the log holds no address. Red before: the sweep threw. |
+| Suggestion | `codes.ts`, comment of `REAL_WRITES`/`DECOY_WRITES`: the limited paths skip `enqueue`, which in production runs statements, so only "real and decoy match each other in every state" is claimed. `public-nondisclosure.test.ts`: the docblock says the same and the assertion `new Set(real).size === 1` (same across turns) is removed. | `public-nondisclosure.test.ts` (the `decoy` equals `real` turn by turn assertion stays) |
+| Suggestion | `public-routes.ts`, `contextOf`: the warning about a client with no known address is logged at most once a minute per organization (an in-memory map in the route registration). | `portal-unknown-client.test.ts` (two more requests after a warning add no line). Red before: 4 lines against 2. |
+
+### Verification (Node v24.22.0, pnpm 10.34.7, a machine shared with other agents)
+
+- `tsc --noEmit` (apps/api), `eslint apps/api/src/modules/portal apps/api/test`, `prettier --check apps/api`: green.
+- Unit (`apps/api`, `vitest run`): 237 files, 3059 tests passed and 1 skipped.
+- Integration (Testcontainers, Postgres 17), full run: 290 files, 287 passed, 1 skipped, 2 failed (`demo-reset.test.ts` x7 and `worker.test.ts` x1, under load); 4465 tests passed, 5 skipped. Both files pass alone (22 tests). All `portal-*` files, `public-nondisclosure` and the rest of the security suite are in the passing set.
+- Containers: the Postgres 17 and the Ryuk of my runs removed themselves; nobody else's container was touched.
+- Logs: `$TEMP/jd5r5-*.log`.
+
 ## Judgment Day Stage 4, round 2
 
 Fresh-context review of `feat/stage-4-revenue` at `7abca49` (diff `9cd11e9..7abca49`; two judges, no CRITICAL, both: NEEDS FIX). Seven findings confirmed by both (R2-1 to R2-7) were fixed; six suspect items (one judge) were reproduced with a failing test first. Strict TDD: each fix has a test that failed on the code before it (the run of `invoice-series.test.ts` against the old `issue-attempt.ts` and `pool.ts` failed 11 of 12 tests; `invoice-guard-races.test.ts` failed 4 of 6 before the migration). Race tests are real two-connection tests. Exceptions to "red first", all disclosed: the contract-suite tests and the web dialog test were written after the code they cover (the contract tests assert fields that did not exist, so they could not have passed); the test "credit note and void of the same charge" in `invoice-guard-races.test.ts` passes before and after (see R2-5).
