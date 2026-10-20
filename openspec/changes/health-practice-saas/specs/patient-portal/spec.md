@@ -120,6 +120,10 @@ The system MUST support a representative, being a portal identity with represent
 
 The portal trusts two facts that the staff can edit: the email of the patient's record and the birth date. Whenever either changes, the system MUST write the change in the same transaction, whoever makes it, and MUST notify the PREVIOUS email of the record (when there was one) with a notice that carries no link, no value and no name. For seven days after such a change, inviting the patient to the portal, inviting or linking a representative, restoring a suspended representative link, and registering through the public form MUST require an owner or an administrator (reception MUST be refused, and the refusal audited); the use of that exception by an owner or an administrator MUST be marked in the audit log.
 
+When a change of the email of a record gives an email to a record that had none (or whose previous email could not be told, because the notice failed or the week ended without it), nobody who knew the old record was warned, so the seven days are not enough: PUBLIC self-registration for that patient (document number and email, with no invitation) MUST stay closed until an owner or an administrator invites the patient, which is an explicit act and MUST be audited. Reception MUST NOT be able to open it. A representative for such a patient MUST be given by an owner or an administrator too. The notice to the previous email MUST be generic: it MUST NOT name a patient, a file or what changed, because the mailbox may belong to somebody who is not the patient. A notice that cannot be told MUST be retried a bounded number of times, then given up with an audit entry and a log line.
+
+A correction of the birth date of a patient MUST NOT extend the access of an existing representative: the day the link stops giving access is the earlier of the day it had and the one the new date gives. If an earlier day suspends the link, restoring it is the gated act for a minor. Restoring a suspended representative link MUST notify the email on the record like the first time.
+
 #### Scenario: Parent sees child appointments
 - GIVEN a verified representative linked to a minor
 - WHEN they select the minor in the portal
@@ -145,6 +149,17 @@ The portal trusts two facts that the staff can edit: the email of the patient's 
 - WHEN they then invite the patient or a representative to the portal, within seven days
 - THEN the system MUST refuse reception, and allow an owner or an administrator
 - AND the previous email of the record MUST have been told of the change, without a link
+
+#### Scenario: A record that had no email is given one
+- GIVEN a patient whose record had no email, and a member of reception who sets one
+- WHEN, after more than seven days, somebody registers through the public form with the document number and that email
+- THEN no code MUST be sent, and the answer MUST be the same as for any other mismatch
+- AND reception MUST be refused when it invites the patient, while an owner or an administrator MUST be able to, which opens the registration and writes `portal.registration.opened`
+
+#### Scenario: A later birth date
+- GIVEN a representative of a minor who turns 18 on a given day
+- WHEN reception corrects the birth date to a later one
+- THEN the representative MUST lose access on the original day
 
 #### Scenario: Minor with no email on the record
 - GIVEN a minor whose record has no email

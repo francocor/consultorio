@@ -14,6 +14,10 @@ not be run; **nothing in Stage 2 or later depends on it**.
 | Configuration    | Every variable is documented in `docs/dev-setup.md` and in `.env.example`; the application refuses to start in production with the local KEK, insecure cookies or static storage keys.                   |
 | Local equivalent | `pnpm demo:stack` runs everything (Postgres, MinIO, Mailpit, API, worker, two demo organizations) with only Docker; `docker compose --profile app up --build` runs the production image locally.         |
 
+## Before running more than one instance of the API
+
+The counters of the public routes (the rate limits of the portal, of the booking and of the waitlist, the tries at a code) live in the MEMORY of each API process (`platform/http/rate-limit.ts`, the memory store). With one instance that is exact; with N instances behind a balancer each one counts on its own, so the real allowance is up to N times the written one. **TODO for the first multi-instance deployment: give `rateLimitStore` a shared store (Redis or Postgres) before scaling out.** The limits that protect a person stay in the database whatever the store does (three sends an hour per address, five tries per challenge and twenty in all), so the hole is in the per-client limits only. A client whose address is not known is counted by its user agent too (JD-S5 R3-7), so a clinic behind one address is not one bucket.
+
 ## What the owner has to provide
 
 1. The cloud account and region (Q1), and the managed Postgres 17 with the roles of

@@ -8,7 +8,7 @@
   "signIn.switchAction": "Activar mi acceso",
 
   "register.title": "Activar mi acceso",
-  "register.description": "Escriba su DNI y el correo electrónico que le dio al consultorio. Si coinciden con su ficha, le enviamos un código a ese correo.",
+  "register.description": "Escriba su DNI y el correo electrónico que le dio al consultorio. Si coinciden con su ficha, le enviamos un código a ese correo. Si no lo recibe, o cambió su correo hace poco, comuníquese con el consultorio.",
   "register.nationalId": "DNI",
   "register.nationalIdInvalid": "Escriba su DNI con 7 u 8 números.",
   "register.email": "Correo electrónico que le dio al consultorio",
