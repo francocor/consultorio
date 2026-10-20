@@ -1,0 +1,125 @@
+# Alert rules of the platform, as code (task 6.45). They read the series the application exposes on its
+# /metrics port (apps/api/src/platform/metrics-catalog.ts is the list and says what each one means).
+# Two checks keep this file honest: a test (apps/api/test/policy/alert-rules.test.ts) fails when a rule
+# reads a name that is not in the catalog or has no severity, summary and runbook, and the CI job
+# "Alert rules" runs promtool over it. What to do when each one fires is in docs/runbooks/incident.md
+# (the runbook field names the section).
+groups:
+  - name: audit
+    rules:
+      - alert: AuditChainBroken
+        expr: 'sum(audit_chain_break_total) > 0 or sum(platform_audit_chain_break_total) > 0'
+        for: 0m
+        labels:
+          severity: critical
+        annotations:
+          summary: 'The nightly verification found a break in an audit chain'
+          runbook: 'docs/runbooks/incident.md#audit-chain-broken'
+      - alert: AuditSealingLate
+        expr: 'max(audit_oldest_unsealed_seconds) > 300'
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: 'Audit events have waited more than five minutes to be sealed'
+          runbook: 'docs/runbooks/incident.md#audit-sealing-late'
+
+  - name: queues
+    rules:
+      - alert: QueueWaitingTooLong
+        expr: 'max by (queue) (queue_oldest_waiting_seconds) > 900'
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: 'A queue has a job that has waited more than fifteen minutes'
+          runbook: 'docs/runbooks/incident.md#a-queue-is-stuck'
+      - alert: QueueDeep
+        expr: 'sum by (queue) (queue_jobs{state="created"}) > 500'
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: 'A queue holds more than five hundred jobs waiting'
+          runbook: 'docs/runbooks/incident.md#a-queue-is-stuck'
+      - alert: MetricsCollectorSilent
+        expr: 'time() - platform_metrics_collected_at_seconds > 300'
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: 'The worker has not measured the platform for five minutes'
+          runbook: 'docs/runbooks/incident.md#the-worker-is-silent'
+      - alert: WorkerDown
+        expr: 'up{job="consultorio-worker"} == 0'
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: 'The worker does not answer the scraper'
+          runbook: 'docs/runbooks/incident.md#the-worker-is-silent'
+
+  - name: messages
+    rules:
+      - alert: ReminderFailureRateHigh
+        expr: 'sum(messages_last_day{status="failed"}) / clamp_min(sum(messages_last_day), 1) > 0.2 and sum(messages_last_day) >= 20'
+        for: 30m
+        labels:
+          severity: warning
+        annotations:
+          summary: 'More than a fifth of the messages of the last day failed'
+          runbook: 'docs/runbooks/incident.md#reminders-are-failing'
+      - alert: BookingAbuse
+        expr: 'sum(increase(booking_suspicious_total[10m])) > 100'
+        for: 0m
+        labels:
+          severity: warning
+        annotations:
+          summary: 'The public booking form is being hit by suspicious requests'
+          runbook: 'docs/runbooks/incident.md#reminders-are-failing'
+
+  - name: invoicing-and-documents
+    rules:
+      - alert: InvoicesPendingPastOutageThreshold
+        expr: 'invoices_pending_past_threshold > 0'
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: 'Invoices are still pending after the outage threshold of their organization'
+          runbook: 'docs/runbooks/afip-outage.md'
+      - alert: DocumentScanBacklog
+        expr: 'documents_scan_oldest_waiting_seconds > 3600'
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: 'A document has waited more than an hour for the malware scan'
+          runbook: 'docs/runbooks/incident.md#documents-wait-for-the-scan'
+      - alert: DocumentScanOverdue
+        expr: 'increase(document_scan_overdue_total[1h]) > 0'
+        for: 0m
+        labels:
+          severity: warning
+        annotations:
+          summary: 'The worker reported documents that waited too long for the scan'
+          runbook: 'docs/runbooks/incident.md#documents-wait-for-the-scan'
+
+  - name: subscriptions
+    rules:
+      - alert: SubscriptionsAboutToBeReadOnly
+        expr: 'sum(subscription_dunning_step{step="3"}) > 0'
+        for: 0m
+        labels:
+          severity: info
+        annotations:
+          summary: 'Organizations have had every reminder of the dunning and are about to become read-only'
+          runbook: 'docs/runbooks/incident.md#subscriptions-in-dunning'
+      - alert: SubscriptionsReadOnly
+        expr: 'subscriptions{status="read_only"} > 0'
+        for: 0m
+        labels:
+          severity: info
+        annotations:
+          summary: 'Organizations are read-only for lack of payment'
+          runbook: 'docs/runbooks/incident.md#subscriptions-in-dunning'

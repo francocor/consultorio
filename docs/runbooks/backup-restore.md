@@ -65,6 +65,54 @@ bucket, then it checks that each organization still sees only its own rows, that
 security and the policies are the same as the source, that the PDF is byte for byte equal, and that a
 tampered dump or an existing database name is refused. It runs with the rest of `pnpm test:integration`.
 
+### The drill in one command
+
+```bash
+pnpm infra:up
+pnpm demo:seed                                  # or any database with data and a sealed audit trail
+pnpm drill:restore                              # add --keep to leave the scratch copy to look at
+```
+
+`pnpm drill:restore` (task 6.44) does the whole drill of the checklist below that a script can do, and
+prints a report that is the evidence to record:
+
+1. counts the rows of every table of the live database, takes the backup (`pg_dump` and the bucket), and
+   counts again, because a live database moves while it is dumped;
+2. keeps the backup in the object store (MinIO, bucket `consultorio-backups`, under
+   `drill/backup-<timestamp>/`) and **reads it back from there**: what is proven is the copy that is
+   kept, not the one still on the disk of whoever took it;
+3. verifies the checksums, restores into a scratch database (`drill_<timestamp>_<random>`) and a
+   scratch bucket, never over a live one;
+4. compares the rows of every table of the copy with the source: each count must lie between the count
+   before and the count after the dump (on a quiet database, exactly the same), and no table may be
+   missing or extra;
+5. walks the **chain of audit events of every organization and of the platform** from the first event
+   (the same verification as the worker's nightly job). A trail that was altered before the dump is a
+   faithful dump of an altered trail, which no checksum can tell; the chains can. A drill that verified
+   no event at all fails, because it proved nothing;
+6. drops the scratch database and bucket, unless `--keep`, and exits with 0 only if everything passed.
+
+The report is also written to `backups/drill-<timestamp>.txt` (names of tables, counts and ids; no
+patient data), so it can go in the operations log as it is. This is the report of the integration test
+`restore-drill.test.ts` on the demo organization, as a sample of what to expect:
+
+```text
+Restore drill PASSED (5.0 s, started 2026-10-20T15:30:00.000Z)
+
+Backup   backup-20261020T153000Z: database 1080174 bytes, 1 objects
+Store    drill-backups/drill/backup-20261020T153000Z: 4 files written and read back
+Restore  drill_20261020t153000z_bc1722: 128 tables, 1 objects
+Counts   124 tables compared, 1991 rows in the copy, 0 differences
+Chains   1 of 1 organizations with events: 701 events verified, platform trail 0 events verified
+```
+
+`apps/api/test/integration/restore-drill.test.ts` runs it on throwaway containers with the demonstration
+organization and its trail sealed. The same test alters one sealed event of the source before the dump
+and shows the drill FAIL: the chain of that organization breaks at event 3 (`hash_mismatch`) while every
+count still matches. What the script cannot do is the checklist below that needs a person: start the
+application against the copy and sign in (4, 5), open a document and check the key (5, 7), and record
+the time it took against the RTO (8).
+
 ## Production (the design the infrastructure must meet)
 
 | Layer            | Requirement                                                                                                                                                                                          |
@@ -89,7 +137,8 @@ the results in the operations log; a drill nobody recorded did not happen.
 5. [ ] Open a patient, a signed clinical note (decrypts: the KEK works), a document (downloads, the
        bytes match its recorded SHA-256) and the audit trail.
 6. [ ] Run the audit verification job: every chain of the restored copy must verify from its first
-       event. A broken chain after a restore means the copy is not faithful.
+       event. A broken chain after a restore means the copy is not faithful. (`pnpm drill:restore`
+       does it for the local environment; in production the same verification runs on the copy.)
 7. [ ] Check isolation: two organizations, each sees only its own rows (the policies came across).
 8. [ ] Record the time it took (RTO) and the age of the newest row in the copy (RPO).
 9. [ ] Destroy the isolated environment and its bucket.

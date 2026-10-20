@@ -100,6 +100,20 @@ jobs:
       # performance is under 0.85, accessibility is under 0.95 or the layout shifts too much.
       - run: pnpm exec lhci autorun
 
+  alert-rules:
+    name: Alert rules (promtool)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      # The rules are code (infra/alerts/rules.yml). Prometheus itself checks their syntax and the scrape
+      # configuration that loads them; the unit test alert-rules.test.ts checks that they read only
+      # series the application exposes.
+      - name: Check the rules and the scrape configuration
+        run: |
+          docker run --rm -v "$PWD/infra:/infra:ro" --entrypoint promtool prom/prometheus:v3.5.0 check rules /infra/alerts/rules.yml
+          docker run --rm -v "$PWD/infra:/etc/prometheus:ro" --entrypoint promtool prom/prometheus:v3.5.0 check config /etc/prometheus/prometheus/prometheus.yml
+
   audit:
     name: Dependency audit
     runs-on: ubuntu-latest
