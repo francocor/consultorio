@@ -159,7 +159,7 @@ To try the production image locally: `docker compose --env-file .env -f infra/do
 | Command                                         | What it does                                                                                                                                                   |
 | ----------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `pnpm typecheck`                                | TypeScript across all packages                                                                                                                                 |
-| `pnpm lint` / `pnpm format:check`               | ESLint and Prettier (`pnpm format` fixes formatting)                                                                                                           |
+| `pnpm lint` / `pnpm format:check`               | ESLint (in several processes, see below) and Prettier (`pnpm format` fixes formatting)                                                                         |
 | `pnpm test`                                     | Unit tests (Vitest: api and contracts in Node, web in jsdom)                                                                                                   |
 | `pnpm test:coverage`                            | Same, with a v8 coverage report in `coverage/`                                                                                                                 |
 | `pnpm test:integration`                         | Integration tests against a real Postgres 17 (needs Docker)                                                                                                    |
@@ -173,6 +173,8 @@ To try the production image locally: `docker compose --env-file .env -f infra/do
 | `pnpm db:check`                                 | Fails when the migration journal is unsound (a stamp that does not rise, a duplicate or out-of-range number) or the Drizzle schema and the migrations disagree |
 | `pnpm db:new <track> <name>`                    | Creates the next migration of a track, in its range (`docs/migration-ranges.md`)                                                                               |
 | `pnpm db:restamp`                               | After a merge or a rebase: raises stamps that do not rise and re-chains the snapshots                                                                          |
+
+**Why `pnpm lint` runs more than one process.** The type-aware rules keep the TypeScript program of a package in memory, and what they resolve grows with every file linted: one `eslint .` over the whole repository ran out of the 4 GB of heap that Node gives a process. `packages/config/eslint/lint.js` plans slices of at most 300 files from the files on disk (so a new folder is covered without editing a list) and lints them one after the other, each in a process of its own; the heaviest slice peaks at about 2.5 GB. Flags go to ESLint (`pnpm lint --fix`); name files or folders (`pnpm lint apps/web/src/features/audit`) and ESLint lints just those, in one process. Do not raise the heap to get around an out-of-memory error: lower `MAX_FILES_PER_SHARD` in `packages/config/eslint/shards.js`.
 
 Migrations are forward-only. Never edit a migration that has been merged; add a new one.
 
@@ -192,4 +194,5 @@ The preview server's Content Security Policy allows the storage origin (`CSP_CON
 - **Install fails with an engine error**: your Node is older than 24. Use `nvm use` (reads `.nvmrc`) or install Node 24.
 - **`pnpm` is the wrong version**: run `corepack enable`, or call `corepack pnpm ...` explicitly.
 - **Integration tests say "Could not find a working container runtime"**: start Docker Desktop.
+- **A unit test does not see a file I just added** (a fixture, a route or navigation entry of a feature, a locale file, a `no-delete` list): those registries are found with `import.meta.glob`, and Vitest keeps the transform of the file that holds the glob. Remove `node_modules/.vitest-cache` and run again. The demo coverage test reads its exemptions from the folder (`discoverModules`) and the fixtures and `no-delete` registries are checked against the folder by `test/policy/discover-modules.test.ts`, which names this step when it finds a stale one. A fresh checkout (CI) is never affected.
 - **Port already in use** (another Postgres or MinIO container is common): change the matching `*_PORT` variable in `.env`, and the port inside `DATABASE_URL` and `MIGRATION_DATABASE_URL` if you changed `POSTGRES_PORT`.
