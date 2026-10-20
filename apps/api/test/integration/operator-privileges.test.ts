@@ -73,6 +73,9 @@ describe('the operator database role is an allowlist', () => {
     expect(await tablesTouchedByOperator()).toEqual([
       // Creating an organization: its row, data key, owner invitation and first audit entry.
       'action_token',
+      // Stage 6: the break-glass release requests (record, verify the identity, approve). The operator
+      // reads the requester's identity to verify it and writes none of the delivery: never content.
+      'archive_release_request',
       'audit_event',
       // Stage 6: the operator asks for the administrative package of the organization it cancels
       // (one row, queued) and reads the state of the packages. No file name, no key, no clinical one.

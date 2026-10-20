@@ -44,12 +44,13 @@ const ELSEWHERE: Partial<Record<TokenKind, string>> = {
   invoice_pdf: 'test/integration/invoice-render.test.ts (`/files/:token`, session bound)',
   prescription_pdf: 'test/integration/prescription-access.test.ts (`/files/:token`, session bound)',
   cancellation_export:
-    'S6.08 (the retention track writes the cancellation export test; `/files/:token`, session bound)',
+    'test/integration/cancellation-export.test.ts (`/files/:token`, session bound)',
   staff_invitation: 'test/integration/invitation-accept.test.ts (the invitation page of the app)',
   password_reset: 'test/integration/auth-routes.test.ts (the recovery routes)',
   signup_verification: 'test/integration/onboarding-api.test.ts (the signup verification)',
   portal_activation: 'Stage 5 (the patient portal is not built yet; the kind is disabled)',
-  archive_release: 'Stage 5 (the kind is disabled)',
+  archive_release:
+    'test/integration/archive-release.test.ts (`/public/:slug/archive-release/:token`, single use, 72 hours)',
 };
 
 /** Kinds this file probes through the router, with what pressing the button does. */

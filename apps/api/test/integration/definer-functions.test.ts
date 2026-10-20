@@ -88,6 +88,12 @@ const ALLOWED: Record<string, readonly string[]> = {
   'app.archive_verify_due(integer,integer)': ['app_rw'],
   'app.write_archive_audit(text,text,uuid,text,jsonb)': ['app_rw'],
   'app.archive_overview(integer)': ['app_operator'],
+  // The approved release requests the releaser has to carry out (ids and the organization only).
+  'app.archive_release_due(integer)': ['app_rw'],
+  // The released packages whose link ended before anybody downloaded them (ids only).
+  'app.archive_release_cleanup_due(integer)': ['app_rw'],
+  // Whether an organization has a written archive: all the operator may ask before recording a release.
+  'app.archive_is_written(uuid)': ['app_operator'],
 };
 
 let owner: pg.Client;
