@@ -3134,3 +3134,19 @@ Merge of `origin/feat/stage-4-revenue` at `b3e47fd` (Stage 4 Judgment Day approv
 
 - The Stage 4 entries `0480` to `0486`/`0497` now sit before Stage 5's `0505` and later, so a development database that applied Stage 5 before this merge would not re-run them in order; fresh databases (CI, Docker, tests) are unaffected. Nothing of Stage 5 is released.
 - `prescription-issue.test.ts` has a rare birthday collision in its generated DNI (see above); not caused by the merge, not fixed here.
+
+## Stage 5 Judgment Day: APPROVED (round 5, 2026-10-20)
+
+Both judges approved the Stage 5 Judgment Day after five rounds. The last real defect, R5-1, was fixed in 5e1ac48 exactly as both judges asked (a coalesce plus a guarded give-up pass), with a test that failed before the fix. The defect: giving up a notice overwrote an opening that the guard writes only once.
+
+The rounds closed these problems:
+
+- A nested transaction that could exhaust the connection pool.
+- The portal reading clinical tables as the system user.
+- A staff path to an adult's clinical content through portal invitations. It is now closed by the owner-confirmed 7-day rule, the record-change notice, and a registration that needs an owner or administrator invitation.
+- Decoy codes that could cancel or rate-limit a real one.
+- Prescriptions issued twice while a request was still in flight. Fixed with a write-ahead mark, a pin, a lease token, and a phased cancel and register.
+- The signature mark and the signer.
+- The majority boundary.
+
+See the per-round sections above. Task 5.51 is done. Tasks 5.53 and 5.54 stay deferred until there is a real e-prescription provider.
