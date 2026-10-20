@@ -20,6 +20,12 @@ import {
   STAGE5_WRITTEN_OUTSIDE_ROUTES,
   findStage5AuditProblems,
 } from './stage5-audit.js';
+import {
+  STAGE6_AUDIT_ACTIONS,
+  STAGE6_NO_AUDIT_ON_PURPOSE,
+  STAGE6_WRITTEN_OUTSIDE_ROUTES,
+  findStage6AuditProblems,
+} from './stage6-audit.js';
 
 /**
  * Audit coverage (audit-log, "Mandatory events"). Two rules keep the trail honest as the product
@@ -268,6 +274,80 @@ describe('the audit trail of Stage 5', () => {
       expect(findStage5AuditProblems(routes)).toEqual([
         'POST /webhooks/erx is listed as auditing nothing but it declares prescription.cancelled',
         'consent.read is listed as written outside the routes but POST /portal/more declares it',
+      ]);
+    });
+  });
+});
+
+/**
+ * Stage 6 (the subscription, the signup, the cancellation of an organization). What an owner is
+ * charged, who accepted which terms and who took the records away are what an owner shows an
+ * accountant or a court, so:
+ *
+ * - every action of Stage 6 is proven by a test (never "pending") that also reads the trail back;
+ * - every action is written by a route, or says which other writer owns it;
+ * - a route of these modules that changes something declares what it audits, and the few that audit
+ *   nothing say why.
+ */
+describe('the audit trail of Stage 6', () => {
+  it('has a scenario for every action of the subscription, the signup and the cancellation, none of them pending', () => {
+    expect(STAGE6_AUDIT_ACTIONS.length).toBeGreaterThanOrEqual(12);
+    for (const action of STAGE6_AUDIT_ACTIONS) {
+      const scenario = AUDIT_SCENARIOS[action];
+
+      expect('test' in scenario, `${action} is still pending`).toBe(true);
+      if (!('test' in scenario)) continue;
+      const text = readFileSync(`${REPO}${scenario.test}`, 'utf8');
+      expect(text, `${scenario.test} does not read the audit trail back`).toMatch(
+        /auditEvent|audit_event|auditRows|audit\(|actions\b|trail/i,
+      );
+    }
+  });
+
+  it('finds an author for every action: a route declares it, or the table names the other writer', async () => {
+    const routes = await realRoutes();
+
+    expect(findStage6AuditProblems(routes)).toEqual([]);
+  });
+
+  describe('the check itself', () => {
+    const declared = (extra: Record<string, Declared> = {}) => {
+      const routes = new Map<string, Declared>();
+      for (const action of STAGE6_AUDIT_ACTIONS) {
+        if (action in STAGE6_WRITTEN_OUTSIDE_ROUTES) continue;
+        routes.set(`POST /subscription/${action}`, [action]);
+      }
+      for (const route of Object.keys(STAGE6_NO_AUDIT_ON_PURPOSE)) routes.set(route, 'none');
+      for (const [route, audits] of Object.entries(extra)) routes.set(route, audits);
+      return routes;
+    };
+
+    it('accepts a complete picture', () => {
+      expect(findStage6AuditProblems(declared())).toEqual([]);
+    });
+
+    it('flags a route that declares nothing, one that audits nothing without saying why, and an action nobody writes', () => {
+      const routes = declared({
+        'POST /subscription/new-thing': undefined,
+        'POST /public/signup/unexplained': 'none',
+      });
+      routes.delete('POST /subscription/subscription.cap_changed');
+
+      expect(findStage6AuditProblems(routes)).toEqual([
+        'POST /subscription/new-thing declares nothing about its audit trail',
+        'POST /public/signup/unexplained audits nothing and the table does not say why',
+        'subscription.cap_changed is written by no route and no other writer is named for it',
+      ]);
+    });
+
+    it('flags a table entry that went stale', () => {
+      const routes = declared();
+      routes.set('POST /webhooks/mercadopago', ['subscription.state_changed']);
+      routes.set('POST /subscription/more', ['subscription.surplus_flagged']);
+
+      expect(findStage6AuditProblems(routes)).toEqual([
+        'POST /webhooks/mercadopago is listed as auditing nothing but it declares subscription.state_changed',
+        'subscription.surplus_flagged is listed as written outside the routes but POST /subscription/more declares it',
       ]);
     });
   });

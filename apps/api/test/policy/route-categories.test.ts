@@ -17,6 +17,7 @@ import {
   LINK_ONLY_ROUTES,
   STAGE5_ROUTES,
 } from './stage5-routes.js';
+import { findStage6RouteProblems, isStage6Route, STAGE6_ROUTES } from './stage6-routes.js';
 
 /**
  * Every route of the real application (all feature routes enabled, multi mode) must declare a
@@ -209,5 +210,98 @@ describe('the routes of Stage 5', () => {
       'POST /public/:slug/portal/register/verify auth',
       'POST /webhooks/erx webhook',
     ]);
+  });
+});
+
+/**
+ * Stage 6 (signup, the subscription and its payments, the cancellation export, the retention
+ * archive): the categories are listed route by route in `stage6-routes.ts`. A new route of these
+ * modules fails here until somebody decides its category, and what stays open in a read-only
+ * organization is exactly what lets the owner pay, cancel and take the records away.
+ */
+describe('the routes of Stage 6', () => {
+  async function stage6Routes() {
+    const db = createRuntimeDb('postgres://nobody:nothing@127.0.0.1:1/none');
+    // With the operator console, so the routes of the subscriptions and of the archive exist too.
+    const app = buildTestApplication(db, {
+      operator: {
+        database: db,
+        secrets: createOperatorSecrets(
+          createLocalKeyManagement(randomBytes(32).toString('base64')),
+        ),
+      },
+    });
+    await app.ready();
+    const routes = new Map(app.routeCategories);
+    await app.close();
+    return routes;
+  }
+
+  it('lists every route of these modules with the category the table gives it', async () => {
+    const routes = await stage6Routes();
+
+    const registered = [...routes.keys()].filter((key) => isStage6Route(key));
+    expect(registered.length).toBeGreaterThan(40);
+    expect(findStage6RouteProblems(routes)).toEqual([]);
+  });
+
+  it('refuses a route that is not in the table, one that went missing and one in the wrong category', () => {
+    const routes = new Map<string, RouteCategory>(
+      Object.entries(STAGE6_ROUTES).map(([key, category]) => [key, category]),
+    );
+    routes.set('POST /subscription/surprise', 'subscription');
+    routes.delete('GET /subscription/usage');
+    routes.set('POST /subscription/checkout', 'write');
+    routes.set('POST /subscription/cancel', 'read');
+
+    expect(findStage6RouteProblems(routes)).toEqual([
+      'POST /subscription/surprise is registered but not in the table of Stage 6 routes',
+      'GET /subscription/usage is in the table but not registered',
+      'POST /subscription/checkout is filed as "write" but the table says "subscription"',
+      'POST /subscription/cancel is filed as "read" but the table says "subscription"',
+      'POST /subscription/cancel changes data and is filed as "read", which a read-only organization may call',
+    ]);
+  });
+
+  it('never files a change as a read, and never a read as a change', () => {
+    const wrong = Object.entries(STAGE6_ROUTES).filter(([key, category]) => {
+      const reads = key.startsWith('GET ');
+      return reads ? category !== 'read' && category !== 'export' : category === 'read';
+    });
+
+    expect(wrong).toEqual([]);
+  });
+
+  it('keeps open in a read-only organization only the way out of it, the records and the notices', () => {
+    const open = Object.entries(STAGE6_ROUTES)
+      .filter(([key, category]) => !key.startsWith('GET ') && category !== 'write')
+      .map(([key, category]) => `${key} ${category}`)
+      .sort();
+
+    expect(open).toEqual([
+      'PATCH /subscription/overage-cap subscription',
+      'POST /cancellation/export/administrative/download export',
+      'POST /cancellation/export/clinical/download export',
+      'POST /public/:slug/archive-release/:token export',
+      'POST /public/signup auth',
+      'POST /public/signup/renew auth',
+      'POST /public/signup/resend auth',
+      'POST /public/signup/verify auth',
+      'POST /subscription/cancel subscription',
+      'POST /subscription/checkout subscription',
+      'POST /subscription/plan subscription',
+      'POST /subscription/reactivate subscription',
+      'POST /subscription/retry-payment subscription',
+      'POST /webhooks/mercadopago webhook',
+    ]);
+  });
+
+  it('files the console of the operator as changes of the platform, never as something a tenant may reach', () => {
+    const operator = Object.entries(STAGE6_ROUTES).filter(([key]) => key.includes(' /operator/'));
+
+    expect(operator.length).toBeGreaterThanOrEqual(10);
+    expect(
+      operator.filter(([key, category]) => !key.startsWith('GET ') && category !== 'write'),
+    ).toEqual([]);
   });
 });
