@@ -1,8 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import type { Tx } from '../../platform/db/tenant-context.js';
 import { UNLIMITED_QUOTA } from '../notifications/index.js';
-import { noPlanImpact } from '../onboarding/index.js';
 
 import {
   createQuotaPolicy,
@@ -11,33 +9,21 @@ import {
   createTrialStarter,
 } from './index.js';
 
-const tx = {} as Tx;
-
-// Seam skeleton of Stage 6: the doors other modules call exist and answer "no effect" until the
-// subscriptions track (A) fills them in. They are what keeps a single-tenant deployment unchanged.
+// The doors other modules call exist and are built without a database. What they do against a real
+// database is proven in `test/integration/subscription-state.test.ts` and its neighbours.
 describe('the doors of the subscriptions module', () => {
-  it('lets every invitation through unchanged until subscriptions exist: the plan is not affected', async () => {
-    const impact = createSubscriptionPlanImpact();
-
-    expect(await impact.preview(tx, { roles: ['professional'] })).toEqual(
-      await noPlanImpact.preview(tx, { roles: ['professional'] }),
-    );
-    expect(await impact.preview(tx, { roles: ['reception', 'admin'] })).toEqual({
-      affectsPlan: false,
-    });
+  it('builds the three doors the other modules call', () => {
+    expect(typeof createTrialStarter().startTrial).toBe('function');
+    expect(typeof createSubscriptionPlanImpact().preview).toBe('function');
+    expect(typeof createQuotaPolicy().limitFor).toBe('function');
   });
 
-  it('applies no quota until the plan supplies one: the Stage 3 policy of counting only', () => {
+  it('keeps the Stage 3 policy of counting only until the plan supplies a quota', () => {
+    // Replaced by the plan's quota in S6.06; this guards the rollback of that slice.
     expect(createQuotaPolicy()).toBe(UNLIMITED_QUOTA);
   });
 
-  it('refuses to start a trial it cannot start, instead of activating an organization with no plan', async () => {
-    await expect(createTrialStarter().startTrial(tx, { tenantId: 'org-1' })).rejects.toThrow(
-      /S6\.01/,
-    );
-  });
-
-  it('builds a module that serves no route yet and keeps what it was given for the track', () => {
+  it('builds a module with the routes of the owner and keeps what it was given for the track', () => {
     const options = {
       withTenant: (() => undefined) as never,
       auditDeny: (() => undefined) as never,

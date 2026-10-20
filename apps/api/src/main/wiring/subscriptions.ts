@@ -1,6 +1,9 @@
 import { createFakePaymentsGateway } from '../../adapters/mercadopago-fake/index.js';
 import type { FakePaymentsGateway } from '../../adapters/mercadopago-fake/index.js';
-import { createSubscriptions } from '../../modules/subscriptions/index.js';
+import {
+  createSubscriptions,
+  subscriptionOperatorRoutes,
+} from '../../modules/subscriptions/index.js';
 import { adapterOfSetting } from '../../platform/local-providers/dev-routes.js';
 import { fake } from '../adapter-resolver.js';
 import type { Config } from '../config.js';
@@ -53,6 +56,8 @@ export const subscriptionsWiring: ModuleWiring = {
   ],
   // A checkout, a plan change and the cancellation are made in a request and followed up by jobs.
   needsJobs: true,
+  // The support view of the subscriptions, inside the operator console (behind its session).
+  operatorRoutes: (context) => subscriptionOperatorRoutes({ run: context.run }),
   create: (context) => {
     const subscriptions = createSubscriptions({
       withTenant: context.withTenant,

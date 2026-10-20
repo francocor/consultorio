@@ -3,9 +3,8 @@
  * lifecycle from trial to cancelled, payments through the gateway, statements, usage and the
  * overage cap). Other modules and the composition root import from here only.
  *
- * This is the seam skeleton of Stage 6: the module is wired and registered, and does nothing yet.
- * The subscriptions track (Track A, S6.01 and S6.03 to S6.07) adds files under this folder and
- * edits this one. The gateway is the `paymentsGateway` port of the adapter resolver
+ * The subscriptions track (Track A, S6.01 and S6.03 to S6.07) fills the seam skeleton of Stage 6 in.
+ * The gateway is the `paymentsGateway` port of the adapter resolver
  * (`application/ports.ts` says how it must be called: it is not idempotent, and a request can still
  * be in flight after the caller gave up). The routes sit behind the `subscriptions` feature, so a
  * single-tenant deployment has none.
@@ -22,17 +21,16 @@ import type { EmailSender } from '../../platform/mail/email-sender.js';
 import type { ExportRegistry, TenantCancelledPort } from '../tenancy/index.js';
 
 import { exportSubscriptions } from './application/export-contributor.js';
-import { unbuiltTrialStarter, type TrialStarter } from './application/trial.js';
+import { subscriptionRoutes } from './http/subscription-routes.js';
 
 export { createSubscriptionPlanImpact } from './application/plan-impact.js';
 export { createQuotaPolicy } from './application/quota-policy.js';
+export { takesProfessionalSeat } from './domain/active-professional.js';
+export { assertProfessionalSeatAvailable } from './application/seats.js';
+export { createTrialStarter } from './application/trial.js';
 export type { StartTrialResult, TrialStarter } from './application/trial.js';
+export { subscriptionOperatorRoutes } from './http/operator-routes.js';
 export type * from './application/ports.js';
-
-/** The trial door for the signup. Seam: refuses until S6.01 builds the real one. */
-export function createTrialStarter(): TrialStarter {
-  return unbuiltTrialStarter;
-}
 
 /** Registers what subscriptions takes with an organization that leaves: its statements. */
 export function registerSubscriptionsExportContributors(registry: ExportRegistry): void {
@@ -63,6 +61,19 @@ export interface Subscriptions {
   routes: (app: FastifyInstance) => void;
 }
 
+/** Who the payments gateway belongs to: nobody. The resolver only needs to know it is not a demo. */
+const PLATFORM_TENANT_ID = '00000000-0000-0000-0000-000000000000';
+
 export function createSubscriptions(options: SubscriptionsOptions): Subscriptions {
-  return { options, routes: () => undefined };
+  const clock = options.clock ?? (() => new Date());
+  const gateway = () =>
+    options.adapters?.forTenant({ id: PLATFORM_TENANT_ID, isDemo: false }, 'paymentsGateway');
+  return {
+    options,
+    routes: subscriptionRoutes({
+      withTenant: options.withTenant,
+      clock,
+      simulated: () => (gateway() as { simulated?: unknown } | undefined)?.simulated === true,
+    }),
+  };
 }
