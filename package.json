@@ -31,6 +31,7 @@
     "demo:platform": "pnpm --filter @consultorio/api demo:platform",
     "demo:stack": "pnpm --filter @consultorio/api demo:stack",
     "backup:local": "pnpm --filter @consultorio/api backup:local",
+    "drill:restore": "pnpm --filter @consultorio/api drill:restore",
     "dev:afip-cert": "pnpm --filter @consultorio/api dev:afip-cert",
     "archive:legal-erase": "pnpm --filter @consultorio/api archive:legal-erase"
   },
