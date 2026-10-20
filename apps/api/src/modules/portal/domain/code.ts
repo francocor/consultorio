@@ -72,7 +72,10 @@ export function addressKey(tenantId: string, email: string): string {
  * Who a client is, as a counter key: a hash, so no address of a visitor sits in the counter store.
  * A client whose address is not known (no address reached the server) is told apart by its user
  * agent (JD-S5 R3-7): without it every such client of an organization would share one bucket, and a
- * clinic behind one NAT would run out of its six requests an hour at once.
+ * clinic behind one NAT would run out of its six requests an hour at once. That bucket is NOT a
+ * security boundary (JD-S5 R4-7): a client changes its user agent at will, so it only keeps honest
+ * clients apart; the limits that protect a person live in the database. The route logs a warning
+ * each time it happens, because it means the proxy setting (`TRUST_PROXY`) does not match.
  */
 function clientKey(client: string | null, userAgent: string | null | undefined): string {
   const who = client ?? `unknown|${userAgent ?? ''}`;

@@ -91,6 +91,15 @@ export function publicRoutes(deps: PublicRoutesDeps) {
     }
 
     function contextOf(request: FastifyRequest, tenant: ResolvedTenant): SignInContext {
+      // A client whose address is unknown is counted by its user agent, which is NOT a security
+      // boundary (a client changes it at will; JD-S5 R4-7). It means `TRUST_PROXY` does not match the
+      // proxies in front of the app, so it is said every time (no address, no user agent in the line).
+      if (request.auditActor.ip === null) {
+        request.log.warn(
+          { tenantId: tenant.id, route: request.routeOptions.url },
+          'the client address of a portal request is unknown',
+        );
+      }
       return {
         tenant: { id: tenant.id, country: tenant.country },
         actor: request.auditActor,

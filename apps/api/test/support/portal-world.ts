@@ -1,4 +1,5 @@
 import { randomBytes, randomUUID } from 'node:crypto';
+import type { Writable } from 'node:stream';
 
 import type {
   PatientPortalResponse,
@@ -111,16 +112,19 @@ export async function createPortalWorld(
      * prescriptions module issues for real. Without it the organization has no provider.
      */
     erx?: PrescriptionProvider;
+    /** Where the server writes its log (a test that reads it). */
+    logStream?: Writable;
   },
 ): Promise<PortalWorld> {
   const storage = createMemoryObjectStorage();
-  const { ports, erx, ...worldOptions } = options;
+  const { ports, erx, logStream, ...worldOptions } = options;
   const challenge = createLocalBotChallenge({ secret: randomBytes(32), difficulty: 6 });
   const served = testAdapters(challenge);
   const base = await createBookingWorld(runtime, {
     ...worldOptions,
     app: {
       storage,
+      ...(logStream ? { logStream, logLevel: 'info' as const } : {}),
       ...(erx
         ? {
             adapters: {
