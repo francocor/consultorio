@@ -27,6 +27,8 @@ export type { OperatorIdentity, OperatorRun } from './application/context.js';
 export { operatorOf, platformAuditMetaOf } from './http/request-context.js';
 export type { OperatorSecrets } from './infrastructure/secrets.js';
 export { unavailableDemoReset } from './application/tenants.js';
+// The address an organization gets from its name, one rule for the console and for the signup.
+export { RESERVED_SLUGS, slugBase, slugWithSuffix } from './domain/slug.js';
 export type { DemoResetPort } from './application/tenants.js';
 export type { OperatorAdmin } from './application/operators.js';
 

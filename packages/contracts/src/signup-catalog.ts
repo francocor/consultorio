@@ -9,10 +9,15 @@
  * signup track (Track B) adds its codes here and nowhere else. A code must never tell a visitor
  * whether a name or an address is already in use.
  */
-export const SIGNUP_ERRORS = {} as const satisfies Record<
-  string,
-  { status: number; i18nKey: string }
->;
+export const SIGNUP_ERRORS = {
+  // The visitor did not accept both documents. Says nothing about names or addresses.
+  signup_terms_required: { status: 400, i18nKey: 'errors.signup_terms_required' },
+  // The bot challenge was missing, wrong, expired or used twice.
+  signup_challenge_failed: { status: 400, i18nKey: 'errors.signup_challenge_failed' },
+  // The emailed link does not exist, expired, was used or was replaced by a newer one: one answer for
+  // all of them, and the page offers a new link.
+  signup_link_invalid: { status: 400, i18nKey: 'errors.signup_link_invalid' },
+} as const satisfies Record<string, { status: number; i18nKey: string }>;
 
 /**
  * Audit actions of a signup that has an organization to write to (unverified or active). The entry
