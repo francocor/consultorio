@@ -6,8 +6,8 @@ import { createPortalWorld, type PortalWorld } from '../support/portal-world.js'
 
 /**
  * JD-S5 R4-7: a client whose address is not known is counted by its user agent, which is not a
- * security boundary. The server says so in its log every time one reaches a portal route, so an
- * operator whose `TRUST_PROXY` does not match the proxies in front of the app finds out.
+ * security boundary. The server says so in its log when one reaches a portal route (once a minute per
+ * organization, JD-S5 R5), so an operator whose `TRUST_PROXY` does not match the proxies in front of the app finds out.
  */
 const SLUG = 'portal-unknown-client';
 const WARNING = 'the client address of a portal request is unknown';

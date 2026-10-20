@@ -36,6 +36,8 @@ export interface PublicRoutesDeps {
   signIn: SignInDeps;
 }
 
+const UNKNOWN_CLIENT_WARNING_EVERY_MS = 60_000;
+
 const SlugParams = z.strictObject({ slug: z.string().min(1).max(64) });
 
 /** What the four routes audit, for the policy that every mutating route says what it writes. */
@@ -64,6 +66,8 @@ const AUDITS = [
 export function publicRoutes(deps: PublicRoutesDeps) {
   return (app: FastifyInstance): void => {
     const typed = app.withTypeProvider<ZodTypeProvider>();
+    /** When each organization last got the warning about a client with no known address. */
+    const unknownClientWarnedAt = new Map<string, number>();
 
     function tenantOf(request: FastifyRequest<{ Params: { slug: string } }>): ResolvedTenant {
       const context = request.hostContext;
@@ -93,12 +97,18 @@ export function publicRoutes(deps: PublicRoutesDeps) {
     function contextOf(request: FastifyRequest, tenant: ResolvedTenant): SignInContext {
       // A client whose address is unknown is counted by its user agent, which is NOT a security
       // boundary (a client changes it at will; JD-S5 R4-7). It means `TRUST_PROXY` does not match the
-      // proxies in front of the app, so it is said every time (no address, no user agent in the line).
+      // proxies in front of the app, so it is said (no address, no user agent in the line), once a
+      // minute per organization: a flood of such requests must not flood the log (JD-S5 R5).
       if (request.auditActor.ip === null) {
-        request.log.warn(
-          { tenantId: tenant.id, route: request.routeOptions.url },
-          'the client address of a portal request is unknown',
-        );
+        const now = Date.now();
+        const last = unknownClientWarnedAt.get(tenant.id);
+        if (last === undefined || now - last >= UNKNOWN_CLIENT_WARNING_EVERY_MS) {
+          unknownClientWarnedAt.set(tenant.id, now);
+          request.log.warn(
+            { tenantId: tenant.id, route: request.routeOptions.url },
+            'the client address of a portal request is unknown',
+          );
+        }
       }
       return {
         tenant: { id: tenant.id, country: tenant.country },
