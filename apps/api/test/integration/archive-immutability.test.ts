@@ -10,11 +10,18 @@ import {
   S3Client,
   type S3ClientConfig,
 } from '@aws-sdk/client-s3';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import pg from 'pg';
+import { afterAll, beforeAll, describe, expect, inject, it } from 'vitest';
 
 import { createLegalErasure } from '../../src/adapters/archive-local/erasure.js';
 import { createLocalArchiveStore } from '../../src/adapters/archive-local/index.js';
+import { legalErase } from '../../src/modules/tenancy/archive/legal-erase.js';
+import { writePlatformAudit } from '../../src/platform/audit/platform-audit.js';
+import { createRuntimeDb, type DbHandle } from '../../src/platform/db/pool.js';
+import { createWithTenant } from '../../src/platform/db/tenant-context.js';
 import { startArchiveMinio, type ArchiveMinio } from '../support/archive-minio.js';
+import { createOperatorHarness, type OperatorHarness } from '../support/operator.js';
+import { createTestTenant } from '../support/tenants.js';
 
 /**
  * The immutability of the retention archive against the real bucket (tenancy, "Retention archive after
@@ -293,5 +300,112 @@ describe('the legal erasure', () => {
     const store = adapter();
     expect(await store.head(key)).toEqual({ status: 'unknown' });
     store.close();
+  });
+});
+
+describe('the legal erasure procedure', () => {
+  let runtime: DbHandle;
+  let operators: OperatorHarness;
+
+  beforeAll(() => {
+    runtime = createRuntimeDb(inject('runtimeUrl'));
+    operators = createOperatorHarness();
+  });
+  afterAll(async () => {
+    await operators.close();
+    await runtime.close();
+  });
+
+  it('erases the archive of one organization for the privileged identity, writes the legal reference in the platform trail, and leaves another organization alone', async () => {
+    const organization = await createTestTenant(runtime, { slug: 'immutability-erase' });
+    const other = await createTestTenant(runtime, { slug: 'immutability-keep' });
+    const mine = `tenants/${organization.id}/archive-1/attempt-1/administrative/000001.enc`;
+    const theirs = `tenants/${other.id}/archive-1/attempt-1/administrative/000001.enc`;
+    await archived(mine, 'records to erase by order');
+    await archived(theirs, 'records to keep');
+    const eraser = createLegalErasure({
+      bucket: minio.bucket,
+      region: minio.region,
+      endpoint: minio.endpoint,
+      credentials: minio.legalErasure,
+    });
+    const reference = 'Oficio 77/2031, Juzgado Civil 9, expediente 5120/2030';
+    const withTenant = createWithTenant(operators.db.db);
+
+    const result = await legalErase(
+      {
+        eraser,
+        audit: (entry) =>
+          withTenant({ tenantId: organization.id, userId: organization.id }, (tx) =>
+            writePlatformAudit(tx, {
+              action: 'archive.erased',
+              outcome: 'allow',
+              actor: {
+                operatorId: null,
+                ip: null,
+                userAgent: 'archive:legal-erase',
+                requestId: null,
+              },
+              targetTenantId: organization.id,
+              reason: entry.reason,
+              resourceType: 'tenant_archive',
+              metadata: {
+                objects: entry.objects,
+                versions: entry.versions,
+                complete: entry.complete,
+              },
+            }),
+          ),
+      },
+      { tenantId: organization.id, reference },
+    );
+    eraser.close();
+
+    expect(result).toEqual({ objects: 1, versions: 1 });
+    expect(await versionsOf(erasure, mine)).toHaveLength(0);
+    expect(await versionsOf(erasure, theirs)).toHaveLength(1);
+    const admin = new pg.Client({ connectionString: inject('adminUrl') });
+    await admin.connect();
+    try {
+      const trail = await admin.query<{ reason: string; metadata: Record<string, unknown> }>(
+        "select reason, metadata from platform_audit_event where action = 'archive.erased' and target_tenant_id = $1",
+        [organization.id],
+      );
+      expect(trail.rows).toEqual([
+        { reason: reference, metadata: { objects: 1, versions: 1, complete: true } },
+      ]);
+    } finally {
+      await admin.end();
+    }
+  });
+
+  it('is refused to the writer of the application: its credential cannot erase, and nothing is written in the trail', async () => {
+    const organization = await createTestTenant(runtime, { slug: 'immutability-refused' });
+    const name = `tenants/${organization.id}/archive-1/attempt-1/administrative/000001.enc`;
+    await archived(name, 'kept');
+    const eraser = createLegalErasure({
+      bucket: minio.bucket,
+      region: minio.region,
+      endpoint: minio.endpoint,
+      credentials: minio.writer,
+    });
+    let audited = 0;
+
+    await expect(
+      legalErase(
+        {
+          eraser,
+          audit: () => {
+            audited += 1;
+            return Promise.resolve();
+          },
+        },
+        { tenantId: organization.id, reference: 'Oficio 88/2031' },
+      ),
+    ).rejects.toMatchObject({ name: 'AccessDenied' });
+    eraser.close();
+
+    expect(audited).toBe(0);
+    expect(await versionsOf(writer, name)).toHaveLength(1);
   });
 });

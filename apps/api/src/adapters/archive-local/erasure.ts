@@ -15,7 +15,15 @@ import type { LocalArchiveStoreConfig } from './index.js';
  * platform trail (`archive.erased`). The decision to erase is a person's; this only carries it out.
  */
 
+export interface ErasableObject {
+  key: string;
+  /** How many versions of it the bucket holds. */
+  versions: number;
+}
+
 export interface LegalErasure {
+  /** The objects under a prefix, with how many versions each has. Reads no content. */
+  list(prefix: string): Promise<ErasableObject[]>;
   /** Removes every version of the object. `reference` is the legal basis (an order, a file number). */
   erase(
     key: string,
@@ -36,6 +44,29 @@ export function createLegalErasure(config: LocalArchiveStoreConfig): LegalErasur
   return {
     close() {
       client.destroy();
+    },
+    async list(prefix) {
+      const counts = new Map<string, number>();
+      let keyMarker: string | undefined;
+      let versionMarker: string | undefined;
+      do {
+        const page = await client.send(
+          new ListObjectVersionsCommand({
+            Bucket,
+            Prefix: prefix,
+            ...(keyMarker ? { KeyMarker: keyMarker } : {}),
+            ...(versionMarker ? { VersionIdMarker: versionMarker } : {}),
+          }),
+        );
+        for (const entry of [...(page.Versions ?? []), ...(page.DeleteMarkers ?? [])]) {
+          if (entry.Key) counts.set(entry.Key, (counts.get(entry.Key) ?? 0) + 1);
+        }
+        keyMarker = page.IsTruncated ? page.NextKeyMarker : undefined;
+        versionMarker = page.IsTruncated ? page.NextVersionIdMarker : undefined;
+      } while (keyMarker !== undefined);
+      return [...counts.entries()]
+        .map(([key, versions]) => ({ key, versions }))
+        .sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0));
     },
     async erase(key, input) {
       if (input.reference.trim() === '') {
