@@ -188,6 +188,97 @@ describe('R4-3: a give-up does not close again a registration an owner opened', 
   });
 });
 
+describe('R5-1: giving a notice up keeps the opening a row already has', () => {
+  it('does not throw when an older untold row was opened before a later one, and the sweep still sends the others', async () => {
+    const nationalId = nationalIdOf();
+    const patient = await world.patientWith({
+      nationalId,
+      email: address('base'),
+      birthDate: '1985-03-10',
+    });
+
+    // Row A: untold, and an owner opens the registration (T1).
+    expect((await patch(patient, { email: address('uno') })).statusCode).toBe(200);
+    const first = await world.invite(patient, {}, world.owner);
+    expect(first.statusCode, first.body).toBe(201);
+    const [rowA] = await changesOf(patient);
+    expect(rowA?.invitation_opened_at).not.toBeNull();
+
+    // Row B, later: untold too, and opened again (T3) while A is still untold.
+    expect((await patch(patient, { email: address('dos') })).statusCode).toBe(200);
+    const second = await world.invite(patient, {}, world.owner);
+    expect(second.statusCode, second.body).toBe(201);
+    const rows = await changesOf(patient);
+    expect(rows).toHaveLength(2);
+    expect(rows[1]?.invitation_opened_at).not.toBeNull();
+    expect(rows[1]?.invitation_opened_at).not.toBe(rows[0]?.invitation_opened_at);
+
+    // Another patient whose notice is recent: the sweep has to send it.
+    const other = address('otro-antes');
+    const stranger = await world.patientWith({
+      nationalId: nationalIdOf(),
+      email: other,
+      birthDate: '1985-03-10',
+    });
+    expect((await patch(stranger, { email: address('otro-despues') })).statusCode).toBe(200);
+
+    // The week ends for the patient's rows: the sweep gives them up.
+    await ageChanges(patient, 8);
+    const logged: Record<string, unknown>[] = [];
+    const email = createFakeEmailSender();
+    const swept = await sendRecordChangeNotices(
+      {
+        email,
+        withTenant: createWithTenant(runtime.db),
+        log: { error: (object) => logged.push(object) },
+      },
+      { tenantId: world.tenant.id, now: new Date() },
+    );
+    expect(swept.expired).toBeGreaterThanOrEqual(2);
+    expect(swept.sent).toBeGreaterThanOrEqual(1);
+    expect(email.lastTo(other)).toBeDefined();
+
+    const after = await changesOf(patient);
+    expect(after[0]?.notice_expired_at).not.toBeNull();
+    expect(after[0]?.invitation_opened_at).toBe(rows[0]?.invitation_opened_at);
+    expect(after[1]?.invitation_opened_at).toBe(rows[1]?.invitation_opened_at);
+    expect(JSON.stringify(logged)).not.toContain('@');
+  });
+
+  it('survives a give-up pass that fails: the others are still sent and the log holds no address', async () => {
+    const before = address('falla-antes');
+    const patient = await world.patientWith({
+      nationalId: nationalIdOf(),
+      email: before,
+      birthDate: '1985-03-10',
+    });
+    expect((await patch(patient, { email: address('falla-despues') })).statusCode).toBe(200);
+
+    const real = createWithTenant(runtime.db);
+    let calls = 0;
+    const logged: Record<string, unknown>[] = [];
+    const email = createFakeEmailSender();
+    const swept = await sendRecordChangeNotices(
+      {
+        email,
+        // The first two transactions are the two give-up passes.
+        withTenant: (scope, work) => {
+          calls += 1;
+          if (calls <= 2) return Promise.reject(new Error(`broken ${before}`));
+          return real(scope, work);
+        },
+        log: { error: (object) => logged.push(object) },
+      },
+      { tenantId: world.tenant.id, now: new Date() },
+    );
+    expect(swept.sent).toBeGreaterThanOrEqual(1);
+    expect(email.lastTo(before)).toBeDefined();
+    expect(logged.length).toBeGreaterThanOrEqual(2);
+    expect(JSON.stringify(logged)).not.toContain('@');
+    expect(JSON.stringify(logged)).not.toContain(before);
+  });
+});
+
 describe('R4-6: the database refuses to expire a notice without closing the registration', () => {
   it('refuses notice_expired_at with the flag down, and accepts it with the flag up', async () => {
     const patient = await world.patientWith({ email: address('base'), birthDate: '1985-03-10' });
