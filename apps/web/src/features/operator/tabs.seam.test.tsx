@@ -18,6 +18,8 @@ function open() {
     routes: {
       'GET /api/operator/me': () => jsonResponse(OPERATOR),
       'GET /api/operator/tenants': () => jsonResponse({ tenants: [] }),
+      'GET /api/operator/archives': () => jsonResponse({ archives: [] }),
+      'GET /api/operator/archive-releases': () => jsonResponse({ requests: [] }),
       'GET /api/operator/dev/providers': () => problemResponse(404, 'not_found'),
     },
   });
