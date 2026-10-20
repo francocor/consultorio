@@ -757,6 +757,13 @@
       "when": 1792456895198,
       "tag": "0580_record_change_hardening",
       "breakpoints": true
+    },
+    {
+      "idx": 108,
+      "version": "7",
+      "when": 1792464632300,
+      "tag": "0581_expiry_requires_flag",
+      "breakpoints": true
     }
   ]
 }

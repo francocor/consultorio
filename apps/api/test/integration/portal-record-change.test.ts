@@ -242,6 +242,9 @@ describe('R2-2 (2): for seven days after a change, access needs an owner or an a
     const patient = await world.patientWith({ birthDate: '1985-03-10', email: address('base') });
     expect((await patch(patient, { email: address('nuevo') })).statusCode).toBe(200);
     expect((await world.invite(patient, {}, world.reception)).statusCode).toBe(409);
+    // The worker tells the previous address within the week; a notice nobody was told keeps the
+    // registration closed whatever its age (JD-S5 R4-1, covered in portal-record-change-round4).
+    await world.sweepNotices();
 
     await ageChanges(patient, 6);
     expect((await world.invite(patient, {}, world.reception)).statusCode).toBe(409);
@@ -322,6 +325,7 @@ describe('R2-2 (2): for seven days after a change, access needs an owner or an a
     expect(asked.statusCode, asked.body).toBe(200);
     expect(world.email.lastTo(insider)).toBeUndefined();
 
+    await world.sweepNotices();
     await ageChanges(patient, 8);
     const again = world.visitor({ ip: '10.50.1.2' });
     await again.post(`/public/${SLUG}/portal/register`, {

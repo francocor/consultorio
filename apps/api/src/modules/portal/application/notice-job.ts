@@ -141,6 +141,15 @@ async function expireNotices(
         noticeEmail: null,
         noticeExpiredAt: sql`now()`,
         registrationRequiresInvitation: true,
+        // An owner or an administrator may have opened the registration of this patient after this
+        // change was written (JD-S5 R4-3): giving the notice up must not close it again. The row
+        // takes the day of that opening, so it counts as invited like the others.
+        invitationOpenedAt: sql`(
+          select max(opened.invitation_opened_at)
+            from patient_record_change opened
+           where opened.patient_id = patient_record_change.patient_id
+             and opened.invitation_opened_at > patient_record_change.created_at
+        )`,
       })
       .where(
         and(

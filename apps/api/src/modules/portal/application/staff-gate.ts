@@ -1,4 +1,4 @@
-import { and, eq, gt, isNull, sql } from 'drizzle-orm';
+import { and, eq, gt, isNotNull, isNull, or, sql } from 'drizzle-orm';
 
 import { patientRecordChange } from '../../../db/schema/portal.js';
 import type { Tx } from '../../../platform/db/tenant-context.js';
@@ -43,41 +43,55 @@ export async function hasRecentRecordChange(tx: Tx, patientId: string): Promise<
 }
 
 /**
+ * The rows of a patient that keep the public registration closed until an owner or an administrator
+ * invites the patient (JD-S5 R3-4, R4-1), and that no invitation has opened yet:
+ *
+ * - a change flagged `registration_requires_invitation` (an address given to a record that had none,
+ *   or a notice that was given up);
+ * - a notice that nobody was told, whatever its age: the address is still on the row, it was neither
+ *   sent nor given up. From day 7 until the sweep gives it up both the week and the flag are down, so
+ *   a worker that is down would open the registration of a record whose previous address was never
+ *   warned. Fail-safe: untold means closed.
+ */
+const closesRegistration = () =>
+  and(
+    isNull(patientRecordChange.invitationOpenedAt),
+    or(
+      eq(patientRecordChange.registrationRequiresInvitation, true),
+      and(
+        isNotNull(patientRecordChange.noticeEmail),
+        isNull(patientRecordChange.noticeSentAt),
+        isNull(patientRecordChange.noticeExpiredAt),
+      ),
+    ),
+  );
+
+/**
  * Whether the PUBLIC registration of the patient (document number plus e-mail, no invitation) is
- * closed (JD-S5 R3-4): a change gave an e-mail to a record that had none, or the notice to the
- * previous address could not be told, and no owner or administrator has invited the patient since.
- * Nobody who knew the old record was warned, so the week of R2-2 is not enough.
+ * closed (JD-S5 R3-4, R4-1): a change gave an e-mail to a record that had none, or the notice to the
+ * previous address could not be told (or has not been told yet), and no owner or administrator has
+ * invited the patient since. Nobody who knew the old record was warned, so the week of R2-2 is not
+ * enough.
  */
 export async function isRegistrationClosed(tx: Tx, patientId: string): Promise<boolean> {
   const [row] = await tx
     .select({ id: patientRecordChange.id })
     .from(patientRecordChange)
-    .where(
-      and(
-        eq(patientRecordChange.patientId, patientId),
-        eq(patientRecordChange.registrationRequiresInvitation, true),
-        isNull(patientRecordChange.invitationOpenedAt),
-      ),
-    )
+    .where(and(eq(patientRecordChange.patientId, patientId), closesRegistration()))
     .limit(1);
   return row !== undefined;
 }
 
 /**
- * An owner or an administrator invited the patient: the public registration is open again. The day
- * is the clock of the database, like the rest of this table. It answers whether it opened anything.
+ * An owner or an administrator invited the patient: the public registration is open again, for the
+ * flagged changes and for the notices nobody was told (R4-1). The day is the clock of the database,
+ * like the rest of this table. It answers whether it opened anything.
  */
 export async function openRegistration(tx: Tx, patientId: string): Promise<boolean> {
   const opened = await tx
     .update(patientRecordChange)
     .set({ invitationOpenedAt: sql`now()` })
-    .where(
-      and(
-        eq(patientRecordChange.patientId, patientId),
-        eq(patientRecordChange.registrationRequiresInvitation, true),
-        isNull(patientRecordChange.invitationOpenedAt),
-      ),
-    )
+    .where(and(eq(patientRecordChange.patientId, patientId), closesRegistration()))
     .returning({ id: patientRecordChange.id });
   return opened.length > 0;
 }
