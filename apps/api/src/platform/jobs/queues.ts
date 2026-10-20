@@ -95,4 +95,33 @@ export const QUEUES: readonly QueueDefinition[] = [
   // Every minute, per organization: tells the address a record HAD that its e-mail or birth date was
   // changed (the change is written by the database, in the transaction of the update).
   { name: 'portal.notice_sweep', options: { retryLimit: 1, retryDelay: 60, expireInSeconds: 300 } },
+
+  // Stage 6, growth. Same rule: the owning track writes the handler, the queue exists from the seam.
+  // Daily, per organization: writes the active-professional day and the WhatsApp usage of the period.
+  { name: 'usage.snapshot', options: { retryLimit: 2, retryDelay: 60, expireInSeconds: 900 } },
+  // Daily, per organization: a trial that ended without a subscription becomes past due, with grace.
+  { name: 'trial.end', options: { retryLimit: 2, retryDelay: 60, expireInSeconds: 300 } },
+  // One step of the dunning (day 1, 3 or 5): asks the payments gateway to charge again. A charge is not
+  // idempotent at the provider, so the queue never redelivers by itself (`retryLimit: 0`): the handler
+  // marks the intent before it calls, asks the provider when the outcome is unknown, and queues the
+  // next step on its own.
+  { name: 'dunning.step', options: { retryLimit: 0, expireInSeconds: 600 } },
+  // At the close of a period, per organization: counts, prices and publishes the statement (idempotent by period).
+  { name: 'statement.generate', options: { retryLimit: 2, retryDelay: 60, expireInSeconds: 900 } },
+  // Pulls the state of a preapproval or a payment from the provider after a webhook or an outage. A
+  // webhook only enqueues this; it never sets state. Safe to repeat: it only reads and then writes what
+  // the provider answered.
+  {
+    name: 'subscription.reconcile',
+    options: { retryLimit: 2, retryDelay: 60, expireInSeconds: 600 },
+  },
+  // Daily: hard-deletes the unverified signups older than seven days (retention exception 2).
+  { name: 'signup.purge', options: { retryLimit: 1, retryDelay: 300, expireInSeconds: 900 } },
+  // Writes the encrypted records of a cancelled organization to the archive, after the export window.
+  // Write once and idempotent by key, so a redelivery is harmless; objects can be large.
+  { name: 'archive.write', options: { retryLimit: 2, retryDelay: 120, expireInSeconds: 3600 } },
+  // Checks the checksums of the archive and restores a sample into a scratch place.
+  { name: 'archive.verify', options: { retryLimit: 1, retryDelay: 300, expireInSeconds: 3600 } },
+  // Break-glass release: decrypts an approved scope and delivers it. Runs only in the `releaser` role.
+  { name: 'archive.release', options: { retryLimit: 1, retryDelay: 300, expireInSeconds: 1800 } },
 ];

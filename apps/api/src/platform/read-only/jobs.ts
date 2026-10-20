@@ -53,6 +53,19 @@ export const JOB_CATEGORIES: Readonly<Record<string, RouteCategory>> = {
   // The warnings about a change to the access of a person protect that person (JD-S5 R2-2).
   'portal.notice_send': 'patient_protective',
   'portal.notice_sweep': 'patient_protective',
+  // Stage 6. The subscription is the owner's: usage, the end of a trial, the dunning and the
+  // statements keep running in a read-only tenant, because that is how it recovers. What a webhook
+  // enqueues is as allowed as the webhook. The records of an ended organization are exported and
+  // archived while it is read-only or cancelled. The purge of a signup is housekeeping.
+  'usage.snapshot': 'subscription',
+  'trial.end': 'subscription',
+  'dunning.step': 'subscription',
+  'statement.generate': 'subscription',
+  'subscription.reconcile': 'webhook',
+  'signup.purge': 'write',
+  'archive.write': 'export',
+  'archive.verify': 'export',
+  'archive.release': 'export',
 };
 
 /** The category of a queue. A queue nobody classified is refused, not guessed. */

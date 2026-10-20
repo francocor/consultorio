@@ -158,6 +158,42 @@ describe('job classification (every queue declares one category)', () => {
     }
   });
 
+  it('classifies the Stage 6 queues: billing and the export of an ended organization keep running, the housekeeping of a signup does not', () => {
+    // The subscription is the owner's: a read-only tenant has to be billed to recover from it.
+    for (const queue of ['usage.snapshot', 'trial.end', 'dunning.step', 'statement.generate']) {
+      expect(jobCategoryOf(queue), queue).toBe('subscription');
+    }
+    // What a webhook enqueues is as allowed as the webhook: the provider's state is the provider's to say.
+    expect(jobCategoryOf('subscription.reconcile')).toBe('webhook');
+    // The records of an ended organization are exported and archived while it is read-only or cancelled.
+    for (const queue of ['archive.write', 'archive.verify', 'archive.release']) {
+      expect(jobCategoryOf(queue), queue).toBe('export');
+    }
+    // The purge of an unverified signup is housekeeping of a plain write.
+    expect(jobCategoryOf('signup.purge')).toBe('write');
+  });
+
+  it('runs the Stage 6 jobs of the allowlisted categories in a read-only tenant and a cancelled one, and cancels the purge', () => {
+    const cancelled = { status: 'cancelled' as const, readOnlySince: frozen.readOnlySince };
+    for (const queue of [
+      'usage.snapshot',
+      'trial.end',
+      'dunning.step',
+      'statement.generate',
+      'subscription.reconcile',
+      'archive.write',
+      'archive.verify',
+      'archive.release',
+    ]) {
+      expect(jobMayRun({ category: jobCategoryOf(queue) }, frozen, AFTER).run, queue).toBe(true);
+      expect(jobMayRun({ category: jobCategoryOf(queue) }, cancelled, AFTER).run, queue).toBe(true);
+    }
+    expect(jobMayRun({ category: jobCategoryOf('signup.purge') }, frozen, AFTER)).toEqual({
+      run: false,
+      reason: 'tenant_read_only',
+    });
+  });
+
   it('refuses a queue nobody classified instead of guessing a category', () => {
     expect(() => jobCategoryOf('made.up.queue')).toThrow(/made.up.queue/);
   });

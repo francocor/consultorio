@@ -22,3 +22,28 @@ export const CONNECTION_HOLDING_JOBS = [
   'erx.reconcile',
   'portal.notice_sweep',
 ] as const;
+
+/**
+ * The Stage 6 families that WILL wait for an outside service the same way (the payments gateway and
+ * the archive store), whose handlers do not exist yet. They are named now so that no track can add
+ * one and forget the pool, but they are not in the list above because the floor of the pool rises
+ * with every family (`MIN_DB_POOL_MAX`) and `.env.example` pins `DB_POOL_MAX=16`, a file the seam may
+ * not edit. The track that writes one of these handlers:
+ *
+ * 1. writes it as the other families do: a short transaction for the mark before the call, none
+ *    held while the call waits, a second one for the answer (never a provider call inside the
+ *    transaction `runJob` opens, which idles for the length of the call);
+ * 2. MOVES the name from this list to `CONNECTION_HOLDING_JOBS`, which raises `MIN_DB_POOL_MAX`;
+ * 3. raises `DEFAULT_RUNTIME_POOL_MAX` (`platform/db/pool.ts`) to at least the new floor, `DB_POOL_MAX`
+ *    in `.env.example` (the maintainer's file: ask) and the numbers in `docs/runbooks/deploy.md`,
+ *    `config.test.ts` and `docs/security/asvs-l2-portal.md`.
+ *
+ * `archive.release` runs only in the `releaser` process, which has a pool of its own.
+ */
+export const PENDING_CONNECTION_HOLDING_JOBS = [
+  'dunning.step',
+  'subscription.reconcile',
+  'archive.write',
+  'archive.verify',
+  'archive.release',
+] as const;

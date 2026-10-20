@@ -50,28 +50,42 @@ const STAGE_5_QUEUES = [
   'portal.code_send',
 ];
 
+const STAGE_6_QUEUES = [
+  'usage.snapshot',
+  'trial.end',
+  'dunning.step',
+  'statement.generate',
+  'subscription.reconcile',
+  'signup.purge',
+  'archive.write',
+  'archive.verify',
+  'archive.release',
+];
+
 describe('the queues the installer creates', () => {
-  it('creates every queue of the application, the Stage 3, 4 and 5 ones included', async () => {
+  it('creates every queue of the application, the Stage 3, 4, 5 and 6 ones included', async () => {
     const existing = (await boss.getQueues()).map((queue) => queue.name);
 
     expect(existing).toEqual(expect.arrayContaining(QUEUES.map((queue) => queue.name)));
     expect(existing).toEqual(expect.arrayContaining(STAGE_3_QUEUES));
     expect(existing).toEqual(expect.arrayContaining(STAGE_4_QUEUES));
     expect(existing).toEqual(expect.arrayContaining(STAGE_5_QUEUES));
+    expect(existing).toEqual(expect.arrayContaining(STAGE_6_QUEUES));
     expect(JOBS_SCHEMA).toBe('pgboss');
   });
 
-  it.each([...STAGE_3_QUEUES, ...STAGE_4_QUEUES, ...STAGE_5_QUEUES].map((name) => [name] as const))(
-    'accepts a job for %s from a request transaction',
-    async (name) => {
-      const client = createJobClient(boss);
+  it.each(
+    [...STAGE_3_QUEUES, ...STAGE_4_QUEUES, ...STAGE_5_QUEUES, ...STAGE_6_QUEUES].map(
+      (name) => [name] as const,
+    ),
+  )('accepts a job for %s from a request transaction', async (name) => {
+    const client = createJobClient(boss);
 
-      const id = await asTenant(runtime, a.id, (tx) =>
-        client.enqueue(tx, name, { tenantId: a.id }, { startAfter: 3600 }),
-      );
+    const id = await asTenant(runtime, a.id, (tx) =>
+      client.enqueue(tx, name, { tenantId: a.id }, { startAfter: 3600 }),
+    );
 
-      expect(id).toEqual(expect.any(String));
-      expect((await boss.findJobs(name, { id: id ?? '' }))[0]?.state).toBe('created');
-    },
-  );
+    expect(id).toEqual(expect.any(String));
+    expect((await boss.findJobs(name, { id: id ?? '' }))[0]?.state).toBe('created');
+  });
 });
