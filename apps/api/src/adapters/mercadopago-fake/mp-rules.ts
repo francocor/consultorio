@@ -95,7 +95,7 @@ export function paymentLinkProblem(request: PaymentLinkRequest, now: Date): stri
  * never share a digest.
  */
 export function requestFingerprint(
-  kind: 'preapproval' | 'link' | 'amount' | 'refund',
+  kind: 'preapproval' | 'link' | 'amount' | 'refund' | 'cancel',
   parts: readonly (string | number)[],
 ): string {
   return createHash('sha256')

@@ -15,6 +15,27 @@ export const SUBSCRIPTION_ERRORS = {
     status: 409,
     i18nKey: 'errors.subscription_professional_limit',
   },
+  // The payments provider is down, did not answer or is not configured: nothing changed, try again.
+  subscription_payments_unavailable: {
+    status: 503,
+    i18nKey: 'errors.subscription_payments_unavailable',
+  },
+  // A request to the provider is in flight, or its outcome is not known yet: wait, do not send another.
+  subscription_checkout_in_progress: {
+    status: 409,
+    i18nKey: 'errors.subscription_checkout_in_progress',
+  },
+  // The subscription is parked for a person: the provider holds something the platform cannot tell apart.
+  subscription_needs_attention: { status: 409, i18nKey: 'errors.subscription_needs_attention' },
+  // The provider refused the request for good.
+  subscription_checkout_rejected: { status: 422, i18nKey: 'errors.subscription_checkout_rejected' },
+  // A demo, or a deployment that bills outside the platform, has no subscription.
+  subscription_exempt: { status: 409, i18nKey: 'errors.subscription_exempt' },
+  subscription_cancelled: { status: 409, i18nKey: 'errors.subscription_cancelled' },
+  subscription_already_subscribed: {
+    status: 409,
+    i18nKey: 'errors.subscription_already_subscribed',
+  },
 } as const satisfies Record<string, { status: number; i18nKey: string }>;
 
 /**

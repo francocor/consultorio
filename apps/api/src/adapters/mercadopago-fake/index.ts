@@ -3,6 +3,7 @@ import { randomBytes } from 'node:crypto';
 import type { PaymentsSimulatorMode } from '@consultorio/contracts';
 
 import type {
+  CancelPreapprovalResult,
   CreatePaymentLinkResult,
   CreatePreapprovalResult,
   PaymentDescription,
@@ -413,6 +414,28 @@ export function createFakePaymentsGateway(
             }
             state.amountCents = request.amountCents;
             return { status: 'updated', preapproval: describePreapproval(state) };
+          },
+          () => ({ status: 'rejected', message: KEY_REUSED_MESSAGE }),
+        );
+      return write(apply, signal);
+    },
+
+    cancelPreapproval(
+      preapprovalId: string,
+      idempotencyKey: string,
+      signal?: AbortSignal,
+    ): Promise<CancelPreapprovalResult> {
+      const fingerprint = requestFingerprint('cancel', [preapprovalId]);
+      const apply = (): CancelPreapprovalResult =>
+        once<CancelPreapprovalResult>(
+          idempotencyKey,
+          fingerprint,
+          () => {
+            const state = preapprovals.get(preapprovalId);
+            if (!state) return { status: 'rejected', message: UNKNOWN_PREAPPROVAL_MESSAGE };
+            state.status = 'cancelled';
+            delete state.checkoutUrl;
+            return { status: 'cancelled', preapproval: describePreapproval(state) };
           },
           () => ({ status: 'rejected', message: KEY_REUSED_MESSAGE }),
         );

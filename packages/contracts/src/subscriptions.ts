@@ -122,6 +122,9 @@ export const SubscriptionDto = z.strictObject({
   nextTransition: SubscriptionNextTransition.nullable(),
   authorization: z.enum(AUTHORIZATION_STATE_VALUES),
   paymentMethodLabel: z.string().nullable(),
+  /** When the provider says it charges next, and the monthly amount the owner authorized. */
+  nextChargeAt: Instant.nullable(),
+  authorizedAmountCents: Cents.nullable(),
   overageCapMessages: Count,
   /** Active professionals today, and what they cost in a full month. */
   activeProfessionals: Count,
@@ -181,6 +184,10 @@ export const OperatorSubscriptionDto = z.strictObject({
   dunningStep: Count,
   authorization: z.enum(AUTHORIZATION_STATE_VALUES),
   overageCapMessages: Count,
+  /** Why the subscription is parked for a person, or null. */
+  attentionReason: z.string().nullable(),
+  /** Payments flagged as a surplus and not reviewed yet. */
+  surplusFlags: Count,
 });
 export type OperatorSubscriptionDto = z.infer<typeof OperatorSubscriptionDto>;
 
@@ -188,3 +195,58 @@ export const OperatorSubscriptionsResponse = z.strictObject({
   subscriptions: z.array(OperatorSubscriptionDto),
 });
 export type OperatorSubscriptionsResponse = z.infer<typeof OperatorSubscriptionsResponse>;
+
+// The local Mercado Pago simulator (provider console) ---------------------------------------------
+
+export const PaymentsSimulatorModeRequest = z.strictObject({
+  mode: z.enum(PAYMENTS_SIMULATOR_MODES),
+});
+export type PaymentsSimulatorModeRequest = z.infer<typeof PaymentsSimulatorModeRequest>;
+
+/** A preapproval the simulator holds, as the console lists it (no payer, no card). */
+export const PaymentsSimulatorPreapprovalDto = z.strictObject({
+  preapprovalId: z.string(),
+  reference: z.string(),
+  status: z.enum(['pending', 'authorized', 'paused', 'cancelled']),
+  amountCents: Cents,
+  createdAt: Instant,
+});
+export type PaymentsSimulatorPreapprovalDto = z.infer<typeof PaymentsSimulatorPreapprovalDto>;
+
+export const PaymentsSimulatorPaymentDto = z.strictObject({
+  paymentId: z.string(),
+  reference: z.string(),
+  status: z.string(),
+  amountCents: Cents,
+  refundedCents: Cents,
+  createdAt: Instant,
+});
+export type PaymentsSimulatorPaymentDto = z.infer<typeof PaymentsSimulatorPaymentDto>;
+
+export const PaymentsSimulatorStateResponse = z.strictObject({
+  mode: z.enum(PAYMENTS_SIMULATOR_MODES),
+  /** The newest first. */
+  preapprovals: z.array(PaymentsSimulatorPreapprovalDto),
+  payments: z.array(PaymentsSimulatorPaymentDto),
+});
+export type PaymentsSimulatorStateResponse = z.infer<typeof PaymentsSimulatorStateResponse>;
+
+/** "Run the billing cycle": the provider charges every authorized preapproval now. */
+export const PaymentsSimulatorCycleRequest = z.strictObject({
+  outcome: z.enum(['approved', 'rejected']).default('approved'),
+});
+export type PaymentsSimulatorCycleRequest = z.infer<typeof PaymentsSimulatorCycleRequest>;
+
+export const PaymentsSimulatorCycleResponse = z.strictObject({
+  /** How many payments the cycle made. */
+  charged: Count,
+  /** How many notices the webhook accepted. */
+  delivered: Count,
+});
+export type PaymentsSimulatorCycleResponse = z.infer<typeof PaymentsSimulatorCycleResponse>;
+
+// Checkout -------------------------------------------------------------------------------------------
+
+/** `POST /subscription/checkout`: where the owner authorizes the monthly payment (the provider's page). */
+export const CheckoutResponse = z.strictObject({ checkoutUrl: z.url() });
+export type CheckoutResponse = z.infer<typeof CheckoutResponse>;

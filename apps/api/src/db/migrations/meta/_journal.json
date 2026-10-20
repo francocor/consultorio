@@ -771,6 +771,20 @@
       "when": 1792483820939,
       "tag": "0610_subscriptions",
       "breakpoints": true
+    },
+    {
+      "idx": 110,
+      "version": "7",
+      "when": 1792485128936,
+      "tag": "0612_local_mercadopago",
+      "breakpoints": true
+    },
+    {
+      "idx": 111,
+      "version": "7",
+      "when": 1792485840725,
+      "tag": "0614_subscription_payments",
+      "breakpoints": true
     }
   ]
 }
