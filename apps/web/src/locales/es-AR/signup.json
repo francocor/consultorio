@@ -34,5 +34,13 @@
   "verify.invalid.description": "El enlace no es válido o ya venció. Pida uno nuevo y le enviamos otro correo.",
   "verify.renew": "Pedir un enlace nuevo",
   "verify.renewed.title": "Revise su correo",
-  "verify.renewed.description": "Si corresponde, le enviamos un enlace nuevo. El anterior dejó de funcionar."
+  "verify.renewed.description": "Si corresponde, le enviamos un enlace nuevo. El anterior dejó de funcionar.",
+  "trial.title": "Su período de prueba",
+  "trial.ends": "Termina el {{date}}. Hasta entonces todas las funciones están disponibles sin costo.",
+  "trial.consequence": "Si para esa fecha no autorizó el pago, tiene {{days}} días más para regularizarlo. Después la cuenta pasa a solo lectura: se puede consultar y exportar, pero no cargar datos nuevos.",
+  "trial.later": "No hace falta pagar para seguir con la configuración. Puede autorizar el pago ahora o más adelante desde Suscripción.",
+  "trial.authorized": "Ya autorizó el pago: no se cobra hasta que termine la prueba.",
+  "trial.subscribe": "Autorizar el pago ahora",
+  "trial.unavailable": "No pudimos abrir la página de pago. Puede seguir con la configuración y completar el pago más tarde.",
+  "trial.laterLink": "Ir a Suscripción"
 }

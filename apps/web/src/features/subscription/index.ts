@@ -4,3 +4,6 @@
  * limit of the plan again when the invitation is sent).
  */
 export { PlanImpactPanel } from './components/PlanImpactPanel.js';
+/** The reads and the hand-off to the provider's page that the wizard of a new organization needs. */
+export { subscriptionApi, subscriptionKeys } from './api/subscription-api.js';
+export { goToProviderPage } from './domain/provider-page.js';

@@ -17,6 +17,7 @@ import { FormSkeleton } from '../../shared/ui/states/loading-skeleton.js';
 import { onboardingApi, onboardingKeys } from './api/onboarding-api.js';
 import { StepNav } from './components/StepNav.js';
 import { FastPathDone, FastPathForm } from './FastPath.js';
+import { TrialCard } from './signup/index.js';
 import { AppointmentTypesStep } from './steps/AppointmentTypesStep.js';
 import { BrandingStep } from './steps/BrandingStep.js';
 import { HoursStep } from './steps/HoursStep.js';
@@ -88,7 +89,10 @@ function Onboarding() {
         />
       ) : (
         // A link to another step (from the checklist) opens that step: a new key starts over there.
-        <Wizard key={requested ?? 'resume'} state={state.data} requested={requested} />
+        <>
+          <TrialCard />
+          <Wizard key={requested ?? 'resume'} state={state.data} requested={requested} />
+        </>
       )}
     </div>
   );
