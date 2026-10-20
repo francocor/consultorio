@@ -74,6 +74,9 @@ describe('the operator database role is an allowlist', () => {
       // Creating an organization: its row, data key, owner invitation and first audit entry.
       'action_token',
       'audit_event',
+      // Stage 6: the operator asks for the administrative package of the organization it cancels
+      // (one row, queued) and reads the state of the packages. No file name, no key, no clinical one.
+      'export_package',
       // The country holiday catalog is platform data the operator maintains.
       'holiday_catalog',
       // Administrative configuration, readable only under a support grant.

@@ -75,6 +75,11 @@ const ALLOWED: Record<string, readonly string[]> = {
   // marked in error stops counting. The runtime role writes the encounter, never this table.
   'app.clinical_footprint_mark()': [],
   'app.clinical_note_care_sync()': [],
+  // Stage 6, retention (track C). The operator console cancels the organization of its transaction
+  // (the role has no UPDATE on `tenant`), and the worker finds which organizations have a package of
+  // the cancellation export waiting (tenant ids only).
+  'app.operator_cancel_tenant(uuid)': ['app_operator'],
+  'app.cancellation_export_pending(integer)': ['app_rw'],
 };
 
 let owner: pg.Client;
