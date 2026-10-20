@@ -9,6 +9,8 @@ import reactHooks from 'eslint-plugin-react-hooks';
 import globals from 'globals';
 import tseslint from 'typescript-eslint';
 
+import { GLOBAL_IGNORES } from './ignores.js';
+
 /** The web features of Stages 1 and 2, exempt from the feature boundary (see the policy below). */
 const LEGACY_WEB_FEATURES = [
   'audit',
@@ -42,21 +44,7 @@ const LEGACY_WEB_FEATURES = [
  *   the modules that need them appear.
  */
 export default defineConfig(
-  globalIgnores([
-    '**/node_modules/**',
-    '**/dist/**',
-    '**/coverage/**',
-    '**/playwright-report/**',
-    '**/test-results/**',
-    // Planning artifacts and local caches.
-    'openspec/**',
-    '.atl/**',
-    // Agent skills installed by AutoSkills (third-party content).
-    '.agents/**',
-    '.claude/**',
-    // Deliberately wrong code that tests lint with `ignore: false`.
-    '**/__fixtures__/**',
-  ]),
+  globalIgnores(GLOBAL_IGNORES),
 
   js.configs.recommended,
   tseslint.configs.strictTypeChecked,
