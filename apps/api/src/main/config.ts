@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { DEFAULT_RUNTIME_POOL_MAX } from '../platform/db/pool.js';
 import { CONNECTION_HOLDING_JOBS, JOB_LOCAL_CONCURRENCY } from '../platform/jobs/concurrency.js';
 
+import { readMetricsConfig, type MetricsConfig } from './config-metrics.js';
 import { readProviderConfig, type ProviderConfig } from './config-providers.js';
 import { readScannerConfig, type ScannerConfig } from './config-scanner.js';
 import { parseTrustProxy, type TrustProxySetting } from './trust-proxy.js';
@@ -308,6 +309,8 @@ export interface Config {
   readonly storage?: StorageConfig;
   /** Undefined when CLAMAV_HOST is not set: development then scans with the fake scanner. */
   readonly scanner?: ScannerConfig;
+  /** Undefined when METRICS_PORT is not set: nothing then listens for a scraper. */
+  readonly metrics?: MetricsConfig;
   /** Undefined when SMTP_HOST is not set (allowed outside production). */
   readonly mail?: MailConfig;
   /** Which provider serves WhatsApp, video and the bot challenge (see config-providers.ts). */
@@ -367,6 +370,12 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     const problems = scanner.problems.map((problem) => `${problem.path}: ${problem.message}`);
     throw new ConfigError(`Invalid environment configuration. ${problems.join('; ')}`);
   }
+  // So have the metrics: a port, a host and a token (see config-metrics.ts).
+  const metrics = readMetricsConfig(withoutEmptyValues(env));
+  if (metrics.problems.length > 0) {
+    const problems = metrics.problems.map((problem) => `${problem.path}: ${problem.message}`);
+    throw new ConfigError(`Invalid environment configuration. ${problems.join('; ')}`);
+  }
   // The provider variables have their own small schema too; production refuses a simulator.
   const providers = readProviderConfig(withoutEmptyValues(env), { nodeEnv: value.NODE_ENV });
   if (providers.config === undefined) {
@@ -413,6 +422,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
           },
         }),
     ...(scanner.config === undefined ? {} : { scanner: scanner.config }),
+    ...(metrics.config === undefined ? {} : { metrics: metrics.config }),
     ...(value.SMTP_HOST === undefined
       ? {}
       : {

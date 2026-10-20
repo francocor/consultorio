@@ -15,6 +15,8 @@ import { createDbProbe } from '../platform/db/probe.js';
 import { createWithTenant } from '../platform/db/tenant-context.js';
 import { createBoss, createLazyJobs } from '../platform/jobs/boss.js';
 import { startWorker } from '../platform/jobs/worker.js';
+import { METRIC_DESCRIPTIONS } from '../platform/metrics-catalog.js';
+import { createMetrics } from '../platform/metrics.js';
 import { createTokenPurgeJob } from '../platform/tokens/purge-job.js';
 
 import { createAdapterResolver, createTenantRoutedEmail } from './adapter-resolver.js';
@@ -26,11 +28,17 @@ import { documentWorker } from './document-jobs.js';
 import { createConfiguredEmail } from './email.js';
 import { createKeyManagement } from './key-management.js';
 import { buildLoggerOptions } from './logger.js';
+import { startMetricsListener } from './metrics-listener.js';
 import { loadPasswordValidator } from './password-validator.js';
+import { collectPlatformMetrics } from './platform-metrics.js';
 import { createConfiguredScanner } from './scanner.js';
 import { MODULE_WIRINGS, combineWorkerContributions } from './wiring/index.js';
+import { onlineBookingMetrics } from './wiring/online-booking.js';
 import { originsFromConfig } from './wiring/origins.js';
 import { demoPrescriptionProviderOf } from './wiring/prescriptions.js';
+
+/** How often the worker measures the counts of the platform (one query per organization). */
+const METRICS_EVERY_MS = 60_000;
 
 const ROLES = ['api', 'worker', 'releaser'] as const;
 type Role = (typeof ROLES)[number];
@@ -165,9 +173,15 @@ async function runApi(config: Config): Promise<void> {
     app.log.warn('SMTP_HOST is not set: emails (password reset, invitations) are not delivered');
   }
   await app.listen({ host: config.host, port: config.port });
+  // The numbers this process keeps (the public booking counters), on a port of its own when asked.
+  const stopMetrics = await startMetricsListener(config.metrics, {
+    render: () => onlineBookingMetrics.render(),
+    log: app.log,
+  });
   await waitForShutdownSignal();
 
   app.log.info('shutting down');
+  await stopMetrics();
   await app.close();
   await jobs?.stop({ graceful: true, timeout: 10_000 });
   email.close();
@@ -248,16 +262,29 @@ async function runWorker(config: Config): Promise<void> {
   const videoJoin = createVideoJoinRegistry();
   // One bus for the process: the billing jobs publish the end of an organization, retention subscribes.
   const tenantLifecycle = createTenantLifecycle();
+  // The numbers this process keeps and the ones it measures about the platform, described by the catalog.
+  const metrics = createMetrics({ catalog: METRIC_DESCRIPTIONS });
   const worker = await startWorker({
     databaseUrl: config.databaseUrl,
     dbPoolMax: config.dbPoolMax,
     sealerDatabaseUrl: config.auditSealerDatabaseUrl,
     log,
+    metrics,
     ...combineWorkerContributions([
       // Scheduling: the holds that ran out are ended every minute (they are also ended lazily).
       { tenantJobs: [{ definition: holdExpireJob, everyMs: 60_000 }] },
       // The links that expired a week ago are deleted once a day.
       { tenantJobs: [{ definition: createTokenPurgeJob(), everyMs: 86_400_000 }] },
+      // The counts of the platform for the alert rules: measured every minute, nothing but numbers.
+      {
+        schedules: ({ db, metrics: registry }) => [
+          {
+            name: 'platform metrics',
+            intervalMs: METRICS_EVERY_MS,
+            run: () => collectPlatformMetrics({ db, metrics: registry }),
+          },
+        ],
+      },
       ...(storage ? [documentWorker({ storage, scanner, email: email.sender })] : []),
       ...MODULE_WIRINGS.map(
         (module) =>
@@ -266,8 +293,13 @@ async function runWorker(config: Config): Promise<void> {
       ),
     ]),
   });
+  const stopMetrics = await startMetricsListener(config.metrics, {
+    render: () => metrics.render(),
+    log,
+  });
   log.info('worker started');
   await waitForShutdownSignal();
+  await stopMetrics();
   await worker.stop();
   await runtime.close();
   email.close();
