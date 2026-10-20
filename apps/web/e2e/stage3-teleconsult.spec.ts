@@ -206,6 +206,14 @@ async function stubCalls(context: BrowserContext) {
   );
 }
 
+/**
+ * Start times, in minutes from now, that leave the appointment in its join window: every three
+ * minutes from a little before it opens to a little before it closes. The demo agenda is laid out
+ * around the hour it is seeded at, so a few offsets can all fall on an existing appointment of every
+ * professional (a mid-afternoon run); the fine grid finds the gaps between them.
+ */
+const WINDOW_OFFSETS: readonly number[] = Array.from({ length: 28 }, (_, index) => 12 - index * 3);
+
 let typeId = '';
 let inWindow: Booked;
 let later: Booked;
@@ -214,7 +222,7 @@ test.beforeAll(async ({ playwright }) => {
   const owner = await ownerApi(playwright);
   typeId = await ensureVirtualType(owner);
   // One appointment that is in its join window right now, and one that opens in a few hours.
-  inWindow = await bookVirtual(owner, typeId, [10, 5, -10, -25, -40, -55, -70]);
+  inWindow = await bookVirtual(owner, typeId, WINDOW_OFFSETS);
   later = await bookVirtual(owner, typeId, [180, 240, 300, 360, 420]);
   await waitUntilReady(owner, inWindow.appointmentId);
   await waitUntilReady(owner, later.appointmentId);
@@ -342,7 +350,7 @@ test('without a room the appointment waits for a manual link, which takes its pl
   expect((await setIntegration(false)).ok()).toBe(true);
   let waiting: Booked;
   try {
-    waiting = await bookVirtual(owner, typeId, [12, 7, -8, -23, -38, -53, -68]);
+    waiting = await bookVirtual(owner, typeId, WINDOW_OFFSETS);
   } finally {
     expect((await setIntegration(true)).ok()).toBe(true);
   }
