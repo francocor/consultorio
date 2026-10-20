@@ -764,6 +764,13 @@
       "when": 1792464632300,
       "tag": "0581_expiry_requires_flag",
       "breakpoints": true
+    },
+    {
+      "idx": 109,
+      "version": "7",
+      "when": 1792483919041,
+      "tag": "0640_signup",
+      "breakpoints": true
     }
   ]
 }

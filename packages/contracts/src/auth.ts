@@ -41,8 +41,12 @@ export const TwoFactorSummary = z.strictObject({
 });
 export type TwoFactorSummary = z.infer<typeof TwoFactorSummary>;
 
-/** The profile of the signed-in user, as the web app needs it to draw the shell. */
-export const TenantStatus = z.enum(['active', 'read_only', 'cancelled']);
+/**
+ * The state of an organization. `unverified` is a signup whose address nobody has confirmed yet: it
+ * has no member, so no session, and it exists only until the link is followed or the purge removes
+ * it (tenant-onboarding, Part B).
+ */
+export const TenantStatus = z.enum(['active', 'read_only', 'cancelled', 'unverified']);
 export type TenantStatus = z.infer<typeof TenantStatus>;
 
 export const MeResponse = z.strictObject({

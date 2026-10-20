@@ -41,7 +41,8 @@ export function defineJob<P extends JobPayload>(definition: JobDefinition<P>): J
   return definition;
 }
 
-export type JobCancelReason = 'tenant_read_only' | 'tenant_not_found' | 'invalid_payload';
+export type JobCancelReason =
+  'tenant_read_only' | 'tenant_unverified' | 'tenant_not_found' | 'invalid_payload';
 
 export type JobRunResult =
   | { status: 'completed' }
@@ -84,7 +85,11 @@ export async function runJob<P extends JobPayload>(
       definition,
       {
         status:
-          state.status === 'read_only' || state.status === 'cancelled' ? state.status : 'active',
+          state.status === 'read_only' ||
+          state.status === 'cancelled' ||
+          state.status === 'unverified'
+            ? state.status
+            : 'active',
         readOnlySince: state.readOnlySince,
       },
       input.enqueuedAt,
