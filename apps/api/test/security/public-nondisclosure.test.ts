@@ -573,8 +573,10 @@ describe('an address that is not live', () => {
  * The code the portal sends (JD-S5 R4-5). An address with an account gets a real challenge and a job;
  * an address without one gets a decoy, and both are capped at three an hour (the real ones among the
  * real sends, the decoys among the decoys). Above the cap each path used to stop at a different
- * point, so a visitor who asked four times could tell the two apart from the work done. All four
- * paths (real, decoy, real above its cap, decoy above its cap) send the same number of statements.
+ * point, so a visitor who asked four times could tell the two apart from the work done. The real and
+ * the decoy path send the same number of statements in every state, below the cap and above it. Not
+ * claimed: that a limited answer costs what one below the cap costs (the limited paths skip
+ * `enqueue`, which in production runs statements).
  */
 describe('the sign-in code of the portal (JD-S5 R4-5)', () => {
   const ask = async (email: string) => {
@@ -608,9 +610,8 @@ describe('the sign-in code of the portal (JD-S5 R4-5)', () => {
       shapes.push(a.shape, b.shape);
     }
 
+    // Turn by turn, the account and the unknown address cost the same, below the cap and above it.
     expect(decoy).toEqual(real);
-    // Above the cap is not told apart from below it either.
-    expect(new Set(real).size).toBe(1);
     expect(new Set(shapes).size).toBe(1);
   });
 });

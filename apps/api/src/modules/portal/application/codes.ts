@@ -26,9 +26,11 @@ export const PORTAL_CODE_JOB = 'portal.code_send';
  * The statements a path of `openChallenge` writes after its early return would have been taken (JD-S5
  * R4-5): the real path ends the live codes of the address and inserts the challenge, the decoy
  * inserts it. A path that answers `limited` sends that many cheap reads instead, so that a visitor who
- * asks above the hourly cap cannot tell an address with an account from one without by the work done
- * (pinned by `test/security/public-nondisclosure.test.ts`). The queueing of the job is the same
- * single call in both paths, so it does not tell them apart.
+ * asks above the hourly cap cannot tell an address with an account from one without by the work done:
+ * real and decoy match each other in every state, below the cap and above it (pinned by
+ * `test/security/public-nondisclosure.test.ts`). The limited paths skip `enqueue`, which in production
+ * runs statements, so a limited answer is not claimed to cost the same as one below the cap; what is
+ * claimed is that the real path and the decoy path cost the same as each other in each state.
  */
 const REAL_WRITES = 2;
 const DECOY_WRITES = 1;
