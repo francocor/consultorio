@@ -1,7 +1,9 @@
 import type { InvoiceIssuer, PrescriptionProvider } from '@consultorio/contracts';
 
 import type { WhatsAppSender } from '../modules/notifications/application/ports.js';
+import type { PaymentsGateway } from '../modules/subscriptions/application/ports.js';
 import type { VideoLinkProvider } from '../modules/teleconsultation/application/ports.js';
+import type { ArchiveStore } from '../modules/tenancy/archive/ports.js';
 import type { BotChallenge } from '../platform/bot-challenge/bot-challenge.js';
 import type { KeyManagement } from '../platform/crypto/key-management.js';
 import type { EmailMessage, EmailSender } from '../platform/mail/email-sender.js';
@@ -31,6 +33,10 @@ export interface AdapterPorts {
   invoiceIssuer: InvoiceIssuer;
   /** Electronic prescriptions (Stage 5): the authorized platform, a local simulator, an in-memory fake. */
   prescriptionProvider: PrescriptionProvider;
+  /** The payments gateway of the platform subscriptions (Stage 6): Mercado Pago, a local simulator, an in-memory fake. */
+  paymentsGateway: PaymentsGateway;
+  /** The write-once store of the retention archive (Stage 6): S3, a local MinIO bucket, an in-memory fake. */
+  archiveStore: ArchiveStore;
 }
 export type AdapterPort = keyof AdapterPorts;
 
@@ -44,6 +50,8 @@ export const ADAPTER_PORTS = [
   'botChallenge',
   'invoiceIssuer',
   'prescriptionProvider',
+  'paymentsGateway',
+  'archiveStore',
 ] as const satisfies readonly AdapterPort[];
 
 export interface Marked<A> {

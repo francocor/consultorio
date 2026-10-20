@@ -27,6 +27,8 @@ export function registerOnboardingExportContributors(registry: ExportRegistry): 
   registry.registerExportContributor('administrative', 'onboarding', exportOnboarding);
 }
 
+export { createSignup } from './signup/signup.js';
+export type { Signup, SignupOptions } from './signup/signup.js';
 export { createWizardGate } from './application/wizard-gate.js';
 export type { WizardGate } from './application/wizard-gate.js';
 export { DEFAULT_CAPABILITIES } from './domain/capabilities.js';

@@ -22,6 +22,9 @@ import { operatorRoutes } from './http/operator-routes.js';
 import type { OperatorSecrets } from './infrastructure/secrets.js';
 
 export { createOperatorSecrets } from './infrastructure/secrets.js';
+export { createOperatorRun } from './application/context.js';
+export type { OperatorIdentity, OperatorRun } from './application/context.js';
+export { operatorOf, platformAuditMetaOf } from './http/request-context.js';
 export type { OperatorSecrets } from './infrastructure/secrets.js';
 export { unavailableDemoReset } from './application/tenants.js';
 export type { DemoResetPort } from './application/tenants.js';

@@ -29,7 +29,7 @@ const context = {
 };
 
 describe('the module wiring (every shared registration, in one place per module)', () => {
-  it('wires each Stage 3, 4 and 5 module that has a directory, once', () => {
+  it('wires each Stage 3, 4, 5 and 6 module that has a directory, once', () => {
     const wired = MODULE_WIRINGS.map((wiring) => wiring.name);
     const directories = readdirSync(MODULES_DIR, { withFileTypes: true })
       .filter((entry) => entry.isDirectory())
@@ -47,6 +47,8 @@ describe('the module wiring (every shared registration, in one place per module)
       'consent',
       'prescriptions',
       'portal',
+      'subscriptions',
+      'tenancy',
     ]) {
       expect(directories, name).toContain(name);
       expect(wired, name).toContain(name);
@@ -60,8 +62,10 @@ describe('the module wiring (every shared registration, in one place per module)
     const owned = slots.flatMap((slot) => Object.keys(slot)).sort();
 
     expect(owned).toEqual([
+      'archiveStore',
       'botChallenge',
       'invoiceIssuer',
+      'paymentsGateway',
       'prescriptionProvider',
       'videoLink',
       'whatsapp',
@@ -81,6 +85,8 @@ describe('the module wiring (every shared registration, in one place per module)
             'botChallenge',
             'invoiceIssuer',
             'prescriptionProvider',
+            'paymentsGateway',
+            'archiveStore',
           ].includes(port),
       ).map((port) => [port, { real: undefined, demo: { adapter: {}, kind: 'fake' as const } }]),
     );
@@ -220,7 +226,7 @@ describe('the simulator console entries of the modules', () => {
         : [],
     );
 
-  it('lists WhatsApp, the bot challenge, video, AFIP, the prescription provider and the email of the demo, each with the adapter that serves customers', async () => {
+  it('lists WhatsApp, the bot challenge, video, AFIP, the prescription provider, the payments gateway and the email of the demo, each with the adapter that serves customers', async () => {
     const entries = entriesFor();
 
     expect(entries.map((entry) => entry.id).sort()).toEqual([
@@ -228,6 +234,7 @@ describe('the simulator console entries of the modules', () => {
       'bot-challenge',
       'demo-outbox',
       'erx',
+      'payments',
       'video',
       'whatsapp',
     ]);
@@ -257,6 +264,8 @@ describe('the simulator console entries of the modules', () => {
     expect(await status('afip')).toEqual({ adapter: 'off', mode: null });
     // The same for the prescription provider: no simulator in production unless somebody asked.
     expect(await status('erx')).toEqual({ adapter: 'off', mode: null });
+    // And for the payments gateway: nobody can subscribe until a provider is chosen.
+    expect(await status('payments')).toEqual({ adapter: 'off', mode: null });
   });
 });
 

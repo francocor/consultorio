@@ -28,6 +28,19 @@ export type {
   RegisteredContributor,
 } from './application/export-registry.js';
 export { createResolveHost } from './application/resolve-tenant.js';
+export { createTenantLifecycle } from './application/lifecycle.js';
+export type {
+  CancellationSource,
+  TenantCancelledEvent,
+  TenantCancelledHandler,
+  TenantCancelledPort,
+  TenantLifecycle,
+} from './application/lifecycle.js';
+export { createCancellation } from './cancellation/cancellation.js';
+export type { Cancellation, CancellationOptions } from './cancellation/cancellation.js';
+export { createArchive } from './archive/archive.js';
+export type { Archive, ArchiveOptions } from './archive/archive.js';
+export type * from './archive/ports.js';
 export type { LookupTenant } from './application/resolve-tenant.js';
 export { classifyHost } from './domain/host.js';
 export type { DeploymentSettings, HostClassification } from './domain/host.js';

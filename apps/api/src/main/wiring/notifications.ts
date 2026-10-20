@@ -17,6 +17,7 @@ import {
   queueVideoLinkFollowUp,
   type TenantRef,
 } from '../../modules/notifications/index.js';
+import { createQuotaPolicy } from '../../modules/subscriptions/index.js';
 import { sealLegacyManualLinks } from '../../modules/teleconsultation/index.js';
 import { createTenantKeys } from '../../platform/crypto/tenant-keys.js';
 import { createRuntimeDb } from '../../platform/db/pool.js';
@@ -119,6 +120,8 @@ export const notificationsWiring: ModuleWiring = {
       origins: context.origins,
       email: context.email,
       worklist: context.worklist,
+      // The quota of the plan (Stage 6); until the subscriptions track fills it in, counting only.
+      quota: createQuotaPolicy(),
       // The webhook is verified by the customer provider; the resolver hands it out for any
       // organization that is not a demo.
       whatsappWebhookSender: context.adapters?.forTenant(PLATFORM, 'whatsapp'),
@@ -145,7 +148,8 @@ export const notificationsWiring: ModuleWiring = {
       // next patient), through the same entry point.
       const whatsappAvailable = (tenant: TenantRef) =>
         adapters.forTenant(tenant, 'whatsapp') !== undefined;
-      bindOfferDelivery({ jobs: client, clock: now, whatsappAvailable, keys });
+      const quota = createQuotaPolicy();
+      bindOfferDelivery({ jobs: client, clock: now, whatsappAvailable, keys, quota });
       const worklist = createWorklist({ keys });
       // The room is created by a job of this process: its link is followed up from here too.
       videoJoin.onLinkReady(async (tx, appointmentId) => {
@@ -166,6 +170,7 @@ export const notificationsWiring: ModuleWiring = {
         jobs: client,
         clock: now,
         origins,
+        quota,
         tokens: createActionTokens({ clock: now }),
         worklist,
         keys,

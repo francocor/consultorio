@@ -150,6 +150,8 @@ describe('the public allowlist (design 4.5)', () => {
     '/public/t/abc',
     '/files/abc',
     '/webhooks/mercadopago',
+    // The hosted checkout of the local Mercado Pago (the payer is not signed in to the product).
+    '/local-providers/mercadopago/checkout/PRE-000001',
     '/health',
     '/ready',
   ])('allows %s', (path) => {
@@ -164,6 +166,8 @@ describe('the public allowlist (design 4.5)', () => {
     '/ready/extra',
     '/publicity',
     '/files',
+    '/local-providers',
+    '/local-providers-other/x',
     '//auth/login',
     '/AUTH/login',
   ])('does not allow %s', (path) => {

@@ -20,6 +20,9 @@ import {
 import { buildTestApplication } from '../support/app.js';
 import { createRecordingJobClient } from '../support/jobs.js';
 
+import type { Declaration } from './public-route-declaration.js';
+import { STAGE6_PUBLIC_ROUTES } from './stage6-public-routes.js';
+
 /**
  * Boot-time enumeration of the real application (design 4.5, identity-access "Authentication
  * required by default"): every route declares whether it needs a session, and the routes that do
@@ -107,31 +110,6 @@ afterAll(async () => {
   await surfaceDatabase.close();
 });
 
-/** How a public route protects itself. A route may use several. */
-type Guard =
-  /** Says nothing about anybody: the look of an organization, a puzzle. */
-  | 'open-metadata'
-  /** Reached by the public slug of a link; every address that is not live answers the same. */
-  | 'link-slug'
-  /** The bot challenge in front of the form: a puzzle solved once. */
-  | 'bot-challenge'
-  /** The anonymous session that made the hold. */
-  | 'hold-session'
-  /** The one-time code sent to the address in the form: ten minutes, five tries. */
-  | 'otp'
-  /** A single-purpose link: unknown, expired, spent and revoked all look alike. */
-  | 'token'
-  /** The signature of the provider, checked over the raw bytes. */
-  | 'signature'
-  /** Per-address bounds (a limit of the route, and the abuse counters of the flow). */
-  | 'rate-limit';
-
-interface Declaration {
-  guards: readonly Guard[];
-  /** The test files that probe it. */
-  probes: readonly string[];
-}
-
 const SURFACE_PROBES = 'test/security/public-surface.test.ts';
 const NONDISCLOSURE = 'test/security/public-nondisclosure.test.ts';
 const ABUSE = 'test/security/public-abuse.test.ts';
@@ -141,6 +119,8 @@ const WAITLIST_JOIN = 'test/integration/waitlist-join.test.ts';
 const PORTAL_SIGNIN = 'test/integration/portal-signin.test.ts';
 
 const DECLARED: Record<string, Declaration> = {
+  // The routes of Stage 6 (signup and the payments provider), declared in their own file.
+  ...STAGE6_PUBLIC_ROUTES,
   'GET /public/boot': { guards: ['open-metadata'], probes: [SURFACE_PROBES] },
   'GET /public/branding/logo': { guards: ['open-metadata'], probes: [SURFACE_PROBES] },
   'GET /public/challenge': { guards: ['open-metadata', 'rate-limit'], probes: [ABUSE] },
@@ -267,8 +247,12 @@ describe('the public surface of the whole product', () => {
         !route.startsWith('POST /public/t/') &&
         !route.startsWith('POST /public/v/')
       ) {
+        // A form is guarded by the challenge or by a code; the verification link of a signup
+        // (Stage 6) is guarded by the single-use token it carries.
         expect(
-          declaration.guards.some((guard) => guard === 'bot-challenge' || guard === 'otp'),
+          declaration.guards.some(
+            (guard) => guard === 'bot-challenge' || guard === 'otp' || guard === 'token',
+          ),
           route,
         ).toBe(true);
       }

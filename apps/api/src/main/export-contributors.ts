@@ -15,6 +15,7 @@ import { registerPrescriptionsExportContributors } from '../modules/prescription
 import { registerReportsExportContributors } from '../modules/reports/index.js';
 import { registerSchedulingExportContributors } from '../modules/scheduling/index.js';
 import { registerStaffExportContributors } from '../modules/staff/index.js';
+import { registerSubscriptionsExportContributors } from '../modules/subscriptions/index.js';
 import { registerTeleconsultationExportContributors } from '../modules/teleconsultation/index.js';
 import {
   registerTenancyExportContributors,
@@ -51,4 +52,5 @@ export function registerAllExportContributors(
   registerConsentExportContributors(registry, deps);
   registerPrescriptionsExportContributors(registry, deps);
   registerPortalExportContributors(registry);
+  registerSubscriptionsExportContributors(registry);
 }

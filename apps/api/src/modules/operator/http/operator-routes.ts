@@ -23,7 +23,6 @@ import type { FastifyInstance, FastifyRequest } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 
-import type { PlatformAuditActor } from '../../../platform/audit/platform-audit.js';
 import { denied, AppError } from '../../../platform/http/problem.js';
 import type { PublicOrigins } from '../../../platform/http/public-origin.js';
 import { EmailDeliveryError, type EmailSender } from '../../../platform/mail/email-sender.js';
@@ -34,13 +33,13 @@ import {
   type OperatorAuth,
   type OperatorSessionInfo,
 } from '../application/auth.js';
-import type { OperatorIdentity } from '../application/context.js';
 import type { OperatorHolidays } from '../application/holidays.js';
 import type { OperatorMatricula } from '../application/matricula.js';
 import type { OperatorSupport } from '../application/support.js';
 import type { OperatorTenants, OwnerInvitation } from '../application/tenants.js';
 
 import { clearOperatorCookie, readOperatorCookie, serializeOperatorCookie } from './cookie.js';
+import { operatorOf, platformAuditMetaOf } from './request-context.js';
 
 declare module 'fastify' {
   interface FastifyContextConfig {
@@ -93,15 +92,7 @@ function hostOfOrigin(origin: string): string | null {
   }
 }
 
-function metaOf(request: FastifyRequest): Omit<PlatformAuditActor, 'operatorId'> {
-  const { ip, userAgent, requestId } = request.auditActor;
-  return { ip, userAgent, requestId };
-}
-
-function operatorOf(request: FastifyRequest): OperatorIdentity {
-  if (!request.operator) throw new AppError('unauthenticated');
-  return request.operator.operator;
-}
+const metaOf = platformAuditMetaOf;
 
 /**
  * The operator console API. It answers ONLY on the platform host: on a tenant host (or any other)
