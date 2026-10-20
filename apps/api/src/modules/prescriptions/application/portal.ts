@@ -42,9 +42,17 @@ function encodeCursor(row: { issued_at: string | Date; id: string }): string {
 }
 
 const CURSOR_TIME =
-  /^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2}):(\d{2})(\.\d{1,6})?(Z|[+-]\d{2}(:?\d{2})?)$/;
+  /^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2}):(\d{2})(\.\d{1,6})?(Z|[+-](\d{2})(?::?(\d{2}))?)$/;
 
-/** Whether the date and the time of a cursor exist (month 13 or the 30th of February do not). */
+/** The largest zone offset the database accepts, hours and minutes: +-15:59 (JD-S5 R4-4). */
+const MAX_OFFSET_HOURS = 15;
+const MAX_OFFSET_MINUTES = 59;
+
+/**
+ * Whether the date, the time and the zone of a cursor exist, so the database never gets one it
+ * refuses (that would be a 500 for a tampered cursor): month 13, the 30th of February, year 0000
+ * (the database has no year 0) and a zone beyond +-15:59 do not.
+ */
 function existsAsDate(at: string): boolean {
   const match = CURSOR_TIME.exec(at);
   if (!match) return false;
@@ -56,8 +64,16 @@ function existsAsDate(at: string): boolean {
     number,
     number,
   ];
+  if (year < 1 || month < 1 || month > 12 || day < 1) return false;
   if (hour > 23 || minute > 59 || second > 59) return false;
-  const date = new Date(Date.UTC(year, month - 1, day));
+  if (match[8] !== 'Z') {
+    const offsetHours = Number(match[9]);
+    const offsetMinutes = Number(match[10] ?? '0');
+    if (offsetHours > MAX_OFFSET_HOURS || offsetMinutes > MAX_OFFSET_MINUTES) return false;
+  }
+  // `Date.UTC` reads the years 0 to 99 as 1900 to 1999, so the year is set apart.
+  const date = new Date(0);
+  date.setUTCFullYear(year, month - 1, day);
   return date.getUTCMonth() === month - 1 && date.getUTCDate() === day;
 }
 const CURSOR_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;

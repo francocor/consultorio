@@ -164,6 +164,50 @@ describe('B-S5: the prescriptions of the portal are paged', () => {
     }
   });
 
+  it('refuses a tampered cursor with a 400, never a 500: year 0, an impossible zone, a day of the first century that does not exist (JD-S5 R4-4)', async () => {
+    const patient = await portalPatient();
+    await issuedTo(patient.patientId);
+    const withAt = (at: string) =>
+      Buffer.from(JSON.stringify({ at, id: 'ffffffff-ffff-7fff-bfff-ffffffffffff' })).toString(
+        'base64url',
+      );
+
+    for (const at of [
+      // There is no year 0 (the database refuses it), and nothing below 1.
+      '0000-06-15T10:00:00.000Z',
+      '0000-01-01T00:00:00Z',
+      // A zone offset beyond +-15:59 does not exist for the database.
+      '2026-10-19T10:00:00+16:00',
+      '2026-10-19T10:00:00-16:00',
+      '2026-10-19T10:00:00+99:00',
+      '2026-10-19T10:00:00+1600',
+      '2026-10-19T10:00:00+16',
+      '2026-10-19T10:00:00+05:60',
+      // Years 0 to 99 are read as 1900 to 1999 by `Date.UTC`: the year is set apart, and a day that
+      // does not exist in the year they say (1, 3 and 100 are not leap years) is still refused.
+      '0001-02-29T10:00:00Z',
+      '0100-02-29T10:00:00Z',
+      '0003-02-29T10:00:00Z',
+    ]) {
+      const refused = await patient.visitor.get(`/portal/prescriptions?cursor=${withAt(at)}`);
+      expect(refused.statusCode, `${at}: ${refused.body}`).toBe(400);
+      expect(refused.json<{ code: string }>().code).toBe('validation_failed');
+    }
+
+    // The edges that do exist are answered (an empty page: nothing is that old).
+    for (const at of [
+      '0004-02-29T10:00:00Z',
+      '0001-01-01T00:00:00Z',
+      '2026-10-19T10:00:00+15:59',
+      '2026-10-19T10:00:00-15:59',
+      '2026-10-19T10:00:00+0530',
+      '2000-02-29T10:00:00.123456Z',
+    ]) {
+      const answered = await patient.visitor.get(`/portal/prescriptions?cursor=${withAt(at)}`);
+      expect(answered.statusCode, `${at}: ${answered.body}`).toBe(200);
+    }
+  });
+
   it('pages across prescriptions issued within the same millisecond (JD-S5 R3)', async () => {
     const patient = await portalPatient();
     const template = await issuedTo(patient.patientId);
