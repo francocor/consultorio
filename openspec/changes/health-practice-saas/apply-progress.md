@@ -3228,3 +3228,48 @@ Branch `feat/stage-6-signup-subscriptions`, started from the tip of Stage 5 (`f1
 | `corepack pnpm db:check` / `db:restamp` | No migration drift; stamps already rising; snapshots already chained; the last snapshot matches the schema |
 
 The e2e suite and Lighthouse were not run (no e2e was added). Two mutations of the fake gateway were run to check that the contract suite fails (refund beyond the payment, no abort check): five tests failed, and the files were restored. No `.env` file was read or written (`.env.example` could not even be read: the permission system denies it). Logs are in `$TEMP/s6seam-*.log`.
+
+## Stage 6 integration 1 (tracks A, B and C merged into the Stage 6 branch)
+
+Branch `feat/stage-6-signup-subscriptions`, from the seam `09574fd`. The three tracks were merged with `--no-ff` in the order A (`a8df1664`), B (`53fa66e`), C (`83b57a2f`), with `pnpm db:restamp` and `pnpm db:check` after each. No PR, no merge to main, CI not polled.
+
+### Conflicts and how they were resolved
+
+| File | Conflict | Resolution |
+| --- | --- | --- |
+| `meta/_journal.json` (B, C) | Both sides appended after 0581 | Kept every entry once, applied order untouched; B's two and C's six appended; `db:restamp` raised the stamps and re-chained the snapshots (0640, 0650); `idx` unique and contiguous (0 to 121), `when` strictly rising |
+| `test/policy/stage6-public-routes.ts` (B, C) | Same object literal | Union: A's webhook, B's five signup routes, C's two release routes |
+| `platform/jobs/concurrency.ts`, `concurrency.test.ts` | A moved two names, C moved three and kept a different pending list | `CONNECTION_HOLDING_JOBS` is the union of eight families (`afip.issue`, `erx.reconcile`, `portal.notice_sweep`, `subscription.reconcile`, `dunning.step`, `export.build`, `archive.write`, `archive.verify`); `PENDING_CONNECTION_HOLDING_JOBS` is `['archive.release']` (it runs in the releaser, which has a pool of its own) |
+| `platform/db/pool.ts`, `main/config.test.ts`, `docs/runbooks/deploy.md`, `docs/security/asvs-l2-portal.md` | 24 (A) against 26 (C) | `MIN_DB_POOL_MAX` = 8 x 2 x 2 + 2 = 34 (read from code), `DEFAULT_RUNTIME_POOL_MAX` = 36; the docs say the same |
+
+The other shared lists (`definer-functions.test.ts`, `operator-privileges.test.ts`, `audit-scenarios/*`, `auth-recovery.test.ts`, the demo exemptions) merged without conflict; the demo exemptions of the subscriptions tables were missing and were added (see fixes).
+
+### Journal order
+
+0610, 0612, 0614, 0616, 0618 (A), 0640, 0641 (B), 0650, 0651, 0652, 0653, 0654, 0655 (C): idx 109 to 121, 122 entries in all.
+
+### Wiring and fixes
+
+1. **The worker gap (test-first).** `WorkerWiringContext` has a required `tenantLifecycle`; `main.ts` and the e2e stack create ONE bus for the worker process and pass it to every module; `subscriptions` publishes on it and `tenancy` subscribes `subscribeCancellationExport` to it in its `worker()`. Before the fix a cancellation reached by `dunning.step` was published on a bus nobody listened to. `test/integration/worker-cancellation.test.ts` (real wiring of both modules, a subscription taken from checkout to the end of the paid period) failed with no `export_package` row and passes with the administrative request queued and `export.cancellation.requested` audited. `publishCancelled` is called inside the cancelling transaction (`transitions.ts`).
+2. `archive:legal-erase` script in `apps/api/package.json` and a root proxy.
+3. `main/wiring/signup.ts` passes the clock to `createTrialStarter`; `docs/migration-ranges.md` names 0641; the activation journey of `stage6-signup.spec.ts` no longer skips (the trial door exists) and passes.
+4. **Task 6.29 done.** `TrialCard` (`features/onboarding/signup/components`) shows in the setup wizard, for the owner only and only while the subscription is in trial: the end date, what happens then (the grace days, then read-only) and "Autorizar el pago ahora"; when the provider cannot be reached it says so and that the payment can wait, with a link to Suscripción, and the wizard goes on. It reads `GET /subscription` through the index of the subscription feature (which now exports `subscriptionApi`, `subscriptionKeys` and `goToProviderPage`); 8 component tests with axe. Task 6.29 is checked.
+5. Merge breakage fixed in the tests: `config.test.ts` (an explicit pool of 30 is now below the floor), `invoice-series.test.ts` (pool default read from code), `action-tokens.test.ts` (every token kind is enabled now: the refusal is tested by switching one off for the assertion), `onboarding-export.test.ts` (`termsAcceptances: []`), `demo-coverage-exemptions/subscriptions.ts` (eight tables), and a racy poll in `archive-release.test.ts` (the object is removed first and the mark follows).
+
+### Verification (tip `HEAD` of the branch, Node v24, pnpm 10.34.7, Docker running)
+
+| Command | Result |
+| --- | --- |
+| `pnpm install --frozen-lockfile` | exit 0 |
+| `pnpm typecheck`, `pnpm format:check`, `pnpm build`, `pnpm db:check` | exit 0 |
+| `pnpm lint` | exit 0 **with `NODE_OPTIONS=--max-old-space-size=8192`**; with the default heap eslint ran out of memory at 4 GB on the merged tree |
+| `pnpm test` | **482 files, 6,085 tests: 6,083 passed, 2 skipped.** A cold run had 20 files whose worker did not start and 3 files that timed out under load; all passed when re-run alone (20 files, 494 tests; 3 files, 15 tests) |
+| `pnpm test:integration` (Testcontainers) | **310 files, 4,934 tests.** The first full run had 5 failures (the five fixed above, plus `worker.test.ts` sealing 15 s timeout). The last full run: 307 files passed, 1 skipped, 2 failed: `worker.test.ts` (sealing, passes alone) and a suite-level `DecryptionError` in `archive-release.test.ts` (passes alone five times); 1 racy assertion in the same file fixed. The `.env.example` test passes (see risks) |
+| e2e, ports 5050/4050/9050, `--workers=2`, Playwright-managed stack | **238 passed, 0 skipped, 0 flaky** (9.1 min); includes `stage6-signup` (7), `stage6-subscription` (2), `stage6-archive` (1) |
+| Docker | Image built; fresh `postgres:17` with `infra/postgres/init`; `db:migrate` twice (both exit 0, 122 migrations recorded); production configuration with `DB_POOL_MAX=36`: `/health` `{"status":"ok"}`, the worker starts; `ARCHIVE_RELEASER_KEK` makes the api and the worker exit 1 ("only the releaser process may hold it"); `PAYMENTS_PROVIDER=local` and `ERX_PROVIDER=local` are refused in production, both are off by default; `DB_POOL_MAX=16` is refused ("must be at least 34") |
+
+### Remaining for track D and the maintainer
+
+- **Maintainer:** `.env.example` still says `DB_POOL_MAX=16`, which every process now refuses (floor 34). Change it to `DB_POOL_MAX=36`. The test "`.env.example` is accepted by the config schema as it is" passes today only because it reads the floor from code when the file pins less.
+- Track D: the Stage 6 demo (S6.12), the demo exemptions of A, B and C to remove as tables are seeded, 6.32 (left unchecked: the signup and subscription journeys now run in one suite, but the task also names a reception write refused in a read-only organization, which was not checked here), judgment day.
+- The unit and integration suites are heavy for this machine: re-run alone any file that times out.
