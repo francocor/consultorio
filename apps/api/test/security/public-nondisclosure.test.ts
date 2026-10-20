@@ -4,6 +4,7 @@ import { afterAll, beforeAll, describe, expect, inject, it } from 'vitest';
 
 import { createRuntimeDb, type DbHandle } from '../../src/platform/db/pool.js';
 import { createBookingWorld, type BookingWorld, type Visitor } from '../support/booking-world.js';
+import { createPortalWorld, type PortalWorld } from '../support/portal-world.js';
 import { countQueries, shapeOf } from '../support/security.js';
 
 /**
@@ -17,6 +18,7 @@ import { countQueries, shapeOf } from '../support/security.js';
 
 let runtime: DbHandle;
 let world: BookingWorld;
+let portal: PortalWorld;
 let links: Awaited<ReturnType<BookingWorld['openLinks']>>;
 
 const EARLY = new Date('2031-05-05T12:00:00.000Z');
@@ -58,9 +60,11 @@ beforeAll(async () => {
     ),
   );
   await world.delegateCalendar(world.reception, [world.doctor.professionalId]);
+  portal = await createPortalWorld(runtime, { slug: 'sec-nondisclosure-portal', ports: {} });
 }, 120_000);
 
 afterAll(async () => {
+  await portal.close();
   await world.close();
   await runtime.close();
 });
@@ -562,5 +566,51 @@ describe('an address that is not live', () => {
 
     expect(readOnly.statusCode).toBe(unknown.statusCode);
     expect(shapeOf(readOnly)).toBe(shapeOf(unknown));
+  });
+});
+
+/**
+ * The code the portal sends (JD-S5 R4-5). An address with an account gets a real challenge and a job;
+ * an address without one gets a decoy, and both are capped at three an hour (the real ones among the
+ * real sends, the decoys among the decoys). Above the cap each path used to stop at a different
+ * point, so a visitor who asked four times could tell the two apart from the work done. All four
+ * paths (real, decoy, real above its cap, decoy above its cap) send the same number of statements.
+ */
+describe('the sign-in code of the portal (JD-S5 R4-5)', () => {
+  const ask = async (email: string) => {
+    const visitor = portal.visitor();
+    const challengeProof = await visitor.solve();
+    let answer: Awaited<ReturnType<Visitor['post']>> | undefined;
+    const statements = await countQueries(async () => {
+      answer = await visitor.post('/public/sec-nondisclosure-portal/portal/otp', {
+        email,
+        challengeProof,
+      });
+      await portal.app.background.idle();
+    });
+    expect(answer?.statusCode, answer?.body).toBe(200);
+    return { statements, shape: shapeOf(answer as NonNullable<typeof answer>) };
+  };
+
+  it('does the same amount of work for an account and for an unknown address, also above the hourly cap', async () => {
+    const known = (await portal.patientSession()).email;
+    const unknown = `nadie-${String(Date.now())}@example.test`;
+
+    const real: number[] = [];
+    const decoy: number[] = [];
+    const shapes: string[] = [];
+    // Three codes an hour, and the fourth asked is above the cap, for the account and for the decoy.
+    for (let turn = 0; turn < 4; turn += 1) {
+      const a = await ask(known);
+      const b = await ask(unknown);
+      real.push(a.statements);
+      decoy.push(b.statements);
+      shapes.push(a.shape, b.shape);
+    }
+
+    expect(decoy).toEqual(real);
+    // Above the cap is not told apart from below it either.
+    expect(new Set(real).size).toBe(1);
+    expect(new Set(shapes).size).toBe(1);
   });
 });

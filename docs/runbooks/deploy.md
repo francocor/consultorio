@@ -18,6 +18,14 @@ not be run; **nothing in Stage 2 or later depends on it**.
 
 The counters of the public routes (the rate limits of the portal, of the booking and of the waitlist, the tries at a code) live in the MEMORY of each API process (`platform/http/rate-limit.ts`, the memory store). With one instance that is exact; with N instances behind a balancer each one counts on its own, so the real allowance is up to N times the written one. **TODO for the first multi-instance deployment: give `rateLimitStore` a shared store (Redis or Postgres) before scaling out.** The limits that protect a person stay in the database whatever the store does (three sends an hour per address, five tries per challenge and twenty in all), so the hole is in the per-client limits only. A client whose address is not known is counted by its user agent too (JD-S5 R3-7), so a clinic behind one address is not one bucket.
 
+## Size the connection pool of the API and of the worker
+
+`DB_POOL_MAX` (default 16, at least 14, at most 100) is the most connections EACH process opens. Both the API and the worker read it and refuse to start below the floor. A job of three families keeps the transaction the job framework opens for it idle while it waits for an outside service and asks for a second connection for its own work: `afip.issue` (the authority), `erx.reconcile` (the e-prescription provider) and `portal.notice_sweep` (the mail server). The worker runs two jobs of each family at once, so the floor is 3 x 2 x 2 + 2 = 14 (the 2 are for the sweeper and the other jobs); it is a floor, not a size, and a busy worker wants more (JD-S5 R4-2, `docs/runbooks/afip-switch-to-real.md`). Add the connections of every instance (API plus worker, times the instances, plus the migrator and the operator and sealer logins) and check them against `max_connections` of the managed Postgres.
+
+## The address of the client behind the proxy
+
+A request whose client address is not known (`ip` is null: no `TRUST_PROXY` entry matched, or the proxy did not send it) is counted in the rate limits of the public and portal routes by a hash of its user agent. That bucket is **not a security boundary**: a client changes its user agent at will, so it only keeps a clinic behind one unknown address from being one shared bucket. The limits that protect a person stay in the database (JD-S5 R3-7, R4-7). The API logs a warning ("the client address of a portal request is unknown") each time it happens on a portal route: if you see it, `TRUST_PROXY` does not match the proxies in front of the app.
+
 ## What the owner has to provide
 
 1. The cloud account and region (Q1), and the managed Postgres 17 with the roles of

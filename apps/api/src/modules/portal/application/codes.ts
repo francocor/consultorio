@@ -1,6 +1,7 @@
 import { and, desc, eq, gt, isNull, sql } from 'drizzle-orm';
 
 import { otpChallenge } from '../../../db/schema/booking-submission.js';
+import { evenOut } from '../../../platform/db/even-work.js';
 import {
   DECOY_PURPOSE,
   decoysInLastHour,
@@ -20,6 +21,17 @@ import {
 } from '../domain/code.js';
 
 export const PORTAL_CODE_JOB = 'portal.code_send';
+
+/**
+ * The statements a path of `openChallenge` writes after its early return would have been taken (JD-S5
+ * R4-5): the real path ends the live codes of the address and inserts the challenge, the decoy
+ * inserts it. A path that answers `limited` sends that many cheap reads instead, so that a visitor who
+ * asks above the hourly cap cannot tell an address with an account from one without by the work done
+ * (pinned by `test/security/public-nondisclosure.test.ts`). The queueing of the job is the same
+ * single call in both paths, so it does not tell them apart.
+ */
+const REAL_WRITES = 2;
+const DECOY_WRITES = 1;
 
 export type PortalCodePurpose = 'portal_registration' | 'portal_sign_in';
 
@@ -65,10 +77,15 @@ export async function openChallenge(
     // A decoy has a cap of its own, counted among decoys only (JD-S5 R3-1). Above it the caller
     // answers the same as always, but nothing is written and no job is queued.
     if ((await decoysInLastHour(tx, input.email, input.now)) >= PORTAL_DECOYS_PER_HOUR) {
+      // The statements it skips (the insert of the challenge), so it costs what the decoy below
+      // costs and is not told apart from the real path above its cap (JD-S5 R4-5).
+      await evenOut(tx, DECOY_WRITES);
       return 'limited';
     }
   } else {
     if ((await sendsInLastHour(tx, input.email, input.now)) >= PORTAL_CODE_SENDS_PER_HOUR) {
+      // The same for the real path: the end of the live codes and the insert it skips.
+      await evenOut(tx, REAL_WRITES);
       return 'limited';
     }
     await tx.update(otpChallenge).set({ consumedAt: input.now }).where(live);

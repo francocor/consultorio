@@ -19,8 +19,12 @@ export interface DbHandle {
  */
 export const CONNECTION_TIMEOUT_MS = 10_000;
 
-/** The most connections the runtime pool opens unless the configuration says otherwise (`DB_POOL_MAX`). */
-export const DEFAULT_RUNTIME_POOL_MAX = 10;
+/**
+ * The most connections the runtime pool opens unless the configuration says otherwise
+ * (`DB_POOL_MAX`). Above the floor of the configuration (`MIN_DB_POOL_MAX`, 14 for the three families
+ * of jobs that hold a transaction idle: JD-S5 R4-2).
+ */
+export const DEFAULT_RUNTIME_POOL_MAX = 16;
 
 function open(connectionString: string, max: number): DbHandle {
   const pool = new Pool({ connectionString, max, connectionTimeoutMillis: CONNECTION_TIMEOUT_MS });

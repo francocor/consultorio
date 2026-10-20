@@ -3,7 +3,8 @@ import { parseEnv } from 'node:util';
 
 import { describe, expect, it } from 'vitest';
 
-import { JOB_LOCAL_CONCURRENCY } from '../platform/jobs/concurrency.js';
+import { DEFAULT_RUNTIME_POOL_MAX } from '../platform/db/pool.js';
+import { CONNECTION_HOLDING_JOBS, JOB_LOCAL_CONCURRENCY } from '../platform/jobs/concurrency.js';
 import { omit } from '../testing/omit.js';
 
 import { ConfigError, ENV_VARIABLES, MIN_DB_POOL_MAX, loadConfig } from './config.js';
@@ -29,20 +30,25 @@ describe('loadConfig', () => {
     });
   });
 
-  it('sizes the pool of the runtime connection with DB_POOL_MAX, ten connections by default (JD-S4 R3-A-W5)', () => {
-    expect(loadConfig(validEnv).dbPoolMax).toBe(10);
+  it('sizes the pool of the runtime connection with DB_POOL_MAX, sixteen connections by default (JD-S4 R3-A-W5, JD-S5 R4-2)', () => {
+    expect(loadConfig(validEnv).dbPoolMax).toBe(DEFAULT_RUNTIME_POOL_MAX);
+    expect(DEFAULT_RUNTIME_POOL_MAX).toBe(16);
+    expect(DEFAULT_RUNTIME_POOL_MAX).toBeGreaterThanOrEqual(MIN_DB_POOL_MAX);
     expect(loadConfig({ ...validEnv, DB_POOL_MAX: '25' }).dbPoolMax).toBe(25);
-    for (const bad of ['0', '1', '-4', '2.5', 'many', '1000']) {
+    for (const bad of ['0', '-1', '1.5', 'abc', '101']) {
       expect(() => loadConfig({ ...validEnv, DB_POOL_MAX: bad }), bad).toThrow(/DB_POOL_MAX/);
     }
   });
 
-  it('refuses a pool too small for the attempts the worker runs at once, and says how many it needs (JD-S4 R4-B-T5)', () => {
-    // An attempt holds one connection for the whole call to the authority and asks for a second one for
-    // its mark. The worker runs two attempts at once (JOB_LOCAL_CONCURRENCY), and the sweeper and the
-    // other jobs need two more: with fewer, attempts wait on each other for the second connection.
-    expect(MIN_DB_POOL_MAX).toBe(2 * JOB_LOCAL_CONCURRENCY + 2);
-    for (const small of ['2', '3', '4', '5']) {
+  it('refuses a pool too small for the jobs the worker runs at once, and says how many it needs (JD-S4 R4-B-T5, JD-S5 R4-2)', () => {
+    // A job of these families holds the transaction `runJob` opens for it, idle, while it waits for the
+    // authority, the provider or the mail server, and asks for a second connection for its own work.
+    // The worker runs JOB_LOCAL_CONCURRENCY of each at once, and two more connections serve the
+    // sweeper and the other jobs: with fewer, jobs wait on each other for the second connection.
+    expect(CONNECTION_HOLDING_JOBS).toEqual(['afip.issue', 'erx.reconcile', 'portal.notice_sweep']);
+    expect(MIN_DB_POOL_MAX).toBe(CONNECTION_HOLDING_JOBS.length * JOB_LOCAL_CONCURRENCY * 2 + 2);
+    expect(MIN_DB_POOL_MAX).toBe(14);
+    for (const small of ['2', '6', '10', String(MIN_DB_POOL_MAX - 1)]) {
       expect(() => loadConfig({ ...validEnv, DB_POOL_MAX: small }), small).toThrow(
         new RegExp(`DB_POOL_MAX.*${String(MIN_DB_POOL_MAX)}`),
       );

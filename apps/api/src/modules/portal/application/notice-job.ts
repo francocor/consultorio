@@ -192,11 +192,17 @@ async function expireNotices(
  * (`patient_record_change`); this pass is what delivers the notice, so a change that nobody expected
  * is told even when the application that made it knew nothing about the portal.
  *
- * Each notice goes through three steps, none of which holds a connection while a message is sent
- * (JD-S5 R3-5): a short transaction CLAIMS the row (and counts the attempt), the message is sent with
- * nothing open, and another short transaction marks it told, the address leaving the row with it.
- * The audit entry is written after the mark, in a transaction of its own: if it fails the notice is
- * not sent again, the failure is logged. A send that fails is logged and tried again after a longer
+ * Each notice goes through three steps, none of which holds a transaction of its own open while a
+ * message is sent (JD-S5 R3-5): a short transaction CLAIMS the row (and counts the attempt), the
+ * message is sent with nothing of the pass open (the transaction the framework opened for the job
+ * stays idle with its connection, JD-S5 R4-2), and another short transaction marks it told, the
+ * address leaving the row with it. The audit entry is written after the mark, in a transaction of
+ * its own: if it fails the notice is not sent again, the failure is logged.
+ *
+ * Delivery is at-least-once, not exactly-once (JD-S5 R4-7): if the mark fails after a message went
+ * out (the database goes away at that moment, the process dies), the row is claimed again when the
+ * lease of the claim ends and the address is told a second time. A repeated warning is the safe
+ * side of that; a lost one is not. A send that fails is logged and tried again after a longer
  * wait, at most `MAX_ATTEMPTS` times; one failing notice does not stop the others. A notice that
  * cannot be told (the week ended, or it failed every time) is given up, audited and logged, and the
  * public registration of that patient closes until an owner or an administrator invites them (R3-4).
@@ -294,7 +300,8 @@ export async function sendRecordChangeNotices(
       continue;
     }
 
-    // The message left. First the mark, so that nothing that happens next can send it again.
+    // The message left. First the mark, so that nothing that happens AFTER it (the audit) can send it
+    // again. If the mark itself fails the notice goes out again later: at-least-once (JD-S5 R4-7).
     try {
       await run((tx) =>
         tx
@@ -339,8 +346,11 @@ export function createPortalNoticeSweepJob(deps: NoticeSweepDeps & { clock?: () 
     name: PORTAL_NOTICE_SWEEP_JOB,
     category: 'patient_protective',
     payload: JobPayload,
-    // The transaction the framework opens for the job holds nothing: every step of the pass runs in
-    // short transactions of its own (`deps.withTenant`), so no connection waits for a message.
+    // The transaction the framework opens for the job (the marker of idempotence) holds no row, but
+    // it does hold a connection, idle, for the whole pass, including while a message is sent. Every
+    // step of the pass runs in short transactions of its own (`deps.withTenant`) on another one, so
+    // this job needs two connections (`CONNECTION_HOLDING_JOBS`, `MIN_DB_POOL_MAX`; JD-S5 R4-2). The
+    // pass is bounded (twenty notices, fifty seconds), so that idle time is too.
     handler: async ({ tenantId }) => {
       await sendRecordChangeNotices(
         { email: deps.email, withTenant: deps.withTenant, log: deps.log },

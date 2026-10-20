@@ -32,8 +32,8 @@ const BATCH = 50;
 /**
  * A pass stops after this many prescriptions in a row that the provider did not answer (JD-S5 R3-2):
  * the provider is down or hung, every further question would only wait for its own timeout, and the
- * transaction of the job (which the framework holds for the whole pass) would stay open for as long.
- * The ones left are picked up by the next pass.
+ * transaction of the job (which the framework holds for the whole pass, idle, with its connection)
+ * would stay open for as long. The ones left are picked up by the next pass.
  */
 const MAX_UNANSWERED_IN_A_ROW = 3;
 /** The longest a pass runs (real time), whatever the provider does. */
@@ -156,8 +156,10 @@ export interface ReconcileResult {
  *
  * Every question to the provider is bounded (JD-S5 R3-2), and a pass ends early when the provider
  * does not answer: after `MAX_UNANSWERED_IN_A_ROW` prescriptions in a row, or `PASS_BUDGET_MS`. The
- * transaction of the job is the framework's and stays open for the whole pass, holding no row, so
- * the pass must not be able to run for ever.
+ * transaction of the job is the framework's and stays open for the whole pass: it holds no row, but
+ * it holds a connection, idle, while the provider is waited for (the work of the pass runs in short
+ * transactions on a second one; `CONNECTION_HOLDING_JOBS` and `MIN_DB_POOL_MAX` count it, JD-S5
+ * R4-2). So the pass must not be able to run for ever.
  */
 export async function reconcileOrganization(
   tx: Tx,
