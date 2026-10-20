@@ -59,19 +59,43 @@ export function signupRoutes(deps: SignupRoutesDeps) {
       }
     }
 
-    /** The host is the platform's: where the form and the request by address live. */
-    function onPlatformHost(request: FastifyRequest): void {
+    /**
+     * Which host a route lives on is decided before anything else about the request is looked at
+     * (before the body is validated), so a route that is not on this host answers exactly like one
+     * that does not exist, whatever was sent to it.
+     */
+    const onPlatformHost = (request: FastifyRequest): void => {
       if (request.hostContext?.kind !== 'platform') throw new AppError('not_found');
-    }
-
-    /** The host is an organization nobody confirmed yet, the only kind this route serves. */
-    function unverifiedTenant(request: FastifyRequest): ResolvedTenant {
+    };
+    /** The host is an organization nobody confirmed yet. */
+    const onUnverifiedHost = (request: FastifyRequest): void => {
       const context = request.hostContext;
       if (context?.kind !== 'tenant' || context.tenant.status !== 'unverified') {
         throw new AppError('not_found');
       }
+    };
+    /** The host is an organization, whatever its state (an active one answers "bad link"). */
+    const onOrganizationHost = (request: FastifyRequest): void => {
+      if (request.hostContext?.kind !== 'tenant') throw new AppError('not_found');
+    };
+    /** The organization the host names (the gates above have already checked what kind). */
+    function organizationOf(request: FastifyRequest): ResolvedTenant {
+      const context = request.hostContext;
+      if (context?.kind !== 'tenant') throw new AppError('not_found');
       return context.tenant;
     }
+
+    /** Turns a check of the host into a hook that runs before the body is read. */
+    const hostGate =
+      (check: (request: FastifyRequest) => void) =>
+      (request: FastifyRequest, _reply: unknown, done: (error?: Error) => void): void => {
+        try {
+          check(request);
+          done();
+        } catch (error) {
+          done(error as Error);
+        }
+      };
 
     /** Public, no session, its own bucket of requests per client. */
     const config = (max: number) =>
@@ -81,14 +105,13 @@ export function signupRoutes(deps: SignupRoutesDeps) {
       '/public/signup/challenge',
       {
         config: { ...config(30), readOnly: 'read', unverifiedAllowed: true },
+        // The platform host, or an organization nobody confirmed yet: no other host.
+        onRequest: hostGate((request) => {
+          if (request.hostContext?.kind !== 'platform') onUnverifiedHost(request);
+        }),
         schema: { response: { 200: PublicChallengeResponse } },
       },
       async (request, reply) => {
-        const context = request.hostContext;
-        const served =
-          context?.kind === 'platform' ||
-          (context?.kind === 'tenant' && context.tenant.status === 'unverified');
-        if (!served) throw new AppError('not_found');
         void reply.header('cache-control', 'no-store');
         return challenge().issue(request.ip);
       },
@@ -98,10 +121,10 @@ export function signupRoutes(deps: SignupRoutesDeps) {
       '/public/signup',
       {
         config: { ...config(10), readOnly: 'auth', audits: ['signup.created', 'terms.accepted'] },
+        onRequest: hostGate(onPlatformHost),
         schema: { body: SignupRequest, response: { 200: SignupAcceptedResponse } },
       },
       async (request, reply) => {
-        onPlatformHost(request);
         void reply.header('cache-control', 'no-store');
         // Refusing the terms costs the visitor nothing: it is checked before the challenge is spent.
         if (!request.body.acceptTerms || !request.body.acceptDataProcessing) {
@@ -119,10 +142,10 @@ export function signupRoutes(deps: SignupRoutesDeps) {
       '/public/signup/resend',
       {
         config: { ...config(10), readOnly: 'auth', audits: 'none' },
+        onRequest: hostGate(onPlatformHost),
         schema: { body: SignupResendRequest, response: { 200: SignupAcceptedResponse } },
       },
       async (request, reply) => {
-        onPlatformHost(request);
         void reply.header('cache-control', 'no-store');
         await assertHuman(request.body.challengeProof, request);
         const delivery = await deps.service.resend(request.body.email, {
@@ -137,10 +160,11 @@ export function signupRoutes(deps: SignupRoutesDeps) {
       '/public/signup/renew',
       {
         config: { ...config(10), readOnly: 'auth', audits: 'none', unverifiedAllowed: true },
+        onRequest: hostGate(onUnverifiedHost),
         schema: { body: SignupRenewRequest, response: { 200: SignupAcceptedResponse } },
       },
       async (request, reply) => {
-        const tenant = unverifiedTenant(request);
+        const tenant = organizationOf(request);
         void reply.header('cache-control', 'no-store');
         await assertHuman(request.body.challengeProof, request);
         const delivery = await deps.service.renew(tenant.id, { actor: request.auditActor });
@@ -158,14 +182,14 @@ export function signupRoutes(deps: SignupRoutesDeps) {
           audits: ['signup.verified'],
           unverifiedAllowed: true,
         },
+        onRequest: hostGate(onOrganizationHost),
         schema: { body: SignupVerifyRequest, response: { 200: SignupVerifiedResponse } },
       },
       async (request, reply) => {
-        const context = request.hostContext;
-        // An organization that is already active answers like a link that does not work.
-        if (context?.kind !== 'tenant') throw new AppError('not_found');
+        const tenant = organizationOf(request);
         void reply.header('cache-control', 'no-store');
-        const issued = await deps.service.verify(context.tenant, request.body.token, {
+        // An organization that is already active answers like a link that does not work.
+        const issued = await deps.service.verify(tenant, request.body.token, {
           actor: request.auditActor,
         });
         void reply.header(

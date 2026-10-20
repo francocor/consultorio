@@ -1,6 +1,8 @@
 import { afterAll, beforeAll, describe, expect, inject, it } from 'vitest';
 
+import { exportOnboarding } from '../../src/modules/onboarding/application/export-contributor.js';
 import { createRuntimeDb, type DbHandle } from '../../src/platform/db/pool.js';
+import { SYSTEM_USER_ID, createWithTenant } from '../../src/platform/db/tenant-context.js';
 import { PASSWORD, createSignupWorld, type SignupWorld } from '../support/signup-world.js';
 
 /**
@@ -191,8 +193,13 @@ describe('signing up', () => {
       ...form,
       challengeProof: 'x',
     });
+    // Whatever is sent: the host is looked at before the body, so a malformed one gets the same 404.
+    const malformed = await world.tenantPost(slug, '/public/signup', {});
+    const resend = await world.tenantPost(slug, '/public/signup/resend', {});
 
     expect(onOrganization.statusCode).toBe(404);
+    expect(malformed.statusCode).toBe(404);
+    expect(resend.statusCode).toBe(404);
   });
 });
 
@@ -512,6 +519,24 @@ describe('verifying the address', () => {
     expect(profile.twoFactor).toMatchObject({ enrolled: false, required: true });
     const graceMs = new Date(profile.twoFactor.graceEndsAt ?? 0).getTime() - world.now().getTime();
     expect(Math.round(graceMs / 86_400_000)).toBe(7);
+  });
+
+  it('keeps the record of the acceptance in what the organization takes with it when it leaves', async () => {
+    const { form } = await world.signUp();
+    await world.idle();
+    const link = world.linkTo(form.email);
+    await world.tenantPost(link.slug, '/public/signup/verify', { token: link.token });
+    const created = await world.tenantOf(link.slug);
+
+    const exported = await createWithTenant(runtime.db)(
+      { tenantId: created?.id ?? '', userId: SYSTEM_USER_ID },
+      (tx) => exportOnboarding({ tx } as never),
+    );
+
+    expect(exported).toMatchObject({
+      termsAcceptances: [{ termsVersion: 1, dataProcessingVersion: 1 }],
+    });
+    expect(JSON.stringify(exported)).not.toContain(form.email);
   });
 
   it('lets the owner sign in with the password chosen at signup', async () => {

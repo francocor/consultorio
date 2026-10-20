@@ -24,12 +24,17 @@ const HOUR = 3_600_000;
  * purge are what bound the rest.
  */
 export const SIGNUPS_PER_CLIENT: SignupLimit = { max: 5, windowMs: HOUR };
+/**
+ * Asking for a new link has a counter of its own per client, apart from the one of signups: a person
+ * who mistyped an address or lost an email asks again a few times and must not run out of signups.
+ */
+export const LINKS_PER_CLIENT: SignupLimit = { max: 10, windowMs: HOUR };
 export const SIGNUP_EMAILS_PER_ADDRESS: SignupLimit = { max: 3, windowMs: HOUR };
 export const SIGNUPS_OVERALL: SignupLimit = { max: 300, windowMs: HOUR };
 
 /** The counter of a client; clients of one IPv6 /64 are one client. */
-export function clientCounter(ip: string | null): string {
-  return `signup|client|${clientKeyOf(ip ?? 'unknown')}`;
+export function clientCounter(ip: string | null, kind: 'signup' | 'link' = 'signup'): string {
+  return `signup|${kind === 'signup' ? 'client' : 'link-client'}|${clientKeyOf(ip ?? 'unknown')}`;
 }
 
 /** The counter of an address: a hash of it, never the address, so the store holds no personal data. */

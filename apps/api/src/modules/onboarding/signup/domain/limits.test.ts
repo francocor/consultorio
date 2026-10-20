@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  LINKS_PER_CLIENT,
   SIGNUPS_OVERALL,
   SIGNUPS_PER_CLIENT,
   SIGNUP_EMAILS_PER_ADDRESS,
@@ -21,6 +22,14 @@ describe('the counters of the public form', () => {
     expect(clientCounter('2001:db8:1:3::1')).not.toBe(clientCounter('2001:db8:1:2::1'));
     expect(clientCounter('::ffff:203.0.113.7')).toBe(clientCounter('203.0.113.7'));
     expect(clientCounter(null)).toBe(clientCounter(null));
+  });
+
+  it('counts the requests for a new link apart from the signups of the same client', () => {
+    expect(clientCounter('203.0.113.7', 'link')).not.toBe(clientCounter('203.0.113.7'));
+    expect(clientCounter('2001:db8:1:2::1', 'link')).toBe(
+      clientCounter('2001:db8:1:2:ffff::9', 'link'),
+    );
+    expect(LINKS_PER_CLIENT.max).toBeGreaterThan(SIGNUPS_PER_CLIENT.max);
   });
 
   it('lets a person create a handful of organizations an hour, three emails go to one address, and bounds the whole platform', () => {

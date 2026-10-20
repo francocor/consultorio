@@ -8,6 +8,7 @@ import { useBoot } from '../../../app/boot.js';
 import { useApi, useServices } from '../../../app/providers.js';
 import { SESSION_QUERY_KEY } from '../../../app/services.js';
 import { usePageTitle } from '../../../app/use-page-title.js';
+import { isApiError } from '../../../shared/lib/api-client.js';
 import { describeError } from '../../../shared/lib/translate.js';
 import { Alert, AlertDescription } from '../../../shared/ui/alert.js';
 import { Button } from '../../../shared/ui/button.js';
@@ -52,12 +53,15 @@ export function VerifyPage() {
     mutationFn: async () => api.renew(await challenge.take()),
   });
 
+  // Only the answer "this link does not work" means that; a failure of the server or of the network
+  // says nothing about the link, which was not spent, and the visitor can press the button again.
+  const linkInvalid =
+    verify.isError && isApiError(verify.error) && verify.error.code === 'signup_link_invalid';
   const { warm } = challenge;
-  const failed = verify.isError;
   useEffect(() => {
     // The puzzle for a new link is solved before the visitor asks for it.
-    if (failed) warm();
-  }, [failed, warm]);
+    if (linkInvalid) warm();
+  }, [linkInvalid, warm]);
 
   if (token === undefined) {
     return (
@@ -86,7 +90,7 @@ export function VerifyPage() {
     );
   }
 
-  if (verify.isError) {
+  if (linkInvalid) {
     return (
       <div className="mx-auto grid w-full max-w-md gap-4">
         <h1 className="font-display text-2xl font-semibold tracking-tight">
@@ -126,6 +130,11 @@ export function VerifyPage() {
           {t('signup:verify.description', { organization: boot?.name ?? t('common:app.name') })}
         </p>
       </div>
+      {verify.isError ? (
+        <Alert tone="danger">
+          <AlertDescription>{describeError(t, verify.error).message}</AlertDescription>
+        </Alert>
+      ) : null}
       <Button
         type="button"
         loading={verify.isPending}

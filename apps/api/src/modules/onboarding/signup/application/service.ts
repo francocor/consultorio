@@ -27,6 +27,7 @@ import type {
 } from '../../../identity/index.js';
 import type { TrialStarter } from '../../../subscriptions/index.js';
 import {
+  LINKS_PER_CLIENT,
   OVERALL_COUNTER,
   SIGNUPS_OVERALL,
   SIGNUPS_PER_CLIENT,
@@ -152,7 +153,9 @@ export function createSignupService(deps: SignupServiceDeps): SignupService {
     options: { creating: boolean },
   ): Promise<void> {
     const allowed = [
-      await hit(clientCounter(origin.actor.ip), SIGNUPS_PER_CLIENT),
+      options.creating
+        ? await hit(clientCounter(origin.actor.ip), SIGNUPS_PER_CLIENT)
+        : await hit(clientCounter(origin.actor.ip, 'link'), LINKS_PER_CLIENT),
       email === null ? true : await hit(addressCounter(email), SIGNUP_EMAILS_PER_ADDRESS),
       options.creating ? await hit(OVERALL_COUNTER, SIGNUPS_OVERALL) : true,
     ];

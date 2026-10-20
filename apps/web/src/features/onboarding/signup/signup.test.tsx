@@ -363,6 +363,19 @@ describe('the page of the emailed link (the host of the organization)', () => {
     expect(bodies['renew']).toEqual([{ challengeProof: 'not-needed' }]);
   });
 
+  it('does not call a link invalid when the server failed: the link was not spent and the button stays', async () => {
+    const user = userEvent.setup();
+    openLink('/signup/verify?token=abcdefghij', {
+      'POST /api/public/signup/verify': () => problemResponse(500, 'internal_error'),
+    });
+
+    await user.click(await screen.findByRole('button', { name: 'Activar mi organización' }));
+
+    expect(await screen.findByRole('alert')).not.toHaveTextContent(/no es válido|venció/);
+    expect(screen.getByRole('button', { name: 'Activar mi organización' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Pedir un enlace nuevo' })).not.toBeInTheDocument();
+  });
+
   it('keeps the offer when the new link cannot be asked for right now', async () => {
     const user = userEvent.setup();
     openLink('/signup/verify?token=vencido', {
