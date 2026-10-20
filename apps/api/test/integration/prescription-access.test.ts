@@ -17,6 +17,7 @@ import { createExportRegistry } from '../../src/modules/tenancy/index.js';
 import { createRuntimeDb, type DbHandle } from '../../src/platform/db/pool.js';
 import { createWithTenant } from '../../src/platform/db/tenant-context.js';
 import { AMOXICILLIN, createErxWorld, type ErxWorld } from '../support/erx-world.js';
+import { settled } from '../support/export-sections.js';
 import { readPdf } from '../support/pdf.js';
 import { asTenant } from '../support/tenants.js';
 
@@ -373,11 +374,13 @@ describe('the cancellation export', () => {
         actingProfessionalId: prescriber.professionalId,
       },
       (tx) =>
-        contributor.contribute({
-          tx,
-          tenantId: world.tenant.id,
-          professionalId: prescriber.professionalId,
-        }),
+        settled(
+          contributor.contribute({
+            tx,
+            tenantId: world.tenant.id,
+            professionalId: prescriber.professionalId,
+          }),
+        ),
     );
 
     const exported = (part as { prescriptions: Record<string, unknown>[] }).prescriptions;
@@ -397,11 +400,13 @@ describe('the cancellation export', () => {
         actingProfessionalId: stranger.prescriber.professionalId,
       },
       (tx) =>
-        contributor.contribute({
-          tx,
-          tenantId: world.tenant.id,
-          professionalId: stranger.prescriber.professionalId,
-        }),
+        settled(
+          contributor.contribute({
+            tx,
+            tenantId: world.tenant.id,
+            professionalId: stranger.prescriber.professionalId,
+          }),
+        ),
     );
     const cancelled = (theirs as { prescriptions: Record<string, unknown>[] }).prescriptions.find(
       (p) => p['id'] === stranger.made.id,

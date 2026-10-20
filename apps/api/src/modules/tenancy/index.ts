@@ -20,6 +20,17 @@ import { supportRoutes } from './http/support-routes.js';
 export { readOrganizationName } from './application/organization-name.js';
 export { assertCanCreateTenant } from './application/create-tenant-policy.js';
 export { createExportRegistry } from './application/export-registry.js';
+export {
+  afterStamp,
+  EXPORT_PAGE_SIZE,
+  omitCursor,
+  pagedBatches,
+  pagedByStamp,
+  pagedRows,
+  stampText,
+  type StampCursor,
+  type StampRow,
+} from './application/export-pages.js';
 export type {
   ExportContext,
   ExportContributor,

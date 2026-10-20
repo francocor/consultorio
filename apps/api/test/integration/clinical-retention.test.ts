@@ -19,6 +19,7 @@ import {
   type Professional,
 } from '../support/clinical-world.js';
 import { asProfessional } from '../support/clinical.js';
+import { settled } from '../support/export-sections.js';
 import { asTenant } from '../support/tenants.js';
 
 /**
@@ -174,11 +175,13 @@ describe('the clinical part of the export', () => {
         actingProfessionalId: author.professionalId,
       },
       (tx) =>
-        exportClinical(keys)({
-          tx,
-          tenantId: world.tenant.id,
-          professionalId: author.professionalId,
-        }),
+        settled(
+          exportClinical(keys)({
+            tx,
+            tenantId: world.tenant.id,
+            professionalId: author.professionalId,
+          }),
+        ),
     )) as {
       entries: { noteId: string; content: Record<string, unknown>; addenda: unknown[] }[];
       excludedEnteredInError: number;
@@ -210,11 +213,13 @@ describe('the clinical part of the export', () => {
         actingProfessionalId: colleague.professionalId,
       },
       (tx) =>
-        exportClinical(keys)({
-          tx,
-          tenantId: world.tenant.id,
-          professionalId: colleague.professionalId,
-        }),
+        settled(
+          exportClinical(keys)({
+            tx,
+            tenantId: world.tenant.id,
+            professionalId: colleague.professionalId,
+          }),
+        ),
     )) as { entries: { content: Record<string, unknown> }[] };
 
     const texts = part.entries.map((entry) => entry.content['reasonForConsultation']);
