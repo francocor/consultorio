@@ -359,3 +359,34 @@ describe('Stage 5 permissions (compliance and portal)', () => {
     expect(GRANTABLE.length).toBe(7);
   });
 });
+
+describe('Stage 6 permissions (subscriptions, signup, cancellation)', () => {
+  const holders = (permission: Permission) =>
+    ROLES.filter((role) => ROLE_PERMISSIONS[role].includes(permission));
+
+  // Stage 6 adds no tenant permission: `billing.manage` already exists and guards every subscription
+  // route; signup is public; the cancellation export is the owner's and each professional's own.
+  it('keeps the subscription in the hands of the owner alone, as the one permission of the stage', () => {
+    expect(holders('billing.manage')).toEqual(['owner']);
+    for (const role of ['admin', 'professional', 'reception', 'patient'] as const) {
+      expect(ROLE_PERMISSIONS[role], role).not.toContain('billing.manage');
+    }
+  });
+
+  it('never lets a grant, the clinical group or the portal reach it', () => {
+    expect(GRANTABLE).not.toContain('billing.manage');
+    expect(isClinicalPermission('billing.manage')).toBe(false);
+    expect(PORTAL_ACTOR_PERMISSIONS).not.toContain('billing.manage');
+    // A grant of it to reception or admin changes nothing.
+    expect(effectivePermissions(['admin'], ['billing.manage'])).not.toContain('billing.manage');
+    expect(effectivePermissions(['reception'], ['billing.manage'])).not.toContain('billing.manage');
+  });
+
+  it('adds no permission for signup, subscriptions, the export or the archive', () => {
+    const names = PERMISSIONS.filter((permission) =>
+      /^(signup|subscription|archive|cancellation|export)\./.test(permission),
+    );
+
+    expect(names).toEqual([]);
+  });
+});

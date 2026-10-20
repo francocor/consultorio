@@ -1,5 +1,11 @@
 import { z } from 'zod';
 
+import {
+  ARCHIVE_PLATFORM_AUDIT_ACTIONS,
+  CANCELLATION_PLATFORM_AUDIT_ACTIONS,
+} from './cancellation-catalog.js';
+import { SIGNUP_PLATFORM_AUDIT_ACTIONS } from './signup-catalog.js';
+
 /**
  * Contracts of the platform operator console: who runs the platform, how organizations are created
  * and how a support grant is given. Operators are not tenant users and none of this is reachable
@@ -28,6 +34,11 @@ export const PLATFORM_AUDIT_ACTIONS = [
   // The platform operator vouches for the registration of a professional, or withdraws it (Stage 5).
   'operator.matricula.verified',
   'operator.matricula.unverified',
+  // Stage 6: what the platform does where there is no organization (left) to write to: the purge of
+  // an unverified signup, the cancellation of an organization by the operator and the archive.
+  ...SIGNUP_PLATFORM_AUDIT_ACTIONS,
+  ...CANCELLATION_PLATFORM_AUDIT_ACTIONS,
+  ...ARCHIVE_PLATFORM_AUDIT_ACTIONS,
 ] as const;
 export type PlatformAuditAction = (typeof PLATFORM_AUDIT_ACTIONS)[number];
 

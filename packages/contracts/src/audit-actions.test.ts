@@ -255,3 +255,59 @@ describe('Stage 5 audit actions (consent, e-prescription, portal)', () => {
     expect(AuditMetadata.safeParse({ itemCount: 3, status: 'issued' }).success).toBe(true);
   });
 });
+
+describe('Stage 6 audit actions (subscriptions, signup, cancellation)', () => {
+  const stage6 = [
+    'subscription.created',
+    'subscription.plan_changed',
+    'subscription.state_changed',
+    'subscription.cap_changed',
+    'subscription.surplus_flagged',
+    'subscription.refunded',
+    'signup.created',
+    'signup.verified',
+    'terms.accepted',
+    'tenant.cancelled',
+    'export.cancellation.requested',
+    'export.cancellation.downloaded',
+  ];
+
+  it('are all catalogued, once each', () => {
+    for (const action of stage6) {
+      expect(isAuditAction(action), action).toBe(true);
+      expect(
+        AUDIT_ACTIONS.filter((known) => known === action),
+        action,
+      ).toHaveLength(1);
+    }
+  });
+
+  it('keep the archive and the purge of a signup out of the tenant trail: they belong to the platform', () => {
+    for (const action of [
+      'signup.purged',
+      'archive.written',
+      'archive.verified',
+      'archive.accessed',
+      'archive.released',
+      'archive.erased',
+    ]) {
+      expect(isAuditAction(action), action).toBe(false);
+    }
+  });
+
+  it('accept the identifiers and states a subscription entry carries, and refuse card data', () => {
+    expect(
+      AuditMetadata.safeParse({
+        fromStatus: 'trial',
+        toStatus: 'past_due',
+        planId: 'plan-pro',
+        professionals: 2,
+        providerEventId: '424242',
+        overageCapMessages: 300,
+      }).success,
+    ).toBe(true);
+    for (const key of ['cardNumber', 'cvv', 'pan', 'token', 'secret']) {
+      expect(AuditMetadata.safeParse({ planId: 'plan-pro', [key]: 'x' }).success, key).toBe(false);
+    }
+  });
+});
