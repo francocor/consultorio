@@ -1,6 +1,6 @@
 /**
- * What other features may use of the subscription. Nothing yet (seam of Stage 6): the subscriptions
- * track (A) exports here the pieces the signup and the staff invitation show (the trial end and its
- * consequences, the plan-impact summary).
+ * What other features may use of the subscription: the summary of what adding a professional does to
+ * the price, shown beside the staff invitation (the owner reads the numbers; the server checks the
+ * limit of the plan again when the invitation is sent).
  */
-export {};
+export { PlanImpactPanel } from './components/PlanImpactPanel.js';
