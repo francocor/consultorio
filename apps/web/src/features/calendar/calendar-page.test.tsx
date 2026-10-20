@@ -360,6 +360,44 @@ describe('booking from the agenda', () => {
     expect(within(dialog).getByLabelText('Profesional')).toHaveValue(IDS.beto);
   });
 
+  it('waits for the professionals before it offers to book, so the one on screen is preselected', async () => {
+    setViewport(1280);
+    const user = userEvent.setup();
+    let release: (response: Response) => void = () => undefined;
+    open({
+      path: `/calendar?date=2026-10-20&pros=${IDS.beto}`,
+      routes: {
+        'GET /api/staff': () =>
+          new Promise<Response>((resolve) => {
+            release = resolve;
+          }),
+      },
+    });
+    const button = await screen.findByRole('button', { name: 'Nuevo turno' });
+
+    // Opened now, the dialog would get no professionals, and it fixes its first choice when it opens.
+    expect(button).toBeDisabled();
+
+    release(jsonResponse({ staff: PROFESSIONALS }));
+    await screen.findByRole('group', { name: 'Agenda de Dr. Beto Ruiz' });
+    await waitFor(() => {
+      expect(button).toBeEnabled();
+    });
+    await user.click(button);
+
+    const dialog = await screen.findByRole('dialog', { name: 'Nuevo turno' });
+    expect(within(dialog).getByLabelText('Profesional')).toHaveValue(IDS.beto);
+  });
+
+  it('still offers to book when the professionals could not be loaded', async () => {
+    setViewport(1280);
+    open({ routes: { 'GET /api/staff': () => problemResponse(500, 'internal_error') } });
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: 'Nuevo turno' })).toBeEnabled();
+    });
+  });
+
   it('opens it with the professional and the time of an empty stretch of the grid', async () => {
     setViewport(1280);
     open();

@@ -51,6 +51,18 @@ describe('a portal request from a client with no known address', () => {
     expect(JSON.stringify(written[0])).not.toContain('curl/8.0');
   });
 
+  it('says it once a minute per organization, not on every request (JD-S5 R5)', async () => {
+    const unknown = () => world.visitor({ ip: 'fe80::2%eth0', userAgent: 'curl/8.0' });
+    // The first one may or may not be the one that warns (the test above has just done it).
+    expect((await askForCode(unknown(), 'a@example.test')).statusCode).toBe(200);
+    const before = warnings().length;
+
+    expect((await askForCode(unknown(), 'b@example.test')).statusCode).toBe(200);
+    expect((await askForCode(unknown(), 'c@example.test')).statusCode).toBe(200);
+
+    expect(warnings().length).toBe(before);
+  });
+
   it('logs nothing for a client with a known address', async () => {
     const before = warnings().length;
 

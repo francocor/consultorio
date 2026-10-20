@@ -168,6 +168,9 @@ export function CalendarPage() {
           canBook ? (
             <>
               <Button
+                // The dialog fixes its first professional when it opens: until the directory has
+                // answered it would open with none, and a person on a single agenda would pick again.
+                disabled={peopleQuery.isPending}
                 aria-disabled={readOnly}
                 aria-describedby={readOnly ? 'booking-read-only' : undefined}
                 onClick={() => {
