@@ -799,6 +799,20 @@
       "when": 1792492313425,
       "tag": "0618_usage_and_statements",
       "breakpoints": true
+    },
+    {
+      "idx": 114,
+      "version": "7",
+      "when": 1792492313426,
+      "tag": "0640_signup",
+      "breakpoints": true
+    },
+    {
+      "idx": 115,
+      "version": "7",
+      "when": 1792492313427,
+      "tag": "0641_signup_unsent",
+      "breakpoints": true
     }
   ]
 }

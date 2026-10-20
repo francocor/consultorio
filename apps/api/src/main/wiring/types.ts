@@ -1,5 +1,10 @@
 import type { FastifyInstance } from 'fastify';
 
+import type {
+  PasswordHasher,
+  PasswordValidator,
+  SessionService,
+} from '../../modules/identity/index.js';
 import type { VideoJoinRegistry } from '../../modules/notifications/index.js';
 import type { OperatorRun } from '../../modules/operator/index.js';
 import type { WorklistService } from '../../modules/scheduling/index.js';
@@ -72,6 +77,21 @@ export interface WiringContext {
    * `create`; the writers (the subscription reaching `cancelled`, the operator action) publish.
    */
   tenantLifecycle: TenantLifecycle;
+  /**
+   * What a module that creates accounts needs from identity (Stage 6: the signup creates the first
+   * owner of an organization): the password rules, the hasher and the session service, the same
+   * instances sign-in uses.
+   */
+  accounts: AccountPieces;
+}
+
+/** The pieces of identity that a module creating accounts may use. */
+export interface AccountPieces {
+  passwordValidator: PasswordValidator;
+  hasher: PasswordHasher;
+  sessions: SessionService;
+  /** True when the session cookie carries `Secure` (the deployment is served over https). */
+  cookieSecure: boolean;
 }
 
 /** What a module's routes in the operator console can use (Stage 6). */

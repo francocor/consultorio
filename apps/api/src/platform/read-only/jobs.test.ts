@@ -55,6 +55,35 @@ describe('jobMayRun', () => {
   });
 });
 
+describe('jobMayRun for an unverified organization (a signup nobody confirmed yet)', () => {
+  const unverified = { status: 'unverified', readOnlySince: null } as const;
+
+  it('runs only the sealing of the audit trail: nothing else may happen in an organization nobody confirmed', () => {
+    expect(jobMayRun({ category: 'audit_write' }, unverified, AFTER)).toEqual({ run: true });
+    for (const category of [
+      'write',
+      'read',
+      'export',
+      'subscription',
+      'webhook',
+      'patient_protective',
+      'afip_submission',
+      'auth',
+    ] as const) {
+      expect(jobMayRun({ category }, unverified, AFTER), category).toEqual({
+        run: false,
+        reason: 'tenant_unverified',
+      });
+    }
+  });
+
+  it('does not let an assertion pass either', () => {
+    expect(() => {
+      assertTenantWritable({ category: 'write' }, unverified, AFTER);
+    }).toThrow(/tenant_read_only/);
+  });
+});
+
 describe('assertTenantWritable', () => {
   it('returns quietly when the job may run', () => {
     expect(() => {

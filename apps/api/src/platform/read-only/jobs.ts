@@ -76,11 +76,12 @@ export function jobCategoryOf(queue: string): RouteCategory {
 }
 
 export interface TenantState {
-  status: 'active' | 'read_only' | 'cancelled';
+  status: 'active' | 'read_only' | 'cancelled' | 'unverified';
   readOnlySince: Date | null;
 }
 
-export type JobDecision = { run: true } | { run: false; reason: 'tenant_read_only' };
+export type JobDecision =
+  { run: true } | { run: false; reason: 'tenant_read_only' | 'tenant_unverified' };
 
 /**
  * Decides, at run time, whether a job may execute for a tenant. Jobs re-check the tenant every time
@@ -89,10 +90,17 @@ export type JobDecision = { run: true } | { run: false; reason: 'tenant_read_onl
  * - a read-only (or cancelled) tenant runs only allowlisted categories, so messages scheduled
  *   during the read-only period are cancelled with the reason "tenant_read_only" and are never
  *   replayed after recovery;
- * - an AFIP submission additionally needs to have been queued BEFORE `read_only_since`.
+ * - an AFIP submission additionally needs to have been queued BEFORE `read_only_since`;
+ * - an unverified organization (a signup nobody confirmed) has no data and no member, so nothing
+ *   runs for it except the sealing of its own audit trail: not even the allowlisted categories.
  */
 export function jobMayRun(job: JobDescriptor, tenant: TenantState, enqueuedAt: Date): JobDecision {
   if (tenant.status === 'active') return { run: true };
+  if (tenant.status === 'unverified') {
+    return job.category === 'audit_write'
+      ? { run: true }
+      : { run: false, reason: 'tenant_unverified' };
+  }
   if (!isAllowedWhenReadOnly(job.category)) return { run: false, reason: 'tenant_read_only' };
   if (job.category === 'afip_submission') {
     const queuedBeforeFreeze =

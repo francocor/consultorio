@@ -42,7 +42,9 @@ export function registerIdentityExportContributors(registry: ExportRegistry): vo
 
 export { createPasswordHasher } from './infrastructure/argon2.js';
 export type { PasswordHasher } from './infrastructure/argon2.js';
-export type { SessionService } from './application/sessions.js';
+export type { IssuedSession, SessionService } from './application/sessions.js';
+export { SESSION_ABSOLUTE_MS } from './application/sessions.js';
+export type { PasswordValidator } from './domain/password-policy.js';
 export type { Invitations } from './application/invitations.js';
 
 export interface IdentityOptions {

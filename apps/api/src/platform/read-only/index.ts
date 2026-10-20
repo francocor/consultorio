@@ -11,6 +11,12 @@ declare module 'fastify' {
   interface FastifyContextConfig {
     /** Read-only category of the route. Mandatory: a route without one fails at boot. */
     readOnly?: RouteCategory;
+    /**
+     * True for a route that an UNVERIFIED organization (a signup nobody confirmed yet) still serves:
+     * the verification link and the request for a new one. Every other route of such an organization
+     * answers like a route that does not exist.
+     */
+    unverifiedAllowed?: boolean;
   }
   interface FastifyInstance {
     /** "METHOD /url" -> category, for every registered route. Used by the route policy test. */
@@ -24,6 +30,12 @@ declare module 'fastify' {
  * nothing about. Covers `/public/{slug}/booking/*`, `/public/{slug}/p/*` and `/public/{slug}/waitlist`.
  */
 const PUBLIC_BOOKING_PREFIX = /^\/public\/[^/]+\/(?:booking|p|waitlist)(?:\/|$)/;
+
+/**
+ * The two documents the page of an unverified organization draws itself from (its name, its look).
+ * They belong to the tenancy module, which does not know the signup, so they are named here.
+ */
+const UNVERIFIED_OPEN_PATHS = ['/public/boot', '/manifest.webmanifest'] as const;
 
 function isKnownCategory(value: unknown): value is RouteCategory {
   return ROUTE_CATEGORIES.some((category) => category === value);
@@ -76,6 +88,14 @@ export function registerReadOnlyPolicy(app: FastifyInstance): void {
     if (request.is404) return;
 
     const path = request.url.split('?')[0] ?? request.url;
+    // An organization nobody confirmed yet is not an organization: it answers only the routes made
+    // for it, and everything else looks like a route that does not exist.
+    if (context.tenant.status === 'unverified') {
+      const open =
+        request.routeOptions.config.unverifiedAllowed === true ||
+        UNVERIFIED_OPEN_PATHS.some((allowed) => allowed === path);
+      return open ? undefined : denied(request, reply);
+    }
     if (PUBLIC_BOOKING_PREFIX.test(path)) {
       return denied(request, reply);
     }

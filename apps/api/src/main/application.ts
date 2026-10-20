@@ -390,6 +390,12 @@ export function createApplication(options: ApplicationOptions): FastifyInstance 
       fileResources,
       portalFileResources,
       tenantLifecycle,
+      accounts: {
+        passwordValidator: options.passwordValidator,
+        hasher: identity.hasher,
+        sessions: identity.sessions,
+        cookieSecure: options.cookieSecure,
+      },
       ...(options.clock ? { clock: options.clock } : {}),
       ...(options.storage ? { storage: options.storage } : {}),
       ...(options.jobs ? { jobs: options.jobs } : {}),

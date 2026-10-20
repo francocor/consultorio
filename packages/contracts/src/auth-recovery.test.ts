@@ -68,6 +68,9 @@ describe('no request schema lets one user set the password of another (IDA-08, A
         'OperatorLoginRequest',
         'PasswordResetCompleteRequest',
         'ReauthenticateRequest',
+        // A visitor choosing the password of the account they are about to own (the signup, Stage 6):
+        // it names no user, the account does not exist until the address is verified.
+        'SignupRequest',
         'TwoFactorEnrollStartRequest',
       ].sort(),
     );

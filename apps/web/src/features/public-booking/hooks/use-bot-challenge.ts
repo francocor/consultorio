@@ -1,6 +1,8 @@
+import type { PublicChallengeResponse } from '@consultorio/contracts';
 import { useCallback, useMemo, useRef } from 'react';
 
 import { useApi } from '../../../app/providers.js';
+import type { ApiClient } from '../../../shared/lib/api-client.js';
 import { publicBookingApi } from '../api/booking-api.js';
 import { parsePuzzle, solvePuzzle, type Puzzle } from '../domain/pow.js';
 
@@ -50,12 +52,22 @@ export interface ProofSource {
  * proof when it knows one is coming (the form is opened) and takes it when the visitor sends. A
  * proof works once, so each request takes its own.
  */
-export function useBotChallenge(): ProofSource {
+export function useBotChallenge(
+  /**
+   * Where the puzzle comes from. The public booking pages ask their organization's route; the
+   * signup, which has no organization yet, asks its own (`/public/signup/challenge`).
+   */
+  fetchPuzzle: (api: ApiClient) => Promise<PublicChallengeResponse> = (api) =>
+    publicBookingApi(api).challenge(),
+): ProofSource {
   const api = useApi();
   const warmed = useRef<{ promise: Promise<string>; at: number } | null>(null);
+  // Held in a ref: a new function on every render must not make a new proof every time.
+  const source = useRef(fetchPuzzle);
+  source.current = fetchPuzzle;
 
   const solve = useCallback(async () => {
-    const puzzle = parsePuzzle(await publicBookingApi(api).challenge());
+    const puzzle = parsePuzzle(await source.current(api));
     return puzzle ? solveInWorker(puzzle) : NO_CHALLENGE_PROOF;
   }, [api]);
 

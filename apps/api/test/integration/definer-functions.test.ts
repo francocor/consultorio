@@ -45,6 +45,14 @@ const ALLOWED: Record<string, readonly string[]> = {
   'app.portal_prescription(uuid)': ['app_rw'],
   // The worker removes what the demo outbox kept for more than a day (the runtime role has no DELETE).
   'app.demo_outbox_purge(timestamp with time zone)': ['app_rw'],
+  // The signup (Stage 6): what an address is for it (an account, a signup waiting for its link, or
+  // free: ids only), and the purge of the signups nobody confirmed (retention exception 2). The
+  // purge refuses anything but an `unverified` organization older than a day, and lets a foreign key
+  // stop it at any row it does not expect (runtime role, from the worker).
+  'app.signup_email_state(citext)': ['app_rw'],
+  'app.signup_purge(timestamp with time zone,integer)': ['app_rw'],
+  // The worker finds the signups whose verification email never went out (organization ids only).
+  'app.signup_unsent(integer)': ['app_rw'],
   // The WhatsApp webhook finds the organization of an event from our own record of what we sent
   // (runtime role). They return tenant ids and nothing else (judgment day finding C10).
   'app.message_tenants_by_provider_id(text)': ['app_rw'],

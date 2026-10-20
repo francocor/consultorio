@@ -6,7 +6,7 @@ import { denied } from './problem.js';
 export interface ResolvedTenant {
   id: string;
   slug: string;
-  status: 'active' | 'read_only' | 'cancelled';
+  status: 'active' | 'read_only' | 'cancelled' | 'unverified';
   readOnlySince: Date | null;
   isDemo: boolean;
   country: string;
