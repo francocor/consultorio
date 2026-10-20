@@ -356,13 +356,17 @@ describe('a patient asks for their own records', () => {
 
   it('takes the package out of the bucket once it was downloaded', async () => {
     const key = `t/${org.world.tenant.id}/archive-release/${requestId}.zip`;
+    // The object goes first and the mark follows in its own transaction: wait for both.
     let removed = false;
-    for (let attempt = 0; attempt < 40 && !removed; attempt += 1) {
+    let row = await requestRow(requestId);
+    for (let attempt = 0; attempt < 100 && !(removed && row?.package_removed_at); attempt += 1) {
       removed = (await org.storage.head(org.world.tenant.id, key)) === null;
-      if (!removed) await new Promise((resolve) => setTimeout(resolve, 50));
+      row = await requestRow(requestId);
+      if (!(removed && row?.package_removed_at)) {
+        await new Promise((resolve) => setTimeout(resolve, 50));
+      }
     }
 
-    const row = await requestRow(requestId);
     expect(removed).toBe(true);
     expect(row?.downloaded_at).not.toBeNull();
     expect(row?.package_removed_at).not.toBeNull();
