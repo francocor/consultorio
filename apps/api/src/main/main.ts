@@ -178,10 +178,6 @@ async function runApi(config: Config): Promise<void> {
 }
 
 /**
- * The only process that registers job handlers and runs the scheduled work: it seals audit
- * events every few seconds and, every night, verifies every audit chain.
- */
-/**
  * The only process that holds the key of the archive: it carries out the release requests an operator
  * approved (decrypts the scope, builds the package, emails a single-use link) and does nothing else.
  */
@@ -217,6 +213,10 @@ async function runReleaser(config: Config): Promise<void> {
   log.info('releaser stopped');
 }
 
+/**
+ * The only process that registers job handlers and runs the scheduled work: it seals audit
+ * events every few seconds and, every night, verifies every audit chain.
+ */
 async function runWorker(config: Config): Promise<void> {
   assertNoReleaserKey(config);
   const log = pino(buildLoggerOptions(config.logLevel));
