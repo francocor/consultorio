@@ -13,6 +13,7 @@ describe('action token kinds (design 4.5)', () => {
         'appointment_confirm',
         'appointment_reschedule',
         'archive_release',
+        'cancellation_export',
         'document_download',
         'export_download',
         'invoice_pdf',
@@ -55,6 +56,9 @@ describe('action token kinds (design 4.5)', () => {
     // Stage 5 turned on the PDF link of a prescription (e-prescription track).
     const fromStageFive = ['prescription_pdf'];
 
+    // Stage 6 turned on the link of a package of the cancellation export (retention track).
+    const fromStageSix = ['cancellation_export'];
+
     expect(enabled).toEqual(expect.arrayContaining(fromStageOne));
     expect(
       enabled.filter(
@@ -62,7 +66,8 @@ describe('action token kinds (design 4.5)', () => {
           !fromStageOne.includes(kind) &&
           !fromStageThree.includes(kind) &&
           !fromStageFour.includes(kind) &&
-          !fromStageFive.includes(kind),
+          !fromStageFive.includes(kind) &&
+          !fromStageSix.includes(kind),
       ),
     ).toEqual([]);
   });
@@ -103,7 +108,12 @@ describe('action token kinds (design 4.5)', () => {
   });
 
   it('binds an export download and an invoice PDF to a session like a document; each track turns its own on', () => {
-    for (const kind of ['export_download', 'invoice_pdf', 'prescription_pdf'] as const) {
+    for (const kind of [
+      'export_download',
+      'invoice_pdf',
+      'prescription_pdf',
+      'cancellation_export',
+    ] as const) {
       expect(TOKEN_KIND_REGISTRY[kind], kind).toMatchObject({
         ttlMs: 5 * MINUTE,
         maxUses: 1,
@@ -115,6 +125,10 @@ describe('action token kinds (design 4.5)', () => {
     expect(TOKEN_KIND_REGISTRY.invoice_pdf.enabled).toBe(true);
     // E-prescription (S5.04) turned on the prescription PDF link.
     expect(TOKEN_KIND_REGISTRY.prescription_pdf.enabled).toBe(true);
+    // The seam of Stage 6 turned on the package link; the retention track (S6.34) registers its resource.
+    expect(TOKEN_KIND_REGISTRY.cancellation_export.enabled).toBe(true);
+    // The break-glass release stays off until its operator routes exist (task 6.41).
+    expect(TOKEN_KIND_REGISTRY.archive_release.enabled).toBe(false);
   });
 
   it('gives every kind a positive lifetime and use count', () => {
