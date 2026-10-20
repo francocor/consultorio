@@ -195,6 +195,41 @@ pnpm --filter @consultorio/web exec playwright test e2e/stage5-demo.spec.ts --pr
 
 The seed verifies the matricula only when it can reach the platform operator's database role: `pnpm demo:stack`, the console's reset button and `pnpm demo:reset` can; `pnpm demo:seed` can when `OPERATOR_DATABASE_URL` is set. Without it the demo has no prescriptions, and the consents and the portal accounts are still there. A command-line seed runs in another process than the API, so the provider console does not know the prescriptions it issued; the stack and the console's reset do.
 
+## Stage 6: signup, subscriptions and the end of an organization
+
+Stage 6 lets a stranger sign up, pay and use the product the same day, and lets an organization that leaves take its records. The demonstration organization shows the **exempt state**: it is billed outside the platform, so it has no subscription, no banner, no limit and is never made read-only (the screen "Suscripción" says "Cuenta sin facturación"). Nothing about the subscription is seeded for it, and the seed refuses an organization that would not be exempt. What has a subscription is a second set of organizations, which are **not** demonstration ones:
+
+```bash
+pnpm demo:platform      # development only: refused in production
+```
+
+It creates four fictional organizations through the services of the subscription module, against the local Mercado Pago (no account, no network), laying their dates out with a clock of the seed. The stack of `pnpm demo:stack` and the browser suite create them too. All accounts use the password of the demo.
+
+| Organization      | State                                                                                                  | Accounts                                                          |
+| ----------------- | ------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------- |
+| `prueba-trial`    | Trial, day 5 of 14                                                                                     | `propietaria.trial@`, `recepcion.trial@` (`@demo.invalid`)        |
+| `prueba-activa`   | Active, paid through the month; one professional, the usage and the statement of the month that closed | `propietaria.activa@`, `recepcion.activa@`, `profesional.activa@` |
+| `prueba-atrasada` | Past due: the charge failed three days ago, the reminders of day 1 and 3 went out                      | `propietaria.atrasada@`, `recepcion.atrasada@`                    |
+| `prueba-vencida`  | Read-only: the grace ended eight days ago                                                              | `propietaria.vencida@`, `recepcion.vencida@`                      |
+
+**1. The operator.** In the console, tab "Suscripciones": the four organizations with their state, their dates, the authorization and the counts of usage (never a patient). In "Proveedores" > "Mercado Pago": the authorizations and payments the simulator holds, and the billing cycle.
+
+**2. The owner who pays.** Sign in to `prueba-atrasada` as its owner (`http://prueba-atrasada.localhost:5173`): "Suscripción" says "Pago pendiente" and the date it becomes read-only. "Pagar lo adeudado" opens the hosted page of the simulator ("Pagar (simulado)"); press "Pagar". When the provider's notice arrives the organization is active again, with nothing due.
+
+**3. Read-only.** Sign in to `prueba-vencida` as reception: the banner says the organization is read-only and to ask the owner of the account, without a word about the subscription; reading works, and registering a patient is refused with the same reason. As its owner the same banner links to "Suscripción", where "Pagar lo adeudado" is the way out.
+
+**4. The statement.** Sign in to `prueba-activa` as its owner: under "Resúmenes", the statement of the month that closed, with the days of the professional (counts, never a patient) and "Descargar el resumen". As the professional of that organization "Suscripción" is refused.
+
+**5. A stranger.** Open `http://platform.localhost:5173/signup`, create an account and read the link in Mailpit (http://127.0.0.1:8025); it opens the new organization, starts the trial and lands in the wizard, whose card "Su período de prueba" has "Autorizar el pago ahora". Press it, approve in the hosted page, and "Suscripción" shows "Activa" the same day.
+
+**6. Leaving.** In the console, cancel the organization (the action of task 6.36, for a deployment without billing and for tests; in a billed one the subscription ends it at the end of the paid period). The owner finds the administrative package under "Exportación", and a professional their clinical one; the archive is written within seconds in the stack (30 days in production) and the console shows its state, never its content (`docs/runbooks/archive-release.md`).
+
+`apps/web/e2e/stage6-demo.spec.ts` automates steps 2, 4, 5 and 6 at 360 px with accessibility and width checked on every screen, and `stage6-signup.spec.ts` step 3 and the roles of a billed organization. Each run starts a fresh stack, because step 2 changes the organization it uses:
+
+```bash
+pnpm --filter @consultorio/web exec playwright test e2e/stage6-demo.spec.ts e2e/stage6-signup.spec.ts --project=desktop
+```
+
 ## Resetting the demo
 
 A demo organization can be put back to its starting content. It is the only place where the product deletes tenant data, and it is deliberately narrow:
