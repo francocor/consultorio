@@ -2,20 +2,27 @@ import { and, asc, eq, inArray, isNull, lt, or, sql } from 'drizzle-orm';
 
 import { membership, userAccount } from '../../../db/schema/identity.js';
 import {
+  statement,
   subscription,
   subscriptionNotice,
   type NoticeKind,
+  type StatementRow,
   type SubscriptionNoticeRow,
 } from '../../../db/schema/subscriptions.js';
 import { tenant } from '../../../db/schema/tenant.js';
 import { SYSTEM_USER_ID, type Tx } from '../../../platform/db/tenant-context.js';
 import { readOrganizationName } from '../../tenancy/index.js';
 import {
+  renderAmountChangeRefusedEmail,
   renderDunningEmail,
   renderPastDueEmail,
+  renderQuotaReachedEmail,
   renderReadOnlyEmail,
+  renderReauthorizationEmail,
   renderRecoveredEmail,
+  renderStatementEmail,
   type BillingEmail,
+  type StatementFacts,
 } from '../assets/es-AR/billing-emails.js';
 
 import { gatewayOf, isSimulated, type SubscriptionDeps } from './provider.js';
@@ -30,6 +37,12 @@ import { CURRENT_TENANT, countActiveProfessionalsNow, findPlan } from './store.j
  */
 
 const MAX_ATTEMPTS = 5;
+/** The notices whose key is the id of a statement. */
+const STATEMENT_NOTICES: ReadonlySet<string> = new Set([
+  'statement_published',
+  'amount_change_refused',
+  'reauthorization_needed',
+]);
 /** A claim holds the notice for this long: a worker that died after claiming does not block it for ever. */
 const CLAIM_MS = 5 * 60_000;
 const BATCH = 10;
@@ -55,7 +68,7 @@ export async function claimNotice(
 }
 
 /** The people who own the organization: they are the ones the billing emails go to. */
-async function ownerEmails(tx: Tx): Promise<string[]> {
+export async function ownerEmails(tx: Tx): Promise<string[]> {
   const rows = await tx
     .select({ email: userAccount.email })
     .from(membership)
@@ -72,7 +85,17 @@ interface Claimed {
   owners: string[];
   graceEndsAt: Date | null;
   amountCents: number | null;
+  /** The statement a statement notice is about (its key is the id of the statement). */
+  statement: StatementRow | null;
 }
+
+const factsOf = (row: StatementRow): StatementFacts => ({
+  period: row.period,
+  totalCents: row.totalCents,
+  professionalsCounted: row.professionalsCounted,
+  overageUnits: row.overageUnits,
+  collectAfter: row.collectAfter,
+});
 
 /** What a notice says, from its kind and the moment it is about. */
 function render(
@@ -102,6 +125,20 @@ function render(
       return renderReadOnlyEmail(common);
     case 'recovered':
       return renderRecoveredEmail(common);
+    case 'statement_published':
+      return claimed.statement
+        ? renderStatementEmail({ ...common, statement: factsOf(claimed.statement) })
+        : null;
+    case 'amount_change_refused':
+      return claimed.statement
+        ? renderAmountChangeRefusedEmail({ ...common, statement: factsOf(claimed.statement) })
+        : null;
+    case 'reauthorization_needed':
+      return claimed.statement
+        ? renderReauthorizationEmail({ ...common, statement: factsOf(claimed.statement) })
+        : null;
+    case 'overage_cap_reached':
+      return renderQuotaReachedEmail({ ...common, period: notice.key });
     default:
       return null;
   }
@@ -167,6 +204,16 @@ export async function sendPendingNotices(
       Math.max(1, await countActiveProfessionalsNow(tx)) * plan.pricePerProfessionalCents;
     const organizationName = await readOrganizationName(tx);
     const owners = await ownerEmails(tx);
+    const statementIds = due
+      .filter((notice) => STATEMENT_NOTICES.has(notice.kind))
+      .map((notice) => notice.key);
+    const statements = new Map<string, StatementRow>(
+      statementIds.length === 0
+        ? []
+        : (await tx.select().from(statement).where(inArray(statement.id, statementIds))).map(
+            (row) => [row.id, row],
+          ),
+    );
     return due.map((notice) => ({
       notice,
       organizationName,
@@ -175,6 +222,7 @@ export async function sendPendingNotices(
       owners,
       graceEndsAt: sub.graceEndsAt,
       amountCents,
+      statement: STATEMENT_NOTICES.has(notice.kind) ? (statements.get(notice.key) ?? null) : null,
     }));
   });
   if (batch.length === 0) return 0;

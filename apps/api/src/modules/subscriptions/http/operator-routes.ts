@@ -1,23 +1,29 @@
 import {
   OperatorSubscriptionDto,
   OperatorSubscriptionsResponse,
+  OperatorUsageResponse,
   type SubscriptionStatus,
 } from '@consultorio/contracts';
-import { asc, eq, sql } from 'drizzle-orm';
+import { and, asc, eq, gte, sql } from 'drizzle-orm';
 import type { FastifyInstance } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 
-import { plan, subscription } from '../../../db/schema/subscriptions.js';
+import { plan, subscription, usageRecord } from '../../../db/schema/subscriptions.js';
 import { AppError } from '../../../platform/http/problem.js';
 import type { OperatorRun } from '../../operator/index.js';
+import { earliestPeriodShown } from '../application/usage.js';
 
 /** The operator reads the subscription of an organization through the `app_operator` role. */
 export interface SubscriptionOperatorDeps {
   run: OperatorRun;
+  /** The instant that is "now" (the periods shown are counted back from it). */
+  clock?: () => Date;
 }
 
 const TenantParams = z.strictObject({ id: z.uuid() });
+/** The organization is named in the query: the console reads one at a time. */
+const UsageQuery = z.strictObject({ tenantId: z.uuid() });
 
 const SELECTED = {
   tenantId: subscription.tenantId,
@@ -88,6 +94,51 @@ export function subscriptionOperatorRoutes(deps: SubscriptionOperatorDeps) {
             .orderBy(asc(subscription.createdAt), asc(subscription.id)),
         );
         return { subscriptions: rows.map(toDto) };
+      },
+    );
+
+    // The usage of one organization: days of activity and messages per professional and period, counts only.
+    typed.get(
+      '/operator/usage',
+      {
+        config: read,
+        schema: { querystring: UsageQuery, response: { 200: OperatorUsageResponse } },
+      },
+      async (request) => {
+        const { tenantId } = request.query;
+        const since = earliestPeriodShown((deps.clock ?? (() => new Date()))());
+        const rows = await deps.run({ tenantId }, (tx) =>
+          tx
+            .select({
+              kind: usageRecord.kind,
+              professionalId: usageRecord.professionalId,
+              period: usageRecord.period,
+              quantity: usageRecord.quantity,
+            })
+            .from(usageRecord)
+            .where(and(eq(usageRecord.tenantId, tenantId), gte(usageRecord.period, since)))
+            .orderBy(asc(usageRecord.period), asc(usageRecord.professionalId)),
+        );
+        type Counts = { activeDays: number; messages: number };
+        const periods = new Map<string, Map<string, Counts>>();
+        for (const row of rows) {
+          const professionals = periods.get(row.period) ?? new Map<string, Counts>();
+          const entry = professionals.get(row.professionalId) ?? { activeDays: 0, messages: 0 };
+          if (row.kind === 'active_professional_day') entry.activeDays += row.quantity;
+          else entry.messages += row.quantity;
+          professionals.set(row.professionalId, entry);
+          periods.set(row.period, professionals);
+        }
+        return {
+          id: tenantId,
+          periods: [...periods.entries()].map(([period, professionals]) => ({
+            period,
+            professionals: [...professionals.entries()].map(([professionalId, counts]) => ({
+              professionalId,
+              ...counts,
+            })),
+          })),
+        };
       },
     );
 

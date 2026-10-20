@@ -1,7 +1,5 @@
 import { describe, expect, it } from 'vitest';
 
-import { UNLIMITED_QUOTA } from '../notifications/index.js';
-
 import {
   createQuotaPolicy,
   createSubscriptionPlanImpact,
@@ -16,11 +14,6 @@ describe('the doors of the subscriptions module', () => {
     expect(typeof createTrialStarter().startTrial).toBe('function');
     expect(typeof createSubscriptionPlanImpact().preview).toBe('function');
     expect(typeof createQuotaPolicy().limitFor).toBe('function');
-  });
-
-  it('keeps the Stage 3 policy of counting only until the plan supplies a quota', () => {
-    // Replaced by the plan's quota in S6.06; this guards the rollback of that slice.
-    expect(createQuotaPolicy()).toBe(UNLIMITED_QUOTA);
   });
 
   it('builds a module with the routes of the owner and keeps what it was given for the track', () => {

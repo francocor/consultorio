@@ -113,3 +113,81 @@ export function renderRecoveredEmail(input: Common): BillingEmail {
     ].join('\n'),
   };
 }
+
+// Statements and the quota -----------------------------------------------------------------------------
+
+/** `marzo de 2026`, the month a period names. */
+export function describePeriod(period: string): string {
+  const [year, month] = period.split('-');
+  const label = new Intl.DateTimeFormat('es-AR', { month: 'long', timeZone: 'UTC' }).format(
+    new Date(Date.UTC(Number(year), Number(month) - 1, 1)),
+  );
+  return `${label} de ${year ?? ''}`;
+}
+
+export interface StatementFacts {
+  period: string;
+  totalCents: number;
+  professionalsCounted: number;
+  overageUnits: number;
+  collectAfter: Date;
+}
+
+export function renderStatementEmail(input: Common & { statement: StatementFacts }): BillingEmail {
+  const { statement } = input;
+  const overage =
+    statement.overageUnits > 0
+      ? ` e incluye ${String(statement.overageUnits)} ${statement.overageUnits === 1 ? 'mensaje excedente' : 'mensajes excedentes'} de WhatsApp`
+      : '';
+  return {
+    subject: `Resumen de ${describePeriod(statement.period)}`,
+    text: [
+      `Publicamos el resumen de ${describePeriod(statement.period)} de ${input.organizationName}: ${String(statement.professionalsCounted)} ${statement.professionalsCounted === 1 ? 'profesional activo' : 'profesionales activos'}${overage}, por un total de ${formatArs(money(statement.totalCents))}.`,
+      '',
+      `Se cobra a partir del ${describeDate(statement.collectAfter)}, y nunca por más de ese monto. Hasta entonces puede revisar el detalle y descargarlo.`,
+      ...closing(input),
+    ].join('\n'),
+  };
+}
+
+export function renderAmountChangeRefusedEmail(
+  input: Common & { statement: StatementFacts },
+): BillingEmail {
+  const { statement } = input;
+  return {
+    subject: 'Hay una diferencia para pagar de su resumen',
+    text: [
+      `Mercado Pago no permite modificar el monto del cobro automático de ${input.organizationName}. Para completar el resumen de ${describePeriod(statement.period)} (${formatArs(money(statement.totalCents))}) hay una diferencia que se paga con un enlace de pago único.`,
+      '',
+      'El enlace está en la pantalla de suscripción, junto al resumen. No se cobra nada más que lo que figura en el resumen.',
+      ...closing(input),
+    ].join('\n'),
+  };
+}
+
+export function renderReauthorizationEmail(
+  input: Common & { statement: StatementFacts },
+): BillingEmail {
+  const { statement } = input;
+  return {
+    subject: 'Necesitamos que autorice nuevamente el monto',
+    text: [
+      `Para cobrar el resumen de ${describePeriod(statement.period)} de ${input.organizationName} (${formatArs(money(statement.totalCents))}) Mercado Pago necesita que autorice nuevamente el monto.`,
+      '',
+      'Mientras no lo haga no se cobra nada fuera de lo que figura en el resumen. Puede autorizarlo desde la pantalla de suscripción.',
+      ...closing(input),
+    ].join('\n'),
+  };
+}
+
+export function renderQuotaReachedEmail(input: Common & { period: string }): BillingEmail {
+  return {
+    subject: 'Se agotó la cuota de mensajes de WhatsApp',
+    text: [
+      `Este mes (${describePeriod(input.period)}) se agotó la cuota de mensajes de WhatsApp de ${input.organizationName} y no se permite enviar más por ese canal: el excedente está desactivado o llegó a su tope.`,
+      '',
+      'Los recordatorios siguen saliendo por correo electrónico cuando el paciente tiene uno. Puede ajustar el tope de excedentes desde la pantalla de suscripción.',
+      ...closing(input),
+    ].join('\n'),
+  };
+}

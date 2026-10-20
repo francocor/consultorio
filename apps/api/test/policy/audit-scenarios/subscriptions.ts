@@ -15,7 +15,7 @@ export const SUBSCRIPTION_SCENARIOS: Record<
   'subscription.created': t('subscription-state.test.ts'),
   'subscription.plan_changed': t('billing-timeline.test.ts'),
   'subscription.state_changed': t('billing-timeline.test.ts'),
-  'subscription.cap_changed': { pending: 'S6.06 (task 6.27): the owner sets the overage cap' },
+  'subscription.cap_changed': t('quota-policy.test.ts'),
   'subscription.surplus_flagged': t('mp-webhook.test.ts'),
   'subscription.refunded': t('mp-webhook.test.ts'),
 };

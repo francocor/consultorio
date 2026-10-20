@@ -36,8 +36,10 @@ export { subscriptionOperatorRoutes } from './http/operator-routes.js';
 export {
   createSubscriptionJobs,
   DUNNING_STEP_JOB,
+  STATEMENT_GENERATE_JOB,
   SUBSCRIPTION_RECONCILE_JOB,
   TRIAL_END_JOB,
+  USAGE_SNAPSHOT_JOB,
 } from './jobs/subscription-jobs.js';
 export type { SubscriptionDeps } from './application/provider.js';
 export { isSimulated } from './application/provider.js';

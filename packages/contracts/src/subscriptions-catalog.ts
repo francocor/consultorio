@@ -47,6 +47,13 @@ export const SUBSCRIPTION_ERRORS = {
   subscription_nothing_due: { status: 409, i18nKey: 'errors.subscription_nothing_due' },
   // The subscription is not being cancelled, so there is nothing to take back.
   subscription_not_cancelling: { status: 409, i18nKey: 'errors.subscription_not_cancelling' },
+  // The cap of overage messages is above the maximum of the plan.
+  subscription_overage_cap_too_high: {
+    status: 422,
+    i18nKey: 'errors.subscription_overage_cap_too_high',
+  },
+  // The organization has no subscription to set a cap on.
+  subscription_not_found: { status: 404, i18nKey: 'errors.subscription_not_found' },
 } as const satisfies Record<string, { status: number; i18nKey: string }>;
 
 /**

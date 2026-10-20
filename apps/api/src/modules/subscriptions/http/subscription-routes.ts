@@ -1,16 +1,23 @@
 import {
   ChangePlanRequest,
   CheckoutResponse,
+  OverageCapRequest,
+  OverageCapResponse,
   PlanImpactQuery,
   PlanImpactResponse,
   PlansResponse,
   RetryPaymentResponse,
+  StatementDto,
+  StatementsResponse,
   SubscriptionResponse,
+  SubscriptionUsageResponse,
 } from '@consultorio/contracts';
 import type { FastifyInstance, FastifyRequest } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
+import { z } from 'zod';
 
 import { AppError } from '../../../platform/http/problem.js';
+import { renderPdf } from '../../../platform/pdf/render.js';
 import { startCheckout } from '../application/checkout.js';
 import {
   changePlan,
@@ -18,10 +25,16 @@ import {
   listPlans,
   requestCancellation,
   requestReactivation,
+  setOverageCap,
 } from '../application/management.js';
 import type { SubscriptionDeps } from '../application/provider.js';
 import { describeSubscription } from '../application/read-model.js';
 import { previewProfessionalImpact } from '../application/seats.js';
+import { listStatements, readStatement, statementPdfInput } from '../application/statements.js';
+import { findPlan, findSubscription, readTenantBilling } from '../application/store.js';
+import { describeUsage } from '../application/usage.js';
+
+const StatementParams = z.strictObject({ id: z.uuid() });
 
 export interface SubscriptionRoutesDeps {
   deps: SubscriptionDeps;
@@ -250,6 +263,117 @@ export function subscriptionRoutes(options: SubscriptionRoutesDeps) {
               outcome.reason === 'exempt' ? 'subscription_exempt' : 'subscription_not_cancelling',
             );
         }
+      },
+    );
+
+    typed.get(
+      '/subscription/usage',
+      {
+        config: { readOnly: 'read', permission: 'billing.manage' },
+        schema: { response: { 200: SubscriptionUsageResponse } },
+      },
+      async (request) => {
+        const actor = request.actor;
+        if (!actor) throw new AppError('unauthenticated');
+        return deps.withTenant({ tenantId: actor.tenantId, userId: actor.userId }, async (tx) => {
+          const billing = await readTenantBilling(tx);
+          if (billing.exempt) throw new AppError('subscription_exempt');
+          const sub = await findSubscription(tx);
+          if (!sub) throw new AppError('subscription_not_found');
+          const plan = await findPlan(tx, sub.planId);
+          return describeUsage(tx, { sub, plan, now: deps.clock() });
+        });
+      },
+    );
+
+    typed.patch(
+      '/subscription/overage-cap',
+      {
+        config: {
+          readOnly: 'subscription',
+          permission: 'billing.manage',
+          audits: ['subscription.cap_changed'],
+        },
+        schema: { body: OverageCapRequest, response: { 200: OverageCapResponse } },
+      },
+      async (request) => {
+        const outcome = await setOverageCap(
+          deps,
+          ownerOf(request),
+          request.body.overageCapMessages,
+        );
+        switch (outcome.status) {
+          case 'set':
+            return { overageCapMessages: outcome.to };
+          case 'too_high':
+            throw new AppError('subscription_overage_cap_too_high');
+          case 'not_allowed':
+            throw new AppError(
+              outcome.reason === 'exempt' ? 'subscription_exempt' : 'subscription_not_found',
+            );
+        }
+      },
+    );
+
+    typed.get(
+      '/subscription/statements',
+      {
+        config: { readOnly: 'read', permission: 'billing.manage' },
+        schema: { response: { 200: StatementsResponse } },
+      },
+      async (request) => {
+        const actor = request.actor;
+        if (!actor) throw new AppError('unauthenticated');
+        return {
+          statements: await deps.withTenant(
+            { tenantId: actor.tenantId, userId: actor.userId },
+            (tx) => listStatements(tx, deps.clock()),
+          ),
+        };
+      },
+    );
+
+    typed.get(
+      '/subscription/statements/:id',
+      {
+        config: { readOnly: 'read', permission: 'billing.manage' },
+        schema: { params: StatementParams, response: { 200: StatementDto } },
+      },
+      async (request) => {
+        const actor = request.actor;
+        if (!actor) throw new AppError('unauthenticated');
+        const found = await deps.withTenant(
+          { tenantId: actor.tenantId, userId: actor.userId },
+          (tx) => readStatement(tx, request.params.id, deps.clock()),
+        );
+        if (!found) throw new AppError('not_found');
+        return found;
+      },
+    );
+
+    typed.get(
+      '/subscription/statements/:id/document',
+      {
+        config: { readOnly: 'read', permission: 'billing.manage' },
+        schema: { params: StatementParams },
+      },
+      async (request, reply) => {
+        const actor = request.actor;
+        if (!actor) throw new AppError('unauthenticated');
+        const prepared = await deps.withTenant(
+          { tenantId: actor.tenantId, userId: actor.userId },
+          (tx) => statementPdfInput(tx, request.params.id, { simulated: options.simulated() }),
+        );
+        if (!prepared) throw new AppError('not_found');
+        const bytes = await renderPdf(prepared.input);
+        // Authenticated, never cached or sniffed: it is the owner's accounting.
+        return reply
+          .header('content-type', 'application/pdf')
+          .header('content-disposition', `attachment; filename="${prepared.fileName}"`)
+          .header('cache-control', 'no-store')
+          .header('x-content-type-options', 'nosniff')
+          .header('content-security-policy', "default-src 'none'; sandbox; frame-ancestors 'none'")
+          .send(bytes);
       },
     );
 

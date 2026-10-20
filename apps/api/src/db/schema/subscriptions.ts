@@ -18,6 +18,7 @@ import {
 } from 'drizzle-orm/pg-core';
 
 import { tenantTable } from './_helpers.js';
+import { professional } from './staff.js';
 import { tenant } from './tenant.js';
 
 const list = (values: readonly string[]) => sql.raw(values.map((v) => `'${v}'`).join(', '));
@@ -223,6 +224,151 @@ export const subscription = tenantTable(
 export type SubscriptionRow = typeof subscription.$inferSelect;
 export type NewSubscriptionRow = typeof subscription.$inferInsert;
 
+/** What a usage record meters. */
+export const USAGE_KINDS = ['active_professional_day', 'whatsapp_messages'] as const;
+export type UsageKind = (typeof USAGE_KINDS)[number];
+
+/**
+ * What the subscription meters (subscriptions, "Per-active-professional pricing", "WhatsApp quota"):
+ * `active_professional_day` is one row per professional and billing day on which the professional was
+ * active (written by the daily snapshot, once per day however many times it runs), and
+ * `whatsapp_messages` is the count of messages the provider accepted for a professional in a period
+ * (rewritten by the snapshot from `whatsapp_usage_event`, which stays the source of the count).
+ * Counts only: no patient, no message.
+ */
+export const usageRecord = tenantTable(
+  'usage_record',
+  {
+    kind: text('kind').notNull(),
+    professionalId: uuid('professional_id').notNull(),
+    /** The billing period (`YYYY-MM`). */
+    period: text('period').notNull(),
+    /** The billing day (`YYYY-MM-DD`) of an `active_professional_day`; null for the monthly count. */
+    day: text('day'),
+    quantity: integer('quantity').notNull().default(1),
+    recordedAt: timestamp('recorded_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    foreignKey({
+      name: 'usage_record_tenant_id_fkey',
+      columns: [table.tenantId],
+      foreignColumns: [tenant.id],
+    }),
+    foreignKey({
+      name: 'usage_record_professional_fkey',
+      columns: [table.tenantId, table.professionalId],
+      foreignColumns: [professional.tenantId, professional.id],
+    }),
+    check('usage_record_kind_check', sql`${table.kind} in (${list(USAGE_KINDS)})`),
+    check('usage_record_period_check', sql`${table.period} ~ '^[0-9]{4}-(0[1-9]|1[0-2])$'`),
+    check('usage_record_quantity_check', sql`${table.quantity} >= 0`),
+    // A day belongs to a day record and to nothing else, and it lies in the period it is filed under.
+    check(
+      'usage_record_day_check',
+      sql`(${table.kind} = 'active_professional_day') = (${table.day} is not null) and (${table.day} is null or left(${table.day}, 7) = ${table.period})`,
+    ),
+    uniqueIndex('usage_record_day_key')
+      .on(table.tenantId, table.professionalId, table.day)
+      .where(sql`${table.kind} = 'active_professional_day'`),
+    uniqueIndex('usage_record_month_key')
+      .on(table.tenantId, table.professionalId, table.period)
+      .where(sql`${table.kind} = 'whatsapp_messages'`),
+    index('usage_record_period_idx').on(table.tenantId, table.period, table.kind),
+  ],
+);
+
+export type UsageRecordRow = typeof usageRecord.$inferSelect;
+
+/**
+ * One line of a statement, as it is stored (the shape of `StatementLine` in
+ * `modules/subscriptions/domain/statement.ts`, which produces it).
+ */
+export type StatementLineRecord =
+  | {
+      kind: 'professional';
+      professionalId: string;
+      name: string | null;
+      days: number;
+      daysInPeriod: number;
+      amountCents: number;
+    }
+  | {
+      kind: 'overage';
+      professionalId: string;
+      name: string | null;
+      quota: number;
+      used: number;
+      units: number;
+      unitPriceCents: number;
+      amountCents: number;
+      eventIds: readonly string[];
+    };
+
+/**
+ * The statement of a billing period (subscriptions, "Billing cycle and statements"): what the
+ * organization is billed for a period that closed, published to the owner BEFORE anything is
+ * collected. It is written once, at the close of the period, and its figures never change afterwards
+ * (a trigger refuses it); what moves is only `collected_cents`, up to the total and never down, and the
+ * bookkeeping of the email.
+ *
+ * `collect_after` is at least three days after `published_at`, enforced here and not only in the
+ * code: the invariant "nothing is collected without a statement the owner could see" does not depend
+ * on the payments provider or on a job being correct.
+ */
+export const statement = tenantTable(
+  'statement',
+  {
+    subscriptionId: uuid('subscription_id').notNull(),
+    /** The billing period (`YYYY-MM`) the statement closes. */
+    period: text('period').notNull(),
+    planId: uuid('plan_id').notNull(),
+    professionalsCounted: integer('professionals_counted').notNull(),
+    baseCents: bigint('base_cents', { mode: 'number' }).notNull(),
+    overageUnits: integer('overage_units').notNull().default(0),
+    overageCents: bigint('overage_cents', { mode: 'number' }).notNull().default(0),
+    totalCents: bigint('total_cents', { mode: 'number' }).notNull(),
+    /** The cap of overage messages that applied to the period. */
+    overageCapMessages: integer('overage_cap_messages').notNull(),
+    lines: jsonb('lines').$type<StatementLineRecord[]>().notNull(),
+    publishedAt: timestamp('published_at', { withTimezone: true }).notNull(),
+    collectAfter: timestamp('collect_after', { withTimezone: true }).notNull(),
+    collectedCents: bigint('collected_cents', { mode: 'number' }).notNull().default(0),
+    collectedAt: timestamp('collected_at', { withTimezone: true }),
+  },
+  (table) => [
+    foreignKey({
+      name: 'statement_tenant_id_fkey',
+      columns: [table.tenantId],
+      foreignColumns: [tenant.id],
+    }),
+    foreignKey({
+      name: 'statement_subscription_fkey',
+      columns: [table.tenantId, table.subscriptionId],
+      foreignColumns: [subscription.tenantId, subscription.id],
+    }),
+    unique('statement_period_key').on(table.subscriptionId, table.period),
+    check('statement_period_check', sql`${table.period} ~ '^[0-9]{4}-(0[1-9]|1[0-2])$'`),
+    check(
+      'statement_amounts_check',
+      sql`${table.baseCents} >= 0 and ${table.overageCents} >= 0 and ${table.overageUnits} >= 0 and ${table.professionalsCounted} >= 1 and ${table.totalCents} = ${table.baseCents} + ${table.overageCents}`,
+    ),
+    check(
+      'statement_collected_check',
+      sql`${table.collectedCents} >= 0 and ${table.collectedCents} <= ${table.totalCents}`,
+    ),
+    // The window the owner has to see the statement before anything is collected.
+    check(
+      'statement_window_check',
+      sql`${table.collectAfter} >= ${table.publishedAt} + interval '3 days'`,
+    ),
+    index('statement_open_idx')
+      .on(table.subscriptionId, table.period)
+      .where(sql`${table.collectedCents} < ${table.totalCents}`),
+  ],
+);
+
+export type StatementRow = typeof statement.$inferSelect;
+
 /**
  * One notice of the provider that was accepted (`POST /webhooks/mercadopago`). The id the provider
  * gave the delivery is UNIQUE: the same notice delivered twice finds its row and does nothing. The
@@ -330,6 +476,11 @@ export const subscriptionAttempt = tenantTable(
       columns: [table.tenantId, table.subscriptionId],
       foreignColumns: [subscription.tenantId, subscription.id],
     }),
+    foreignKey({
+      name: 'subscription_attempt_statement_fkey',
+      columns: [table.tenantId, table.statementId],
+      foreignColumns: [statement.tenantId, statement.id],
+    }),
     check('subscription_attempt_kind_check', sql`${table.kind} in (${list(ATTEMPT_KINDS)})`),
     check('subscription_attempt_state_check', sql`${table.state} in (${list(ATTEMPT_STATES)})`),
     check('subscription_attempt_amount_check', sql`${table.amountCents} >= 0`),
@@ -396,6 +547,11 @@ export const subscriptionPayment = tenantTable(
       name: 'subscription_payment_subscription_fkey',
       columns: [table.tenantId, table.subscriptionId],
       foreignColumns: [subscription.tenantId, subscription.id],
+    }),
+    foreignKey({
+      name: 'subscription_payment_statement_fkey',
+      columns: [table.tenantId, table.statementId],
+      foreignColumns: [statement.tenantId, statement.id],
     }),
     unique('subscription_payment_provider_key').on(table.tenantId, table.providerPaymentId),
     check(
@@ -470,6 +626,14 @@ export const NOTICE_KINDS = [
   'dunning_5',
   'read_only_started',
   'recovered',
+  /** A statement was published; the key is its id. */
+  'statement_published',
+  /** The provider would not change the recurring amount: the difference is asked by a link. */
+  'amount_change_refused',
+  /** The provider wants the owner to authorize the new amount again. */
+  'reauthorization_needed',
+  /** The overage cap of the period was reached: WhatsApp messages go by email. The key is the period. */
+  'overage_cap_reached',
 ] as const;
 export type NoticeKind = (typeof NOTICE_KINDS)[number];
 

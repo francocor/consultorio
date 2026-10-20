@@ -1,5 +1,7 @@
 import { z } from 'zod';
 
+import { USAGE_STATES } from './notifications.js';
+
 export { SUBSCRIPTION_ERRORS, SUBSCRIPTION_AUDIT_ACTIONS } from './subscriptions-catalog.js';
 
 /**
@@ -266,3 +268,128 @@ export type ChangePlanRequest = z.infer<typeof ChangePlanRequest>;
 /** `POST /subscription/retry-payment`: a one-off link for the overdue amount. */
 export const RetryPaymentResponse = z.strictObject({ paymentUrl: z.url() });
 export type RetryPaymentResponse = z.infer<typeof RetryPaymentResponse>;
+
+// Usage ----------------------------------------------------------------------------------------------
+
+/** One professional's WhatsApp usage in the period: counts only, never a message or a patient. */
+export const SubscriptionUsageProfessional = z.strictObject({
+  professionalId: z.uuid(),
+  name: z.string().nullable(),
+  /** Messages the provider accepted in the period. */
+  count: Count,
+  /** The quota of the period (prorated by the days the professional was active). */
+  quota: Count,
+  remaining: Count,
+  /** Messages beyond the quota. */
+  overageUnits: Count,
+  state: z.enum(USAGE_STATES),
+});
+export type SubscriptionUsageProfessional = z.infer<typeof SubscriptionUsageProfessional>;
+
+/** `GET /subscription/usage`. */
+export const SubscriptionUsageResponse = z.strictObject({
+  period: z.string().regex(/^\d{4}-(0[1-9]|1[0-2])$/),
+  professionals: z.array(SubscriptionUsageProfessional),
+  totals: z.strictObject({
+    count: Count,
+    quota: Count,
+    remaining: Count,
+    /** Messages beyond the quota, all professionals together, before the cap. */
+    overageUnits: Count,
+  }),
+  overage: z.strictObject({
+    /** The most overage messages the period bills. 0 means overage is off. */
+    capMessages: Count,
+    capMax: Count,
+    unitPriceCents: Cents,
+    /** Overage messages the statement of this period would bill now (never above the cap). */
+    billableUnits: Count,
+    /** What those messages would cost. */
+    projectedCents: Cents,
+    /** Overage is off or the cap was reached: the messages beyond the quota go by email. */
+    capReached: z.boolean(),
+  }),
+});
+export type SubscriptionUsageResponse = z.infer<typeof SubscriptionUsageResponse>;
+
+/** `PATCH /subscription/overage-cap`: never unlimited, never above the maximum of the plan. */
+export const OverageCapRequest = z.strictObject({
+  overageCapMessages: z.number().int().min(0),
+});
+export type OverageCapRequest = z.infer<typeof OverageCapRequest>;
+
+export const OverageCapResponse = z.strictObject({ overageCapMessages: Count });
+export type OverageCapResponse = z.infer<typeof OverageCapResponse>;
+
+// Statements -----------------------------------------------------------------------------------------
+
+export const StatementLineDto = z.discriminatedUnion('kind', [
+  z.strictObject({
+    kind: z.literal('professional'),
+    professionalId: z.uuid(),
+    name: z.string().nullable(),
+    days: Count,
+    daysInPeriod: Count,
+    amountCents: Cents,
+  }),
+  z.strictObject({
+    kind: z.literal('overage'),
+    professionalId: z.uuid(),
+    name: z.string().nullable(),
+    quota: Count,
+    used: Count,
+    units: Count,
+    unitPriceCents: Cents,
+    amountCents: Cents,
+    /** The counted events the line bills. Only in the detail of a statement, never in the list. */
+    eventIds: z.array(z.uuid()).optional(),
+  }),
+]);
+export type StatementLineDto = z.infer<typeof StatementLineDto>;
+
+export const StatementDto = z.strictObject({
+  id: z.uuid(),
+  /** The billing period the statement closes (`YYYY-MM`). */
+  period: z.string().regex(/^\d{4}-(0[1-9]|1[0-2])$/),
+  publishedAt: Instant,
+  /** The statement is not collected before this instant. */
+  collectAfter: Instant,
+  professionalsCounted: Count,
+  baseCents: Cents,
+  overageUnits: Count,
+  overageCents: Cents,
+  totalCents: Cents,
+  collectedCents: Cents,
+  lines: z.array(StatementLineDto),
+  /** Where the owner pays the difference the recurring charge cannot take (a link), or null. */
+  paymentUrl: z.url().nullable(),
+  /** Where the owner authorizes the new amount again, when the provider asks for it, or null. */
+  reauthorizationUrl: z.url().nullable(),
+});
+export type StatementDto = z.infer<typeof StatementDto>;
+
+/** `GET /subscription/statements`, the newest first. */
+export const StatementsResponse = z.strictObject({ statements: z.array(StatementDto) });
+export type StatementsResponse = z.infer<typeof StatementsResponse>;
+
+// What the operator sees of the usage of an organization (counts, per professional and period) -------
+
+export const OperatorUsageResponse = z.strictObject({
+  /** The organization the counts belong to. */
+  id: z.uuid(),
+  periods: z.array(
+    z.strictObject({
+      period: z.string().regex(/^\d{4}-(0[1-9]|1[0-2])$/),
+      professionals: z.array(
+        z.strictObject({
+          professionalId: z.uuid(),
+          /** Days on which the professional was active (a snapshot per day). */
+          activeDays: Count,
+          /** WhatsApp messages the provider accepted. */
+          messages: Count,
+        }),
+      ),
+    }),
+  ),
+});
+export type OperatorUsageResponse = z.infer<typeof OperatorUsageResponse>;

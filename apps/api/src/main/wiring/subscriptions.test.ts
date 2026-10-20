@@ -15,13 +15,20 @@ const config = (overrides: Record<string, unknown>) =>
 
 describe('the worker of the subscriptions', () => {
   const context = (deploymentMode: 'multi' | 'single') => ({
-    config: config({ deploymentMode }),
+    config: config({ deploymentMode, publicUrl: 'https://aillu.consultorio.test' }),
     adapters: { forTenant: () => undefined },
     email: createFakeEmailSender(),
   });
 
-  it('has no job in a single-tenant deployment: there is nobody to bill', () => {
-    expect(subscriptionsWiring.worker?.(context('single') as never)).toEqual({});
+  it('only meters in a single-tenant deployment: there is nobody to bill, but the counts are kept', () => {
+    const contribution = subscriptionsWiring.worker?.(context('single') as never);
+    const queues = (definitions: readonly { name: string }[] | undefined) =>
+      definitions?.map((definition) => definition.name);
+
+    const jobs = contribution?.jobs?.({ client: {}, db: {}, log: {} } as never);
+    expect(queues(jobs as never)).toEqual(['usage.snapshot']);
+    const schedules = contribution?.schedules?.({ client: {}, db: {} } as never);
+    expect(schedules?.map((schedule) => schedule.name)).toEqual(['usage.snapshot tick']);
   });
 
   it('has the jobs of the subscription and the clocks that drive them in a multi-tenant one', () => {

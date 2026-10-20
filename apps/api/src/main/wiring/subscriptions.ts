@@ -11,8 +11,10 @@ import {
 } from '../../adapters/mercadopago-local/index.js';
 import {
   DUNNING_STEP_JOB,
+  STATEMENT_GENERATE_JOB,
   SUBSCRIPTION_RECONCILE_JOB,
   TRIAL_END_JOB,
+  USAGE_SNAPSHOT_JOB,
   createSubscriptionJobs,
   createSubscriptions,
   subscriptionOperatorRoutes,
@@ -88,6 +90,9 @@ const RECONCILE_EVERY_MS = 300_000;
 
 /** How often the dates of every subscription are looked at (10 minutes). */
 const DATES_EVERY_MS = 600_000;
+
+/** How often the activity of the professionals is metered, and the closed periods are looked at (1 hour). */
+const METERING_EVERY_MS = 3_600_000;
 
 const isLocalGateway = (gateway: unknown): gateway is LocalPaymentsGateway => {
   const candidate = gateway as Partial<LocalPaymentsGateway> | undefined;
@@ -171,12 +176,11 @@ export const subscriptionsWiring: ModuleWiring = {
     };
   },
   worker: ({ config, adapters, email, clock }) => {
-    // Billing exists only where organizations are billed: a single-tenant deployment has no jobs.
-    if (config.deploymentMode !== 'multi') return {};
     const now = clock ?? (() => new Date());
+    const billing = config.deploymentMode === 'multi';
     return {
-      jobs: ({ client, db, log }) =>
-        createSubscriptionJobs({
+      jobs: ({ client, db, log }) => {
+        const jobs = createSubscriptionJobs({
           // Every step of a reconcile runs in short transactions of its own, with the mark of a write
           // committed before its call; the transaction the framework opens stays idle meanwhile.
           withTenant: createWithTenant(db),
@@ -188,27 +192,59 @@ export const subscriptionsWiring: ModuleWiring = {
           // The end of a subscription is announced to retention through this bus.
           tenantCancelled: createTenantLifecycle(),
           log,
-        }).definitions,
+        });
+        // Billing exists only where organizations are billed. A single-tenant deployment still meters
+        // (the counts feed the contract invoicing of the operator) and runs nothing else.
+        return billing ? jobs.billing : jobs.metering;
+      },
       schedules: ({ client, db }) => [
         {
-          // The clock that heals an outage: every organization is asked where its subscription stands.
-          name: `${SUBSCRIPTION_RECONCILE_JOB} tick`,
-          intervalMs: RECONCILE_EVERY_MS,
+          // The clock of the metering: the day each professional was active, the messages accepted.
+          name: `${USAGE_SNAPSHOT_JOB} tick`,
+          intervalMs: METERING_EVERY_MS,
           run: async () => {
-            await fanOut(db, client, SUBSCRIPTION_RECONCILE_JOB, {
-              singletonSeconds: RECONCILE_EVERY_MS / 2000,
+            await fanOut(db, client, USAGE_SNAPSHOT_JOB, {
+              singletonSeconds: METERING_EVERY_MS / 2000,
             });
           },
         },
-        {
-          // The clock of the dates: the end of a trial, the reminders and the end of a grace.
-          name: `${TRIAL_END_JOB} tick`,
-          intervalMs: DATES_EVERY_MS,
-          run: async () => {
-            await fanOut(db, client, TRIAL_END_JOB, { singletonSeconds: DATES_EVERY_MS / 2000 });
-            await fanOut(db, client, DUNNING_STEP_JOB, { singletonSeconds: DATES_EVERY_MS / 2000 });
-          },
-        },
+        ...(billing
+          ? [
+              {
+                // The clock that closes the periods: the statements of the periods that ended.
+                name: `${STATEMENT_GENERATE_JOB} tick`,
+                intervalMs: METERING_EVERY_MS,
+                run: async () => {
+                  await fanOut(db, client, STATEMENT_GENERATE_JOB, {
+                    singletonSeconds: METERING_EVERY_MS / 2000,
+                  });
+                },
+              },
+              {
+                // The clock that heals an outage: every organization is asked where its subscription stands.
+                name: `${SUBSCRIPTION_RECONCILE_JOB} tick`,
+                intervalMs: RECONCILE_EVERY_MS,
+                run: async () => {
+                  await fanOut(db, client, SUBSCRIPTION_RECONCILE_JOB, {
+                    singletonSeconds: RECONCILE_EVERY_MS / 2000,
+                  });
+                },
+              },
+              {
+                // The clock of the dates: the end of a trial, the reminders and the end of a grace.
+                name: `${TRIAL_END_JOB} tick`,
+                intervalMs: DATES_EVERY_MS,
+                run: async () => {
+                  await fanOut(db, client, TRIAL_END_JOB, {
+                    singletonSeconds: DATES_EVERY_MS / 2000,
+                  });
+                  await fanOut(db, client, DUNNING_STEP_JOB, {
+                    singletonSeconds: DATES_EVERY_MS / 2000,
+                  });
+                },
+              },
+            ]
+          : []),
       ],
     };
   },

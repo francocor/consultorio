@@ -3,18 +3,35 @@ import { defineJob, type JobDefinition } from '../../../platform/jobs/define-job
 import { runDunningStep, runTrialEnd } from '../application/clock.js';
 import {
   DUNNING_STEP_JOB,
+  STATEMENT_GENERATE_JOB,
   SUBSCRIPTION_RECONCILE_JOB,
   TRIAL_END_JOB,
+  USAGE_SNAPSHOT_JOB,
 } from '../application/job-names.js';
+import { sendPendingNotices } from '../application/notices.js';
 import type { SubscriptionDeps } from '../application/provider.js';
 import { reconcileSubscription } from '../application/reconcile.js';
+import { generateStatements } from '../application/statements.js';
+import { runUsageSnapshot } from '../application/usage.js';
 
-export { DUNNING_STEP_JOB, SUBSCRIPTION_RECONCILE_JOB, TRIAL_END_JOB };
+export {
+  DUNNING_STEP_JOB,
+  STATEMENT_GENERATE_JOB,
+  SUBSCRIPTION_RECONCILE_JOB,
+  TRIAL_END_JOB,
+  USAGE_SNAPSHOT_JOB,
+};
 
 export interface SubscriptionJobs {
   reconcile: JobDefinition;
   trialEnd: JobDefinition;
   dunningStep: JobDefinition;
+  usageSnapshot: JobDefinition;
+  statementGenerate: JobDefinition;
+  /** The jobs of a deployment that bills organizations (all of them). */
+  billing: readonly JobDefinition[];
+  /** The jobs of a deployment that only meters (a single-tenant one with billing off). */
+  metering: readonly JobDefinition[];
   /** All of them, to register them (or to run them in a test). */
   definitions: readonly JobDefinition[];
 }
@@ -35,7 +52,14 @@ export interface SubscriptionJobs {
  *   a cancelled paid period. Category `subscription`, and it never retries on its own
  *   (`retryLimit: 0`): a pass either does its step or skips it, and the clock tries the next one.
  *
- * An exempt organization has no subscription and these jobs do nothing for it.
+ * - `usage.snapshot`: writes the day each professional was active and the count of accepted WhatsApp
+ *   messages, and sends the notice of an exhausted quota that was claimed since. Category
+ *   `subscription`. It asks no provider.
+ * - `statement.generate`: writes the statement of every closed period that has none and tells the owner
+ *   (the statements keep being published in a read-only organization). It asks no provider either, so
+ *   neither is a connection-holding family.
+ *
+ * An exempt organization has no subscription and the billing jobs do nothing for it.
  *
  * The transaction `runJob` opens for the handler is NOT used for the work: the handler runs its own
  * short transactions (`deps.withTenant`) between the questions to the provider, so the framework
@@ -67,10 +91,38 @@ export function createSubscriptionJobs(deps: SubscriptionDeps): SubscriptionJobs
       await runDunningStep(deps, tenantId);
     },
   });
+  const usageSnapshot = defineJob({
+    name: USAGE_SNAPSHOT_JOB,
+    category: 'subscription',
+    payload: JobPayload,
+    async handler({ tenantId }) {
+      await runUsageSnapshot(deps, tenantId);
+      await sendPendingNotices(deps, tenantId).catch(() => 0);
+    },
+  });
+  const statementGenerate = defineJob({
+    name: STATEMENT_GENERATE_JOB,
+    category: 'subscription',
+    payload: JobPayload,
+    async handler({ tenantId }) {
+      await generateStatements(deps, tenantId);
+    },
+  });
+  const billing = [
+    reconcile,
+    trialEnd,
+    dunningStep,
+    usageSnapshot,
+    statementGenerate,
+  ] as readonly JobDefinition[];
   return {
     reconcile,
     trialEnd,
     dunningStep,
-    definitions: [reconcile, trialEnd, dunningStep] as readonly JobDefinition[],
+    usageSnapshot,
+    statementGenerate,
+    billing,
+    metering: [usageSnapshot] as readonly JobDefinition[],
+    definitions: billing,
   };
 }

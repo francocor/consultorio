@@ -438,3 +438,47 @@ export async function createOverdueLink(
   }
   return { status: 'in_progress' };
 }
+
+// The overage cap -----------------------------------------------------------------------------------
+
+export type OverageCapOutcome =
+  | { status: 'set'; from: number; to: number }
+  | { status: 'too_high'; max: number }
+  | { status: 'not_allowed'; reason: 'exempt' | 'none' };
+
+/**
+ * `PATCH /subscription/overage-cap`: the most extra WhatsApp messages a period may bill, between zero
+ * (overage off) and the maximum of the plan. It is never unlimited: the request carries a whole number,
+ * and a number above the maximum is refused. The change is audited with the value before and after.
+ */
+export async function setOverageCap(
+  deps: SubscriptionDeps,
+  owner: Owner,
+  cap: number,
+): Promise<OverageCapOutcome> {
+  return as(deps, owner, async (tx) => {
+    const billing = await readTenantBilling(tx);
+    if (billing.exempt) return { status: 'not_allowed', reason: 'exempt' };
+    const row = await lockSubscription(tx);
+    if (!row) return { status: 'not_allowed', reason: 'none' };
+    const plan = await findPlan(tx, row.planId);
+    if (!Number.isSafeInteger(cap) || cap < 0 || cap > plan.overageCapMax) {
+      return { status: 'too_high', max: plan.overageCapMax };
+    }
+    if (cap !== row.overageCapMessages) {
+      await tx
+        .update(subscription)
+        .set({ overageCapMessages: cap, version: row.version + 1 })
+        .where(eq(subscription.id, row.id));
+      await audit(tx, {
+        action: 'subscription.cap_changed',
+        outcome: 'allow',
+        actor: owner.actor,
+        resourceType: 'subscription',
+        resourceId: row.id,
+        metadata: { from: row.overageCapMessages, to: cap },
+      });
+    }
+    return { status: 'set', from: row.overageCapMessages, to: cap };
+  });
+}

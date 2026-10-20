@@ -10,5 +10,7 @@
   "subscription_plan_too_small": "El plan elegido admite menos profesionales activos de los que hay hoy. Desactive profesionales o elija un plan más amplio.",
   "subscription_reauthorization_required": "Mercado Pago ya no tiene vigente la autorización de pago. Autorice el pago nuevamente para retomar la suscripción: la cancelación se deja sin efecto cuando Mercado Pago lo confirme.",
   "subscription_nothing_due": "No hay ningún pago atrasado para realizar.",
-  "subscription_not_cancelling": "La suscripción no está en proceso de cancelación."
+  "subscription_not_cancelling": "La suscripción no está en proceso de cancelación.",
+  "subscription_overage_cap_too_high": "El tope de mensajes excedentes supera el máximo que admite su plan. Elija un valor menor o igual al máximo.",
+  "subscription_not_found": "Esta organización todavía no tiene una suscripción."
 }

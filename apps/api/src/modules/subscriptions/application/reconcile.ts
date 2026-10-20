@@ -22,9 +22,10 @@ import {
 
 import { openAttempts, parkSubscription, resolveAttempt } from './attempts.js';
 import { cancelAtProvider } from './cancel-at-provider.js';
+import { allocatePayments, collectStatements } from './collection.js';
 import { DAY_MS, SYSTEM_ACTOR } from './common.js';
 import { applyLedger } from './ledger-store.js';
-import { sendPendingNotices } from './notices.js';
+import { claimNotice, sendPendingNotices } from './notices.js';
 import type {
   PaymentDescription,
   PaymentLinkDescription,
@@ -339,6 +340,10 @@ async function settleAttempts(
         resourceUrl: found.url,
         now,
       });
+      // A link made for a statement: the owner is told what it is for, as when the answer came back.
+      if (fresh.statementId !== null) {
+        await claimNotice(tx, row.id, 'amount_change_refused', fresh.statementId);
+      }
     } else if (fresh.kind === 'refund') {
       const found = verdict.resource as {
         refundId: string;
@@ -430,6 +435,9 @@ export async function reconcileSubscription(
       to: fromStatus === toStatus ? null : toStatus,
     };
   });
+  // A published statement whose window passed moves the amount the provider charges (or asks for the
+  // difference): its own short transactions, with the mark of every write committed before its call.
+  if (result.outcome === 'done') await collectStatements(deps, tenantId).catch(() => 'nothing');
   // The owner is told what the changes above owe them: after the commit, outside any transaction.
   await sendPendingNotices(deps, tenantId).catch(() => 0);
   // A cancelling subscription whose authorization is still in force is told to the provider again.
@@ -515,6 +523,8 @@ async function applyPayments(
 ): Promise<SubscriptionRow> {
   const ledger = await applyLedger(tx, start, payments);
   let row = ledger.row;
+  // What the provider collected is booked against the statements it was owed for.
+  await allocatePayments(tx, row.id, now);
   const { effects } = ledger.plan;
 
   if (effects.approvedCounted) {
