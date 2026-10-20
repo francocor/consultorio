@@ -1,14 +1,23 @@
 import { createFakeArchiveStore } from '../../adapters/archive-fake/index.js';
 import type { FakeArchiveStore } from '../../adapters/archive-fake/index.js';
+import { createS3ObjectStorage } from '../../adapters/s3/index.js';
 import {
   createArchive,
   createCancellation,
+  createCancellationExportJob,
   createExportRegistry,
+  enqueuePendingExports,
+  operatorCancelRoutes,
 } from '../../modules/tenancy/index.js';
+import { createTenantKeys } from '../../platform/crypto/tenant-keys.js';
+import { createWithTenant } from '../../platform/db/tenant-context.js';
+import type { ObjectStorage } from '../../platform/storage/object-storage.js';
 import { fake } from '../adapter-resolver.js';
 import type { Config } from '../config.js';
 import { registerAllExportContributors } from '../export-contributors.js';
+import { createKeyManagement } from '../key-management.js';
 
+import { originsFromConfig } from './origins.js';
 import type { ModuleWiring } from './types.js';
 
 /**
@@ -24,6 +33,9 @@ export function demoArchiveStoreOf(config: Config): FakeArchiveStore {
   }
   return store;
 }
+
+/** How often the worker looks for an organization whose export is waiting (seconds, in effect). */
+const EXPORT_SWEEP_EVERY_MS = 30_000;
 
 /**
  * Everything the end of an organization registers with the composition root (Track C: the
@@ -56,6 +68,7 @@ export const tenancyWiring: ModuleWiring = {
       exports,
       lifecycle: context.tenantLifecycle,
       jobs: context.jobs,
+      fileResources: context.fileResources,
       ...(context.clock ? { clock: context.clock } : {}),
     });
     const archive = createArchive({
@@ -70,6 +83,54 @@ export const tenancyWiring: ModuleWiring = {
         cancellation.routes(app);
         archive.routes(app);
       },
+    };
+  },
+  // The operator cancels an organization: single-tenant deployments and local testing (task 6.36).
+  operatorRoutes: (context) =>
+    operatorCancelRoutes({
+      run: context.run,
+      tenantCancelled: context.tenantCancelled,
+      clock: context.clock,
+    }),
+  worker: ({ config, email, clock }) => {
+    // The bucket of the packages is the one of the documents. It is opened when the first job needs it.
+    let storage: ObjectStorage | undefined;
+    const bucket = () => {
+      if (!storage && config.storage) storage = createS3ObjectStorage(config.storage);
+      return storage;
+    };
+    // The contributors of the clinical parts decrypt with the key service, like the API's.
+    const exports = createExportRegistry();
+    registerAllExportContributors(exports, {
+      keys: createTenantKeys({ kms: createKeyManagement(config.kms) }),
+    });
+    return {
+      jobs: ({ db, log }) => {
+        const found = bucket();
+        // Without a bucket there is nowhere to put a package: the job is not registered.
+        return found
+          ? [
+              createCancellationExportJob({
+                exports,
+                withTenant: createWithTenant(db),
+                storage: found,
+                clock: clock ?? (() => new Date()),
+                notify: { email, origins: originsFromConfig(config) },
+                log,
+              }),
+            ]
+          : [];
+      },
+      schedules: ({ client, db }) => [
+        {
+          // The cancelling transaction only writes the request; this is what turns it into a job.
+          name: 'cancellation export tick',
+          intervalMs: EXPORT_SWEEP_EVERY_MS,
+          run: async () => {
+            await enqueuePendingExports(db, client);
+          },
+        },
+      ],
     };
   },
 };

@@ -7,6 +7,8 @@ import {
   CANCELLATION_ERRORS,
   CANCELLATION_PLATFORM_AUDIT_ACTIONS,
   EXPORT_PACKAGE_KINDS,
+  ExportPackageDto,
+  ExportPackageResponse,
 } from './cancellation.js';
 import { ERROR_CATALOG } from './errors.js';
 import { isPlatformAuditAction } from './operator.js';
@@ -57,5 +59,41 @@ describe('cancellation and archive catalogues', () => {
       expect(ERROR_CATALOG, code).toHaveProperty(code);
       expect(entry.i18nKey, code).toBe(`errors.${code}`);
     }
+  });
+});
+
+describe('the shapes of the cancellation export', () => {
+  const dto = {
+    id: '0190a000-0000-7000-8000-000000000001',
+    kind: 'administrative',
+    status: 'ready',
+    fileName: 'exportacion-administrativa-20310531.zip',
+    sizeBytes: 2048,
+    builtAt: '2031-05-31T18:00:00.000Z',
+    failureCode: null,
+  };
+
+  it('describes a package by its state and file, never by its content', () => {
+    expect(ExportPackageDto.parse(dto)).toEqual(dto);
+    expect(Object.keys(ExportPackageDto.shape).sort()).toEqual([
+      'builtAt',
+      'failureCode',
+      'fileName',
+      'id',
+      'kind',
+      'sizeBytes',
+      'status',
+    ]);
+  });
+
+  it('refuses a status or a kind the table does not have, and any extra field', () => {
+    expect(ExportPackageDto.safeParse({ ...dto, status: 'building' }).success).toBe(false);
+    expect(ExportPackageDto.safeParse({ ...dto, kind: 'custody' }).success).toBe(false);
+    expect(ExportPackageDto.safeParse({ ...dto, objectKey: 't/x/y' }).success).toBe(false);
+  });
+
+  it('answers a missing package with null so the screen can say "not yet"', () => {
+    expect(ExportPackageResponse.parse({ package: null })).toEqual({ package: null });
+    expect(ExportPackageResponse.parse({ package: dto })).toEqual({ package: dto });
   });
 });

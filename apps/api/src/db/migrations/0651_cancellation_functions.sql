@@ -12,6 +12,8 @@
 --    operator's, which has no privilege on the job queue; so the announcement is a row
 --    (`export_package`, queued) and the worker looks for those rows. The function returns tenant ids
 --    and nothing else.
+-- 3. The operator's scope on the organization's own trail (migration 0593) gains the two entries the
+--    cancellation writes there: the end of the organization and the request of its export.
 CREATE FUNCTION app.operator_cancel_tenant(p_tenant uuid) RETURNS text
   LANGUAGE plpgsql SECURITY DEFINER
   SET search_path = pg_catalog, public, pg_temp
@@ -63,3 +65,11 @@ CREATE FUNCTION app.cancellation_export_pending(p_limit integer) RETURNS SETOF u
 REVOKE ALL ON FUNCTION app.cancellation_export_pending(integer) FROM PUBLIC, app_operator;
 --> statement-breakpoint
 GRANT EXECUTE ON FUNCTION app.cancellation_export_pending(integer) TO app_rw;
+--> statement-breakpoint
+DROP POLICY "operator_audit_scope" ON "audit_event";
+--> statement-breakpoint
+CREATE POLICY "operator_audit_scope" ON "audit_event" AS RESTRICTIVE FOR INSERT TO app_operator
+  WITH CHECK ("action" IN (
+    'tenant.created', 'support.access', 'matricula.verified', 'matricula.unverified',
+    'tenant.cancelled', 'export.cancellation.requested'
+  ));

@@ -9,10 +9,10 @@
  * `locales/es-AR/errors.archive.json`, keyed by the code. The retention track (Track C) adds its
  * codes here and nowhere else.
  */
-export const CANCELLATION_ERRORS = {} as const satisfies Record<
-  string,
-  { status: number; i18nKey: string }
->;
+export const CANCELLATION_ERRORS = {
+  // The package is not a file yet (still being made) or could not be made: nothing to download.
+  export_package_not_ready: { status: 409, i18nKey: 'errors.export_package_not_ready' },
+} as const satisfies Record<string, { status: number; i18nKey: string }>;
 
 /**
  * Audit actions of the organization that cancels: its own trail is part of the export. The metadata

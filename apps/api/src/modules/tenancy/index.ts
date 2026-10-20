@@ -38,6 +38,13 @@ export type {
 } from './application/lifecycle.js';
 export { createCancellation } from './cancellation/cancellation.js';
 export type { Cancellation, CancellationOptions } from './cancellation/cancellation.js';
+export {
+  CANCELLATION_EXPORT_JOB,
+  createCancellationExportJob,
+} from './cancellation/build-export.js';
+export type { CancellationExportDeps } from './cancellation/build-export.js';
+export { enqueuePendingExports } from './cancellation/queue.js';
+export { operatorCancelRoutes } from './cancellation/http/operator-cancel-routes.js';
 export { createArchive } from './archive/archive.js';
 export type { Archive, ArchiveOptions } from './archive/archive.js';
 export type * from './archive/ports.js';
