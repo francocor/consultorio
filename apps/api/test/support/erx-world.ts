@@ -69,6 +69,12 @@ export interface ErxWorld extends ClinicalWorld {
   get(by: Professional, id: string): Promise<PrescriptionDto>;
   /** The row of the prescription as the database holds it, read as the system. */
   rowOf(id: string): Promise<Record<string, unknown>>;
+  /**
+   * Runs `work` with the clock past the pin of a call in flight (JD-S5 R3-3): a call whose outcome
+   * is unknown pins the prescription for ten minutes, and nothing acts on it before. The clock goes
+   * back when `work` ends.
+   */
+  pastPin<T>(work: () => Promise<T>): Promise<T>;
   stop(): Promise<void>;
 }
 
@@ -111,6 +117,9 @@ export async function createErxWorld(
   await admin.connect();
 
   let patients = 0;
+  // Unique and deterministic: the counter of the world, on a base taken from the id of its
+  // organization. A random part could give two patients of one organization the same document (409).
+  const documentBase = 30_000_000 + (Number.parseInt(world.tenant.id.slice(-4), 16) % 1000) * 1000;
   const erx: ErxWorld = {
     ...world,
     provider,
@@ -144,7 +153,7 @@ export async function createErxWorld(
         birthDate: '1980-01-01',
         document: {
           type: 'dni',
-          number: String(30_000_000 + patients + Math.floor(Math.random() * 9000)),
+          number: String(documentBase + patients),
         },
         dataProcessingConsent: true,
       });
@@ -209,6 +218,15 @@ export async function createErxWorld(
       const row = result.rows[0];
       if (!row) throw new Error('no such prescription');
       return row;
+    },
+    async pastPin(work) {
+      const before = clock.now;
+      clock.now = new Date(before.getTime() + 11 * 60_000);
+      try {
+        return await work();
+      } finally {
+        clock.now = before;
+      }
     },
     async stop() {
       await admin.end();

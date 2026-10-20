@@ -416,7 +416,9 @@ describe('an outage never produces a valid prescription and never a second one',
     });
     expect(world.provider.prescriptions().length).toBe(before + 1);
 
-    const retried = await world.api.post(`/prescriptions/${lost.id}/retry`, prescriber.session);
+    const retried = await world.pastPin(() =>
+      world.api.post(`/prescriptions/${lost.id}/retry`, prescriber.session),
+    );
 
     expect(retried.json<PrescriptionDto>()).toMatchObject({ status: 'issued' });
     expect(world.provider.prescriptions().length).toBe(before + 1);
@@ -446,7 +448,9 @@ describe('an outage never produces a valid prescription and never a second one',
     expect(row['delivery_state']).toBe('awaiting_reconciliation');
     expect(world.provider.prescriptions().length).toBe(before + 1);
 
-    const retried = await world.api.post(`/prescriptions/${lost.id}/retry`, prescriber.session);
+    const retried = await world.pastPin(() =>
+      world.api.post(`/prescriptions/${lost.id}/retry`, prescriber.session),
+    );
 
     expect(retried.json<PrescriptionDto>().status).toBe('issued');
     expect(world.provider.prescriptions().length).toBe(before + 1);
@@ -472,7 +476,9 @@ describe('an outage never produces a valid prescription and never a second one',
       const second = (await world.issue(prescriber, { patientId })).json<PrescriptionDto>();
       expect(second.failure?.awaitingReconciliation).toBe(true);
 
-      const retried = await world.api.post(`/prescriptions/${second.id}/retry`, prescriber.session);
+      const retried = await world.pastPin(() =>
+        world.api.post(`/prescriptions/${second.id}/retry`, prescriber.session),
+      );
 
       expect(retried.json<PrescriptionDto>()).toMatchObject({
         status: 'pending_submission',

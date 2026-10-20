@@ -263,9 +263,11 @@ describe('cancelling a prescription', () => {
     const lost = (await world.issue(prescriber, { patientId })).json<PrescriptionDto>();
     expect(lost.failure?.awaitingReconciliation).toBe(true);
 
-    const response = await world.api.post(`/prescriptions/${lost.id}/cancel`, prescriber.session, {
-      reason: 'Ya no hace falta',
-    });
+    const response = await world.pastPin(() =>
+      world.api.post(`/prescriptions/${lost.id}/cancel`, prescriber.session, {
+        reason: 'Ya no hace falta',
+      }),
+    );
 
     expect(response.statusCode).toBe(409);
     expect(problemOf(response).code).toBe('prescription_awaiting_reconciliation');
@@ -391,12 +393,10 @@ describe('a prescription issued on the site of the provider', () => {
     world.provider.setMode('timeout_after_issue');
     const lost = (await world.issue(prescriber, { patientId })).json<PrescriptionDto>();
 
-    const response = await world.api.post(
-      `/prescriptions/${lost.id}/register-manual`,
-      prescriber.session,
-      {
+    const response = await world.pastPin(() =>
+      world.api.post(`/prescriptions/${lost.id}/register-manual`, prescriber.session, {
         identifier: 'RX-DUPLICADA',
-      },
+      }),
     );
 
     expect(response.statusCode).toBe(409);

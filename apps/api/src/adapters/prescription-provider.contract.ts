@@ -208,9 +208,10 @@ export function describePrescriptionProviderContract(
       );
     });
 
-    it('never creates two prescriptions while the first call for a key is still in flight', async () => {
+    it('never creates two prescriptions while the first call for a key is still in flight', async (context) => {
       const { provider, hold } = await target.make();
-      if (!hold) return;
+      // An explicit skip, not a silent pass: a target that cannot be slowed down says so in the report.
+      if (!hold) return context.skip('this target cannot hold a call (no hold())');
       const idempotencyKey = key();
       const slow = hold();
 

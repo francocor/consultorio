@@ -62,6 +62,13 @@ const inProgress = (row: PrescriptionRow) =>
     entryOf(row),
   );
 
+const inFlight = (row: PrescriptionRow) =>
+  new PrescriptionConflict(
+    'prescription_provider_in_flight',
+    'prescription_provider_in_flight',
+    entryOf(row),
+  );
+
 /**
  * Leaves the row alone while an attempt waits for the provider: the advisory lock of the attempts
  * (held for the length of a job's transaction), the lease of a request's attempt (which holds no
@@ -78,9 +85,9 @@ async function assertNoAttemptInFlight(
     sql`select pg_try_advisory_xact_lock(hashtextextended(${'erx-prescription|' + row.id}, 0)) as locked`,
   );
   const now = deps.clock();
-  if (lock.rows[0]?.locked !== true || leaseIsLive(row, now) || pinnedInFlight(row, now)) {
-    throw inProgress(row);
-  }
+  if (lock.rows[0]?.locked !== true || leaseIsLive(row, now)) throw inProgress(row);
+  // A send is in flight at the provider: it is a matter of minutes, not of seconds (JD-S5 R3).
+  if (pinnedInFlight(row, now)) throw inFlight(row);
 }
 
 /**
@@ -155,16 +162,19 @@ async function writeCancelled(
 
 /**
  * The row again, after the provider was asked, if this request still owns it: the lease it took is
- * the one on the row. A lease that ran out and was taken over means another attempt is in charge,
- * and this request does nothing more.
+ * the one on the row AND it is still alive (JD-S5 R3-8). A lease that ran out, whether or not
+ * another attempt took it over, means this request no longer holds the row, and it does nothing
+ * more: the provider is asked again by whoever acts next.
  */
 async function ownedRow(
   tx: Tx,
+  deps: PrescriptionDeps,
   row: PrescriptionRow,
   token: string,
 ): Promise<PrescriptionRow | undefined> {
   const locked = await lockPrescription(tx, row.id);
   if (locked?.attemptLeaseToken !== token) return undefined;
+  if (!leaseIsLive(locked, deps.clock())) return undefined;
   return locked;
 }
 
@@ -254,7 +264,7 @@ export async function cancelPrescriptionPhased(
     const { row, token } = begun;
     const answer = await askProvider(deps, begun.provider, row);
     const ended = await run(async (tx) => {
-      const locked = await ownedRow(tx, row, token);
+      const locked = await ownedRow(tx, deps, row, token);
       if (!locked) return 'lost' as const;
       await releaseLease(tx, row.id, token);
       if (answer === 'unreachable') return 'unavailable' as const;
@@ -289,7 +299,7 @@ export async function cancelPrescriptionPhased(
     { status: 'retryable', message: 'unreachable', outcomeUnknown: true },
   );
   const ended = await run(async (tx) => {
-    const locked = await ownedRow(tx, row, token);
+    const locked = await ownedRow(tx, deps, row, token);
     if (!locked) return 'lost' as const;
     await releaseLease(tx, row.id, token);
     if (result.status === 'cancelled') {
@@ -330,7 +340,7 @@ async function writeRegistered(
   tx: Tx,
   caller: Caller,
   row: PrescriptionRow,
-  input: { identifier: string; now: Date },
+  input: { identifier: string; now: Date; unconfirmed?: boolean },
 ): Promise<'registered' | 'taken'> {
   try {
     // A savepoint: an identifier that is already registered must not abort the whole request.
@@ -371,7 +381,12 @@ async function writeRegistered(
     resourceType: 'prescription',
     resourceId: row.id,
     patientId: row.patientId,
-    metadata: { simulated: row.simulated },
+    metadata: {
+      simulated: row.simulated,
+      // Registered although the provider may hold the prescription, because no provider was there to
+      // ask (the professional acknowledged it).
+      ...(input.unconfirmed === true ? { unconfirmed: true } : {}),
+    },
   });
   return 'registered';
 }
@@ -417,7 +432,21 @@ export async function registerManuallyPhased(
       }
       return { kind: 'done' };
     }
-    const { provider } = await requireProvider(tx, deps);
+    const { provider } = await connectedProvider(tx, deps);
+    if (!provider) {
+      // Nobody to ask. The professional may register it knowing so (the same acknowledgement as the
+      // cancellation); otherwise the prescription waits for a provider to be connected.
+      if (input.request.acknowledgeUnknownOutcome !== true) {
+        throw new AppError('prescription_provider_not_connected');
+      }
+      const written = await writeRegistered(tx, caller, row, {
+        identifier,
+        now: deps.clock(),
+        unconfirmed: true,
+      });
+      if (written === 'taken') throw new AppError('prescription_identifier_taken');
+      return { kind: 'done' };
+    }
     return { kind: 'ask', row, provider, token: await takeLease(tx, row.id, deps.clock()) };
   });
   if (begun.kind === 'done') return;
@@ -425,7 +454,7 @@ export async function registerManuallyPhased(
   const { row, token } = begun;
   const answer = await askProvider(deps, begun.provider, row);
   const ended = await run(async (tx) => {
-    const locked = await ownedRow(tx, row, token);
+    const locked = await ownedRow(tx, deps, row, token);
     if (!locked) return 'lost' as const;
     await releaseLease(tx, row.id, token);
     if (answer === 'unreachable') return 'unavailable' as const;

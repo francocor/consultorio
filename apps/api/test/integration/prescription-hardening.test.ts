@@ -140,6 +140,10 @@ describe('S5-3: a cancellation or a manual registration never races an attempt',
     world.provider.setMode('ok');
     expect(lost.failure?.awaitingReconciliation).toBe(true);
     const held = world.provider.prescriptions().length;
+    // The call may still be running at the provider (JD-S5 R3-3): the pin has to end before anything
+    // acts on the prescription.
+    const clockBefore = world.clock.now;
+    world.clock.now = new Date(clockBefore.getTime() + 11 * 60_000);
     // The registration is withdrawn: the next attempt PARKS the prescription, which overwrites the
     // "awaiting reconciliation" state, although the provider still holds the prescription.
     await unverify(prescriber.professionalId);
@@ -176,6 +180,7 @@ describe('S5-3: a cancellation or a manual registration never races an attempt',
     const adopted = await world.api.post(`/prescriptions/${lost.id}/retry`, prescriber.session);
     expect(adopted.json<PrescriptionDto>().status).toBe('issued');
     expect(world.provider.prescriptions().length).toBe(held);
+    world.clock.now = clockBefore;
   });
 
   it('cancels locally a parked prescription the provider does not hold', async () => {

@@ -8,6 +8,7 @@
   "prescription_provider_unavailable": "No pudimos comunicarnos con el proveedor de recetas. No se hizo ningún cambio: intente nuevamente en unos minutos.",
   "prescription_awaiting_reconciliation": "Todavía no sabemos si el proveedor emitió esta receta. Espere a que se verifique antes de registrarla a mano o anularla.",
   "prescription_attempt_in_progress": "Se está enviando esta receta al proveedor en este momento. Espere unos segundos y vuelva a intentar.",
+  "prescription_provider_in_flight": "Hay un envío de esta receta en curso en el proveedor. Se podrá anular o registrar a mano en unos minutos, cuando se sepa si lo emitió.",
   "prescription_not_pending": "Solo se puede reintentar o registrar a mano una receta que el proveedor todavía no confirmó.",
   "prescription_identifier_taken": "Ese identificador ya corresponde a otra receta de la organización.",
   "prescription_document_not_ready": "El documento de la receta todavía no está listo. Intente de nuevo en unos minutos."

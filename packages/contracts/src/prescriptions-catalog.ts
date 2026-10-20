@@ -49,6 +49,12 @@ export const PRESCRIPTION_ERRORS = {
     status: 409,
     i18nKey: 'errors.prescription_attempt_in_progress',
   },
+  // A request to send the prescription may still be running at the provider (it was sent and its
+  // outcome is not known): it can be cancelled or registered by hand once the pin ends, in minutes.
+  prescription_provider_in_flight: {
+    status: 409,
+    i18nKey: 'errors.prescription_provider_in_flight',
+  },
   // Only a prescription the provider has not confirmed can be retried or registered by hand.
   prescription_not_pending: { status: 409, i18nKey: 'errors.prescription_not_pending' },
   // The identifier belongs to another prescription of the organization.

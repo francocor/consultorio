@@ -86,6 +86,12 @@ export const PRESCRIPTION_IDENTIFIER_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._/-]{3,79
 /** The identifier the professional got by issuing the prescription on the provider's own site. */
 export const RegisterManualPrescriptionRequest = z.strictObject({
   identifier: Text(80).regex(PRESCRIPTION_IDENTIFIER_PATTERN),
+  /**
+   * The professional accepts registering a prescription the provider may hold, with no provider
+   * connected to ask (it was switched off after the prescription was made). Without it the request
+   * waits for a provider, like the cancellation (JD-S5 R3).
+   */
+  acknowledgeUnknownOutcome: z.boolean().optional(),
 });
 export type RegisterManualPrescriptionRequest = z.infer<typeof RegisterManualPrescriptionRequest>;
 

@@ -160,9 +160,9 @@ describe('R2-3: a call that timed out may still be running at the provider', () 
       expect(again.statusCode, again.body).toBe(200);
       expect(spy.calls()).toBe(1);
       expect(cancel.statusCode, cancel.body).toBe(409);
-      expect(problemOf(cancel).code).toBe('prescription_attempt_in_progress');
+      expect(problemOf(cancel).code).toBe('prescription_provider_in_flight');
       expect(manual.statusCode, manual.body).toBe(409);
-      expect(problemOf(manual).code).toBe('prescription_attempt_in_progress');
+      expect(problemOf(manual).code).toBe('prescription_provider_in_flight');
       expect((await world.rowOf(pending.id))['status']).toBe('pending_submission');
 
       // The late request reaches the provider and issues; the pin ends; the retry ADOPTS it.
@@ -296,8 +296,9 @@ describe('R2-7 and R2-8: a lease belongs to the attempt that took it', () => {
       const leaseOfA = (await world.rowOf(pending.id))['attempt_lease_token'];
       expect(leaseOfA).not.toBeNull();
 
-      // A overruns: its lease runs out, and another attempt takes the row over.
-      world.clock.now = new Date(START.getTime() + 5 * 60_000);
+      // A overruns: its lease and its pin run out, and another attempt takes the row over (the pin
+      // of the call in flight comes first, JD-S5 R3-3: nobody takes a row while it may be running).
+      world.clock.now = new Date(START.getTime() + PIN_MS + 60_000);
       const second = attemptSubmitDetached(deps, world.tenant.id, pending.id, { force: true });
       await b.inside;
       const leaseOfB = (await world.rowOf(pending.id))['attempt_lease_token'];
@@ -365,8 +366,8 @@ describe('R2-7 and R2-8: a lease belongs to the attempt that took it', () => {
       expect(forced).toBe('skipped');
       expect(calls).toBe(1);
 
-      // Two minutes later the lease has run out: the next attempt takes the row.
-      world.clock.now = new Date(START.getTime() + 3 * 60_000);
+      // The lease and the pin of the call have run out: the next attempt takes the row.
+      world.clock.now = new Date(START.getTime() + PIN_MS + 60_000);
       const takeover = attemptSubmitDetached(deps, world.tenant.id, pending.id, { force: true });
       await settleLater(100);
       expect(calls).toBe(2);

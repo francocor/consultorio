@@ -58,9 +58,11 @@ type Verdict =
   | { kind: 'rejected'; message: string }
   /**
    * `unknown`: the request may have been answered. Otherwise the provider said it issued nothing.
-   * `timedOut`: the caller stopped waiting for a request that may still be running there.
+   * `inFlight`: the request was sent and its outcome is not known (it timed out, the call threw, or
+   * the adapter says it cannot tell): it may still be running at the provider, so the pin that was
+   * written before the call stays. A refusal before sending (`outcomeUnknown: false`) clears it.
    */
-  | { kind: 'retry'; unknown: boolean; timedOut: boolean }
+  | { kind: 'retry'; unknown: boolean; inFlight: boolean }
   /** A prescription the provider holds that cannot be recorded for this one, or a missing verification. */
   | { kind: 'attention'; reason: AttentionReason; externalId?: string };
 
@@ -78,9 +80,15 @@ export interface SubmitOptions {
  * the process dies after the provider answered, the next attempt finds the mark and asks the
  * provider for the key before it sends anything. Only a definite answer clears the state.
  *
- * It answers whether the row was marked: a prescription somebody cancelled in the meantime is not
- * (the update touches only a row that still waits, also when it was marked before), and then NOTHING
- * is sent (JD-S5 R1-S5-3, R2-6).
+ * The same write pins the row (`provider_in_flight_until`, JD-S5 R3-3): from this moment the request
+ * may be running at the provider, whatever happens to the process that sends it, so no other attempt,
+ * cancellation or manual registration touches the row until the pin ends. The pin is anchored on the
+ * time of the SEND (the clock is read again here, after the questions that came first), and only a
+ * definite answer clears it (`settle` and `defer`).
+ *
+ * It answers the time of the send, or null when the row was not marked: a prescription somebody
+ * cancelled in the meantime is not (the update touches only a row that still waits, also when it was
+ * marked before), and then NOTHING is sent (JD-S5 R1-S5-3, R2-6).
  *
  * Where the mark is written: in the transaction given (`inTransaction`: the attempt of a request,
  * which holds no connection across the call and commits the mark before it), or, for an attempt that
@@ -94,7 +102,8 @@ async function markIntent(
   organization: Organization,
   row: PrescriptionRow,
   step: { now: Date; inTransaction: boolean },
-): Promise<boolean> {
+): Promise<Date | null> {
+  const sentAt = deps.clock();
   // No shortcut for a row that is marked already: the update below is what checks, in the database,
   // that the prescription still waits (JD-S5 R2-6).
   const write = (target: Tx) =>
@@ -103,6 +112,7 @@ async function markIntent(
       .set({
         deliveryState: 'awaiting_reconciliation',
         lastAttemptAt: step.now,
+        providerInFlightUntil: new Date(sentAt.getTime() + pinMsOf(deps)),
         ...(row.providerContactedAt === null ? { providerContactedAt: step.now } : {}),
       })
       .where(and(eq(prescription.id, row.id), eq(prescription.status, 'pending_submission')))
@@ -111,7 +121,7 @@ async function markIntent(
     !step.inTransaction && deps.withTenant
       ? await deps.withTenant({ tenantId: organization.id, userId: SYSTEM_USER_ID }, write)
       : await write(tx);
-  return written.length > 0;
+  return written.length > 0 ? sentAt : null;
 }
 
 /** What the provider answered, or an unknown outcome when the call itself failed or took too long. */
@@ -122,14 +132,16 @@ async function callProvider(
   key: string,
 ): Promise<Verdict> {
   // The same key always gets the same prescription, so asking again after a lost answer finds it.
-  const { value: result, timedOut } = await callWithin(
+  const { value: result } = await callWithin(
     deps,
     (signal) => provider.issue(request, key, signal),
     UNREACHABLE,
   );
   if (result.status === 'issued') return { kind: 'issued', result, settled: 'issued' };
   if (result.status === 'rejected') return { kind: 'rejected', message: result.message };
-  return { kind: 'retry', unknown: result.outcomeUnknown, timedOut };
+  // A timeout and a call that threw both come back as `UNREACHABLE` (unknown): only an adapter that
+  // claims the request never left (`outcomeUnknown: false`) lets the pin go.
+  return { kind: 'retry', unknown: result.outcomeUnknown, inFlight: result.outcomeUnknown };
 }
 
 /** What the provider says about the key of a prescription, before anything is sent. */
@@ -193,7 +205,7 @@ async function conclude(
     case 'none':
       return { kind: 'send' };
     case 'retry':
-      return { kind: 'retry', unknown: true, timedOut: false };
+      return { kind: 'retry', unknown: true, inFlight: false };
     case 'rejected':
       return { kind: 'rejected', message: facts.message };
     case 'attention':
@@ -243,27 +255,31 @@ async function defer(
     now: Date;
     reason: 'unavailable' | 'provider_not_connected';
     tenantId: string;
-    /** The call that failed timed out and may still be running at the provider (JD-S5 R2-3). */
+    /**
+     * The request was sent and its outcome is unknown (JD-S5 R2-3, R3-3): the pin that `markIntent`
+     * wrote stays, and the next attempt waits for it. Anything else is a definite answer (or no
+     * send at all), and the pin goes.
+     */
     inFlight?: boolean;
+    /** When the request was sent (the pin is anchored on it). */
+    sentAt?: Date | null;
   },
 ): Promise<void> {
   const attempts = row.attempts + 1;
   // A request that may still be running at the provider is not asked about before it can be done.
-  const pin = deps.inFlightPinMs ?? DEFAULT_IN_FLIGHT_PIN_MS;
-  const delay =
-    step.inFlight === true
-      ? Math.max(nextAttemptDelayMs(attempts), pin)
-      : nextAttemptDelayMs(attempts);
+  const pinUntil =
+    step.inFlight === true ? (step.sentAt ?? step.now).getTime() + pinMsOf(deps) : null;
+  const backoff = step.now.getTime() + nextAttemptDelayMs(attempts);
+  const next = pinUntil === null ? backoff : Math.max(backoff, pinUntil);
+  const delay = next - step.now.getTime();
   await tx
     .update(prescription)
     .set({
       attempts,
       lastAttemptAt: step.now,
-      nextAttemptAt: new Date(step.now.getTime() + delay),
+      nextAttemptAt: new Date(next),
       deliveryState: step.awaiting ? 'awaiting_reconciliation' : 'retrying',
-      ...(step.inFlight === true
-        ? { providerInFlightUntil: new Date(step.now.getTime() + pin) }
-        : {}),
+      ...(step.inFlight === true ? {} : { providerInFlightUntil: null }),
     })
     .where(eq(prescription.id, row.id));
   await audit(tx, {
@@ -283,6 +299,9 @@ async function defer(
     { startAfter: Math.ceil(delay / 1000) },
   );
 }
+
+const pinMsOf = (deps: Pick<PrescriptionDeps, 'inFlightPinMs'>) =>
+  deps.inFlightPinMs ?? DEFAULT_IN_FLIGHT_PIN_MS;
 
 /**
  * Parks a pending prescription for a person: no automatic attempt touches it again until somebody
@@ -346,6 +365,8 @@ interface Plan {
   now: Date;
   /** The lease this attempt took (an attempt that holds no connection); only it can release it. */
   leaseToken: string | null;
+  /** When the request went out (the time `markIntent` pinned the row on); null before the send. */
+  sentAt: Date | null;
 }
 
 type Begun = { done: SubmitOutcome } | { plan: Plan };
@@ -442,6 +463,7 @@ async function begin(
         row.providerContactedAt !== null,
       now,
       leaseToken,
+      sentAt: null,
     },
   };
 }
@@ -468,14 +490,15 @@ async function settle(
   }
 
   if (verdict.kind === 'retry') {
-    const { unknown, timedOut } = verdict;
+    const { unknown, inFlight } = verdict;
     const wrote = await lockedWrite(tx, row, () =>
       defer(tx, deps, row, {
         awaiting: unknown,
         now,
         reason: 'unavailable',
         tenantId: organization.id,
-        inFlight: timedOut,
+        inFlight,
+        sentAt: plan.sentAt,
       }),
     );
     return wrote ? 'retry' : 'skipped';
@@ -493,6 +516,7 @@ async function settle(
         .set({
           status: 'draft',
           deliveryState: null,
+          providerInFlightUntil: null,
           rejectionMessage: cleanProviderMessage(message),
           attempts: row.attempts + 1,
           lastAttemptAt: now,
@@ -526,6 +550,7 @@ async function settle(
             externalId: result.externalId,
             issuedAt: now,
             deliveryState: null,
+            providerInFlightUntil: null,
             rejectionMessage: null,
             attempts: row.attempts + 1,
             lastAttemptAt: now,
@@ -622,14 +647,11 @@ export async function attemptSubmit(
     ? await conclude(tx, plan.row, await askAboutKey(deps, plan.provider, plan.row))
     : { kind: 'send' };
   if (verdict.kind === 'send') {
-    if (
-      !(await markIntent(tx, deps, plan.organization, plan.row, {
-        now: plan.now,
-        inTransaction: false,
-      }))
-    ) {
-      return 'skipped';
-    }
+    plan.sentAt = await markIntent(tx, deps, plan.organization, plan.row, {
+      now: plan.now,
+      inTransaction: false,
+    });
+    if (plan.sentAt === null) return 'skipped';
     verdict = await callProvider(
       deps,
       plan.provider,
@@ -678,10 +700,10 @@ export async function attemptSubmitDetached(
       verdict = { kind: 'send' };
     }
     if (verdict.kind === 'send') {
-      const marked = await as((tx) =>
+      plan.sentAt = await as((tx) =>
         markIntent(tx, deps, plan.organization, plan.row, { now: plan.now, inTransaction: true }),
       );
-      if (!marked) {
+      if (plan.sentAt === null) {
         await release(plan.leaseToken);
         return 'skipped';
       }
