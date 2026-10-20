@@ -31,6 +31,10 @@ export { createQuotaPolicy } from './application/quota-policy.js';
 export { takesProfessionalSeat } from './domain/active-professional.js';
 export { assertProfessionalSeatAvailable } from './application/seats.js';
 export { createTrialStarter } from './application/trial.js';
+// The services the platform demo (`pnpm demo:platform`) drives, as the jobs and routes do.
+export { startCheckout } from './application/checkout.js';
+export { runDunningStep, runTrialEnd } from './application/clock.js';
+export { reconcileSubscription } from './application/reconcile.js';
 export type { StartTrialResult, TrialStarter } from './application/trial.js';
 export { subscriptionOperatorRoutes } from './http/operator-routes.js';
 export {

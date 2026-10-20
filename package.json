@@ -28,6 +28,7 @@
     "prepare": "node -e \"require('node:fs').existsSync('.git')&&require('node:child_process').execSync('lefthook install',{stdio:'inherit'})\"",
     "demo:seed": "pnpm --filter @consultorio/api demo:seed",
     "demo:reset": "pnpm --filter @consultorio/api demo:reset",
+    "demo:platform": "pnpm --filter @consultorio/api demo:platform",
     "demo:stack": "pnpm --filter @consultorio/api demo:stack",
     "backup:local": "pnpm --filter @consultorio/api backup:local",
     "dev:afip-cert": "pnpm --filter @consultorio/api dev:afip-cert",
