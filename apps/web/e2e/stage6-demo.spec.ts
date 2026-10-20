@@ -120,9 +120,6 @@ test('a stranger signs up, pays in the local checkout, uses the product the same
   await page.getByLabel('Nombre de la organización').fill(name);
   await page.getByLabel('Su nombre y apellido').fill('Laura Medina');
   await page.getByLabel('Correo electrónico').fill(email);
-  await page.getByLabel('Contraseña', { exact: true }).fill(PASSWORD);
-  await page.getByRole('checkbox', { name: 'Acepto los términos del servicio.' }).check();
-  await page.getByRole('checkbox', { name: /Acepto los términos de tratamiento de datos/ }).check();
   await page.getByRole('button', { name: 'Crear cuenta' }).click();
   await expect(page.getByRole('heading', { level: 1, name: 'Revise su correo' })).toBeVisible();
   await expectFitsAndAccessible(page);
@@ -135,6 +132,10 @@ test('a stranger signs up, pays in the local checkout, uses the product the same
   await expect(
     page.getByRole('heading', { level: 1, name: 'Active su organización' }),
   ).toBeVisible();
+  // The owner chooses the password and accepts the terms here, on the page of the link.
+  await page.getByLabel('Contraseña', { exact: true }).fill(PASSWORD);
+  await page.getByRole('checkbox', { name: 'Acepto los términos del servicio.' }).check();
+  await page.getByRole('checkbox', { name: /Acepto los términos de tratamiento de datos/ }).check();
   await page.getByRole('button', { name: 'Activar mi organización' }).click();
   await page.waitForURL(/\/onboarding/);
   const trial = page.getByRole('region', { name: 'Su período de prueba' });

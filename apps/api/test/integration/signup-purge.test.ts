@@ -73,9 +73,7 @@ describe('the purge of the signups nobody confirmed', () => {
       expect(await rowsFor(table, old.id), table).toBe(0);
     }
     // The link of the removed organization does not work any more.
-    const response = await world.tenantPost(old.link.slug, '/public/signup/verify', {
-      token: old.link.token,
-    });
+    const response = await world.verify(old.link);
     expect(response.statusCode).toBe(404);
   });
 
@@ -125,9 +123,7 @@ describe('the purge of the signups nobody confirmed', () => {
 
   it('never touches a verified organization, however old', async () => {
     const old = await waiting(10);
-    const verified = await world.tenantPost(old.link.slug, '/public/signup/verify', {
-      token: old.link.token,
-    });
+    const verified = await world.verify(old.link);
     expect(verified.statusCode, verified.body).toBe(200);
     // The age is set after the verification, so the organization is as old as an abandoned one.
     await world.admin.query(
@@ -165,6 +161,36 @@ describe('the purge of the signups nobody confirmed', () => {
       [withData.id],
     );
     expect(events.rowCount).toBe(0);
+  });
+
+  it('does not starve on rows that cannot be removed: they sink behind the ones that can (JD-S6 R1-A-T5)', async () => {
+    // Three organizations that hold a location (they fail with a foreign key violation) and are the
+    // OLDEST candidates, and a bare signup that is newer. Two per pass: before the fix the pass kept
+    // choosing the same oldest ones and the clean signup waited for ever.
+    const stuck = [await waiting(30), await waiting(29), await waiting(28)];
+    for (const row of stuck) {
+      await world.admin.query(
+        `INSERT INTO location (tenant_id, name, time_zone) VALUES ($1, 'Sede', 'America/Argentina/Buenos_Aires')`,
+        [row.id],
+      );
+    }
+    const clean = await waiting(20);
+    const pass = () =>
+      runtime.db.transaction((tx) =>
+        tx.execute(sql`select app.signup_purge(now() - interval '7 days', 2) as purged`),
+      );
+
+    await pass();
+    await pass();
+
+    expect(await exists(clean.id)).toBe(false);
+    for (const row of stuck) expect(await exists(row.id)).toBe(true);
+    // The failures are counted on the signup of each, so an operator can see which ones are stuck.
+    const attempts = await world.admin.query<{ purge_attempts: number }>(
+      'SELECT purge_attempts FROM signup_pending WHERE tenant_id = ANY($1::uuid[]) ORDER BY purge_attempts DESC',
+      [stuck.map((row) => row.id)],
+    );
+    expect(attempts.rows.map((row) => row.purge_attempts)).toEqual([1, 1, 1]);
   });
 
   it('never purges what is younger than a day, whatever cutoff it is given', async () => {
@@ -231,10 +257,12 @@ describe('what a bare signup holds', () => {
 
   it('is deleted by a function that names exactly those tables and the organization, and nothing else', () => {
     const migration = readFileSync(
-      fileURLToPath(new URL('../../src/db/migrations/0640_signup.sql', import.meta.url)),
+      fileURLToPath(
+        new URL('../../src/db/migrations/0685_signup_set_password_at_verify.sql', import.meta.url),
+      ),
       'utf8',
     );
-    const purge = migration.slice(migration.indexOf('CREATE FUNCTION app.signup_purge'));
+    const purge = migration.slice(migration.indexOf('FUNCTION app.signup_purge'));
     const deletes = [...purge.matchAll(/DELETE FROM public\.(\w+)/g)].map((match) => match[1]);
 
     expect(deletes).toEqual([

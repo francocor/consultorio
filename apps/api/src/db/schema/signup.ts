@@ -52,7 +52,7 @@ export const termsVersion = pgTable(
 /**
  * The record that an owner accepted the terms and the data-processing terms: which version of
  * each, when, and who. Written when the owner's account exists (the verification of the signup),
- * with the instant the visitor accepted on the form. Append-only: a later acceptance is a new row.
+ * with the instant the owner accepted on the page of the link. Append-only: a later acceptance is a new row.
  */
 export const termsAcceptance = tenantTable(
   'terms_acceptance',
@@ -82,10 +82,12 @@ export const termsAcceptance = tenantTable(
 
 /**
  * What an unverified organization carries until its owner follows the emailed link: the owner's
- * address and name, the HASH of the chosen password, and the two acceptances with their versions.
- * There is no account yet on purpose (a signup nobody confirmed must not take an address that
- * somebody else may need: pre-registering an account with a victim's address would let the signer
- * set its password). The verification creates the account from this row and clears the hash.
+ * address and name. NO password and NO acceptance: whoever types an address on the public form has
+ * not proved it is theirs, so a password or an acceptance stored here would be a stranger's choice
+ * (a pre-hijack of the account of the victim, JD-S6 R1-S6-3). The person who owns the address sets
+ * the password and accepts the terms on the page of the link, and the verification creates the
+ * account and the acceptance then. There is no account yet on purpose (a signup nobody confirmed
+ * must not take an address that somebody else may need).
  *
  * Holds the personal data of a person who has not proved the address is theirs, so the purge
  * removes it with the organization after seven days. Never read by any other module.
@@ -95,16 +97,17 @@ export const signupPending = tenantTable(
   {
     ownerEmail: citext('owner_email').notNull(),
     ownerName: text('owner_name').notNull(),
-    /** Argon2id PHC string; cleared (null) when the signup is verified. */
-    passwordHash: text('password_hash'),
-    termsVersion: integer('terms_version').notNull(),
-    dataProcessingVersion: integer('data_processing_version').notNull(),
-    acceptedAt: timestamp('accepted_at', { withTimezone: true }).notNull(),
     /** When the verification email was handed to the provider; null while it is still to be sent. */
     verificationSentAt: timestamp('verification_sent_at', { withTimezone: true }),
     sendAttempts: integer('send_attempts').notNull().default(0),
     lastSendAttemptAt: timestamp('last_send_attempt_at', { withTimezone: true }),
     verifiedAt: timestamp('verified_at', { withTimezone: true }),
+    /**
+     * How many times the purge could not remove this organization (something else points at it).
+     * The purge works the rows with fewer failures first, so a row that never goes does not keep the
+     * ones behind it from being purged (JD-S6 R1-A-T5).
+     */
+    purgeAttempts: integer('purge_attempts').notNull().default(0),
   },
   (table) => [
     foreignKey({
@@ -118,11 +121,7 @@ export const signupPending = tenantTable(
     uniqueIndex('signup_pending_email_key')
       .on(table.ownerEmail)
       .where(sql`${table.verifiedAt} is null`),
-    // The password hash lives exactly as long as the signup is unverified.
-    check(
-      'signup_pending_hash_check',
-      sql`(${table.verifiedAt} is null) = (${table.passwordHash} is not null)`,
-    ),
     check('signup_pending_attempts_check', sql`${table.sendAttempts} >= 0`),
+    check('signup_pending_purge_attempts_check', sql`${table.purgeAttempts} >= 0`),
   ],
 );

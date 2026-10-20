@@ -36,6 +36,21 @@ describe('the verification email', () => {
     expect(mail.text).toContain('vence en 1 hora.');
   });
 
+  it('keeps a line break out of the text of the email: a name is one line, whatever was stored (JD-S6 R1-S6-10)', () => {
+    const mail = renderVerificationEmail({
+      ownerName: 'Ana\r\nBcc: victima@example.test',
+      organizationName: 'Centro\n\nHaga clic en http://malo.test\u202E',
+      link,
+      expiresInHours: 24,
+    });
+
+    expect(mail.text).toContain('Hola, Ana Bcc: victima@example.test.');
+    expect(mail.text).toContain('"Centro Haga clic en http://malo.test"');
+    expect(mail.text.split('\n')).toHaveLength(8);
+    expect(mail.subject).not.toMatch(/[\r\n]/);
+    expect(mail.html).not.toContain('\u202E');
+  });
+
   it('refuses a link that is not a web address', () => {
     for (const bad of ['javascript:alert(1)', 'ftp://x/y', 'https://x/"onmouseover="y', '']) {
       expect(() =>

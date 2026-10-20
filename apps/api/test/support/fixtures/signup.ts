@@ -13,11 +13,9 @@ export const fixtures: Record<string, TenantTableFixture> = {
     insert: (tx, tenantId) =>
       returningId(
         tx,
-        sql`INSERT INTO signup_pending
-              (tenant_id, owner_email, owner_name, password_hash, terms_version,
-               data_processing_version, accepted_at)
+        sql`INSERT INTO signup_pending (tenant_id, owner_email, owner_name)
               VALUES (${tenantId}, ${`${unique('registro')}-${tenantId.slice(0, 8)}@example.test`},
-                      'Ana Pérez', '$argon2id$fixture', 1, 1, now())
+                      'Ana Pérez')
               ON CONFLICT (tenant_id) DO UPDATE SET owner_email = EXCLUDED.owner_email
               RETURNING id`,
       ),

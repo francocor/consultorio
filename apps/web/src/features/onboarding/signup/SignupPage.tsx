@@ -2,7 +2,7 @@ import { zodResolver } from '@hookform/resolvers/zod';
 import { useMutation } from '@tanstack/react-query';
 import { MailCheck } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
-import { useForm, useWatch } from 'react-hook-form';
+import { useForm } from 'react-hook-form';
 import { useTranslation } from 'react-i18next';
 import { z } from 'zod';
 
@@ -11,7 +11,6 @@ import { applyApiFieldErrors, fieldErrorCount } from '../../../shared/lib/form-e
 import { describeError } from '../../../shared/lib/translate.js';
 import { Alert, AlertDescription } from '../../../shared/ui/alert.js';
 import { Button } from '../../../shared/ui/button.js';
-import { Checkbox } from '../../../shared/ui/checkbox.js';
 import {
   Form,
   FormControl,
@@ -25,27 +24,33 @@ import { Input } from '../../../shared/ui/input.js';
 import { useBotChallenge } from '../../public-booking/index.js';
 
 import { signupApi } from './api/signup-api.js';
-import { PasswordField, PasswordHints } from './components/PasswordField.js';
 import { usePlatformTitle } from './use-platform-title.js';
+
+/** Line breaks, control and format characters, and the Unicode line separators: a name has none. */
+const HIDDEN_CHARACTER = /[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/u;
+const plainName = (min: number, max: number) =>
+  z
+    .string()
+    .trim()
+    .min(min)
+    .max(max)
+    .refine((value) => !HIDDEN_CHARACTER.test(value), { message: 'signup.name.invalid' });
 
 /** The form as the visitor fills it. The server has the last word on every rule it knows. */
 const Schema = z.object({
-  organizationName: z.string().trim().min(2).max(80),
-  ownerName: z.string().trim().min(2).max(100),
+  organizationName: plainName(2, 80),
+  ownerName: plainName(2, 100),
   email: z.string().trim().pipe(z.email().max(254)),
-  password: z.string().min(1).max(1024),
-  acceptTerms: z.boolean().refine((accepted) => accepted, { message: 'signup.terms.required' }),
-  acceptDataProcessing: z
-    .boolean()
-    .refine((accepted) => accepted, { message: 'signup.terms.required' }),
 });
 type Values = z.infer<typeof Schema>;
 
 /**
  * The public signup (`/signup`, platform host). A visitor gives the name of the organization, their
- * own name, an email, a password and the two acceptances; the page never says whether the name or
- * the address already existed (the answer is always "check your email"), and the address of the
- * organization is made by the platform, not chosen here.
+ * own name and an email; the page never says whether the name or the address already existed (the
+ * answer is always "check your email"), and the address of the organization is made by the platform,
+ * not chosen here. There is no password and no acceptance of the terms on this page: whoever types
+ * an address here has not proved it is theirs, so the owner chooses the password and accepts the
+ * terms on the page of the emailed link (`VerifyPage`).
  */
 export function SignupPage() {
   const { t } = useTranslation(['signup', 'common']);
@@ -55,16 +60,8 @@ export function SignupPage() {
   const [sentTo, setSentTo] = useState<string | null>(null);
   const form = useForm<Values>({
     resolver: zodResolver(Schema),
-    defaultValues: {
-      organizationName: '',
-      ownerName: '',
-      email: '',
-      password: '',
-      acceptTerms: false,
-      acceptDataProcessing: false,
-    },
+    defaultValues: { organizationName: '', ownerName: '', email: '' },
   });
-  const password = useWatch({ control: form.control, name: 'password' });
   const { setFocus } = form;
   const { warm } = challenge;
   useEffect(() => {
@@ -80,7 +77,7 @@ export function SignupPage() {
       setSentTo(values.email.trim());
     },
     onError: (error) => {
-      if (applyApiFieldErrors(form, error)) form.setFocus('password');
+      if (applyApiFieldErrors(form, error)) form.setFocus('organizationName');
     },
   });
 
@@ -159,29 +156,6 @@ export function SignupPage() {
               </FormItem>
             )}
           />
-          <FormField
-            control={form.control}
-            name="password"
-            render={({ field }) => (
-              <FormItem>
-                <FormLabel>{t('signup:field.password')}</FormLabel>
-                <FormControl>
-                  <PasswordField autoComplete="new-password" {...field} />
-                </FormControl>
-                <FormMessage />
-              </FormItem>
-            )}
-          />
-          <PasswordHints value={password} />
-          <fieldset className="grid gap-3">
-            <legend className="sr-only">{t('signup:terms.legend')}</legend>
-            <AcceptanceField form={form} name="acceptTerms" label={t('signup:terms.accept')} />
-            <AcceptanceField
-              form={form}
-              name="acceptDataProcessing"
-              label={t('signup:terms.dataProcessing')}
-            />
-          </fieldset>
           <Button type="submit" loading={signUp.isPending} className="w-full">
             {t('signup:submit')}
           </Button>
@@ -189,43 +163,6 @@ export function SignupPage() {
       </Form>
       <p className="text-center text-sm text-muted-foreground">{t('signup:login.hint')}</p>
     </div>
-  );
-}
-
-/** One of the two acceptances: a checkbox with its sentence, and the reason when it is missing. */
-function AcceptanceField({
-  form,
-  name,
-  label,
-}: {
-  form: ReturnType<typeof useForm<Values>>;
-  name: 'acceptTerms' | 'acceptDataProcessing';
-  label: string;
-}) {
-  return (
-    <FormField
-      control={form.control}
-      name={name}
-      render={({ field }) => (
-        <FormItem>
-          <div className="flex items-start gap-3">
-            <FormControl>
-              <Checkbox
-                checked={field.value}
-                onCheckedChange={(checked) => {
-                  field.onChange(checked === true);
-                }}
-                onBlur={field.onBlur}
-                name={field.name}
-                ref={field.ref}
-              />
-            </FormControl>
-            <FormLabel className="text-sm font-normal leading-snug">{label}</FormLabel>
-          </div>
-          <FormMessage />
-        </FormItem>
-      )}
-    />
   );
 }
 

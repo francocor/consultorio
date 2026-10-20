@@ -855,6 +855,13 @@
       "when": 1792492313433,
       "tag": "0655_archive_release_cleanup",
       "breakpoints": true
+    },
+    {
+      "idx": 122,
+      "version": "7",
+      "when": 1792530392955,
+      "tag": "0685_signup_set_password_at_verify",
+      "breakpoints": true
     }
   ]
 }

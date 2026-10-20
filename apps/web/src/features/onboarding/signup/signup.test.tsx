@@ -69,10 +69,6 @@ async function fill(
     screen.getByLabelText('Correo electrónico'),
     overrides['email'] ?? 'ana@example.test',
   );
-  await user.type(
-    screen.getByLabelText('Contraseña'),
-    overrides['password'] ?? 'una frase larga y propia',
-  );
 }
 
 const accept = async (user: ReturnType<typeof userEvent.setup>) => {
@@ -81,9 +77,12 @@ const accept = async (user: ReturnType<typeof userEvent.setup>) => {
     screen.getByRole('checkbox', { name: /Acepto los términos de tratamiento de datos/ }),
   );
 };
+const choosePassword = async (user: ReturnType<typeof userEvent.setup>, value: string) => {
+  await user.type(await screen.findByLabelText('Contraseña'), value);
+};
 
 describe('the signup page (a public page of the platform host)', () => {
-  it('opens /signup on the platform host with no session and no organization, and asks for what the signup needs', async () => {
+  it('opens /signup on the platform host with no session and no organization, and asks for what the signup needs and no more', async () => {
     const { app } = openSignup();
 
     expect(
@@ -93,11 +92,12 @@ describe('the signup page (a public page of the platform host)', () => {
       'Nombre de la organización',
       'Su nombre y apellido',
       'Correo electrónico',
-      'Contraseña',
     ]) {
       expect(screen.getByLabelText(label)).toBeInTheDocument();
     }
-    expect(screen.getAllByRole('checkbox')).toHaveLength(2);
+    // Whoever types an address here has not proved it is theirs: no password and no acceptance (JD-S6 R1-S6-3).
+    expect(screen.queryByLabelText('Contraseña')).not.toBeInTheDocument();
+    expect(screen.queryAllByRole('checkbox')).toHaveLength(0);
     expect(screen.getByRole('button', { name: 'Crear cuenta' })).toBeInTheDocument();
     // The visitor never chooses the address of the organization.
     expect(screen.queryByLabelText(/dirección|subdominio|slug/i)).not.toBeInTheDocument();
@@ -159,7 +159,6 @@ describe('sending the form', () => {
     const user = userEvent.setup();
     const { app, bodies } = openSignup();
     await fill(user);
-    await accept(user);
 
     await user.click(screen.getByRole('button', { name: 'Crear cuenta' }));
 
@@ -172,9 +171,6 @@ describe('sending the form', () => {
         organizationName: 'Centro Salud Norte',
         ownerName: 'Ana Pérez',
         email: 'ana@example.test',
-        password: 'una frase larga y propia',
-        acceptTerms: true,
-        acceptDataProcessing: true,
         challengeProof: 'not-needed',
       },
     ]);
@@ -183,16 +179,22 @@ describe('sending the form', () => {
     expect(await a11yViolations(app.container)).toEqual([]);
   });
 
-  it('does not send until both documents are accepted, and says which one is missing', async () => {
+  it('does not send a name with a line break or a control character (JD-S6 R1-S6-10)', async () => {
     const user = userEvent.setup();
     const { bodies } = openSignup();
-    await fill(user);
-    await user.click(screen.getByRole('checkbox', { name: 'Acepto los términos del servicio.' }));
+    await fill(user, { organization: 'Centro Norte' });
+    const owner = screen.getByLabelText('Su nombre y apellido');
+    await user.clear(owner);
+    await user.type(owner, 'Ana');
+    // A pasted name can carry a line break; typing it into a one-line input strips it, so set it directly.
+    const hidden = String.fromCharCode(0x202e);
+    await user.type(owner, ` Pérez${hidden}`);
 
     await user.click(screen.getByRole('button', { name: 'Crear cuenta' }));
 
-    const alerts = await screen.findAllByText('Para crear la cuenta debe aceptar este punto.');
-    expect(alerts).toHaveLength(1);
+    expect(
+      await screen.findByText('El nombre no puede tener saltos de línea ni caracteres de control.'),
+    ).toBeInTheDocument();
     expect(bodies['signup']).toBeUndefined();
   });
 
@@ -203,22 +205,22 @@ describe('sending the form', () => {
 
     await user.click(screen.getByRole('button', { name: 'Crear cuenta' }));
 
-    expect((await screen.findAllByRole('alert')).length).toBeGreaterThanOrEqual(5);
+    expect((await screen.findAllByRole('alert')).length).toBeGreaterThanOrEqual(3);
     expect(bodies['signup']).toBeUndefined();
   });
 
-  it('puts the rejection of the password under its field and keeps what was typed', async () => {
+  it('puts the rejection of a field under it and keeps what was typed', async () => {
     const user = userEvent.setup();
     const { bodies } = openSignup({
-      'POST /api/public/signup': () => validationFailure('password', 'auth.password.common'),
+      'POST /api/public/signup': () => validationFailure('email', 'validation.email'),
     });
-    await fill(user, { password: 'password1234' });
-    await accept(user);
+    await fill(user);
 
     await user.click(screen.getByRole('button', { name: 'Crear cuenta' }));
 
-    expect(await screen.findByText(/Esa contraseña es muy común/)).toBeInTheDocument();
-    expect(screen.getByLabelText('Nombre de la organización')).toHaveValue('Centro Salud Norte');
+    await waitFor(() => {
+      expect(screen.getByLabelText('Nombre de la organización')).toHaveValue('Centro Salud Norte');
+    });
     expect(screen.queryByRole('heading', { name: 'Revise su correo' })).not.toBeInTheDocument();
     expect(bodies['signup']).toBeUndefined();
   });
@@ -227,7 +229,6 @@ describe('sending the form', () => {
     const user = userEvent.setup();
     openSignup({ 'POST /api/public/signup': () => problemResponse(429, 'rate_limited') });
     await fill(user);
-    await accept(user);
 
     await user.click(screen.getByRole('button', { name: 'Crear cuenta' }));
 
@@ -238,7 +239,6 @@ describe('sending the form', () => {
     const user = userEvent.setup();
     openSignup();
     await fill(user, { email: 'ya-existe@example.test' });
-    await accept(user);
 
     await user.click(screen.getByRole('button', { name: 'Crear cuenta' }));
 
@@ -252,7 +252,6 @@ describe('asking for the email again', () => {
   async function toTheCheckScreen(user: ReturnType<typeof userEvent.setup>, routes: Routes = {}) {
     const opened = openSignup(routes);
     await fill(user);
-    await accept(user);
     await user.click(screen.getByRole('button', { name: 'Crear cuenta' }));
     await screen.findByRole('heading', { level: 1, name: 'Revise su correo' });
     return opened;
@@ -290,6 +289,13 @@ describe('asking for the email again', () => {
 });
 
 describe('the page of the emailed link (the host of the organization)', () => {
+  /** Fills the form of the link as the owner does and presses the button. */
+  async function submitLink(user: ReturnType<typeof userEvent.setup>) {
+    await choosePassword(user, 'una frase larga y propia');
+    await accept(user);
+    await user.click(screen.getByRole('button', { name: 'Activar mi organización' }));
+  }
+
   function openLink(
     path: string,
     routes: Routes = {},
@@ -313,28 +319,68 @@ describe('the page of the emailed link (the host of the organization)', () => {
     return { app, bodies };
   }
 
-  it('shows what the link is for and spends nothing until the button is pressed', async () => {
+  it('shows what the link is for and asks for the password and the acceptances, spending nothing until the button is pressed', async () => {
     const { app, bodies } = openLink('/signup/verify?token=abcdefghij');
 
     expect(
       await screen.findByRole('heading', { level: 1, name: 'Active su organización' }),
     ).toBeInTheDocument();
     expect(screen.getByText(/para activar Clínica Norte/)).toBeInTheDocument();
+    expect(screen.getByLabelText('Contraseña')).toBeInTheDocument();
+    expect(screen.getAllByRole('checkbox')).toHaveLength(2);
     expect(bodies['verify']).toBeUndefined();
     expect(app.requests).not.toContain('POST /api/public/signup/verify');
     expect(await a11yViolations(app.container)).toEqual([]);
   });
 
-  it('activates with the token of the link and takes the owner to the setup wizard', async () => {
+  it('activates with the token, the password and both acceptances, and takes the owner to the setup wizard', async () => {
     const user = userEvent.setup();
     const { app, bodies } = openLink('/signup/verify?token=abcdefghij');
 
+    await choosePassword(user, 'una frase larga y propia');
+    await accept(user);
     await user.click(await screen.findByRole('button', { name: 'Activar mi organización' }));
 
     await waitFor(() => {
       expect(app.router.state.location.pathname).toBe('/onboarding');
     });
-    expect(bodies['verify']).toEqual([{ token: 'abcdefghij' }]);
+    expect(bodies['verify']).toEqual([
+      {
+        token: 'abcdefghij',
+        password: 'una frase larga y propia',
+        acceptTerms: true,
+        acceptDataProcessing: true,
+      },
+    ]);
+  });
+
+  it('does not send until both documents are accepted, and says which one is missing', async () => {
+    const user = userEvent.setup();
+    const { bodies } = openLink('/signup/verify?token=abcdefghij');
+    await choosePassword(user, 'una frase larga y propia');
+    await user.click(screen.getByRole('checkbox', { name: 'Acepto los términos del servicio.' }));
+
+    await user.click(screen.getByRole('button', { name: 'Activar mi organización' }));
+
+    const alerts = await screen.findAllByText('Para activar la cuenta debe aceptar este punto.');
+    expect(alerts).toHaveLength(1);
+    expect(bodies['verify']).toBeUndefined();
+  });
+
+  it('puts the rejection of the password under its field and keeps the link and what was typed', async () => {
+    const user = userEvent.setup();
+    openLink('/signup/verify?token=abcdefghij', {
+      'POST /api/public/signup/verify': () => validationFailure('password', 'auth.password.common'),
+    });
+    await choosePassword(user, 'password1234');
+    await accept(user);
+
+    await user.click(screen.getByRole('button', { name: 'Activar mi organización' }));
+
+    expect(await screen.findByText(/Esa contraseña es muy común/)).toBeInTheDocument();
+    expect(screen.getByLabelText('Contraseña')).toHaveValue('password1234');
+    expect(screen.getByRole('button', { name: 'Activar mi organización' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Pedir un enlace nuevo' })).not.toBeInTheDocument();
   });
 
   it('says there is no link when the address has none', async () => {
@@ -352,7 +398,7 @@ describe('the page of the emailed link (the host of the organization)', () => {
       'POST /api/public/signup/verify': () => problemResponse(400, 'signup_link_invalid'),
     });
 
-    await user.click(await screen.findByRole('button', { name: 'Activar mi organización' }));
+    await submitLink(user);
     const alert = await screen.findByRole('alert');
     expect(within(alert).getByText(/no es válido o ya venció/)).toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: 'Pedir un enlace nuevo' }));
@@ -369,7 +415,7 @@ describe('the page of the emailed link (the host of the organization)', () => {
       'POST /api/public/signup/verify': () => problemResponse(500, 'internal_error'),
     });
 
-    await user.click(await screen.findByRole('button', { name: 'Activar mi organización' }));
+    await submitLink(user);
 
     expect(await screen.findByRole('alert')).not.toHaveTextContent(/no es válido|venció/);
     expect(screen.getByRole('button', { name: 'Activar mi organización' })).toBeInTheDocument();
@@ -383,7 +429,7 @@ describe('the page of the emailed link (the host of the organization)', () => {
       'POST /api/public/signup/renew': () => problemResponse(429, 'rate_limited'),
     });
 
-    await user.click(await screen.findByRole('button', { name: 'Activar mi organización' }));
+    await submitLink(user);
     await user.click(await screen.findByRole('button', { name: 'Pedir un enlace nuevo' }));
 
     expect(await screen.findAllByRole('alert')).toHaveLength(2);

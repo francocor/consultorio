@@ -26,32 +26,33 @@ Stages 0 to 2 are one linear sequence below `0300` (today `0000` to `0043`), num
 
 Inside a stage each track has its own range (the track names are the ones `pnpm db:new` takes):
 
-| Track   | Range       | Owner                         |
-| ------- | ----------- | ----------------------------- |
-| `3seam` | 0300 - 0319 | Stage 3 seams (S3.00, S3.00b) |
-| `3a`    | 0320 - 0339 | A, messaging                  |
-| `3b`    | 0340 - 0359 | B, public booking             |
-| `3c`    | 0360 - 0369 | C, waitlist                   |
-| `3d`    | 0370 - 0379 | D, teleconsultation           |
-| `3e`    | 0390 - 0399 | E, integration                |
-| `4seam` | 0400 - 0409 | Stage 4 seams                 |
-| `4a`    | 0410 - 0429 | A, billing                    |
-| `4b`    | 0430 - 0439 | B, reports                    |
-| `4c`    | 0440 - 0469 | C, invoicing                  |
-| `4jd`   | 0480 - 0489 | Judgment day follow-ups       |
-| `4d`    | 0490 - 0499 | D, integration                |
-| `5seam` | 0500 - 0504 | Stage 5 seams                 |
-| `5a1`   | 0505 - 0509 | A1, matricula verification    |
-| `5a2`   | 0510 - 0529 | A2, consent                   |
-| `5a3`   | 0530 - 0549 | A3, e-prescription            |
-| `5b`    | 0550 - 0579 | B, portal                     |
-| `5jd`   | 0580 - 0589 | Judgment day follow-ups       |
-| `5c`    | 0590 - 0599 | C, integration                |
-| `6seam` | 0600 - 0609 | Stage 6 seams                 |
-| `6a`    | 0610 - 0639 | A, subscriptions              |
-| `6b`    | 0640 - 0649 | B, signup                     |
-| `6c`    | 0650 - 0679 | C, retention                  |
-| `6d`    | 0690 - 0699 | D, readiness                  |
+| Track   | Range       | Owner                                      |
+| ------- | ----------- | ------------------------------------------ |
+| `3seam` | 0300 - 0319 | Stage 3 seams (S3.00, S3.00b)              |
+| `3a`    | 0320 - 0339 | A, messaging                               |
+| `3b`    | 0340 - 0359 | B, public booking                          |
+| `3c`    | 0360 - 0369 | C, waitlist                                |
+| `3d`    | 0370 - 0379 | D, teleconsultation                        |
+| `3e`    | 0390 - 0399 | E, integration                             |
+| `4seam` | 0400 - 0409 | Stage 4 seams                              |
+| `4a`    | 0410 - 0429 | A, billing                                 |
+| `4b`    | 0430 - 0439 | B, reports                                 |
+| `4c`    | 0440 - 0469 | C, invoicing                               |
+| `4jd`   | 0480 - 0489 | Judgment day follow-ups                    |
+| `4d`    | 0490 - 0499 | D, integration                             |
+| `5seam` | 0500 - 0504 | Stage 5 seams                              |
+| `5a1`   | 0505 - 0509 | A1, matricula verification                 |
+| `5a2`   | 0510 - 0529 | A2, consent                                |
+| `5a3`   | 0530 - 0549 | A3, e-prescription                         |
+| `5b`    | 0550 - 0579 | B, portal                                  |
+| `5jd`   | 0580 - 0589 | Judgment day follow-ups                    |
+| `5c`    | 0590 - 0599 | C, integration                             |
+| `6seam` | 0600 - 0609 | Stage 6 seams                              |
+| `6a`    | 0610 - 0639 | A, subscriptions                           |
+| `6b`    | 0640 - 0649 | B, signup                                  |
+| `6c`    | 0650 - 0679 | C, retention                               |
+| `6jd2`  | 0685 - 0689 | Judgment day round 1, signup and retention |
+| `6d`    | 0690 - 0699 | D, readiness                               |
 
 The gaps (`0380 - 0389`, `0470 - 0479`, `0680 - 0689`) are reserved and are not used by `pnpm db:new`. The gap `0480 - 0489` is the track `4jd`: the range of `4d` (0490 - 0499) is full, and the fixes of the Stage 4 judgment day that need a migration go there. The gap `0580 - 0589` is the track `5jd`, for the same reason: the range of `5c` is full, and the fixes of the Stage 5 judgment day go there (`pnpm db:new 5jd <name>`).
 

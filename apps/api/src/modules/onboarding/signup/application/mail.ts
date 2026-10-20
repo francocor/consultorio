@@ -18,6 +18,22 @@ const HTML_ESCAPES: Record<string, string> = {
   "'": '&#39;',
 };
 
+/**
+ * Control characters (line breaks, tabs), format characters (bidirectional overrides) and the
+ * Unicode line and paragraph separators.
+ */
+const HIDDEN_CHARACTERS = /[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]+/gu;
+
+/**
+ * A name typed by a visitor, as one line of visible text. The contract already refuses these
+ * characters; this is the second wall, for a name stored before it did, so that a name can never
+ * add a line (a Bcc, a paragraph with another link) to a message that carries the platform's name
+ * (JD-S6 R1-S6-10).
+ */
+function oneLine(value: string): string {
+  return value.replace(HIDDEN_CHARACTERS, ' ').trim();
+}
+
 function escapeHtml(value: string): string {
   return value.replace(/[&<>"']/g, (character) => HTML_ESCAPES[character] ?? character);
 }
@@ -65,14 +81,16 @@ export interface VerificationEmailInput {
 /** "Confirme su correo": the link that activates the organization. */
 export function renderVerificationEmail(input: VerificationEmailInput): RenderedSignupEmail {
   assertWebLink(input.link);
+  const ownerName = oneLine(input.ownerName);
+  const organizationName = oneLine(input.organizationName);
   const lifetime = hoursText(input.expiresInHours);
   const subject = 'Confirme su correo para activar su organización';
   const footer = 'Si no pidió crear esta cuenta, ignore este mensaje: no se activa nada.';
 
   const text = [
-    `Hola, ${input.ownerName}.`,
+    `Hola, ${ownerName}.`,
     '',
-    `Recibimos el registro de la organización "${input.organizationName}". Para activarla y empezar el período de prueba, confirme su correo con este enlace:`,
+    `Recibimos el registro de la organización "${organizationName}". Para activarla y empezar el período de prueba, confirme su correo y elija su contraseña con este enlace:`,
     input.link,
     '',
     `El enlace sirve una sola vez y vence en ${lifetime}. Si venció, pida uno nuevo desde la misma página.`,
@@ -83,8 +101,8 @@ export function renderVerificationEmail(input: VerificationEmailInput): Rendered
   const html = frame(
     'Confirme su correo',
     [
-      `Hola, ${escapeHtml(input.ownerName)}.`,
-      `Recibimos el registro de la organización <strong>${escapeHtml(input.organizationName)}</strong>. Para activarla y empezar el período de prueba, confirme su correo.`,
+      `Hola, ${escapeHtml(ownerName)}.`,
+      `Recibimos el registro de la organización <strong>${escapeHtml(organizationName)}</strong>. Para activarla y empezar el período de prueba, confirme su correo y elija su contraseña.`,
       `El enlace sirve una sola vez y vence en ${lifetime}. Si venció, pida uno nuevo desde la misma página.`,
     ],
     { label: 'Confirmar mi correo', link: escapeHtml(input.link) },

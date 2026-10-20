@@ -1,5 +1,5 @@
 {
-  "signup_terms_required": "Para crear la cuenta debe aceptar los términos del servicio y los términos de tratamiento de datos.",
+  "signup_terms_required": "Para activar la cuenta debe aceptar los términos del servicio y los términos de tratamiento de datos.",
   "signup_challenge_failed": "No pudimos comprobar que sea una persona. Vuelva a intentar.",
   "signup_link_invalid": "El enlace no es válido o ya venció. Pida uno nuevo para activar su organización."
 }
