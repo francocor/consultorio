@@ -509,6 +509,47 @@ describe('who may have which package', () => {
   });
 });
 
+describe('the identity data that leaves in bulk', () => {
+  const bulkReads = () =>
+    asTenant(runtime, org.world.tenant.id, (tx) =>
+      tx
+        .select({
+          actor: auditEvent.actorUserId,
+          resourceType: auditEvent.resourceType,
+          resourceId: auditEvent.resourceId,
+          metadata: auditEvent.metadata,
+        })
+        .from(auditEvent)
+        .where(sql`${auditEvent.action} = 'patient.bulk_read'`)
+        .orderBy(asc(auditEvent.occurredAt)),
+    );
+
+  it('is written once, for the administrative package, with how many patients it carries and no name', async () => {
+    const reads = await bulkReads();
+    const packages = await packagesOf();
+    const administrative = packages.find((row) => row.kind === 'administrative');
+
+    expect(reads).toHaveLength(1);
+    expect(reads[0]).toMatchObject({
+      actor: null,
+      resourceType: 'export_package',
+      resourceId: administrative?.id,
+      metadata: { kind: 'administrative', patients: 4 },
+    });
+    // Counts and the id of the package, never a name or a document number.
+    expect(JSON.stringify(reads)).not.toMatch(/Clinica|Paciente|dni/i);
+  });
+
+  it('is not written for a clinical package, whose patients are read as clinical records', async () => {
+    const reads = await bulkReads();
+    const packages = await packagesOf();
+    const clinicalIds = packages.filter((row) => row.kind === 'clinical').map((row) => row.id);
+
+    expect(clinicalIds.length).toBeGreaterThanOrEqual(2);
+    expect(reads.filter((read) => clinicalIds.includes(read.resourceId ?? ''))).toEqual([]);
+  });
+});
+
 describe('a package that cannot be made', () => {
   it('answers the link of a package that is not ready yet with a conflict, and issues nothing', async () => {
     const world = await createClinicalWorld(runtime, 'cancel-export-waiting');

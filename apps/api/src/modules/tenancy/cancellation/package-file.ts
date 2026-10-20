@@ -33,6 +33,8 @@ export interface PackageFileDeps {
   withTenant: WithTenant;
   /** Where the attached files of the organization are. */
   storage: ObjectStorage;
+  /** Rows per question for the sections that are read a page at a time. Absent: `EXPORT_PAGE_SIZE`. */
+  pageSize?: number;
 }
 
 export interface PackageFileInput {
@@ -72,6 +74,7 @@ export async function writePackageFile(
             tx,
             tenantId: input.tenantId,
             ...(input.professionalId ? { professionalId: input.professionalId } : {}),
+            ...(deps.pageSize === undefined ? {} : { pageSize: deps.pageSize }),
           }),
         );
       }),

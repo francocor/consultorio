@@ -5,6 +5,7 @@ import { exportNotifications } from '../../src/modules/notifications/application
 import { exportTeleconsultation } from '../../src/modules/teleconsultation/application/export-contributor.js';
 import { exportWaitlist } from '../../src/modules/waitlist/application/export-contributor.js';
 import { createRuntimeDb, type DbHandle } from '../../src/platform/db/pool.js';
+import { settled } from '../support/export-sections.js';
 import { createRecordingJobClient } from '../support/jobs.js';
 import {
   createNotificationsWorld,
@@ -42,7 +43,10 @@ afterAll(async () => {
 const part = <T>(
   contribute: (context: { tx: never; tenantId: string }) => Promise<unknown>,
   tenantId = scheduling.tenant.id,
-) => asTenant(runtime, tenantId, (tx) => contribute({ tx: tx as never, tenantId })) as Promise<T>;
+) =>
+  asTenant(runtime, tenantId, (tx) =>
+    settled(contribute({ tx: tx as never, tenantId })),
+  ) as Promise<T>;
 
 describe('the administrative export of Stage 3', () => {
   it('carries the choices and the log of messages of the organization, as metadata, and nothing of another', async () => {

@@ -7,6 +7,7 @@ import { sql } from 'drizzle-orm';
 import { z } from 'zod';
 
 import type { ExportPackageRow } from '../../../db/schema/export-package.js';
+import { audit } from '../../../platform/audit/writer.js';
 import {
   SYSTEM_USER_ID,
   type RequestContext,
@@ -35,6 +36,7 @@ import {
   requestClinicalPackages,
   tenantSlug,
 } from './packages.js';
+import { SYSTEM_ACTOR } from './queue.js';
 import { ClinicalKeyInAdministrativePartError } from './redaction.js';
 import { packageFileName } from './summary.js';
 import { ZipLimitError } from './zip.js';
@@ -140,9 +142,22 @@ export function createCancellationExportJob(
             professionalName: recipient?.displayName ?? null,
             now,
           });
-          const recorded = await deps.withTenant(system, (inner) =>
-            markPackageReady(inner, row.id, { ...built, at: now }),
-          );
+          const recorded = await deps.withTenant(system, async (inner) => {
+            const done = await markPackageReady(inner, row.id, { ...built, at: now });
+            // The identity data of every patient leaves in the administrative package: a read in
+            // bulk, with the count and the package and nothing about who the patients are.
+            if (done && row.kind === 'administrative') {
+              await audit(inner, {
+                action: 'patient.bulk_read',
+                outcome: 'allow',
+                actor: SYSTEM_ACTOR,
+                resourceType: 'export_package',
+                resourceId: row.id,
+                metadata: { kind: 'administrative', patients: built.patientRows },
+              });
+            }
+            return done;
+          });
           if (recorded) {
             await tellPeople(deps, tenantId, row, organizationName, recipient?.email ?? null);
           }
@@ -186,6 +201,8 @@ async function buildPackage(
   sizeBytes: number;
   sha256: string;
   entryCount: number;
+  /** The patients of the identity section (zero for a part that has none). */
+  patientRows: number;
 }> {
   const kind: ExportKind = input.row.kind === 'clinical' ? 'clinical' : 'administrative';
   const scratch = await mkdtemp(join(deps.workDir ?? tmpdir(), 'cancellation-export-'));
@@ -212,6 +229,9 @@ async function buildPackage(
       sizeBytes: written.sizeBytes,
       sha256: written.sha256,
       entryCount: written.entryCount,
+      patientRows: written.report.sections
+        .filter((section) => section.contributor === 'patients' && section.section === 'patients')
+        .reduce((sum, section) => sum + (section.rows ?? 0), 0),
     };
   } finally {
     await rm(scratch, { recursive: true, force: true });

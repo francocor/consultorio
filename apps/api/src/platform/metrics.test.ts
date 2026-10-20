@@ -44,4 +44,50 @@ describe('in-memory metrics', () => {
       ['audit_chain_break_total{tenant="a"} 1', 'audit_seal_lag_seconds 7', ''].join('\n'),
     );
   });
+
+  it('escapes the characters of a label value that the text format reserves', () => {
+    const metrics = createMetrics();
+    metrics.gauge('x', 1, { reason: 'a"b\\c\nd' });
+
+    expect(metrics.render()).toBe('x{reason="a\\"b\\\\c\\nd"} 1\n');
+  });
+
+  it('writes the help and the type of a described metric once, above its series', () => {
+    const metrics = createMetrics({
+      catalog: {
+        queue_jobs: { type: 'gauge', help: 'Jobs in the queue, by queue and state.' },
+        errors_total: { type: 'counter', help: 'Failures.' },
+      },
+    });
+    metrics.gauge('queue_jobs', 4, { queue: 'dunning.step', state: 'created' });
+    metrics.gauge('queue_jobs', 1, { queue: 'archive.write', state: 'active' });
+    metrics.increment('errors_total');
+    metrics.gauge('not_described', 9);
+
+    expect(metrics.render()).toBe(
+      [
+        '# HELP errors_total Failures.',
+        '# TYPE errors_total counter',
+        'errors_total 1',
+        'not_described 9',
+        '# HELP queue_jobs Jobs in the queue, by queue and state.',
+        '# TYPE queue_jobs gauge',
+        'queue_jobs{queue="archive.write",state="active"} 1',
+        'queue_jobs{queue="dunning.step",state="created"} 4',
+        '',
+      ].join('\n'),
+    );
+  });
+
+  it('forgets the series of a metric when it is replaced as a whole, so a queue that emptied does not stay at its last depth', () => {
+    const metrics = createMetrics();
+    metrics.gauge('queue_jobs', 4, { queue: 'a' });
+    metrics.gauge('queue_jobs', 2, { queue: 'b' });
+
+    metrics.replace('queue_jobs', [{ labels: { queue: 'b' }, value: 7 }]);
+
+    expect(metrics.get('queue_jobs', { queue: 'a' })).toBe(0);
+    expect(metrics.get('queue_jobs', { queue: 'b' })).toBe(7);
+    expect(metrics.render()).toBe('queue_jobs{queue="b"} 7\n');
+  });
 });

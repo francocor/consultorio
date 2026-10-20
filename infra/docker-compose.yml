@@ -196,6 +196,11 @@ services:
       KMS_PROVIDER: local
       KMS_LOCAL_KEK_BASE64: ${KMS_LOCAL_KEK_BASE64:-ZGV2X29ubHlfbG9jYWxfa2VrXzAxMjM0NTY3ODlhYmM=}
       LOG_LEVEL: ${LOG_LEVEL:-info}
+      # The numbers of the process, for the scraper of the `observability` profile. The port is open
+      # inside the compose network only (it is not published) and answers just to the token.
+      METRICS_PORT: 9464
+      METRICS_HOST: 0.0.0.0
+      METRICS_TOKEN: ${METRICS_TOKEN:-metrics_token_dev_only_0123456789}
     ports:
       - '127.0.0.1:${API_PORT:-3000}:3000'
     depends_on:
@@ -246,6 +251,43 @@ services:
         condition: service_healthy
       archive-init:
         condition: service_completed_successfully
+
+  # Prometheus and Grafana for the numbers of the platform (task 6.45). Optional: nothing else needs them.
+  # They scrape the /metrics port of the API (and of the worker, run on the machine) and load the alert
+  # rules of the repository (infra/alerts/rules.yml). What to do when a rule fires: docs/runbooks/incident.md.
+  #   docker compose --env-file .env -f infra/docker-compose.yml --profile app --profile observability up
+  prometheus:
+    profiles: ['observability']
+    image: prom/prometheus:v3.5.0
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.retention.time=2d
+    # The worker runs on the machine, not in the compose file: the container reaches it through the host.
+    extra_hosts:
+      - 'host.docker.internal:host-gateway'
+    ports:
+      - '127.0.0.1:${PROMETHEUS_PORT:-9090}:9090'
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./alerts:/etc/prometheus/alerts:ro
+
+  grafana:
+    profiles: ['observability']
+    image: grafana/grafana:12.1.0
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-grafana_dev_only}
+      GF_USERS_ALLOW_SIGN_UP: 'false'
+      GF_ANALYTICS_REPORTING_ENABLED: 'false'
+      GF_ANALYTICS_CHECK_FOR_UPDATES: 'false'
+    ports:
+      - '127.0.0.1:${GRAFANA_PORT:-3001}:3000'
+    volumes:
+      - ./grafana/provisioning/datasources:/etc/grafana/provisioning/datasources:ro
+      - ./grafana/provisioning/dashboards:/etc/grafana/provisioning/dashboards:ro
+      - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
+    depends_on:
+      - prometheus
 
 configs:
   archive-writer-policy:

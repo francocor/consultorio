@@ -51,6 +51,7 @@
   "book.slug": "Organización: {{slug}}",
   "notFound.action": "Ir al inicio",
   "banner.enrollment.action": "Activar ahora",
+  "banner.readOnly.action": "Ir a la suscripción",
   "nav.bottom": "Navegación inferior",
   "platform.title": "Gestión de consultorios"
 }

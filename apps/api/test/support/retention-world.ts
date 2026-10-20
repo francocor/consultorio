@@ -144,7 +144,14 @@ export async function createRetentionWorld(
       });
     },
     async buildPackages(overrides = {}) {
-      await enqueuePendingExports(runtime.db, jobs);
+      // The sweep looks at every organization of the shared database. Another test file may have
+      // left one cancelled and not exported, sealed with the keys of its own world: this world
+      // builds only the request of its own organization.
+      const sweep = createRecordingJobClient();
+      await enqueuePendingExports(runtime.db, sweep);
+      for (const next of sweep.jobs) {
+        if (next.payload.tenantId === world.tenant.id) jobs.jobs.push(next);
+      }
       const results = await runPending(runtime.db, jobs, [job(overrides)]);
       for (const { name, result } of results) {
         if (name !== CANCELLATION_EXPORT_JOB || result.status !== 'completed') {

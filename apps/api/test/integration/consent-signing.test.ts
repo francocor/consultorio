@@ -35,6 +35,7 @@ import { createRuntimeDb, type DbHandle } from '../../src/platform/db/pool.js';
 import { createWithTenant, SYSTEM_USER_ID } from '../../src/platform/db/tenant-context.js';
 import { runJob } from '../../src/platform/jobs/define-job.js';
 import { asSystem, createDocumentsHarness, type DocumentsHarness } from '../support/documents.js';
+import { settled } from '../support/export-sections.js';
 import { insertAppointmentRow } from '../support/fixture-helpers.js';
 import { createTestPatient } from '../support/patients.js';
 import { asTenant } from '../support/tenants.js';
@@ -1254,7 +1255,13 @@ describe('the export', () => {
         actingProfessionalId: h.professionalId,
       },
       (tx) =>
-        exportSignedConsents(keys)({ tx, tenantId: h.tenant.id, professionalId: h.professionalId }),
+        settled(
+          exportSignedConsents(keys)({
+            tx,
+            tenantId: h.tenant.id,
+            professionalId: h.professionalId,
+          }),
+        ),
     )) as {
       consents: {
         requestId: string;
@@ -1279,7 +1286,7 @@ describe('the export', () => {
 
     const part = (await createWithTenant(runtime.db)(
       { tenantId: h.tenant.id, userId: SYSTEM_USER_ID },
-      (tx) => exportConsentTemplates({ tx, tenantId: h.tenant.id }),
+      (tx) => settled(exportConsentTemplates({ tx, tenantId: h.tenant.id })),
     )) as {
       templates: { id: string; title: string; versions: { body: string }[] }[];
       requests: { id: string; status: string }[];

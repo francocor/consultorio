@@ -23,8 +23,22 @@ export function OfflineBanner({ className }: { className?: string }) {
   );
 }
 
-/** The organization is read only: reads work, writes are refused (402). */
-export function ReadOnlyBanner({ className }: { className?: string }) {
+/**
+ * The organization is read only: reads work, writes are refused (402). The person who can regularize
+ * the subscription is told where; anybody else is told who can, and nothing about the billing (the
+ * reason is the same, the details are the owner's).
+ */
+export function ReadOnlyBanner({
+  className,
+  action,
+  canResolve = true,
+}: {
+  className?: string;
+  /** What the person who can regularize the subscription does next (a link to it). */
+  action?: ReactNode;
+  /** False for a person who cannot manage the subscription. */
+  canResolve?: boolean;
+}) {
   const { t } = useTranslation();
   return (
     <div
@@ -37,7 +51,8 @@ export function ReadOnlyBanner({ className }: { className?: string }) {
       <Lock className="mt-0.5 size-4 shrink-0" aria-hidden="true" />
       <div>
         <p className="font-medium">{t('state.readOnly.title')}</p>
-        <p>{t('state.readOnly.description')}</p>
+        <p>{t(canResolve ? 'state.readOnly.description' : 'state.readOnly.descriptionOthers')}</p>
+        {canResolve && action ? <p className="mt-1">{action}</p> : null}
       </div>
     </div>
   );

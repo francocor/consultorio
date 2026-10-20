@@ -15,6 +15,17 @@ interface StackInfo {
   tenants: Record<string, { id: string; slug: string; name: string; emailSuffix: string }>;
   operator: { email: string; password: string; totpSecret: string };
   operatorTwo: { email: string; password: string; totpSecret: string };
+  /** The billed organizations of the platform demo, by state of their subscription (Stage 6). */
+  platformDemo: Record<
+    'trial' | 'active' | 'past_due' | 'read_only',
+    {
+      slug: string;
+      name: string;
+      ownerEmail: string;
+      receptionEmail: string;
+      professionalEmail: string | null;
+    }
+  >;
 }
 
 /** The port of the preview server; `E2E_WEB_PORT` moves it when another run holds 4173. */

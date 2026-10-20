@@ -22,7 +22,7 @@ import { requestAdministrativePackage } from './packages.js';
  */
 
 /** The actor of an entry written by the system itself. */
-const SYSTEM_ACTOR = {
+export const SYSTEM_ACTOR = {
   userId: null,
   actingRole: null,
   ip: null,

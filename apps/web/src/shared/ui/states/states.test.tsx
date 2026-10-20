@@ -125,6 +125,20 @@ describe('banners', () => {
     expect(await a11yViolations(container)).toEqual([]);
   });
 
+  it('ReadOnlyBanner shows the action it is given, and for a person who cannot act it names who can instead', async () => {
+    const owner = renderWithApp(<ReadOnlyBanner action={<a href="/subscription">Ir</a>} />);
+    expect(screen.getByRole('link', { name: 'Ir' })).toHaveAttribute('href', '/subscription');
+    owner.unmount();
+
+    const { container } = renderWithApp(<ReadOnlyBanner canResolve={false} />);
+
+    const banner = screen.getByRole('status');
+    expect(banner).toHaveTextContent('persona titular de la cuenta');
+    expect(banner).not.toHaveTextContent('regularice');
+    expect(screen.queryByRole('link')).not.toBeInTheDocument();
+    expect(await a11yViolations(container)).toEqual([]);
+  });
+
   it('TwoFactorRequiredState blocks with an action; the grace banner shows the date', async () => {
     const { container } = renderWithApp(
       <div>

@@ -1415,7 +1415,7 @@ Start: S6.04, S6.02. Done when: a visitor signs up, subscribes and uses the prod
 - [x] 6.29 `features/onboarding/signup/*`: signup page (organization, owner name, email, password hints, two terms checkboxes, bot challenge widget), generic "check your email" screen, verification landing into the wizard, payment step that can be deferred when the provider is down, trial end date and its consequences; `locales/es-AR/signup.json`. [ONB-09, ONB-10, ONB-12, ONB-13] Test: component tests plus axe.
 - [x] 6.30 `features/subscription/*` (owner only): plan, state with dates and next transition, next charge, usage per professional with thresholds, statements list and download, overage cap control, cancel and reactivate, retry payment; a demo tenant shows an "account without billing" state; non-owner read-only banner without billing details; `locales/es-AR/subscription.json`. [SUB-03, SUB-08, SUB-10, SUB-11, SUB-17, SUB-19] Test: component tests per state and role.
 - [x] 6.31 Plan-impact dialog in staff invitation and activation (price change, proration, confirm; limit reached with upgrade path) and `features/operator/subscriptions/*` (state, usage counts, surplus flags, support view with no clinical data). [SUB-01, SUB-02, SUB-17] Test: component tests; professional cannot open billing.
-- [ ] 6.32 `e2e/stage6-signup.spec.ts` at 360 px: sign up, verify from Mailpit, wizard, approve in the local checkout, tenant active the same day; professional denied on billing; reception write refused in a read-only tenant shows the reason. [ONB-09, ONB-10, SUB-05, SUB-17] Test: that spec.
+- [x] 6.32 `e2e/stage6-signup.spec.ts` at 360 px: sign up, verify from Mailpit, wizard, approve in the local checkout, tenant active the same day; professional denied on billing; reception write refused in a read-only tenant shows the reason. [ONB-09, ONB-10, SUB-05, SUB-17] Test: that spec. **DONE** (S6.12): the sign up, verify and wizard journey was in the spec since S6.07; the professional denied on the billing and the reception write refused in a read-only organization (the reason, with no word about the billing) are the last two tests of `stage6-signup.spec.ts`, on the read-only organization of the platform demo; the banner for a person who cannot manage the subscription was fixed on the way (it sent every role to a Facturacion that no longer exists). The full journey with the checkout is `stage6-demo.spec.ts`.
 
 ## S6.08 Cancellation and split export (~450) [Track C]
 
@@ -1447,17 +1447,17 @@ Start: S6.09. Done when: a verified requester receives their records through a s
 
 Start: tracks A and C merged. Done when: the restore drill, metrics and runbooks exist and run without a cloud account. Verify: default plus `pnpm drill:restore`. Rollback: default.
 
-- [ ] 6.44 `scripts/restore-drill.ts` (`pnpm drill:restore`): dumps the compose Postgres to MinIO, restores into a scratch database, re-runs the audit chain verification and row-count checks, prints a report; `docs/runbooks/backup-restore.md` (from task 2.99) gains the local drill evidence. [AUD-04, AUD-05] Test: the drill passes on the demo data; a tampered dump fails the chain check.
-- [ ] 6.45 Observability: `/metrics` (Prometheus text) from `platform/metrics.ts` with queue depth, reminder failure rate, pending invoices past the outage threshold, scan backlog, unsealed audit lag, audit chain breaks and dunning step counts; alert rules as code in `infra/alerts/rules.yml` validated in CI; an optional compose profile `observability` (Prometheus, Grafana). [AUD-04, INV-09, NTF-06] Test: metrics endpoint test; rule-file validation job.
-- [ ] 6.46 Runbooks and checklist: `docs/runbooks/{incident,afip-outage,provider-switch,tenant-cancellation}.md` and `docs/go-live-checklist.md`, which lists every deferred real-provider task (3.80 to 3.83, 4.68, 4.69, 5.53, 5.54, 6.50 to 6.52) with the credential or contract it needs, and the owner-held legal items (hosting review Q1, erasure Q7) as owner actions, not tasks. [SUB-15] Test: a docs test fails when a deferred task id is missing from the checklist.
+- [x] 6.44 `scripts/restore-drill.ts` (`pnpm drill:restore`): dumps the compose Postgres to MinIO, restores into a scratch database, re-runs the audit chain verification and row-count checks, prints a report; `docs/runbooks/backup-restore.md` (from task 2.99) gains the local drill evidence. [AUD-04, AUD-05] Test: the drill passes on the demo data; a tampered dump fails the chain check. **DONE** (S6.11): `pnpm drill:restore` also keeps the backup in the object store and restores from what it reads back, counts every table before and after the dump, and fails when no audit event was verified; `restore-drill.test.ts` passes on the demo data and fails, naming the event, when a sealed event was altered before the dump. The runbook records the command and a sample report.
+- [x] 6.45 Observability: `/metrics` (Prometheus text) from `platform/metrics.ts` with queue depth, reminder failure rate, pending invoices past the outage threshold, scan backlog, unsealed audit lag, audit chain breaks and dunning step counts; alert rules as code in `infra/alerts/rules.yml` validated in CI; an optional compose profile `observability` (Prometheus, Grafana). [AUD-04, INV-09, NTF-06] Test: metrics endpoint test; rule-file validation job. **DONE** (S6.11): the numbers are served on a port of each process (`METRICS_PORT`, off by default, a token off the loopback interface) and not on a route of the API, so the host, session and read-only policies are untouched; the worker measures the counts of the platform organization by organization (`main/platform-metrics.ts`, no migration); `infra/alerts/rules.yml` has 13 rules checked by `alert-rules.test.ts` against `platform/metrics-catalog.ts` and by promtool in the CI job "Alert rules"; the compose profile `observability` has Prometheus and Grafana.
+- [x] 6.46 Runbooks and checklist: `docs/runbooks/{incident,afip-outage,provider-switch,tenant-cancellation}.md` and `docs/go-live-checklist.md`, which lists every deferred real-provider task (3.80 to 3.83, 4.68, 4.69, 5.53, 5.54, 6.50 to 6.52) with the credential or contract it needs, and the owner-held legal items (hosting review Q1, erasure Q7) as owner actions, not tasks. [SUB-15] Test: a docs test fails when a deferred task id is missing from the checklist. **DONE** (S6.11): the four runbooks and `docs/go-live-checklist.md`; `go-live-checklist.test.ts` reads the deferred tasks from this file, so a new one cannot be forgotten.
 
 ## S6.12 Demo data and Stage 6 gate (~300) [Track D]
 
 Start: S6.07, S6.10, S6.11. Done when: the Stage 6 demo runs locally end to end and the final review is closed. Verify: the e2e spec plus the review. Rollback: default.
 
-- [ ] 6.47 `db/seed/demo/stage6/*` and `pnpm demo:platform` (refused in production): the demo tenant shows the exempt state, and four fictional non-demo tenants in dev databases cover trial, active, past_due and read_only for the operator views. [DEM-04, SUB-04] Test: gap check; guard refuses production.
-- [ ] 6.48 `e2e/stage6-demo.spec.ts`: sign up, pay in the local checkout and use the product the same day; second run rejects a renewal and walks dunning, read-only, payment and recovery. [ONB-09, SUB-05, SUB-12, SUB-13, SUB-14] Test: that spec.
-- [ ] 6.49 Final fresh-context security review (`judgment-day`) of webhooks, retention and archive keys, export scoping and signup abuse; `docs/security/asvs-l2-final.md`; update the traceability section; re-run `sdd-init`. Test: review report attached.
+- [x] 6.47 `db/seed/demo/stage6/*` and `pnpm demo:platform` (refused in production): the demo tenant shows the exempt state, and four fictional non-demo tenants in dev databases cover trial, active, past_due and read_only for the operator views. [DEM-04, SUB-04] Test: gap check; guard refuses production. **DONE** (S6.12): `pnpm demo:platform` makes four billed organizations (trial, active with a professional and a statement, past due, read-only) by the services of the subscription module against the local Mercado Pago; the demonstration organization shows the exempt state (`seedStage6`). The tables of the subscription, the signup and the retention stay empty FOR THE DEMONSTRATION ORGANIZATION on purpose (the database refuses a subscription for an exempt one), so the three exemption files of the tracks became `demo-coverage-exemptions/stage6.ts`, entry by entry with its reason.
+- [x] 6.48 `e2e/stage6-demo.spec.ts`: sign up, pay in the local checkout and use the product the same day; second run rejects a renewal and walks dunning, read-only, payment and recovery. [ONB-09, SUB-05, SUB-12, SUB-13, SUB-14] Test: that spec. **DONE** (S6.12): `stage6-demo.spec.ts`, at 360 px with axe on every screen: sign up, pay in the local checkout, use the product, then cancel, take the split export and see the archive written; the statement of the month that closed; a failed charge paid and the organization active again. The dunning and the read-only state cannot be walked in real time in a browser, so the journey starts from the organizations that the seed built with a clock; the walk itself (day 1, 3 and 5, the grace, read-only, payment, recovery) is `billing-timeline.test.ts` under a fake clock.
+- [ ] 6.49 Final fresh-context security review (`judgment-day`) of webhooks, retention and archive keys, export scoping and signup abuse; `docs/security/asvs-l2-final.md`; update the traceability section; re-run `sdd-init`. Test: review report attached. **OPEN** (for the orchestrator): `docs/security/asvs-l2-final.md` is written from the code and the tests and the traceability section is updated, but an executor cannot run the fresh-context review; the findings go in the last section of that page and `sdd-init` is re-run after them.
 
 ## S6.D Deferred real-provider adapters (no gate depends on them)
 
@@ -1545,8 +1545,8 @@ Every requirement of the capabilities delivered in Stages 0 to 2 maps to at leas
 | AUD-01 | Mandatory events | 1.26, 1.27, 1.84, 1.86 |
 | AUD-02 | Synchronous, fail-closed writing | 1.26, 1.27 |
 | AUD-03 | Entry content | 1.24, 1.26, 1.28 |
-| AUD-04 | Append-only and tamper-evident | 1.24, 1.25, 1.30, 1.31 |
-| AUD-05 | Retention of at least 10 years | 1.85 |
+| AUD-04 | Append-only and tamper-evident | 1.24, 1.25, 1.30, 1.31, 6.44 (restore drill walks every chain), 6.45 (alerts on a break and on late sealing), 6.52 (deferred) |
+| AUD-05 | Retention of at least 10 years | 1.85, 6.44 (the copy keeps the whole trail) |
 | AUD-06 | Tenant-scoped access to the log | 1.83, 1.119 |
 | AUD-07 | Searchable and exportable log | 1.83, 1.84, 1.119 |
 
@@ -1732,7 +1732,7 @@ This section resolves the closing note of the Stage 0 to 2 traceability ("Stage 
 | NTF-03 | Confirmation by the patient | 3.19 to 3.21, 3.25, 3.33, 3.44, 3.76, 3.77 |
 | NTF-04 | Opt-out and consent | 3.12, 3.17, 3.20, 3.25 to 3.27, 3.32, 3.33, 3.43 |
 | NTF-05 | Message content and privacy | 3.13, 3.30 |
-| NTF-06 | Delivery tracking, retries and fallback | 3.11, 3.12, 3.14, 3.22, 3.31, 3.80 (deferred) |
+| NTF-06 | Delivery tracking, retries and fallback | 3.11, 3.12, 3.14, 3.22, 3.31, 6.45 (failure rate alert), 3.80 (deferred) |
 | NTF-07 | Provider webhooks and inbound messages | 3.23, 3.24, 3.33, 3.74, 3.81 (deferred) |
 | NTF-08 | Quotas, usage and integration switches | 3.8, 3.28 to 3.30, 6.26, 6.28 |
 | NTF-09 | Demo and read-only tenants | 3.2, 3.14 |
@@ -1824,7 +1824,7 @@ This section resolves the closing note of the Stage 0 to 2 traceability ("Stage 
 | INV-06 | Invoice immutability | 4.43, 4.46 |
 | INV-07 | Credit notes | 4.45, 4.56, 4.61 |
 | INV-08 | Voided and rejected invoices | 4.43, 4.46 |
-| INV-09 | AFIP outage handling and no duplicate issuance | 4.40 to 4.42, 4.47, 4.48, 4.55, 4.56, 4.65, 4.68 (deferred) |
+| INV-09 | AFIP outage handling and no duplicate issuance | 4.40 to 4.42, 4.47, 4.48, 4.55, 4.56, 4.65, 6.45 and 6.46 (alert and runbook of the outage), 4.68 (deferred) |
 | INV-10 | Manual invoice entry fallback | 4.49, 4.55 |
 | INV-11 | Invoice document and delivery | 4.5, 4.51 to 4.53, 5.33 |
 | INV-12 | Access control and audit | 4.3, 4.38, 4.53, 4.56, 4.62 |

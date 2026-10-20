@@ -287,7 +287,12 @@ describe('a patient asks for their own records', () => {
     const row = await requestRow(requestId);
 
     expect(swept.queued).toBeGreaterThanOrEqual(1);
-    expect(jobs.jobs.find((job) => job.name === ARCHIVE_RELEASE_JOB)?.payload).toMatchObject({
+    // Other files of the shared database may have approved requests of their own: look for ours.
+    expect(
+      jobs.jobs.find(
+        (job) => job.name === ARCHIVE_RELEASE_JOB && job.payload.requestId === requestId,
+      )?.payload,
+    ).toMatchObject({
       tenantId: org.world.tenant.id,
       requestId,
     });

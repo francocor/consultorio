@@ -2,7 +2,12 @@ import { and, asc, eq, inArray, or, sql } from 'drizzle-orm';
 
 import { careRelationship } from '../../../db/schema/care.js';
 import { document, type DocumentRow } from '../../../db/schema/documents.js';
-import type { ExportContributor } from '../../tenancy/index.js';
+import {
+  afterStamp,
+  pagedByStamp,
+  stampText,
+  type ExportContributor,
+} from '../../tenancy/index.js';
 
 /**
  * What the cancellation export needs to rebuild a document: its metadata, and the storage key and
@@ -42,16 +47,33 @@ const real = and(
 /**
  * Administrative part: the administrative documents of every patient. The export runs as the
  * organization, so row level security gives it administrative documents only: a clinical one can
- * never leave through this part.
+ * never leave through this part. They are read a page at a time (a document per visit), in the
+ * order they were uploaded.
  */
-export const exportAdministrativeDocuments: ExportContributor = async ({ tx }) => {
-  const rows = await tx
-    .select()
-    .from(document)
-    .where(and(real, eq(document.classification, 'administrative')))
-    .orderBy(asc(document.createdAt), asc(document.id));
-  return { documents: rows.map(exported) };
-};
+export const exportAdministrativeDocuments: ExportContributor = ({ tx, pageSize }) =>
+  Promise.resolve({
+    documents: pagedByStamp({
+      pageSize,
+      fetch: (after, limit) =>
+        tx
+          .select({
+            row: document,
+            cursorAt: stampText(document.createdAt),
+            cursorId: document.id,
+          })
+          .from(document)
+          .where(
+            and(
+              real,
+              eq(document.classification, 'administrative'),
+              afterStamp(document.createdAt, document.id, after),
+            ),
+          )
+          .orderBy(asc(document.createdAt), asc(document.id))
+          .limit(limit),
+      project: ({ row }) => exported(row),
+    }),
+  });
 
 /**
  * Clinical part, one package per professional: the clinical documents that professional wrote,
@@ -60,24 +82,39 @@ export const exportAdministrativeDocuments: ExportContributor = async ({ tx }) =
  * their own work, the same rule as the notes. A document the professional wrote is theirs even if
  * no relationship is active any more.
  */
-export const exportClinicalDocuments: ExportContributor = async ({ tx, professionalId }) => {
-  if (professionalId === undefined) return { documents: [] };
+export const exportClinicalDocuments: ExportContributor = ({ tx, professionalId, pageSize }) => {
+  if (professionalId === undefined) return Promise.resolve({ documents: [] });
   const treated = tx
     .select({ patientId: careRelationship.patientId })
     .from(careRelationship)
     .where(
       and(eq(careRelationship.professionalId, professionalId), eq(careRelationship.active, true)),
     );
-  const rows = await tx
-    .select()
-    .from(document)
-    .where(
-      and(
-        real,
-        eq(document.classification, 'clinical'),
-        or(eq(document.authorProfessionalId, professionalId), inArray(document.patientId, treated)),
-      ),
-    )
-    .orderBy(asc(document.createdAt), asc(document.id));
-  return { documents: rows.map(exported) };
+  return Promise.resolve({
+    documents: pagedByStamp({
+      pageSize,
+      fetch: (after, limit) =>
+        tx
+          .select({
+            row: document,
+            cursorAt: stampText(document.createdAt),
+            cursorId: document.id,
+          })
+          .from(document)
+          .where(
+            and(
+              real,
+              eq(document.classification, 'clinical'),
+              or(
+                eq(document.authorProfessionalId, professionalId),
+                inArray(document.patientId, treated),
+              ),
+              afterStamp(document.createdAt, document.id, after),
+            ),
+          )
+          .orderBy(asc(document.createdAt), asc(document.id))
+          .limit(limit),
+      project: ({ row }) => exported(row),
+    }),
+  });
 };

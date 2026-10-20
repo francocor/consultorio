@@ -81,7 +81,6 @@ const PLATFORM_SCENARIOS: Record<Exclude<AuditAction, ModuleAuditAction>, AuditS
   'auth.2fa.recovery_regenerated': t('two-factor-routes.test.ts'),
   'auth.2fa.disabled': t('two-factor-routes.test.ts'),
   'auth.invitation.accepted': t('invitation-accept.test.ts'),
-  'auth.portal.sign_in': { pending: 'Stage 5: patient portal sign-in by one-time code' },
 
   // Clinical records.
   'clinical.note.read': t('clinical-notes-api.test.ts'),
@@ -105,9 +104,7 @@ const PLATFORM_SCENARIOS: Record<Exclude<AuditAction, ModuleAuditAction>, AuditS
   'patient.created': t('patients-api.test.ts'),
   'patient.updated': t('patients-api.test.ts'),
   'patient.read': t('patients-api.test.ts'),
-  'patient.bulk_read': {
-    pending: 'Stage 6: export of patient identity data (cancellation export)',
-  },
+  'patient.bulk_read': t('cancellation-export.test.ts'),
   'patient.deactivated': t('patients-api.test.ts'),
   'patient.reactivated': t('patients-api.test.ts'),
   'patient.representative.changed': t('patients-minors.test.ts'),
@@ -173,8 +170,6 @@ const PLATFORM_SCENARIOS: Record<Exclude<AuditAction, ModuleAuditAction>, AuditS
   'day_off.removed': t('scheduling-config-api.test.ts'),
 
   // Exports and archive.
-  'export.created': { pending: 'Stage 6: cancellation export' },
-  'archive.read': { pending: 'Stage 6: archive access' },
   'audit.exported': t('audit-viewer.test.ts'),
 
   // The guided first run.
@@ -189,7 +184,7 @@ const PLATFORM_SCENARIOS: Record<Exclude<AuditAction, ModuleAuditAction>, AuditS
   'support.grant.created': t('operator-support.test.ts'),
   'support.grant.revoked': t('operator-support.test.ts'),
   'tenant.created': t('operator-tenants.test.ts'),
-  'tenant.demo_reset': { pending: 'S1.36 (task 1.124): demo reset' },
+  'tenant.demo_reset': t('operator-tenants.test.ts'),
 
   // Denials.
   'access.denied': t('admin-denied.test.ts'),

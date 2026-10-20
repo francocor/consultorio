@@ -19,7 +19,7 @@ import { WAITLIST_AUDIT_ACTIONS } from './waitlist-catalog.js';
  * a new, unqueryable action. Families follow the mandatory events of the audit-log spec.
  */
 export const AUDIT_ACTIONS = [
-  // Authentication (including patient portal sign-ins by one-time code).
+  // Authentication. The sign-ins of the patient portal by one-time code are `portal.signin.*`.
   'auth.login.success',
   'auth.login.failed',
   'auth.login.locked',
@@ -37,7 +37,6 @@ export const AUDIT_ACTIONS = [
   'auth.2fa.recovery_regenerated',
   'auth.2fa.disabled',
   'auth.invitation.accepted',
-  'auth.portal.sign_in',
   // Clinical records (every read and write).
   'clinical.note.read',
   'clinical.note.created',
@@ -138,9 +137,8 @@ export const AUDIT_ACTIONS = [
   // Support access that the organization opens for the platform.
   'support.grant.created',
   'support.grant.revoked',
-  // Exports and archive.
-  'export.created',
-  'archive.read',
+  // Exports. The cancellation export is `export.cancellation.*` and the archive is in the platform
+  // trail (`archive.*`, `operator.ts`).
   'audit.exported',
   // Platform operator.
   'support.access',

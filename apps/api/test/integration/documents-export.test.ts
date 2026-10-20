@@ -11,6 +11,7 @@ import { uuidv7 } from '../../src/platform/db/uuid.js';
 import { minimalPdf } from '../../src/platform/files/test-files.js';
 import { withScanning, type ScanningHarness } from '../support/document-scans.js';
 import { asSystem, createDocumentsHarness } from '../support/documents.js';
+import { settled } from '../support/export-sections.js';
 
 /**
  * The documents part of the cancellation export (documents, "Retention, export and tenant
@@ -66,7 +67,7 @@ describe('the administrative part', () => {
     await document(h.sessions.professional, patientId, 'lab_result', 'laboratorio-secreto');
 
     const part = (await asOrganization((tx) =>
-      exportAdministrativeDocuments({ tx, tenantId: h.tenant.id }),
+      settled(exportAdministrativeDocuments({ tx, tenantId: h.tenant.id })),
     )) as Exported;
 
     const mine = part.documents.filter((entry) => [first, second, hidden].includes(entry.id));
@@ -102,7 +103,9 @@ describe('the clinical part, one package per professional', () => {
         actingProfessionalId: h.professionalId,
       },
       (tx) =>
-        exportClinicalDocuments({ tx, tenantId: h.tenant.id, professionalId: h.professionalId }),
+        settled(
+          exportClinicalDocuments({ tx, tenantId: h.tenant.id, professionalId: h.professionalId }),
+        ),
     )) as Exported;
 
     expect(part.documents.map((entry) => entry.id)).toContain(kept);
@@ -138,7 +141,9 @@ describe('the clinical part, one package per professional', () => {
         actingProfessionalId: h.professionalId,
       },
       (tx) =>
-        exportClinicalDocuments({ tx, tenantId: h.tenant.id, professionalId: h.professionalId }),
+        settled(
+          exportClinicalDocuments({ tx, tenantId: h.tenant.id, professionalId: h.professionalId }),
+        ),
     )) as Exported;
     const colleaguePart = (await createWithTenant(runtime.db)(
       {
@@ -146,7 +151,10 @@ describe('the clinical part, one package per professional', () => {
         userId: h.sessions.colleague.user.id,
         actingProfessionalId: h.colleagueId,
       },
-      (tx) => exportClinicalDocuments({ tx, tenantId: h.tenant.id, professionalId: h.colleagueId }),
+      (tx) =>
+        settled(
+          exportClinicalDocuments({ tx, tenantId: h.tenant.id, professionalId: h.colleagueId }),
+        ),
     )) as Exported;
 
     expect(part.documents.map((entry) => entry.id)).toContain(id);
@@ -155,7 +163,7 @@ describe('the clinical part, one package per professional', () => {
 
   it('is empty for a package that names no professional', async () => {
     const part = (await asOrganization((tx) =>
-      exportClinicalDocuments({ tx, tenantId: h.tenant.id }),
+      settled(exportClinicalDocuments({ tx, tenantId: h.tenant.id })),
     )) as Exported;
 
     expect(part.documents).toEqual([]);

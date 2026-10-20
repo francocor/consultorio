@@ -25,6 +25,7 @@ import {
   ensureDemoTenant,
   seedDemoTenant,
 } from '../../src/db/seed/demo/index.js';
+import { PLATFORM_DEMO_TENANTS, seedPlatformDemo } from '../../src/db/seed/demo/stage6/index.js';
 import { seedPlatformCatalogs } from '../../src/db/seed/platform.js';
 import { createAdapterResolver } from '../../src/main/adapter-resolver.js';
 import { buildAdapterRegistry } from '../../src/main/adapters.js';
@@ -102,6 +103,12 @@ export interface StackOptions {
   /** Run the worker (audit sealing, scans, hold expiry) in the same process. */
   withWorker?: boolean;
   /**
+   * Also create the four billed organizations of `pnpm demo:platform` (a trial, an active
+   * subscription, a charge that failed, a read-only organization). On by default: the browser
+   * journeys of the subscription use them as their starting points.
+   */
+  platformDemo?: boolean;
+  /**
    * Host port of the object storage. A browser uploads documents straight to it, so the web app must
    * allow that origin (`CSP_CONNECT_SOURCES=http://localhost:<port>` when it is built or served).
    * Random when absent.
@@ -122,6 +129,17 @@ export interface StackInfo {
   operator: { email: string; password: string; totpSecret: string };
   /** The second person of the four-eyes steps of the archive release. */
   operatorTwo: { email: string; password: string; totpSecret: string };
+  /** The billed organizations of the platform demo, by state (empty when the stack was told not to make them). */
+  platformDemo: Record<
+    string,
+    {
+      slug: string;
+      name: string;
+      ownerEmail: string;
+      receptionEmail: string;
+      professionalEmail: string | null;
+    }
+  >;
 }
 
 export interface Stack {
@@ -303,6 +321,20 @@ export async function startStack(options: StackOptions): Promise<Stack> {
       );
     await applyNorteTheme();
 
+    // The organizations with a subscription: each state of it, built by the services of the module.
+    if (options.platformDemo !== false) {
+      log('Seeding the platform demo organizations');
+      await seedPlatformDemo({
+        db: runtime.db,
+        withTenant,
+        hasher,
+        origins: originsFromConfig(config),
+        webhookSecret: randomBytes(24).toString('hex'),
+        publicBaseUrl: `http://${platformHost}/api`,
+        environment: 'development',
+      });
+    }
+
     const operatorAdmin = createOperatorAdminFor({
       db: operatorDb.db,
       hasher,
@@ -479,6 +511,21 @@ export async function startStack(options: StackOptions): Promise<Stack> {
         password: OPERATOR_TWO.password,
         totpSecret: operatorTwo.totpSecretBase32,
       },
+      platformDemo:
+        options.platformDemo === false
+          ? {}
+          : Object.fromEntries(
+              PLATFORM_DEMO_TENANTS.map((entry) => [
+                entry.state,
+                {
+                  slug: entry.slug,
+                  name: entry.displayName,
+                  ownerEmail: entry.ownerEmail,
+                  receptionEmail: entry.receptionEmail,
+                  professionalEmail: entry.professionalEmail ?? null,
+                },
+              ]),
+            ),
     };
     if (options.infoFile) {
       await mkdir(dirname(options.infoFile), { recursive: true });
@@ -503,11 +550,20 @@ export async function startStack(options: StackOptions): Promise<Stack> {
  * identity, the way `infra/docker-compose.yml` does for the local environment.
  */
 async function prepareArchiveBucket(minio: StartedTestContainer): Promise<void> {
+  // The Docker daemon can drop the connection of an exec while the container is still settling (a
+  // "socket hang up" that is thrown, not an exit code): it counts as a server that is not ready.
+  const run = async (command: string[]): Promise<{ exitCode: number; output: string }> => {
+    try {
+      return await minio.exec(command);
+    } catch (error) {
+      return { exitCode: -1, output: `not ready: ${String(error)}` };
+    }
+  };
   // MinIO can restart under the first commands (the image does it once while it starts), so a command
   // that finds the server down is tried again.
   const mc = async (...args: string[]) => {
     for (let attempt = 1; ; attempt += 1) {
-      const result = await minio.exec(['mc', ...args]);
+      const result = await run(['mc', ...args]);
       if (result.exitCode === 0) return;
       const down = /connection refused|EOF|reset by peer|not ready/i.test(result.output);
       if (!down || attempt >= 20) {
@@ -519,7 +575,7 @@ async function prepareArchiveBucket(minio: StartedTestContainer): Promise<void> 
   // The image restarts MinIO once while it starts: the alias is retried.
   let ready = false;
   for (let attempt = 0; attempt < 30 && !ready; attempt += 1) {
-    const set = await minio.exec([
+    const set = await run([
       'mc',
       'alias',
       'set',

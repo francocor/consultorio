@@ -7,6 +7,7 @@ import {
   FORBIDDEN_METADATA_KEYS,
   isAuditAction,
 } from './audit-actions.js';
+import { ARCHIVE_PLATFORM_AUDIT_ACTIONS } from './cancellation-catalog.js';
 
 describe('audit action catalogue', () => {
   it('lists unique, dot-separated lowercase actions', () => {
@@ -17,7 +18,11 @@ describe('audit action catalogue', () => {
   });
 
   it('covers the mandatory event families of the audit-log spec', () => {
-    const families = new Set(AUDIT_ACTIONS.map((action) => action.split('.')[0]));
+    // Archive access is written in the platform trail (the organization is gone), not in the tenant
+    // one: `archive.accessed`, `archive.released`, ...
+    const families = new Set(
+      [...AUDIT_ACTIONS, ...ARCHIVE_PLATFORM_AUDIT_ACTIONS].map((action) => action.split('.')[0]),
+    );
 
     for (const family of [
       'auth',

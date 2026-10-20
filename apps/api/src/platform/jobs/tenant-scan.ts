@@ -30,3 +30,20 @@ export function listTenantIds(db: Db): Promise<string[]> {
     return rows.map((row) => row.id);
   });
 }
+
+/**
+ * How many organizations there are in each operational status, the unconfirmed signups included (they
+ * are not listed for jobs, but they are part of what the platform holds). Same platform scope as
+ * `listTenantIds`: it reads the `tenant` table only, and only counts.
+ */
+export function tenantStatusCounts(db: Db): Promise<Map<string, number>> {
+  return db.transaction(async (tx) => {
+    await tx.execute(sql`select
+      set_config('app.tenant_id', ${NO_TENANT}, true),
+      set_config('app.scope', 'platform', true)`);
+    const result = await tx.execute<{ status: string; n: number }>(
+      sql`select status, count(*)::int as n from tenant group by status`,
+    );
+    return new Map(result.rows.map((row) => [row.status, row.n]));
+  });
+}

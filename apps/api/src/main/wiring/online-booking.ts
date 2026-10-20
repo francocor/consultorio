@@ -10,6 +10,7 @@ import {
   createOtpSendJob,
 } from '../../modules/online-booking/index.js';
 import { adapterOfSetting } from '../../platform/local-providers/dev-routes.js';
+import { METRIC_DESCRIPTIONS } from '../../platform/metrics-catalog.js';
 import { createMetrics } from '../../platform/metrics.js';
 import { createActionTokens } from '../../platform/tokens/index.js';
 import { createTenantRoutedEmail, fake, real } from '../adapter-resolver.js';
@@ -25,7 +26,7 @@ import type { ModuleWiring } from './types.js';
  * What online booking counts in this process (suspicious activity of the public form). The internal
  * metrics endpoint reads it; one registry per process is what the API needs.
  */
-export const onlineBookingMetrics = createMetrics();
+export const onlineBookingMetrics = createMetrics({ catalog: METRIC_DESCRIPTIONS });
 
 /** The purge of abandoned submissions runs for every organization once an hour. */
 const PURGE_EVERY_MS = 3_600_000;

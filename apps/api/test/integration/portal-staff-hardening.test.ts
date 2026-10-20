@@ -15,6 +15,7 @@ import { exportPortal } from '../../src/modules/portal/application/export-contri
 import { createMajorityReviewJob } from '../../src/modules/portal/index.js';
 import { createRuntimeDb, type DbHandle } from '../../src/platform/db/pool.js';
 import { runJob } from '../../src/platform/jobs/define-job.js';
+import { settled } from '../support/export-sections.js';
 import { createPortalWorld, type PortalWorld } from '../support/portal-world.js';
 
 /**
@@ -583,7 +584,7 @@ describe('B-W8: the portal part of the cancellation export', () => {
     expect(shared.statusCode, shared.body).toBe(200);
 
     const exported = (await world.inTenant((tx) =>
-      exportPortal({ tx, tenantId: world.tenant.id }),
+      settled(exportPortal({ tx, tenantId: world.tenant.id })),
     )) as {
       identities: { id: string; email: string; status: string }[];
       links: { id: string; patientId: string; relationship: string; relation: string | null }[];

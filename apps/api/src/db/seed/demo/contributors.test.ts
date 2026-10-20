@@ -4,6 +4,7 @@ import { DEMO_CONTRIBUTORS, runContributors, type DemoContributorContext } from 
 import { seedStage3 } from './stage3/index.js';
 import { seedStage4 } from './stage4/index.js';
 import { seedStage5 } from './stage5/index.js';
+import { seedStage6 } from './stage6/index.js';
 
 const context = { tenantId: 'tenant-1' } as unknown as DemoContributorContext;
 
@@ -34,7 +35,7 @@ describe('the demo contributors', () => {
     expect(after).not.toHaveBeenCalled();
   });
 
-  it('registers the Stage 3 seed (engagement), the Stage 4 one (revenue, which reads the visits) and the Stage 5 one (compliance and portal), and nothing else yet', () => {
-    expect(DEMO_CONTRIBUTORS).toEqual([seedStage3, seedStage4, seedStage5]);
+  it('registers the Stage 3 seed (engagement), the Stage 4 one (revenue, which reads the visits), the Stage 5 one (compliance and portal) and the Stage 6 one (the exempt state), and nothing else yet', () => {
+    expect(DEMO_CONTRIBUTORS).toEqual([seedStage3, seedStage4, seedStage5, seedStage6]);
   });
 });

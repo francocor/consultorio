@@ -1,5 +1,6 @@
 import { expect, test, type Page } from '@playwright/test';
 
+import { orgUrl, platformOrg, signInTo } from './support/platform-demo.js';
 import { expectFitsAndAccessible } from './support/public-booking.js';
 import { emailOf, emailTo, linkIn, localLink, stack, urlOf } from './support/stack.js';
 
@@ -10,8 +11,11 @@ import { emailOf, emailTo, linkIn, localLink, stack, urlOf } from './support/sta
  * every screen. Asking for a new link, and signing up with an address that already has an account
  * (which must look exactly the same), are journeys of their own.
  *
- * The subscription half of the journey (approve in the local checkout, tenant active the same day)
- * joins this file when the subscriptions track (S6.04 and S6.07) lands.
+ * The subscription half of the journey (approve in the local checkout, tenant active the same day) is
+ * in `stage6-demo.spec.ts`, and the roles of a billed organization are checked at the end of this file
+ * on the organizations of the platform demo: a professional is denied on the billing, and in a
+ * read-only organization a write of reception is refused with the reason and without a word about the
+ * billing.
  */
 test.use({ viewport: { width: 360, height: 740 }, isMobile: true, hasTouch: true });
 test.setTimeout(240_000);
@@ -170,4 +174,53 @@ test('the signup does not exist on the host of an organization', async ({ page }
     headers: { origin: urlOf('aillu', '') },
   });
   expect(response.status()).toBe(404);
+});
+
+test('a professional of a billed organization is denied on the billing, with no link to it', async ({
+  page,
+}) => {
+  const org = platformOrg('active');
+  await signInTo(page, org.slug, org.professionalEmail ?? '');
+
+  await page.goto(orgUrl(org.slug, '/subscription'));
+
+  await expect(page.getByText('No tiene acceso a esta sección')).toBeVisible();
+  await expect(page.getByRole('link', { name: 'Suscripción' })).toHaveCount(0);
+  await expectFitsAndAccessible(page);
+});
+
+test('in a read-only organization a write of reception is refused with the reason, and the page says nothing of the billing', async ({
+  page,
+}) => {
+  const org = platformOrg('read_only');
+  await signInTo(page, org.slug, org.receptionEmail);
+
+  // The banner is the reason, and it points at the owner of the account, not at the billing.
+  await page.goto(orgUrl(org.slug, '/patients/new'));
+  const banner = page
+    .getByRole('status')
+    .filter({ hasText: 'Organización en modo de solo lectura' });
+  await expect(banner).toBeVisible();
+  await expect(banner).toContainText('persona titular de la cuenta');
+  await expect(banner.getByRole('link')).toHaveCount(0);
+  await expect(banner).not.toContainText(/suscripci|factura|pago/i);
+  await expectFitsAndAccessible(page);
+
+  // Reading still works.
+  await page.goto(orgUrl(org.slug, '/patients'));
+  await expect(page.getByRole('heading', { level: 1, name: 'Pacientes' })).toBeVisible();
+
+  // The write is refused by the server, and the form says why.
+  await page.goto(orgUrl(org.slug, '/patients/new'));
+  await page.getByLabel('Apellido').fill('Prueba');
+  await page.getByLabel('Nombre', { exact: true }).fill('Paciente');
+  await page.getByLabel('Fecha de nacimiento').fill('1990-01-01');
+  await page.getByLabel('Número de documento').fill(`96${String(Date.now()).slice(-6)}`);
+  await page.getByRole('radio', { name: /El paciente acepta el tratamiento/ }).click();
+  await page.getByRole('button', { name: 'Registrar paciente' }).click();
+  const refusal = page.getByRole('alert').filter({ hasText: 'modo de solo lectura' });
+  await expect(refusal).toBeVisible();
+  await expect(refusal).not.toContainText(/suscripci|factura|pago|Mercado/i);
+  await expect(page.getByRole('heading', { level: 1, name: 'Paciente Prueba' })).toHaveCount(0);
+  await expectFitsAndAccessible(page);
 });

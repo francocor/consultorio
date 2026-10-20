@@ -119,7 +119,7 @@ async function psql(target: PostgresTarget, database: string, sql: string): Prom
   return result.stdout.trim();
 }
 
-function s3Client(target: BucketTarget): S3Client {
+export function s3Client(target: BucketTarget): S3Client {
   return new S3Client({
     region: target.region,
     ...(target.endpoint === undefined ? {} : { endpoint: target.endpoint }),
