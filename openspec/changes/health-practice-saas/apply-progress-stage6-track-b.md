@@ -22,6 +22,8 @@ Change: `health-practice-saas`. Branch `feat/stage-6-track-6b`, from the Stage 6
 | `af73e96` | 6.10, 6.11, 6.12 | Contracts, module, routes, wiring, mailer, housekeeping (purge and retry), migration 0641; `signup.test.ts` (28), `signup-purge.test.ts` (10), `signup-abuse.test.ts` (9), policy tests, public route declarations, audit scenarios.                                                     |
 | `857e693` | 6.29             | `features/onboarding/signup` (page, check-your-email screen, verification page), `signup.json`, `errors.signup.json`, 21 component tests.                                                                                                                                                  |
 | `c0e87ce` | 6.10, 6.29, 6.32 | Host gates before the body, a counter of its own for new links, the acceptance in the export of onboarding, demo coverage exemptions, `e2e/stage6-signup.spec.ts`.                                                                                                                         |
+| `986ec26` | tests            | The signup request in the list of requests that carry a password (a policy test of the contracts).                                                                                                                                                                                       |
+| `ee1cdcd` | tests            | The retry test checks its own address, not the whole pass.                                                                                                                                                                                                                                |
 | (this)    | docs             | This file, `tasks.md` marks.                                                                                                                                                                                                                                                              |
 
 ## How it works (the decisions that are not in the spec)
@@ -68,7 +70,21 @@ Change: `health-practice-saas`. Branch `feat/stage-6-track-6b`, from the Stage 6
 
 ## Verification
 
-(see the table below, filled after the last run)
+Node v24, pnpm 10.34.7, Docker running, other tracks running at the same time (so the machine was loaded). Logs are in `$TEMP/6b-*.log`. Only the integration files that concern this track were run (never the full suite), and the e2e ran on ports 5030, 4030 and 9030 with one worker.
+
+| Command | Result |
+| --- | --- |
+| `corepack pnpm install --frozen-lockfile` | exit 0 |
+| `corepack pnpm typecheck` | exit 0 (contracts, api, web) |
+| `corepack pnpm lint` / `corepack pnpm format:check` | exit 0 / exit 0 |
+| `corepack pnpm test` | **457 files, 5,805 tests**: 5,803 passed, 2 skipped; the first run had 2 failures that are not left: `contracts/src/auth-recovery.test.ts` (a real finding: the list of requests that carry a password did not know `SignupRequest`; fixed, 5 tests pass) and `financial-report-page.test.tsx` (a 30 s timeout under load; passes alone, 26 tests) |
+| `corepack pnpm test:integration`, only these files (39 files, 1,031 tests): `signup`, `signup-purge`, `signup-schema`, `signup-abuse`, `definer-functions`, `no-delete-privileges`, `audit-integrity`, `audit-verify`, `demo-reset`, `demo-coverage`, `operator-privileges`, `branding-boot`, `job-queues`, `jobs`, `worker`, `public-surface`, `public-nondisclosure`, `public-tokens`, the generated isolation suite, `test/policy`, `migrate-validation`, `migration-lanes` | 1,030 passed and 1 failed: the retry test of `signup.test.ts` asserted that a pass retried NOTHING, but the pass is global and other files leave unsent signups in the shared database. It now checks its own address; `signup.test.ts` and `signup-abuse.test.ts` pass together (37 tests) |
+| `corepack pnpm build` | exit 0 (api, web; the signup pages are lazy chunks) |
+| `corepack pnpm db:check` / `db:restamp` | No migration drift; snapshots already chained; the last snapshot matches the schema |
+| `playwright test e2e/stage6-signup.spec.ts --workers=1 --project=desktop` on this branch | 6 passed, 1 skipped (the activation: the trial door of the seam refuses until S6.01); the refusal is logged with frames and no message |
+| the same spec in a scratch clone with `origin/feat/stage-6-track-6a` (`955ca40`) merged | **7 of 7 passed**, including the activation that lands in the wizard and `GET /auth/me` as the owner of an active organization. The same clone passed the 5 signup integration files (58 tests) with a test that uses the real door (a 14-day trial; trail `signup.created, terms.accepted, subscription.created, signup.verified`). The clone was deleted; nothing of it is pushed |
+
+Mutation checks (the files were restored each time): removing the two new branches of the read-only policy failed 13 tests; `EVEN_WORK.request` from 6 to 5 failed exactly the statement-count test. Removing the account check of `verify` failed nothing, because the unique key of `user_account` gives the same answer (documented above).
 
 ## What is left
 
