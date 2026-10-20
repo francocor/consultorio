@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { DEFAULT_MANUAL_LINK_DOMAINS } from '../../adapters/video-local/index.js';
 import { createVideoJoinRegistry } from '../../modules/notifications/index.js';
 import { VideoProviderUnavailableError } from '../../modules/teleconsultation/application/ports.js';
+import { createTenantLifecycle } from '../../modules/tenancy/index.js';
 import { loadConfig } from '../config.js';
 
 import { teleconsultationWiring } from './teleconsultation.js';
@@ -109,6 +110,7 @@ describe('the join address that reminders carry', () => {
       adapters: {} as never,
       email: {} as never,
       videoJoin,
+      tenantLifecycle: createTenantLifecycle(),
     });
 
     // The slot is taken: a second resolver would be refused.

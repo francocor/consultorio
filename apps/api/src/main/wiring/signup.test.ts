@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import { createFakeEmailSender } from '../../adapters/fake-email/index.js';
 import { createVideoJoinRegistry } from '../../modules/notifications/index.js';
+import { createTenantLifecycle } from '../../modules/tenancy/index.js';
 import { loadConfig } from '../config.js';
 
 import { signupWiring } from './signup.js';
@@ -21,6 +22,7 @@ function contribution() {
     adapters: { forTenant: () => undefined },
     email: createFakeEmailSender(),
     videoJoin: createVideoJoinRegistry(),
+    tenantLifecycle: createTenantLifecycle(),
   });
 }
 

@@ -126,6 +126,12 @@ export interface WorkerWiringContext {
   clock?: () => Date;
   /** The same registry for every module of this worker process. */
   videoJoin: VideoJoinRegistry;
+  /**
+   * What happens to an organization when it ends (Stage 6), the one bus of this worker process. The
+   * end of a paid period is decided here (`dunning.step`), so the writer that publishes and the
+   * retention subscriber must share this bus, as they share the API's.
+   */
+  tenantLifecycle: TenantLifecycle;
 }
 
 /** Jobs, scheduled tasks and per-organization ticks a module adds to the worker process. */

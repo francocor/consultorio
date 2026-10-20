@@ -43,7 +43,7 @@ export {
   createCancellationExportJob,
 } from './cancellation/build-export.js';
 export type { CancellationExportDeps } from './cancellation/build-export.js';
-export { enqueuePendingExports } from './cancellation/queue.js';
+export { enqueuePendingExports, subscribeCancellationExport } from './cancellation/queue.js';
 export { operatorCancelRoutes } from './cancellation/http/operator-cancel-routes.js';
 export { createArchive } from './archive/archive.js';
 export { enqueueDueArchives, enqueueDueVerifications } from './archive/due.js';

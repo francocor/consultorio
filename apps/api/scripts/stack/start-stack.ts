@@ -43,6 +43,7 @@ import { holdExpireJob } from '../../src/modules/scheduling/index.js';
 import { generateReleaserKeys } from '../../src/modules/tenancy/archive/archive-crypto.js';
 import {
   createReleaser,
+  createTenantLifecycle,
   enqueueDueArchives,
   enqueuePendingExports,
 } from '../../src/modules/tenancy/index.js';
@@ -391,6 +392,8 @@ export async function startStack(options: StackOptions): Promise<Stack> {
     let worker: Awaited<ReturnType<typeof startWorker>> | undefined;
     if (options.withWorker !== false) {
       const videoJoin = createVideoJoinRegistry();
+      // One bus for the worker: the billing jobs publish the end of an organization, retention subscribes.
+      const tenantLifecycle = createTenantLifecycle();
       worker = await startWorker({
         databaseUrl: runtimeUrl,
         sealerDatabaseUrl: sealerUrl,
@@ -401,7 +404,14 @@ export async function startStack(options: StackOptions): Promise<Stack> {
           { tenantJobs: [{ definition: holdExpireJob, everyMs: 60_000 }] },
           documentWorker({ storage, scanner, email: email.sender }),
           ...MODULE_WIRINGS.map(
-            (module) => module.worker?.({ config, adapters, email: email.sender, videoJoin }) ?? {},
+            (module) =>
+              module.worker?.({
+                config,
+                adapters,
+                email: email.sender,
+                videoJoin,
+                tenantLifecycle,
+              }) ?? {},
           ),
         ]),
       });

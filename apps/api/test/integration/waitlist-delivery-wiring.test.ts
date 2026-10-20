@@ -10,6 +10,7 @@ import { waitlistWiring } from '../../src/main/wiring/waitlist.js';
 import type { WhatsAppSendRequest } from '../../src/modules/notifications/application/ports.js';
 import { recordOptIn } from '../../src/modules/notifications/application/preferences.js';
 import { createVideoJoinRegistry } from '../../src/modules/notifications/index.js';
+import { createTenantLifecycle } from '../../src/modules/tenancy/index.js';
 import { createTenantKeys } from '../../src/platform/crypto/tenant-keys.js';
 import { createRuntimeDb, type DbHandle } from '../../src/platform/db/pool.js';
 import type { JobDefinition } from '../../src/platform/jobs/define-job.js';
@@ -74,6 +75,7 @@ beforeAll(async () => {
     email,
     clock: () => world.now(),
     videoJoin: createVideoJoinRegistry(),
+    tenantLifecycle: createTenantLifecycle(),
   };
   const job = { client: world.jobs, db: runtime.db, metrics: {} as never, log: {} as never };
   // The two modules contribute to the same worker, the way main.ts joins them.

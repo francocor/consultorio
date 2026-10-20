@@ -8,7 +8,7 @@ import { createPasswordHasher } from '../modules/identity/index.js';
 import { configureAddressHash, createVideoJoinRegistry } from '../modules/notifications/index.js';
 import { createOperatorSecrets } from '../modules/operator/index.js';
 import { holdExpireJob } from '../modules/scheduling/index.js';
-import { createReleaser } from '../modules/tenancy/index.js';
+import { createReleaser, createTenantLifecycle } from '../modules/tenancy/index.js';
 import { createTenantKeys } from '../platform/crypto/tenant-keys.js';
 import { createOperatorDb, createRuntimeDb } from '../platform/db/pool.js';
 import { createDbProbe } from '../platform/db/probe.js';
@@ -246,6 +246,8 @@ async function runWorker(config: Config): Promise<void> {
   );
   // One registry for the process: teleconsultation fills it, notifications asks it.
   const videoJoin = createVideoJoinRegistry();
+  // One bus for the process: the billing jobs publish the end of an organization, retention subscribes.
+  const tenantLifecycle = createTenantLifecycle();
   const worker = await startWorker({
     databaseUrl: config.databaseUrl,
     dbPoolMax: config.dbPoolMax,
@@ -258,7 +260,9 @@ async function runWorker(config: Config): Promise<void> {
       { tenantJobs: [{ definition: createTokenPurgeJob(), everyMs: 86_400_000 }] },
       ...(storage ? [documentWorker({ storage, scanner, email: email.sender })] : []),
       ...MODULE_WIRINGS.map(
-        (module) => module.worker?.({ config, adapters, email: email.sender, videoJoin }) ?? {},
+        (module) =>
+          module.worker?.({ config, adapters, email: email.sender, videoJoin, tenantLifecycle }) ??
+          {},
       ),
     ]),
   });

@@ -19,7 +19,6 @@ import {
   createSubscriptions,
   subscriptionOperatorRoutes,
 } from '../../modules/subscriptions/index.js';
-import { createTenantLifecycle } from '../../modules/tenancy/index.js';
 import { createRuntimeDb, type Db } from '../../platform/db/pool.js';
 import { createWithTenant } from '../../platform/db/tenant-context.js';
 import { fanOut } from '../../platform/jobs/worker.js';
@@ -175,7 +174,7 @@ export const subscriptionsWiring: ModuleWiring = {
       },
     };
   },
-  worker: ({ config, adapters, email, clock }) => {
+  worker: ({ config, adapters, email, clock, tenantLifecycle }) => {
     const now = clock ?? (() => new Date());
     const billing = config.deploymentMode === 'multi';
     return {
@@ -189,8 +188,8 @@ export const subscriptionsWiring: ModuleWiring = {
           email,
           origins: originsFromConfig(config),
           clock: now,
-          // The end of a subscription is announced to retention through this bus.
-          tenantCancelled: createTenantLifecycle(),
+          // The end of a subscription is announced to retention through the bus of the worker.
+          tenantCancelled: tenantLifecycle,
           log,
         });
         // Billing exists only where organizations are billed. A single-tenant deployment still meters

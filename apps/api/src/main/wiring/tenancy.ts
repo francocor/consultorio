@@ -16,6 +16,7 @@ import {
   operatorCancelRoutes,
   releaseRoutes,
   createReleaseRequests,
+  subscribeCancellationExport,
 } from '../../modules/tenancy/index.js';
 import { createTenantKeys } from '../../platform/crypto/tenant-keys.js';
 import { createWithTenant } from '../../platform/db/tenant-context.js';
@@ -132,7 +133,9 @@ export const tenancyWiring: ModuleWiring = {
       releases(app);
     };
   },
-  worker: ({ config, email, clock, adapters }) => {
+  worker: ({ config, email, clock, adapters, tenantLifecycle }) => {
+    // A cancellation decided in the worker (the end of a paid period) asks for the export here too.
+    subscribeCancellationExport(tenantLifecycle);
     // The bucket of the packages is the one of the documents. It is opened when the first job needs it.
     let storage: ObjectStorage | undefined;
     const bucket = () => {
