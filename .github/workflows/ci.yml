@@ -15,7 +15,20 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # The type-aware lint runs in several processes, one after the other (about five minutes on a laptop,
+  # packages/config/eslint/lint.js): it is a job of its own so that it runs beside the rest and the
+  # time of the checks is the longer of the two, not their sum.
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: ./.github/actions/setup-workspace
+      - run: pnpm lint
+
   check:
+    # The name stays as the required checks of the repository know it; lint has its own job above.
     name: Typecheck, lint, unit tests, build
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -23,7 +36,6 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - uses: ./.github/actions/setup-workspace
       - run: pnpm typecheck
-      - run: pnpm lint
       - run: pnpm format:check
       - run: pnpm test
       - run: pnpm build
