@@ -1,3 +1,10 @@
 {
-  "subscription_professional_limit": "Su plan alcanzó el máximo de profesionales activos. Cambie de plan para sumar otro profesional; las altas de recepción y administración no tienen límite."
+  "subscription_professional_limit": "Su plan alcanzó el máximo de profesionales activos. Cambie de plan para sumar otro profesional; las altas de recepción y administración no tienen límite.",
+  "subscription_payments_unavailable": "No pudimos comunicarnos con Mercado Pago. No se hizo ningún cambio en su suscripción: intente nuevamente en unos minutos.",
+  "subscription_checkout_in_progress": "Ya estamos preparando su autorización de pago, o todavía verificamos con Mercado Pago si llegó a crearse. Espere unos minutos y vuelva a intentar: no se cobró nada.",
+  "subscription_needs_attention": "Encontramos algo en Mercado Pago que no podemos resolver solos. No se cobró nada de más y no se hará ningún cambio hasta que el equipo de la plataforma lo revise. Escríbanos para acelerarlo.",
+  "subscription_checkout_rejected": "Mercado Pago no aceptó la solicitud de suscripción. Revise el correo del titular y vuelva a intentar.",
+  "subscription_exempt": "Esta cuenta no tiene facturación: no hay suscripción para administrar.",
+  "subscription_cancelled": "La suscripción de esta organización ya terminó.",
+  "subscription_already_subscribed": "La suscripción ya está activa con un medio de pago autorizado."
 }

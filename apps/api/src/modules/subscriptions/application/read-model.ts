@@ -84,10 +84,12 @@ export async function describeSubscription(
     nextTransition: nextTransitionOf(current),
     authorization: current.authorizationState as SubscriptionDto['authorization'],
     paymentMethodLabel: current.paymentMethodLabel,
+    nextChargeAt: current.nextChargeAt?.toISOString() ?? null,
+    authorizedAmountCents: current.authorizedAmountCents,
     overageCapMessages: current.overageCapMessages,
     activeProfessionals,
     monthlyPriceCents: activeProfessionals * plan.pricePerProfessionalCents,
-    needsAttention: false,
+    needsAttention: current.attentionReason !== null,
   };
   return {
     exempt: false,

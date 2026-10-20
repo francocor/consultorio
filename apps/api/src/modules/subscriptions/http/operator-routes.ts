@@ -3,7 +3,7 @@ import {
   OperatorSubscriptionsResponse,
   type SubscriptionStatus,
 } from '@consultorio/contracts';
-import { asc, eq } from 'drizzle-orm';
+import { asc, eq, sql } from 'drizzle-orm';
 import type { FastifyInstance } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
@@ -29,6 +29,10 @@ const SELECTED = {
   dunningStep: subscription.dunningStep,
   authorizationState: subscription.authorizationState,
   overageCapMessages: subscription.overageCapMessages,
+  attentionReason: subscription.attentionReason,
+  // Payments flagged as a surplus and not looked at: a count, never a payer.
+  surplusFlags: sql<number>`(select count(*)::int from subscription_payment p
+      where p.tenant_id = ${subscription.tenantId} and p.surplus and p.surplus_reviewed_at is null)`,
 } as const;
 
 interface Selected {
@@ -41,6 +45,8 @@ interface Selected {
   dunningStep: number;
   authorizationState: string;
   overageCapMessages: number;
+  attentionReason: string | null;
+  surplusFlags: number;
 }
 
 function toDto(row: Selected): OperatorSubscriptionDto {
@@ -54,6 +60,8 @@ function toDto(row: Selected): OperatorSubscriptionDto {
     dunningStep: row.dunningStep,
     authorization: row.authorizationState as OperatorSubscriptionDto['authorization'],
     overageCapMessages: row.overageCapMessages,
+    attentionReason: row.attentionReason,
+    surplusFlags: row.surplusFlags,
   };
 }
 

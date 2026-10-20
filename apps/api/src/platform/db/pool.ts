@@ -21,10 +21,12 @@ export const CONNECTION_TIMEOUT_MS = 10_000;
 
 /**
  * The most connections the runtime pool opens unless the configuration says otherwise
- * (`DB_POOL_MAX`). Above the floor of the configuration (`MIN_DB_POOL_MAX`, 14 for the three families
- * of jobs that hold a transaction idle: JD-S5 R4-2).
+ * (`DB_POOL_MAX`). Above the floor of the configuration (`MIN_DB_POOL_MAX`, which grows by four with
+ * every family of jobs that holds a transaction idle: 14 for the three of Stages 4 and 5 (JD-S5 R4-2),
+ * 18 with the reconcile of the payments, 22 with the dunning of Stage 6). 24 leaves two for the rest.
+ * `.env.example` still pins 16, the maintainer's line to change (see `docs/runbooks/deploy.md`).
  */
-export const DEFAULT_RUNTIME_POOL_MAX = 16;
+export const DEFAULT_RUNTIME_POOL_MAX = 24;
 
 function open(connectionString: string, max: number): DbHandle {
   const pool = new Pool({ connectionString, max, connectionTimeoutMillis: CONNECTION_TIMEOUT_MS });

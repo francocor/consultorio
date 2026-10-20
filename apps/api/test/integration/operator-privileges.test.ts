@@ -91,6 +91,7 @@ describe('the operator database role is an allowlist', () => {
       // Matricula verification: the one write the operator makes on a professional.
       'professional',
       'subscription',
+      'subscription_payment',
       'tenant',
       'tenant_feature',
       'tenant_key',

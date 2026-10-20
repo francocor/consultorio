@@ -21,7 +21,10 @@ import type { EmailSender } from '../../platform/mail/email-sender.js';
 import type { ExportRegistry, TenantCancelledPort } from '../tenancy/index.js';
 
 import { exportSubscriptions } from './application/export-contributor.js';
+import type { SubscriptionDeps } from './application/provider.js';
+import { gatewayOf, isSimulated } from './application/provider.js';
 import { subscriptionRoutes } from './http/subscription-routes.js';
+import { subscriptionWebhookRoutes } from './http/webhook-routes.js';
 
 export { createSubscriptionPlanImpact } from './application/plan-impact.js';
 export { createQuotaPolicy } from './application/quota-policy.js';
@@ -30,6 +33,9 @@ export { assertProfessionalSeatAvailable } from './application/seats.js';
 export { createTrialStarter } from './application/trial.js';
 export type { StartTrialResult, TrialStarter } from './application/trial.js';
 export { subscriptionOperatorRoutes } from './http/operator-routes.js';
+export { createSubscriptionJobs, SUBSCRIPTION_RECONCILE_JOB } from './jobs/subscription-jobs.js';
+export type { SubscriptionDeps } from './application/provider.js';
+export { isSimulated } from './application/provider.js';
 export type * from './application/ports.js';
 
 /** Registers what subscriptions takes with an organization that leaves: its statements. */
@@ -52,6 +58,8 @@ export interface SubscriptionsOptions {
   /** Says an organization was cancelled (the subscription reaching its end publishes through it). */
   tenantCancelled: TenantCancelledPort;
   clock?: () => Date;
+  /** How long a call to the provider is waited for before its outcome counts as unknown (20 s). */
+  providerTimeoutMs?: number | undefined;
 }
 
 export interface Subscriptions {
@@ -61,19 +69,38 @@ export interface Subscriptions {
   routes: (app: FastifyInstance) => void;
 }
 
-/** Who the payments gateway belongs to: nobody. The resolver only needs to know it is not a demo. */
-const PLATFORM_TENANT_ID = '00000000-0000-0000-0000-000000000000';
+/** The services of the module are built with this: what the composition root offers. */
+export function depsOf(options: SubscriptionsOptions): SubscriptionDeps {
+  return {
+    withTenant: options.withTenant,
+    adapters: options.adapters,
+    jobs: options.jobs,
+    email: options.email,
+    origins: options.origins,
+    tenantCancelled: options.tenantCancelled,
+    clock: options.clock ?? (() => new Date()),
+    providerTimeoutMs: options.providerTimeoutMs,
+  };
+}
 
 export function createSubscriptions(options: SubscriptionsOptions): Subscriptions {
-  const clock = options.clock ?? (() => new Date());
-  const gateway = () =>
-    options.adapters?.forTenant({ id: PLATFORM_TENANT_ID, isDemo: false }, 'paymentsGateway');
+  const deps = depsOf(options);
+  const registerOwnerRoutes = subscriptionRoutes({
+    deps,
+    simulated: () => isSimulated(gatewayOf(deps)),
+  });
+  const registerWebhook = subscriptionWebhookRoutes({
+    withTenant: options.withTenant,
+    gateway: () => gatewayOf(deps),
+    jobs: options.jobs,
+    clock: deps.clock,
+    providerTimeoutMs: options.providerTimeoutMs,
+  });
   return {
     options,
-    routes: subscriptionRoutes({
-      withTenant: options.withTenant,
-      clock,
-      simulated: () => (gateway() as { simulated?: unknown } | undefined)?.simulated === true,
-    }),
+    routes: (app) => {
+      registerOwnerRoutes(app);
+      registerWebhook(app);
+    },
   };
 }

@@ -58,6 +58,9 @@ const ALLOWED: Record<string, readonly string[]> = {
   'app.reception_prescription_existence(uuid)': ['app_rw'],
   // Tells a prescription the caller may not read from one that does not exist (the trail names who asked).
   'app.prescription_probe(uuid)': ['app_rw'],
+  // Payments (Stage 6): a notice of the payments provider carries a resource and no organization, so
+  // the webhook finds the subscription from the records of what was asked and confirmed (ids only).
+  'app.subscription_for_notice(text,text,text)': ['app_rw'],
   // Called only by triggers, never directly.
   // The record changes of a patient (JD-S5 R3-6): the trigger of `patient` writes the row as the owner,
   // because the runtime role has no INSERT on `patient_record_change`.
