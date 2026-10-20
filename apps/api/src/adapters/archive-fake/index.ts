@@ -78,6 +78,7 @@ export function createFakeArchiveStore(options: { clock?: () => Date } = {}): Fa
         sha256: digest,
         retainUntil: put.retainUntil.toISOString(),
         storedAt: clock().toISOString(),
+        versions: 1,
       };
       objects.set(key, { info, body: new Uint8Array(body) });
       return Promise.resolve<ArchivePutResult>({ status: 'stored', object: { ...info } });

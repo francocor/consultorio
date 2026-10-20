@@ -29,6 +29,13 @@ export interface ArchiveObjectInfo {
   /** ISO instant until which the object cannot be altered or removed. */
   retainUntil: string;
   storedAt: string;
+  /**
+   * How many versions the store holds under the key. Always 1 for an object only this port wrote:
+   * the port serves the ORIGINAL version, and more than one means something wrote under the key
+   * behind the port's back (a credential that bypassed the `If-None-Match` of `put`). The original is
+   * untouched (Object Lock); the verification reports the extra one as an attempt to overwrite.
+   */
+  versions: number;
 }
 
 export interface ArchivePutOptions {
