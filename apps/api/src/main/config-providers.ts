@@ -1,5 +1,6 @@
 import { z } from 'zod';
 
+import { releaserPublicKeyOf } from '../modules/tenancy/archive/archive-crypto.js';
 import {
   checkLocalProviders,
   type NodeEnvironment,
@@ -16,6 +17,10 @@ import {
  * payments gateway of the platform subscriptions: the local Mercado Pago simulator or none; the key
  * of the real gateway is added with its adapter (task 6.50). `MP_WEBHOOK_SECRET` signs its
  * webhook and `MP_PUBLIC_BASE_URL` is the address the hosted checkout and the webhook are reached on.
+ * The `ARCHIVE_*` variables (Stage 6, retention) describe the archive of cancelled organizations: its
+ * write-once bucket, how long it is kept, how long after the cancellation it is written, and the key
+ * of the releaser. `ARCHIVE_RELEASER_KEK` belongs to the `releaser` process alone: the API and the
+ * worker refuse to start with it.
  */
 export const PROVIDER_ENV_VARIABLES = [
   'WHATSAPP_PROVIDER',
@@ -33,6 +38,15 @@ export const PROVIDER_ENV_VARIABLES = [
   'ALLOW_LOCAL_PROVIDERS',
   'LOCAL_PROVIDERS_CONSOLE',
   'ADDRESS_HASH_PEPPER',
+  'ARCHIVE_S3_BUCKET',
+  'ARCHIVE_S3_ENDPOINT',
+  'ARCHIVE_S3_REGION',
+  'ARCHIVE_S3_ACCESS_KEY_ID',
+  'ARCHIVE_S3_SECRET_ACCESS_KEY',
+  'ARCHIVE_RETENTION_DAYS',
+  'ARCHIVE_AFTER_DAYS',
+  'ARCHIVE_RELEASER_PUBLIC_KEY',
+  'ARCHIVE_RELEASER_KEK',
 ] as const;
 
 /** A lowercase host name: what a manual video link may point at. */
@@ -123,11 +137,47 @@ const providerEnv = z.object({
    * platform. Required in production; development has a public default that protects nothing.
    */
   ADDRESS_HASH_PEPPER: z.string().min(MIN_PEPPER_LENGTH).optional(),
+  /** The write-once bucket of the retention archive (Object Lock). Unset: nothing is archived. */
+  ARCHIVE_S3_BUCKET: z.string().min(3).max(63).optional(),
+  ARCHIVE_S3_ENDPOINT: z
+    .string()
+    .refine(isPublicAddress, { message: 'must be an http or https address with no credentials' })
+    .optional(),
+  ARCHIVE_S3_REGION: z.string().min(1).default('us-east-1'),
+  /** The identity that writes the archive (it can write, read and list; it can not delete). */
+  ARCHIVE_S3_ACCESS_KEY_ID: z.string().min(1).optional(),
+  ARCHIVE_S3_SECRET_ACCESS_KEY: z.string().min(1).optional(),
+  /** How long an archived object cannot be altered or removed (the 10-year legal retention). */
+  ARCHIVE_RETENTION_DAYS: z.coerce.number().int().min(1).max(36_500).default(3650),
+  /** Days after the cancellation before the archive is written: the window of the export. */
+  ARCHIVE_AFTER_DAYS: z.coerce.number().int().min(0).max(3650).default(30),
+  /** The public half of the key of the releaser (32 bytes, base64): lets the writer seal, not open. */
+  ARCHIVE_RELEASER_PUBLIC_KEY: z.string().min(1).optional(),
+  /** The private half (32 bytes, base64). ONLY the releaser process has it. */
+  ARCHIVE_RELEASER_KEK: z.string().min(1).optional(),
   ALLOW_LOCAL_PROVIDERS: booleanFlag.default(false),
   LOCAL_PROVIDERS_CONSOLE: booleanFlag.default(false),
 });
 
+/** The retention archive (Stage 6), present when its bucket and its keys are configured. */
+export interface ArchiveConfig {
+  readonly storage: {
+    readonly bucket: string;
+    readonly region: string;
+    readonly endpoint: string;
+    readonly credentials: { readonly accessKeyId: string; readonly secretAccessKey: string };
+  };
+  readonly retentionDays: number;
+  readonly afterDays: number;
+  /** What the writers seal with: always set when the archive is. */
+  readonly releaserPublicKey: string;
+  /** Set only in the environment of the releaser. */
+  readonly releaserKek?: string;
+}
+
 export interface ProviderConfig extends ProviderSelection {
+  /** Set when the archive bucket and the key of the releaser are configured. */
+  readonly archive?: ArchiveConfig;
   /** Set when `WHATSAPP_APP_SECRET` is. Required for the real provider. */
   readonly whatsappAppSecret?: string;
   /** Set when `ERX_WEBHOOK_SECRET` is. The provider webhook is refused without it. */
@@ -207,11 +257,13 @@ export function readProviderConfig(
       message: `is required in production (at least ${String(MIN_PEPPER_LENGTH)} characters, secret): it keys the hash of the addresses in the message log`,
     });
   }
+  const archive = readArchiveConfig(value, problems);
   if (problems.length > 0) return { problems };
 
   return {
     config: {
       ...selection,
+      ...(archive ? { archive } : {}),
       ...(value.WHATSAPP_APP_SECRET === undefined
         ? {}
         : { whatsappAppSecret: value.WHATSAPP_APP_SECRET }),
@@ -235,5 +287,83 @@ export function readProviderConfig(
       localProvidersConsole: value.LOCAL_PROVIDERS_CONSOLE,
     },
     problems: [],
+  };
+}
+
+/** The archive settings, or nothing when no bucket is named. A half-configured archive is a problem. */
+function readArchiveConfig(
+  value: z.infer<typeof providerEnv>,
+  problems: ProviderEnvProblem[],
+): ArchiveConfig | undefined {
+  if (value.ARCHIVE_S3_BUCKET === undefined) {
+    for (const name of ['ARCHIVE_RELEASER_PUBLIC_KEY', 'ARCHIVE_RELEASER_KEK'] as const) {
+      if (value[name] !== undefined) {
+        problems.push({ path: name, message: 'is set but ARCHIVE_S3_BUCKET is not' });
+      }
+    }
+    return undefined;
+  }
+  const required = {
+    ARCHIVE_S3_ENDPOINT: value.ARCHIVE_S3_ENDPOINT,
+    ARCHIVE_S3_ACCESS_KEY_ID: value.ARCHIVE_S3_ACCESS_KEY_ID,
+    ARCHIVE_S3_SECRET_ACCESS_KEY: value.ARCHIVE_S3_SECRET_ACCESS_KEY,
+  };
+  for (const [name, entry] of Object.entries(required)) {
+    if (entry === undefined) {
+      problems.push({ path: name, message: 'is required when ARCHIVE_S3_BUCKET is set' });
+    }
+  }
+  // The public key can be derived from the private one, so the releaser needs only the latter.
+  let publicKey = value.ARCHIVE_RELEASER_PUBLIC_KEY;
+  if (value.ARCHIVE_RELEASER_KEK !== undefined) {
+    try {
+      const derived = releaserPublicKeyOf(value.ARCHIVE_RELEASER_KEK);
+      if (publicKey !== undefined && publicKey !== derived) {
+        problems.push({
+          path: 'ARCHIVE_RELEASER_PUBLIC_KEY',
+          message: 'is not the public half of ARCHIVE_RELEASER_KEK',
+        });
+      }
+      publicKey ??= derived;
+    } catch {
+      problems.push({ path: 'ARCHIVE_RELEASER_KEK', message: 'must be 32 bytes in base64' });
+    }
+  } else if (publicKey !== undefined) {
+    try {
+      if (Buffer.from(publicKey, 'base64').length !== 32) throw new Error('length');
+    } catch {
+      problems.push({ path: 'ARCHIVE_RELEASER_PUBLIC_KEY', message: 'must be 32 bytes in base64' });
+    }
+  }
+  if (publicKey === undefined) {
+    problems.push({
+      path: 'ARCHIVE_RELEASER_PUBLIC_KEY',
+      message: 'is required when ARCHIVE_S3_BUCKET is set: the archive is sealed to the releaser',
+    });
+  }
+  if (
+    required.ARCHIVE_S3_ENDPOINT === undefined ||
+    required.ARCHIVE_S3_ACCESS_KEY_ID === undefined ||
+    required.ARCHIVE_S3_SECRET_ACCESS_KEY === undefined ||
+    publicKey === undefined
+  ) {
+    return undefined;
+  }
+  return {
+    storage: {
+      bucket: value.ARCHIVE_S3_BUCKET,
+      region: value.ARCHIVE_S3_REGION,
+      endpoint: required.ARCHIVE_S3_ENDPOINT,
+      credentials: {
+        accessKeyId: required.ARCHIVE_S3_ACCESS_KEY_ID,
+        secretAccessKey: required.ARCHIVE_S3_SECRET_ACCESS_KEY,
+      },
+    },
+    retentionDays: value.ARCHIVE_RETENTION_DAYS,
+    afterDays: value.ARCHIVE_AFTER_DAYS,
+    releaserPublicKey: publicKey,
+    ...(value.ARCHIVE_RELEASER_KEK === undefined
+      ? {}
+      : { releaserKek: value.ARCHIVE_RELEASER_KEK }),
   };
 }

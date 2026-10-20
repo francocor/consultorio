@@ -778,6 +778,20 @@
       "when": 1792483639681,
       "tag": "0651_cancellation_functions",
       "breakpoints": true
+    },
+    {
+      "idx": 111,
+      "version": "7",
+      "when": 1792486810618,
+      "tag": "0652_archive_key",
+      "breakpoints": true
+    },
+    {
+      "idx": 112,
+      "version": "7",
+      "when": 1792487121986,
+      "tag": "0653_tenant_archive",
+      "breakpoints": true
     }
   ]
 }

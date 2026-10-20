@@ -1,10 +1,7 @@
-import { createHash } from 'node:crypto';
-import { createReadStream, createWriteStream } from 'node:fs';
+import { createReadStream } from 'node:fs';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { Transform } from 'node:stream';
-import { pipeline } from 'node:stream/promises';
 
 import { sql } from 'drizzle-orm';
 import { z } from 'zod';
@@ -23,21 +20,12 @@ import {
   type WorkerLog,
 } from '../../../platform/jobs/define-job.js';
 import type { EmailSender } from '../../../platform/mail/email-sender.js';
-import {
-  StorageKeyError,
-  tenantKey,
-  type ObjectStorage,
-} from '../../../platform/storage/object-storage.js';
+import { tenantKey, type ObjectStorage } from '../../../platform/storage/object-storage.js';
 import type { ExportKind, ExportRegistry } from '../application/export-registry.js';
 import { readOrganizationName } from '../application/organization-name.js';
 
 import { packageReadyNotice } from './emails.js';
-import {
-  packageEntries,
-  type PackageReport,
-  type PackageSource,
-  type ReadAttachment,
-} from './package-content.js';
+import { writePackageFile } from './package-file.js';
 import {
   clinicalRecipient,
   markPackageFailed,
@@ -48,8 +36,8 @@ import {
   tenantSlug,
 } from './packages.js';
 import { ClinicalKeyInAdministrativePartError } from './redaction.js';
-import { packageFileName, summaryEntries } from './summary.js';
-import { ZipLimitError, zipStream } from './zip.js';
+import { packageFileName } from './summary.js';
+import { ZipLimitError } from './zip.js';
 
 /**
  * The queue of the cancellation export. It is `export.build`, which billing's exports already use
@@ -200,82 +188,30 @@ async function buildPackage(
   entryCount: number;
 }> {
   const kind: ExportKind = input.row.kind === 'clinical' ? 'clinical' : 'administrative';
-  const professionalId = input.row.professionalId ?? undefined;
-  const sources: PackageSource[] = deps.exports.list(kind).map((contributor) => ({
-    name: contributor.name,
-    run: (sink) =>
-      deps.withTenant(input.context, async (tx) => {
-        await sink(
-          await contributor.contribute({
-            tx,
-            tenantId: input.tenantId,
-            ...(professionalId ? { professionalId } : {}),
-          }),
-        );
-      }),
-  }));
-  const readAttachment: ReadAttachment = async (objectKey) => {
-    try {
-      const found = await deps.storage.get(input.tenantId, objectKey);
-      return found ? { stream: found.stream } : null;
-    } catch (error) {
-      // A key outside the organization's prefix is refused by the storage: it is not a file of ours.
-      if (error instanceof StorageKeyError) return null;
-      throw error;
-    }
-  };
-
   const scratch = await mkdtemp(join(deps.workDir ?? tmpdir(), 'cancellation-export-'));
   try {
-    const file = join(scratch, 'package.zip');
-    const hash = createHash('sha256');
-    let size = 0;
-    let entryCount = 0;
-    const entries = packageEntries({
+    const written = await writePackageFile(deps, {
+      tenantId: input.tenantId,
       kind,
-      sources,
-      workDir: scratch,
-      modifiedAt: input.now,
-      readAttachment,
-      trailer: async (report: PackageReport) =>
-        summaryEntries({
-          kind,
-          organizationName: input.organizationName,
-          generatedAt: input.now,
-          professionalName: input.professionalName,
-          report,
-        }),
+      professionalId: input.row.professionalId ?? undefined,
+      context: input.context,
+      organizationName: input.organizationName,
+      professionalName: input.professionalName,
+      now: input.now,
+      scratch,
     });
-    async function* counted() {
-      for await (const entry of entries) {
-        entryCount += 1;
-        yield entry;
-      }
-    }
-    await pipeline(
-      zipStream(counted()),
-      new Transform({
-        transform(chunk: Buffer, _encoding, callback) {
-          hash.update(chunk);
-          size += chunk.length;
-          callback(null, chunk);
-        },
-      }),
-      createWriteStream(file),
-    );
-
     const objectKey = tenantKey(input.tenantId, 'cancellation-export', `${input.row.id}.zip`);
     await deps.storage.put(input.tenantId, objectKey, {
-      body: createReadStream(file),
+      body: createReadStream(written.path),
       contentType: 'application/zip',
-      contentLength: size,
+      contentLength: written.sizeBytes,
     });
     return {
       objectKey,
       fileName: packageFileName(kind, input.now),
-      sizeBytes: size,
-      sha256: hash.digest('hex'),
-      entryCount,
+      sizeBytes: written.sizeBytes,
+      sha256: written.sha256,
+      entryCount: written.entryCount,
     };
   } finally {
     await rm(scratch, { recursive: true, force: true });

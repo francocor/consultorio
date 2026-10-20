@@ -24,6 +24,17 @@ export interface FakeArchiveStore extends ArchiveStore {
   setMode(mode: 'ok' | 'down'): void;
   /** Forgets everything and goes back to the `ok` mode. */
   reset(): void;
+  /**
+   * What damage looks like, for the tests of the verification (the real bucket cannot be damaged
+   * through its own port, which is the point): `damage` flips a bit of the stored bytes without
+   * touching what the object says about itself, `lose` makes an object disappear, and `shadow` adds a
+   * second version under a key, as a credential that skipped the write-once header could.
+   */
+  damage(key: string): void;
+  lose(key: string): void;
+  shadow(key: string): void;
+  /** The names of every object, for a test that counts them. */
+  keys(): string[];
 }
 
 const SERVICE_DOWN_MESSAGE =
@@ -42,6 +53,7 @@ export function createFakeArchiveStore(options: { clock?: () => Date } = {}): Fa
   const clock = options.clock ?? (() => new Date());
   let mode: 'ok' | 'down' = 'ok';
   let objects = new Map<string, Stored>();
+  let shadows = new Map<string, number>();
 
   const down = () => ({ status: 'retryable', message: SERVICE_DOWN_MESSAGE }) as const;
 
@@ -53,6 +65,24 @@ export function createFakeArchiveStore(options: { clock?: () => Date } = {}): Fa
     reset() {
       mode = 'ok';
       objects = new Map();
+      shadows = new Map();
+    },
+    damage(key: string) {
+      const stored = objects.get(key);
+      if (!stored) throw new Error(`no object ${key}`);
+      const altered = new Uint8Array(stored.body);
+      altered[Math.floor(altered.length / 2)] =
+        (altered[Math.floor(altered.length / 2)] ?? 0) ^ 0x01;
+      objects.set(key, { info: stored.info, body: altered });
+    },
+    lose(key: string) {
+      objects.delete(key);
+    },
+    shadow(key: string) {
+      shadows.set(key, (shadows.get(key) ?? 0) + 1);
+    },
+    keys() {
+      return [...objects.keys()].sort();
     },
 
     put(key: string, body: Uint8Array, put: ArchivePutOptions, signal?: AbortSignal) {
@@ -89,7 +119,9 @@ export function createFakeArchiveStore(options: { clock?: () => Date } = {}): Fa
       if (mode === 'down') return Promise.resolve<ArchiveHeadResult>(down());
       const stored = objects.get(key);
       return Promise.resolve<ArchiveHeadResult>(
-        stored ? { status: 'found', object: { ...stored.info } } : { status: 'unknown' },
+        stored
+          ? { status: 'found', object: { ...stored.info, versions: 1 + (shadows.get(key) ?? 0) } }
+          : { status: 'unknown' },
       );
     },
 
@@ -99,7 +131,11 @@ export function createFakeArchiveStore(options: { clock?: () => Date } = {}): Fa
       const stored = objects.get(key);
       return Promise.resolve<ArchiveGetResult>(
         stored
-          ? { status: 'found', object: { ...stored.info }, body: new Uint8Array(stored.body) }
+          ? {
+              status: 'found',
+              object: { ...stored.info, versions: 1 + (shadows.get(key) ?? 0) },
+              body: new Uint8Array(stored.body),
+            }
           : { status: 'unknown' },
       );
     },
@@ -111,7 +147,10 @@ export function createFakeArchiveStore(options: { clock?: () => Date } = {}): Fa
         status: 'ok',
         objects: [...objects.values()]
           .filter((stored) => stored.info.key.startsWith(prefix))
-          .map((stored) => ({ ...stored.info })),
+          .map((stored) => ({
+            ...stored.info,
+            versions: 1 + (shadows.get(stored.info.key) ?? 0),
+          })),
       });
     },
 
