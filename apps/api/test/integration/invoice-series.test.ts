@@ -5,7 +5,11 @@ import { afterAll, afterEach, beforeAll, describe, expect, inject, it, vi } from
 import { invoice as invoiceTable } from '../../src/db/schema/index.js';
 import { issuerKeyOf } from '../../src/modules/invoicing/application/issue-attempt.js';
 import { createAfipIssueJob } from '../../src/modules/invoicing/index.js';
-import { createRuntimeDb, type DbHandle } from '../../src/platform/db/pool.js';
+import {
+  DEFAULT_RUNTIME_POOL_MAX,
+  createRuntimeDb,
+  type DbHandle,
+} from '../../src/platform/db/pool.js';
 import { runJob } from '../../src/platform/jobs/define-job.js';
 import { submissionKey } from '../support/billing-world.js';
 import { issueOutOfBand } from '../support/invoice-series.js';
@@ -460,8 +464,8 @@ describe('the mark written before the call (JD-S4 R2-3)', () => {
     const sized = createRuntimeDb(inject('runtimeUrl'), { max: 4 });
     try {
       expect(handle.pool.options.connectionTimeoutMillis).toBe(10_000);
-      // Sixteen connections unless the configuration says otherwise (`DB_POOL_MAX`).
-      expect(handle.pool.options.max).toBe(16);
+      // The default size of the runtime pool unless the configuration says otherwise (`DB_POOL_MAX`).
+      expect(handle.pool.options.max).toBe(DEFAULT_RUNTIME_POOL_MAX);
       expect(sized.pool.options.max).toBe(4);
     } finally {
       void handle.close();
