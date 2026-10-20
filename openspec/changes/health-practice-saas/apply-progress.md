@@ -2541,6 +2541,43 @@ New things in the contracts: errors `prescription_provider_in_flight`; audit act
 - Docker: `infra/Dockerfile` built (`consultorio-api:jd5r3`, image `9fd74eae3131`); a fresh `postgres:17` (`c7a6e97b77cc`) with `infra/postgres/init/01-roles.sql`; `db:migrate` twice (both: migrations applied, platform catalogs loaded; 108 migrations recorded); the image started with a production-like environment against that database (`50e9f6afdc53`): `/health` answered `{"status":"ok"}`. Both containers and the image were removed; nobody else's containers were touched.
 - Logs: `$TEMP/jd5r3-*.log`.
 
+## Judgment Day Stage 5, round 4
+
+Fresh-context review of `feat/stage-5-compliance-portal` at `f2d4f5f` (two judges: A approved, B NEEDS FIX for one real defect). Every item both judges agreed on (R4-1 to R4-7) was fixed with the failing test first, except where noted below. Work started from `f2d4f5f`.
+
+### Items
+
+| Id | Fix | Test |
+| --- | --- | --- |
+| R4-1 | The day-7 gap of the registration gate is closed fail-safe: `isRegistrationClosed` (and `openRegistration`) now also count a row of the patient with `notice_email IS NOT NULL AND notice_sent_at IS NULL AND notice_expired_at IS NULL` and no `invitation_opened_at`, whatever its age. A stopped worker no longer opens the public registration or reception invitations of a record whose previous address was never warned; an owner or an administrator invitation opens those rows too (and writes `portal.registration.opened`). Two older tests that aged a change 8 days without running the sweep now run `world.sweepNotices()` first (the notice was told). | `portal-record-change-round4.test.ts` (day 8, sweep skipped: public registration refused, reception 409, owner 201, activation works; a told notice opens it by itself) |
+| R4-2 | `MIN_DB_POOL_MAX = families x JOB_LOCAL_CONCURRENCY x 2 + 2` computed from `CONNECTION_HOLDING_JOBS` (`afip.issue`, `erx.reconcile`, `portal.notice_sweep`) = 14; the default (`DEFAULT_RUNTIME_POOL_MAX`, `.env.example`) is 16. The comments of `notice-job.ts` and `settle.ts` that said the job transaction "holds nothing" now say it holds a connection, idle. Runbook (`afip-switch-to-real.md`, new upgrade notes), `deploy.md` (new section) and the ASVS page updated. The config error message names the three families. | `config.test.ts` (default 16 and above the floor; floor 14 from the list; 2, 6, 10 and 13 refused with the number), `invoice-series.test.ts` (default of the pool 16). The config test was written before the code but not run red on its own. |
+| R4-3 | `expireNotices` sets `invitation_opened_at` of the row it expires to the latest invitation opened AFTER that row was written (subquery), so a give-up never closes again a registration an owner opened. | `portal-record-change-round4.test.ts` (state built with the owner connection: rows 1 and 2 untold, row 3 flagged and opened later; after the sweep no row closes the registration) |
+| R4-4 | `existsAsDate` of the prescriptions cursor: year below 1 (`0000`), zone offsets beyond +-15:59 (hours and minutes, with or without colon, `+16`), and the year is set with `setUTCFullYear` instead of `Date.UTC` (years 0 to 99). A tampered cursor is `400 validation_failed`. | `portal-prescriptions-round2.test.ts` (refused: year 0, +-16:00, +99:00, +1600, +16, +05:60, 0001/0003/0100-02-29; answered 200: 0004-02-29, 0001-01-01, +-15:59, +0530, microseconds) |
+| R4-5 | `openChallenge` calls `evenOut(tx, 2)` before the `limited` return of the real path and `evenOut(tx, 1)` before the one of the decoy path, for the update and the insert they skip. The queueing of the job is the same single call in both normal paths, so it does not separate real from decoy. | `public-nondisclosure.test.ts` (new block with a portal world: four requests each for an account and for an unknown address, the third and fourth above the cap of each: statement counts and answer shapes are the same in all eight; red before: `[11, 11, 9, 9]` against `[11, 11, 11, 10]`) |
+| R4-6 | Migration 0581: the guard of `patient_record_change` refuses to set `notice_expired_at` unless `registration_requires_invitation` is true in the same write. | `portal-record-change-round4.test.ts` (23000 with the flag down, accepted with it up) |
+| R4-7 | Documentation: delivery of the notice is at-least-once when the mark fails after a send (comment of `sendRecordChangeNotices`, ASVS page); the bucket of a client with no address is not a security boundary (`clientKey`, ASVS, `deploy.md`); the public portal routes log the warning "the client address of a portal request is unknown" each time `ip` is null (organization and route only, never the e-mail or the user agent). | `portal-unknown-client.test.ts` (the warning for an address with a zone id, none for a known one); `PortalWorld` accepts a `logStream`. |
+
+### Migration (track `5jd`)
+
+`0581_expiry_requires_flag` (the guard function of `patient_record_change` replaced: the rest is the one of 0580). `pnpm db:restamp` found nothing to change; `pnpm db:check`: no drift. The journal now has 109 entries.
+
+### Notes
+
+- A reproduction of the day-7 gap needed the sweep skipped, which `world.sweepNotices()` makes explicit; the two older tests that relied on the gap (aging 8 days with no sweep and expecting the registration open) now run the sweep first, which is the behavior the spec describes (the previous address was told).
+- R4-3 is defensive: with R4-1 an invitation opens every untold row of the patient at once, so the state the test builds (an opening that did not reach an older untold row) can only come from data written by an earlier version.
+- The pool default moved from 10 to 16 in `pool.ts` (`DEFAULT_RUNTIME_POOL_MAX`), `config.ts` and `.env.example`; a deployment that sets `DB_POOL_MAX` between 6 and 13 now refuses to start (runbook, "Upgrade notes").
+- The null-IP warning is logged in the public portal routes (`public-routes.ts`, `contextOf`), the only place where the user-agent bucket is used; the authenticated portal routes do not use it.
+
+### Verification (Node v24.22.0, pnpm 10.34.7, a machine shared with other agents)
+
+- `pnpm typecheck`, `pnpm lint`, `pnpm format:check`: green.
+- Unit (`pnpm test`): 435 files, 5533 tests passed and 1 skipped.
+- Integration (Testcontainers, Postgres 17): 290 files, 287 passed, 1 skipped, 2 failed in the full run (`storage-s3.test.ts` MinIO stream tests, `worker.test.ts` sealing under load: 3 tests); the 4467 other tests passed; both files pass alone (22 tests).
+- `pnpm build`: green. `pnpm db:check`: no drift.
+- Full e2e (`E2E_WEB_PORT=4960 E2E_API_PORT=3960 E2E_MINIO_PORT=9960`, `--workers=2`, Playwright-managed stack): 228 passed, 1 failed in each of three full runs (`calendar.day.spec.ts` "book, confirm, check in, start and attend", desktop: the booking dialog opened without the professional preselected, so the group "Horarios disponibles" never rendered); the same spec passes alone (2 passed, 45 s). Nothing of `apps/web` changed in this round; the dialog preselects the professional in `useState` only when the list it gets has one entry (`BookingDialog.tsx`), probably a race of the screen with the filter (not proven), in code this round does not touch. Not fixed here.
+- Docker: `infra/Dockerfile` built (`consultorio-api:jd5r4`, image `191d670bd1a5`); a fresh `postgres:17` (`76f2f5b7f6c7`) with `infra/postgres/init/01-roles.sql`; `db:migrate` twice (both: migrations applied, platform catalogs loaded; 109 migrations recorded); the image started with a production-like environment against that database (`de2f6ebb9243`): `/health` answered `{"status":"ok"}` and `/ready` 200. Both containers and the image were removed; nobody else's containers were touched.
+- Logs: `$TEMP/jd5r4-*.log`.
+
 ## Judgment Day Stage 4, round 2
 
 Fresh-context review of `feat/stage-4-revenue` at `7abca49` (diff `9cd11e9..7abca49`; two judges, no CRITICAL, both: NEEDS FIX). Seven findings confirmed by both (R2-1 to R2-7) were fixed; six suspect items (one judge) were reproduced with a failing test first. Strict TDD: each fix has a test that failed on the code before it (the run of `invoice-series.test.ts` against the old `issue-attempt.ts` and `pool.ts` failed 11 of 12 tests; `invoice-guard-races.test.ts` failed 4 of 6 before the migration). Race tests are real two-connection tests. Exceptions to "red first", all disclosed: the contract-suite tests and the web dialog test were written after the code they cover (the contract tests assert fields that did not exist, so they could not have passed); the test "credit note and void of the same charge" in `invoice-guard-races.test.ts` passes before and after (see R2-5).
