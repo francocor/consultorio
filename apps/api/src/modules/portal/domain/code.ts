@@ -20,6 +20,13 @@ export const PORTAL_CODE_ATTEMPTS = 5;
 export const PORTAL_CODE_ATTEMPTS_PER_CHALLENGE = 20;
 export const PORTAL_CODE_SENDS_PER_HOUR = 3;
 /**
+ * The decoys one address may have in an hour (JD-S5 R3-1), counted among decoys only. A decoy is
+ * written so that the answer takes the same time; above this many the answer is the same and
+ * nothing is written, so several clients (or a store that fails) cannot fill `otp_challenge` and the
+ * queue by naming one address.
+ */
+export const PORTAL_DECOYS_PER_HOUR = 3;
+/**
  * The codes one client may ask for in an hour, whatever the addresses (JD-S5 R2-4). A person asks for
  * at most three (the sends of an address); a household behind one address asks for a few more.
  */

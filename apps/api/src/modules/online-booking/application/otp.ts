@@ -1,6 +1,7 @@
-import { and, desc, eq, gt, sql } from 'drizzle-orm';
+import { desc, eq, sql } from 'drizzle-orm';
 
 import { otpChallenge } from '../../../db/schema/booking-submission.js';
+import { realSendsInLastHour } from '../../../platform/db/otp-sends.js';
 import type { Tx } from '../../../platform/db/tenant-context.js';
 import type { JobClient } from '../../../platform/jobs/boss.js';
 import {
@@ -12,18 +13,9 @@ import {
 
 export const OTP_SEND_JOB = 'otp.send';
 
-/** How many codes were sent to an address in the last hour (every purpose counts). */
-export async function sendsInLastHour(tx: Tx, email: string, now: Date): Promise<number> {
-  const rows = await tx
-    .select({ n: sql<number>`count(*)::int` })
-    .from(otpChallenge)
-    .where(
-      and(
-        eq(otpChallenge.email, email),
-        gt(otpChallenge.createdAt, new Date(now.getTime() - 3_600_000)),
-      ),
-    );
-  return rows[0]?.n ?? 0;
+/** How many codes were sent to an address in the last hour (every purpose counts, a decoy does not). */
+export function sendsInLastHour(tx: Tx, email: string, now: Date): Promise<number> {
+  return realSendsInLastHour(tx, email, now);
 }
 
 export type IssueOutcome =

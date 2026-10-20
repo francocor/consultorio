@@ -1,6 +1,11 @@
-import { and, desc, eq, gt, isNull, ne, sql } from 'drizzle-orm';
+import { and, desc, eq, gt, isNull, sql } from 'drizzle-orm';
 
 import { otpChallenge } from '../../../db/schema/booking-submission.js';
+import {
+  DECOY_PURPOSE,
+  decoysInLastHour,
+  realSendsInLastHour,
+} from '../../../platform/db/otp-sends.js';
 import type { Tx } from '../../../platform/db/tenant-context.js';
 import type { RateLimitStore } from '../../../platform/http/rate-limit.js';
 import type { JobClient } from '../../../platform/jobs/boss.js';
@@ -9,6 +14,7 @@ import {
   PORTAL_CODE_ATTEMPTS_PER_CHALLENGE,
   PORTAL_CODE_LIFETIME_MS,
   PORTAL_CODE_SENDS_PER_HOUR,
+  PORTAL_DECOYS_PER_HOUR,
   challengeTriesKey,
   codeMatches,
 } from '../domain/code.js';
@@ -18,28 +24,11 @@ export const PORTAL_CODE_JOB = 'portal.code_send';
 export type PortalCodePurpose = 'portal_registration' | 'portal_sign_in';
 
 /**
- * The purpose of a decoy (JD-S5 R2-1). Nothing that serves a code reads it: not the check of a code
- * (which looks for the newest challenge of the purpose it serves) and not the count of the sends.
- */
-const DECOY_PURPOSE = 'portal_decoy';
-
-/**
  * How many codes were sent to an address in the last hour (every purpose that sends a code counts; a
- * decoy sends nothing and counts for nothing, JD-S5 R2-1).
+ * decoy sends nothing and counts for nothing, JD-S5 R2-1). The one count of the booking and the
+ * waitlist too (`realSendsInLastHour`).
  */
-export async function sendsInLastHour(tx: Tx, email: string, now: Date): Promise<number> {
-  const rows = await tx
-    .select({ n: sql<number>`count(*)::int` })
-    .from(otpChallenge)
-    .where(
-      and(
-        eq(otpChallenge.email, email),
-        ne(otpChallenge.purpose, DECOY_PURPOSE),
-        gt(otpChallenge.createdAt, new Date(now.getTime() - 3_600_000)),
-      ),
-    );
-  return rows[0]?.n ?? 0;
-}
+export const sendsInLastHour = realSendsInLastHour;
 
 /**
  * Opens a challenge for an address and queues the job that emails the code, in the same
@@ -64,9 +53,6 @@ export async function openChallenge(
     decoy?: boolean;
   },
 ): Promise<'queued' | 'limited'> {
-  if ((await sendsInLastHour(tx, input.email, input.now)) >= PORTAL_CODE_SENDS_PER_HOUR) {
-    return 'limited';
-  }
   const live = and(
     eq(otpChallenge.email, input.email),
     eq(otpChallenge.purpose, input.purpose),
@@ -76,7 +62,15 @@ export async function openChallenge(
   if (input.decoy === true) {
     // The same lookup, without touching what belongs to the address.
     await tx.select({ id: otpChallenge.id }).from(otpChallenge).where(live);
+    // A decoy has a cap of its own, counted among decoys only (JD-S5 R3-1). Above it the caller
+    // answers the same as always, but nothing is written and no job is queued.
+    if ((await decoysInLastHour(tx, input.email, input.now)) >= PORTAL_DECOYS_PER_HOUR) {
+      return 'limited';
+    }
   } else {
+    if ((await sendsInLastHour(tx, input.email, input.now)) >= PORTAL_CODE_SENDS_PER_HOUR) {
+      return 'limited';
+    }
     await tx.update(otpChallenge).set({ consumedAt: input.now }).where(live);
   }
   const [row] = await tx
