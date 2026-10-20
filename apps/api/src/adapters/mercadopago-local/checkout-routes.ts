@@ -3,7 +3,11 @@ import { z } from 'zod';
 
 import { AppError } from '../../platform/http/problem.js';
 
-import { CHECKOUT_CONTENT_SECURITY_POLICY, renderCheckoutPage } from './checkout-page.js';
+import {
+  CHECKOUT_CONTENT_SECURITY_POLICY,
+  renderCheckoutPage,
+  renderReturnPage,
+} from './checkout-page.js';
 import { deliver, paymentNotices, preapprovalNotice, type Notice } from './notices.js';
 
 import type { CheckoutChoice, LocalPaymentsControls, LocalPaymentsGateway } from './index.js';
@@ -13,7 +17,8 @@ import type { CheckoutChoice, LocalPaymentsControls, LocalPaymentsGateway } from
  * payer authorizes a preapproval or pays a link. It is registered only while the provider console is
  * on (`LOCAL_PROVIDERS_CONSOLE`), and the prefix is the one the auth guard leaves open for the
  * simulators. What the payer decides is signed and posted to the application's own webhook, then the
- * payer is sent back to the address the subscription gave (`back_url`), with the outcome in `mp`.
+ * payer is taken back to the address the subscription gave (`back_url`), with the outcome in `mp`, by a
+ * page that links and refreshes there (a redirect would be blocked by the `form-action` of the page).
  *
  * The page is public and moves no money; it only changes the state of the simulator, so the route is
  * of the `webhook` category: it keeps working when the organization is read-only, because paying is
@@ -110,7 +115,12 @@ export function checkoutRoutes(deps: CheckoutRoutesDeps) {
 
           const back = new URL(resource.backUrl);
           back.searchParams.set('mp', OUTCOME_OF[choice]);
-          return reply.redirect(back.toString(), 303);
+          return reply
+            .header('content-security-policy', CHECKOUT_CONTENT_SECURITY_POLICY)
+            .header('x-robots-tag', 'noindex, nofollow')
+            .header('referrer-policy', 'same-origin')
+            .type('text/html; charset=utf-8')
+            .send(renderReturnPage(back.toString()));
         },
       );
       done();

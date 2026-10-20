@@ -257,6 +257,12 @@ describe('the hosted page of the local Mercado Pago decides what the payer does 
       payload: `choice=${choice}`,
       remoteAddress: '10.99.0.3',
     });
+  /** Where the page takes the payer back to: the address its `refresh` points at. */
+  const returnAddress = (response: { body: string }) => {
+    const match = /http-equiv="refresh" content="0; url=([^"]+)"/.exec(response.body);
+    expect(match, 'the page takes the payer back').not.toBeNull();
+    return (match?.[1] ?? '').replaceAll('&amp;', '&');
+  };
 
   it('says it is simulated, offers approve, reject, pending and abandon, and asks for no card', async () => {
     const org = await world.organization();
@@ -286,11 +292,12 @@ describe('the hosted page of the local Mercado Pago decides what the payer does 
 
     const done = await choose(path, 'approve');
 
-    expect(done.statusCode).toBe(303);
-    expect(done.headers['location']).toContain('/subscription?mp=approved');
-    expect(new URL(String(done.headers['location'])).host).toBe(
-      `${org.tenant.slug}.${BASE_DOMAIN}`,
-    );
+    // A page that takes the payer back, not a redirect of the form: the policy of the page forbids it.
+    expect(done.statusCode).toBe(200);
+    expect(done.headers['content-security-policy']).toContain("form-action 'self'");
+    expect(returnAddress(done)).toContain('/subscription?mp=approved');
+    expect(new URL(returnAddress(done)).host).toBe(`${org.tenant.slug}.${BASE_DOMAIN}`);
+    expect(done.body).toContain('Volver a la aplicación');
     expect(await eventsOf(org)).toHaveLength(1);
     expect(await org.subscription()).toMatchObject({ status: 'trial' });
     await runJobs();
@@ -309,8 +316,8 @@ describe('the hosted page of the local Mercado Pago decides what the payer does 
     const abandoned = await choose(path, 'abandon');
     const pending = await choose(path, 'pending');
     await runJobs();
-    expect(abandoned.headers['location']).toContain('mp=abandoned');
-    expect(pending.headers['location']).toContain('mp=pending');
+    expect(returnAddress(abandoned)).toContain('mp=abandoned');
+    expect(returnAddress(pending)).toContain('mp=pending');
     expect(await eventsOf(org)).toEqual([]);
     expect(await org.subscription()).toMatchObject({
       status: 'trial',
@@ -319,7 +326,7 @@ describe('the hosted page of the local Mercado Pago decides what the payer does 
 
     const rejected = await choose(path, 'reject');
     await runJobs();
-    expect(rejected.headers['location']).toContain('mp=rejected');
+    expect(returnAddress(rejected)).toContain('mp=rejected');
     expect(await org.subscription()).toMatchObject({
       status: 'trial',
       authorization_state: 'lost',

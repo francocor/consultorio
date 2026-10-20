@@ -104,3 +104,34 @@ ${buttons}
 </html>
 `;
 }
+
+/**
+ * What the payer sees after deciding: a page that takes them back to the application. It is a page and
+ * not a redirect of the form on purpose: the policy of the page says `form-action 'self'`, and a browser
+ * applies it to the redirect that follows a post, so a redirect to the application (which lives on the
+ * address of the organization, not on the one of this page) would be blocked. Following a link or a
+ * `refresh` is not a form action.
+ */
+export function renderReturnPage(backUrl: string): string {
+  const address = escapeHtml(backUrl);
+  return `<!doctype html>
+<html lang="es-AR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<meta http-equiv="refresh" content="0; url=${address}">
+<title>Volviendo a la aplicación</title>
+<style>${STYLE}</style>
+</head>
+<body>
+<main>
+<p class="notice">Mercado Pago simulado: esta página no mueve dinero y no pide datos de tarjeta.</p>
+<h1>Listo</h1>
+<p>Lo estamos llevando de vuelta a la aplicación.</p>
+<p><a href="${address}">Volver a la aplicación</a></p>
+</main>
+</body>
+</html>
+`;
+}

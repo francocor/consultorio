@@ -3,6 +3,7 @@ import { sql } from 'drizzle-orm';
 import pg from 'pg';
 import { afterAll, afterEach, beforeAll, describe, expect, inject, it } from 'vitest';
 
+import { exportSubscriptions } from '../../src/modules/subscriptions/application/export-contributor.js';
 import { reconcileSubscription } from '../../src/modules/subscriptions/application/reconcile.js';
 import { generateStatements } from '../../src/modules/subscriptions/application/statements.js';
 import { runUsageSnapshot } from '../../src/modules/subscriptions/application/usage.js';
@@ -311,6 +312,25 @@ describe('the statement of a closed period (tasks 6.23 and 6.27)', () => {
     expect(document.headers['content-type']).toBe('application/pdf');
     expect(document.headers['cache-control']).toBe('no-store');
     expect(document.rawPayload.subarray(0, 5).toString('latin1')).toBe('%PDF-');
+  });
+
+  it('goes with the export of an organization that leaves, without the identifiers of the provider', async () => {
+    const { org } = await meteredOrganization();
+    await generateStatements(world.deps, org.tenant.id);
+
+    const exported = (await world.deps.withTenant(
+      { tenantId: org.tenant.id, userId: org.owner.user.id },
+      (tx) => exportSubscriptions({ tx } as never),
+    )) as {
+      subscription: Record<string, unknown> | null;
+      statements: Record<string, unknown>[];
+      payments: unknown[];
+    };
+
+    expect(exported.subscription).toMatchObject({ plan: 'standard', status: 'trial' });
+    expect(exported.statements).toHaveLength(1);
+    expect(exported.statements[0]).toMatchObject({ period: '2026-09', totalCents: 2_580_000 });
+    expect(JSON.stringify(exported)).not.toMatch(/preapproval|payer|idempotency|@/i);
   });
 
   it('is for the owner only: a professional, a receptionist and an administrator are refused', async () => {
