@@ -30,7 +30,8 @@
     "demo:reset": "pnpm --filter @consultorio/api demo:reset",
     "demo:stack": "pnpm --filter @consultorio/api demo:stack",
     "backup:local": "pnpm --filter @consultorio/api backup:local",
-    "dev:afip-cert": "pnpm --filter @consultorio/api dev:afip-cert"
+    "dev:afip-cert": "pnpm --filter @consultorio/api dev:afip-cert",
+    "archive:legal-erase": "pnpm --filter @consultorio/api archive:legal-erase"
   },
   "prettier": "@consultorio/config/prettier.config.js",
   "devDependencies": {
