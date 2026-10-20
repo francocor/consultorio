@@ -1,0 +1,10 @@
+{
+  "title": "Exportación",
+  "nav": "Exportación",
+  "stub.description": "Aquí podrá descargar el paquete administrativo de su organización.",
+  "clinical.title": "Exportación clínica",
+  "clinical.stub.description": "Aquí podrá descargar el paquete clínico de sus pacientes.",
+  "operator.nav": "Archivo",
+  "operator.title": "Archivo de organizaciones canceladas",
+  "operator.stub.description": "Aquí verá las solicitudes de liberación del archivo y su estado, sin ver nunca el contenido."
+}

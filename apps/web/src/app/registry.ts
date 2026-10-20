@@ -34,7 +34,13 @@ export type RouteMount =
    * and from `minimal`, so the portal can grow its own frame (the subject picker, the installable
    * scope) without touching either.
    */
-  | 'portal';
+  | 'portal'
+  /**
+   * The platform host (Stage 6): the pages of the product itself that anybody can open before they
+   * have an organization, such as the signup. They sit beside the operator console, in a frame of
+   * their own, and never on the host of an organization.
+   */
+  | 'platform';
 
 export interface FeatureRoute {
   mount: RouteMount;
@@ -63,6 +69,11 @@ export interface ContributedNavItem {
   /** The user needs any one of these; empty means everyone signed in. */
   anyOf: readonly Permission[];
   placements: readonly NavPlacement[];
+  /**
+   * True for an entry that exists only on the multi-tenant platform (the platform subscription): a
+   * single-tenant deployment has no signup and no subscription, so it does not list it.
+   */
+  multiModeOnly?: boolean;
 }
 
 /** A section of Settings. */

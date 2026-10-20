@@ -172,7 +172,7 @@ describe('BottomNav', () => {
     NAV_ITEMS.audit,
     NAV_ITEMS.settings,
     NAV_ITEMS.worklist,
-    NAV_ITEMS.billing,
+    NAV_ITEMS.today,
   ];
 
   it('with more than five entries shows four and a "More" sheet with the rest', async () => {
@@ -186,7 +186,7 @@ describe('BottomNav', () => {
     const sheet = await screen.findByRole('dialog', { name: 'Más secciones' });
     expect(within(sheet).getByRole('link', { name: 'Configuración' })).toBeInTheDocument();
     expect(within(sheet).getByRole('link', { name: 'Pendientes' })).toBeInTheDocument();
-    expect(within(sheet).getByRole('link', { name: 'Facturación' })).toBeInTheDocument();
+    expect(within(sheet).getByRole('link', { name: 'Hoy' })).toBeInTheDocument();
   });
 
   it('with five or fewer entries shows them all and no "More"', async () => {

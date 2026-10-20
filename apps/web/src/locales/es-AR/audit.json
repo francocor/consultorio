@@ -224,6 +224,18 @@
   "action.portal.notice.sent": "Aviso enviado por un cambio en el acceso al portal",
   "action.portal.notice.expired": "Aviso por un cambio en los datos de contacto que no pudo enviarse",
   "action.portal.registration.opened": "Registro público en el portal habilitado al invitar a la persona",
+  "action.subscription.created": "Suscripción creada",
+  "action.subscription.plan_changed": "Plan de la suscripción cambiado",
+  "action.subscription.state_changed": "Estado de la suscripción cambiado",
+  "action.subscription.cap_changed": "Tope de mensajes excedentes modificado",
+  "action.subscription.surplus_flagged": "Pago duplicado de un período registrado",
+  "action.subscription.refunded": "Pago de la suscripción reembolsado",
+  "action.signup.created": "Organización registrada desde el formulario público",
+  "action.signup.verified": "Registro verificado por el enlace del correo",
+  "action.terms.accepted": "Términos y tratamiento de datos aceptados",
+  "action.tenant.cancelled": "Organización cancelada",
+  "action.export.cancellation.requested": "Exportación por cancelación generada",
+  "action.export.cancellation.downloaded": "Paquete de la exportación por cancelación descargado",
   "action.access.denied": "Acceso denegado",
   "action.cross_tenant.denied": "Acceso entre organizaciones denegado"
 }

@@ -12,10 +12,12 @@ import { FormSkeleton } from '../../shared/ui/states/loading-skeleton.js';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../../shared/ui/tabs.js';
 
 import { operatorApi, operatorKeys } from './api/operator-api.js';
+import { ArchiveTab } from './archive/ArchiveTab.js';
 import { ProvidersPage } from './dev/ProvidersPage.js';
 import { HolidayCatalog } from './holidays/HolidayCatalog.js';
 import { MatriculaQueue } from './matricula/MatriculaQueue.js';
 import { OperatorLogin } from './OperatorLogin.js';
+import { SubscriptionsTab } from './subscriptions/SubscriptionsTab.js';
 import { TenantsPanel } from './TenantsPanel.js';
 
 /** The platform console: the sign-in when there is no session, and the organizations when there is. */
@@ -134,6 +136,8 @@ function Console({ operator, onSignedOut }: { operator: OperatorDto; onSignedOut
             <TabsTrigger value="tenants">{t('nav.tenants')}</TabsTrigger>
             <TabsTrigger value="holidays">{t('nav.holidays')}</TabsTrigger>
             <TabsTrigger value="matricula">{t('matricula.nav')}</TabsTrigger>
+            <TabsTrigger value="subscriptions">{t('subscription:operator.nav')}</TabsTrigger>
+            <TabsTrigger value="archive">{t('export:operator.nav')}</TabsTrigger>
             {providers.data ? (
               <TabsTrigger value="providers">{t('nav.providers')}</TabsTrigger>
             ) : null}
@@ -146,6 +150,12 @@ function Console({ operator, onSignedOut }: { operator: OperatorDto; onSignedOut
           </TabsContent>
           <TabsContent value="matricula">
             <MatriculaQueue />
+          </TabsContent>
+          <TabsContent value="subscriptions">
+            <SubscriptionsTab />
+          </TabsContent>
+          <TabsContent value="archive">
+            <ArchiveTab />
           </TabsContent>
           {providers.data ? (
             <TabsContent value="providers">

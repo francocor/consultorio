@@ -5,6 +5,8 @@ import { useTranslation } from 'react-i18next';
 
 import { ForbiddenState } from '../shared/ui/states/forbidden-state.js';
 
+import { useBoot } from './boot.js';
+import { NotFoundPage } from './NotFoundPage.js';
 import { hasAnyPermission, useMe } from './session.js';
 
 /**
@@ -49,4 +51,16 @@ export const guardedScreen = (anyOf: readonly Permission[], Screen: ComponentTyp
         <Screen />
       </RequirePermission>
     );
+  };
+
+/**
+ * A screen that exists only on the multi-tenant platform (the platform subscription): in a
+ * single-tenant deployment the address is the "not found" page of any unknown one, and the screen is
+ * never mounted, so nothing is fetched for it. The API has no such routes there either.
+ */
+export const multiModeScreen = (Screen: ComponentType) =>
+  function MultiModeScreen() {
+    const boot = useBoot();
+    if (boot?.deploymentMode === 'single') return <NotFoundPage />;
+    return <Screen />;
   };

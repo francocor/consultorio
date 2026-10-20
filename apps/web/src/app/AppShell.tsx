@@ -6,6 +6,7 @@ import { useTranslation } from 'react-i18next';
 import { cn } from '../shared/lib/cn.js';
 import { readSidebarCollapsed, writeSidebarCollapsed } from '../shared/lib/preferences.js';
 
+import { useBoot } from './boot.js';
 import { BottomNav } from './BottomNav.js';
 import { FirstRunSlot } from './FirstRunSlot.js';
 import { buildNav } from './nav/nav-config.js';
@@ -25,10 +26,12 @@ export function AppShell() {
   const { t } = useTranslation(['shell', 'common']);
   const me = useMe();
   const { registry } = useServices();
+  const boot = useBoot();
   const items = buildNav({
     permissions: me.permissions,
     roles: me.roles,
     contributed: registry.navItems,
+    deploymentMode: boot?.deploymentMode,
   });
   const [collapsed, setCollapsed] = useState(readSidebarCollapsed);
 

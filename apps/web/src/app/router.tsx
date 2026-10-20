@@ -415,8 +415,11 @@ function buildRouteTree(registry: AppRegistry) {
   ]);
 }
 
-/** The platform host has one screen: the operator console decides between sign-in and content. */
-function buildOperatorRouteTree() {
+/**
+ * The platform host has the operator console at `/`, which decides between sign-in and content, and
+ * the public pages of the product itself (the signup) in a frame of their own.
+ */
+function buildOperatorRouteTree(registry: AppRegistry) {
   const rootRoute = createRootRouteWithContext<RouterContext>()({
     component: RootLayout,
     notFoundComponent: function RedirectHome() {
@@ -431,7 +434,19 @@ function buildOperatorRouteTree() {
       'OperatorConsole',
     ),
   });
-  return rootRoute.addChildren([consoleRoute]);
+  const platformShellRoute = createRoute({
+    getParentRoute: () => rootRoute,
+    id: 'platform-shell',
+    component: lazyRouteComponent(() => import('./PlatformShell.js'), 'PlatformShell'),
+  });
+  return rootRoute.addChildren([
+    consoleRoute,
+    platformShellRoute.addChildren(
+      registry.routes
+        .filter((entry) => entry.mount === 'platform')
+        .map((entry) => entry.create(platformShellRoute)),
+    ),
+  ]);
 }
 
 export function createAppRouter({
@@ -474,7 +489,7 @@ export function createOperatorRouter({
   history?: RouterHistory;
 }) {
   return createRouter({
-    routeTree: buildOperatorRouteTree(),
+    routeTree: buildOperatorRouteTree(services.registry),
     context: { services },
     ...(history ? { history } : {}),
     defaultPendingComponent: RoutePending,

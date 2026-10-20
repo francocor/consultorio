@@ -1,0 +1,8 @@
+{
+  "title": "Suscripción",
+  "nav": "Suscripción",
+  "stub.description": "Aquí podrá ver su plan, el estado de la suscripción, el uso de mensajes y los resúmenes.",
+  "operator.nav": "Suscripciones",
+  "operator.title": "Suscripciones de las organizaciones",
+  "operator.stub.description": "Aquí verá el estado, el uso y los pagos duplicados de cada organización, sin datos clínicos."
+}
