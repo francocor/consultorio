@@ -8,8 +8,12 @@ import type { AdapterResolver } from '../../../../main/adapter-resolver.js';
 import type { PasswordHasher } from '../../../../modules/identity/index.js';
 import {
   createTrialStarter,
+  generateStatements,
+  periodBounds,
+  periodOf,
   reconcileSubscription,
   runDunningStep,
+  runUsageSnapshot,
   startCheckout,
   type SubscriptionDeps,
 } from '../../../../modules/subscriptions/index.js';
@@ -20,6 +24,7 @@ import { SYSTEM_USER_ID, type WithTenant } from '../../../../platform/db/tenant-
 import { uuidv7 } from '../../../../platform/db/uuid.js';
 import type { PublicOrigins } from '../../../../platform/http/public-origin.js';
 import { membership, userAccount } from '../../../schema/identity.js';
+import { professional } from '../../../schema/staff.js';
 import { subscription } from '../../../schema/subscriptions.js';
 import { tenant } from '../../../schema/tenant.js';
 import { DEMO_EMAIL_DOMAIN, DEMO_PASSWORD } from '../credentials.js';
@@ -51,6 +56,12 @@ export interface PlatformDemoTenant {
   displayName: string;
   ownerEmail: string;
   ownerName: string;
+  /** The reception of the organization: it never sees the billing, and in a read-only one it is refused a write. */
+  receptionEmail: string;
+  receptionName: string;
+  /** A professional with an active seat (the one the statement counts), only where the story needs one. */
+  professionalEmail?: string;
+  professionalName?: string;
 }
 
 export const PLATFORM_DEMO_TENANTS: readonly PlatformDemoTenant[] = [
@@ -60,6 +71,8 @@ export const PLATFORM_DEMO_TENANTS: readonly PlatformDemoTenant[] = [
     displayName: 'Consultorio Prueba Trial',
     ownerEmail: `propietaria.trial@${DEMO_EMAIL_DOMAIN}`,
     ownerName: 'Ana Prueba',
+    receptionEmail: `recepcion.trial@${DEMO_EMAIL_DOMAIN}`,
+    receptionName: 'Ernesto Ruiz',
   },
   {
     state: 'active',
@@ -67,6 +80,10 @@ export const PLATFORM_DEMO_TENANTS: readonly PlatformDemoTenant[] = [
     displayName: 'Consultorio Prueba Activa',
     ownerEmail: `propietaria.activa@${DEMO_EMAIL_DOMAIN}`,
     ownerName: 'Beatriz Prueba',
+    receptionEmail: `recepcion.activa@${DEMO_EMAIL_DOMAIN}`,
+    receptionName: 'Facundo Ruiz',
+    professionalEmail: `profesional.activa@${DEMO_EMAIL_DOMAIN}`,
+    professionalName: 'Dr. Ignacio Prueba',
   },
   {
     state: 'past_due',
@@ -74,6 +91,8 @@ export const PLATFORM_DEMO_TENANTS: readonly PlatformDemoTenant[] = [
     displayName: 'Consultorio Prueba Atrasada',
     ownerEmail: `propietaria.atrasada@${DEMO_EMAIL_DOMAIN}`,
     ownerName: 'Carla Prueba',
+    receptionEmail: `recepcion.atrasada@${DEMO_EMAIL_DOMAIN}`,
+    receptionName: 'Gabriela Ruiz',
   },
   {
     state: 'read_only',
@@ -81,6 +100,8 @@ export const PLATFORM_DEMO_TENANTS: readonly PlatformDemoTenant[] = [
     displayName: 'Consultorio Prueba Vencida',
     ownerEmail: `propietaria.vencida@${DEMO_EMAIL_DOMAIN}`,
     ownerName: 'Delia Prueba',
+    receptionEmail: `recepcion.vencida@${DEMO_EMAIL_DOMAIN}`,
+    receptionName: 'Hernán Ruiz',
   },
 ];
 
@@ -144,6 +165,9 @@ export async function seedPlatformDemo(deps: PlatformDemoDeps): Promise<Platform
   const moveTo = (daysAgo: number, seconds = 0) => {
     clock.at = new Date(now.getTime() - daysAgo * DAY_MS + seconds * 1000);
   };
+  const setClock = (at: Date) => {
+    clock.at = at;
+  };
 
   // A mode left on by hand ("down", "refuse_amount_change") would make the walk fail or lie.
   const previousMode = await controls.mode();
@@ -157,7 +181,15 @@ export async function seedPlatformDemo(deps: PlatformDemoDeps): Promise<Platform
         continue;
       }
       const organization = await createOrganization(deps, entry, now);
-      await walkTo(entry.state, { ...organization, services, controls, moveTo, deps });
+      await walkTo(entry.state, {
+        ...organization,
+        services,
+        controls,
+        now,
+        moveTo,
+        setClock,
+        deps,
+      });
       moveTo(0);
       results.push({ slug: entry.slug, state: entry.state, created: true });
     }
@@ -172,13 +204,46 @@ interface Organization {
   ownerId: string;
 }
 
+interface Person {
+  email: string;
+  name: string;
+  roles: ('owner' | 'reception' | 'professional')[];
+}
+
+/** One account and its membership; the identity policies only let a transaction insert the account it acts as. */
+async function addMember(
+  deps: PlatformDemoDeps,
+  tenantId: string,
+  person: Person,
+  passwordHash: string,
+  now: Date,
+): Promise<{ userId: string; membershipId: string }> {
+  const userId = uuidv7();
+  const membershipId = uuidv7();
+  await deps.withTenant({ tenantId, userId }, async (tx) => {
+    await tx.insert(userAccount).values({
+      id: userId,
+      email: person.email,
+      passwordHash,
+      passwordChangedAt: now,
+    });
+    await tx.insert(membership).values({
+      id: membershipId,
+      tenantId,
+      userId,
+      roles: person.roles,
+      displayName: person.name,
+    });
+  });
+  return { userId, membershipId };
+}
+
 async function createOrganization(
   deps: PlatformDemoDeps,
   entry: PlatformDemoTenant,
   now: Date,
 ): Promise<Organization> {
   const tenantId = uuidv7();
-  const ownerId = uuidv7();
   // Inserted under a context whose tenant id is the new row's own id, as the operator console does.
   await deps.withTenant({ tenantId, userId: SYSTEM_USER_ID }, (tx) =>
     tx.insert(tenant).values({
@@ -190,30 +255,54 @@ async function createOrganization(
     }),
   );
   const passwordHash = await deps.hasher.hash(DEMO_PASSWORD);
-  // The identity policies only let a transaction insert the account it acts as.
-  await deps.withTenant({ tenantId, userId: ownerId }, async (tx) => {
-    await tx.insert(userAccount).values({
-      id: ownerId,
-      email: entry.ownerEmail,
-      passwordHash,
-      passwordChangedAt: now,
-    });
-    await tx.insert(membership).values({
-      id: uuidv7(),
+  const owner = await addMember(
+    deps,
+    tenantId,
+    { email: entry.ownerEmail, name: entry.ownerName, roles: ['owner'] },
+    passwordHash,
+    now,
+  );
+  await addMember(
+    deps,
+    tenantId,
+    { email: entry.receptionEmail, name: entry.receptionName, roles: ['reception'] },
+    passwordHash,
+    now,
+  );
+  if (entry.professionalEmail !== undefined) {
+    const person = await addMember(
+      deps,
       tenantId,
-      userId: ownerId,
-      roles: ['owner'],
-      displayName: entry.ownerName,
-    });
-  });
-  return { tenantId, ownerId };
+      {
+        email: entry.professionalEmail,
+        name: entry.professionalName ?? 'Profesional',
+        roles: ['professional'],
+      },
+      passwordHash,
+      now,
+    );
+    await deps.withTenant({ tenantId, userId: owner.userId }, (tx) =>
+      tx.insert(professional).values({
+        tenantId,
+        membershipId: person.membershipId,
+        specialties: ['Medicina general'],
+        matricula: '910001',
+        matriculaJurisdiction: 'AR-B',
+      }),
+    );
+  }
+  return { tenantId, ownerId: owner.userId };
 }
 
 interface Walk extends Organization {
   services: SubscriptionDeps;
   controls: ReturnType<typeof createLocalPaymentsControls>;
+  /** The instant "now" of the seed. */
+  now: Date;
   /** Puts the clock of the services N days (and some seconds) before "now". */
   moveTo(daysAgo: number, seconds?: number): void;
+  /** Puts the clock of the services at an instant. */
+  setClock(at: Date): void;
   deps: PlatformDemoDeps;
 }
 
@@ -232,17 +321,21 @@ async function startTrial(walk: Walk): Promise<void> {
   );
 }
 
-async function preapprovalOf(walk: Walk): Promise<string> {
+async function subscriptionRow(walk: Walk) {
   const [row] = await walk.deps.withTenant(
     { tenantId: walk.tenantId, userId: SYSTEM_USER_ID },
-    (tx) =>
-      tx
-        .select({ id: subscription.providerPreapprovalId })
-        .from(subscription)
-        .where(eq(subscription.tenantId, walk.tenantId)),
+    (tx) => tx.select().from(subscription).where(eq(subscription.tenantId, walk.tenantId)),
   );
-  if (!row?.id) throw new DemoSeedError('The checkout of the platform demo made no preapproval.');
-  return row.id;
+  if (!row) throw new DemoSeedError('The organization of the platform demo has no subscription.');
+  return row;
+}
+
+async function preapprovalOf(walk: Walk): Promise<string> {
+  const row = await subscriptionRow(walk);
+  if (!row.providerPreapprovalId) {
+    throw new DemoSeedError('The checkout of the platform demo made no preapproval.');
+  }
+  return row.providerPreapprovalId;
 }
 
 /** The owner subscribes, authorizes on the hosted page, and the provider charges the first month. */
@@ -277,6 +370,33 @@ async function runClock(walk: Walk): Promise<void> {
   }
 }
 
+/**
+ * The months of an active subscription that has been going on: each time the paid time ends, the
+ * provider charges the next month, until the paid time reaches beyond "now".
+ */
+async function renewUntilNow(walk: Walk, preapprovalId: string): Promise<void> {
+  for (let renewal = 0; renewal < 4; renewal += 1) {
+    const paidThrough = (await subscriptionRow(walk)).paidThrough;
+    if (paidThrough === null || paidThrough.getTime() > walk.now.getTime()) return;
+    walk.setClock(paidThrough);
+    await walk.controls.charge(preapprovalId, 'approved');
+    await reconcileSubscription(walk.services, walk.tenantId);
+  }
+}
+
+/** The days the professionals were active, one snapshot a day as the clock of the metering takes it. */
+async function meterDays(walk: Walk, from: Date): Promise<void> {
+  const noon = (day: Date) => new Date(day.getTime() + 12 * 3_600_000);
+  for (
+    let day = new Date(from.getTime());
+    day.getTime() < walk.now.getTime() - DAY_MS;
+    day = new Date(day.getTime() + DAY_MS)
+  ) {
+    walk.setClock(noon(day));
+    await runUsageSnapshot(walk.services, walk.tenantId);
+  }
+}
+
 async function walkTo(state: PlatformDemoState, walk: Walk): Promise<void> {
   switch (state) {
     case 'trial': {
@@ -286,12 +406,21 @@ async function walkTo(state: PlatformDemoState, walk: Walk): Promise<void> {
       return;
     }
     case 'active': {
-      walk.moveTo(35);
+      // Laid out on the calendar of the billing, not "so many days ago", so that a month has always
+      // closed with the professional's days in it, whatever the day of the month the seed runs: the
+      // trial began twenty days before the month started and ended six days before it, the owner
+      // subscribed the day after, and the provider charged every month since.
+      const monthStart = periodBounds(periodOf(walk.now)).start;
+      const at = (days: number) => new Date(monthStart.getTime() + days * DAY_MS);
+      walk.setClock(at(-20));
       await startTrial(walk);
-      // The trial ended unpaid without anyone noticing; the owner subscribes ten days ago and the
-      // month paid then runs for twenty more.
-      walk.moveTo(10);
-      await subscribeAndPay(walk);
+      walk.setClock(at(-5));
+      const preapprovalId = await subscribeAndPay(walk);
+      await renewUntilNow(walk, preapprovalId);
+      // The professional worked every day since the trial ended; the month that closed has its statement.
+      await meterDays(walk, at(-6));
+      walk.setClock(walk.now);
+      await generateStatements(walk.services, walk.tenantId);
       return;
     }
     case 'past_due': {

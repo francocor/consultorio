@@ -12,6 +12,7 @@ import {
 } from '../../src/db/seed/demo/stage6/platform-tenants.js';
 import { seedPlatformCatalogs } from '../../src/db/seed/platform.js';
 import { createPasswordHasher } from '../../src/modules/identity/infrastructure/argon2.js';
+import { periodOf, previousPeriod } from '../../src/modules/subscriptions/index.js';
 import { createTenantLookup } from '../../src/modules/tenancy/index.js';
 import { createOwnerDb, createRuntimeDb, type DbHandle } from '../../src/platform/db/pool.js';
 import { createWithTenant } from '../../src/platform/db/tenant-context.js';
@@ -152,6 +153,95 @@ describe('the four organizations of the platform demo', () => {
         const body = SubscriptionResponse.parse(view.json());
         expect(body.exempt).toBe(false);
         expect(body.subscription?.status).toBe(entry.state);
+      }
+    } finally {
+      await app.close();
+    }
+  });
+
+  it('gives the active organization a professional, the days they were active and the statement of the month that closed', async () => {
+    const entry = PLATFORM_DEMO_TENANTS.find((candidate) => candidate.state === 'active');
+    const slug = entry?.slug ?? '';
+    const professionals = await rowsOf(
+      slug,
+      sql`select count(*)::int as n from professional p join membership m on m.id = p.membership_id
+           where p.status = 'active' and m.status = 'active' and 'professional' = any(m.roles)`,
+    );
+    const days = await rowsOf(
+      slug,
+      sql`select count(*)::int as n, min(day) as first, max(day) as last from usage_record where kind = 'active_professional_day'`,
+    );
+    const statements = await rowsOf(
+      slug,
+      sql`select period, professionals_counted, base_cents, total_cents from statement order by period`,
+    );
+
+    expect(professionals[0]?.['n']).toBe(1);
+    // From the day the trial ended to yesterday, one record a day.
+    expect(days[0]?.['n']).toBeGreaterThanOrEqual(6);
+    expect(statements).toHaveLength(1);
+    expect(statements[0]).toMatchObject({
+      period: previousPeriod(periodOf(now)),
+      professionals_counted: 1,
+    });
+    expect(Number(statements[0]?.['total_cents'])).toBeGreaterThan(0);
+  });
+
+  it('shows the owner the statement through the product, with counts and no patient', async () => {
+    const app = buildTestApplication(runtime, { clock: () => now });
+    await app.ready();
+    try {
+      const entry = PLATFORM_DEMO_TENANTS.find((candidate) => candidate.state === 'active');
+      const slug = entry?.slug ?? '';
+      const session = await signInAs(
+        app,
+        slug,
+        { id: 'unused', email: entry?.ownerEmail ?? '', membershipId: 'unused' },
+        DEMO_PASSWORD,
+      );
+      const api = clientFor(app, slug);
+
+      const statements = await api.get('/subscription/statements', session);
+      const usage = await api.get('/subscription/usage', session);
+
+      expect(statements.statusCode, statements.body).toBe(200);
+      expect(statements.json<{ statements: { period: string }[] }>().statements).toHaveLength(1);
+      expect(usage.statusCode, usage.body).toBe(200);
+    } finally {
+      await app.close();
+    }
+  });
+
+  it('gives every organization a reception, who cannot see the billing, and who is refused a write in the read-only one', async () => {
+    const app = buildTestApplication(runtime, { clock: () => now });
+    await app.ready();
+    try {
+      for (const entry of PLATFORM_DEMO_TENANTS) {
+        const session = await signInAs(
+          app,
+          entry.slug,
+          { id: 'unused', email: entry.receptionEmail, membershipId: 'unused' },
+          DEMO_PASSWORD,
+        );
+        const api = clientFor(app, entry.slug);
+
+        const billing = await api.get('/subscription', session);
+        const write = await api.post('/patients', session, {
+          familyName: 'Prueba',
+          givenNames: 'Paciente',
+          birthDate: '1990-01-01',
+          dataProcessingConsent: true,
+        });
+
+        expect(billing.statusCode, entry.slug).toBe(403);
+        if (entry.state === 'read_only') {
+          expect(write.statusCode, write.body).toBe(402);
+          expect(write.json<{ code: string }>().code).toBe('tenant_read_only');
+          // The reason, with no word about the billing.
+          expect(write.body).not.toMatch(/suscripci|pago|Mercado|\$/i);
+        } else {
+          expect(write.statusCode, `${entry.slug}: ${write.body}`).toBe(201);
+        }
       }
     } finally {
       await app.close();
