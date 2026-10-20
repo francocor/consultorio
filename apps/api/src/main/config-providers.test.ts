@@ -2,6 +2,8 @@ import { readFileSync } from 'node:fs';
 
 import { describe, expect, it } from 'vitest';
 
+import { generateReleaserKeys } from '../modules/tenancy/archive/archive-crypto.js';
+
 import { PROVIDER_ENV_VARIABLES } from './config-providers.js';
 import { ConfigError, loadConfig } from './config.js';
 
@@ -266,5 +268,100 @@ describe('provider configuration', () => {
     expect(PROVIDER_ENV_VARIABLES).toContain('MP_WEBHOOK_SECRET');
     expect(PROVIDER_ENV_VARIABLES).toContain('MP_PUBLIC_BASE_URL');
     for (const name of PROVIDER_ENV_VARIABLES) expect(guide, name).toContain(name);
+  });
+});
+
+describe('the retention archive settings', () => {
+  const pair = generateReleaserKeys();
+  const archive = {
+    ...base,
+    ARCHIVE_S3_BUCKET: 'consultorio-archive',
+    ARCHIVE_S3_ENDPOINT: 'http://127.0.0.1:9000',
+    ARCHIVE_S3_ACCESS_KEY_ID: 'archive-writer',
+    ARCHIVE_S3_SECRET_ACCESS_KEY: 'placeholder-writer-secret',
+    ARCHIVE_RELEASER_PUBLIC_KEY: pair.publicKey,
+  };
+
+  it('is absent when no bucket is named, and nothing is archived', () => {
+    expect(loadConfig(base).providers.archive).toBeUndefined();
+  });
+
+  it('reads the bucket, the identity that writes, the retention and the key it seals to', () => {
+    const { archive: found } = loadConfig(archive).providers;
+
+    expect(found).toEqual({
+      storage: {
+        bucket: 'consultorio-archive',
+        region: 'us-east-1',
+        endpoint: 'http://127.0.0.1:9000',
+        credentials: {
+          accessKeyId: 'archive-writer',
+          secretAccessKey: 'placeholder-writer-secret',
+        },
+      },
+      retentionDays: 3650,
+      afterDays: 30,
+      releaserPublicKey: pair.publicKey,
+    });
+    expect(found).not.toHaveProperty('releaserKek');
+  });
+
+  it('keeps ten years and thirty days unless told otherwise, and accepts other figures', () => {
+    const { archive: found } = loadConfig({
+      ...archive,
+      ARCHIVE_RETENTION_DAYS: '7300',
+      ARCHIVE_AFTER_DAYS: '0',
+    }).providers;
+
+    expect(found).toMatchObject({ retentionDays: 7300, afterDays: 0 });
+    expect(() => loadConfig({ ...archive, ARCHIVE_RETENTION_DAYS: '0' })).toThrow(
+      /ARCHIVE_RETENTION_DAYS/,
+    );
+    expect(() => loadConfig({ ...archive, ARCHIVE_AFTER_DAYS: '-1' })).toThrow(
+      /ARCHIVE_AFTER_DAYS/,
+    );
+  });
+
+  it('gives the releaser only its private key: the public one is derived from it', () => {
+    const withoutPublic: Record<string, string> = { ...archive };
+    delete withoutPublic['ARCHIVE_RELEASER_PUBLIC_KEY'];
+
+    const { archive: found } = loadConfig({
+      ...withoutPublic,
+      ARCHIVE_RELEASER_KEK: pair.kek,
+    }).providers;
+
+    expect(found).toMatchObject({ releaserPublicKey: pair.publicKey, releaserKek: pair.kek });
+  });
+
+  it('refuses a private key that is not the one of the public key it is given with', () => {
+    const stranger = generateReleaserKeys();
+
+    expect(() => loadConfig({ ...archive, ARCHIVE_RELEASER_KEK: stranger.kek })).toThrow(
+      /ARCHIVE_RELEASER_PUBLIC_KEY/,
+    );
+  });
+
+  it('refuses a half-configured archive and names the variable, never its value', () => {
+    for (const missing of [
+      'ARCHIVE_S3_ENDPOINT',
+      'ARCHIVE_S3_ACCESS_KEY_ID',
+      'ARCHIVE_S3_SECRET_ACCESS_KEY',
+      'ARCHIVE_RELEASER_PUBLIC_KEY',
+    ] as const) {
+      const rest = Object.fromEntries(Object.entries(archive).filter(([name]) => name !== missing));
+      expect(() => loadConfig(rest), missing).toThrow(new RegExp(missing));
+    }
+    expect(() => loadConfig({ ...base, ARCHIVE_RELEASER_PUBLIC_KEY: pair.publicKey })).toThrow(
+      /ARCHIVE_S3_BUCKET/,
+    );
+    let message = '';
+    try {
+      loadConfig({ ...archive, ARCHIVE_RELEASER_PUBLIC_KEY: 'bm90IGEga2V5' });
+    } catch (error) {
+      message = error instanceof ConfigError ? error.message : '';
+    }
+    expect(message).toContain('ARCHIVE_RELEASER_PUBLIC_KEY');
+    expect(message).not.toContain('bm90IGEga2V5');
   });
 });

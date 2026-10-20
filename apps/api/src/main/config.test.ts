@@ -30,11 +30,11 @@ describe('loadConfig', () => {
     });
   });
 
-  it('sizes the pool of the runtime connection with DB_POOL_MAX, above the floor by default (JD-S4 R3-A-W5, JD-S5 R4-2)', () => {
+  it('sizes the pool of the runtime connection with DB_POOL_MAX, above the floor by default (JD-S4 R3-A-W5, JD-S5 R4-2, Stage 6)', () => {
     expect(loadConfig(validEnv).dbPoolMax).toBe(DEFAULT_RUNTIME_POOL_MAX);
-    expect(DEFAULT_RUNTIME_POOL_MAX).toBe(24);
+    expect(DEFAULT_RUNTIME_POOL_MAX).toBe(36);
     expect(DEFAULT_RUNTIME_POOL_MAX).toBeGreaterThanOrEqual(MIN_DB_POOL_MAX);
-    expect(loadConfig({ ...validEnv, DB_POOL_MAX: '25' }).dbPoolMax).toBe(25);
+    expect(loadConfig({ ...validEnv, DB_POOL_MAX: '30' }).dbPoolMax).toBe(30);
     for (const bad of ['0', '-1', '1.5', 'abc', '101']) {
       expect(() => loadConfig({ ...validEnv, DB_POOL_MAX: bad }), bad).toThrow(/DB_POOL_MAX/);
     }
@@ -51,9 +51,12 @@ describe('loadConfig', () => {
       'portal.notice_sweep',
       'subscription.reconcile',
       'dunning.step',
+      'export.build',
+      'archive.write',
+      'archive.verify',
     ]);
     expect(MIN_DB_POOL_MAX).toBe(CONNECTION_HOLDING_JOBS.length * JOB_LOCAL_CONCURRENCY * 2 + 2);
-    expect(MIN_DB_POOL_MAX).toBe(22);
+    expect(MIN_DB_POOL_MAX).toBe(34);
     for (const small of ['2', '6', '10', String(MIN_DB_POOL_MAX - 1)]) {
       expect(() => loadConfig({ ...validEnv, DB_POOL_MAX: small }), small).toThrow(
         new RegExp(`DB_POOL_MAX.*${String(MIN_DB_POOL_MAX)}`),
@@ -126,7 +129,7 @@ describe('.env.example', () => {
   it('is accepted by the config schema as it is (its pool is the floor when the file pins less)', () => {
     // `DB_POOL_MAX=16` of `.env.example` is the maintainer's file and is below the floor that the
     // payments reconcile raised (MIN_DB_POOL_MAX): the maintainer sets it to DEFAULT_RUNTIME_POOL_MAX
-    // (24) or the floor of the day. Until then this reads the floor from the code, so the example
+    // (36) or the floor of the day. Until then this reads the floor from the code, so the example
     // keeps being checked for everything else.
     const pinned = Number(example['DB_POOL_MAX']);
     const config = loadConfig({

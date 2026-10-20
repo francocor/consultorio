@@ -86,6 +86,25 @@ const ALLOWED: Record<string, readonly string[]> = {
   // marked in error stops counting. The runtime role writes the encounter, never this table.
   'app.clinical_footprint_mark()': [],
   'app.clinical_note_care_sync()': [],
+  // Stage 6, retention (track C). The operator console cancels the organization of its transaction
+  // (the role has no UPDATE on `tenant`), and the worker finds which organizations have a package of
+  // the cancellation export waiting (tenant ids only).
+  'app.operator_cancel_tenant(uuid)': ['app_operator'],
+  'app.cancellation_export_pending(integer)': ['app_rw'],
+  // The retention archive (S6.09): which organizations are due to be archived or verified (ids only),
+  // the platform-trail entries of the archive jobs (the runtime role cannot write that table, and the
+  // function takes four actions and only the organization of the transaction), and the state of the
+  // archives for the operator console (counts and states, no table privilege).
+  'app.archive_due(integer,integer)': ['app_rw'],
+  'app.archive_verify_due(integer,integer)': ['app_rw'],
+  'app.write_archive_audit(text,text,uuid,text,jsonb)': ['app_rw'],
+  'app.archive_overview(integer)': ['app_operator'],
+  // The approved release requests the releaser has to carry out (ids and the organization only).
+  'app.archive_release_due(integer)': ['app_rw'],
+  // The released packages whose link ended before anybody downloaded them (ids only).
+  'app.archive_release_cleanup_due(integer)': ['app_rw'],
+  // Whether an organization has a written archive: all the operator may ask before recording a release.
+  'app.archive_is_written(uuid)': ['app_operator'],
 };
 
 let owner: pg.Client;

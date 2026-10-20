@@ -38,7 +38,25 @@ export type {
 } from './application/lifecycle.js';
 export { createCancellation } from './cancellation/cancellation.js';
 export type { Cancellation, CancellationOptions } from './cancellation/cancellation.js';
+export {
+  CANCELLATION_EXPORT_JOB,
+  createCancellationExportJob,
+} from './cancellation/build-export.js';
+export type { CancellationExportDeps } from './cancellation/build-export.js';
+export { enqueuePendingExports } from './cancellation/queue.js';
+export { operatorCancelRoutes } from './cancellation/http/operator-cancel-routes.js';
 export { createArchive } from './archive/archive.js';
+export { enqueueDueArchives, enqueueDueVerifications } from './archive/due.js';
+export { createArchiveKeyReleaser, createArchiveKeyWriter } from './archive/keys.js';
+export type { ArchiveKeyReleaser, ArchiveKeyWriter } from './archive/keys.js';
+export { createArchiveVerifyJob, ARCHIVE_VERIFY_JOB } from './archive/verify-archive.js';
+export { releaseRoutes } from './archive/http/release-routes.js';
+export { createArchiveReleaseJob, ARCHIVE_RELEASE_JOB } from './archive/release-archive.js';
+export { createReleaser } from './archive/releaser.js';
+export type { Releaser, ReleaserOptions } from './archive/releaser.js';
+export { createReleaseRequests } from './archive/release-requests.js';
+export type { ReleaseRequests } from './archive/release-requests.js';
+export { createArchiveWriteJob, ARCHIVE_WRITE_JOB } from './archive/write-archive.js';
 export type { Archive, ArchiveOptions } from './archive/archive.js';
 export type * from './archive/ports.js';
 export type { LookupTenant } from './application/resolve-tenant.js';

@@ -36,7 +36,7 @@ export function registerAllExportContributors(
   registerIdentityExportContributors(registry);
   registerAccessExportContributors(registry);
   registerStaffExportContributors(registry);
-  registerPatientsExportContributors(registry);
+  registerPatientsExportContributors(registry, deps);
   registerSchedulingExportContributors(registry);
   registerDocumentsExportContributors(registry);
   registerOnboardingExportContributors(registry);

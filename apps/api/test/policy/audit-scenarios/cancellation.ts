@@ -3,23 +3,21 @@ import type { CANCELLATION_AUDIT_ACTIONS } from '@consultorio/contracts';
 import type { AuditScenario } from '../audit-scenarios.js';
 
 /**
- * Where the audit actions of the cancellation of an organization are proven. Track C (retention)
- * replaces each `pending` with the integration test that names the action, in this file only. The
- * archive actions are platform ones (`ARCHIVE_PLATFORM_AUDIT_ACTIONS`): they are proven in the
- * archive tests against the platform trail, not here.
+ * Where the audit actions of the cancellation of an organization are proven. The archive actions are
+ * platform ones (`ARCHIVE_PLATFORM_AUDIT_ACTIONS`): they are proven in the archive tests against the
+ * platform trail, not here.
  */
 export const CANCELLATION_SCENARIOS: Record<
   (typeof CANCELLATION_AUDIT_ACTIONS)[number],
   AuditScenario
 > = {
-  'tenant.cancelled': {
-    pending:
-      'S6.04 (task 6.21) and S6.08 (task 6.36): the subscription ends, or the operator cancels',
-  },
+  // The operator's cancellation (task 6.36). The subscription ending writes the same entry from
+  // billing (S6.04); its own test is Track A's to name when it lands.
+  'tenant.cancelled': { test: 'apps/api/test/integration/cancellation-export.test.ts' },
   'export.cancellation.requested': {
-    pending: 'S6.08 (task 6.33): the export is built when the organization is cancelled',
+    test: 'apps/api/test/integration/cancellation-export.test.ts',
   },
   'export.cancellation.downloaded': {
-    pending: 'S6.08 (task 6.34): the owner and each professional download their package',
+    test: 'apps/api/test/integration/cancellation-export.test.ts',
   },
 };

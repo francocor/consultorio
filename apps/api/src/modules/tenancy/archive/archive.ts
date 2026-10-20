@@ -4,6 +4,10 @@ import type { AdapterResolver } from '../../../main/adapter-resolver.js';
 import type { WithTenant } from '../../../platform/db/tenant-context.js';
 import type { JobClient } from '../../../platform/jobs/boss.js';
 import type { EmailSender } from '../../../platform/mail/email-sender.js';
+import type { ObjectStorage } from '../../../platform/storage/object-storage.js';
+import { createActionTokens } from '../../../platform/tokens/index.js';
+
+import { releaseLinkRoutes } from './http/link-routes.js';
 
 /**
  * The retention archive of Stage 6 (tenancy, "Retention archive after cancellation"): the records of
@@ -11,9 +15,13 @@ import type { EmailSender } from '../../../platform/mail/email-sender.js';
  * role can alter, and the break-glass release to the patient or a verified professional while the
  * operator never reads the content.
  *
- * Seam skeleton: the module is registered through the tenancy `index.ts` and does nothing yet. The
- * retention track (Track C, S6.09 and S6.10) adds files under this folder and edits this one. The
- * store is the `archiveStore` port of the adapter resolver (`ports.ts` says how it must behave).
+ * What lives where:
+ * - `write-archive.ts` and `verify-archive.ts` (jobs of the worker) write and check the archive;
+ * - `release-archive.ts` (a job of the `releaser` process, the only holder of the key) carries out an
+ *   approved release; `release-requests.ts` is the operator's side of it;
+ * - this module serves the single-use link of a release (`http/link-routes.ts`), the only HTTP
+ *   surface of the archive that is not the operator's.
+ * The store is the `archiveStore` port of the adapter resolver (`ports.ts` says how it must behave).
  */
 
 export interface ArchiveOptions {
@@ -24,6 +32,8 @@ export interface ArchiveOptions {
   email: EmailSender;
   /** Queues `archive.write`, `archive.verify` and `archive.release`. */
   jobs?: JobClient | undefined;
+  /** The bucket where a released package waits for its link. Absent: the link does not work. */
+  storage?: ObjectStorage | undefined;
   clock?: () => Date;
 }
 
@@ -35,5 +45,14 @@ export interface Archive {
 }
 
 export function createArchive(options: ArchiveOptions): Archive {
-  return { options, routes: () => undefined };
+  const clock = options.clock ?? (() => new Date());
+  return {
+    options,
+    routes: releaseLinkRoutes({
+      withTenant: options.withTenant,
+      tokens: createActionTokens({ clock }),
+      storage: options.storage,
+      clock,
+    }),
+  };
 }

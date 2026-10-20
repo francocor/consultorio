@@ -50,4 +50,15 @@ export const STAGE6_PUBLIC_ROUTES: Readonly<Record<string, Declaration>> = {
     guards: ['token', 'rate-limit'],
     probes: [SIGNUP, SIGNUP_ABUSE],
   },
+  // Retention (track C): the single-use link of a break-glass release, 72 hours. Looking at it spends
+  // nothing; the POST spends it and hands the package over once. Unknown, expired, spent and foreign
+  // links all answer the same.
+  'GET /public/:slug/archive-release/:token': {
+    guards: ['token', 'rate-limit'],
+    probes: ['test/integration/archive-release.test.ts'],
+  },
+  'POST /public/:slug/archive-release/:token': {
+    guards: ['token', 'rate-limit'],
+    probes: ['test/integration/archive-release.test.ts'],
+  },
 };

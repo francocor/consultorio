@@ -69,7 +69,9 @@ export const TOKEN_KIND_REGISTRY: Record<TokenKind, KindSpec> = {
   // one for its professional). Its own kind, not `export_download`: the billing exports own that one
   // in the staff door, which holds one resource per kind.
   cancellation_export: { ttlMs: 5 * MINUTE, maxUses: 1, sessionBound: true, enabled: true },
-  archive_release: { ttlMs: 72 * HOUR, maxUses: 1, sessionBound: false, enabled: false },
+  // Stage 6: the single-use link the break-glass release of the archive emails to a verified requester
+  // (72 hours). Not session bound: the person has no session, only the address the link was sent to.
+  archive_release: { ttlMs: 72 * HOUR, maxUses: 1, sessionBound: false, enabled: true },
 };
 
 export function isTokenKind(value: string): value is TokenKind {

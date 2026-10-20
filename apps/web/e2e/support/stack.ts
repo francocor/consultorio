@@ -14,6 +14,7 @@ interface StackInfo {
   demoPassword: string;
   tenants: Record<string, { id: string; slug: string; name: string; emailSuffix: string }>;
   operator: { email: string; password: string; totpSecret: string };
+  operatorTwo: { email: string; password: string; totpSecret: string };
 }
 
 /** The port of the preview server; `E2E_WEB_PORT` moves it when another run holds 4173. */

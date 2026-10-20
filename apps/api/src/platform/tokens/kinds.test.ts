@@ -57,7 +57,8 @@ describe('action token kinds (design 4.5)', () => {
     const fromStageFive = ['prescription_pdf'];
 
     // Stage 6 turned on the link of a package of the cancellation export (retention track).
-    const fromStageSix = ['cancellation_export'];
+    // and, with the break-glass release of the archive (task 6.41), the single-use link of a release.
+    const fromStageSix = ['cancellation_export', 'archive_release'];
 
     expect(enabled).toEqual(expect.arrayContaining(fromStageOne));
     expect(
@@ -127,8 +128,14 @@ describe('action token kinds (design 4.5)', () => {
     expect(TOKEN_KIND_REGISTRY.prescription_pdf.enabled).toBe(true);
     // The seam of Stage 6 turned on the package link; the retention track (S6.34) registers its resource.
     expect(TOKEN_KIND_REGISTRY.cancellation_export.enabled).toBe(true);
-    // The break-glass release stays off until its operator routes exist (task 6.41).
-    expect(TOKEN_KIND_REGISTRY.archive_release.enabled).toBe(false);
+    // The retention track turned the break-glass release link on with its operator routes (task 6.41):
+    // 72 hours, one use, and not bound to a session (the requester has none).
+    expect(TOKEN_KIND_REGISTRY.archive_release).toMatchObject({
+      enabled: true,
+      ttlMs: 72 * HOUR,
+      maxUses: 1,
+      sessionBound: false,
+    });
   });
 
   it('gives every kind a positive lifetime and use count', () => {

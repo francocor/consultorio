@@ -15,7 +15,10 @@ export const JOB_LOCAL_CONCURRENCY = 2;
  * - `portal.notice_sweep`: the messages of the notices, with the claim and the mark in short ones;
  * - `subscription.reconcile` and `dunning.step`: the questions to the payments provider, asked
  *   between two short transactions, with the mark of every write committed before its call (Stage 6,
- *   track A).
+ *   track A);
+ * - `export.build`: the package of a cancelled organization, streamed to the files bucket while the
+ *   lock of the build is held on the transaction of the framework (the reads are short ones of their own);
+ * - `archive.write` and `archive.verify`: the write-once store, the same way.
  *
  * Each family runs `JOB_LOCAL_CONCURRENCY` jobs at once, so the worker needs two connections for each
  * (`MIN_DB_POOL_MAX`). A new job that waits like these inside `defineJob` must be added here.
@@ -26,27 +29,19 @@ export const CONNECTION_HOLDING_JOBS = [
   'portal.notice_sweep',
   'subscription.reconcile',
   'dunning.step',
+  'export.build',
+  'archive.write',
+  'archive.verify',
 ] as const;
 
 /**
- * The Stage 6 families that WILL wait for an outside service the same way (the payments gateway and
- * the archive store), whose handlers do not exist yet. They are named now so that no track can add
- * one and forget the pool, but they are not in the list above because the floor of the pool rises
- * with every family (`MIN_DB_POOL_MAX`) and `.env.example` pins `DB_POOL_MAX=16`, a file the seam may
- * not edit. The track that writes one of these handlers:
+ * The families that wait on an outside service the same way but run in no worker, so they do not set
+ * the floor of the worker pool (`MIN_DB_POOL_MAX`). `archive.release` runs only in the `releaser`
+ * process, which has a pool of its own (the break-glass release of the archive, Stage 6 retention).
  *
- * 1. writes it as the other families do: a short transaction for the mark before the call, none
- *    held while the call waits, a second one for the answer (never a provider call inside the
- *    transaction `runJob` opens, which idles for the length of the call);
- * 2. MOVES the name from this list to `CONNECTION_HOLDING_JOBS`, which raises `MIN_DB_POOL_MAX`;
- * 3. raises `DEFAULT_RUNTIME_POOL_MAX` (`platform/db/pool.ts`) to at least the new floor, `DB_POOL_MAX`
- *    in `.env.example` (the maintainer's file: ask) and the numbers in `docs/runbooks/deploy.md`,
- *    `config.test.ts` and `docs/security/asvs-l2-portal.md`.
- *
- * `archive.release` runs only in the `releaser` process, which has a pool of its own.
+ * A new job that waits like the families above is added to `CONNECTION_HOLDING_JOBS`, which raises
+ * `MIN_DB_POOL_MAX`; then `DEFAULT_RUNTIME_POOL_MAX` (`platform/db/pool.ts`) is raised to at least
+ * the new floor, with `DB_POOL_MAX` in `.env.example` (the maintainer's file: ask) and the numbers in
+ * `docs/runbooks/deploy.md`, `config.test.ts` and `docs/security/asvs-l2-portal.md`.
  */
-export const PENDING_CONNECTION_HOLDING_JOBS = [
-  'archive.write',
-  'archive.verify',
-  'archive.release',
-] as const;
+export const PENDING_CONNECTION_HOLDING_JOBS = ['archive.release'] as const;

@@ -107,7 +107,11 @@ export interface ApiClient {
     file: Blob,
     options?: RequestOptions<T>,
   ) => Promise<T>;
-  download: (path: string, options?: RequestOptions<unknown>) => Promise<DownloadedFile>;
+  /** Fetches a file as a blob; a link that spends itself on use (a single-use download) is a POST. */
+  download: (
+    path: string,
+    options?: RequestOptions<unknown> & { method?: 'GET' | 'POST' },
+  ) => Promise<DownloadedFile>;
 }
 
 function withQuery(path: string, query: Record<string, QueryValue> | undefined): string {
@@ -296,7 +300,7 @@ export function createApiClient(options: ApiClientOptions = {}): ApiClient {
     },
     async download(path, requestOptions = {}) {
       const response = await send(
-        'GET',
+        requestOptions.method ?? 'GET',
         path,
         requestOptions.query ? { query: requestOptions.query } : {},
         requestOptions.signal,

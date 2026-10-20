@@ -95,3 +95,57 @@ describe('booting the API without a database', () => {
     expect(status).toBe(200);
   }, 60_000);
 });
+
+/** Runs the entry point with a role and waits for it to stop on its own. */
+function runUntilExit(role: string, extra: NodeJS.ProcessEnv) {
+  return new Promise<{ code: number | null; output: string }>((resolve, reject) => {
+    let output = '';
+    const process_ = spawn(process.execPath, ['--import', 'tsx', 'src/main/main.ts', role], {
+      cwd: API_DIR,
+      env: { ...smokeEnv(3999), ...extra },
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    const timer = setTimeout(() => {
+      process_.kill();
+      reject(new Error(`The ${role} role did not stop: ${output}`));
+    }, 40_000);
+    for (const stream of [process_.stdout, process_.stderr]) {
+      stream.on('data', (chunk: Buffer) => {
+        output += chunk.toString();
+      });
+    }
+    process_.once('exit', (code) => {
+      clearTimeout(timer);
+      resolve({ code, output });
+    });
+  });
+}
+
+describe('who holds the key of the retention archive', () => {
+  const ARCHIVE = {
+    ARCHIVE_S3_BUCKET: 'consultorio-archive',
+    ARCHIVE_S3_ENDPOINT: 'http://127.0.0.1:1',
+    ARCHIVE_S3_ACCESS_KEY_ID: 'archive-writer',
+    ARCHIVE_S3_SECRET_ACCESS_KEY: 'placeholder-writer',
+    ARCHIVE_RELEASER_KEK: Buffer.alloc(32, 7).toString('base64'),
+  };
+
+  it.each(['api', 'worker'])(
+    'refuses to start the %s role when the private key of the releaser is in its environment',
+    async (role) => {
+      const { code, output } = await runUntilExit(role, ARCHIVE);
+
+      expect(code).not.toBe(0);
+      expect(output).toContain('ARCHIVE_RELEASER_KEK');
+      expect(output).toContain('only the releaser process may hold it');
+    },
+    60_000,
+  );
+
+  it('refuses to start the releaser role without its key', async () => {
+    const { code, output } = await runUntilExit('releaser', {});
+
+    expect(code).not.toBe(0);
+    expect(output).toContain('ARCHIVE_RELEASER_KEK');
+  }, 60_000);
+});

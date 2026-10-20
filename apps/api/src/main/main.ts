@@ -1,5 +1,6 @@
 import pino from 'pino';
 
+import { createLocalArchiveStore } from '../adapters/archive-local/index.js';
 import { createFakeScanner } from '../adapters/fake-scanner/index.js';
 import { createS3ObjectStorage } from '../adapters/s3/index.js';
 import { consentTextFor, createDemoResetPort } from '../db/seed/demo/index.js';
@@ -7,6 +8,7 @@ import { createPasswordHasher } from '../modules/identity/index.js';
 import { configureAddressHash, createVideoJoinRegistry } from '../modules/notifications/index.js';
 import { createOperatorSecrets } from '../modules/operator/index.js';
 import { holdExpireJob } from '../modules/scheduling/index.js';
+import { createReleaser } from '../modules/tenancy/index.js';
 import { createTenantKeys } from '../platform/crypto/tenant-keys.js';
 import { createOperatorDb, createRuntimeDb } from '../platform/db/pool.js';
 import { createDbProbe } from '../platform/db/probe.js';
@@ -27,9 +29,10 @@ import { buildLoggerOptions } from './logger.js';
 import { loadPasswordValidator } from './password-validator.js';
 import { createConfiguredScanner } from './scanner.js';
 import { MODULE_WIRINGS, combineWorkerContributions } from './wiring/index.js';
+import { originsFromConfig } from './wiring/origins.js';
 import { demoPrescriptionProviderOf } from './wiring/prescriptions.js';
 
-const ROLES = ['api', 'worker'] as const;
+const ROLES = ['api', 'worker', 'releaser'] as const;
 type Role = (typeof ROLES)[number];
 
 function isRole(value: string | undefined): value is Role {
@@ -47,7 +50,21 @@ function waitForShutdownSignal(): Promise<void> {
   });
 }
 
+/**
+ * `ARCHIVE_RELEASER_KEK` opens the archive of every cancelled organization, so it lives in ONE process:
+ * the releaser. The API and the worker refuse to start with it, so a leak of their environment (or a
+ * deployment that copies the same variables everywhere) never hands the key over.
+ */
+function assertNoReleaserKey(config: Config): void {
+  if (config.providers.archive?.releaserKek !== undefined) {
+    throw new ConfigError(
+      'Invalid environment configuration. ARCHIVE_RELEASER_KEK: only the releaser process may hold it (the API and the worker are given ARCHIVE_RELEASER_PUBLIC_KEY)',
+    );
+  }
+}
+
 async function runApi(config: Config): Promise<void> {
+  assertNoReleaserKey(config);
   const probe = createDbProbe(config.databaseUrl);
   const database = createRuntimeDb(config.databaseUrl, { max: config.dbPoolMax });
   const kms = createKeyManagement(config.kms);
@@ -161,10 +178,47 @@ async function runApi(config: Config): Promise<void> {
 }
 
 /**
+ * The only process that holds the key of the archive: it carries out the release requests an operator
+ * approved (decrypts the scope, builds the package, emails a single-use link) and does nothing else.
+ */
+async function runReleaser(config: Config): Promise<void> {
+  const log = pino(buildLoggerOptions(config.logLevel));
+  const archive = config.providers.archive;
+  if (archive?.releaserKek === undefined) {
+    throw new ConfigError(
+      'Invalid environment configuration. ARCHIVE_RELEASER_KEK: is required for the releaser, together with the archive bucket (ARCHIVE_S3_*)',
+    );
+  }
+  if (!config.storage) {
+    throw new ConfigError(
+      'Invalid environment configuration. S3_BUCKET: is required for the releaser (the package waits there for its link)',
+    );
+  }
+  const storage = createS3ObjectStorage(config.storage);
+  const email = createConfiguredEmail(config.mail);
+  const releaser = await createReleaser({
+    databaseUrl: config.databaseUrl,
+    kek: archive.releaserKek,
+    store: createLocalArchiveStore(archive.storage),
+    storage,
+    email: email.sender,
+    origins: originsFromConfig(config),
+    log,
+  });
+  log.info('releaser started');
+  await waitForShutdownSignal();
+  await releaser.stop();
+  email.close();
+  storage.close();
+  log.info('releaser stopped');
+}
+
+/**
  * The only process that registers job handlers and runs the scheduled work: it seals audit
  * events every few seconds and, every night, verifies every audit chain.
  */
 async function runWorker(config: Config): Promise<void> {
+  assertNoReleaserKey(config);
   const log = pino(buildLoggerOptions(config.logLevel));
   if (config.auditSealerDatabaseUrl === undefined) {
     throw new ConfigError(
@@ -228,6 +282,8 @@ async function main(): Promise<void> {
   configureAddressHash(config.providers.addressHashPepper ?? null);
   if (role === 'api') {
     await runApi(config);
+  } else if (role === 'releaser') {
+    await runReleaser(config);
   } else {
     await runWorker(config);
   }
