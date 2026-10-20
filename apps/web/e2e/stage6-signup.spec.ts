@@ -77,19 +77,8 @@ test('a visitor signs up, opens the emailed link on the new organization and act
   await expectFitsAndAccessible(page);
   await page.getByRole('button', { name: 'Activar mi organización' }).click();
 
-  // Until the subscriptions track (S6.01) is in the build the trial door refuses and nothing
-  // activates: the page then says so and keeps the button. With it, the owner lands in the wizard.
-  const outcome = await Promise.race([
-    page.waitForURL(/\/onboarding/).then(() => 'wizard' as const),
-    page
-      .getByRole('alert')
-      .waitFor()
-      .then(() => 'refused' as const),
-  ]);
-  test.skip(
-    outcome === 'refused',
-    'The trial door of the subscriptions track (S6.01) is not built.',
-  );
+  // The trial starts in the same transaction that activates, and the owner lands in the wizard.
+  await page.waitForURL(/\/onboarding/);
   await expect(page.getByRole('heading', { level: 1 })).toBeVisible();
   const me = await page.request.get(new URL('/api/auth/me', page.url()).toString());
   expect(me.ok()).toBe(true);

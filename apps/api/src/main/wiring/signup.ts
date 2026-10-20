@@ -43,10 +43,9 @@ export function createSignupWiring(
         rateLimitStore: context.rateLimitStore,
         jobs: context.jobs,
         adapters: context.adapters,
-        // The door of the subscription: it starts the trial in the transaction of the verification.
-        // Until the subscriptions track builds it, it refuses, so no organization is activated
-        // without a plan (see `docs/stage6-tracks.md`).
-        trial: options.trial ?? createTrialStarter(),
+        // The door of the subscription: it starts the trial in the transaction of the verification,
+        // counted from the clock of the application (so a test that moves the clock moves the trial).
+        trial: options.trial ?? createTrialStarter({ clock: context.clock }),
         accounts: context.accounts,
         ...(context.clock ? { clock: context.clock } : {}),
       });
