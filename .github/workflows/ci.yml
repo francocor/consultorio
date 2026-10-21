@@ -108,6 +108,8 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - uses: ./.github/actions/setup-workspace
       - run: pnpm --filter @consultorio/web build
+      # What the sign-in page downloads first: the catalogs and the navigation of the features stay out.
+      - run: pnpm --filter @consultorio/web test:build
       # lighthouserc.json: mobile, 4G with a 4x slower CPU. The job fails when LCP is over 2.5 s,
       # performance is under 0.85, accessibility is under 0.95 or the layout shifts too much.
       - run: pnpm exec lhci autorun
