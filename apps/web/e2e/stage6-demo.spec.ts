@@ -16,7 +16,6 @@ import {
   urlOf,
   type Organization,
 } from './support/stack.js';
-import { readZip, textOf } from './support/zip.js';
 
 /**
  * The Stage 6 gate on the real stack (tasks 6.48 and 6.49), as a person on a phone of 360 px, with axe
@@ -24,9 +23,9 @@ import { readZip, textOf } from './support/zip.js';
  *
  * 1. A stranger signs up, activates the organization from the emailed link, authorizes the monthly
  *    payment in the hosted page of the local Mercado Pago, and uses the product the same day (registers
- *    a patient, sees the usage of the month). When they leave, the platform cancels the organization:
- *    the owner takes the administrative package and, as a professional, the clinical one, and the
- *    archive is written.
+ *    a patient, sees the usage of the month). They leave through the subscription: the owner cancels it
+ *    from the product, and the platform refuses to cancel a billed organization by hand. The export and
+ *    the archive of an organization that ends are the journey of `stage6-archive.spec.ts`.
  * 2. The owner of an active subscription reads the statement of the month that closed, with the days of
  *    each professional, and downloads it.
  * 3. The owner of an organization whose charge failed sees the state, the date it becomes read-only and
@@ -58,14 +57,6 @@ async function operatorCall(
     headers: { origin: originOf('platform') },
     ...(data === undefined ? {} : { data }),
   });
-}
-
-async function downloadZip(page: Page, button: string) {
-  const downloading = page.waitForEvent('download');
-  await page.getByRole('button', { name: button }).click();
-  const download = await downloading;
-  const path = await download.path();
-  return { name: download.suggestedFilename(), files: readZip(path) };
 }
 
 /** A signed general note, written with the calls of the clinical screens, in this organization. */
@@ -102,7 +93,7 @@ async function signNote(
   expect(signed.status).toBe(200);
 }
 
-test('a stranger signs up, pays in the local checkout, uses the product the same day and takes the records away when they leave', async ({
+test('a stranger signs up, pays in the local checkout, uses the product the same day and leaves through the subscription', async ({
   page,
   playwright,
 }) => {
@@ -195,52 +186,35 @@ test('a stranger signs up, pays in the local checkout, uses the product the same
   await expect(page.getByText(/Todavía no hay resúmenes/)).toBeVisible();
   await expectFitsAndAccessible(page);
 
-  // 6. They leave: the platform cancels the organization.
+  // 6. They leave through the subscription: the owner cancels from the product, the service goes on
+  // until the end of the paid time, and the platform does NOT end a billed organization behind the
+  // provider's back (the operator's cancel is for an organization nobody bills; JD-S6 R1-S6-2). The
+  // export and the archive of an organization that ends are proven in `stage6-archive.spec.ts`.
   const tenants = await operatorCall(operator, 'GET', '/operator/tenants');
   const tenant = (
     (await tenants.json()) as { tenants: { id: string; slug: string }[] }
   ).tenants.find((entry) => entry.slug === slug);
   expect(tenant, 'the new organization is in the console').toBeDefined();
-  const cancelled = await operatorCall(
+  const refused = await operatorCall(
     operator,
     'POST',
     `/operator/tenants/${tenant?.id ?? ''}/cancel`,
+    { reason: 'Prueba de la guarda: tiene una suscripción' },
   );
-  expect(cancelled.ok(), await cancelled.text()).toBe(true);
+  expect(refused.status()).toBe(409);
+  expect(((await refused.json()) as { code: string }).code).toBe(
+    'operator_cancel_has_subscription',
+  );
 
-  // 7. The split export: the administrative package for the owner, the clinical one for the professional.
-  await page.goto(orgUrl(slug, '/export'));
-  await expect(page.getByRole('heading', { level: 1, name: 'Exportación' })).toBeVisible();
-  await expect(
-    page.getByRole('button', { name: 'Descargar el paquete administrativo' }),
-  ).toBeVisible({ timeout: 90_000 });
+  await page.goto(orgUrl(slug, '/subscription'));
+  await page.getByRole('button', { name: 'Cancelar la suscripción' }).click();
+  const confirmation = page.getByRole('alertdialog', { name: '¿Cancelar la suscripción?' });
+  await expect(confirmation).toContainText('No se borra ningún dato');
   await expectFitsAndAccessible(page);
-  const administrative = await downloadZip(page, 'Descargar el paquete administrativo');
-  expect(textOf(administrative.files)).toContain('Retiro');
-  expect(textOf(administrative.files)).not.toContain(reason);
-
-  await page.goto(orgUrl(slug, '/export/clinical'));
-  await expect(page.getByRole('heading', { level: 1, name: 'Exportación clínica' })).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Descargar el paquete clínico' })).toBeVisible({
-    timeout: 90_000,
-  });
+  await confirmation.getByRole('button', { name: 'Sí, cancelar' }).click();
+  await expect(page.getByText('En cancelación')).toBeVisible();
+  await expect(page.getByText(/El servicio continúa hasta el/)).toBeVisible();
   await expectFitsAndAccessible(page);
-  const clinical = await downloadZip(page, 'Descargar el paquete clínico');
-  expect(textOf(clinical.files)).toContain(reason);
-
-  // 8. The archive is written, and the console shows its state, never its content.
-  await expect
-    .poll(
-      async () => {
-        const response = await operatorCall(operator, 'GET', '/operator/archives');
-        const body = (await response.json()) as {
-          archives: { organization: string; status: string }[];
-        };
-        return body.archives.find((entry) => entry.organization === tenant?.id)?.status;
-      },
-      { timeout: 120_000, intervals: [2000] },
-    )
-    .toBe('written');
 });
 
 test('the owner of an active subscription reads the statement of the month that closed and downloads it', async ({

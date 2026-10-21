@@ -145,6 +145,18 @@ test('the check-your-email screen can ask for the message again', async ({ page 
       timeout: 20_000,
     })
     .not.toBe(first);
+
+  // The page of the new link does not activate until both documents are accepted (the form of the
+  // signup is limited to five an hour per client, so this rides on a signup the file already makes).
+  const fresh = linkIn(await emailTo(signup.email, /Confirme su correo/), '/signup/verify');
+  await page.goto(localLink(fresh));
+  await fillActivation(page, { acceptDataProcessing: false });
+  await page.getByRole('button', { name: 'Activar mi organización' }).click();
+  await expect(page.getByText('Para activar la cuenta debe aceptar este punto.')).toBeVisible();
+  await expect(
+    page.getByRole('heading', { level: 1, name: 'Active su organización' }),
+  ).toBeVisible();
+  await expectFitsAndAccessible(page);
 });
 
 test('an address that already has an account gets the same screen, and its holder is told, with no link', async ({
@@ -158,24 +170,6 @@ test('an address that already has an account gets the same screen, and its holde
   await expect(page.getByText(/ya existe|ya tiene una cuenta con/i)).toHaveCount(0);
   const notice = await emailTo(holder, /Alguien pidió crear una organización/);
   expect(notice).not.toMatch(/https?:\/\//);
-});
-
-test('the page of the link does not activate until both documents are accepted', async ({
-  page,
-}) => {
-  const signup = newSignup();
-  await signUp(page, signup);
-  const link = linkIn(await emailTo(signup.email, /Confirme su correo/), '/signup/verify');
-  await page.goto(localLink(link));
-  await fillActivation(page, { acceptDataProcessing: false });
-
-  await page.getByRole('button', { name: 'Activar mi organización' }).click();
-
-  await expect(page.getByText('Para activar la cuenta debe aceptar este punto.')).toBeVisible();
-  await expect(
-    page.getByRole('heading', { level: 1, name: 'Active su organización' }),
-  ).toBeVisible();
-  await expectFitsAndAccessible(page);
 });
 
 test('the public form has no password and no acceptance: a stranger cannot choose them for the owner', async ({
