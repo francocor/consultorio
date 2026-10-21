@@ -81,6 +81,11 @@ export interface Link {
   url: string;
 }
 
+/**
+ * What the form of the signup sends: the organization, its owner and the address. `password` and the
+ * two acceptances are NOT sent with it: they belong to the verification (JD-S6 R1-S6-3); the world
+ * keeps them with the form so that a test verifies as the same person who signed up.
+ */
 export interface SignupBody {
   organizationName: string;
   ownerName: string;
@@ -89,6 +94,14 @@ export interface SignupBody {
   acceptTerms: boolean;
   acceptDataProcessing: boolean;
   challengeProof: string;
+}
+
+/** What the page of the link sends: the token, the password and the two acceptances. */
+export interface VerifyBody {
+  token: string;
+  password: string;
+  acceptTerms: boolean;
+  acceptDataProcessing: boolean;
 }
 
 export interface SignupWorld {
@@ -124,6 +137,16 @@ export interface SignupWorld {
   solve(options?: { slug?: string; ip?: string }): Promise<string>;
   /** A valid form; `overrides` change what a test needs. A new address and name every time. */
   form(overrides?: Partial<Omit<SignupBody, 'challengeProof'>>): Omit<SignupBody, 'challengeProof'>;
+  /** The body the public form sends for a form: the organization, its owner, the address and the proof. */
+  signupBody(
+    form: Omit<SignupBody, 'challengeProof'>,
+    challengeProof: string,
+  ): {
+    organizationName: string;
+    ownerName: string;
+    email: string;
+    challengeProof: string;
+  };
   /** Solves a challenge and posts the form. */
   signUp(
     overrides?: Partial<Omit<SignupBody, 'challengeProof'>>,
@@ -135,6 +158,12 @@ export interface SignupWorld {
   renew(slug: string, options?: { ip?: string }): Promise<LightMyRequestResponse>;
   /** The link of the last verification email sent to an address. */
   linkTo(address: string): Link;
+  /** Follows a link as its owner does: the token, a good password and both acceptances. */
+  verify(
+    link: Link,
+    overrides?: Partial<VerifyBody>,
+    options?: { ip?: string },
+  ): Promise<LightMyRequestResponse>;
   /** Waits for the work that started after the answers (the emails). */
   idle(): Promise<void>;
   /** The passes of the worker, with the world's email, origins and clock. */
@@ -268,16 +297,35 @@ export async function createSignupWorld(
         ...overrides,
       };
     },
+    signupBody: (form, challengeProof) => ({
+      organizationName: form.organizationName,
+      ownerName: form.ownerName,
+      email: form.email,
+      challengeProof,
+    }),
     signUp: async (overrides = {}, o = {}) => {
       const form = world.form(overrides);
       const ip = o.ip ?? nextIp();
       const response = await world.platformPost(
         '/public/signup',
-        { ...form, challengeProof: await world.solve({ ip }) },
+        world.signupBody(form, await world.solve({ ip })),
         { ip },
       );
       return { response, form };
     },
+    verify: (link, overrides = {}, o = {}) =>
+      world.tenantPost(
+        link.slug,
+        '/public/signup/verify',
+        {
+          token: link.token,
+          password: PASSWORD,
+          acceptTerms: true,
+          acceptDataProcessing: true,
+          ...overrides,
+        },
+        o,
+      ),
     resend: async (address, o = {}) => {
       const ip = o.ip ?? nextIp();
       return world.platformPost(

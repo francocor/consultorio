@@ -54,9 +54,6 @@ const VALID = {
   organizationName: '  Centro Salud Norte  ',
   ownerName: ' Ana Pérez ',
   email: '  Ana.Perez@Example.test ',
-  password: 'una frase larga y propia',
-  acceptTerms: true,
-  acceptDataProcessing: true,
   challengeProof: 'prueba',
 } as const;
 
@@ -69,9 +66,33 @@ describe('the signup request', () => {
     expect(parsed.email).toBe('ana.perez@example.test');
   });
 
-  it('carries the two acceptances as plain booleans: refusing is an answer of the API, not a malformed form', () => {
-    expect(SignupRequest.safeParse({ ...VALID, acceptTerms: false }).success).toBe(true);
-    expect(SignupRequest.safeParse({ ...VALID, acceptTerms: 'yes' }).success).toBe(false);
+  it('carries no password and no acceptance: both are given on the verification page, by whoever owns the address (JD-S6 R1-S6-3)', () => {
+    expect(
+      SignupRequest.safeParse({ ...VALID, password: 'una frase larga y propia' }).success,
+    ).toBe(false);
+    expect(SignupRequest.safeParse({ ...VALID, acceptTerms: true }).success).toBe(false);
+    expect(SignupRequest.safeParse({ ...VALID, acceptDataProcessing: true }).success).toBe(false);
+  });
+
+  it.each([
+    ['a line break in the organization name', { organizationName: 'Centro\nBcc: x@evil.test' }],
+    ['a carriage return in the owner name', { ownerName: 'Ana\r\nSubject: urgente' }],
+    ['a control character in the owner name', { ownerName: 'Ana\u0000 Pérez' }],
+    ['a tab in the organization name', { organizationName: 'Centro\tSalud' }],
+    ['a bidirectional override in the owner name', { ownerName: 'Ana \u202Egnp.exe' }],
+    ['a line separator in the organization name', { organizationName: 'Centro\u2028Salud' }],
+  ])('refuses %s, so a name can never write into a mail (JD-S6 R1-S6-10)', (_name, patch) => {
+    expect(SignupRequest.safeParse({ ...VALID, ...patch }).success).toBe(false);
+  });
+
+  it('keeps the accents and the punctuation of a real name', () => {
+    expect(
+      SignupRequest.safeParse({
+        ...VALID,
+        organizationName: 'Clínica Niño Jesús - Sede N°2 (Rosario) & Asoc.',
+        ownerName: "María-José O'Brien Peña",
+      }).success,
+    ).toBe(true);
   });
 
   it.each([
@@ -82,7 +103,6 @@ describe('the signup request', () => {
     ['an address that is not one', { email: 'sin-arroba' }],
     ['an address longer than 254 characters', { email: `${'a'.repeat(250)}@example.test` }],
     ['no proof of the challenge', { challengeProof: '' }],
-    ['a password of a megabyte', { password: 'x'.repeat(1_000_000) }],
   ])('refuses %s', (_name, patch) => {
     expect(SignupRequest.safeParse({ ...VALID, ...patch }).success).toBe(false);
   });
@@ -105,9 +125,23 @@ describe('the other requests and the answers of the signup', () => {
     ).toBe(false);
   });
 
-  it('verifies with the token alone', () => {
-    expect(SignupVerifyRequest.parse({ token: 'x'.repeat(43) })).toEqual({ token: 'x'.repeat(43) });
-    expect(SignupVerifyRequest.safeParse({ token: '' }).success).toBe(false);
+  it('verifies with the token, the password the owner chooses and the two acceptances (JD-S6 R1-S6-3)', () => {
+    const body = {
+      token: 'x'.repeat(43),
+      password: 'una frase larga y propia',
+      acceptTerms: true,
+      acceptDataProcessing: true,
+    };
+    expect(SignupVerifyRequest.parse(body)).toEqual(body);
+    expect(SignupVerifyRequest.safeParse({ ...body, token: '' }).success).toBe(false);
+    expect(SignupVerifyRequest.safeParse({ ...body, password: '' }).success).toBe(false);
+    expect(
+      SignupVerifyRequest.safeParse({ ...body, password: 'x'.repeat(1_000_000) }).success,
+    ).toBe(false);
+    // Refusing an acceptance is an answer of the API, not a malformed request.
+    expect(SignupVerifyRequest.safeParse({ ...body, acceptTerms: false }).success).toBe(true);
+    expect(SignupVerifyRequest.safeParse({ ...body, acceptTerms: 'yes' }).success).toBe(false);
+    expect(SignupVerifyRequest.safeParse({ token: body.token }).success).toBe(false);
   });
 
   it('answers only that the request was received, or that the organization is active', () => {

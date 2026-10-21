@@ -61,55 +61,77 @@ describe('signing up', () => {
     expect(
       await count('SELECT count(*) AS n FROM membership WHERE tenant_id = $1', [created?.id]),
     ).toBe(0);
-    // The password is stored as an Argon2id hash, and the pending signup remembers the acceptances.
-    const pending = await world.admin.query<{
-      password_hash: string;
-      owner_name: string;
-      terms_version: number;
-      data_processing_version: number;
-      verification_sent_at: Date | null;
-      send_attempts: number;
-    }>('SELECT * FROM signup_pending WHERE tenant_id = $1', [created?.id]);
-    expect(pending.rows[0]?.password_hash).toMatch(/^\$argon2id\$/);
-    expect(pending.rows[0]?.password_hash).not.toContain(PASSWORD);
-    expect(pending.rows[0]).toMatchObject({
-      owner_name: 'Ana Pérez',
-      terms_version: 1,
-      data_processing_version: 1,
-      send_attempts: 1,
-    });
-    expect(pending.rows[0]?.verification_sent_at).not.toBeNull();
+    // Nothing the visitor chose is kept: no password and no acceptance (JD-S6 R1-S6-3).
+    const pending = await world.admin.query<Record<string, unknown>>(
+      'SELECT * FROM signup_pending WHERE tenant_id = $1',
+      [created?.id],
+    );
+    expect(pending.rows[0]).toMatchObject({ owner_name: 'Ana Pérez', send_attempts: 1 });
+    expect(Object.keys(pending.rows[0] ?? {})).not.toEqual(
+      expect.arrayContaining(['password_hash']),
+    );
+    expect(JSON.stringify(pending.rows[0])).not.toContain(PASSWORD);
+    expect(pending.rows[0]?.['verification_sent_at']).not.toBeNull();
+    expect(
+      await count('SELECT count(*) AS n FROM terms_acceptance WHERE tenant_id = $1', [created?.id]),
+    ).toBe(0);
     const mail = world.email.lastTo(form.email);
     expect(mail?.subject).toBe('Confirme su correo para activar su organización');
     expect(mail?.text).toContain(form.organizationName);
     expect(mail?.tenant).toEqual({ id: created?.id, isDemo: false });
   });
 
-  it("records the signup and the acceptance in the organization's trail, with the versions and no personal data", async () => {
+  it("records the signup in the organization's trail, with no acceptance yet and no personal data", async () => {
     const { form } = await world.signUp();
     await world.idle();
 
     const created = await world.tenantOf(world.linkTo(form.email).slug);
     const trail = await audits(created?.id ?? '');
 
-    expect(trail.map((row) => row.action)).toEqual(['signup.created', 'terms.accepted']);
+    // The acceptance is recorded when the owner gives it, on the verification page.
+    expect(trail.map((row) => row.action)).toEqual(['signup.created']);
     expect(trail.every((row) => row.outcome === 'allow' && row.actor_user_id === null)).toBe(true);
-    expect(trail[1]?.metadata).toEqual({ terms: 1, dataProcessing: 1 });
     expect(JSON.stringify(trail)).not.toContain(form.email);
     expect(JSON.stringify(trail)).not.toContain(form.ownerName);
   });
 
-  it('refuses a visitor who does not accept both documents, and creates nothing', async () => {
+  it('refuses a form that carries a password or an acceptance: those are given at verification (JD-S6 R1-S6-3)', async () => {
+    const before = await count('SELECT count(*) AS n FROM tenant');
+    const ip = world.ip();
+    for (const extra of [
+      { password: PASSWORD },
+      { acceptTerms: true },
+      { acceptDataProcessing: true },
+    ]) {
+      const form = world.form();
+      const response = await world.platformPost(
+        '/public/signup',
+        {
+          organizationName: form.organizationName,
+          ownerName: form.ownerName,
+          email: form.email,
+          challengeProof: await world.solve({ ip }),
+          ...extra,
+        },
+        { ip },
+      );
+
+      expect(response.statusCode, response.body).toBe(400);
+      expect(world.email.lastTo(form.email)).toBeUndefined();
+    }
+    expect(await count('SELECT count(*) AS n FROM tenant')).toBe(before);
+  });
+
+  it('refuses a name with a line break or a control character, and creates nothing (JD-S6 R1-S6-10)', async () => {
     const before = await count('SELECT count(*) AS n FROM tenant');
     for (const patch of [
-      { acceptTerms: false },
-      { acceptDataProcessing: false },
-      { acceptTerms: false, acceptDataProcessing: false },
+      { organizationName: 'Centro\nBcc: victima@example.test' },
+      { ownerName: 'Ana\r\nSubject: urgente' },
+      { ownerName: 'Ana\u0000' },
     ]) {
       const { response, form } = await world.signUp(patch);
 
       expect(response.statusCode, response.body).toBe(400);
-      expect(response.json()).toMatchObject({ code: 'signup_terms_required' });
       expect(world.email.lastTo(form.email)).toBeUndefined();
     }
     expect(await count('SELECT count(*) AS n FROM tenant')).toBe(before);
@@ -120,16 +142,12 @@ describe('signing up', () => {
     const form = world.form();
 
     const ip = world.ip();
-    const missing = await world.platformPost('/public/signup', { ...form, challengeProof: 'nope' });
+    const missing = await world.platformPost('/public/signup', world.signupBody(form, 'nope'));
     const proof = await world.solve({ ip });
-    const first = await world.platformPost(
-      '/public/signup',
-      { ...form, challengeProof: proof },
-      { ip },
-    );
+    const first = await world.platformPost('/public/signup', world.signupBody(form, proof), { ip });
     const replayed = await world.platformPost(
       '/public/signup',
-      { ...world.form(), challengeProof: proof },
+      world.signupBody(world.form(), proof),
       { ip },
     );
 
@@ -143,37 +161,12 @@ describe('signing up', () => {
     expect(await count('SELECT count(*) AS n FROM tenant')).toBe(before + 1);
   });
 
-  it('applies the password rules of identity: a common password creates nothing', async () => {
-    const before = await count('SELECT count(*) AS n FROM tenant');
-
-    const common = await world.signUp({ password: 'password1234' });
-    const short = await world.signUp({ password: 'corta' });
-    const ownEmail = await world.signUp({
-      email: 'carolina.gomez@example.test',
-      password: 'carolina.gomez 2031',
-    });
-
-    for (const { response } of [common, short, ownEmail]) {
-      expect(response.statusCode, response.body).toBe(400);
-      expect(response.json()).toMatchObject({ code: 'validation_failed' });
-    }
-    const fields = (response: (typeof common)['response']) =>
-      (response.json<{ errors?: { path: string; i18nKey: string }[] }>().errors ?? []).map(
-        (field) => `${field.path}:${field.i18nKey}`,
-      );
-    expect(fields(common.response)).toEqual(['password:auth.password.common']);
-    expect(fields(short.response)).toEqual(['password:auth.password.too_short']);
-    expect(fields(ownEmail.response)).toEqual(['password:auth.password.contains_email']);
-    expect(await count('SELECT count(*) AS n FROM tenant')).toBe(before);
-  });
-
   it('never lets the visitor choose the address or the state of the organization', async () => {
     const ip = world.ip();
     const response = await world.platformPost(
       '/public/signup',
       {
-        ...world.form(),
-        challengeProof: await world.solve({ ip }),
+        ...world.signupBody(world.form(), await world.solve({ ip })),
         slug: 'mi-centro',
         status: 'active',
       },
@@ -246,10 +239,7 @@ describe('an address that already means something', () => {
     const { form: owner } = await world.signUp();
     await world.idle();
     const link = world.linkTo(owner.email);
-    expect(
-      (await world.tenantPost(link.slug, '/public/signup/verify', { token: link.token }))
-        .statusCode,
-    ).toBe(200);
+    expect((await world.verify(link)).statusCode).toBe(200);
     world.email.clear();
     const organizations = await count('SELECT count(*) AS n FROM tenant');
 
@@ -267,28 +257,24 @@ describe('an address that already means something', () => {
     expect(world.email.sent).toHaveLength(1);
   });
 
-  it('keeps one signup per address waiting: asking again sends a fresh link and replaces the old one', async () => {
+  it('keeps one signup per address waiting, and asking again does not touch the live link (JD-S6 R1-S6-3)', async () => {
     const { form } = await world.signUp();
     await world.idle();
-    const old = world.linkTo(form.email);
+    const live = world.linkTo(form.email);
     const organizations = await count('SELECT count(*) AS n FROM tenant');
+    const sent = world.email.sent.length;
 
+    // A stranger who types the same address again must not be able to spend or replace the link
+    // of the person who will open it.
     const again = await world.signUp({ email: form.email, organizationName: 'No Importa' });
     await world.idle();
 
     expect(again.response.statusCode).toBe(200);
+    expect(again.response.json()).toEqual({ accepted: true });
     expect(await count('SELECT count(*) AS n FROM tenant')).toBe(organizations);
-    const fresh = world.linkTo(form.email);
-    expect(fresh.slug).toBe(old.slug);
-    expect(fresh.token).not.toBe(old.token);
-    // The old link stopped working, the new one works.
-    expect(
-      (await world.tenantPost(old.slug, '/public/signup/verify', { token: old.token })).statusCode,
-    ).toBe(400);
-    expect(
-      (await world.tenantPost(fresh.slug, '/public/signup/verify', { token: fresh.token }))
-        .statusCode,
-    ).toBe(200);
+    expect(world.email.sent.length).toBe(sent);
+    expect(world.linkTo(form.email).token).toBe(live.token);
+    expect((await world.verify(live)).statusCode).toBe(200);
   });
 });
 
@@ -319,7 +305,19 @@ describe('throttling', () => {
     await world.idle();
 
     expect(statuses).toEqual([200, 200, 200, 429, 429]);
-    expect(world.email.sent.filter((mail) => mail.to === address)).toHaveLength(3);
+    // Only the first one sends: a repeated signup for a waiting address sends nothing.
+    expect(world.email.sent.filter((mail) => mail.to === address)).toHaveLength(1);
+  });
+
+  it('counts the aliases of one mailbox as one address (JD-S6 R1-A-T6)', async () => {
+    const stem = `alias-${crypto.randomUUID().slice(0, 6)}`;
+    const statuses = [];
+    for (const local of [stem, `${stem}+a`, `${stem}+b`, `${stem}+c`, `${stem}+d`]) {
+      statuses.push((await world.signUp({ email: `${local}@example.test` })).response.statusCode);
+    }
+    await world.idle();
+
+    expect(statuses).toEqual([200, 200, 200, 429, 429]);
   });
 });
 
@@ -355,10 +353,7 @@ describe('when the email provider is down', () => {
     expect(await world.worker.retryVerifications()).toBeGreaterThanOrEqual(1);
 
     const link = world.linkTo(form.email);
-    expect(
-      (await world.tenantPost(link.slug, '/public/signup/verify', { token: link.token }))
-        .statusCode,
-    ).toBe(200);
+    expect((await world.verify(link)).statusCode).toBe(200);
   });
 
   it('gives up on its own after five attempts, and a visitor can still ask for a new link', async () => {
@@ -421,7 +416,7 @@ describe('asking for a new link', () => {
     const { form } = await world.signUp();
     await world.idle();
     const link = world.linkTo(form.email);
-    await world.tenantPost(link.slug, '/public/signup/verify', { token: link.token });
+    await world.verify(link);
 
     const renewed = await world.tenantPost(link.slug, '/public/signup/renew', {
       challengeProof: 'x',
@@ -438,9 +433,7 @@ describe('verifying the address', () => {
     const link = world.linkTo(form.email);
     const created = await world.tenantOf(link.slug);
 
-    const response = await world.tenantPost(link.slug, '/public/signup/verify', {
-      token: link.token,
-    });
+    const response = await world.verify(link);
 
     expect(response.statusCode, response.body).toBe(200);
     expect(response.json()).toEqual({ verified: true });
@@ -450,7 +443,7 @@ describe('verifying the address', () => {
     );
     expect((await world.tenantOf(link.slug))?.status).toBe('active');
     expect(world.trial.calls).toContain(created?.id);
-    // The account exists now, with the password the visitor chose, and the owner is its only member.
+    // The account exists now, with the password the owner chose at the link, and is its only member.
     const members = await world.admin.query<{
       roles: string[];
       display_name: string;
@@ -462,24 +455,28 @@ describe('verifying the address', () => {
     expect(members.rows).toEqual([
       { roles: ['owner'], display_name: 'Lucía Méndez', email: form.email },
     ]);
-    // The hash of the password does not outlive the signup.
-    const pending = await world.admin.query<{
-      password_hash: string | null;
-      verified_at: Date | null;
-    }>('SELECT password_hash, verified_at FROM signup_pending WHERE tenant_id = $1', [created?.id]);
-    expect(pending.rows[0]?.password_hash).toBeNull();
+    const pending = await world.admin.query<{ verified_at: Date | null }>(
+      'SELECT verified_at FROM signup_pending WHERE tenant_id = $1',
+      [created?.id],
+    );
     expect(pending.rows[0]?.verified_at).not.toBeNull();
-    // The versions accepted, with the instant of the form and the owner's identity.
+    // The versions accepted, with the instant of the verification and the owner's identity.
     const accepted = await world.admin.query<{
       terms_version: number;
       data_processing_version: number;
       accepted_at: Date;
+      user_id: string;
     }>(
-      'SELECT terms_version, data_processing_version, accepted_at FROM terms_acceptance WHERE tenant_id = $1',
+      'SELECT terms_version, data_processing_version, accepted_at, user_id FROM terms_acceptance WHERE tenant_id = $1',
       [created?.id],
     );
     expect(accepted.rows).toHaveLength(1);
     expect(accepted.rows[0]).toMatchObject({ terms_version: 1, data_processing_version: 1 });
+    const owner = await world.admin.query<{ id: string }>(
+      'SELECT id FROM user_account WHERE email = $1',
+      [form.email],
+    );
+    expect(accepted.rows[0]?.user_id).toBe(owner.rows[0]?.id);
     // The key of the organization was made on activation.
     expect(
       await count('SELECT count(*) AS n FROM tenant_key WHERE tenant_id = $1', [created?.id]),
@@ -490,16 +487,114 @@ describe('verifying the address', () => {
       'terms.accepted',
       'signup.verified',
     ]);
+    expect(trail[1]?.metadata).toEqual({ terms: 1, dataProcessing: 1 });
+    expect(trail[1]?.actor_user_id).not.toBeNull();
     expect(trail[2]?.actor_user_id).not.toBeNull();
+  });
+
+  it('lets the person who owns the address set the password: a stranger who signed up with it chooses nothing (JD-S6 R1-S6-3)', async () => {
+    // The stranger types the victim's address on the public form. The form has no password field.
+    const victim = world.form({ password: 'la frase que eligio la victima 2031' });
+    const attacker = await world.signUp({ email: victim.email, ownerName: 'Intruso' });
+    await world.idle();
+    expect(attacker.response.statusCode).toBe(200);
+
+    // The link goes to the victim, who sets the password at the link.
+    const link = world.linkTo(victim.email);
+    const verified = await world.verify(link, { password: victim.password });
+    expect(verified.statusCode, verified.body).toBe(200);
+
+    const asVictim = await world.tenantPost(link.slug, '/auth/login', {
+      email: victim.email,
+      password: victim.password,
+    });
+    const asStranger = await world.tenantPost(link.slug, '/auth/login', {
+      email: victim.email,
+      password: PASSWORD,
+    });
+    expect(asVictim.statusCode, asVictim.body).toBe(200);
+    expect(asStranger.statusCode).not.toBe(200);
+  });
+
+  it('records the acceptance when the owner gives it, with the instant of the verification and not of the form (JD-S6 R1-S6-3)', async () => {
+    const { form } = await world.signUp();
+    await world.idle();
+    const link = world.linkTo(form.email);
+    const created = await world.tenantOf(link.slug);
+    expect(
+      await count('SELECT count(*) AS n FROM terms_acceptance WHERE tenant_id = $1', [created?.id]),
+    ).toBe(0);
+    world.advance(3 * 3_600_000);
+
+    const response = await world.verify(link);
+
+    expect(response.statusCode, response.body).toBe(200);
+    const accepted = await world.admin.query<{ accepted_at: Date }>(
+      'SELECT accepted_at FROM terms_acceptance WHERE tenant_id = $1',
+      [created?.id],
+    );
+    expect(accepted.rows).toHaveLength(1);
+    expect(accepted.rows[0]?.accepted_at.getTime()).toBe(world.now().getTime());
+  });
+
+  it('refuses an owner who does not accept both documents, creates nothing and keeps the link', async () => {
+    const { form } = await world.signUp();
+    await world.idle();
+    const link = world.linkTo(form.email);
+    const created = await world.tenantOf(link.slug);
+
+    for (const patch of [
+      { acceptTerms: false },
+      { acceptDataProcessing: false },
+      { acceptTerms: false, acceptDataProcessing: false },
+    ]) {
+      const response = await world.verify(link, patch);
+
+      expect(response.statusCode, response.body).toBe(400);
+      expect(response.json()).toMatchObject({ code: 'signup_terms_required' });
+    }
+    expect((await world.tenantOf(link.slug))?.status).toBe('unverified');
+    expect(
+      await count('SELECT count(*) AS n FROM terms_acceptance WHERE tenant_id = $1', [created?.id]),
+    ).toBe(0);
+    // The link was not spent.
+    expect((await world.verify(link)).statusCode).toBe(200);
+  });
+
+  it('applies the password rules of identity at the link: a weak password creates nothing and keeps the link', async () => {
+    const { form } = await world.signUp({ email: 'carolina.gomez@example.test' });
+    await world.idle();
+    const link = world.linkTo(form.email);
+    const created = await world.tenantOf(link.slug);
+
+    const common = await world.verify(link, { password: 'password1234' });
+    const short = await world.verify(link, { password: 'corta' });
+    const ownEmail = await world.verify(link, { password: 'carolina.gomez 2031' });
+
+    for (const response of [common, short, ownEmail]) {
+      expect(response.statusCode, response.body).toBe(400);
+      expect(response.json()).toMatchObject({ code: 'validation_failed' });
+    }
+    const fields = (response: typeof common) =>
+      (response.json<{ errors?: { path: string; i18nKey: string }[] }>().errors ?? []).map(
+        (field) => `${field.path}:${field.i18nKey}`,
+      );
+    expect(fields(common)).toEqual(['password:auth.password.common']);
+    expect(fields(short)).toEqual(['password:auth.password.too_short']);
+    expect(fields(ownEmail)).toEqual(['password:auth.password.contains_email']);
+    expect((await world.tenantOf(link.slug))?.status).toBe('unverified');
+    expect(
+      await count('SELECT count(*) AS n FROM user_account WHERE email = $1', [form.email]),
+    ).toBe(0);
+    expect(created?.status).toBe('unverified');
+    expect((await world.verify(link)).statusCode).toBe(200);
   });
 
   it('lands the owner signed in: the session is the owner of the organization, with the second factor still to enroll', async () => {
     const { form } = await world.signUp();
     await world.idle();
     const link = world.linkTo(form.email);
-    const verified = await world.tenantPost(link.slug, '/public/signup/verify', {
-      token: link.token,
-    });
+    const verified = await world.verify(link);
     const cookie = String(verified.headers['set-cookie']).split(';')[0] ?? '';
 
     const me = await world.tenantGet(link.slug, '/auth/me', { cookie });
@@ -530,7 +625,7 @@ describe('verifying the address', () => {
     const { form } = await world.signUp();
     await world.idle();
     const link = world.linkTo(form.email);
-    await world.tenantPost(link.slug, '/public/signup/verify', { token: link.token });
+    await world.verify(link);
     const created = await world.tenantOf(link.slug);
 
     const exported = await createWithTenant(runtime.db)(
@@ -544,11 +639,11 @@ describe('verifying the address', () => {
     expect(JSON.stringify(exported)).not.toContain(form.email);
   });
 
-  it('lets the owner sign in with the password chosen at signup', async () => {
+  it('lets the owner sign in with the password chosen at the link', async () => {
     const { form } = await world.signUp();
     await world.idle();
     const link = world.linkTo(form.email);
-    await world.tenantPost(link.slug, '/public/signup/verify', { token: link.token });
+    await world.verify(link);
 
     const login = await world.tenantPost(link.slug, '/auth/login', {
       email: form.email,
@@ -563,9 +658,9 @@ describe('verifying the address', () => {
     const { form } = await world.signUp();
     await world.idle();
     const link = world.linkTo(form.email);
-    await world.tenantPost(link.slug, '/public/signup/verify', { token: link.token });
+    await world.verify(link);
 
-    const again = await world.tenantPost(link.slug, '/public/signup/verify', { token: link.token });
+    const again = await world.verify(link);
 
     expect(again.statusCode).toBe(400);
     expect(again.json()).toMatchObject({ code: 'signup_link_invalid' });
@@ -577,11 +672,11 @@ describe('verifying the address', () => {
     const old = world.linkTo(form.email);
     world.advance(25 * 3_600_000);
 
-    const expired = await world.tenantPost(old.slug, '/public/signup/verify', { token: old.token });
+    const expired = await world.verify(old);
     const renewed = await world.renew(old.slug);
     await world.idle();
     const fresh = world.linkTo(form.email);
-    const done = await world.tenantPost(old.slug, '/public/signup/verify', { token: fresh.token });
+    const done = await world.verify({ ...old, token: fresh.token });
 
     expect(expired.statusCode).toBe(400);
     expect(expired.json()).toMatchObject({ code: 'signup_link_invalid' });
@@ -598,9 +693,9 @@ describe('verifying the address', () => {
     const theirs = world.linkTo(second.email);
 
     const answers = [
-      await world.tenantPost(mine.slug, '/public/signup/verify', { token: 'x'.repeat(43) }),
-      await world.tenantPost(mine.slug, '/public/signup/verify', { token: theirs.token }),
-      await world.tenantPost(mine.slug, '/public/signup/verify', { token: 'corto' }),
+      await world.verify({ ...mine, token: 'x'.repeat(43) }),
+      await world.verify({ ...mine, token: theirs.token }),
+      await world.verify({ ...mine, token: 'corto' }),
     ];
 
     for (const answer of answers) {
@@ -611,10 +706,7 @@ describe('verifying the address', () => {
       new Set(answers.map((answer) => JSON.stringify({ ...answer.json(), requestId: 0 }))).size,
     ).toBe(1);
     // The link of the other organization still works on its own host.
-    expect(
-      (await world.tenantPost(theirs.slug, '/public/signup/verify', { token: theirs.token }))
-        .statusCode,
-    ).toBe(200);
+    expect((await world.verify(theirs)).statusCode).toBe(200);
   });
 
   it('never confirms an address that got an account while the link was in the mailbox', async () => {
@@ -625,15 +717,13 @@ describe('verifying the address', () => {
     const other = await world.signUp();
     await world.idle();
     const otherLink = world.linkTo(other.form.email);
-    await world.tenantPost(otherLink.slug, '/public/signup/verify', { token: otherLink.token });
+    await world.verify(otherLink);
     await world.admin.query(`UPDATE user_account SET email = $1 WHERE email = $2`, [
       form.email,
       other.form.email,
     ]);
 
-    const response = await world.tenantPost(link.slug, '/public/signup/verify', {
-      token: link.token,
-    });
+    const response = await world.verify(link);
 
     expect(response.statusCode).toBe(400);
     expect(response.json()).toMatchObject({ code: 'signup_link_invalid' });
@@ -646,9 +736,7 @@ describe('verifying the address', () => {
     const link = world.linkTo(form.email);
     world.trial.refuse = true;
 
-    const refused = await world.tenantPost(link.slug, '/public/signup/verify', {
-      token: link.token,
-    });
+    const refused = await world.verify(link);
     world.trial.refuse = false;
 
     expect(refused.statusCode).toBe(500);
@@ -657,9 +745,7 @@ describe('verifying the address', () => {
       await count('SELECT count(*) AS n FROM user_account WHERE email = $1', [form.email]),
     ).toBe(0);
     // The link was not spent: the same one works once the door is open.
-    const retried = await world.tenantPost(link.slug, '/public/signup/verify', {
-      token: link.token,
-    });
+    const retried = await world.verify(link);
     expect(retried.statusCode, retried.body).toBe(200);
   });
 
@@ -667,12 +753,10 @@ describe('verifying the address', () => {
     const { form } = await world.signUp();
     await world.idle();
     const link = world.linkTo(form.email);
-    await world.tenantPost(link.slug, '/public/signup/verify', { token: link.token });
+    await world.verify(link);
 
     const onPlatform = await world.platformPost('/public/signup/verify', { token: link.token });
-    const onActive = await world.tenantPost(link.slug, '/public/signup/verify', {
-      token: link.token,
-    });
+    const onActive = await world.verify(link);
 
     expect(onPlatform.statusCode).toBe(404);
     expect(onActive.statusCode).toBe(400);

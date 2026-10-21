@@ -9,9 +9,13 @@ import { listDefinerFunctions, pinsSearchPath } from '../support/function-catalo
  * definer function is added without an entry here, when one can be run by PUBLIC, by a role that
  * has no business with it, or when it does not pin its search path.
  */
-const CHECKED_ROLES = ['app_rw', 'app_operator', 'audit_sealer'] as const;
+const CHECKED_ROLES = ['app_releaser', 'app_rw', 'app_operator', 'audit_sealer'] as const;
 
-/** The only roles allowed to run each definer function, and why. */
+/**
+ * The only roles allowed to run each definer function, and why. `app_releaser` is a member of `app_rw`
+ * (migration 0688), so whatever `app_rw` may run it may run too: the table below lists `app_rw` and the
+ * test adds the releaser; the functions only the releaser may run list `app_releaser` alone.
+ */
 const ALLOWED: Record<string, readonly string[]> = {
   // Sign-in looks the account up before any tenant is known (the runtime role).
   'app.lookup_user_for_login(citext)': ['app_rw'],
@@ -100,12 +104,32 @@ const ALLOWED: Record<string, readonly string[]> = {
   // archives for the operator console (counts and states, no table privilege).
   'app.archive_due(integer,integer)': ['app_rw'],
   'app.archive_verify_due(integer,integer)': ['app_rw'],
+  // The worker's two actions (`archive.written`, `archive.verified`); the entries of a release have
+  // functions of their own below (JD-S6 R1-S6-12).
   'app.write_archive_audit(text,text,uuid,text,jsonb)': ['app_rw'],
   'app.archive_overview(integer)': ['app_operator'],
-  // The approved release requests the releaser has to carry out (ids and the organization only).
-  'app.archive_release_due(integer)': ['app_rw'],
-  // The released packages whose link ended before anybody downloaded them (ids only).
-  'app.archive_release_cleanup_due(integer)': ['app_rw'],
+  // The approved release requests the releaser has to carry out (ids and the organization only): the
+  // releaser's role alone, not the API's or the worker's (JD-S6 R1-S6-12).
+  'app.archive_release_due(integer)': ['app_releaser'],
+  // The packages that are in the bucket and should not be: the link of a release ended unused, or the
+  // release failed (ids only). The releaser alone.
+  'app.archive_release_cleanup_due(integer)': ['app_releaser'],
+  // The releaser closes the requests nobody carried on for seven days, and writes its heartbeat.
+  'app.archive_release_expire_stale(integer)': ['app_releaser'],
+  'app.releaser_beat(timestamp with time zone)': ['app_releaser'],
+  // The entries of a release (the archive was opened, a request was delivered, failed or expired): the
+  // releaser alone, and only about an approved request of the organization of the transaction. The API
+  // writes the one entry of a download, for a request that was released.
+  'app.write_release_audit(text,uuid,text,jsonb)': ['app_releaser'],
+  'app.write_download_audit(uuid)': ['app_rw'],
+  // The organizations whose plain export can leave the bucket: the window is over and the archive that
+  // replaces it was verified (ids only).
+  'app.export_cleanup_due(integer,integer)': ['app_rw'],
+  // The legal erasure records which folder of the archive it erased (operator role, from the command).
+  'app.archive_mark_erased(uuid,text)': ['app_operator'],
+  // The figures of the alert rules that no organization-by-organization read can give: the archives of
+  // cancelled organizations, the release requests, the signups nobody confirmed, the releaser's heartbeat.
+  'app.platform_health()': ['app_rw'],
   // Whether an organization has a written archive: all the operator may ask before recording a release.
   'app.archive_is_written(uuid)': ['app_operator'],
 };
@@ -144,12 +168,18 @@ describe('SECURITY DEFINER functions in schema app', () => {
   it('is executable only by the roles that need it: not app_rw, app_operator or audit_sealer by accident', async () => {
     const found = await listDefinerFunctions(owner, 'app', CHECKED_ROLES);
 
+    // The releaser inherits what `app_rw` may run.
+    const expected = (signature: string): string[] => {
+      const roles = [...(ALLOWED[signature] ?? [])];
+      if (roles.includes('app_rw') && !roles.includes('app_releaser')) roles.push('app_releaser');
+      return roles.sort();
+    };
     const unexpected = found
       .filter((fn) => ALLOWED[fn.signature] !== undefined)
       .map((fn) => ({
         signature: fn.signature,
-        executableBy: fn.executableBy,
-        allowed: [...(ALLOWED[fn.signature] ?? [])].sort(),
+        executableBy: [...fn.executableBy].sort(),
+        allowed: expected(fn.signature),
       }))
       .filter((fn) => JSON.stringify(fn.executableBy) !== JSON.stringify(fn.allowed));
 

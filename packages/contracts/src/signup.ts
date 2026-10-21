@@ -27,18 +27,36 @@ const ChallengeProof = z.string().min(1).max(512);
 const SignupEmail = z.string().trim().toLowerCase().pipe(z.email().max(254));
 
 /**
+ * Control characters (line breaks, tabs, NUL), format characters (bidirectional overrides, zero
+ * width) and the Unicode line and paragraph separators. A name is written into an email, so none of
+ * these may reach it (JD-S6 R1-S6-10).
+ */
+const HIDDEN_CHARACTER = /[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/u;
+
+/** A name typed by a visitor and shown or emailed as it is: one line of visible characters. */
+function plainName(min: number, max: number) {
+  return z
+    .string()
+    .trim()
+    .min(min)
+    .max(max)
+    .refine((value) => !HIDDEN_CHARACTER.test(value), {
+      message: 'The name has hidden characters',
+    });
+}
+
+/**
  * The form of the signup. The visitor gives a name for the organization, never an address for it:
- * the platform generates that (tenancy, F11). The two acceptances are booleans so that refusing is
- * an answer of the API (`signup_terms_required`) and not a malformed request. The password is
- * checked by the password rules of the API, which only it has; here only its size is bounded.
+ * the platform generates that (tenancy, F11). It carries NO password and NO acceptance: whoever
+ * types an address on this public form has not proved it is theirs, so anything chosen here (a
+ * password, an acceptance of the terms) would be the choice of a stranger. The person who owns the
+ * address sets the password and accepts the terms on the page of the emailed link
+ * (`SignupVerifyRequest`, JD-S6 R1-S6-3).
  */
 export const SignupRequest = z.strictObject({
-  organizationName: z.string().trim().min(2).max(80),
-  ownerName: z.string().trim().min(2).max(100),
+  organizationName: plainName(2, 80),
+  ownerName: plainName(2, 100),
   email: SignupEmail,
-  password: z.string().min(1).max(LOGIN_PASSWORD_MAX),
-  acceptTerms: z.boolean(),
-  acceptDataProcessing: z.boolean(),
   challengeProof: ChallengeProof,
 });
 export type SignupRequest = z.infer<typeof SignupRequest>;
@@ -57,8 +75,18 @@ export type SignupResendRequest = z.infer<typeof SignupResendRequest>;
 export const SignupRenewRequest = z.strictObject({ challengeProof: ChallengeProof });
 export type SignupRenewRequest = z.infer<typeof SignupRenewRequest>;
 
-/** The token of the emailed link. */
-export const SignupVerifyRequest = z.strictObject({ token: z.string().min(1).max(512) });
+/**
+ * The token of the emailed link, with the password the owner chooses now and the two acceptances.
+ * The acceptances are booleans so that refusing is an answer of the API (`signup_terms_required`)
+ * and not a malformed request. The password is checked by the password rules of the API, which only
+ * it has; here only its size is bounded.
+ */
+export const SignupVerifyRequest = z.strictObject({
+  token: z.string().min(1).max(512),
+  password: z.string().min(1).max(LOGIN_PASSWORD_MAX),
+  acceptTerms: z.boolean(),
+  acceptDataProcessing: z.boolean(),
+});
 export type SignupVerifyRequest = z.infer<typeof SignupVerifyRequest>;
 
 /** The only thing a signup or a request for a new link says: it was received. */

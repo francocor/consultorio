@@ -160,12 +160,9 @@ describe('the terms a signup asks for', () => {
 });
 
 describe('the pending signup and the acceptance record', () => {
-  const pending = (tenantId: string, email: string, hash: string | null = '$argon2id$x') =>
-    sql`INSERT INTO signup_pending
-          (tenant_id, owner_email, owner_name, password_hash, terms_version,
-           data_processing_version, accepted_at, verified_at)
-          VALUES (${tenantId}, ${email}, 'Ana Pérez', ${hash}, 1, 1, now(),
-                  ${hash === null ? sql`now()` : sql`null`})`;
+  const pending = (tenantId: string, email: string, verified = false) =>
+    sql`INSERT INTO signup_pending (tenant_id, owner_email, owner_name, verified_at)
+          VALUES (${tenantId}, ${email}, 'Ana Pérez', ${verified ? sql`now()` : sql`null`})`;
 
   it('lets an address wait for one link at a time, whatever its case', async () => {
     const first = await unverifiedTenant('espera-uno');
@@ -177,28 +174,21 @@ describe('the pending signup and the acceptance record', () => {
     ).rejects.toThrow();
   });
 
-  it('keeps the password hash exactly as long as the signup is unverified', async () => {
-    const tenantA = await unverifiedTenant('hash-uno');
-    const tenantB = await unverifiedTenant('hash-dos');
-
-    await expect(
-      asTenant(runtime, tenantA.id, (tx) =>
-        tx.execute(
-          sql`INSERT INTO signup_pending (tenant_id, owner_email, owner_name, password_hash,
-                terms_version, data_processing_version, accepted_at)
-              VALUES (${tenantA.id}, 'sin-hash@example.test', 'Ana', null, 1, 1, now())`,
-        ),
-      ),
-    ).rejects.toThrow();
-    // Verified, with no hash: allowed. Verified with a hash: refused.
-    await asTenant(runtime, tenantB.id, (tx) =>
-      tx.execute(pending(tenantB.id, 'confirmada@example.test', null)),
+  it('holds no password and no acceptance: the owner gives both at the link (JD-S6 R1-S6-3)', async () => {
+    const columns = await owner.query<{ column_name: string }>(
+      `SELECT column_name FROM information_schema.columns WHERE table_name = 'signup_pending'`,
     );
-    await expect(
-      inTransaction(owner, tenantB.id, () =>
-        owner.query(`UPDATE signup_pending SET password_hash = 'x' WHERE verified_at IS NOT NULL`),
-      ),
-    ).rejects.toThrow(/signup_pending_hash_check/);
+    const names = columns.rows.map((row) => row.column_name);
+
+    for (const gone of [
+      'password_hash',
+      'terms_version',
+      'data_processing_version',
+      'accepted_at',
+    ]) {
+      expect(names, gone).not.toContain(gone);
+    }
+    expect(names).toContain('purge_attempts');
   });
 
   it('is never deleted by the runtime role', async () => {
@@ -248,9 +238,8 @@ describe('what an address is for the signup (app.signup_email_state)', () => {
     const waiting = await unverifiedTenant('estado-espera');
     await asTenant(runtime, waiting.id, (tx) =>
       tx.execute(
-        sql`INSERT INTO signup_pending (tenant_id, owner_email, owner_name, password_hash,
-              terms_version, data_processing_version, accepted_at)
-            VALUES (${waiting.id}, 'espera@example.test', 'Ana', '$argon2id$x', 1, 1, now())`,
+        sql`INSERT INTO signup_pending (tenant_id, owner_email, owner_name)
+            VALUES (${waiting.id}, 'espera@example.test', 'Ana')`,
       ),
     );
     const userId = uuidv7();
@@ -276,6 +265,14 @@ describe('what an address is for the signup (app.signup_email_state)', () => {
 });
 
 describe('the status of an organization', () => {
+  it('has its check validated: no migration leaves a constraint NOT VALID (JD-S6 R1-A-S)', async () => {
+    const unvalidated = await owner.query<{ conname: string }>(
+      `SELECT conname FROM pg_constraint WHERE conname = 'tenant_status_check' AND NOT convalidated`,
+    );
+
+    expect(unvalidated.rows).toEqual([]);
+  });
+
   it('moves from unverified to active in one update, which the runtime role may do', async () => {
     const created = await unverifiedTenant('se-activa');
 

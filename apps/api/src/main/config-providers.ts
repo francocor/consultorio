@@ -150,7 +150,7 @@ const providerEnv = z.object({
   /** How long an archived object cannot be altered or removed (the 10-year legal retention). */
   ARCHIVE_RETENTION_DAYS: z.coerce.number().int().min(1).max(36_500).default(3650),
   /** Days after the cancellation before the archive is written: the window of the export. */
-  ARCHIVE_AFTER_DAYS: z.coerce.number().int().min(0).max(3650).default(30),
+  ARCHIVE_AFTER_DAYS: z.coerce.number().int().min(1).max(3650).default(30),
   /** The public half of the key of the releaser (32 bytes, base64): lets the writer seal, not open. */
   ARCHIVE_RELEASER_PUBLIC_KEY: z.string().min(1).optional(),
   /** The private half (32 bytes, base64). ONLY the releaser process has it. */
@@ -257,7 +257,7 @@ export function readProviderConfig(
       message: `is required in production (at least ${String(MIN_PEPPER_LENGTH)} characters, secret): it keys the hash of the addresses in the message log`,
     });
   }
-  const archive = readArchiveConfig(value, problems);
+  const archive = readArchiveConfig(value, problems, production);
   if (problems.length > 0) return { problems };
 
   return {
@@ -290,10 +290,17 @@ export function readProviderConfig(
   };
 }
 
+/**
+ * The key of the releaser that `infra/docker-compose.yml` runs on: it is printed in the repository, so
+ * nothing sealed to it is secret. Production refuses it, as the private half and as the public one.
+ */
+const DEVELOPMENT_RELEASER_KEK = 'ZGV2X29ubHlfYXJjaGl2ZV9yZWxlYXNlcl9rZWtfMDA=';
+
 /** The archive settings, or nothing when no bucket is named. A half-configured archive is a problem. */
 function readArchiveConfig(
   value: z.infer<typeof providerEnv>,
   problems: ProviderEnvProblem[],
+  production: boolean,
 ): ArchiveConfig | undefined {
   if (value.ARCHIVE_S3_BUCKET === undefined) {
     for (const name of ['ARCHIVE_RELEASER_PUBLIC_KEY', 'ARCHIVE_RELEASER_KEK'] as const) {
@@ -311,6 +318,29 @@ function readArchiveConfig(
   for (const [name, entry] of Object.entries(required)) {
     if (entry === undefined) {
       problems.push({ path: name, message: 'is required when ARCHIVE_S3_BUCKET is set' });
+    }
+  }
+  if (production) {
+    // The records of cancelled organizations do not travel in the clear, and are not sealed to a key
+    // that is printed in the repository (JD-S6 R1-A-T12).
+    if (value.ARCHIVE_S3_ENDPOINT?.toLowerCase().startsWith('http://')) {
+      problems.push({
+        path: 'ARCHIVE_S3_ENDPOINT',
+        message: 'must be https in production',
+      });
+    }
+    if (value.ARCHIVE_RELEASER_KEK === DEVELOPMENT_RELEASER_KEK) {
+      problems.push({
+        path: 'ARCHIVE_RELEASER_KEK',
+        message: 'is the public development key of the repository and is not allowed in production',
+      });
+    }
+    if (value.ARCHIVE_RELEASER_PUBLIC_KEY === releaserPublicKeyOf(DEVELOPMENT_RELEASER_KEK)) {
+      problems.push({
+        path: 'ARCHIVE_RELEASER_PUBLIC_KEY',
+        message:
+          'is the public half of the development key of the repository and is not allowed in production',
+      });
     }
   }
   // The public key can be derived from the private one, so the releaser needs only the latter.

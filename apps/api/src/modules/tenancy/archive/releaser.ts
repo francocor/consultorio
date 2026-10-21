@@ -1,3 +1,4 @@
+import { ARCHIVE_RELEASE_OPEN_DAYS } from '@consultorio/contracts';
 import { eq, sql } from 'drizzle-orm';
 
 import { archiveReleaseRequest } from '../../../db/schema/archive-release.js';
@@ -17,14 +18,20 @@ import { createActionTokens } from '../../../platform/tokens/index.js';
 
 import { createArchiveKeyReleaser } from './keys.js';
 import type { ArchiveStore } from './ports.js';
-import { ARCHIVE_RELEASE_JOB, createArchiveReleaseJob } from './release-archive.js';
+import { ARCHIVE_RELEASE_JOB, createArchiveReleaseJob, packageKeyOf } from './release-archive.js';
 
 /**
  * The `releaser` process role: the one process that holds `ARCHIVE_RELEASER_KEK` and therefore the
  * only one that can open the archive. It registers a single job, `archive.release`, looks every few
- * seconds for requests the operators approved, and takes out of the bucket the packages whose link
- * ended unused. It serves no HTTP and has no audit sealer login: it is deliberately small, because what
- * it holds is the key to every cancelled organization's records.
+ * seconds for requests the operators approved, closes the requests nobody carried on for seven days,
+ * and takes out of the bucket the packages whose link ended unused or whose release failed. It serves
+ * no HTTP and has no audit sealer login: it is deliberately small, because what it holds is the key to
+ * every cancelled organization's records.
+ *
+ * It connects as its own database role (`app_releaser`, `RELEASER_DATABASE_URL`), the only one that
+ * may mark a request released, write the entries of a release, and ask what is waiting (migration
+ * 0688). Every sweep it also writes its heartbeat, which the alert rules read (`releaser_heartbeat`):
+ * a releaser that died is an alert, not a silence.
  *
  * Its connection pool is its own (a handful of connections: one release at a time per job slot).
  */
@@ -34,6 +41,7 @@ const DEFAULT_SWEEP_MS = 15_000;
 const DEFAULT_POOL = 6;
 
 export interface ReleaserOptions {
+  /** The connection of the role `app_releaser` (`RELEASER_DATABASE_URL`). */
   databaseUrl: string;
   dbPoolMax?: number;
   /** The private half of the key of the releaser (32 bytes, base64). */
@@ -52,14 +60,23 @@ export interface Releaser {
   stop(): Promise<void>;
 }
 
-/** Queues `archive.release` for the approved requests and clears the packages whose link ended. */
+/**
+ * Closes the requests that waited too long, queues `archive.release` for the approved ones and clears
+ * the packages that should not be in the bucket (the link ended unused, or the release failed).
+ */
 export async function sweepReleases(deps: {
   db: ReturnType<typeof createRuntimeDb>['db'];
   withTenant: WithTenant;
   client: JobClient;
   storage: ObjectStorage;
   clock: () => Date;
-}): Promise<{ queued: number; removed: number }> {
+}): Promise<{ queued: number; removed: number; expired: number }> {
+  const expired = await deps.db.transaction(async (tx) => {
+    const result = await tx.execute<{ closed: number }>(
+      sql`select app.archive_release_expire_stale(${ARCHIVE_RELEASE_OPEN_DAYS}) as closed`,
+    );
+    return result.rows[0]?.closed ?? 0;
+  });
   const due = await deps.db.transaction(async (tx) => {
     const result = await tx.execute<{ request_id: string; tenant_id: string }>(
       sql`select * from app.archive_release_due(${SWEEP_LIMIT})`,
@@ -93,7 +110,9 @@ export async function sweepReleases(deps: {
         .where(eq(archiveReleaseRequest.id, row.request_id));
       return found?.key ?? null;
     });
-    if (key !== null) await deps.storage.remove(row.tenant_id, key);
+    // A failed or expired release has no key on its row, but it may have left the package in the bucket
+    // under the name its id gives it: the removal of an object that is not there is not an error.
+    await deps.storage.remove(row.tenant_id, key ?? packageKeyOf(row.tenant_id, row.request_id));
     await deps.withTenant(context, (tx) =>
       tx
         .update(archiveReleaseRequest)
@@ -102,7 +121,7 @@ export async function sweepReleases(deps: {
     );
     removed += 1;
   }
-  return { queued: due.length, removed };
+  return { queued: due.length, removed, expired };
 }
 
 export async function createReleaser(options: ReleaserOptions): Promise<Releaser> {
@@ -113,6 +132,7 @@ export async function createReleaser(options: ReleaserOptions): Promise<Releaser
   await boss.start();
 
   const withTenant = createWithTenant(handle.db);
+  const startedAt = clock();
   await registerJobs(
     boss,
     { db: handle.db, log: options.log },
@@ -137,6 +157,10 @@ export async function createReleaser(options: ReleaserOptions): Promise<Releaser
   const ticker = createTicker({
     intervalMs: options.sweepEveryMs ?? DEFAULT_SWEEP_MS,
     tick: async () => {
+      // First the heartbeat, so a sweep that fails halfway still says the process is alive.
+      await handle.db.execute(
+        sql`select app.releaser_beat(${startedAt.toISOString()}::timestamptz)`,
+      );
       await sweepReleases({ db: handle.db, withTenant, client, storage: options.storage, clock });
     },
     onError: (error) => {
@@ -146,6 +170,8 @@ export async function createReleaser(options: ReleaserOptions): Promise<Releaser
       );
     },
   });
+  // Alive from the first second, not from the first sweep.
+  await handle.db.execute(sql`select app.releaser_beat(${startedAt.toISOString()}::timestamptz)`);
   ticker.start();
 
   return {

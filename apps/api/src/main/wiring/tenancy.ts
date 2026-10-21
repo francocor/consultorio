@@ -14,6 +14,7 @@ import {
   enqueueDueVerifications,
   enqueuePendingExports,
   operatorCancelRoutes,
+  removeSpentExports,
   releaseRoutes,
   createReleaseRequests,
   subscribeCancellationExport,
@@ -208,6 +209,18 @@ export const tenancyWiring: ModuleWiring = {
                 run: async () => {
                   await enqueueDueArchives(db, client, { afterDays: archive.afterDays });
                   await enqueueDueVerifications(db, client, { everyDays: VERIFY_EVERY_DAYS });
+                  // The plain export leaves the bucket once the archive that replaces it is verified
+                  // and the download window is over (JD-S6 R1-A-W7).
+                  const files = bucket();
+                  if (files) {
+                    await removeSpentExports({
+                      db,
+                      withTenant: createWithTenant(db),
+                      storage: files,
+                      clock: now,
+                      afterDays: archive.afterDays,
+                    });
+                  }
                 },
               },
             ]

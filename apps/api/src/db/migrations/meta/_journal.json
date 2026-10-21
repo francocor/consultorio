@@ -876,6 +876,41 @@
       "when": 1792530522247,
       "tag": "0682_validate_notice_kind_check",
       "breakpoints": true
+    },
+    {
+      "idx": 125,
+      "version": "7",
+      "when": 1792530522248,
+      "tag": "0685_signup_set_password_at_verify",
+      "breakpoints": true
+    },
+    {
+      "idx": 126,
+      "version": "7",
+      "when": 1792532474840,
+      "tag": "0686_archive_release_hardening",
+      "breakpoints": true
+    },
+    {
+      "idx": 127,
+      "version": "7",
+      "when": 1792532479479,
+      "tag": "0687_archive_erasure_and_health",
+      "breakpoints": true
+    },
+    {
+      "idx": 128,
+      "version": "7",
+      "when": 1792532483610,
+      "tag": "0688_archive_releaser_role",
+      "breakpoints": true
+    },
+    {
+      "idx": 129,
+      "version": "7",
+      "when": 1792532488043,
+      "tag": "0689_operator_cancel_guard",
+      "breakpoints": true
     }
   ]
 }

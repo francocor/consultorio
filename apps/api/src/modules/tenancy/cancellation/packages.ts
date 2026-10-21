@@ -116,8 +116,24 @@ export async function findPackage(tx: Tx, id: string): Promise<ExportPackageRow 
   return row ?? null;
 }
 
+/** The code a package shows once its file was taken out of the bucket (see `export-cleanup.ts`). */
+export const REMOVED_AFTER_ARCHIVE = 'removed_after_archive';
+
 export function toPackageDto(row: ExportPackageRow): ExportPackageDto {
   const kind = row.kind === 'clinical' ? 'clinical' : 'administrative';
+  // A package whose file was removed has nothing to download: it is told apart from one that could
+  // not be made by its code, and offers no download.
+  if (row.objectRemovedAt !== null) {
+    return {
+      id: row.id,
+      kind,
+      status: 'failed',
+      fileName: null,
+      sizeBytes: null,
+      builtAt: row.builtAt?.toISOString() ?? null,
+      failureCode: REMOVED_AFTER_ARCHIVE,
+    };
+  }
   const status =
     row.status === 'ready' ? 'ready' : row.status === 'failed' ? 'failed' : ('queued' as const);
   return {

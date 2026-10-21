@@ -191,7 +191,9 @@ test('an organization that leaves exports its records, is archived and releases 
   });
 
   // 2. The platform cancels the organization.
-  const cancelled = await operatorCall(first, 'POST', `/operator/tenants/${tenant.id}/cancel`);
+  const cancelled = await operatorCall(first, 'POST', `/operator/tenants/${tenant.id}/cancel`, {
+    reason: 'Cierre acordado con la titular, ticket 5521',
+  });
   expect(cancelled.ok(), await cancelled.text()).toBe(true);
   expect(((await cancelled.json()) as { status: string }).status).toBe('cancelled');
 

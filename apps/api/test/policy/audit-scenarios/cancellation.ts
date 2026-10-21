@@ -20,4 +20,7 @@ export const CANCELLATION_SCENARIOS: Record<
   'export.cancellation.downloaded': {
     test: 'apps/api/test/integration/cancellation-export.test.ts',
   },
+  'export.cancellation.removed': {
+    test: 'apps/api/test/integration/cancellation-export-cleanup.test.ts',
+  },
 };

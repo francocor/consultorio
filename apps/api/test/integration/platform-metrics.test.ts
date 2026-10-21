@@ -29,6 +29,9 @@ let admin: pg.Client;
 let metrics: Metrics;
 let measuredAt: number;
 
+/** The organizations the worker reads in full: not a cancelled one (JD-S6 R1-S6-5), not an unconfirmed signup. */
+const LIVE = `select id from tenant where status not in ('cancelled', 'unverified')`;
+
 const ONE = async <T>(statement: string, ...params: unknown[]): Promise<T> => {
   const result = await admin.query(statement, params);
   return result.rows[0] as T;
@@ -90,7 +93,7 @@ describe('what the worker measures across the organizations', () => {
   it('counts the messages of the last day by status, as the one query that sees them all does', async () => {
     const expected = await admin.query<{ status: string; n: number }>(
       `select status, count(*)::int as n from message
-        where created_at > now() - interval '24 hours' group by status`,
+        where created_at > now() - interval '24 hours' and tenant_id in (${LIVE}) group by status`,
     );
 
     expect(expected.rows.find((row) => row.status === 'failed')?.n).toBeGreaterThanOrEqual(1);
@@ -103,16 +106,18 @@ describe('what the worker measures across the organizations', () => {
   it('counts the invoices pending past the threshold, the documents waiting for the scan and how long the oldest waited', async () => {
     const invoices = await ONE<{ n: number }>(
       `select count(*)::int as n from invoice i
-        where i.status = 'pending'
+        where i.status = 'pending' and i.tenant_id in (${LIVE})
           and i.created_at < now() - make_interval(hours => coalesce(
-                (select (t.settings -> 'invoicing' ->> 'outageThresholdHours')::int
+                (select case when t.settings -> 'invoicing' ->> 'outageThresholdHours' ~ '^[0-9]{1,4}$'
+                             then (t.settings -> 'invoicing' ->> 'outageThresholdHours')::int end
                    from tenant t where t.id = i.tenant_id), 24))`,
     );
     const documents = await ONE<{ n: number; oldest: number }>(
       `select count(*)::int as n,
               coalesce(extract(epoch from now() - min(upload_completed_at)), 0)::float as oldest
          from document
-        where status = 'quarantined' and upload_completed_at is not null and abandoned_at is null`,
+        where status = 'quarantined' and upload_completed_at is not null and abandoned_at is null
+          and tenant_id in (${LIVE})`,
     );
 
     expect(invoices.n).toBeGreaterThanOrEqual(1);
@@ -132,7 +137,11 @@ describe('what the worker measures across the organizations', () => {
     // made at a quiet moment: the oracle before and after a fresh measurement must agree, and then the
     // measurement has to agree with both. A figure that counted something else never would.
     const oracle = async () =>
-      (await ONE<{ n: number }>('select count(*)::int as n from audit_event where seq is null')).n;
+      (
+        await ONE<{ n: number }>(
+          `select count(*)::int as n from audit_event where seq is null and tenant_id in (${LIVE})`,
+        )
+      ).n;
     let agreed: { unsealed: number; measured: number } | null = null;
     let last = 'no attempt';
     for (let attempt = 0; attempt < 40 && agreed === null; attempt += 1) {
@@ -230,5 +239,182 @@ describe('what the worker measures across the organizations', () => {
 
     expect(text).toContain('# TYPE subscriptions gauge');
     expect(text).not.toMatch(/@|Gomez|Rios|propietaria|Paciente/i);
+  });
+});
+
+describe('what the alert rules of Stage 6 read (JD-S6 R1-S6-5)', () => {
+  const fresh = async () => {
+    const next = createMetrics({ catalog: METRIC_DESCRIPTIONS });
+    await collectPlatformMetrics({ db: runtime.db, metrics: next });
+    return next;
+  };
+
+  it('counts the subscriptions parked for a person by reason, the stalest reconciliation and the surplus nobody reviewed', async () => {
+    const parked = await createTestTenant(runtime, { slug: 'metrics-parked' });
+    await admin.query(
+      `insert into subscription (tenant_id, plan_id, status, trial_ends_at, overage_cap_messages,
+                                 provider_preapproval_id, external_reference, last_reconciled_at,
+                                 attention_reason, attention_at)
+       select $1, id, 'trial', now() + interval '14 days', 300, 'PRE-METRICS-1', 'sub:metrics-1',
+              now() - interval '3 hours', 'ambiguous_preapproval', now()
+         from plan where key = 'standard'`,
+      [parked.id],
+    );
+    await admin.query(
+      `insert into subscription_payment (tenant_id, subscription_id, provider_payment_id, purpose, reference,
+                                         amount_cents, status, surplus, credited, provider_created_at)
+       select $1, s.id, 'PAY-METRICS-1', 'charge', 'sub:metrics-1', 3600000, 'approved', true, true, now()
+         from subscription s where s.tenant_id = $1`,
+      [parked.id],
+    );
+
+    const measured = await fresh();
+
+    const reasons = await admin.query<{ reason: string; n: number }>(
+      `select attention_reason as reason, count(*)::int as n from subscription
+        where attention_reason is not null and tenant_id in (${LIVE}) group by 1`,
+    );
+    const unreviewed = await ONE<{ n: number }>(
+      `select count(*)::int as n from subscription_payment
+        where surplus and surplus_reviewed_at is null and tenant_id in (${LIVE})`,
+    );
+    for (const reason of [
+      'ambiguous_preapproval',
+      'identity_mismatch',
+      'unexpected_state',
+      'reauthorization_needed',
+    ]) {
+      const want = reasons.rows.find((row) => row.reason === reason)?.n ?? 0;
+      expect(measured.get('subscriptions_parked', { reason }), reason).toBe(want);
+    }
+    expect(
+      measured.get('subscriptions_parked', { reason: 'ambiguous_preapproval' }),
+    ).toBeGreaterThanOrEqual(1);
+    expect(measured.get('subscription_reconcile_oldest_seconds')).toBeGreaterThanOrEqual(3 * 3600);
+    expect(measured.get('subscription_surplus_unreviewed')).toBe(unreviewed.n);
+    expect(unreviewed.n).toBeGreaterThanOrEqual(1);
+  });
+
+  it('is not stopped by one organization with a threshold that is not a number, which counts as the default', async () => {
+    const odd = await createTestTenant(runtime, { slug: 'metrics-odd-threshold' });
+    await admin.query(
+      `update tenant set settings = jsonb_build_object('invoicing', jsonb_build_object('outageThresholdHours', 'tres dias')) where id = $1`,
+      [odd.id],
+    );
+
+    const measured = await fresh();
+
+    expect(measured.get('platform_metrics_collection_errors_total')).toBe(0);
+    expect(measured.get('invoices_pending_past_threshold')).toBeGreaterThanOrEqual(1);
+  });
+
+  it('leaves out the organizations that were cancelled, except for their subscription', async () => {
+    const gone = await createTestTenant(runtime, { slug: 'metrics-cancelled' });
+    const fixture = TENANT_FIXTURES['message'];
+    if (!fixture) throw new Error('no fixture for message');
+    await asTenant(runtime, gone.id, (tx) => fixture.insert(tx, gone.id));
+    await admin.query('SET session_replication_role = replica');
+    await admin.query(
+      `update message set status = 'failed', failure_reason = 'delivery_failed' where tenant_id = $1`,
+      [gone.id],
+    );
+    await admin.query(
+      `insert into subscription (tenant_id, plan_id, status, trial_ends_at, overage_cap_messages)
+       select $1, id, 'cancelled', now() - interval '1 day', 300 from plan where key = 'standard'`,
+      [gone.id],
+    );
+    await admin.query(`update tenant set status = 'cancelled' where id = $1`, [gone.id]);
+    await admin.query('SET session_replication_role = DEFAULT');
+
+    const measured = await fresh();
+
+    const failedLive = await ONE<{ n: number }>(
+      `select count(*)::int as n from message
+        where status = 'failed' and created_at > now() - interval '24 hours' and tenant_id in (${LIVE})`,
+    );
+    const failedAll = await ONE<{ n: number }>(
+      `select count(*)::int as n from message
+        where status = 'failed' and created_at > now() - interval '24 hours'`,
+    );
+    const cancelledSubscriptions = await ONE<{ n: number }>(
+      `select count(*)::int as n from subscription where status = 'cancelled'`,
+    );
+    expect(failedAll.n).toBeGreaterThan(failedLive.n);
+    expect(measured.get('messages_last_day', { status: 'failed' })).toBe(failedLive.n);
+    // Its subscription is still counted, so the series by state keeps adding up.
+    expect(measured.get('subscriptions', { status: 'cancelled' })).toBe(cancelledSubscriptions.n);
+  });
+
+  it('measures the archives, the release requests, the signups and the releaser as the health function counts them', async () => {
+    const written = await createTestTenant(runtime, { slug: 'metrics-archive-corrupted' });
+    const failed = await createTestTenant(runtime, { slug: 'metrics-archive-failed' });
+    await admin.query(
+      `insert into tenant_archive (tenant_id, archive_id, key_version, status, manifest_key, manifest_sha256,
+                                   objects_count, bytes_total, retain_until, archived_at, verified_at,
+                                   verify_status, verify_problems)
+       values ($1, app.uuid_v7(), 1, 'written', 'tenants/x/manifest.json', $2, 3, 300,
+               now() + interval '3650 days', now() - interval '20 days', now() - interval '16 days',
+               'corrupted', 2)`,
+      [written.id, 'c'.repeat(64)],
+    );
+    await admin.query(
+      `insert into tenant_archive (tenant_id, archive_id, key_version, status, failure_code)
+       values ($1, app.uuid_v7(), 1, 'failed', 'store_unavailable')`,
+      [failed.id],
+    );
+    const operator = '0190a000-0000-7000-8000-0000000000b1';
+    const other = '0190a000-0000-7000-8000-0000000000b2';
+    await admin.query(
+      `insert into archive_release_request (target_tenant_id, requester_kind, requester_name, requester_email,
+                                            scope_document_type, scope_document, reason, status, recorded_by,
+                                            identity_verified_by, identity_verified_at, approved_by, approved_at,
+                                            expires_at, identity_checklist)
+       values ($1, 'patient', 'Ana Ríos', 'ana@ejemplo.test', 'dni', '20111222', 'Segunda opinión médica',
+               'approved', $2, $2, now() - interval '30 minutes', $3, now() - interval '30 minutes',
+               now() + interval '7 days',
+               '{"documentChecked": true, "photoMatches": true, "contactConfirmed": true, "entitlementChecked": true}'::jsonb)`,
+      [written.id, operator, other],
+    );
+    const unconfirmed = await createTestTenant(runtime, { slug: 'metrics-signup-unsent' });
+    await admin.query(`update tenant set status = 'unverified' where id = $1`, [unconfirmed.id]);
+    await admin.query(
+      `insert into signup_pending (tenant_id, owner_email, owner_name, created_at)
+       values ($1, 'sin-enviar@ejemplo.test', 'Ana', now() - interval '2 hours')`,
+      [unconfirmed.id],
+    );
+    await admin.query('select app.releaser_beat(now())');
+    await admin.query("update releaser_heartbeat set beat_at = now() - interval '10 seconds'");
+
+    const measured = await fresh();
+    const oracle = await ONE<Record<string, number | null>>('select * from app.platform_health()');
+
+    expect(measured.get('archive_verify_problems', { status: 'corrupted' })).toBe(
+      oracle['archive_verify_corrupted'],
+    );
+    expect(measured.get('archive_verify_problems', { status: 'corrupted' })).toBeGreaterThanOrEqual(
+      1,
+    );
+    expect(measured.get('archive_write_failed')).toBe(oracle['archive_write_failed']);
+    expect(measured.get('archive_write_failed')).toBeGreaterThanOrEqual(1);
+    expect(measured.get('archive_verify_oldest_seconds')).toBeGreaterThanOrEqual(16 * 86_400);
+    expect(measured.get('archive_release_approved_waiting')).toBe(
+      oracle['release_approved_waiting'],
+    );
+    expect(measured.get('archive_release_approved_waiting')).toBeGreaterThanOrEqual(1);
+    expect(measured.get('archive_release_approved_oldest_seconds')).toBeGreaterThanOrEqual(1800);
+    expect(measured.get('signup_emails_unsent')).toBe(oracle['signup_unsent']);
+    expect(measured.get('signup_emails_unsent')).toBeGreaterThanOrEqual(1);
+    expect(measured.get('signup_oldest_unsent_seconds')).toBeGreaterThanOrEqual(7200);
+    // The releaser wrote its heartbeat ten seconds ago: the age is a few seconds, and a minute is
+    // more than enough of a margin for a slow machine.
+    expect(measured.get('archive_releaser_heartbeat_age_seconds')).toBeGreaterThanOrEqual(10);
+    expect(measured.get('archive_releaser_heartbeat_age_seconds')).toBeLessThan(120);
+  });
+
+  it('keeps the new series free of names, addresses and text of a person', async () => {
+    const text = (await fresh()).render();
+
+    expect(text).toContain('# TYPE subscriptions_parked gauge');
+    expect(text).not.toMatch(/@|Ana R|ejemplo\.test|tenants\/x/i);
   });
 });

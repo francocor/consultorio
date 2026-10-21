@@ -110,6 +110,56 @@ export const METRIC_CATALOG: Readonly<Record<string, CatalogEntry>> = {
     help: 'Organizations, by operational status.',
     labels: ['status'],
   },
+  subscriptions_parked: {
+    type: 'gauge',
+    help: 'Subscriptions parked for a person (nothing more is sent to the provider for them), by reason.',
+    labels: ['reason'],
+  },
+  subscription_reconcile_oldest_seconds: {
+    type: 'gauge',
+    help: 'Age of the oldest reconciliation with the payments provider among the subscriptions that have a preapproval (never reconciled counts from its creation).',
+  },
+  subscription_surplus_unreviewed: {
+    type: 'gauge',
+    help: 'Payments flagged as a surplus (a second charge for a period already paid) that no operator reviewed.',
+  },
+
+  // The retention archive and its break-glass release.
+  archive_verify_problems: {
+    type: 'gauge',
+    help: 'Archives whose last verification found a problem, by finding (corrupted, missing, overwritten). Erased archives are not counted.',
+    labels: ['status'],
+  },
+  archive_write_failed: {
+    type: 'gauge',
+    help: 'Archives whose writing failed for good (the organization is cancelled and nothing is in custody).',
+  },
+  archive_verify_oldest_seconds: {
+    type: 'gauge',
+    help: 'Age of the oldest verification of a written archive (an archive never verified counts from the day it was written).',
+  },
+  archive_release_approved_waiting: {
+    type: 'gauge',
+    help: 'Release requests approved by the operators and not carried out yet.',
+  },
+  archive_release_approved_oldest_seconds: {
+    type: 'gauge',
+    help: 'Age of the oldest approved release request that was not carried out.',
+  },
+  archive_releaser_heartbeat_age_seconds: {
+    type: 'gauge',
+    help: 'Seconds since the releaser process last wrote its heartbeat. Absent while no releaser ever ran.',
+  },
+
+  // Signup.
+  signup_emails_unsent: {
+    type: 'gauge',
+    help: 'Signups waiting for their verification link whose email never went out for more than thirty minutes.',
+  },
+  signup_oldest_unsent_seconds: {
+    type: 'gauge',
+    help: 'Age of the oldest signup whose verification email never went out.',
+  },
 
   // Public surfaces.
   booking_suspicious_total: {

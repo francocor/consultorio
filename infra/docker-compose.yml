@@ -226,7 +226,11 @@ services:
       disable: true
     environment:
       NODE_ENV: development
-      DATABASE_URL: postgres://app_rw:app_rw_dev_only@postgres:5432/${POSTGRES_DB:-consultorio}
+      # The releaser connects as its own database role (app_releaser, JD-S6 R1-S6-12): the only one that
+      # may mark a release request released and write the entries of a release. It holds no key service
+      # of the organizations (no KMS_*): its own key opens the archive and nothing else.
+      DATABASE_URL: postgres://app_releaser:app_releaser_dev_only@postgres:5432/${POSTGRES_DB:-consultorio}
+      RELEASER_DATABASE_URL: postgres://app_releaser:app_releaser_dev_only@postgres:5432/${POSTGRES_DB:-consultorio}
       DEPLOYMENT_MODE: ${DEPLOYMENT_MODE:-multi}
       BASE_DOMAIN: ${BASE_DOMAIN:-localhost}
       PLATFORM_HOST: ${PLATFORM_HOST:-platform.localhost}
@@ -243,8 +247,6 @@ services:
       ARCHIVE_S3_ACCESS_KEY_ID: archive-writer
       ARCHIVE_S3_SECRET_ACCESS_KEY: ${ARCHIVE_S3_SECRET_ACCESS_KEY:-archive_writer_dev_only_secret}
       ARCHIVE_RELEASER_KEK: ${ARCHIVE_RELEASER_KEK:-ZGV2X29ubHlfYXJjaGl2ZV9yZWxlYXNlcl9rZWtfMDA=}
-      KMS_PROVIDER: local
-      KMS_LOCAL_KEK_BASE64: ${KMS_LOCAL_KEK_BASE64:-ZGV2X29ubHlfbG9jYWxfa2VrXzAxMjM0NTY3ODlhYmM=}
       LOG_LEVEL: ${LOG_LEVEL:-info}
     depends_on:
       postgres:

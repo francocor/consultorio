@@ -3,6 +3,7 @@ import {
   SignupAcceptedResponse,
   SignupVerifiedResponse,
   type SignupRequest,
+  type SignupVerifyRequest,
 } from '@consultorio/contracts';
 
 import type { ApiClient } from '../../../../shared/lib/api-client.js';
@@ -29,8 +30,11 @@ export function signupApi(api: ApiClient) {
         body: { challengeProof },
         schema: SignupAcceptedResponse,
       }),
-    /** Follows the link: the organization is active and the owner is signed in (cookie). */
-    verify: (token: string) =>
-      api.post('/public/signup/verify', { body: { token }, schema: SignupVerifiedResponse }),
+    /**
+     * Follows the link with the password the owner chose and the two acceptances: the organization
+     * is active and the owner is signed in (cookie).
+     */
+    verify: (body: SignupVerifyRequest) =>
+      api.post('/public/signup/verify', { body, schema: SignupVerifiedResponse }),
   };
 }

@@ -6,8 +6,9 @@ import { emailOf, emailTo, linkIn, localLink, stack, urlOf } from './support/sta
 
 /**
  * Self-service signup on the real stack (Stage 6, track B), as a visitor on a phone: opens the form
- * on the platform host, signs up, reads the link from the mailbox, opens it on the host of the new
- * organization and activates it. The page is checked with axe and for horizontal scroll at 360 px on
+ * on the platform host, signs up (no password and no acceptance: those are the owner's, given on the
+ * page of the link), reads the link from the mailbox, opens it on the host of the new organization,
+ * chooses the password, accepts the terms and activates it. The page is checked with axe and for horizontal scroll at 360 px on
  * every screen. Asking for a new link, and signing up with an address that already has an account
  * (which must look exactly the same), are journeys of their own.
  *
@@ -37,9 +38,17 @@ async function fillForm(page: Page, signup: Signup) {
   await page.getByLabel('Nombre de la organización').fill(signup.name);
   await page.getByLabel('Su nombre y apellido').fill('Lucía Méndez');
   await page.getByLabel('Correo electrónico').fill(signup.email);
+}
+
+/** The page of the link: the owner chooses the password and accepts both documents (JD-S6 R1-S6-3). */
+async function fillActivation(page: Page, options: { acceptDataProcessing?: boolean } = {}) {
   await page.getByLabel('Contraseña', { exact: true }).fill(PASSWORD);
   await page.getByRole('checkbox', { name: 'Acepto los términos del servicio.' }).check();
-  await page.getByRole('checkbox', { name: /Acepto los términos de tratamiento de datos/ }).check();
+  if (options.acceptDataProcessing !== false) {
+    await page
+      .getByRole('checkbox', { name: /Acepto los términos de tratamiento de datos/ })
+      .check();
+  }
 }
 
 /** Opens the form on the platform host and sends it; ends on the "check your email" screen. */
@@ -79,6 +88,7 @@ test('a visitor signs up, opens the emailed link on the new organization and act
   ).toBeVisible();
   await expect(page.getByText(new RegExp(`para activar ${signup.name}`))).toBeVisible();
   await expectFitsAndAccessible(page);
+  await fillActivation(page);
   await page.getByRole('button', { name: 'Activar mi organización' }).click();
 
   // The trial starts in the same transaction that activates, and the owner lands in the wizard.
@@ -107,6 +117,7 @@ test('a link that does not work offers a new one, and the new one arrives', asyn
   const wrong = new URL(localLink(first));
   wrong.searchParams.set('token', 'x'.repeat(43));
   await page.goto(wrong.toString());
+  await fillActivation(page);
   await page.getByRole('button', { name: 'Activar mi organización' }).click();
   await expect(page.getByRole('heading', { level: 1, name: 'El enlace no sirve' })).toBeVisible();
   await expectFitsAndAccessible(page);
@@ -134,6 +145,18 @@ test('the check-your-email screen can ask for the message again', async ({ page 
       timeout: 20_000,
     })
     .not.toBe(first);
+
+  // The page of the new link does not activate until both documents are accepted (the form of the
+  // signup is limited to five an hour per client, so this rides on a signup the file already makes).
+  const fresh = linkIn(await emailTo(signup.email, /Confirme su correo/), '/signup/verify');
+  await page.goto(localLink(fresh));
+  await fillActivation(page, { acceptDataProcessing: false });
+  await page.getByRole('button', { name: 'Activar mi organización' }).click();
+  await expect(page.getByText('Para activar la cuenta debe aceptar este punto.')).toBeVisible();
+  await expect(
+    page.getByRole('heading', { level: 1, name: 'Active su organización' }),
+  ).toBeVisible();
+  await expectFitsAndAccessible(page);
 });
 
 test('an address that already has an account gets the same screen, and its holder is told, with no link', async ({
@@ -149,20 +172,14 @@ test('an address that already has an account gets the same screen, and its holde
   expect(notice).not.toMatch(/https?:\/\//);
 });
 
-test('the form does not send until both documents are accepted', async ({ page }) => {
-  const signup = newSignup();
+test('the public form has no password and no acceptance: a stranger cannot choose them for the owner', async ({
+  page,
+}) => {
   await page.goto(urlOf('platform', '/signup'));
-  await page.getByLabel('Nombre de la organización').fill(signup.name);
-  await page.getByLabel('Su nombre y apellido').fill('Lucía Méndez');
-  await page.getByLabel('Correo electrónico').fill(signup.email);
-  await page.getByLabel('Contraseña', { exact: true }).fill(PASSWORD);
-  await page.getByRole('checkbox', { name: 'Acepto los términos del servicio.' }).check();
 
-  await page.getByRole('button', { name: 'Crear cuenta' }).click();
-
-  await expect(page.getByText('Para crear la cuenta debe aceptar este punto.')).toBeVisible();
   await expect(page.getByRole('heading', { level: 1, name: 'Cree su cuenta' })).toBeVisible();
-  await expectFitsAndAccessible(page);
+  await expect(page.getByLabel('Contraseña', { exact: true })).toHaveCount(0);
+  await expect(page.getByRole('checkbox')).toHaveCount(0);
 });
 
 test('the signup does not exist on the host of an organization', async ({ page }) => {

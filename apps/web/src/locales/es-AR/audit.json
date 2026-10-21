@@ -236,6 +236,7 @@
   "action.tenant.cancelled": "Organización cancelada",
   "action.export.cancellation.requested": "Exportación por cancelación generada",
   "action.export.cancellation.downloaded": "Paquete de la exportación por cancelación descargado",
+  "action.export.cancellation.removed": "Paquete de la exportación por cancelación retirado, con el archivo cifrado ya verificado",
   "action.access.denied": "Acceso denegado",
   "action.cross_tenant.denied": "Acceso entre organizaciones denegado"
 }

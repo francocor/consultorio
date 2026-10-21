@@ -275,6 +275,7 @@ describe('Stage 6 audit actions (subscriptions, signup, cancellation)', () => {
     'tenant.cancelled',
     'export.cancellation.requested',
     'export.cancellation.downloaded',
+    'export.cancellation.removed',
   ];
 
   it('are all catalogued, once each', () => {

@@ -32,7 +32,16 @@ async function measuredSignUp(form: Form) {
   const challengeProof = await world.solve({ ip });
   let response!: Awaited<ReturnType<SignupWorld['platformPost']>>;
   const statements = await countQueries(async () => {
-    response = await world.platformPost('/public/signup', { ...form, challengeProof }, { ip });
+    response = await world.platformPost(
+      '/public/signup',
+      {
+        organizationName: form.organizationName,
+        ownerName: form.ownerName,
+        email: form.email,
+        challengeProof,
+      },
+      { ip },
+    );
     await world.idle();
   });
   return { response, statements };
@@ -58,9 +67,7 @@ async function accountAddress(): Promise<string> {
   const { form } = await world.signUp();
   await world.idle();
   const link = world.linkTo(form.email);
-  const verified = await world.tenantPost(link.slug, '/public/signup/verify', {
-    token: link.token,
-  });
+  const verified = await world.verify(link);
   expect(verified.statusCode, verified.body).toBe(200);
   return form.email;
 }
@@ -175,8 +182,13 @@ describe('what the signup keeps out of the logs', () => {
     await measuredSignUp(down);
     world.email.down = false;
     const link = world.linkTo(good.email);
-    await world.tenantPost(link.slug, '/public/signup/verify', { token: link.token });
-    await world.tenantPost(link.slug, '/public/signup/verify', { token: link.token });
+    await world.verify(link);
+    await world.verify(link);
+    // The refusals of the link: a weak password and a missing acceptance, which carry both.
+    const weakLink = world.linkTo(weak.email);
+    await world.verify(weakLink, { password: weak.password });
+    const noTermsLink = world.linkTo(noTerms.email);
+    await world.verify(noTermsLink, { acceptTerms: false });
 
     const log = world.logs();
     expect(log.length).toBeGreaterThan(0);
@@ -194,6 +206,8 @@ describe('what the signup keeps out of the logs', () => {
       PASSWORD,
       'password1234',
       link.token,
+      weakLink.token,
+      noTermsLink.token,
     ]) {
       expect(log, secret).not.toContain(secret);
     }
@@ -208,7 +222,7 @@ describe('who may ask for what, and from where', () => {
 
     const platform = await world.platformGet('/public/signup/challenge');
     const waiting = await world.tenantGet(link.slug, '/public/signup/challenge');
-    await world.tenantPost(link.slug, '/public/signup/verify', { token: link.token });
+    await world.verify(link);
     const active = await world.tenantGet(link.slug, '/public/signup/challenge');
 
     expect(platform.statusCode).toBe(200);
@@ -237,16 +251,7 @@ describe('who may ask for what, and from where', () => {
 
     const statuses = [];
     for (let attempt = 0; attempt < 22; attempt += 1) {
-      statuses.push(
-        (
-          await world.tenantPost(
-            link.slug,
-            '/public/signup/verify',
-            { token: 'x'.repeat(43) },
-            { ip },
-          )
-        ).statusCode,
-      );
+      statuses.push((await world.verify(link, { token: 'x'.repeat(43) }, { ip })).statusCode);
     }
 
     expect(statuses.slice(0, 20).every((status) => status === 400)).toBe(true);

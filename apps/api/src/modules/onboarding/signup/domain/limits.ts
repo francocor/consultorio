@@ -20,8 +20,10 @@ const HOUR = 3_600_000;
  *   an account and the ones that do not alike, so being throttled tells nothing about anyone;
  * - overall: a ceiling for the whole platform, so a distributed flood cannot fill the table.
  *
- * Counters are best effort (a store that fails does not close the form); the bot challenge and the
- * purge are what bound the rest.
+ * The counters of a client and of an address are best effort (a store that fails does not close the
+ * form); the bot challenge and the purge are what bound the rest. The overall ceiling fails CLOSED:
+ * a store that is down is exactly when a flood is not being counted, so the form waits for it
+ * (JD-S6 R1-A-T6).
  */
 export const SIGNUPS_PER_CLIENT: SignupLimit = { max: 5, windowMs: HOUR };
 /**
@@ -37,9 +39,26 @@ export function clientCounter(ip: string | null, kind: 'signup' | 'link' = 'sign
   return `signup|${kind === 'signup' ? 'client' : 'link-client'}|${clientKeyOf(ip ?? 'unknown')}`;
 }
 
+/**
+ * The mailbox an address delivers to, for the counter only: lower case, and without a `+tag` in the
+ * local part, so `ana+1@x` and `ana+2@x` count as `ana@x` (the aliases of one mailbox are one
+ * mailbox to flood). A local part that is only a tag is left as it is. The address that is stored
+ * and emailed is never changed by this.
+ */
+function mailboxOf(email: string): string {
+  const address = email.trim().toLowerCase();
+  const at = address.lastIndexOf('@');
+  if (at < 1) return address;
+  const local = address.slice(0, at);
+  const tag = local.indexOf('+');
+  return tag > 0 ? `${local.slice(0, tag)}${address.slice(at)}` : address;
+}
+
 /** The counter of an address: a hash of it, never the address, so the store holds no personal data. */
 export function addressCounter(email: string): string {
-  const digest = createHash('sha256').update(`signup|${email.trim().toLowerCase()}`).digest('hex');
+  const digest = createHash('sha256')
+    .update(`signup|${mailboxOf(email)}`)
+    .digest('hex');
   return `signup|address|${digest.slice(0, 32)}`;
 }
 

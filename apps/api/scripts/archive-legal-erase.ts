@@ -1,10 +1,10 @@
 import { createLegalErasure } from '../src/adapters/archive-local/erasure.js';
 import { loadConfig } from '../src/main/config.js';
+import { createLegalEraseDatabase } from '../src/modules/tenancy/archive/legal-erase-database.js';
 import {
   legalErase,
   parseLegalEraseArguments,
 } from '../src/modules/tenancy/archive/legal-erase.js';
-import { writePlatformAudit } from '../src/platform/audit/platform-audit.js';
 import { createOperatorDb } from '../src/platform/db/pool.js';
 import { createWithTenant } from '../src/platform/db/tenant-context.js';
 
@@ -15,10 +15,16 @@ import { createWithTenant } from '../src/platform/db/tenant-context.js';
  *
  *   ARCHIVE_LEGAL_ERASURE_ACCESS_KEY_ID=legal-erasure \
  *   ARCHIVE_LEGAL_ERASURE_SECRET_ACCESS_KEY='...' \
- *     pnpm archive:legal-erase --tenant <uuid> --reference "Oficio 123/2031, Juzgado ..." [--prefix <p>] [--yes]
+ *     pnpm archive:legal-erase --tenant <uuid> --reference "Oficio 123/2031, Juzgado ..." \
+ *       --operator <operator id> --approver <a different operator id> [--prefix <p>] [--yes]
  *
- * Without `--yes` it only lists what it would erase. The legal reference goes to the platform trail
- * (`archive.erased`) with the counts. It reads the bucket and the database like the application does
+ * Two named people (JD-S6 R1-S6-7): the operator who runs it and a different one who approves it, both
+ * active operators of the console (their ids are in the operators list of the console). Without `--yes`
+ * it only lists what it would erase. The legal reference goes to the platform trail (`archive.erased`):
+ * first the INTENT, before the first object goes, then the outcome with the counts, with the operator
+ * as the actor and the approver in the metadata. The folder erased is recorded in the database so
+ * verification skips it and a release answers `erased`. The hot rows of the organization and the
+ * backups are NOT touched (docs/runbooks/archive-release.md). It reads the bucket and the database like the application does
  * (`ARCHIVE_S3_BUCKET`, `ARCHIVE_S3_ENDPOINT`, `ARCHIVE_S3_REGION`, `OPERATOR_DATABASE_URL`), but the
  * credential is its own: the writer of the application cannot erase.
  */
@@ -70,31 +76,17 @@ async function main(): Promise<void> {
     const result = await legalErase(
       {
         eraser,
-        audit: (entry) =>
-          withTenant({ tenantId: input.tenantId, userId: input.tenantId }, (tx) =>
-            writePlatformAudit(tx, {
-              action: 'archive.erased',
-              outcome: 'allow',
-              actor: {
-                operatorId: null,
-                ip: null,
-                userAgent: 'archive:legal-erase',
-                requestId: null,
-              },
-              targetTenantId: input.tenantId,
-              reason: entry.reason,
-              resourceType: 'tenant_archive',
-              metadata: {
-                objects: entry.objects,
-                versions: entry.versions,
-                complete: entry.complete,
-              },
-            }),
-          ),
+        ...createLegalEraseDatabase({
+          withTenant,
+          tenantId: input.tenantId,
+          operatorId: input.operatorId,
+        }),
       },
       {
         tenantId: input.tenantId,
         reference: input.reference,
+        operatorId: input.operatorId,
+        approverId: input.approverId,
         ...(input.prefix ? { prefix: input.prefix } : {}),
       },
     );

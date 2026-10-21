@@ -123,3 +123,81 @@ groups:
         annotations:
           summary: 'Organizations are read-only for lack of payment'
           runbook: 'docs/runbooks/incident.md#subscriptions-in-dunning'
+      - alert: SubscriptionParked
+        expr: 'sum(subscriptions_parked) > 0'
+        for: 30m
+        labels:
+          severity: warning
+        annotations:
+          summary: 'A subscription is parked for a person: nothing more is sent to the provider for it'
+          runbook: 'docs/runbooks/incident.md#a-subscription-is-parked-for-a-person'
+      - alert: SubscriptionReconcileStale
+        expr: 'subscription_reconcile_oldest_seconds > 7200'
+        for: 30m
+        labels:
+          severity: warning
+        annotations:
+          summary: 'A subscription has not been reconciled with the payments provider for two hours'
+          runbook: 'docs/runbooks/incident.md#reconciliation-with-the-payments-provider-is-stale'
+      - alert: SubscriptionSurplusUnreviewed
+        expr: 'subscription_surplus_unreviewed > 0'
+        for: 1h
+        labels:
+          severity: warning
+        annotations:
+          summary: 'A second charge for a period already paid waits for an operator to look at it'
+          runbook: 'docs/runbooks/incident.md#a-surplus-payment-waits-for-review'
+
+  - name: retention
+    rules:
+      - alert: ArchiveVerifyProblem
+        expr: 'sum(archive_verify_problems) > 0'
+        for: 0m
+        labels:
+          severity: critical
+        annotations:
+          summary: 'The verification of an archive found an object corrupted, missing or overwritten'
+          runbook: 'docs/runbooks/incident.md#an-archive-failed-to-write-or-to-verify'
+      - alert: ArchiveWriteFailed
+        expr: 'archive_write_failed > 0'
+        for: 0m
+        labels:
+          severity: critical
+        annotations:
+          summary: 'The archive of a cancelled organization could not be written'
+          runbook: 'docs/runbooks/incident.md#an-archive-failed-to-write-or-to-verify'
+      - alert: ArchiveVerifyOverdue
+        expr: 'archive_verify_oldest_seconds > 1209600'
+        for: 1h
+        labels:
+          severity: warning
+        annotations:
+          summary: 'An archive was not verified for two weeks (it is verified every week)'
+          runbook: 'docs/runbooks/incident.md#an-archive-failed-to-write-or-to-verify'
+      - alert: ArchiveReleaseNotCarriedOut
+        expr: 'archive_release_approved_oldest_seconds > 900'
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: 'A release approved by two operators was not carried out within fifteen minutes'
+          runbook: 'docs/runbooks/incident.md#an-approved-release-was-not-carried-out'
+      - alert: ReleaserSilent
+        expr: 'archive_releaser_heartbeat_age_seconds > 120'
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: 'The releaser has not written its heartbeat for two minutes'
+          runbook: 'docs/runbooks/incident.md#the-releaser-is-silent'
+
+  - name: signup
+    rules:
+      - alert: SignupEmailsUnsent
+        expr: 'signup_emails_unsent > 0'
+        for: 30m
+        labels:
+          severity: warning
+        annotations:
+          summary: 'Signups are waiting for a verification email that never went out'
+          runbook: 'docs/runbooks/incident.md#signup-emails-are-not-going-out'

@@ -80,7 +80,7 @@ export function createCancellationDelivery(deps: { tokens: ActionTokens }): Canc
             : null;
       if (!row) throw new AppError('not_found');
       if (!mayHavePackage(input.actor, row)) throw new AppError('forbidden');
-      if (row.status !== 'ready' || row.objectKey === null) {
+      if (row.status !== 'ready' || row.objectKey === null || row.objectRemovedAt !== null) {
         throw new AppError('export_package_not_ready');
       }
       const issued = await deps.tokens.issue(tx, {
@@ -123,7 +123,12 @@ export function createCancellationFileResource(tokens: ActionTokens): FileResour
           resourceId: redeemed.subjectId,
         });
       }
-      if (row.status !== 'ready' || row.objectKey === null || row.fileName === null) {
+      if (
+        row.status !== 'ready' ||
+        row.objectKey === null ||
+        row.fileName === null ||
+        row.objectRemovedAt !== null
+      ) {
         throw new FileRefused('export_not_ready', 'export_package', { resourceId: row.id });
       }
       await audit(tx, {

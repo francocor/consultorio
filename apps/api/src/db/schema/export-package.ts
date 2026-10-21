@@ -45,6 +45,11 @@ export const exportPackage = tenantTable(
     /** Files in the zip (JSON sections, attachments and the PDF). */
     entryCount: integer('entry_count'),
     builtAt: timestamp('built_at', { withTimezone: true }),
+    /**
+     * When the object was taken out of the bucket: after the download window and once the archive that
+     * replaces it was verified (JD-S6 R1-A-W7). The row stays, as a record that there was a package.
+     */
+    objectRemovedAt: timestamp('object_removed_at', { withTimezone: true }),
     /** Why a package could not be made. A code, never a message that could carry data. */
     failureCode: text('failure_code'),
   },

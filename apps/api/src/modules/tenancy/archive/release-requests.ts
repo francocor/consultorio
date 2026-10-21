@@ -24,8 +24,10 @@ import type { OperatorIdentity, OperatorRun } from '../../operator/index.js';
  * custody of the platform are released only to the patient themselves, identity verified, or to a
  * verified professional, with an audit entry, and the operator cannot read the content). The operator
  * RECORDS a request, VERIFIES the identity of the requester out of band, and a DIFFERENT operator
- * APPROVES; the releaser does the rest. Every step is an entry of the platform trail with the
- * operator's own id, so the two people each leave theirs.
+ * (neither the one who recorded it nor the one who verified) APPROVES; the releaser does the rest.
+ * Every step is an entry of the platform trail with the operator's own id, and the database repeats
+ * the rules: the step names the operator of the session, and a request that waited seven days is
+ * closed by the releaser instead of being approved late.
  *
  * Nothing here reads the archive: the operator's database role has no privilege on any table that
  * holds a key, a name of an object or a record, and the one question it may ask about an archive is
@@ -36,6 +38,7 @@ type Meta = Omit<PlatformAuditActor, 'operatorId'>;
 
 /** The window to carry out an approved request before it expires. */
 export const ARCHIVE_RELEASE_WINDOW_DAYS = 7;
+export { ARCHIVE_RELEASE_OPEN_DAYS } from '@consultorio/contracts';
 const DAY_MS = 86_400_000;
 
 export interface ReleaseRequests {
@@ -68,6 +71,18 @@ function scopeOf(row: ArchiveReleaseRequestRow): string {
   return row.requesterKind === 'patient'
     ? `${(row.scopeDocumentType ?? '').toUpperCase()} ${row.scopeDocument ?? ''}`.trim()
     : `${row.scopeMatriculaJurisdiction ?? ''} ${row.scopeMatricula ?? ''}`.trim();
+}
+
+/**
+ * The database refuses a step on a request that waited more than `ARCHIVE_RELEASE_OPEN_DAYS` (a
+ * trigger, 42501): to the operator that is a request that is no longer at a step to take.
+ */
+function staleStep(error: unknown): never {
+  const code =
+    (error as { cause?: { code?: string }; code?: string } | null)?.cause?.code ??
+    (error as { code?: string } | null)?.code;
+  if (code === '42501') throw new AppError('archive_release_wrong_step');
+  throw error;
 }
 
 /** A timestamp as ISO text. A raw query returns the driver's text for it, the query builder a Date. */
@@ -113,7 +128,12 @@ export function toRequestDto(
     rejectedReason: row.rejectedReason,
     failureCode: row.failureCode,
     canVerifyIdentity: status === 'requested',
-    canApprove: status === 'identity_verified' && row.identityVerifiedBy !== operator.id,
+    // Three pairs of eyes: neither the person who recorded the request nor the one who verified the
+    // identity approves it (JD-S6 R1-S6-4).
+    canApprove:
+      status === 'identity_verified' &&
+      row.identityVerifiedBy !== operator.id &&
+      row.recordedBy !== operator.id,
     canReject: OPEN_STATUSES.includes(status),
   };
 }
@@ -212,7 +232,8 @@ export function createReleaseRequests(deps: {
             identityVerifiedAt: now(),
           })
           .where(eq(archiveReleaseRequest.id, id))
-          .returning();
+          .returning()
+          .catch(staleStep);
         if (!row) throw new Error('the release request was not updated');
         await trail(tx, row, operator, meta, 'identity_verified');
         return toRequestDto(row, operator);
@@ -224,8 +245,8 @@ export function createReleaseRequests(deps: {
         const current = await load(tx, id);
         if (current.status !== 'identity_verified')
           throw new AppError('archive_release_wrong_step');
-        // Two people: the database refuses it too (a check), this says why.
-        if (current.identityVerifiedBy === operator.id) {
+        // Three pairs of eyes: the database refuses it too (two checks), this says why.
+        if (current.identityVerifiedBy === operator.id || current.recordedBy === operator.id) {
           throw new AppError('archive_release_same_operator');
         }
         const at = now();
@@ -238,7 +259,8 @@ export function createReleaseRequests(deps: {
             expiresAt: new Date(at.getTime() + ARCHIVE_RELEASE_WINDOW_DAYS * DAY_MS),
           })
           .where(eq(archiveReleaseRequest.id, id))
-          .returning();
+          .returning()
+          .catch(staleStep);
         if (!row) throw new Error('the release request was not updated');
         await trail(tx, row, operator, meta, 'approved');
         return toRequestDto(row, operator);

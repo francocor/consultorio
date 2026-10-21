@@ -1,6 +1,6 @@
 import { randomBytes } from 'node:crypto';
 
-import type { SignupRequest } from '@consultorio/contracts';
+import type { SignupRequest, SignupVerifyRequest } from '@consultorio/contracts';
 import { and, eq, isNull, sql } from 'drizzle-orm';
 
 import { membership, userAccount } from '../../../../db/schema/identity.js';
@@ -48,6 +48,8 @@ export type Delivery = () => Promise<void>;
 /** Where a request came from, as the audit trail and the counters need it. */
 export interface Origin {
   actor: AuditActor;
+  /** Where the failure of the store of the counters is told (a code, never a key or an address). */
+  warn?: (event: 'counters_store_failed_open' | 'counters_store_failed_closed') => void;
 }
 
 export interface SignupServiceDeps {
@@ -79,10 +81,15 @@ export interface SignupService {
   resend(email: string, origin: Origin): Promise<Delivery>;
   /** A new link, asked from the host of the unverified organization itself. */
   renew(tenantId: string, origin: Origin): Promise<Delivery>;
-  /** Follows the link: activates the organization, starts the trial and signs the owner in. */
+  /**
+   * Follows the link: the person who owns the address chooses the password and accepts the terms,
+   * and only then the organization is activated, the account made, the acceptance recorded, the
+   * trial started and the owner signed in. Nothing the signup form carried is trusted for any of it
+   * (JD-S6 R1-S6-3).
+   */
   verify(
     host: { id: string; status: string },
-    token: string,
+    input: SignupVerifyRequest,
     origin: Origin,
   ): Promise<IssuedSession>;
 }
@@ -90,12 +97,12 @@ export interface SignupService {
 /**
  * How many cheap reads a branch that does not create the organization sends, to cost Postgres what
  * the branch that does create it costs (the pattern of the portal, `evenOut`). The counts are pinned
- * by `test/security/signup-nondisclosure.test.ts`: change what a branch writes and that test fails
+ * by `test/security/signup-abuse.test.ts` ("sends the database the same number of statements"): change what a branch writes and that test fails
  * until the number is adjusted.
  */
 export const EVEN_WORK = {
   /** The request path: after the lookup of the address, what creating an organization writes. */
-  request: 6,
+  request: 4,
   /** The delivery of a verification link (`VerificationMailer.issueAndSend`), first transaction. */
   prepare: 5,
   /** The same, last transaction (the mark that the email was sent). */
@@ -133,13 +140,25 @@ export function createSignupService(deps: SignupServiceDeps): SignupService {
   const newTenantId = deps.newTenantId ?? uuidv7;
   const slugSuffix = deps.slugSuffix ?? (() => randomBytes(3).toString('hex').slice(0, 4));
 
-  /** Counts one try in a window. A store that fails does not close the form. */
-  async function hit(key: string, limit: SignupLimit): Promise<boolean> {
+  /**
+   * Counts one try in a window. A store that fails does not close the form for a client or an
+   * address (the bot challenge bounds those), but it does for the overall ceiling: a store that is
+   * down is exactly when a flood is not being counted. The failure is told, with no key in it.
+   */
+  async function hit(
+    origin: Origin,
+    key: string,
+    limit: SignupLimit,
+    options: { failClosed?: boolean } = {},
+  ): Promise<boolean> {
     try {
       const state = await deps.store.hit(key, limit.windowMs);
       return state.count <= limit.max;
     } catch {
-      return true;
+      origin.warn?.(
+        options.failClosed === true ? 'counters_store_failed_closed' : 'counters_store_failed_open',
+      );
+      return options.failClosed !== true;
     }
   }
 
@@ -154,10 +173,12 @@ export function createSignupService(deps: SignupServiceDeps): SignupService {
   ): Promise<void> {
     const allowed = [
       options.creating
-        ? await hit(clientCounter(origin.actor.ip), SIGNUPS_PER_CLIENT)
-        : await hit(clientCounter(origin.actor.ip, 'link'), LINKS_PER_CLIENT),
-      email === null ? true : await hit(addressCounter(email), SIGNUP_EMAILS_PER_ADDRESS),
-      options.creating ? await hit(OVERALL_COUNTER, SIGNUPS_OVERALL) : true,
+        ? await hit(origin, clientCounter(origin.actor.ip), SIGNUPS_PER_CLIENT)
+        : await hit(origin, clientCounter(origin.actor.ip, 'link'), LINKS_PER_CLIENT),
+      email === null ? true : await hit(origin, addressCounter(email), SIGNUP_EMAILS_PER_ADDRESS),
+      options.creating
+        ? await hit(origin, OVERALL_COUNTER, SIGNUPS_OVERALL, { failClosed: true })
+        : true,
     ];
     if (allowed.includes(false)) throw new AppError('rate_limited');
   }
@@ -201,26 +222,11 @@ export function createSignupService(deps: SignupServiceDeps): SignupService {
   /**
    * Creates the unverified organization of a free address: the organization (its address generated
    * from the name, with a random suffix only when the plain one is taken), the pending signup and
-   * the two audit entries. Two statements for the address whatever happens: the plain one and, if
-   * it was taken, the suffixed one; when the plain one is free the second is a cheap read.
+   * the audit entry. Two statements for the address whatever happens: the plain one and, if it was
+   * taken, the suffixed one; when the plain one is free the second is a cheap read. No password and
+   * no acceptance are stored: the owner gives both at the link (JD-S6 R1-S6-3).
    */
-  async function create(
-    tx: Tx,
-    id: string,
-    input: SignupRequest,
-    passwordHash: string,
-    origin: Origin,
-  ): Promise<void> {
-    const terms = await tx
-      .select({ kind: termsVersion.kind, version: termsVersion.version })
-      .from(termsVersion)
-      .where(eq(termsVersion.isCurrent, true));
-    const termsCurrent = terms.find((row) => row.kind === 'terms')?.version;
-    const processingCurrent = terms.find((row) => row.kind === 'data_processing')?.version;
-    if (termsCurrent === undefined || processingCurrent === undefined) {
-      throw new Error('There is no current version of the terms');
-    }
-
+  async function create(tx: Tx, id: string, input: SignupRequest, origin: Origin): Promise<void> {
     const base = signupSlugBase(input.organizationName);
     const insertWith = async (slug: string) => {
       const [created] = await tx
@@ -243,52 +249,25 @@ export function createSignupService(deps: SignupServiceDeps): SignupService {
     }
     if (!placed) throw new Error('No free address for the organization');
 
-    const now = deps.clock();
     const stored = await tx
       .insert(signupPending)
-      .values({
-        tenantId: id,
-        ownerEmail: input.email,
-        ownerName: input.ownerName,
-        passwordHash,
-        termsVersion: termsCurrent,
-        dataProcessingVersion: processingCurrent,
-        acceptedAt: now,
-      })
+      .values({ tenantId: id, ownerEmail: input.email, ownerName: input.ownerName })
       .onConflictDoNothing()
       .returning({ id: signupPending.id });
     if (stored.length === 0) throw new LostTheRace();
 
-    const actor = { ...origin.actor, userId: null, actingRole: null };
     await audit(tx, {
       action: 'signup.created',
       outcome: 'allow',
-      actor,
+      actor: { ...origin.actor, userId: null, actingRole: null },
       resourceType: 'tenant',
       resourceId: id,
-    });
-    await audit(tx, {
-      action: 'terms.accepted',
-      outcome: 'allow',
-      actor,
-      resourceType: 'tenant',
-      resourceId: id,
-      metadata: { terms: termsCurrent, dataProcessing: processingCurrent },
     });
   }
 
   return {
     async signUp(input, origin) {
-      if (!input.acceptTerms || !input.acceptDataProcessing) {
-        throw new AppError('signup_terms_required');
-      }
       await withinLimits(origin, input.email, { creating: true });
-
-      // The same rules for everyone, before anything is looked up.
-      const verdict = await deps.validator.validate(input.password, { email: input.email });
-      if (!verdict.ok) throw new AppError('validation_failed', passwordFieldErrors(verdict.issues));
-      // One Argon2 hash on every path: the time does not say whether the address has an account.
-      const passwordHash = await deps.hasher.hash(input.password);
 
       const id = newTenantId();
       let plan: Delivery;
@@ -300,10 +279,15 @@ export function createSignupService(deps: SignupServiceDeps): SignupService {
             return noticeDelivery(input.email, id);
           }
           if (state.kind === 'pending') {
+            // A repeated signup for an address that is waiting for its link sends nothing and
+            // touches nothing: the link in the mailbox is the owner's, and a stranger who types the
+            // same address must not be able to replace it or spend it. The owner who lost the email
+            // asks for a new one by the address (`resend`), which has its own limits. The delivery
+            // does the same work as sending one (`silentDelivery`), so nothing tells it apart.
             await evenOut(tx, EVEN_WORK.request);
-            return linkDelivery(state.tenantId, false);
+            return silentDelivery(id);
           }
-          await create(tx, id, input, passwordHash, origin);
+          await create(tx, id, input, origin);
           return linkDelivery(id, false);
         });
       } catch (error) {
@@ -343,9 +327,14 @@ export function createSignupService(deps: SignupServiceDeps): SignupService {
       return linkDelivery(tenantId, true);
     },
 
-    async verify(host, token, origin) {
+    async verify(host, input, origin) {
       const invalid = () => new AppError('signup_link_invalid');
       if (host.status !== 'unverified') throw invalid();
+      // Both acceptances are the owner's, given now. Refusing costs nothing: the link is not spent.
+      if (!input.acceptTerms || !input.acceptDataProcessing) {
+        throw new AppError('signup_terms_required');
+      }
+      const token = input.token;
 
       // 1. Look at the link without spending it, and at the address: an account that appeared since
       // the signup (an invitation accepted) means the link must not create a second one.
@@ -353,35 +342,45 @@ export function createSignupService(deps: SignupServiceDeps): SignupService {
         const seen = await tokens.inspect(tx, 'signup_verification', token);
         if (!seen) return null;
         const [pending] = await tx
-          .select({
-            id: signupPending.id,
-            email: signupPending.ownerEmail,
-            hasHash: signupPending.passwordHash,
-          })
+          .select({ id: signupPending.id, email: signupPending.ownerEmail })
           .from(signupPending)
           .where(and(eq(signupPending.id, seen.subjectId), isNull(signupPending.verifiedAt)));
-        if (!pending || pending.hasHash === null) return null;
+        if (!pending) return null;
         const state = await stateOf(tx, pending.email);
-        return state.kind === 'pending' && state.tenantId === host.id ? pending.id : null;
+        return state.kind === 'pending' && state.tenantId === host.id ? pending : null;
       });
       if (looked === null) throw invalid();
 
-      // 2. Spend the link and create everything in one transaction, acting as the new owner. If the
+      // 2. The password is the owner's choice, checked by the rules of identity against their own
+      // address. A refusal says why and does not spend the link.
+      const verdict = await deps.validator.validate(input.password, { email: looked.email });
+      if (!verdict.ok) throw new AppError('validation_failed', passwordFieldErrors(verdict.issues));
+      const passwordHash = await deps.hasher.hash(input.password);
+
+      // 3. Spend the link and create everything in one transaction, acting as the new owner. If the
       // trial cannot start, nothing of this happened.
       const userId = uuidv7();
       try {
         return await withTenant({ tenantId: host.id, userId }, async (tx) => {
           const redeemed = await tokens.redeem(tx, 'signup_verification', token);
-          if (!redeemed || redeemed.subjectId !== looked) throw invalid();
+          if (!redeemed || redeemed.subjectId !== looked.id) throw invalid();
           const [pending] = await tx
             .select()
             .from(signupPending)
-            .where(eq(signupPending.id, looked))
+            .where(eq(signupPending.id, looked.id))
             .for('update');
-          if (!pending || pending.verifiedAt !== null || pending.passwordHash === null) {
-            throw invalid();
-          }
+          if (!pending || pending.verifiedAt !== null) throw invalid();
           const now = deps.clock();
+
+          const terms = await tx
+            .select({ kind: termsVersion.kind, version: termsVersion.version })
+            .from(termsVersion)
+            .where(eq(termsVersion.isCurrent, true));
+          const termsCurrent = terms.find((row) => row.kind === 'terms')?.version;
+          const processingCurrent = terms.find((row) => row.kind === 'data_processing')?.version;
+          if (termsCurrent === undefined || processingCurrent === undefined) {
+            throw new Error('There is no current version of the terms');
+          }
 
           const activated = await tx
             .update(tenant)
@@ -391,12 +390,12 @@ export function createSignupService(deps: SignupServiceDeps): SignupService {
           if (activated.length === 0) throw invalid();
           await deps.keys.ensureTenantKey(tx);
 
-          // The account exists only now, with the password hash the visitor chose at signup. The
-          // owner has had no sign-in yet: the grace period of the second factor starts with it.
+          // The account exists only now, with the password its owner chose at the link. The owner
+          // has had no sign-in yet: the grace period of the second factor starts with it.
           await tx.insert(userAccount).values({
             id: userId,
             email: pending.ownerEmail,
-            passwordHash: pending.passwordHash,
+            passwordHash,
             passwordChangedAt: now,
             firstSignInAt: now,
           });
@@ -410,16 +409,17 @@ export function createSignupService(deps: SignupServiceDeps): SignupService {
             })
             .returning({ id: membership.id });
           if (!member) throw new Error('membership insert returned no row');
+          // The acceptance is recorded at the moment the owner gives it, with the versions in force.
           await tx.insert(termsAcceptance).values({
             tenantId: host.id,
             userId,
-            termsVersion: pending.termsVersion,
-            dataProcessingVersion: pending.dataProcessingVersion,
-            acceptedAt: pending.acceptedAt,
+            termsVersion: termsCurrent,
+            dataProcessingVersion: processingCurrent,
+            acceptedAt: now,
           });
           await tx
             .update(signupPending)
-            .set({ verifiedAt: now, passwordHash: null })
+            .set({ verifiedAt: now })
             .where(eq(signupPending.id, pending.id));
 
           // The trial of the plan starts with the organization. A refusal rolls everything back.
@@ -433,10 +433,19 @@ export function createSignupService(deps: SignupServiceDeps): SignupService {
             ip: origin.actor.ip,
             userAgent: origin.actor.userAgent,
           });
+          const actor = { ...origin.actor, userId, actingRole: 'owner' as const };
+          await audit(tx, {
+            action: 'terms.accepted',
+            outcome: 'allow',
+            actor,
+            resourceType: 'tenant',
+            resourceId: host.id,
+            metadata: { terms: termsCurrent, dataProcessing: processingCurrent },
+          });
           await audit(tx, {
             action: 'signup.verified',
             outcome: 'allow',
-            actor: { ...origin.actor, userId, actingRole: 'owner' },
+            actor,
             resourceType: 'tenant',
             resourceId: host.id,
           });

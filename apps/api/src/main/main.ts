@@ -71,8 +71,42 @@ function assertNoReleaserKey(config: Config): void {
   }
 }
 
-async function runApi(config: Config): Promise<void> {
-  assertNoReleaserKey(config);
+/**
+ * The login of the releaser (`RELEASER_DATABASE_URL`, role `app_releaser`) is the one that may mark a
+ * release request released and write the entries of a release (migration 0688). Like the key, it lives
+ * in ONE process (JD-S6 R1-S6-12).
+ */
+function assertNoReleaserLogin(config: Config): void {
+  if (config.releaserDatabaseUrl !== undefined) {
+    throw new ConfigError(
+      'Invalid environment configuration. RELEASER_DATABASE_URL: only the releaser process may hold it',
+    );
+  }
+}
+
+/**
+ * The API serves the single-use link of a release and nothing else of the archive: it never reads or
+ * writes the archive bucket, so it does not need the identity that writes it. Production refuses to
+ * start with it; elsewhere (one shared `.env` on a developer's machine) the API simply does not use it:
+ * the archive store is left out of its adapters (JD-S6 R1-S6-12).
+ */
+function withoutArchiveWriter(config: Config): Config {
+  if (config.providers.archive === undefined) return config;
+  if (config.nodeEnv === 'production') {
+    throw new ConfigError(
+      'Invalid environment configuration. ARCHIVE_S3_ACCESS_KEY_ID: the API does not write the archive and must not hold the identity that does (set ARCHIVE_S3_* for the worker only)',
+    );
+  }
+  // The archive settings are the one thing left out of the providers the API runs on.
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  const { archive: _archive, ...providers } = config.providers;
+  return { ...config, providers };
+}
+
+async function runApi(rawConfig: Config): Promise<void> {
+  assertNoReleaserKey(rawConfig);
+  assertNoReleaserLogin(rawConfig);
+  const config = withoutArchiveWriter(rawConfig);
   const probe = createDbProbe(config.databaseUrl);
   const database = createRuntimeDb(config.databaseUrl, { max: config.dbPoolMax });
   const kms = createKeyManagement(config.kms);
@@ -203,6 +237,11 @@ async function runReleaser(config: Config): Promise<void> {
       'Invalid environment configuration. ARCHIVE_RELEASER_KEK: is required for the releaser, together with the archive bucket (ARCHIVE_S3_*)',
     );
   }
+  if (config.releaserDatabaseUrl === undefined) {
+    throw new ConfigError(
+      'Invalid environment configuration. RELEASER_DATABASE_URL: is required for the releaser (the app_releaser login; the API and the worker role is not enough)',
+    );
+  }
   if (!config.storage) {
     throw new ConfigError(
       'Invalid environment configuration. S3_BUCKET: is required for the releaser (the package waits there for its link)',
@@ -211,7 +250,7 @@ async function runReleaser(config: Config): Promise<void> {
   const storage = createS3ObjectStorage(config.storage);
   const email = createConfiguredEmail(config.mail);
   const releaser = await createReleaser({
-    databaseUrl: config.databaseUrl,
+    databaseUrl: config.releaserDatabaseUrl,
     kek: archive.releaserKek,
     store: createLocalArchiveStore(archive.storage),
     storage,
@@ -233,6 +272,7 @@ async function runReleaser(config: Config): Promise<void> {
  */
 async function runWorker(config: Config): Promise<void> {
   assertNoReleaserKey(config);
+  assertNoReleaserLogin(config);
   const log = pino(buildLoggerOptions(config.logLevel));
   if (config.auditSealerDatabaseUrl === undefined) {
     throw new ConfigError(
@@ -314,7 +354,8 @@ async function main(): Promise<void> {
     process.exit(2);
   }
 
-  const config = loadConfig();
+  // The releaser holds no key service: its own key opens the archive, and nothing else.
+  const config = loadConfig(process.env, { role });
   configureAddressHash(config.providers.addressHashPepper ?? null);
   if (role === 'api') {
     await runApi(config);

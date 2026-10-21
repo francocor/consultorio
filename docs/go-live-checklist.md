@@ -68,8 +68,16 @@ The application refuses to start in production without these, and says which one
   or a mail goes out (`docs/runbooks/deploy.md`). The example file says 48. Both the API and the worker
   open that many, so `max_connections` of the database must cover both with room to spare (150 is
   a sound number for one API, one worker, the releaser and the migrator).
-- The archive: `ARCHIVE_S3_*`, the public half of the key of the releaser in the API and the worker
-  (`ARCHIVE_RELEASER_PUBLIC_KEY`), the private half only in the releaser (`ARCHIVE_RELEASER_KEK`).
+- The archive: `ARCHIVE_S3_*` for the worker and the releaser only (the API refuses the writer identity in
+  production), the public half of the key of the releaser in the API and the worker
+  (`ARCHIVE_RELEASER_PUBLIC_KEY`), the private half only in the releaser (`ARCHIVE_RELEASER_KEK`). In
+  production the application refuses the development key of the repository, an `http://`
+  `ARCHIVE_S3_ENDPOINT` and `ARCHIVE_AFTER_DAYS=0`.
+- The database role of the releaser: create `app_releaser` (a member of `app_rw`) BEFORE running the
+  migrations of Stage 6 (`0688` refuses to run without it), and give the releaser
+  `RELEASER_DATABASE_URL` (see `docs/runbooks/archive-release.md`, "The database role of the releaser").
+  `RELEASER_DATABASE_URL` is the one variable of the application that `.env.example` does not list yet:
+  add it for the releaser's environment.
 - `PAYMENTS_PROVIDER` and the other providers, set to a real adapter or to `off`. With `off` the dates of
   the billing hold (nobody can subscribe, so a trial that ends or a grace that runs out is not walked
   toward read-only for a debt nobody can pay): every organization stays as it is. Set it to a real
@@ -82,7 +90,12 @@ The application refuses to start in production without these, and says which one
 - [ ] `pnpm drill:restore` passed on a copy of the real database, and the report is in the operations log
       (`docs/runbooks/backup-restore.md`).
 - [ ] The alert rules are loaded and one of them was made to fire on purpose
-      (`docs/runbooks/incident.md`).
+      (`docs/runbooks/incident.md`). Stage 6 added rules for the subscriptions parked for a person, a stale
+      reconciliation, an unreviewed surplus, an archive that failed to write or to verify, an approved
+      release that was not carried out, a silent releaser and signup emails that never went out: each
+      names its section of the runbook.
+- [ ] The releaser is running and `ReleaserSilent` is quiet (it writes a heartbeat every few seconds). An
+      approved release that nobody carries out is `ArchiveReleaseNotCarriedOut`.
 - [ ] The cancellation of an organization was rehearsed from the console to the release of the archive
       (`docs/runbooks/tenant-cancellation.md`, `docs/runbooks/archive-release.md`).
 - [ ] The switch to a real provider was rehearsed in staging with the runbook

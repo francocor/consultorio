@@ -197,6 +197,70 @@ describe('the operator cancels an organization', () => {
     expect(state?.status).toBe('active');
   });
 
+  it('wants a reason, which goes to the platform trail with the operator (JD-S6 R1-S6-2)', async () => {
+    const reasoned = await createTestTenant(runtime, { slug: 'cancel-export-reason' });
+
+    const without = await org.cancel(reasoned.id, null);
+    const empty = await org.cancel(reasoned.id, { reason: '  ' });
+    const [untouched] = await asTenant(runtime, reasoned.id, (tx) =>
+      tx.select({ status: tenant.status }).from(tenant),
+    );
+    const done = await org.cancel(reasoned.id, {
+      reason: 'Cierre pedido por la titular, ticket 4471',
+    });
+
+    expect(without.statusCode).toBe(400);
+    expect(empty.statusCode).toBe(400);
+    expect(untouched?.status).toBe('active');
+    expect(done.statusCode, done.body).toBe(200);
+    const admin = new pg.Client({ connectionString: inject('adminUrl') });
+    await admin.connect();
+    try {
+      const trail = await admin.query<{ reason: string | null; operator_id: string | null }>(
+        "select reason, operator_id from platform_audit_event where action = 'tenant.cancelled' and target_tenant_id = $1",
+        [reasoned.id],
+      );
+      expect(trail.rows).toEqual([
+        { reason: 'Cierre pedido por la titular, ticket 4471', operator_id: org.operator.id },
+      ]);
+    } finally {
+      await admin.end();
+    }
+  });
+
+  it('refuses an organization that has a subscription: its end goes through the subscription, not through this route (JD-S6 R1-S6-2)', async () => {
+    const billed = await createTestTenant(runtime, { slug: 'cancel-export-billed' });
+    const admin = new pg.Client({ connectionString: inject('adminUrl') });
+    await admin.connect();
+    try {
+      await admin.query(
+        `insert into subscription (tenant_id, plan_id, status, trial_ends_at, overage_cap_messages)
+         select $1, id, 'trial', now() + interval '14 days', 300 from plan where key = 'standard'`,
+        [billed.id],
+      );
+      const refused = await org.cancel(billed.id);
+      const again = await org.cancel(billed.id);
+      const trail = await admin.query(
+        "select 1 from platform_audit_event where action = 'tenant.cancelled' and target_tenant_id = $1",
+        [billed.id],
+      );
+      const requested = await asTenant(runtime, billed.id, (tx) => tx.select().from(exportPackage));
+      const [state] = await asTenant(runtime, billed.id, (tx) =>
+        tx.select({ status: tenant.status }).from(tenant),
+      );
+
+      expect(refused.statusCode, refused.body).toBe(409);
+      expect(refused.json<{ code: string }>().code).toBe('operator_cancel_has_subscription');
+      expect(again.statusCode).toBe(409);
+      // Nothing happened: the organization is active, nothing was asked for, nothing was written.
+      expect(state?.status).toBe('active');
+      expect(requested).toHaveLength(0);
+      expect(trail.rowCount).toBe(0);
+    } finally {
+      await admin.end();
+    }
+  });
+
   it('needs the operator session: a staff session, or none, is turned away', async () => {
     const withoutSession = await org.world.app.inject({
       method: 'POST',

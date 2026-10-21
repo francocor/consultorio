@@ -204,6 +204,7 @@ export async function startStack(options: StackOptions): Promise<Stack> {
     const runtimeUrl = url('app_rw', 'app_rw_dev_only');
     const operatorUrl = url('app_operator', 'app_operator_dev_only');
     const sealerUrl = url('audit_sealer', 'audit_sealer_dev_only');
+    const releaserUrl = url('app_releaser', 'app_releaser_dev_only');
 
     log('Migrating');
     await runMigrations(ownerUrl);
@@ -267,7 +268,7 @@ export async function startStack(options: StackOptions): Promise<Stack> {
 
     // The same composition as `main`: the modules, their adapters (the local simulators), the
     // provider console and the jobs of the worker, so a browser journey runs the real thing.
-    const config = loadConfig({
+    const loaded = loadConfig({
       DATABASE_URL: runtimeUrl,
       BASE_DOMAIN: baseDomain,
       PLATFORM_HOST: platformHost,
@@ -288,8 +289,20 @@ export async function startStack(options: StackOptions): Promise<Stack> {
       ARCHIVE_S3_ACCESS_KEY_ID: ARCHIVE_WRITER_USER,
       ARCHIVE_S3_SECRET_ACCESS_KEY: ARCHIVE_WRITER_SECRET,
       ARCHIVE_RELEASER_PUBLIC_KEY: releaserKeys.publicKey,
-      ARCHIVE_AFTER_DAYS: '0',
+      // The configuration refuses a window of zero days (a real deployment always has one); the stack
+      // brings the window to zero below, after the configuration is read.
+      ARCHIVE_AFTER_DAYS: '1',
     });
+    // The archive is written the moment a cancelled organization is found: no window in the stack.
+    const config: typeof loaded = {
+      ...loaded,
+      providers: {
+        ...loaded.providers,
+        ...(loaded.providers.archive
+          ? { archive: { ...loaded.providers.archive, afterDays: 0 } }
+          : {}),
+      },
+    };
 
     // Two demo organizations with different looks.
     log('Seeding demo organizations');
@@ -457,7 +470,8 @@ export async function startStack(options: StackOptions): Promise<Stack> {
     const archiveSettings = config.providers.archive;
     if (archiveSettings && options.withWorker !== false) {
       const releaser = await createReleaser({
-        databaseUrl: runtimeUrl,
+        // Its own database role, like in production (JD-S6 R1-S6-12).
+        databaseUrl: releaserUrl,
         kek: releaserKeys.kek,
         store: createLocalArchiveStore(archiveSettings.storage),
         storage,

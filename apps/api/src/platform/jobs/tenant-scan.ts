@@ -47,3 +47,23 @@ export function tenantStatusCounts(db: Db): Promise<Map<string, number>> {
     return new Map(result.rows.map((row) => [row.status, row.n]));
   });
 }
+
+/**
+ * Every organization that is not an unconfirmed signup, with its status: for the measurements of the
+ * platform, which read a live organization fully and a cancelled one only as far as its subscription
+ * (a cancelled organization keeps its rows for the retention period, and scanning all of them every
+ * minute for ever would grow with the number of organizations that left; JD-S6 R1-S6-5). Same
+ * platform scope as `listTenantIds`.
+ */
+export function listTenantStatuses(db: Db): Promise<{ id: string; status: string }[]> {
+  return db.transaction(async (tx) => {
+    await tx.execute(sql`select
+      set_config('app.tenant_id', ${NO_TENANT}, true),
+      set_config('app.scope', 'platform', true)`);
+    return tx
+      .select({ id: tenant.id, status: tenant.status })
+      .from(tenant)
+      .where(ne(tenant.status, 'unverified'))
+      .orderBy(tenant.id);
+  });
+}

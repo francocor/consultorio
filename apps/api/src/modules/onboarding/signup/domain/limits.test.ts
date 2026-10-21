@@ -17,6 +17,17 @@ describe('the counters of the public form', () => {
     expect(addressCounter('ana@example.test')).toMatch(/^signup\|address\|[0-9a-f]{32}$/);
   });
 
+  it('counts the aliases of one mailbox as one address: +tag and the case do not make a new counter (JD-S6 R1-A-T6)', () => {
+    const plain = addressCounter('ana@example.test');
+    expect(addressCounter('ana+1@example.test')).toBe(plain);
+    expect(addressCounter('Ana+otra.cosa@Example.test')).toBe(plain);
+    expect(addressCounter(' ana+a+b@example.test ')).toBe(plain);
+    // Another mailbox, another domain and a local part that is only a tag stay apart.
+    expect(addressCounter('ana2+1@example.test')).not.toBe(plain);
+    expect(addressCounter('ana+1@example.org')).not.toBe(plain);
+    expect(addressCounter('+tag@example.test')).not.toBe(addressCounter('+otra@example.test'));
+  });
+
   it('counts the clients of one IPv6 /64 as one, and a client with no known address as one more', () => {
     expect(clientCounter('2001:db8:1:2::1')).toBe(clientCounter('2001:db8:1:2:ffff::9'));
     expect(clientCounter('2001:db8:1:3::1')).not.toBe(clientCounter('2001:db8:1:2::1'));

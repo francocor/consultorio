@@ -16,7 +16,7 @@ import { AppError } from '../../../../platform/http/problem.js';
 import { serializeSessionCookie } from '../../../../platform/http/session-cookie.js';
 import type { ResolvedTenant } from '../../../../platform/http/tenant-host.js';
 import { SESSION_ABSOLUTE_MS } from '../../../identity/index.js';
-import type { SignupService } from '../application/service.js';
+import type { Origin, SignupService } from '../application/service.js';
 
 export interface SignupRoutesDeps {
   service: SignupService;
@@ -78,6 +78,13 @@ export function signupRoutes(deps: SignupRoutesDeps) {
     const onOrganizationHost = (request: FastifyRequest): void => {
       if (request.hostContext?.kind !== 'tenant') throw new AppError('not_found');
     };
+    /** Where a request came from, for the audit trail and the counters, and where they tell a failure. */
+    const originOf = (request: FastifyRequest): Origin => ({
+      actor: request.auditActor,
+      warn: (event) => {
+        request.log.warn({ event }, 'the counters of the signup could not be read');
+      },
+    });
     /** The organization the host names (the gates above have already checked what kind). */
     function organizationOf(request: FastifyRequest): ResolvedTenant {
       const context = request.hostContext;
@@ -120,18 +127,14 @@ export function signupRoutes(deps: SignupRoutesDeps) {
     typed.post(
       '/public/signup',
       {
-        config: { ...config(10), readOnly: 'auth', audits: ['signup.created', 'terms.accepted'] },
+        config: { ...config(10), readOnly: 'auth', audits: ['signup.created'] },
         onRequest: hostGate(onPlatformHost),
         schema: { body: SignupRequest, response: { 200: SignupAcceptedResponse } },
       },
       async (request, reply) => {
         void reply.header('cache-control', 'no-store');
-        // Refusing the terms costs the visitor nothing: it is checked before the challenge is spent.
-        if (!request.body.acceptTerms || !request.body.acceptDataProcessing) {
-          throw new AppError('signup_terms_required');
-        }
         await assertHuman(request.body.challengeProof, request);
-        const delivery = await deps.service.signUp(request.body, { actor: request.auditActor });
+        const delivery = await deps.service.signUp(request.body, originOf(request));
         // After the answer: how long the email takes must not tell whether the address had an account.
         request.server.background.run(delivery);
         return { accepted: true } as const;
@@ -148,9 +151,7 @@ export function signupRoutes(deps: SignupRoutesDeps) {
       async (request, reply) => {
         void reply.header('cache-control', 'no-store');
         await assertHuman(request.body.challengeProof, request);
-        const delivery = await deps.service.resend(request.body.email, {
-          actor: request.auditActor,
-        });
+        const delivery = await deps.service.resend(request.body.email, originOf(request));
         request.server.background.run(delivery);
         return { accepted: true } as const;
       },
@@ -167,7 +168,7 @@ export function signupRoutes(deps: SignupRoutesDeps) {
         const tenant = organizationOf(request);
         void reply.header('cache-control', 'no-store');
         await assertHuman(request.body.challengeProof, request);
-        const delivery = await deps.service.renew(tenant.id, { actor: request.auditActor });
+        const delivery = await deps.service.renew(tenant.id, originOf(request));
         request.server.background.run(delivery);
         return { accepted: true } as const;
       },
@@ -179,7 +180,7 @@ export function signupRoutes(deps: SignupRoutesDeps) {
         config: {
           ...config(20),
           readOnly: 'auth',
-          audits: ['signup.verified'],
+          audits: ['terms.accepted', 'signup.verified'],
           unverifiedAllowed: true,
         },
         onRequest: hostGate(onOrganizationHost),
@@ -189,9 +190,7 @@ export function signupRoutes(deps: SignupRoutesDeps) {
         const tenant = organizationOf(request);
         void reply.header('cache-control', 'no-store');
         // An organization that is already active answers like a link that does not work.
-        const issued = await deps.service.verify(tenant, request.body.token, {
-          actor: request.auditActor,
-        });
+        const issued = await deps.service.verify(tenant, request.body, originOf(request));
         void reply.header(
           'set-cookie',
           serializeSessionCookie(issued.token, {

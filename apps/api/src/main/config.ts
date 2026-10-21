@@ -39,6 +39,16 @@ function originOf(value: string): string | null {
 
 const booleanFlag = z.enum(['true', 'false']).transform((value) => value === 'true');
 
+/** The process roles of `main.ts`. */
+export type ProcessRole = 'api' | 'worker' | 'releaser';
+
+/**
+ * Whether the environment being parsed must carry the key service of the organizations. The releaser
+ * opens the archive with its own key and never touches the data key of an organization, so it needs
+ * none (JD-S6 R1-S6-12). Set around ONE synchronous parse by `loadConfig`.
+ */
+let keyServiceRequired = true;
+
 /**
  * Environment contract of the API and worker processes.
  * Secrets (such as the database URL and the local KEK) come only from the environment, never from
@@ -169,7 +179,9 @@ const envSchema = z
       }
     }
 
-    if (env.KMS_PROVIDER === 'aws') {
+    if (!keyServiceRequired) {
+      // The releaser: no key service.
+    } else if (env.KMS_PROVIDER === 'aws') {
       require('AWS_REGION', 'is required when KMS_PROVIDER is aws');
       require('AWS_KMS_KEY_ID', 'is required when KMS_PROVIDER is aws');
     } else {
@@ -238,7 +250,7 @@ const envSchema = z
           message: 'the mail connection must use starttls or tls in production',
         });
       }
-      if (env.KMS_PROVIDER === 'local') {
+      if (keyServiceRequired && env.KMS_PROVIDER === 'local') {
         ctx.addIssue({
           code: 'custom',
           path: ['KMS_PROVIDER'],
@@ -290,6 +302,11 @@ export interface Config {
   readonly operatorDatabaseUrl?: string;
   /** Set for the worker: the `audit_sealer` login that seals and verifies the audit trails. */
   readonly auditSealerDatabaseUrl?: string;
+  /**
+   * Set for the releaser: the `app_releaser` login, the only role that may mark a release request
+   * released and write the entries of a release. The API and the worker refuse to start with it.
+   */
+  readonly releaserDatabaseUrl?: string;
   readonly deploymentMode: 'multi' | 'single';
   /** Set in multi mode. */
   readonly baseDomain?: string;
@@ -350,8 +367,17 @@ function withoutEmptyValues(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   return Object.fromEntries(Object.entries(env).filter(([, value]) => value !== ''));
 }
 
-export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
-  const parsed = envSchema.safeParse(withoutEmptyValues(env));
+export function loadConfig(
+  env: NodeJS.ProcessEnv = process.env,
+  options: { role?: ProcessRole } = {},
+): Config {
+  keyServiceRequired = options.role !== 'releaser';
+  let parsed: ReturnType<typeof envSchema.safeParse>;
+  try {
+    parsed = envSchema.safeParse(withoutEmptyValues(env));
+  } finally {
+    keyServiceRequired = true;
+  }
   if (!parsed.success) {
     // Only the variable name and the validation message are reported. Input values are
     // deliberately left out because they may be secrets.
@@ -361,6 +387,16 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     throw new ConfigError(`Invalid environment configuration. ${problems}`);
   }
   const value = parsed.data;
+  // The login of the releaser has no place in the schema above: it belongs to one process only.
+  const releaserUrl = z
+    .url({ protocol: /^postgres(ql)?$/ })
+    .optional()
+    .safeParse(withoutEmptyValues(env)['RELEASER_DATABASE_URL']);
+  if (!releaserUrl.success) {
+    throw new ConfigError(
+      'Invalid environment configuration. RELEASER_DATABASE_URL: must be a postgres URL',
+    );
+  }
   // The scanner has its own small schema (see config-scanner.ts), read from the same environment.
   const scanner = readScannerConfig(withoutEmptyValues(env), {
     nodeEnv: value.NODE_ENV,
@@ -389,6 +425,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     ...(value.AUDIT_SEALER_DATABASE_URL === undefined
       ? {}
       : { auditSealerDatabaseUrl: value.AUDIT_SEALER_DATABASE_URL }),
+    ...(releaserUrl.data === undefined ? {} : { releaserDatabaseUrl: releaserUrl.data }),
     ...(value.OPERATOR_DATABASE_URL === undefined || value.DEPLOYMENT_MODE === 'single'
       ? {}
       : { operatorDatabaseUrl: value.OPERATOR_DATABASE_URL }),

@@ -31,7 +31,12 @@ describe('the retention exceptions in the allowlist of deletes', () => {
   it('names the purge of unverified signups as exception 2, in the migration that makes it', () => {
     const second = entries.filter((entry) => exceptionOf(entry.why) === 2);
 
-    expect(second.map((entry) => entry.file)).toEqual(['src/db/migrations/0640_signup.sql']);
+    // The migration that makes it, and the one that replaced the function to stop stuck rows from
+    // starving the others (JD-S6 R1-A-T5): the same exception, the same list of tables.
+    expect(second.map((entry) => entry.file)).toEqual([
+      'src/db/migrations/0640_signup.sql',
+      'src/db/migrations/0685_signup_set_password_at_verify.sql',
+    ]);
     expect(second[0]?.why).toMatch(/never younger than a day/);
     expect(second[0]?.why).toMatch(/foreign key/);
   });
