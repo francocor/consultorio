@@ -3363,3 +3363,21 @@ Only the containers, the network and the image of the smoke were created and rem
 - **Maintainer:** `.env.example` says 36 and must say 48 (floor 46); until then `pnpm dev` refuses to start.
 - The sealing test of `worker.test.ts` and some unit files are timing-sensitive on this machine; re-run alone when they fail under load.
 - `SubscriptionReauthorizationWaiting` is new and untested against a real Prometheus (`promtool` runs in CI).
+
+## Judgment Day Stage 6, round 2
+
+Fixed (commits `b3ab719a`, `4cea8ca5`, `6a514797`, `3f528d25`):
+
+- **R2-1** a refund token is answered from every attempt it made (confirmed, then rejected, then in flight); only an all-released token plans a refund.
+- **R2-2** (`0683`) the release trigger binds `recorded_by` and every `*_by` / `*_at` on every update; recorder bound to `app.user_id` on insert; `archive_release_recorder_check` validated. `app.user_id` protects against bugs and console misuse, not a hostile credential.
+- **R2-3** (`0656`, track `6c`) an archive erased whole makes the plaintext export due.
+- **R2-4** resolving a parked subscription releases only preapproval creations; other parked writes go back to `marked` with a new settle window for the reconcile to decide.
+- **R2-5** cancelled organizations keep `subscriptions_parked`, `subscription_surplus_unreviewed` and `subscription_reconcile_oldest_seconds`.
+- **R2-6** a manual resend does not rotate a link sent less than 30 minutes ago (the token is stored hashed, so the same one cannot be re-sent); resends count under their own per-address counter.
+- **B-W3** a cancelling subscription with an open creation sweeps the provider at the period end and re-reads the creations after the sweep.
+- **B-W6** (`0684`) `emailed_at`, `app.archive_release_unsent`, the releaser sweep sends a new link, `release_unsent` metric and the alert `ArchiveReleaseNotEmailed`.
+- Also done: the lease of a download is given back only by its claim, `completeDownload` result decides the removal, erased folders need a trailing slash, `staleStep` maps only the step refusal, the erasure marks a rerun that finds nothing, and the trail field is now `namedSecondOperator` (B-W5: renamed, not a real approval).
+
+Open (not done in this round): a real second approval for the legal erasure (B-W5 proper), the supersede reconcile pass (B-T), `readFacts` `lastReconciledAt` after an incomplete stray search (B-S), and all SUGGESTIONS (`PAYMENTS_PROVIDER=off` in production, first-bundle memo cycle, `purge_attempts`, stale comments, `connection-holding` list, intent audit before refund and resolve-parked, name whitelist).
+
+Verified: typecheck, `db:check`, prettier and eslint on the changed files, unit tests of the touched modules, and the integration files of the touched areas (refunds, parked, platform metrics, archive release, requests, immutability, cancellation export cleanup, signup, signup abuse, policy). Not run: the full integration and e2e suites, build, `test:build`, Docker smoke.
