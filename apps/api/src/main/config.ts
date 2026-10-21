@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { DEFAULT_RUNTIME_POOL_MAX } from '../platform/db/pool.js';
 import { CONNECTION_HOLDING_JOBS, JOB_LOCAL_CONCURRENCY } from '../platform/jobs/concurrency.js';
 
+import { readMetricsConfig, type MetricsConfig } from './config-metrics.js';
 import { readProviderConfig, type ProviderConfig } from './config-providers.js';
 import { readScannerConfig, type ScannerConfig } from './config-scanner.js';
 import { parseTrustProxy, type TrustProxySetting } from './trust-proxy.js';
@@ -37,6 +38,16 @@ function originOf(value: string): string | null {
 }
 
 const booleanFlag = z.enum(['true', 'false']).transform((value) => value === 'true');
+
+/** The process roles of `main.ts`. */
+export type ProcessRole = 'api' | 'worker' | 'releaser';
+
+/**
+ * Whether the environment being parsed must carry the key service of the organizations. The releaser
+ * opens the archive with its own key and never touches the data key of an organization, so it needs
+ * none (JD-S6 R1-S6-12). Set around ONE synchronous parse by `loadConfig`.
+ */
+let keyServiceRequired = true;
 
 /**
  * Environment contract of the API and worker processes.
@@ -168,7 +179,9 @@ const envSchema = z
       }
     }
 
-    if (env.KMS_PROVIDER === 'aws') {
+    if (!keyServiceRequired) {
+      // The releaser: no key service.
+    } else if (env.KMS_PROVIDER === 'aws') {
       require('AWS_REGION', 'is required when KMS_PROVIDER is aws');
       require('AWS_KMS_KEY_ID', 'is required when KMS_PROVIDER is aws');
     } else {
@@ -237,7 +250,7 @@ const envSchema = z
           message: 'the mail connection must use starttls or tls in production',
         });
       }
-      if (env.KMS_PROVIDER === 'local') {
+      if (keyServiceRequired && env.KMS_PROVIDER === 'local') {
         ctx.addIssue({
           code: 'custom',
           path: ['KMS_PROVIDER'],
@@ -289,6 +302,11 @@ export interface Config {
   readonly operatorDatabaseUrl?: string;
   /** Set for the worker: the `audit_sealer` login that seals and verifies the audit trails. */
   readonly auditSealerDatabaseUrl?: string;
+  /**
+   * Set for the releaser: the `app_releaser` login, the only role that may mark a release request
+   * released and write the entries of a release. The API and the worker refuse to start with it.
+   */
+  readonly releaserDatabaseUrl?: string;
   readonly deploymentMode: 'multi' | 'single';
   /** Set in multi mode. */
   readonly baseDomain?: string;
@@ -308,6 +326,8 @@ export interface Config {
   readonly storage?: StorageConfig;
   /** Undefined when CLAMAV_HOST is not set: development then scans with the fake scanner. */
   readonly scanner?: ScannerConfig;
+  /** Undefined when METRICS_PORT is not set: nothing then listens for a scraper. */
+  readonly metrics?: MetricsConfig;
   /** Undefined when SMTP_HOST is not set (allowed outside production). */
   readonly mail?: MailConfig;
   /** Which provider serves WhatsApp, video and the bot challenge (see config-providers.ts). */
@@ -347,8 +367,17 @@ function withoutEmptyValues(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   return Object.fromEntries(Object.entries(env).filter(([, value]) => value !== ''));
 }
 
-export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
-  const parsed = envSchema.safeParse(withoutEmptyValues(env));
+export function loadConfig(
+  env: NodeJS.ProcessEnv = process.env,
+  options: { role?: ProcessRole } = {},
+): Config {
+  keyServiceRequired = options.role !== 'releaser';
+  let parsed: ReturnType<typeof envSchema.safeParse>;
+  try {
+    parsed = envSchema.safeParse(withoutEmptyValues(env));
+  } finally {
+    keyServiceRequired = true;
+  }
   if (!parsed.success) {
     // Only the variable name and the validation message are reported. Input values are
     // deliberately left out because they may be secrets.
@@ -358,6 +387,16 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     throw new ConfigError(`Invalid environment configuration. ${problems}`);
   }
   const value = parsed.data;
+  // The login of the releaser has no place in the schema above: it belongs to one process only.
+  const releaserUrl = z
+    .url({ protocol: /^postgres(ql)?$/ })
+    .optional()
+    .safeParse(withoutEmptyValues(env)['RELEASER_DATABASE_URL']);
+  if (!releaserUrl.success) {
+    throw new ConfigError(
+      'Invalid environment configuration. RELEASER_DATABASE_URL: must be a postgres URL',
+    );
+  }
   // The scanner has its own small schema (see config-scanner.ts), read from the same environment.
   const scanner = readScannerConfig(withoutEmptyValues(env), {
     nodeEnv: value.NODE_ENV,
@@ -365,6 +404,12 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   });
   if (scanner.problems.length > 0) {
     const problems = scanner.problems.map((problem) => `${problem.path}: ${problem.message}`);
+    throw new ConfigError(`Invalid environment configuration. ${problems.join('; ')}`);
+  }
+  // So have the metrics: a port, a host and a token (see config-metrics.ts).
+  const metrics = readMetricsConfig(withoutEmptyValues(env));
+  if (metrics.problems.length > 0) {
+    const problems = metrics.problems.map((problem) => `${problem.path}: ${problem.message}`);
     throw new ConfigError(`Invalid environment configuration. ${problems.join('; ')}`);
   }
   // The provider variables have their own small schema too; production refuses a simulator.
@@ -380,6 +425,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     ...(value.AUDIT_SEALER_DATABASE_URL === undefined
       ? {}
       : { auditSealerDatabaseUrl: value.AUDIT_SEALER_DATABASE_URL }),
+    ...(releaserUrl.data === undefined ? {} : { releaserDatabaseUrl: releaserUrl.data }),
     ...(value.OPERATOR_DATABASE_URL === undefined || value.DEPLOYMENT_MODE === 'single'
       ? {}
       : { operatorDatabaseUrl: value.OPERATOR_DATABASE_URL }),
@@ -413,6 +459,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
           },
         }),
     ...(scanner.config === undefined ? {} : { scanner: scanner.config }),
+    ...(metrics.config === undefined ? {} : { metrics: metrics.config }),
     ...(value.SMTP_HOST === undefined
       ? {}
       : {

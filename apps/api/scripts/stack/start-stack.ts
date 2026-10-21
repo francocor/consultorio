@@ -6,8 +6,13 @@ import { CreateBucketCommand, S3Client } from '@aws-sdk/client-s3';
 import { PostgreSqlContainer } from '@testcontainers/postgresql';
 import { eq } from 'drizzle-orm';
 import pino from 'pino';
-import { GenericContainer, Wait } from 'testcontainers';
+import { GenericContainer, Wait, type StartedTestContainer } from 'testcontainers';
 
+import { createLocalArchiveStore } from '../../src/adapters/archive-local/index.js';
+import {
+  ARCHIVE_WRITER_USER,
+  archiveWriterPolicy,
+} from '../../src/adapters/archive-local/policies.js';
 import { createFakeScanner } from '../../src/adapters/fake-scanner/index.js';
 import { createLocalKeyManagement } from '../../src/adapters/local-kek/index.js';
 import { createS3ObjectStorage } from '../../src/adapters/s3/index.js';
@@ -20,6 +25,7 @@ import {
   ensureDemoTenant,
   seedDemoTenant,
 } from '../../src/db/seed/demo/index.js';
+import { PLATFORM_DEMO_TENANTS, seedPlatformDemo } from '../../src/db/seed/demo/stage6/index.js';
 import { seedPlatformCatalogs } from '../../src/db/seed/platform.js';
 import { createAdapterResolver } from '../../src/main/adapter-resolver.js';
 import { buildAdapterRegistry } from '../../src/main/adapters.js';
@@ -29,11 +35,19 @@ import { documentWorker } from '../../src/main/document-jobs.js';
 import { createConfiguredEmail } from '../../src/main/email.js';
 import { loadPasswordValidator } from '../../src/main/password-validator.js';
 import { MODULE_WIRINGS, combineWorkerContributions } from '../../src/main/wiring/index.js';
+import { originsFromConfig } from '../../src/main/wiring/origins.js';
 import { demoPrescriptionProviderOf } from '../../src/main/wiring/prescriptions.js';
 import { createPasswordHasher } from '../../src/modules/identity/index.js';
 import { createVideoJoinRegistry } from '../../src/modules/notifications/index.js';
 import { createOperatorAdminFor, createOperatorSecrets } from '../../src/modules/operator/index.js';
 import { holdExpireJob } from '../../src/modules/scheduling/index.js';
+import { generateReleaserKeys } from '../../src/modules/tenancy/archive/archive-crypto.js';
+import {
+  createReleaser,
+  createTenantLifecycle,
+  enqueueDueArchives,
+  enqueuePendingExports,
+} from '../../src/modules/tenancy/index.js';
 import { createTenantKeys } from '../../src/platform/crypto/tenant-keys.js';
 import { createOperatorDb, createOwnerDb, createRuntimeDb } from '../../src/platform/db/pool.js';
 import { SYSTEM_USER_ID, createWithTenant } from '../../src/platform/db/tenant-context.js';
@@ -49,11 +63,32 @@ const MINIO_USER = 'minio_stack';
 const MINIO_PASSWORD = 'minio_stack_only_secret';
 const BUCKET = 'consultorio-files';
 
+/**
+ * The retention archive of the stack: a bucket with Object Lock and the writer identity of the local
+ * environment (the policies of `adapters/archive-local`), in the same MinIO as the files. The
+ * archive is written the moment a cancelled organization is found (`ARCHIVE_AFTER_DAYS=0`).
+ */
+const ARCHIVE_BUCKET = 'consultorio-archive';
+const ARCHIVE_WRITER_SECRET = 'archive_stack_writer_secret';
+
+/** How often the stack looks for work that production looks for in minutes. */
+const STACK_SWEEP_MS = 2000;
+
 /** The operator of the throwaway stack. Public development values, like the demo passwords. */
 const OPERATOR = {
   email: 'operador@demo.invalid',
   displayName: 'Operadora de la plataforma',
   password: 'Operador-Demo-2026-clave',
+} as const;
+
+/**
+ * A second operator. Releasing archived records takes two people (one verifies the identity of the
+ * requester, a different one approves), so the journeys that release need a pair.
+ */
+const OPERATOR_TWO = {
+  email: 'operador.dos@demo.invalid',
+  displayName: 'Segundo operador de la plataforma',
+  password: 'Operador-Demo-2026-clave-dos',
 } as const;
 
 export interface StackOptions {
@@ -67,6 +102,12 @@ export interface StackOptions {
   publicPort?: number;
   /** Run the worker (audit sealing, scans, hold expiry) in the same process. */
   withWorker?: boolean;
+  /**
+   * Also create the four billed organizations of `pnpm demo:platform` (a trial, an active
+   * subscription, a charge that failed, a read-only organization). On by default: the browser
+   * journeys of the subscription use them as their starting points.
+   */
+  platformDemo?: boolean;
   /**
    * Host port of the object storage. A browser uploads documents straight to it, so the web app must
    * allow that origin (`CSP_CONNECT_SOURCES=http://localhost:<port>` when it is built or served).
@@ -86,6 +127,19 @@ export interface StackInfo {
   demoPassword: string;
   tenants: Record<string, { id: string; slug: string; name: string; emailSuffix: string }>;
   operator: { email: string; password: string; totpSecret: string };
+  /** The second person of the four-eyes steps of the archive release. */
+  operatorTwo: { email: string; password: string; totpSecret: string };
+  /** The billed organizations of the platform demo, by state (empty when the stack was told not to make them). */
+  platformDemo: Record<
+    string,
+    {
+      slug: string;
+      name: string;
+      ownerEmail: string;
+      receptionEmail: string;
+      professionalEmail: string | null;
+    }
+  >;
 }
 
 export interface Stack {
@@ -150,6 +204,7 @@ export async function startStack(options: StackOptions): Promise<Stack> {
     const runtimeUrl = url('app_rw', 'app_rw_dev_only');
     const operatorUrl = url('app_operator', 'app_operator_dev_only');
     const sealerUrl = url('audit_sealer', 'audit_sealer_dev_only');
+    const releaserUrl = url('app_releaser', 'app_releaser_dev_only');
 
     log('Migrating');
     await runMigrations(ownerUrl);
@@ -163,6 +218,9 @@ export async function startStack(options: StackOptions): Promise<Stack> {
       () => runtime.close(),
       () => operatorDb.close(),
     );
+
+    log('Preparing the archive bucket');
+    await prepareArchiveBucket(minio);
 
     // The browser sends files to this address, so it is the one it can reach: `localhost`.
     const storageUrl = `http://localhost:${String(minio.getMappedPort(9000))}`;
@@ -192,6 +250,7 @@ export async function startStack(options: StackOptions): Promise<Stack> {
     // One key-encryption key for the whole stack, like in production, where the API and the worker
     // share it: the worker wiring builds its own key service from the configuration below.
     const kek = randomBytes(32).toString('base64');
+    const releaserKeys = generateReleaserKeys();
     const kms = createLocalKeyManagement(kek);
     const keys = createTenantKeys({ kms });
     const email = createConfiguredEmail({
@@ -209,7 +268,7 @@ export async function startStack(options: StackOptions): Promise<Stack> {
 
     // The same composition as `main`: the modules, their adapters (the local simulators), the
     // provider console and the jobs of the worker, so a browser journey runs the real thing.
-    const config = loadConfig({
+    const loaded = loadConfig({
       DATABASE_URL: runtimeUrl,
       BASE_DOMAIN: baseDomain,
       PLATFORM_HOST: platformHost,
@@ -223,7 +282,27 @@ export async function startStack(options: StackOptions): Promise<Stack> {
       S3_FORCE_PATH_STYLE: 'true',
       S3_ACCESS_KEY_ID: MINIO_USER,
       S3_SECRET_ACCESS_KEY: MINIO_PASSWORD,
+      // The archive of the cancelled organizations. The API and the worker hold only the PUBLIC half of
+      // the key of the releaser; the private half goes to the releaser below and nowhere else.
+      ARCHIVE_S3_BUCKET: ARCHIVE_BUCKET,
+      ARCHIVE_S3_ENDPOINT: storageUrl,
+      ARCHIVE_S3_ACCESS_KEY_ID: ARCHIVE_WRITER_USER,
+      ARCHIVE_S3_SECRET_ACCESS_KEY: ARCHIVE_WRITER_SECRET,
+      ARCHIVE_RELEASER_PUBLIC_KEY: releaserKeys.publicKey,
+      // The configuration refuses a window of zero days (a real deployment always has one); the stack
+      // brings the window to zero below, after the configuration is read.
+      ARCHIVE_AFTER_DAYS: '1',
     });
+    // The archive is written the moment a cancelled organization is found: no window in the stack.
+    const config: typeof loaded = {
+      ...loaded,
+      providers: {
+        ...loaded.providers,
+        ...(loaded.providers.archive
+          ? { archive: { ...loaded.providers.archive, afterDays: 0 } }
+          : {}),
+      },
+    };
 
     // Two demo organizations with different looks.
     log('Seeding demo organizations');
@@ -255,6 +334,20 @@ export async function startStack(options: StackOptions): Promise<Stack> {
       );
     await applyNorteTheme();
 
+    // The organizations with a subscription: each state of it, built by the services of the module.
+    if (options.platformDemo !== false) {
+      log('Seeding the platform demo organizations');
+      await seedPlatformDemo({
+        db: runtime.db,
+        withTenant,
+        hasher,
+        origins: originsFromConfig(config),
+        webhookSecret: randomBytes(24).toString('hex'),
+        publicBaseUrl: `http://${platformHost}/api`,
+        environment: 'development',
+      });
+    }
+
     const operatorAdmin = createOperatorAdminFor({
       db: operatorDb.db,
       hasher,
@@ -264,6 +357,12 @@ export async function startStack(options: StackOptions): Promise<Stack> {
       email: OPERATOR.email,
       displayName: OPERATOR.displayName,
       password: OPERATOR.password,
+    });
+
+    const operatorTwo = await operatorAdmin.create({
+      email: OPERATOR_TWO.email,
+      displayName: OPERATOR_TWO.displayName,
+      password: OPERATOR_TWO.password,
     });
 
     const jobsBoss = createBoss(runtimeUrl, 'api');
@@ -299,6 +398,7 @@ export async function startStack(options: StackOptions): Promise<Stack> {
         simulated: {
           afip: config.providers.afip === 'local',
           erx: config.providers.erx === 'local',
+          payments: config.providers.payments === 'local',
         },
       },
       passwordValidator,
@@ -337,6 +437,8 @@ export async function startStack(options: StackOptions): Promise<Stack> {
     let worker: Awaited<ReturnType<typeof startWorker>> | undefined;
     if (options.withWorker !== false) {
       const videoJoin = createVideoJoinRegistry();
+      // One bus for the worker: the billing jobs publish the end of an organization, retention subscribes.
+      const tenantLifecycle = createTenantLifecycle();
       worker = await startWorker({
         databaseUrl: runtimeUrl,
         sealerDatabaseUrl: sealerUrl,
@@ -347,11 +449,59 @@ export async function startStack(options: StackOptions): Promise<Stack> {
           { tenantJobs: [{ definition: holdExpireJob, everyMs: 60_000 }] },
           documentWorker({ storage, scanner, email: email.sender }),
           ...MODULE_WIRINGS.map(
-            (module) => module.worker?.({ config, adapters, email: email.sender, videoJoin }) ?? {},
+            (module) =>
+              module.worker?.({
+                config,
+                adapters,
+                email: email.sender,
+                videoJoin,
+                tenantLifecycle,
+              }) ?? {},
           ),
         ]),
       });
       closers.unshift(() => worker?.stop() ?? Promise.resolve());
+    }
+
+    // The releaser: the one process with the private key of the archive. In the stack it runs in this
+    // process, with its own pool, and looks for approved requests every couple of seconds. The sweeps of
+    // the worker that production runs every few minutes are brought forward too, so a journey that
+    // cancels an organization sees its export and its archive within seconds.
+    const archiveSettings = config.providers.archive;
+    if (archiveSettings && options.withWorker !== false) {
+      const releaser = await createReleaser({
+        // Its own database role, like in production (JD-S6 R1-S6-12).
+        databaseUrl: releaserUrl,
+        kek: releaserKeys.kek,
+        store: createLocalArchiveStore(archiveSettings.storage),
+        storage,
+        email: email.sender,
+        origins: originsFromConfig(config),
+        log: pino({ level: 'warn' }),
+        sweepEveryMs: STACK_SWEEP_MS,
+        pollingIntervalSeconds: 1,
+      });
+      closers.unshift(() => releaser.stop());
+      const client = createJobClient(jobsBoss);
+      let sweeping = false;
+      const sweep = setInterval(() => {
+        if (sweeping) return;
+        sweeping = true;
+        void (async () => {
+          try {
+            await enqueuePendingExports(runtime.db, client);
+            await enqueueDueArchives(runtime.db, client, { afterDays: archiveSettings.afterDays });
+          } catch {
+            // The next tick tries again; a stack that is stopping closes the pool under this.
+          } finally {
+            sweeping = false;
+          }
+        })();
+      }, STACK_SWEEP_MS);
+      closers.unshift(() => {
+        clearInterval(sweep);
+        return Promise.resolve();
+      });
     }
 
     const info: StackInfo = {
@@ -370,6 +520,26 @@ export async function startStack(options: StackOptions): Promise<Stack> {
         password: OPERATOR.password,
         totpSecret: operator.totpSecretBase32,
       },
+      operatorTwo: {
+        email: OPERATOR_TWO.email,
+        password: OPERATOR_TWO.password,
+        totpSecret: operatorTwo.totpSecretBase32,
+      },
+      platformDemo:
+        options.platformDemo === false
+          ? {}
+          : Object.fromEntries(
+              PLATFORM_DEMO_TENANTS.map((entry) => [
+                entry.state,
+                {
+                  slug: entry.slug,
+                  name: entry.displayName,
+                  ownerEmail: entry.ownerEmail,
+                  receptionEmail: entry.receptionEmail,
+                  professionalEmail: entry.professionalEmail ?? null,
+                },
+              ]),
+            ),
     };
     if (options.infoFile) {
       await mkdir(dirname(options.infoFile), { recursive: true });
@@ -387,4 +557,57 @@ export async function startStack(options: StackOptions): Promise<Stack> {
     for (const close of closers) await close().catch(() => undefined);
     throw error;
   }
+}
+
+/**
+ * Creates the archive bucket with Object Lock (governance mode, a default retention) and the writer
+ * identity, the way `infra/docker-compose.yml` does for the local environment.
+ */
+async function prepareArchiveBucket(minio: StartedTestContainer): Promise<void> {
+  // The Docker daemon can drop the connection of an exec while the container is still settling (a
+  // "socket hang up" that is thrown, not an exit code): it counts as a server that is not ready.
+  const run = async (command: string[]): Promise<{ exitCode: number; output: string }> => {
+    try {
+      return await minio.exec(command);
+    } catch (error) {
+      return { exitCode: -1, output: `not ready: ${String(error)}` };
+    }
+  };
+  // MinIO can restart under the first commands (the image does it once while it starts), so a command
+  // that finds the server down is tried again.
+  const mc = async (...args: string[]) => {
+    for (let attempt = 1; ; attempt += 1) {
+      const result = await run(['mc', ...args]);
+      if (result.exitCode === 0) return;
+      const down = /connection refused|EOF|reset by peer|not ready/i.test(result.output);
+      if (!down || attempt >= 20) {
+        throw new Error(`mc ${args.slice(0, 3).join(' ')} failed: ${result.output}`);
+      }
+      await new Promise((resolve) => setTimeout(resolve, 1000));
+    }
+  };
+  // The image restarts MinIO once while it starts: the alias is retried.
+  let ready = false;
+  for (let attempt = 0; attempt < 30 && !ready; attempt += 1) {
+    const set = await run([
+      'mc',
+      'alias',
+      'set',
+      'local',
+      'http://127.0.0.1:9000',
+      MINIO_USER,
+      MINIO_PASSWORD,
+    ]);
+    ready = set.exitCode === 0;
+    if (!ready) await new Promise((resolve) => setTimeout(resolve, 1000));
+  }
+  if (!ready) throw new Error('the MinIO of the stack did not accept the alias');
+  await mc('mb', '--with-lock', `local/${ARCHIVE_BUCKET}`);
+  await mc('retention', 'set', '--default', 'GOVERNANCE', '3650d', `local/${ARCHIVE_BUCKET}`);
+  await minio.copyContentToContainer([
+    { content: archiveWriterPolicy(ARCHIVE_BUCKET), target: '/tmp/archive-writer.json' },
+  ]);
+  await mc('admin', 'policy', 'create', 'local', 'archive-writer', '/tmp/archive-writer.json');
+  await mc('admin', 'user', 'add', 'local', ARCHIVE_WRITER_USER, ARCHIVE_WRITER_SECRET);
+  await mc('admin', 'policy', 'attach', 'local', 'archive-writer', '--user', ARCHIVE_WRITER_USER);
 }

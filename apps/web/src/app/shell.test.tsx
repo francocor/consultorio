@@ -172,7 +172,7 @@ describe('BottomNav', () => {
     NAV_ITEMS.audit,
     NAV_ITEMS.settings,
     NAV_ITEMS.worklist,
-    NAV_ITEMS.billing,
+    NAV_ITEMS.today,
   ];
 
   it('with more than five entries shows four and a "More" sheet with the rest', async () => {
@@ -186,7 +186,7 @@ describe('BottomNav', () => {
     const sheet = await screen.findByRole('dialog', { name: 'Más secciones' });
     expect(within(sheet).getByRole('link', { name: 'Configuración' })).toBeInTheDocument();
     expect(within(sheet).getByRole('link', { name: 'Pendientes' })).toBeInTheDocument();
-    expect(within(sheet).getByRole('link', { name: 'Facturación' })).toBeInTheDocument();
+    expect(within(sheet).getByRole('link', { name: 'Hoy' })).toBeInTheDocument();
   });
 
   it('with five or fewer entries shows them all and no "More"', async () => {
@@ -213,6 +213,28 @@ describe('banners wired to real signals', () => {
     renderApp({ me: meFor(['owner'], { tenantStatus: 'read_only' }) });
 
     expect(await screen.findByText('Organización en modo de solo lectura')).toBeInTheDocument();
+  });
+
+  it('read-only: the owner is taken to the subscription, which is where the way out is', async () => {
+    renderApp({ me: meFor(['owner'], { tenantStatus: 'read_only' }) });
+
+    const banner = await screen.findByRole('status');
+    expect(banner).toHaveTextContent('regularice la suscripción');
+    expect(within(banner).getByRole('link', { name: 'Ir a la suscripción' })).toHaveAttribute(
+      'href',
+      '/subscription',
+    );
+    expect(banner).not.toHaveTextContent('Facturación');
+  });
+
+  it('read-only: a person who cannot manage the subscription is told who can, with no word about billing and no link to it', async () => {
+    renderApp({ me: meFor(['reception'], { tenantStatus: 'read_only' }) });
+
+    const banner = await screen.findByRole('status');
+    expect(banner).toHaveTextContent('Organización en modo de solo lectura');
+    expect(banner).toHaveTextContent('persona titular de la cuenta');
+    expect(banner).not.toHaveTextContent(/suscripci|factura|pago/i);
+    expect(within(banner).queryByRole('link')).not.toBeInTheDocument();
   });
 
   it('offline: the banner follows the device connection', async () => {

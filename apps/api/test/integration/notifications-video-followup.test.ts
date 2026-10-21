@@ -7,6 +7,7 @@ import { notificationsWiring } from '../../src/main/wiring/notifications.js';
 import { teleconsultationWiring } from '../../src/main/wiring/teleconsultation.js';
 import { recordOptIn } from '../../src/modules/notifications/application/preferences.js';
 import { createVideoJoinRegistry } from '../../src/modules/notifications/index.js';
+import { createTenantLifecycle } from '../../src/modules/tenancy/index.js';
 import { createRuntimeDb, type DbHandle } from '../../src/platform/db/pool.js';
 import type { JobDefinition } from '../../src/platform/jobs/define-job.js';
 import { runPending } from '../support/jobs.js';
@@ -65,6 +66,7 @@ beforeAll(async () => {
     email: notes.email,
     clock: () => now,
     videoJoin: registry,
+    tenantLifecycle: createTenantLifecycle(),
   };
   const job = { client: video.jobs, db: runtime.db, metrics: {} as never, log: {} as never };
   definitions = [

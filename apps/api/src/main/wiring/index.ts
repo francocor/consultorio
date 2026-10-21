@@ -7,13 +7,18 @@ import { onlineBookingWiring } from './online-booking.js';
 import { portalWiring } from './portal.js';
 import { prescriptionsWiring } from './prescriptions.js';
 import { reportsWiring } from './reports.js';
+import { signupWiring } from './signup.js';
+import { subscriptionsWiring } from './subscriptions.js';
 import { teleconsultationWiring } from './teleconsultation.js';
+import { tenancyWiring } from './tenancy.js';
 import type { ModuleWiring } from './types.js';
 import { waitlistWiring } from './waitlist.js';
 
+export { mergeFeatureRoutes, operatorExtensionsOf } from './feature-routes.js';
 export type {
   AdapterWiringContext,
   ModuleWiring,
+  OperatorWiringContext,
   WiringContext,
   WorkerContribution,
   WorkerWiringContext,
@@ -37,4 +42,7 @@ export const MODULE_WIRINGS: readonly ModuleWiring[] = [
   consentWiring,
   prescriptionsWiring,
   portalWiring,
+  subscriptionsWiring,
+  signupWiring,
+  tenancyWiring,
 ];

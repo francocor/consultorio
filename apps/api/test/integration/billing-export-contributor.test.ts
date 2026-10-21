@@ -5,6 +5,7 @@ import { exportBilling } from '../../src/modules/billing/application/export-cont
 import { createExportRegistry } from '../../src/modules/tenancy/index.js';
 import { createRuntimeDb, type DbHandle } from '../../src/platform/db/pool.js';
 import { createBillingWorld, type BillingWorld } from '../support/billing-world.js';
+import { settled } from '../support/export-sections.js';
 import { asTenant } from '../support/tenants.js';
 
 /**
@@ -47,7 +48,7 @@ interface Part {
 
 const contribute = (world: BillingWorld) =>
   asTenant(runtime, world.tenant.id, (tx) =>
-    exportBilling({ tx, tenantId: world.tenant.id }),
+    settled(exportBilling({ tx, tenantId: world.tenant.id })),
   ) as Promise<Part>;
 
 describe('the administrative export of billing', () => {

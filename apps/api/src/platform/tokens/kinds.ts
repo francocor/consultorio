@@ -19,6 +19,7 @@ export const TOKEN_KINDS = [
   'export_download',
   'invoice_pdf',
   'prescription_pdf',
+  'cancellation_export',
   'archive_release',
 ] as const;
 export type TokenKind = (typeof TOKEN_KINDS)[number];
@@ -64,7 +65,13 @@ export const TOKEN_KIND_REGISTRY: Record<TokenKind, KindSpec> = {
   // Stage 5: the PDF of a prescription, for the staff who may read it. Its own kind, not a document
   // link: it opens a clinical file the documents module does not own (e-prescription track).
   prescription_pdf: { ttlMs: 5 * MINUTE, maxUses: 1, sessionBound: true, enabled: true },
-  archive_release: { ttlMs: 72 * HOUR, maxUses: 1, sessionBound: false, enabled: false },
+  // Stage 6: a package of the cancellation export (the administrative one for the owner, a clinical
+  // one for its professional). Its own kind, not `export_download`: the billing exports own that one
+  // in the staff door, which holds one resource per kind.
+  cancellation_export: { ttlMs: 5 * MINUTE, maxUses: 1, sessionBound: true, enabled: true },
+  // Stage 6: the single-use link the break-glass release of the archive emails to a verified requester
+  // (72 hours). Not session bound: the person has no session, only the address the link was sent to.
+  archive_release: { ttlMs: 72 * HOUR, maxUses: 1, sessionBound: false, enabled: true },
 };
 
 export function isTokenKind(value: string): value is TokenKind {

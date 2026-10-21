@@ -15,12 +15,23 @@ export function StatusBanners({ me }: { me: MeResponse }) {
   const { t } = useTranslation('shell');
   const status = useAppStatus();
   const readOnly = status.readOnly || me.tenantStatus === 'read_only';
+  // Only the owner can regularize the subscription (`billing.manage`).
+  const canManageBilling = me.permissions.includes('billing.manage');
   const { enrolled, required, graceEndsAt } = me.twoFactor;
   const showGrace = required && !enrolled && graceEndsAt !== null && me.scope === 'full';
 
   return (
     <>
-      {readOnly ? <ReadOnlyBanner /> : null}
+      {readOnly ? (
+        <ReadOnlyBanner
+          canResolve={canManageBilling}
+          action={
+            <Link to="/subscription" className="font-medium underline">
+              {t('banner.readOnly.action')}
+            </Link>
+          }
+        />
+      ) : null}
       {showGrace ? (
         <div className="px-4 pt-4 md:px-8">
           <TwoFactorGraceBanner

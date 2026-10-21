@@ -204,6 +204,33 @@ describe('GET /public/boot', () => {
     }
   });
 
+  it('says so when the payments simulator serves the deployment, apart from the other providers', async () => {
+    const simulated = buildTestApplication(runtime, {
+      storage: createMemoryObjectStorage(),
+      localProviders: {
+        console: false,
+        providers: [],
+        simulated: { afip: false, payments: true },
+      },
+    });
+    await simulated.ready();
+    try {
+      const response = await simulated.inject({
+        method: 'GET',
+        url: '/public/boot',
+        headers: browserHeaders('boot-clinic'),
+        remoteAddress: '10.98.0.2',
+      });
+
+      expect(BootPayload.parse(response.json()).localProviders).toEqual({
+        afip: false,
+        payments: true,
+      });
+    } finally {
+      await simulated.close();
+    }
+  });
+
   it('lists only the features that are on', async () => {
     const boot = (await get('/public/boot', 'boot-clinic')).json<BootPayload>();
 

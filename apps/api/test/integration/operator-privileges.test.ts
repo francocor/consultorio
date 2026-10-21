@@ -73,7 +73,13 @@ describe('the operator database role is an allowlist', () => {
     expect(await tablesTouchedByOperator()).toEqual([
       // Creating an organization: its row, data key, owner invitation and first audit entry.
       'action_token',
+      // Stage 6: the break-glass release requests (record, verify the identity, approve). The operator
+      // reads the requester's identity to verify it and writes none of the delivery: never content.
+      'archive_release_request',
       'audit_event',
+      // Stage 6: the operator asks for the administrative package of the organization it cancels
+      // (one row, queued) and reads the state of the packages. No file name, no key, no clinical one.
+      'export_package',
       // The country holiday catalog is platform data the operator maintains.
       'holiday_catalog',
       // Administrative configuration, readable only under a support grant.
@@ -83,12 +89,21 @@ describe('the operator database role is an allowlist', () => {
       // The operator's own accounts, sessions and trail.
       'operator_session',
       'operator_user',
+      // The plans are platform data the operator maintains; the subscription is read for support
+      // (state, dates and counters, never a person; the provider's identifiers are not granted).
+      'plan',
+      'plan_entitlement',
       'platform_audit_event',
       // Matricula verification: the one write the operator makes on a professional.
       'professional',
+      'subscription',
+      'subscription_payment',
       'tenant',
       'tenant_feature',
       'tenant_key',
+      // The days of activity and the accepted messages per professional: counts, for the contract
+      // invoicing of a deployment that bills outside the platform and for support.
+      'usage_record',
     ]);
   });
 

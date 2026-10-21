@@ -5,6 +5,7 @@ import {
   collectNav,
   collectRoutes,
   collectSlots,
+  createDeferredRegistry,
   createRegistry,
   defaultRegistry,
   type FeatureRoute,
@@ -166,5 +167,82 @@ describe('the registry of the application', () => {
     const mounts = defaultRegistry().routes.map((entry) => entry.mount);
 
     expect(mounts).toContain('minimal');
+  });
+});
+
+describe('the registry that loads the navigation and the slots later', () => {
+  const contributions = () => ({
+    nav: { '../features/a/nav.ts': nav('alpha') },
+    slots: {},
+  });
+
+  it('knows the routes at once, because the router needs them to answer the first address', () => {
+    const registry = createDeferredRegistry({
+      routes: { '../features/a/routes.tsx': { default: [route('authed', 'a')] } },
+      load: () => new Promise(() => undefined),
+    });
+
+    expect(registry.routes).toHaveLength(1);
+  });
+
+  it('refuses to hand out the navigation or the slots before they are loaded', () => {
+    const registry = createDeferredRegistry({
+      routes: {},
+      load: () => Promise.resolve(contributions()),
+    });
+
+    expect(() => registry.navItems).toThrow(/ready()/);
+    expect(() => registry.settingsTabs).toThrow(/ready()/);
+    expect(() => registry.slots).toThrow(/ready()/);
+  });
+
+  it('hands them out once ready() has resolved, collected like the eager registry does', async () => {
+    const registry = createDeferredRegistry({
+      routes: {},
+      load: () => Promise.resolve(contributions()),
+    });
+
+    await registry.ready();
+
+    expect(registry.navItems.map((item) => item.id)).toEqual(['alpha']);
+    expect(registry.slots).toEqual([]);
+  });
+
+  it('loads once, however many screens ask', async () => {
+    const load = vi.fn(() => Promise.resolve(contributions()));
+    const registry = createDeferredRegistry({ routes: {}, load });
+
+    await Promise.all([registry.ready(), registry.ready()]);
+    await registry.ready();
+
+    expect(load).toHaveBeenCalledTimes(1);
+  });
+
+  it('tries again after a load that failed, instead of remembering the failure', async () => {
+    const load = vi
+      .fn<() => Promise<ReturnType<typeof contributions>>>()
+      .mockRejectedValueOnce(new Error('chunk did not arrive'))
+      .mockResolvedValue(contributions());
+    const registry = createDeferredRegistry({ routes: {}, load });
+
+    await expect(registry.ready()).rejects.toThrow('chunk did not arrive');
+    await registry.ready();
+
+    expect(registry.navItems).toHaveLength(1);
+  });
+
+  it('is ready at once when it is built from modules', async () => {
+    const registry = createRegistry({ routes: {}, nav: {}, slots: {} });
+
+    await expect(registry.ready()).resolves.toBeUndefined();
+  });
+
+  it('finds the nav.ts and slots.tsx files of the real features once it is ready', async () => {
+    const registry = defaultRegistry();
+
+    await registry.ready();
+
+    expect(registry.navItems.length).toBeGreaterThan(0);
+    expect(registry.slots.length).toBeGreaterThan(0);
   });
 });

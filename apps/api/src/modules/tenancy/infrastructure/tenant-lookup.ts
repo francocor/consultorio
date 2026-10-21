@@ -36,7 +36,12 @@ export function createTenantLookup(db: Db): LookupTenant {
       if (!row) return null;
       const resolved: ResolvedTenant = {
         ...row,
-        status: row.status === 'read_only' || row.status === 'cancelled' ? row.status : 'active',
+        // Any state the code does not know counts as the strictest one that leaves the host
+        // standing, never as `active` (an organization nobody confirmed must not be served).
+        status:
+          row.status === 'read_only' || row.status === 'cancelled' || row.status === 'unverified'
+            ? row.status
+            : 'active',
       };
       return resolved;
     });

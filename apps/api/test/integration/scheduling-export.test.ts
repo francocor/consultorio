@@ -2,6 +2,7 @@ import { afterAll, beforeAll, describe, expect, inject, it } from 'vitest';
 
 import { exportScheduling } from '../../src/modules/scheduling/application/export-contributor.js';
 import { createRuntimeDb, type DbHandle } from '../../src/platform/db/pool.js';
+import { settled } from '../support/export-sections.js';
 import {
   at,
   createSchedulingWorld,
@@ -37,7 +38,7 @@ describe('administrative export of the scheduling', () => {
     });
 
     const part = (await asTenant(runtime, a.tenantId, (tx) =>
-      exportScheduling({ tx, tenantId: a.tenantId }),
+      settled(exportScheduling({ tx, tenantId: a.tenantId })),
     )) as {
       appointmentTypes: { name: string }[];
       appointments: { patientId: string; status: string; startsAt: Date }[];
@@ -50,7 +51,7 @@ describe('administrative export of the scheduling', () => {
 
   it('carries no clinical or encrypted content', async () => {
     const part = await asTenant(runtime, a.tenantId, (tx) =>
-      exportScheduling({ tx, tenantId: a.tenantId }),
+      settled(exportScheduling({ tx, tenantId: a.tenantId })),
     );
 
     expect(JSON.stringify(part)).not.toMatch(/_enc|detailEnc|reason_for|diagnos/i);

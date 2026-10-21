@@ -1,6 +1,7 @@
 import { z } from 'zod';
 
 import { BILLING_AUDIT_ACTIONS } from './billing-catalog.js';
+import { CANCELLATION_AUDIT_ACTIONS } from './cancellation-catalog.js';
 import { CONSENT_AUDIT_ACTIONS } from './consent-catalog.js';
 import { INVOICING_AUDIT_ACTIONS } from './invoicing-catalog.js';
 import { NOTIFICATION_AUDIT_ACTIONS } from './notifications-catalog.js';
@@ -8,6 +9,8 @@ import { ONLINE_BOOKING_AUDIT_ACTIONS } from './online-booking-catalog.js';
 import { PORTAL_AUDIT_ACTIONS } from './portal-catalog.js';
 import { PRESCRIPTION_AUDIT_ACTIONS } from './prescriptions-catalog.js';
 import { REPORTS_AUDIT_ACTIONS } from './reports-catalog.js';
+import { SIGNUP_AUDIT_ACTIONS } from './signup-catalog.js';
+import { SUBSCRIPTION_AUDIT_ACTIONS } from './subscriptions-catalog.js';
 import { TELECONSULTATION_AUDIT_ACTIONS } from './teleconsultation-catalog.js';
 import { WAITLIST_AUDIT_ACTIONS } from './waitlist-catalog.js';
 
@@ -16,7 +19,7 @@ import { WAITLIST_AUDIT_ACTIONS } from './waitlist-catalog.js';
  * a new, unqueryable action. Families follow the mandatory events of the audit-log spec.
  */
 export const AUDIT_ACTIONS = [
-  // Authentication (including patient portal sign-ins by one-time code).
+  // Authentication. The sign-ins of the patient portal by one-time code are `portal.signin.*`.
   'auth.login.success',
   'auth.login.failed',
   'auth.login.locked',
@@ -34,7 +37,6 @@ export const AUDIT_ACTIONS = [
   'auth.2fa.recovery_regenerated',
   'auth.2fa.disabled',
   'auth.invitation.accepted',
-  'auth.portal.sign_in',
   // Clinical records (every read and write).
   'clinical.note.read',
   'clinical.note.created',
@@ -135,9 +137,8 @@ export const AUDIT_ACTIONS = [
   // Support access that the organization opens for the platform.
   'support.grant.created',
   'support.grant.revoked',
-  // Exports and archive.
-  'export.created',
-  'archive.read',
+  // Exports. The cancellation export is `export.cancellation.*` and the archive is in the platform
+  // trail (`archive.*`, `operator.ts`).
   'audit.exported',
   // Platform operator.
   'support.access',
@@ -156,6 +157,11 @@ export const AUDIT_ACTIONS = [
   ...CONSENT_AUDIT_ACTIONS,
   ...PRESCRIPTION_AUDIT_ACTIONS,
   ...PORTAL_AUDIT_ACTIONS,
+  // Growth (Stage 6). Each module declares its own actions next to its contracts. The archive and the
+  // purge of a signup are in the platform trail (`operator.ts`), not here.
+  ...SUBSCRIPTION_AUDIT_ACTIONS,
+  ...SIGNUP_AUDIT_ACTIONS,
+  ...CANCELLATION_AUDIT_ACTIONS,
   // Denials.
   'access.denied',
   'cross_tenant.denied',

@@ -1,11 +1,21 @@
+import type { FastifyInstance } from 'fastify';
+
+import type {
+  PasswordHasher,
+  PasswordValidator,
+  SessionService,
+} from '../../modules/identity/index.js';
 import type { VideoJoinRegistry } from '../../modules/notifications/index.js';
+import type { OperatorRun } from '../../modules/operator/index.js';
 import type { WorklistService } from '../../modules/scheduling/index.js';
+import type { TenantCancelledPort, TenantLifecycle } from '../../modules/tenancy/index.js';
 import type { PortalActor } from '../../platform/authz/actor.js';
 import type { AuthzOptions } from '../../platform/authz/guard.js';
 import type { TenantKeys } from '../../platform/crypto/tenant-keys.js';
 import type { Db } from '../../platform/db/pool.js';
 import type { WithTenant } from '../../platform/db/tenant-context.js';
 import type { AppointmentEvents } from '../../platform/events/appointment-events.js';
+import type { FeatureKey } from '../../platform/features.js';
 import type { FileResourceRegistry } from '../../platform/files/file-resources.js';
 import type { PublicOrigins } from '../../platform/http/public-origin.js';
 import type { RateLimitStore } from '../../platform/http/rate-limit.js';
@@ -62,6 +72,48 @@ export interface WiringContext {
    * patient's link or the other way round. Only the portal module registers here.
    */
   portalFileResources: FileResourceRegistry<PortalActor>;
+  /**
+   * What happens to an organization when it ends (Stage 6). Retention subscribes (`onCancelled`) in
+   * `create`; the writers (the subscription reaching `cancelled`, the operator action) publish.
+   */
+  tenantLifecycle: TenantLifecycle;
+  /**
+   * What a module that creates accounts needs from identity (Stage 6: the signup creates the first
+   * owner of an organization): the password rules, the hasher and the session service, the same
+   * instances sign-in uses.
+   */
+  accounts: AccountPieces;
+}
+
+/** The pieces of identity that a module creating accounts may use. */
+export interface AccountPieces {
+  passwordValidator: PasswordValidator;
+  hasher: PasswordHasher;
+  sessions: SessionService;
+  /** True when the session cookie carries `Secure` (the deployment is served over https). */
+  cookieSecure: boolean;
+}
+
+/** What a module's routes in the operator console can use (Stage 6). */
+export interface OperatorWiringContext {
+  /** Runs a callback in one transaction of the operator connection (the `app_operator` role). */
+  run: OperatorRun;
+  /**
+   * Runs a callback in one transaction of the runtime connection, for what the operator DECIDES and
+   * the platform then carries out as it does for the jobs (a refund, letting a parked subscription
+   * go). The operator role itself cannot write a payment or reach the provider.
+   */
+  withTenant: WithTenant;
+  /** Which provider serves which service; the billing decisions of the operator reach the payments one. */
+  adapters?: AdapterResolver | undefined;
+  /** Queues the jobs a decision asks for (a new look at the subscription). */
+  jobs?: JobClient | undefined;
+  /** The door that says an organization was cancelled; the operator action publishes through it. */
+  tenantCancelled: TenantCancelledPort;
+  email: EmailSender;
+  /** Where an organization's emailed links point. */
+  origins: PublicOrigins;
+  clock?: () => Date;
 }
 
 /** What the module needs to fill its slots of the adapter registry. */
@@ -84,6 +136,12 @@ export interface WorkerWiringContext {
   clock?: () => Date;
   /** The same registry for every module of this worker process. */
   videoJoin: VideoJoinRegistry;
+  /**
+   * What happens to an organization when it ends (Stage 6), the one bus of this worker process. The
+   * end of a paid period is decided here (`dunning.step`), so the writer that publishes and the
+   * retention subscriber must share this bus, as they share the API's.
+   */
+  tenantLifecycle: TenantLifecycle;
 }
 
 /** Jobs, scheduled tasks and per-organization ticks a module adds to the worker process. */
@@ -106,8 +164,23 @@ export interface ModuleWiring {
   devProviders?: (context: DevWiringContext) => readonly DevProvider[];
   /** True when the module enqueues jobs from a request, so the API process holds a queue client. */
   needsJobs?: boolean;
-  /** Builds the module: returns its routes and subscribes to the event bus. */
-  create(context: WiringContext): { routes?: FeatureRoutes };
+  /**
+   * Builds the module: returns its routes and subscribes to the event bus. `featureRoutes` are the
+   * routes that exist only where the deployment has the capability (`signup` and `subscriptions`
+   * only in multi mode, `operator_console` only with the console): the composition root registers
+   * them behind the feature registry, so a single-tenant deployment never serves them.
+   */
+  create(context: WiringContext): {
+    routes?: FeatureRoutes;
+    featureRoutes?: Partial<Record<FeatureKey, FeatureRoutes>>;
+  };
+  /**
+   * Routes this module adds INSIDE the operator console (Stage 6: the subscription support view, the
+   * cancellation, the archive releases). They are registered after the console's guard, so they
+   * answer only on the platform host behind the operator session, and each one declares
+   * `config.operatorAuth: 'session'`. Read the operator with `operatorOf(request)`.
+   */
+  operatorRoutes?: (context: OperatorWiringContext) => (app: FastifyInstance) => void;
   /** The module's part of the worker process. */
   worker?: (context: WorkerWiringContext) => WorkerContribution;
 }

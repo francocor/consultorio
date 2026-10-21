@@ -13,7 +13,8 @@ import type { TokenKind } from '../tokens/kinds.js';
  * which token it redeems, who may have the file, which audit entry the download writes.
  *
  * The documents module registers `document_download`; the billing track registers
- * `export_download` and the invoicing track `invoice_pdf`. Neither owns the route.
+ * `export_download` and the invoicing track `invoice_pdf`; the retention track (Stage 6) registers
+ * `cancellation_export` for the packages of the cancellation export. None of them owns the route.
  *
  * The patient portal has a door of its own (Stage 5): the registry is generic over the actor who
  * redeems, so the staff registry holds resources that take a staff `Actor` and the portal registry
@@ -27,6 +28,7 @@ export const FILE_TOKEN_KINDS = [
   'export_download',
   'invoice_pdf',
   'prescription_pdf',
+  'cancellation_export',
 ] as const satisfies readonly TokenKind[];
 export type FileTokenKind = (typeof FILE_TOKEN_KINDS)[number];
 

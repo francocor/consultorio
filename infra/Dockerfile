@@ -1,6 +1,7 @@
 # syntax=docker/dockerfile:1
 #
-# One image, two roles: `docker run IMAGE api` or `docker run IMAGE worker`.
+# One image, three roles: `docker run IMAGE api`, `worker` or `releaser` (the process that holds the
+# key of the retention archive; see docs/runbooks/archive-release.md).
 # Build from the repository root:  docker build -f infra/Dockerfile -t consultorio-api .
 
 # ---- build: install the workspace and bundle the API ------------------------------------------
@@ -40,7 +41,7 @@ COPY --from=build --chown=node:node /repo/apps/api/assets ./assets
 USER node
 EXPOSE 3000
 
-# Meaningful for the `api` role. The `worker` role has no HTTP port: override this check there.
+# Meaningful for the `api` role. The `worker` and `releaser` roles have no HTTP port: override this check there.
 HEALTHCHECK --interval=30s --timeout=3s --start-period=15s --retries=3 \
     CMD ["node", "-e", "fetch('http://127.0.0.1:'+(process.env.PORT||3000)+'/health').then(r=>process.exit(r.ok?0:1),()=>process.exit(1))"]
 

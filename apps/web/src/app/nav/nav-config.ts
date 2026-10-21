@@ -1,7 +1,6 @@
 import type { Permission, Role } from '@consultorio/contracts';
 import {
   CalendarDays,
-  CreditCard,
   FilePen,
   House,
   ListTodo,
@@ -26,8 +25,8 @@ import type { ContributedNavItem, NavLayout } from '../registry.js';
  *
  * The cash register, the reports, the charges and the invoices (Stage 4) are not here: their
  * features contribute them through their own `nav.ts` (`docs/stage4-tracks.md` gives the ids,
- * paths, permissions and places), so no track edits this file. The subscription (`billing`, Stage
- * 6) is a different screen and keeps its entry.
+ * paths, permissions and places), so no track edits this file. The same goes for the platform
+ * subscription and the export of Stage 6 (`features/subscription/nav.ts`, `features/export/nav.ts`).
  */
 export const ENABLED_STAGE = 2;
 
@@ -47,7 +46,6 @@ export type NavId =
   | 'drafts'
   | 'prescriptions'
   | 'staff'
-  | 'billing'
   | 'audit'
   | 'settings';
 
@@ -62,6 +60,8 @@ export interface NavItem {
   stage: number;
   /** The user needs any one of these; empty means everyone who is signed in. */
   anyOf: readonly Permission[];
+  /** Hidden in a single-tenant deployment (see `ContributedNavItem.multiModeOnly`). */
+  multiModeOnly?: boolean;
 }
 
 export const NAV_ITEMS: Record<NavId, NavItem> = {
@@ -130,14 +130,6 @@ export const NAV_ITEMS: Record<NavId, NavItem> = {
     stage: 1,
     anyOf: ['staff.manage'],
   },
-  billing: {
-    id: 'billing',
-    to: '/billing',
-    labelKey: 'nav.billing',
-    icon: CreditCard,
-    stage: 6,
-    anyOf: ['billing.manage'],
-  },
   audit: {
     id: 'audit',
     to: '/audit',
@@ -162,7 +154,7 @@ type Layout = NavLayout;
 const LAYOUTS: Record<Layout, readonly string[]> = {
   professional: ['today', 'calendar', 'patients', 'drafts', 'prescriptions'],
   reception: ['calendar', 'check-in', 'worklist', 'patients'],
-  admin: ['calendar', 'worklist', 'patients', 'staff', 'billing', 'audit', 'settings'],
+  admin: ['calendar', 'worklist', 'patients', 'staff', 'audit', 'settings'],
 };
 
 const LAYOUT_OF_ROLE: Partial<Record<Role, Layout>> = {
@@ -180,6 +172,8 @@ export interface NavOptions {
   stage?: number;
   /** The entries features contribute through their `nav.ts` (the registry's `navItems`). */
   contributed?: readonly ContributedNavItem[];
+  /** Whether the deployment hosts many organizations or one; unknown (still loading) hides the multi-only entries. */
+  deploymentMode?: 'multi' | 'single' | undefined;
 }
 
 /** The entries of a layout with the contributed ones placed after the entry they name. */
@@ -201,6 +195,7 @@ export function buildNav({
   roles,
   stage = ENABLED_STAGE,
   contributed = [],
+  deploymentMode,
 }: NavOptions): NavItem[] {
   const layouts = new Set(roles.flatMap((role) => LAYOUT_OF_ROLE[role] ?? []));
   const ids = [
@@ -222,6 +217,9 @@ export function buildNav({
     const item = known.get(id);
     if (!item) continue;
     if (item.stage > stage) continue;
+    // Until the deployment is known the entry stays out: an entry that appears is a lesser flicker
+    // than a dead link that disappears.
+    if (item.multiModeOnly === true && deploymentMode !== 'multi') continue;
     if (stage <= ENABLED_STAGE && isNavId(id) && NOT_BUILT_YET.has(id)) continue;
     if (item.anyOf.length > 0 && !item.anyOf.some((permission) => granted.has(permission)))
       continue;

@@ -15,7 +15,20 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # The type-aware lint runs in several processes, one after the other (about five minutes on a laptop,
+  # packages/config/eslint/lint.js): it is a job of its own so that it runs beside the rest and the
+  # time of the checks is the longer of the two, not their sum.
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: ./.github/actions/setup-workspace
+      - run: pnpm lint
+
   check:
+    # The name stays as the required checks of the repository know it; lint has its own job above.
     name: Typecheck, lint, unit tests, build
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -23,7 +36,6 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - uses: ./.github/actions/setup-workspace
       - run: pnpm typecheck
-      - run: pnpm lint
       - run: pnpm format:check
       - run: pnpm test
       - run: pnpm build
@@ -96,9 +108,25 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - uses: ./.github/actions/setup-workspace
       - run: pnpm --filter @consultorio/web build
+      # What the sign-in page downloads first: the catalogs and the navigation of the features stay out.
+      - run: pnpm --filter @consultorio/web test:build
       # lighthouserc.json: mobile, 4G with a 4x slower CPU. The job fails when LCP is over 2.5 s,
       # performance is under 0.85, accessibility is under 0.95 or the layout shifts too much.
       - run: pnpm exec lhci autorun
+
+  alert-rules:
+    name: Alert rules (promtool)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      # The rules are code (infra/alerts/rules.yml). Prometheus itself checks their syntax and the scrape
+      # configuration that loads them; the unit test alert-rules.test.ts checks that they read only
+      # series the application exposes.
+      - name: Check the rules and the scrape configuration
+        run: |
+          docker run --rm -v "$PWD/infra:/infra:ro" --entrypoint promtool prom/prometheus:v3.5.0 check rules /infra/alerts/rules.yml
+          docker run --rm -v "$PWD/infra:/etc/prometheus:ro" --entrypoint promtool prom/prometheus:v3.5.0 check config /etc/prometheus/prometheus/prometheus.yml
 
   audit:
     name: Dependency audit

@@ -1,9 +1,9 @@
 import { effectivePermissions, type AppointmentStatus, type Role } from '@consultorio/contracts';
 import { fireEvent, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { describe, expect, it, vi } from 'vitest';
+import { beforeAll, describe, expect, it, vi } from 'vitest';
 
-import { createRegistry, type AppRegistry } from '../../app/registry.js';
+import { createRegistry, defaultRegistry, type AppRegistry } from '../../app/registry.js';
 import { a11yViolations } from '../../shared/test/a11y.js';
 import { meFor } from '../../shared/test/fixtures.js';
 import { renderInRouter } from '../../shared/test/render-app.js';
@@ -103,6 +103,12 @@ interface Mount {
   routes?: Record<string, FetchHandler | Response>;
   registry?: AppRegistry;
 }
+
+// The drawer sits inside the signed-in frame, which waits for the slots of the features before it draws.
+// This test mounts it alone, so it waits for them here.
+beforeAll(async () => {
+  await defaultRegistry().ready();
+});
 
 function mount(options: Mount = {}) {
   const status = options.status ?? 'scheduled';

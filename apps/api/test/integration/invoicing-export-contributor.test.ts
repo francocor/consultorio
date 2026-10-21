@@ -6,6 +6,7 @@ import { exportInvoicing } from '../../src/modules/invoicing/application/export-
 import { createExportRegistry } from '../../src/modules/tenancy/index.js';
 import { createRuntimeDb, type DbHandle } from '../../src/platform/db/pool.js';
 import { generateDevCertificate } from '../../src/testing/dev-afip-certificate.js';
+import { settled } from '../support/export-sections.js';
 import { createInvoicingWorld, type InvoicingWorld } from '../support/invoicing-world.js';
 import { asTenant } from '../support/tenants.js';
 
@@ -54,7 +55,7 @@ interface Part {
 
 const contribute = (world: InvoicingWorld) =>
   asTenant(runtime, world.tenant.id, (tx) =>
-    exportInvoicing({ tx, tenantId: world.tenant.id }),
+    settled(exportInvoicing({ tx, tenantId: world.tenant.id })),
   ) as Promise<Part>;
 
 describe('the administrative export of invoicing', () => {

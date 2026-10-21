@@ -4,7 +4,7 @@ import { describe, expect, it } from 'vitest';
 
 import { collectNav, type ContributedNavItem } from '../registry.js';
 
-import { buildNav, splitForMobile, ENABLED_STAGE } from './nav-config.js';
+import { buildNav, splitForMobile, ENABLED_STAGE, NAV_ITEMS } from './nav-config.js';
 
 const idsFor = (roles: readonly Role[], stage = ENABLED_STAGE, grants: string[] = []) =>
   buildNav({ permissions: effectivePermissions(roles, grants), roles, stage }).map(
@@ -111,18 +111,19 @@ describe('navigation once every stage has shipped', () => {
     ]);
   });
 
-  it('owner layout adds the subscription, only for the owner', () => {
-    expect(idsFor(['owner'], 6)).toEqual([
-      'home',
-      'calendar',
-      'worklist',
-      'patients',
-      'staff',
-      'billing',
-      'audit',
-      'settings',
-    ]);
-    expect(idsFor(['admin'], 6)).not.toContain('billing');
+  it('owner and admin share one layout: the subscription is contributed by its feature, not reserved by the shell', () => {
+    for (const role of ['owner', 'admin'] as const) {
+      expect(idsFor([role], 6), role).toEqual([
+        'home',
+        'calendar',
+        'worklist',
+        'patients',
+        'staff',
+        'audit',
+        'settings',
+      ]);
+    }
+    expect(Object.keys(NAV_ITEMS)).not.toContain('billing');
   });
 
   it('a multi-role user combines the layouts, professional first', () => {
@@ -144,7 +145,6 @@ describe('every entry names a permission the role catalog really has', () => {
     expect([...shown].sort()).toEqual(
       [
         'audit',
-        'billing',
         'calendar',
         'check-in',
         'drafts',
@@ -354,5 +354,52 @@ describe('the revenue screens (Stage 4) contribute their own entries', () => {
 
   it('a patient sees none of it', () => {
     expect(idsFor4(['patient'])).toEqual(['home']);
+  });
+});
+
+describe('entries that exist only on the multi-tenant platform', () => {
+  const subscription: ContributedNavItem = {
+    id: 'subscription',
+    to: '/subscription',
+    labelKey: 'subscription:nav',
+    icon: Users,
+    anyOf: ['billing.manage'],
+    multiModeOnly: true,
+    placements: [{ layout: 'admin', after: 'staff' }],
+  };
+  const idsIn = (deploymentMode: 'multi' | 'single' | undefined) =>
+    buildNav({
+      permissions: effectivePermissions(['owner'], []),
+      roles: ['owner'],
+      contributed: [subscription],
+      deploymentMode,
+    }).map((item) => item.id);
+
+  it('lists it for the owner of a multi-tenant platform, after the team', () => {
+    expect(idsIn('multi')).toContain('subscription');
+    const ids = idsIn('multi');
+    expect(ids.indexOf('subscription')).toBe(ids.indexOf('staff') + 1);
+  });
+
+  it('leaves it out of a single-tenant deployment, which has no subscription', () => {
+    expect(idsIn('single')).not.toContain('subscription');
+    // The rest of the layout is the same.
+    expect(idsIn('single')).toEqual(idsIn('multi').filter((id) => id !== 'subscription'));
+  });
+
+  it('keeps it out while the deployment is still unknown, so a single-tenant owner never sees a dead link appear', () => {
+    expect(idsIn(undefined)).not.toContain('subscription');
+  });
+
+  it('never hides an entry that does not say so, in either mode', () => {
+    const plain: ContributedNavItem = { ...subscription, id: 'export', multiModeOnly: false };
+    const ids = buildNav({
+      permissions: effectivePermissions(['owner'], []),
+      roles: ['owner'],
+      contributed: [plain],
+      deploymentMode: 'single',
+    }).map((item) => item.id);
+
+    expect(ids).toContain('export');
   });
 });

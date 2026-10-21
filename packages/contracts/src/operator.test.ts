@@ -19,6 +19,21 @@ describe('the platform audit actions', () => {
     }
   });
 
+  it('record what the platform does without an organization to write to: the purge of a signup, a cancellation and the archive', () => {
+    for (const action of [
+      'signup.purged',
+      'tenant.cancelled',
+      'archive.written',
+      'archive.verified',
+      'archive.accessed',
+      'archive.released',
+      'archive.erased',
+    ]) {
+      expect(isPlatformAuditAction(action), action).toBe(true);
+      expect(PLATFORM_AUDIT_ACTIONS.filter((known) => known === action)).toHaveLength(1);
+    }
+  });
+
   it('keeps every action unique and dot separated', () => {
     expect(new Set(PLATFORM_AUDIT_ACTIONS).size).toBe(PLATFORM_AUDIT_ACTIONS.length);
     for (const action of PLATFORM_AUDIT_ACTIONS) {

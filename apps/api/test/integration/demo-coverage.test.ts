@@ -1,4 +1,5 @@
 import { randomBytes } from 'node:crypto';
+import { fileURLToPath } from 'node:url';
 
 import { sql } from 'drizzle-orm';
 import pg from 'pg';
@@ -14,6 +15,7 @@ import { createPasswordHasher } from '../../src/modules/identity/infrastructure/
 import { createTenantKeys } from '../../src/platform/crypto/tenant-keys.js';
 import { createOwnerDb, createRuntimeDb, type DbHandle } from '../../src/platform/db/pool.js';
 import { createWithTenant } from '../../src/platform/db/tenant-context.js';
+import { discoverModules } from '../support/discover-modules.js';
 import { createOperatorHarness, type OperatorHarness } from '../support/operator.js';
 import { createTestTenant } from '../support/tenants.js';
 
@@ -48,15 +50,10 @@ const CORE_NO_SEED_DATA: Record<string, string> = {
  * file of `demo-coverage-exemptions/` (exporting `exemptions`), with the slice that seeds it.
  * The seed slice removes the entry. No track edits the list above.
  */
-const exemptionFiles = import.meta.glob<{ exemptions: Record<string, string> }>(
-  './demo-coverage-exemptions/*.ts',
-  { eager: true },
-);
-const NO_SEED_DATA: Record<string, string> = Object.fromEntries(
-  [CORE_NO_SEED_DATA, ...Object.values(exemptionFiles).map((file) => file.exemptions)].flatMap(
-    (list) => Object.entries(list),
-  ),
-);
+const EXEMPTIONS_FOLDER = fileURLToPath(new URL('./demo-coverage-exemptions', import.meta.url));
+// Filled in `beforeAll` from the folder as it is on disk: `import.meta.glob` kept a stale list
+// until `node_modules/.vitest-cache` was removed (see `discoverModules`).
+let NO_SEED_DATA: Record<string, string> = {};
 
 let runtime: DbHandle;
 let owner: pg.Client;
@@ -64,6 +61,14 @@ let operator: OperatorHarness;
 let deps: DemoSeedDeps;
 
 beforeAll(async () => {
+  const exemptionFiles = await discoverModules<{ exemptions: Record<string, string> }>(
+    EXEMPTIONS_FOLDER,
+  );
+  NO_SEED_DATA = Object.fromEntries(
+    [CORE_NO_SEED_DATA, ...Object.values(exemptionFiles).map((file) => file.exemptions)].flatMap(
+      (list) => Object.entries(list),
+    ),
+  );
   const ownerDb = createOwnerDb(inject('ownerUrl'));
   await seedPlatformCatalogs(ownerDb.db);
   await ownerDb.close();

@@ -8,7 +8,6 @@
   "nav.drafts": "Borradores",
   "nav.prescriptions": "Recetas",
   "nav.staff": "Equipo",
-  "nav.billing": "Facturación",
   "nav.audit": "Auditoría",
   "nav.settings": "Configuración",
   "nav.primary": "Navegación principal",
@@ -52,5 +51,7 @@
   "book.slug": "Organización: {{slug}}",
   "notFound.action": "Ir al inicio",
   "banner.enrollment.action": "Activar ahora",
-  "nav.bottom": "Navegación inferior"
+  "banner.readOnly.action": "Ir a la suscripción",
+  "nav.bottom": "Navegación inferior",
+  "platform.title": "Gestión de consultorios"
 }

@@ -37,6 +37,7 @@ import {
 } from '../../../shared/ui/form.js';
 import { Input } from '../../../shared/ui/input.js';
 import { toast } from '../../../shared/ui/toaster.js';
+import { PlanImpactPanel } from '../../subscription/index.js';
 import { staffApi, staffKeys } from '../api/staff-api.js';
 
 const Schema = z.object({
@@ -183,6 +184,10 @@ export function InviteStaffDialog({
                     <Alert tone="info">
                       <AlertDescription>{t('staff:invite.professionalNotice')}</AlertDescription>
                     </Alert>
+                  ) : null}
+                  {/* A professional takes a priced seat: the owner sees the price before confirming. */}
+                  {chosen.includes('professional') && inviterRoles.includes('owner') ? (
+                    <PlanImpactPanel />
                   ) : null}
                   <FormMessage />
                 </FormItem>

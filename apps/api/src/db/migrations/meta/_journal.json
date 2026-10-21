@@ -764,6 +764,174 @@
       "when": 1792464632300,
       "tag": "0581_expiry_requires_flag",
       "breakpoints": true
+    },
+    {
+      "idx": 109,
+      "version": "7",
+      "when": 1792483820939,
+      "tag": "0610_subscriptions",
+      "breakpoints": true
+    },
+    {
+      "idx": 110,
+      "version": "7",
+      "when": 1792485128936,
+      "tag": "0612_local_mercadopago",
+      "breakpoints": true
+    },
+    {
+      "idx": 111,
+      "version": "7",
+      "when": 1792485840725,
+      "tag": "0614_subscription_payments",
+      "breakpoints": true
+    },
+    {
+      "idx": 112,
+      "version": "7",
+      "when": 1792489377376,
+      "tag": "0616_subscription_notices",
+      "breakpoints": true
+    },
+    {
+      "idx": 113,
+      "version": "7",
+      "when": 1792492313425,
+      "tag": "0618_usage_and_statements",
+      "breakpoints": true
+    },
+    {
+      "idx": 114,
+      "version": "7",
+      "when": 1792492313426,
+      "tag": "0640_signup",
+      "breakpoints": true
+    },
+    {
+      "idx": 115,
+      "version": "7",
+      "when": 1792492313427,
+      "tag": "0641_signup_unsent",
+      "breakpoints": true
+    },
+    {
+      "idx": 116,
+      "version": "7",
+      "when": 1792492313428,
+      "tag": "0650_export_package",
+      "breakpoints": true
+    },
+    {
+      "idx": 117,
+      "version": "7",
+      "when": 1792492313429,
+      "tag": "0651_cancellation_functions",
+      "breakpoints": true
+    },
+    {
+      "idx": 118,
+      "version": "7",
+      "when": 1792492313430,
+      "tag": "0652_archive_key",
+      "breakpoints": true
+    },
+    {
+      "idx": 119,
+      "version": "7",
+      "when": 1792492313431,
+      "tag": "0653_tenant_archive",
+      "breakpoints": true
+    },
+    {
+      "idx": 120,
+      "version": "7",
+      "when": 1792492313432,
+      "tag": "0654_archive_release",
+      "breakpoints": true
+    },
+    {
+      "idx": 121,
+      "version": "7",
+      "when": 1792492313433,
+      "tag": "0655_archive_release_cleanup",
+      "breakpoints": true
+    },
+    {
+      "idx": 122,
+      "version": "7",
+      "when": 1792530515810,
+      "tag": "0680_tenant_cancelled_terminal",
+      "breakpoints": true
+    },
+    {
+      "idx": 123,
+      "version": "7",
+      "when": 1792530519584,
+      "tag": "0681_subscription_event_purge",
+      "breakpoints": true
+    },
+    {
+      "idx": 124,
+      "version": "7",
+      "when": 1792530522247,
+      "tag": "0682_validate_notice_kind_check",
+      "breakpoints": true
+    },
+    {
+      "idx": 125,
+      "version": "7",
+      "when": 1792530522248,
+      "tag": "0685_signup_set_password_at_verify",
+      "breakpoints": true
+    },
+    {
+      "idx": 126,
+      "version": "7",
+      "when": 1792532474840,
+      "tag": "0686_archive_release_hardening",
+      "breakpoints": true
+    },
+    {
+      "idx": 127,
+      "version": "7",
+      "when": 1792532479479,
+      "tag": "0687_archive_erasure_and_health",
+      "breakpoints": true
+    },
+    {
+      "idx": 128,
+      "version": "7",
+      "when": 1792532483610,
+      "tag": "0688_archive_releaser_role",
+      "breakpoints": true
+    },
+    {
+      "idx": 129,
+      "version": "7",
+      "when": 1792532488043,
+      "tag": "0689_operator_cancel_guard",
+      "breakpoints": true
+    },
+    {
+      "idx": 130,
+      "version": "7",
+      "when": 1792614564670,
+      "tag": "0683_archive_release_four_eyes_bound",
+      "breakpoints": true
+    },
+    {
+      "idx": 131,
+      "version": "7",
+      "when": 1792620593059,
+      "tag": "0684_archive_release_unsent",
+      "breakpoints": true
+    },
+    {
+      "idx": 132,
+      "version": "7",
+      "when": 1792620595823,
+      "tag": "0656_export_cleanup_erased",
+      "breakpoints": true
     }
   ]
 }

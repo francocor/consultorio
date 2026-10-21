@@ -16,6 +16,8 @@ declare module 'vitest' {
     operatorUrl: string;
     /** Connection string for `audit_sealer`, the login only the worker uses. */
     sealerUrl: string;
+    /** Connection string for `app_releaser`, the login only the releaser uses (member of `app_rw`). */
+    releaserUrl: string;
     /** Container superuser: only for tests that act as a role the application cannot become. */
     adminUrl: string;
   }
@@ -55,6 +57,7 @@ export default async function setup(project: TestProject): Promise<() => Promise
   const runtimeUrl = url('app_rw', 'app_rw_dev_only');
   const operatorUrl = url('app_operator', 'app_operator_dev_only');
   const sealerUrl = url('audit_sealer', 'audit_sealer_dev_only');
+  const releaserUrl = url('app_releaser', 'app_releaser_dev_only');
 
   await runMigrations(ownerUrl, TEST_QUEUES);
 
@@ -62,6 +65,7 @@ export default async function setup(project: TestProject): Promise<() => Promise
   project.provide('runtimeUrl', runtimeUrl);
   project.provide('operatorUrl', operatorUrl);
   project.provide('sealerUrl', sealerUrl);
+  project.provide('releaserUrl', releaserUrl);
   project.provide('adminUrl', container.getConnectionUri());
 
   return async () => {

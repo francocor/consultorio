@@ -53,6 +53,19 @@ export const JOB_CATEGORIES: Readonly<Record<string, RouteCategory>> = {
   // The warnings about a change to the access of a person protect that person (JD-S5 R2-2).
   'portal.notice_send': 'patient_protective',
   'portal.notice_sweep': 'patient_protective',
+  // Stage 6. The subscription is the owner's: usage, the end of a trial, the dunning and the
+  // statements keep running in a read-only tenant, because that is how it recovers. What a webhook
+  // enqueues is as allowed as the webhook. The records of an ended organization are exported and
+  // archived while it is read-only or cancelled. The purge of a signup is housekeeping.
+  'usage.snapshot': 'subscription',
+  'trial.end': 'subscription',
+  'dunning.step': 'subscription',
+  'statement.generate': 'subscription',
+  'subscription.reconcile': 'webhook',
+  'signup.purge': 'write',
+  'archive.write': 'export',
+  'archive.verify': 'export',
+  'archive.release': 'export',
 };
 
 /** The category of a queue. A queue nobody classified is refused, not guessed. */
@@ -63,11 +76,12 @@ export function jobCategoryOf(queue: string): RouteCategory {
 }
 
 export interface TenantState {
-  status: 'active' | 'read_only' | 'cancelled';
+  status: 'active' | 'read_only' | 'cancelled' | 'unverified';
   readOnlySince: Date | null;
 }
 
-export type JobDecision = { run: true } | { run: false; reason: 'tenant_read_only' };
+export type JobDecision =
+  { run: true } | { run: false; reason: 'tenant_read_only' | 'tenant_unverified' };
 
 /**
  * Decides, at run time, whether a job may execute for a tenant. Jobs re-check the tenant every time
@@ -76,10 +90,17 @@ export type JobDecision = { run: true } | { run: false; reason: 'tenant_read_onl
  * - a read-only (or cancelled) tenant runs only allowlisted categories, so messages scheduled
  *   during the read-only period are cancelled with the reason "tenant_read_only" and are never
  *   replayed after recovery;
- * - an AFIP submission additionally needs to have been queued BEFORE `read_only_since`.
+ * - an AFIP submission additionally needs to have been queued BEFORE `read_only_since`;
+ * - an unverified organization (a signup nobody confirmed) has no data and no member, so nothing
+ *   runs for it except the sealing of its own audit trail: not even the allowlisted categories.
  */
 export function jobMayRun(job: JobDescriptor, tenant: TenantState, enqueuedAt: Date): JobDecision {
   if (tenant.status === 'active') return { run: true };
+  if (tenant.status === 'unverified') {
+    return job.category === 'audit_write'
+      ? { run: true }
+      : { run: false, reason: 'tenant_unverified' };
+  }
   if (!isAllowedWhenReadOnly(job.category)) return { run: false, reason: 'tenant_read_only' };
   if (job.category === 'afip_submission') {
     const queuedBeforeFreeze =

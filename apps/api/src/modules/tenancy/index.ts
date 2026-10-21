@@ -20,6 +20,17 @@ import { supportRoutes } from './http/support-routes.js';
 export { readOrganizationName } from './application/organization-name.js';
 export { assertCanCreateTenant } from './application/create-tenant-policy.js';
 export { createExportRegistry } from './application/export-registry.js';
+export {
+  afterStamp,
+  EXPORT_PAGE_SIZE,
+  omitCursor,
+  pagedBatches,
+  pagedByStamp,
+  pagedRows,
+  stampText,
+  type StampCursor,
+  type StampRow,
+} from './application/export-pages.js';
 export type {
   ExportContext,
   ExportContributor,
@@ -28,6 +39,38 @@ export type {
   RegisteredContributor,
 } from './application/export-registry.js';
 export { createResolveHost } from './application/resolve-tenant.js';
+export { createTenantLifecycle } from './application/lifecycle.js';
+export type {
+  CancellationSource,
+  TenantCancelledEvent,
+  TenantCancelledHandler,
+  TenantCancelledPort,
+  TenantLifecycle,
+} from './application/lifecycle.js';
+export { createCancellation } from './cancellation/cancellation.js';
+export type { Cancellation, CancellationOptions } from './cancellation/cancellation.js';
+export {
+  CANCELLATION_EXPORT_JOB,
+  createCancellationExportJob,
+} from './cancellation/build-export.js';
+export type { CancellationExportDeps } from './cancellation/build-export.js';
+export { enqueuePendingExports, subscribeCancellationExport } from './cancellation/queue.js';
+export { operatorCancelRoutes } from './cancellation/http/operator-cancel-routes.js';
+export { createArchive } from './archive/archive.js';
+export { enqueueDueArchives, enqueueDueVerifications } from './archive/due.js';
+export { removeSpentExports } from './cancellation/export-cleanup.js';
+export { createArchiveKeyReleaser, createArchiveKeyWriter } from './archive/keys.js';
+export type { ArchiveKeyReleaser, ArchiveKeyWriter } from './archive/keys.js';
+export { createArchiveVerifyJob, ARCHIVE_VERIFY_JOB } from './archive/verify-archive.js';
+export { releaseRoutes } from './archive/http/release-routes.js';
+export { createArchiveReleaseJob, ARCHIVE_RELEASE_JOB } from './archive/release-archive.js';
+export { createReleaser } from './archive/releaser.js';
+export type { Releaser, ReleaserOptions } from './archive/releaser.js';
+export { createReleaseRequests } from './archive/release-requests.js';
+export type { ReleaseRequests } from './archive/release-requests.js';
+export { createArchiveWriteJob, ARCHIVE_WRITE_JOB } from './archive/write-archive.js';
+export type { Archive, ArchiveOptions } from './archive/archive.js';
+export type * from './archive/ports.js';
 export type { LookupTenant } from './application/resolve-tenant.js';
 export { classifyHost } from './domain/host.js';
 export type { DeploymentSettings, HostClassification } from './domain/host.js';

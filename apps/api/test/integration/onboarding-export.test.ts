@@ -56,6 +56,7 @@ describe('administrative export of the first run', () => {
       exportOnboarding({ tx, tenantId: empty.id }),
     );
 
-    expect(part).toEqual({ progress: null });
+    // No progress, and no signup acceptance either: the organization was created by an operator.
+    expect(part).toEqual({ progress: null, termsAcceptances: [] });
   });
 });

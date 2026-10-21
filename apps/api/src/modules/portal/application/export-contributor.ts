@@ -6,7 +6,13 @@ import {
   portalLink,
   portalSession,
 } from '../../../db/schema/portal.js';
-import type { ExportContributor } from '../../tenancy/index.js';
+import {
+  afterStamp,
+  omitCursor,
+  pagedByStamp,
+  stampText,
+  type ExportContributor,
+} from '../../tenancy/index.js';
 
 const iso = (value: Date | null): string | null => value?.toISOString() ?? null;
 
@@ -22,82 +28,126 @@ const iso = (value: Date | null): string | null => value?.toISOString() ?? null;
  * What it never carries: the token of a session (only its hash is stored, and the hash is not
  * exported either), the address or the browser of a session, the sign-in codes, the activation
  * links, and the text of the verification note a member of the staff wrote about a representative.
+ *
+ * The sessions (a row for every sign-in, for years) and the other lists are read a page at a time.
  */
-export const exportPortal: ExportContributor = async ({ tx }) => {
-  const identities = await tx
-    .select({
-      id: portalIdentity.id,
-      email: portalIdentity.email,
-      status: portalIdentity.status,
-      invitedPatientId: portalIdentity.invitedPatientId,
-      createdAt: portalIdentity.createdAt,
-      activatedAt: portalIdentity.activatedAt,
-      deactivatedAt: portalIdentity.deactivatedAt,
-    })
-    .from(portalIdentity)
-    .orderBy(asc(portalIdentity.createdAt), asc(portalIdentity.id));
-  const links = await tx
-    .select({
-      id: portalLink.id,
-      identityId: portalLink.portalIdentityId,
-      patientId: portalLink.patientId,
-      relationship: portalLink.relationship,
-      relation: portalLink.relation,
-      status: portalLink.status,
-      majorityReviewOn: portalLink.majorityReviewOn,
-      createdAt: portalLink.createdAt,
-      suspendedAt: portalLink.suspendedAt,
-      revokedAt: portalLink.revokedAt,
-    })
-    .from(portalLink)
-    .orderBy(asc(portalLink.createdAt), asc(portalLink.id));
-  const sessions = await tx
-    .select({
-      id: portalSession.id,
-      identityId: portalSession.portalIdentityId,
-      createdAt: portalSession.createdAt,
-      lastSeenAt: portalSession.lastSeenAt,
-      expiresAt: portalSession.expiresAt,
-      revokedAt: portalSession.revokedAt,
-      revokedReason: portalSession.revokedReason,
-    })
-    .from(portalSession)
-    .orderBy(asc(portalSession.createdAt), asc(portalSession.id));
-  const shares = await tx
-    .select({
-      id: documentShare.id,
-      documentId: documentShare.documentId,
-      patientId: documentShare.patientId,
-      createdAt: documentShare.createdAt,
-      unsharedAt: documentShare.unsharedAt,
-    })
-    .from(documentShare)
-    .orderBy(asc(documentShare.createdAt), asc(documentShare.id));
-
-  return {
-    identities: identities.map((row) => ({
-      ...row,
-      createdAt: row.createdAt.toISOString(),
-      activatedAt: iso(row.activatedAt),
-      deactivatedAt: iso(row.deactivatedAt),
-    })),
-    links: links.map((row) => ({
-      ...row,
-      createdAt: row.createdAt.toISOString(),
-      suspendedAt: iso(row.suspendedAt),
-      revokedAt: iso(row.revokedAt),
-    })),
-    sessions: sessions.map((row) => ({
-      ...row,
-      createdAt: row.createdAt.toISOString(),
-      lastSeenAt: row.lastSeenAt.toISOString(),
-      expiresAt: row.expiresAt.toISOString(),
-      revokedAt: iso(row.revokedAt),
-    })),
-    documentShares: shares.map((row) => ({
-      ...row,
-      createdAt: row.createdAt.toISOString(),
-      unsharedAt: iso(row.unsharedAt),
-    })),
-  };
-};
+export const exportPortal: ExportContributor = ({ tx, pageSize }) =>
+  Promise.resolve({
+    identities: pagedByStamp({
+      pageSize,
+      fetch: (after, limit) =>
+        tx
+          .select({
+            id: portalIdentity.id,
+            email: portalIdentity.email,
+            status: portalIdentity.status,
+            invitedPatientId: portalIdentity.invitedPatientId,
+            createdAt: portalIdentity.createdAt,
+            activatedAt: portalIdentity.activatedAt,
+            deactivatedAt: portalIdentity.deactivatedAt,
+            cursorAt: stampText(portalIdentity.createdAt),
+            cursorId: portalIdentity.id,
+          })
+          .from(portalIdentity)
+          .where(afterStamp(portalIdentity.createdAt, portalIdentity.id, after))
+          .orderBy(asc(portalIdentity.createdAt), asc(portalIdentity.id))
+          .limit(limit),
+      project: (raw) => {
+        const row = omitCursor(raw);
+        return {
+          ...row,
+          createdAt: row.createdAt.toISOString(),
+          activatedAt: iso(row.activatedAt),
+          deactivatedAt: iso(row.deactivatedAt),
+        };
+      },
+    }),
+    links: pagedByStamp({
+      pageSize,
+      fetch: (after, limit) =>
+        tx
+          .select({
+            id: portalLink.id,
+            identityId: portalLink.portalIdentityId,
+            patientId: portalLink.patientId,
+            relationship: portalLink.relationship,
+            relation: portalLink.relation,
+            status: portalLink.status,
+            majorityReviewOn: portalLink.majorityReviewOn,
+            createdAt: portalLink.createdAt,
+            suspendedAt: portalLink.suspendedAt,
+            revokedAt: portalLink.revokedAt,
+            cursorAt: stampText(portalLink.createdAt),
+            cursorId: portalLink.id,
+          })
+          .from(portalLink)
+          .where(afterStamp(portalLink.createdAt, portalLink.id, after))
+          .orderBy(asc(portalLink.createdAt), asc(portalLink.id))
+          .limit(limit),
+      project: (raw) => {
+        const row = omitCursor(raw);
+        return {
+          ...row,
+          createdAt: row.createdAt.toISOString(),
+          suspendedAt: iso(row.suspendedAt),
+          revokedAt: iso(row.revokedAt),
+        };
+      },
+    }),
+    sessions: pagedByStamp({
+      pageSize,
+      fetch: (after, limit) =>
+        tx
+          .select({
+            id: portalSession.id,
+            identityId: portalSession.portalIdentityId,
+            createdAt: portalSession.createdAt,
+            lastSeenAt: portalSession.lastSeenAt,
+            expiresAt: portalSession.expiresAt,
+            revokedAt: portalSession.revokedAt,
+            revokedReason: portalSession.revokedReason,
+            cursorAt: stampText(portalSession.createdAt),
+            cursorId: portalSession.id,
+          })
+          .from(portalSession)
+          .where(afterStamp(portalSession.createdAt, portalSession.id, after))
+          .orderBy(asc(portalSession.createdAt), asc(portalSession.id))
+          .limit(limit),
+      project: (raw) => {
+        const row = omitCursor(raw);
+        return {
+          ...row,
+          createdAt: row.createdAt.toISOString(),
+          lastSeenAt: row.lastSeenAt.toISOString(),
+          expiresAt: row.expiresAt.toISOString(),
+          revokedAt: iso(row.revokedAt),
+        };
+      },
+    }),
+    documentShares: pagedByStamp({
+      pageSize,
+      fetch: (after, limit) =>
+        tx
+          .select({
+            id: documentShare.id,
+            documentId: documentShare.documentId,
+            patientId: documentShare.patientId,
+            createdAt: documentShare.createdAt,
+            unsharedAt: documentShare.unsharedAt,
+            cursorAt: stampText(documentShare.createdAt),
+            cursorId: documentShare.id,
+          })
+          .from(documentShare)
+          .where(afterStamp(documentShare.createdAt, documentShare.id, after))
+          .orderBy(asc(documentShare.createdAt), asc(documentShare.id))
+          .limit(limit),
+      project: (raw) => {
+        const row = omitCursor(raw);
+        return {
+          ...row,
+          createdAt: row.createdAt.toISOString(),
+          unsharedAt: iso(row.unsharedAt),
+        };
+      },
+    }),
+  });

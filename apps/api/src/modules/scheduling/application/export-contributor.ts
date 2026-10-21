@@ -8,7 +8,12 @@ import {
   tenantDayOff,
 } from '../../../db/schema/scheduling-config.js';
 import { appointment, appointmentEvent } from '../../../db/schema/scheduling.js';
-import type { ExportContributor } from '../../tenancy/index.js';
+import {
+  afterStamp,
+  pagedByStamp,
+  stampText,
+  type ExportContributor,
+} from '../../tenancy/index.js';
 
 /**
  * Administrative export part owned by scheduling: the appointment types, every appointment with
@@ -16,8 +21,12 @@ import type { ExportContributor } from '../../tenancy/index.js';
  * is clinical content. The transient parts (slot holds, the occupancy index) are derived from the
  * appointments and are not exported, and neither is the reception worklist, an operational queue
  * whose details are encrypted.
+ *
+ * The appointments (in the order of their day and hour) and the history of their changes grow with the
+ * years of the organization, so they are read a page at a time. The types, the blocks, the days off and
+ * the special hours are as many as the organization sets up, and stay lists.
  */
-export const exportScheduling: ExportContributor = async ({ tx }) => {
+export const exportScheduling: ExportContributor = async ({ tx, pageSize }) => {
   const types = await tx
     .select({
       id: appointmentType.id,
@@ -32,46 +41,62 @@ export const exportScheduling: ExportContributor = async ({ tx }) => {
     .from(appointmentType)
     .orderBy(asc(appointmentType.createdAt), asc(appointmentType.id));
 
-  const appointments = await tx
-    .select({
-      id: appointment.id,
-      patientId: appointment.patientId,
-      patientFamilyName: patient.familyName,
-      patientGivenNames: patient.givenNames,
-      professionalId: appointment.professionalId,
-      locationId: appointment.locationId,
-      appointmentTypeId: appointment.appointmentTypeId,
-      startsAt: appointment.startsAt,
-      endsAt: appointment.endsAt,
-      status: appointment.status,
-      source: appointment.source,
-      outOfHours: appointment.outOfHours,
-      overrideReason: appointment.overrideReason,
-      identityConfirmed: appointment.identityConfirmed,
-      seriesId: appointment.seriesId,
-      cancelledByKind: appointment.cancelledByKind,
-      cancelReason: appointment.cancelReason,
-      cancelNote: appointment.cancelNote,
-      cancelledAt: appointment.cancelledAt,
-      lateCancellation: appointment.lateCancellation,
-      bookedAt: appointment.createdAt,
-    })
-    .from(appointment)
-    .innerJoin(patient, eq(patient.id, appointment.patientId))
-    .orderBy(asc(appointment.startsAt), asc(appointment.id));
+  const appointments = pagedByStamp({
+    pageSize,
+    fetch: (after, limit) =>
+      tx
+        .select({
+          id: appointment.id,
+          patientId: appointment.patientId,
+          patientFamilyName: patient.familyName,
+          patientGivenNames: patient.givenNames,
+          professionalId: appointment.professionalId,
+          locationId: appointment.locationId,
+          appointmentTypeId: appointment.appointmentTypeId,
+          startsAt: appointment.startsAt,
+          endsAt: appointment.endsAt,
+          status: appointment.status,
+          source: appointment.source,
+          outOfHours: appointment.outOfHours,
+          overrideReason: appointment.overrideReason,
+          identityConfirmed: appointment.identityConfirmed,
+          seriesId: appointment.seriesId,
+          cancelledByKind: appointment.cancelledByKind,
+          cancelReason: appointment.cancelReason,
+          cancelNote: appointment.cancelNote,
+          cancelledAt: appointment.cancelledAt,
+          lateCancellation: appointment.lateCancellation,
+          bookedAt: appointment.createdAt,
+          cursorAt: stampText(appointment.startsAt),
+          cursorId: appointment.id,
+        })
+        .from(appointment)
+        .innerJoin(patient, eq(patient.id, appointment.patientId))
+        .where(afterStamp(appointment.startsAt, appointment.id, after))
+        .orderBy(asc(appointment.startsAt), asc(appointment.id))
+        .limit(limit),
+  });
 
-  const events = await tx
-    .select({
-      appointmentId: appointmentEvent.appointmentId,
-      kind: appointmentEvent.kind,
-      fromStatus: appointmentEvent.fromStatus,
-      toStatus: appointmentEvent.toStatus,
-      actorKind: appointmentEvent.actorKind,
-      details: appointmentEvent.details,
-      at: appointmentEvent.createdAt,
-    })
-    .from(appointmentEvent)
-    .orderBy(asc(appointmentEvent.createdAt), asc(appointmentEvent.id));
+  const events = pagedByStamp({
+    pageSize,
+    fetch: (after, limit) =>
+      tx
+        .select({
+          appointmentId: appointmentEvent.appointmentId,
+          kind: appointmentEvent.kind,
+          fromStatus: appointmentEvent.fromStatus,
+          toStatus: appointmentEvent.toStatus,
+          actorKind: appointmentEvent.actorKind,
+          details: appointmentEvent.details,
+          at: appointmentEvent.createdAt,
+          cursorAt: stampText(appointmentEvent.createdAt),
+          cursorId: appointmentEvent.id,
+        })
+        .from(appointmentEvent)
+        .where(afterStamp(appointmentEvent.createdAt, appointmentEvent.id, after))
+        .orderBy(asc(appointmentEvent.createdAt), asc(appointmentEvent.id))
+        .limit(limit),
+  });
 
   const blocks = await tx
     .select({

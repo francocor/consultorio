@@ -3150,3 +3150,234 @@ The rounds closed these problems:
 - The majority boundary.
 
 See the per-round sections above. Task 5.51 is done. Tasks 5.53 and 5.54 stay deferred until there is a real e-prescription provider.
+
+
+## Stage 6 seam: S6.00 (tasks 6.1 to 6.4)
+
+Branch `feat/stage-6-signup-subscriptions`, started from the tip of Stage 5 (`f1330b0`, which contains every earlier stage). Mode: automatic, strict TDD, work-unit commits. Worktree `consultorio-wt-s6`. The seam registers every shared Stage 6 piece once so that the tracks (A subscriptions, B signup, C retention, D readiness) only add files. The per-track boundaries, the ports and read functions each one consumes and exports, the rules for a provider that is not idempotent and the gotchas are in `docs/stage6-tracks.md`; the migration numbers are in `docs/migration-ranges.md`. The seam has no tables and adds no migration (`6seam`, 0600 to 0609, stays empty; `db:check` and `db:restamp` report no drift).
+
+### Commits (in order)
+
+| Task    | Commit    | What                                                                                                                                                                                                                                                                                                                     |
+| ------- | --------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| 6.1     | `0037b06` | `PAYMENTS_PROVIDER` (`local\|off`), `MP_WEBHOOK_SECRET`, `MP_PUBLIC_BASE_URL`, the production guard, `BootPayload.localProviders.payments`, `docs/dev-setup.md`                                                                                                                                                              |
+| 6.2     | `c9824b2` | Contracts `subscriptions`, `signup`, `cancellation` with their catalogs; 12 tenant audit actions and 7 platform ones; error catalogs; the permission invariants (`billing.manage` owner-only, no new permission); audit scenario files                                                                                       |
+| 6.1/6.3 | `825bf1d` | `PaymentsGateway` port, `adapters/mercadopago-fake/` (non-idempotent mode, lost answer, hold, late completion, amount-change refusal), the Mercado Pago webhook signature, `adapters/payments-gateway.contract.ts`; the `ArchiveStore` port and `adapters/archive-fake/`; the `TenantCancelled` door; the operator request helpers |
+| 6.2     | `5896a1d` | Nine queues and their read-only categories; `PENDING_CONNECTION_HOLDING_JOBS`                                                                                                                                                                                                                                                |
+| 6.1/6.3 | `6702ad4` | `paymentsGateway` and `archiveStore` in the adapter resolver; skeletons and wirings of subscriptions, signup, cancellation and archive; `featureRoutes` and `operatorRoutes`; six empty schema files; the doors `createTrialStarter`, `createSubscriptionPlanImpact`, `createQuotaPolicy`; `/local-providers/` public prefix; policy tests |
+| 6.3     | `b4dcaf3` | Token kind `cancellation_export` (session bound, five minutes) in `FILE_TOKEN_KINDS`                                                                                                                                                                                                                                     |
+| 6.4     | `2c2030a` | `/signup` on the platform host (`RouteMount` `'platform'`, `PlatformShell`), `/subscription`, `/export`, `/export/clinical`, the owner entries, the operator tabs, six locale files, the labels of the new audit actions                                                                                                  |
+| docs    | `b66ec09` | `docs/stage6-tracks.md`, the Stage 6 paragraph of `docs/migration-ranges.md`, tasks 6.1 to 6.4 marked                                                                                                                                                                                                                       |
+
+### Extra seam work (not listed as tasks, or listed under other slices)
+
+1. **The payments port is written for a provider that is not idempotent.** `honoursIdempotencyKey` and `settleWindowMs` are properties of the port; every create has a server-derived `externalReference` and a matching `find*ByReference`, so the caller can reconcile through the provider's own state; every method takes an `AbortSignal`; `verifyWebhook` returns a `WebhookNotice` that has no status field, so a webhook cannot set a state by type. Beyond the methods of the task, the port has `findPreapprovalsByReference`, `findPaymentLinksByReference` and `findPayments`, and `updatePreapprovalAmount` can answer `reauthorization_required` as well as `amount_change_refused` (task 6.24 mentions both).
+2. **The shared contract suite proves the hard cases against two fakes** (one that honours the key, one that does not): a resend of a key makes two preapprovals when the provider does not honour it (the search shows both with every identifying field equal, so the caller must park), a lost answer is found by reference, an aborted call never lands, and a request held with `completeLate` lands after the caller gave up and the caller's first search finds nothing. Two mutations of the fake (refund beyond the payment, no abort check) made five tests fail.
+3. **The Mercado Pago webhook signature is a pure module shared by the fake, the local simulator and the real adapter** (`mp-signature.ts`): HMAC-SHA256 over `id:<data.id>;request-id:<x-request-id>;ts:<ts>;`, a five minute window on the signed time, the signature checked BEFORE the window and the shape of the body (so `stale` and `malformed` are reported only for a notice that really is the provider's).
+4. **`ArchiveStore` port, fake and `archiveStore` registry slot were added by the seam although `tasks.md` lists them under S6.09**, so that the adapter resolver, `test/support/adapters.ts` and the wiring test are touched once. The port (`put` write once with checksum and retention, `head`, `get`, `list`, `remove` that a routine role can never use) is Track C's to reshape.
+5. **`TenantCancelled` is a small bus** (`modules/tenancy/application/lifecycle.ts`, `createTenantLifecycle`), like the appointment events: synchronous, in the transaction that cancelled, a failing subscriber rolls the cancellation back. The writers get the narrow `TenantCancelledPort`, retention subscribes with `onCancelled`.
+6. **`featureRoutes` and `operatorRoutes` on `ModuleWiring`.** A module returns the routes that must not exist in a single-tenant deployment as `featureRoutes` (merged by `mergeFeatureRoutes`, registered by `buildServer` behind the feature registry), and registers its operator-console routes with `operatorRoutes(context)` (merged by `operatorExtensionsOf` into the console's `extensions`), so A and C never edit `modules/operator/` or `application.ts`. `modules/operator` exports `operatorOf` and `platformAuditMetaOf`, which its own routes now use too.
+7. **Two audit trails.** `signup.purged`, `tenant.cancelled` (operator) and `archive.*` are in `PLATFORM_AUDIT_ACTIONS`; the other twelve are in the tenant catalogue. The task lists them all as audit actions without saying which trail; the organization may be gone for the purge and the archive, and the tenant trail is exported with the organization.
+8. **Token kind `cancellation_export`.** The staff door holds one resource per kind and `export_download` belongs to billing, so the packages need a kind of their own (task 6.34 says "session-bound links"). Enabled, in `FILE_TOKEN_KINDS`; no resource is registered until Track C. `archive_release` stays disabled.
+9. **`/local-providers/` joined `PUBLIC_ROUTE_PREFIXES`** for the hosted checkout of the local Mercado Pago. The prefix is static; the routes exist only while the console flag is on.
+10. **The shell's reserved `billing` entry is gone.** The subscription is contributed by `features/subscription/nav.ts` (owner only, after "Equipo", `multiModeOnly`), like every other feature; `NavItem.multiModeOnly` and the `deploymentMode` option of `buildNav` keep it out of a single-tenant deployment and out of the first paint while the deployment is unknown. `features/export/nav.ts` adds the owner's "Exportación".
+11. **Public-route policy tests.** `test/policy/public-route-declaration.ts` (the `Guard` and `Declaration` types, moved out of `public-routes.test.ts`) and `test/policy/stage6-public-routes.ts` let the tracks declare their routes without editing the shared test; a POST under `/public/` may be guarded by a `token` (the verification link) as well as by the challenge or a code. `test/policy/stage6-single-mode.test.ts` proves no signup, subscription, Mercado Pago or checkout route is served in single mode.
+
+### TDD cycle evidence
+
+| Task    | Tests                                                                                                                                                                                                                             | RED                                                                   | GREEN  | Notes                                                                                                                                              |
+| ------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------- | ------ | -------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 6.1     | `guard.test.ts` (matrix with `payments`), `config-providers.test.ts` (7 new), `branding-boot.test.ts` (integration)                                                                                                               | written first; run after the code (the failures are by construction)   | passed | triangulated: production default, production refusal, https only in production, five malformed addresses, a short secret never printed             |
+| 6.1     | `mp-signature.test.ts` (13)                                                                                                                                                                                                       | module missing (run)                                                  | passed | forged, altered, swapped request id, stale and ahead of the window, the edges of the window, malformed only after a right signature                |
+| 6.1     | `payments-gateway.contract.ts` (30 tests per target, run on two fakes), `mercadopago-fake/index.test.ts` (4)                                                                                                                                      | contract written before the fake                                      | passed | 2 mutations of the fake made 5 tests fail; one explicit skip per target that cannot hold a call or does not honour the key                       |
+| 6.1     | `archive-fake/index.test.ts` (6)                                                                                                                                                                                                  | module missing                                                        | passed | write once, checksum, retention, no removal, list, outage and abort                                                                                |
+| 6.2     | `subscriptions.test.ts`, `signup.test.ts`, `cancellation.test.ts`, `audit-actions.test.ts` (Stage 6), `operator.test.ts`, `errors.test.ts`, `roles.test.ts` (Stage 6 permissions)                                                  | files missing                                                         | passed | the permission tests are invariants that pass on the first run: they bind when a track adds a permission                                           |
+| 6.2     | `jobs.test.ts` (2 new), `concurrency.test.ts` (3), `job-queues.test.ts` (integration, 9 queues)                                                                                                                                  | unclassified queues                                                   | passed | `dunning.step` has no automatic retry; the archive queues and `export.build` run in a cancelled organization                                       |
+| 6.3     | `lifecycle.test.ts` (5), `request-context.test.ts` (3), `feature-routes.test.ts` (5, with a probe module in multi and single mode), `export-contributor.test.ts`, `index.test.ts` of subscriptions, `adapter-resolver.test.ts`, `wiring.test.ts`, `schema-index.test.ts`, `stage6-single-mode.test.ts` | adapters and modules missing; audit scenarios failed the type check | passed | the type check was the RED of the audit scenarios and of the resolver                                                                              |
+| 6.3     | `kinds.test.ts` (2 new assertions)                                                                                                                                                                                               | 2 failed (run)                                                        | passed | `public-tokens.test.ts` fails until the kind is placed                                                                                              |
+| 6.4     | `seam.test.tsx` x3 (subscription 11, signup 4, export 11), `tabs.seam.test.tsx` (2), `nav-config.test.ts` (4 new), `shell.test.tsx`                                                                                              | pages and mount missing; one race found (see deviations)              | passed | the first run showed the entry for a moment in single mode before the boot payload arrived: the entry now stays out until the deployment is known |
+
+### Deviations from the tasks and the design
+
+1. **Task 6.1 puts the variables in `main/config.ts`**; they are in `main/config-providers.ts`, the file Stage 5 used for the same purpose (`config.ts` reads it). The checkout prefix "allowed only while the console flag is on" is a static allowed prefix whose routes exist only with the flag.
+2. **Task 6.4 puts `/signup` "under a minimal shell"**: the minimal shell shows the brand of an organization, and a visitor has none yet and is on the platform host. A new mount `'platform'` with `PlatformShell` (the name of the product) holds it. "The single-mode build omits the signup route" holds because a single-tenant deployment has no platform host; the route is also absent from the API there.
+3. **The audit actions are split between the tenant and the platform trails** (extra work 7), and `tenant.cancelled` is in both like `tenant.created`.
+4. **`ArchiveStore` and the token kind `cancellation_export` are seam work that `tasks.md` did not list** (extra work 4 and 8).
+5. **`CONNECTION_HOLDING_JOBS` was NOT extended.** The lesson is that every connection-holding family sets the floor of the pool. The five Stage 6 families that will wait for the gateway or the archive store are named in `PENDING_CONNECTION_HOLDING_JOBS` (tested against the queues), and the track that writes each handler moves it and raises the pool. Doing it now raises `MIN_DB_POOL_MAX` from 14 to 34, above the 16 that `.env.example` pins, and `config.test.ts` loads that file as it is; `.env` files may not be touched in this unit. This is a request to the maintainer, listed below.
+6. **`createTrialStarter()` refuses** until S6.01 (so the wiring of the signup boots and a verified signup cannot activate an organization without a plan). The other two doors (`createQuotaPolicy`, `createSubscriptionPlanImpact`) keep today's behavior.
+7. **No new tenant permission**, as the stage says; the owner export page uses `billing.manage`, the professional one `clinical.note.read`.
+
+### Risks and follow-ups
+
+- **Pool floor (maintainer):** when A and C move their families, `DB_POOL_MAX` in `.env.example` has to move with `DEFAULT_RUNTIME_POOL_MAX`. Until then a handler of those families that holds the framework transaction across a provider call would exhaust a pool of 16 under load: the doc tells the tracks to use the short-transaction pattern.
+- `signup.purge` is a `write` queue: a `write` job is cancelled for a blocked (`unverified`) organization, so B has to run the purge as a platform-level pass (documented). `runJob` maps unknown statuses to `active` today, so B also extends the status handling for `unverified`.
+- The operator routes of A and C run on the `app_operator` connection; whether it can enqueue a job in the `pgboss` schema (the operator cancel publishes `TenantCancelled`, whose subscriber enqueues `export.build`) is C's to prove in S6.08.
+- The web bundle: the new pages and the platform shell are lazy chunks. The router (entry chunk) gained the few lines that build the platform route tree and the `multiModeOnly` filter of the navigation; the effect on the Lighthouse budget was not measured here (the unit test of the budget passes), and Track D re-measures it.
+- The e2e suite, Lighthouse and the Docker image build were not run for this unit (no e2e was added: the stubs are covered by component tests).
+
+### Verification (tip before this progress commit, Node v24, pnpm 10.34.7, Docker running, no other agent)
+
+| Command | Result |
+| --- | --- |
+| `corepack pnpm install --frozen-lockfile` | exit 0 |
+| `corepack pnpm typecheck` | exit 0 (contracts, api, web) |
+| `corepack pnpm lint` / `format:check` | exit 0 |
+| `corepack pnpm test` | **452 files, 5,738 tests passed, 2 skipped** (`boot.test.ts`, the Lighthouse budget test, `route-categories`, `audit-coverage`, the demo determinism tests and the money invariants inside) |
+| `corepack pnpm test:integration` (Testcontainers, the whole suite) | **291 files: 288 passed, 1 skipped, 2 failed on timing under load; 4,503 tests passed, 5 skipped, 2 failed.** The two (`demo-coverage.test.ts` "resets in a fraction of the minute", 36 s against 30 s; `worker.test.ts` "seals new audit events ... shortly after", 15 s) passed alone: **2 files, 7 tests** |
+| `corepack pnpm build` | exit 0 (the new pages are lazy chunks; the entry chunk is `index-*.js`, 396 kB / 122 kB gzip) |
+| `corepack pnpm db:check` / `db:restamp` | No migration drift; stamps already rising; snapshots already chained; the last snapshot matches the schema |
+
+The e2e suite and Lighthouse were not run (no e2e was added). Two mutations of the fake gateway were run to check that the contract suite fails (refund beyond the payment, no abort check): five tests failed, and the files were restored. No `.env` file was read or written (`.env.example` could not even be read: the permission system denies it). Logs are in `$TEMP/s6seam-*.log`.
+
+## Stage 6 integration 1 (tracks A, B and C merged into the Stage 6 branch)
+
+Branch `feat/stage-6-signup-subscriptions`, from the seam `09574fd`. The three tracks were merged with `--no-ff` in the order A (`a8df1664`), B (`53fa66e`), C (`83b57a2f`), with `pnpm db:restamp` and `pnpm db:check` after each. No PR, no merge to main, CI not polled.
+
+### Conflicts and how they were resolved
+
+| File | Conflict | Resolution |
+| --- | --- | --- |
+| `meta/_journal.json` (B, C) | Both sides appended after 0581 | Kept every entry once, applied order untouched; B's two and C's six appended; `db:restamp` raised the stamps and re-chained the snapshots (0640, 0650); `idx` unique and contiguous (0 to 121), `when` strictly rising |
+| `test/policy/stage6-public-routes.ts` (B, C) | Same object literal | Union: A's webhook, B's five signup routes, C's two release routes |
+| `platform/jobs/concurrency.ts`, `concurrency.test.ts` | A moved two names, C moved three and kept a different pending list | `CONNECTION_HOLDING_JOBS` is the union of eight families (`afip.issue`, `erx.reconcile`, `portal.notice_sweep`, `subscription.reconcile`, `dunning.step`, `export.build`, `archive.write`, `archive.verify`); `PENDING_CONNECTION_HOLDING_JOBS` is `['archive.release']` (it runs in the releaser, which has a pool of its own) |
+| `platform/db/pool.ts`, `main/config.test.ts`, `docs/runbooks/deploy.md`, `docs/security/asvs-l2-portal.md` | 24 (A) against 26 (C) | `MIN_DB_POOL_MAX` = 8 x 2 x 2 + 2 = 34 (read from code), `DEFAULT_RUNTIME_POOL_MAX` = 36; the docs say the same |
+
+The other shared lists (`definer-functions.test.ts`, `operator-privileges.test.ts`, `audit-scenarios/*`, `auth-recovery.test.ts`, the demo exemptions) merged without conflict; the demo exemptions of the subscriptions tables were missing and were added (see fixes).
+
+### Journal order
+
+0610, 0612, 0614, 0616, 0618 (A), 0640, 0641 (B), 0650, 0651, 0652, 0653, 0654, 0655 (C): idx 109 to 121, 122 entries in all.
+
+### Wiring and fixes
+
+1. **The worker gap (test-first).** `WorkerWiringContext` has a required `tenantLifecycle`; `main.ts` and the e2e stack create ONE bus for the worker process and pass it to every module; `subscriptions` publishes on it and `tenancy` subscribes `subscribeCancellationExport` to it in its `worker()`. Before the fix a cancellation reached by `dunning.step` was published on a bus nobody listened to. `test/integration/worker-cancellation.test.ts` (real wiring of both modules, a subscription taken from checkout to the end of the paid period) failed with no `export_package` row and passes with the administrative request queued and `export.cancellation.requested` audited. `publishCancelled` is called inside the cancelling transaction (`transitions.ts`).
+2. `archive:legal-erase` script in `apps/api/package.json` and a root proxy.
+3. `main/wiring/signup.ts` passes the clock to `createTrialStarter`; `docs/migration-ranges.md` names 0641; the activation journey of `stage6-signup.spec.ts` no longer skips (the trial door exists) and passes.
+4. **Task 6.29 done.** `TrialCard` (`features/onboarding/signup/components`) shows in the setup wizard, for the owner only and only while the subscription is in trial: the end date, what happens then (the grace days, then read-only) and "Autorizar el pago ahora"; when the provider cannot be reached it says so and that the payment can wait, with a link to Suscripción, and the wizard goes on. It reads `GET /subscription` through the index of the subscription feature (which now exports `subscriptionApi`, `subscriptionKeys` and `goToProviderPage`); 8 component tests with axe. Task 6.29 is checked.
+5. Merge breakage fixed in the tests: `config.test.ts` (an explicit pool of 30 is now below the floor), `invoice-series.test.ts` (pool default read from code), `action-tokens.test.ts` (every token kind is enabled now: the refusal is tested by switching one off for the assertion), `onboarding-export.test.ts` (`termsAcceptances: []`), `demo-coverage-exemptions/subscriptions.ts` (eight tables), and a racy poll in `archive-release.test.ts` (the object is removed first and the mark follows).
+
+### Verification (tip `HEAD` of the branch, Node v24, pnpm 10.34.7, Docker running)
+
+| Command | Result |
+| --- | --- |
+| `pnpm install --frozen-lockfile` | exit 0 |
+| `pnpm typecheck`, `pnpm format:check`, `pnpm build`, `pnpm db:check` | exit 0 |
+| `pnpm lint` | exit 0 **with `NODE_OPTIONS=--max-old-space-size=8192`**; with the default heap eslint ran out of memory at 4 GB on the merged tree |
+| `pnpm test` | **482 files, 6,085 tests: 6,083 passed, 2 skipped.** A cold run had 20 files whose worker did not start and 3 files that timed out under load; all passed when re-run alone (20 files, 494 tests; 3 files, 15 tests) |
+| `pnpm test:integration` (Testcontainers) | **310 files, 4,934 tests.** The first full run had 5 failures (the five fixed above, plus `worker.test.ts` sealing 15 s timeout). The last full run: 307 files passed, 1 skipped, 2 failed: `worker.test.ts` (sealing, passes alone) and a suite-level `DecryptionError` in `archive-release.test.ts` (passes alone five times); 1 racy assertion in the same file fixed. The `.env.example` test passes (see risks) |
+| e2e, ports 5050/4050/9050, `--workers=2`, Playwright-managed stack | **238 passed, 0 skipped, 0 flaky** (9.1 min); includes `stage6-signup` (7), `stage6-subscription` (2), `stage6-archive` (1) |
+| Docker | Image built; fresh `postgres:17` with `infra/postgres/init`; `db:migrate` twice (both exit 0, 122 migrations recorded); production configuration with `DB_POOL_MAX=36`: `/health` `{"status":"ok"}`, the worker starts; `ARCHIVE_RELEASER_KEK` makes the api and the worker exit 1 ("only the releaser process may hold it"); `PAYMENTS_PROVIDER=local` and `ERX_PROVIDER=local` are refused in production, both are off by default; `DB_POOL_MAX=16` is refused ("must be at least 34") |
+
+### Remaining for track D and the maintainer
+
+- **Maintainer:** `.env.example` still says `DB_POOL_MAX=16`, which every process now refuses (floor 34). Change it to `DB_POOL_MAX=36`. The test "`.env.example` is accepted by the config schema as it is" passes today only because it reads the floor from code when the file pins less.
+- Track D: the Stage 6 demo (S6.12), the demo exemptions of A, B and C to remove as tables are seeded, 6.32 (left unchecked: the signup and subscription journeys now run in one suite, but the task also names a reception write refused in a read-only organization, which was not checked here), judgment day.
+- The unit and integration suites are heavy for this machine: re-run alone any file that times out.
+
+## Login LCP regression (Stage 6 branch, after track D)
+
+The Lighthouse job failed: median LCP 2,644 ms against the 2,500 ms budget on the sign-in page (48 files, 414 KB gzip; 28 files and 258 KB when Stage 3 met the budget at 2,439 ms).
+
+### Root cause
+
+LCP on `/login` is the paint of React's first render, and what comes before it is a chain, not a sum of bytes:
+
+1. **Requests, not bytes.** Modules shared between the entry and the lazy screens were cut into tiny chunks (icons, Radix pieces, `button`, `format`, the schemas), and the app modules import each other in cycles, so the bundler never folded them back. The browser fetched 38 scripts over six connections at 170 ms of round trip: about seven rounds, then the Inter font as one more round after the first layout (the swap repaint is what the browser reports as LCP). Measured with the budget's own throttling, the last script arrived at 1,655 ms and LCP followed at 3,740 ms.
+2. **Work the sign-in page does not need.** The texts of every feature (about 83 KB gzip, all of `locales/es-AR`), the `nav.ts` and `slots.tsx` registrations, and the waitlist slot that was not lazy (it dragged the dialog and `sonner`, 33 KB, into the entry).
+3. What did **not** help, measured: removing the catalogs alone (bytes 414 to 331 KB, LCP unchanged within noise). This explains why the earlier attempts (`json.stringify`, 7 catalogs) sat in the noise.
+
+### Changes (two commits)
+
+- `99f0b0bb` catalogs, navigation and slots after sign-in: `locale-core` (common, auth, shell, `errors.json`) in the bundle; `locale-rest` is one chunk that the signed-in route, the portal, the public pages and the platform host wait for (`loadRemainingCatalogs`, `beforeLoad`); a visitor sent to sign-in downloads none of it. `registry.ready()` loads `registry-contributions` (nav and slots); reading them before throws. The waitlist slot is `lazySlot`. Tests build their i18n with `locale-all` and wait for the registry.
+- `5b19715e` first bundle in two files and the font preloaded: a Rolldown chunking group gathers the app modules the entry imports (packages and `@consultorio/contracts` are left to the bundler on purpose: a group pulls in what it captures even when unused, and every schema costs start-up time); `<link rel="preload">` for the Latin subset of Inter; `build.manifest` and `pnpm --filter @consultorio/web test:build` (run by the Lighthouse job) that fail when a feature catalog, the navigation or the slots reach the first bundle, when it passes 6 files, or 235 KB gzip.
+
+### Numbers (Lighthouse, repo config, mobile, 3 runs; the port was 4190 because 4173 was taken)
+
+| | LCP (median) | LCP runs | Performance | Accessibility | CLS | Files | Transfer |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| Before (tip `26ce261e`) | 3,095 ms on this machine | 3,095 / 2,795 / 19,641 (machine busy) | 0.88 | 1.00 | 0.0012 | 48 | 414 KB |
+| After | **2,237 ms** | 2,237 / 2,225 / 2,242 | 0.97 | 1.00 | 0 | 13 | 289 KB |
+
+The machine is slower than the reporter's (2,644 ms for the same code), so compare the two rows, not the absolute value. The simulated LCP follows the CPU time the trace saw, so runs on a busy machine are noisy (an unrelated 19 s run in the baseline).
+
+### Design notes
+
+- `ready()` is required on `AppRegistry`; `createRegistry` (fixtures) is ready at once. `createI18n()` starts with the core catalogs; tests pass `resources: LOCALE_RESOURCES`.
+- Why the group lists no packages: a first attempt listed them and captured whole barrels (all icons, the Radix umbrella, every contract), 740 KB and slower. The module graph by `importers` over-approximates because of barrels; the app code does not use any.
+- Not done: the schemas of `@consultorio/contracts` still build at start-up for what `api-client` and `session` import (about 35 KB raw, roughly 170 ms at 4x CPU). Narrower imports would cut it further.
+
+### Verification
+
+- `pnpm --filter @consultorio/web build` (includes `tsc --noEmit`) and `test:build`: 6 checks pass; the same checks fail on the previous build (catalogs and slots found in the first bundle).
+- Web unit tests: 178 files, 2,070 tests; one file (`appointment-drawer.test.tsx`) needed `await defaultRegistry().ready()`, then 46 of 46 pass.
+- Lint of the touched files and `format:check`: clean. Full e2e (`E2E_WEB_PORT=5072 E2E_API_PORT=4070 E2E_MINIO_PORT=9070`, `DB_POOL_MAX=36`, `--workers=2`, Playwright-managed): **243 passed, 0 failed** (11.8 min). No container of mine was left.
+
+## Stage 6 integration 2 (Judgment Day round 1 fixes: payments and retention merged)
+
+Branch `feat/stage-6-signup-subscriptions`, from `66473585` (login LCP fix and the maintainer's `.env.example` commit). The two fix branches were merged with `--no-ff`, in this order, with `pnpm db:restamp` and `pnpm db:check` after each: `origin/fix/stage-6-6jd1` (payments, tip `e2c6fa71`, migrations 0680 - 0682) as `8fd46916`, then `origin/fix/stage-6-6jd2` (signup, retention and ops, tip `c49c2f19`, migrations 0685 - 0689) as `6a9cb437`. No PR, no merge to main, CI not polled.
+
+### Conflicts and how they were resolved
+
+The payments merge was clean. The retention merge conflicted in four files; everything else that both branches touched (`stage6-routes.ts`, `stage6-audit.ts`, `definer-functions.test.ts`, `no-delete` allowlists, `operator.ts`, `application.ts`, `wiring/types.ts`, `incident.md`, `asvs-l2-final.md`, `deploy.md`) merged without a textual conflict and was proven by the policy, unit and integration suites.
+
+| File | Conflict | Resolution |
+| --- | --- | --- |
+| `scripts/migration-journal.ts` | `TRACK_RANGES` | Union: `6jd1` (680 - 684) and `6jd2` (685 - 689) |
+| `docs/migration-ranges.md` | The table, and the Stage 6 paragraph | Union: one row per track, and the paragraph names the migrations of both halves |
+| `meta/_journal.json` | Both sides appended after 0581 | The payments entries 0680, 0681, 0682 kept as they were (idx 122 - 124); the five of retention appended after them (idx 125 - 129); `db:restamp` raised the stamp of 0685 above 0682 and re-chained the snapshot of 0685; the last snapshot (0689) was rebuilt from the schema |
+| `docs/go-live-checklist.md` | `DB_POOL_MAX` and the archive bullets | Both kept: pool floor 46 (payments), the archive identity for the worker and the releaser only, the role `app_releaser` created before the migrations, and the payments provider text |
+
+`docs/runbooks/incident.md` merged textually but had two sections for the same alert (`A subscription parked for a person` and `A subscription is parked for a person`); they are one now (see fixes).
+
+### Journal order
+
+0610, 0612, 0614, 0616, 0618 (A), 0640, 0641 (B), 0650 - 0655 (C), 0680, 0681, 0682 (6jd1), 0685, 0686, 0687, 0688, 0689 (6jd2): idx 0 to 129, 130 entries, `idx` unique and contiguous, `when` strictly rising, every applied entry untouched. Pool: `MIN_DB_POOL_MAX` stays 46 (eleven families) and `DEFAULT_RUNTIME_POOL_MAX` 48; retention added no family. `.env.example` was neither read nor edited (it says 36, so `pnpm dev` refuses to start until the maintainer sets 48; the e2e and the smoke pass `DB_POOL_MAX=48`).
+
+### Cross-branch checks
+
+1. **The collector and the payments signals.** `collectPlatformMetrics` reads the subscription of each organization through the runtime login in that organization's transaction (not `app_operator`), so `last_reconciled_at` (not in the `app_operator` column grant of 0614) is readable; `platform-metrics.test.ts` asserts the stale-reconciliation figure against the real table. The other figures come from `app.platform_health()`.
+2. **The parked gauge splits by reason**, already (label `reason`, every known reason present). The gap was the alert: `SubscriptionParked` read `sum(subscriptions_parked)`, so `reauthorization_needed` (which clears by itself when the owner authorizes) woke a person for something that is not an ambiguity at the provider. Fixed test-first (see fixes).
+3. **The demo journey and the semantics of both branches.** `stage6-demo.spec.ts` (retention) asks the operator to cancel the new organization (409 `operator_cancel_has_subscription`, migration 0689) and then cancels through the subscription (`En cancelación`); with the payments rules (cancelling works while parked, `period_ended` never cancels while the provider holds, `tenant_cancelled_is_terminal` of 0680) it passes. The two guards do not overlap: 0689 refuses the operator to END an organization that has a subscription, 0680 refuses anything to REOPEN a cancelled one; the only way to `cancelled` for a billed organization is its own subscription.
+
+### Fixes (each in its own commit)
+
+1. `046da215` `fix(ops)`: test first (`alert-rules.test.ts` failed on `sum(subscriptions_parked) > 0`), then `SubscriptionParked` excludes `reason="reauthorization_needed"` and a new info alert `SubscriptionReauthorizationWaiting` (24 h) covers it; both point to one runbook section, which merges the two that the branches had written.
+2. `f45ddf3b` `fix(test)`: `demo-platform.test.ts` expected the four demo organizations to be created by itself, but `platform-metrics.test.ts` seeds the same ones in the shared database and which file runs first depends on the order the runner chooses (the order changed when the vitest cache was deleted). The expectation now follows what existed before the seed. The failure was seen in the full run; the fixed pair passes together.
+
+### Verification (after the last change, Node v24, pnpm 10.34.7, Docker running)
+
+| Command | Result |
+| --- | --- |
+| `pnpm install --frozen-lockfile`, `pnpm typecheck`, `pnpm format:check`, `pnpm build`, `pnpm db:check` | exit 0; "No migration drift" |
+| `pnpm lint` (sharded, 10 shards) | exit 0 |
+| `pnpm test` | **499 files, 6,267 tests passed, 2 skipped**, no file needed a re-run |
+| `pnpm test:integration` (Testcontainers) | **325 files, 5,100 tests: 5,087 passed, 11 skipped, 2 failed.** The two: `demo-platform.test.ts` (the order dependency fixed above) and `worker.test.ts` (sealing within 15 s, a timing test that fails under load); both pass when re-run alone (13 tests), and the fixed `demo-platform` passes after `platform-metrics` |
+| `pnpm --filter @consultorio/web test:build` (the LCP guard) | exit 0, 6 checks pass |
+| e2e, `E2E_WEB_PORT=5102 E2E_API_PORT=4100 E2E_MINIO_PORT=9100`, `DB_POOL_MAX=48`, `--workers=2`, Playwright-managed | **243 passed, 0 failed, 0 flaky, 0 skipped** (9.2 min); includes `stage6-demo`, `stage6-signup`, `stage6-subscription`, `stage6-archive` |
+| Docker smoke | Image built; fresh `postgres:17.11` with `infra/postgres/init` (creates `app_releaser`); `db:migrate` twice, both exit 0, **130 migrations recorded**; production configuration (`NODE_ENV=production`, `KMS_PROVIDER=aws`, `DB_POOL_MAX=48`): api `/health` `{"status":"ok"}`; the worker starts; the releaser starts with `RELEASER_DATABASE_URL` as `app_releaser` (one session of that role, `app.platform_health()` shows its heartbeat); the api exits 1 with `RELEASER_DATABASE_URL`, with `ARCHIVE_S3_ACCESS_KEY_ID` and with `ARCHIVE_RELEASER_KEK`; `DB_POOL_MAX=36` is refused ("must be at least 46", eleven families) |
+
+Only the containers, the network and the image of the smoke were created and removed (the container list is identical to the one before). The vitest caches were deleted after the merges and again at the end. Logs are in `$TEMP/s6r1int-*.log`.
+
+### Risks and follow-ups
+
+- **Maintainer:** `.env.example` says 36 and must say 48 (floor 46); until then `pnpm dev` refuses to start.
+- The sealing test of `worker.test.ts` and some unit files are timing-sensitive on this machine; re-run alone when they fail under load.
+- `SubscriptionReauthorizationWaiting` is new and untested against a real Prometheus (`promtool` runs in CI).
+
+## Judgment Day Stage 6, round 2
+
+Fixed (commits `b3ab719a`, `4cea8ca5`, `6a514797`, `3f528d25`):
+
+- **R2-1** a refund token is answered from every attempt it made (confirmed, then rejected, then in flight); only an all-released token plans a refund.
+- **R2-2** (`0683`) the release trigger binds `recorded_by` and every `*_by` / `*_at` on every update; recorder bound to `app.user_id` on insert; `archive_release_recorder_check` validated. `app.user_id` protects against bugs and console misuse, not a hostile credential.
+- **R2-3** (`0656`, track `6c`) an archive erased whole makes the plaintext export due.
+- **R2-4** resolving a parked subscription releases only preapproval creations; other parked writes go back to `marked` with a new settle window for the reconcile to decide.
+- **R2-5** cancelled organizations keep `subscriptions_parked`, `subscription_surplus_unreviewed` and `subscription_reconcile_oldest_seconds`.
+- **R2-6** a manual resend does not rotate a link sent less than 30 minutes ago (the token is stored hashed, so the same one cannot be re-sent); resends count under their own per-address counter.
+- **B-W3** a cancelling subscription with an open creation sweeps the provider at the period end and re-reads the creations after the sweep.
+- **B-W6** (`0684`) `emailed_at`, `app.archive_release_unsent`, the releaser sweep sends a new link, `release_unsent` metric and the alert `ArchiveReleaseNotEmailed`.
+- Also done: the lease of a download is given back only by its claim, `completeDownload` result decides the removal, erased folders need a trailing slash, `staleStep` maps only the step refusal, the erasure marks a rerun that finds nothing, and the trail field is now `namedSecondOperator` (B-W5: renamed, not a real approval).
+
+Open (not done in this round): a real second approval for the legal erasure (B-W5 proper), the supersede reconcile pass (B-T), `readFacts` `lastReconciledAt` after an incomplete stray search (B-S), and all SUGGESTIONS (`PAYMENTS_PROVIDER=off` in production, first-bundle memo cycle, `purge_attempts`, stale comments, `connection-holding` list, intent audit before refund and resolve-parked, name whitelist).
+
+Verified: typecheck, `db:check`, prettier and eslint on the changed files, unit tests of the touched modules, and the integration files of the touched areas (refunds, parked, platform metrics, archive release, requests, immutability, cancellation export cleanup, signup, signup abuse, policy). Not run: the full integration and e2e suites, build, `test:build`, Docker smoke.

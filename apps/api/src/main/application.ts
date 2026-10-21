@@ -23,6 +23,7 @@ import {
 } from '../modules/onboarding/index.js';
 import {
   createOperatorConsole,
+  createOperatorRun,
   type DemoResetPort,
   type OperatorSecrets,
 } from '../modules/operator/index.js';
@@ -40,8 +41,13 @@ import {
   type MatriculaRules,
 } from '../modules/staff/index.js';
 import {
+  assertProfessionalSeatAvailable,
+  createSubscriptionPlanImpact,
+} from '../modules/subscriptions/index.js';
+import {
   createBranding,
   createSupportAccess,
+  createTenantLifecycle,
   createTenantLookup,
   type DeploymentSettings,
 } from '../modules/tenancy/index.js';
@@ -76,6 +82,7 @@ import type { ObjectStorage } from '../platform/storage/object-storage.js';
 import type { AdapterResolver } from './adapter-resolver.js';
 import { buildServer, type FeatureRoutes } from './server.js';
 import type { TrustProxySetting } from './trust-proxy.js';
+import { mergeFeatureRoutes, operatorExtensionsOf } from './wiring/feature-routes.js';
 import type { ModuleWiring } from './wiring/types.js';
 
 export interface ApplicationOptions {
@@ -164,7 +171,7 @@ export interface ApplicationOptions {
     console: boolean;
     providers: readonly DevProvider[];
     /** Which providers run on a simulator; the public boot payload tells the app. */
-    simulated?: { afip: boolean; erx?: boolean };
+    simulated?: { afip: boolean; erx?: boolean; payments?: boolean };
   };
   /**
    * The appointment event bus. Defaults to a new one per application; a test passes its own to
@@ -269,6 +276,8 @@ export function createApplication(options: ApplicationOptions): FastifyInstance 
     withTenant,
     auditDeny,
     sessions: identity.sessions,
+    // Giving the professional role back to a member with an active profile takes a seat of the plan.
+    seats: { assertAvailable: (tx) => assertProfessionalSeatAvailable(tx) },
     grants,
     defaultTimeZone: countryTimeZone,
     settingsSections,
@@ -359,6 +368,9 @@ export function createApplication(options: ApplicationOptions): FastifyInstance 
     }),
     types: createAppointmentTypeService(),
     defaultTimeZone: countryTimeZone,
+    // Inviting or activating a professional first shows what it does to the price (Stage 6); where
+    // there is no subscription (single mode, a demo organization) it changes nothing.
+    planImpact: createSubscriptionPlanImpact(),
     ...(options.clock ? { clock: options.clock } : {}),
   });
 
@@ -366,6 +378,9 @@ export function createApplication(options: ApplicationOptions): FastifyInstance 
   // a kind another one already took fails here instead of silently replacing it.
   resetTokenHandlers();
   const videoJoin = createVideoJoinRegistry();
+  // What ends an organization (Stage 6): retention subscribes while the modules are built below, and
+  // the subscription and the operator publish. One per application, like the appointment events.
+  const tenantLifecycle = createTenantLifecycle();
   const wired = (options.wiring ?? []).map((wiring) =>
     wiring.create({
       withTenant,
@@ -379,6 +394,13 @@ export function createApplication(options: ApplicationOptions): FastifyInstance 
       videoJoin,
       fileResources,
       portalFileResources,
+      tenantLifecycle,
+      accounts: {
+        passwordValidator: options.passwordValidator,
+        hasher: identity.hasher,
+        sessions: identity.sessions,
+        cookieSecure: options.cookieSecure,
+      },
       ...(options.clock ? { clock: options.clock } : {}),
       ...(options.storage ? { storage: options.storage } : {}),
       ...(options.jobs ? { jobs: options.jobs } : {}),
@@ -404,7 +426,20 @@ export function createApplication(options: ApplicationOptions): FastifyInstance 
           secureLinks: options.cookieSecure,
           loginRateLimit: limits.login,
           ...(options.operator.demoReset ? { demoReset: options.operator.demoReset } : {}),
-          ...(devRoutes ? { extensions: [devRoutes] } : {}),
+          // Inside the console, behind its session: the provider console, then what the modules add.
+          extensions: [
+            ...(devRoutes ? [devRoutes] : []),
+            ...operatorExtensionsOf(options.wiring ?? [], {
+              run: createOperatorRun(options.operator.database.db),
+              withTenant,
+              ...(options.adapters ? { adapters: options.adapters } : {}),
+              ...(options.jobs ? { jobs: options.jobs } : {}),
+              tenantCancelled: tenantLifecycle,
+              email: options.email,
+              origins,
+              ...(options.clock ? { clock: options.clock } : {}),
+            }),
+          ],
           ...(options.clock ? { clock: options.clock } : {}),
         })
       : undefined;
@@ -434,6 +469,8 @@ export function createApplication(options: ApplicationOptions): FastifyInstance 
       perTenant: limits.perTenant,
     },
     lookupTenant: createTenantLookup(db),
+    // Behind the feature registry: signup and subscriptions exist in multi mode only.
+    featureRoutes: mergeFeatureRoutes(wired.map((module) => module.featureRoutes)),
     auth: {
       authenticate: identity.authenticate,
       cookieSecure: options.cookieSecure,

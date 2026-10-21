@@ -1,11 +1,13 @@
 import { randomBytes } from 'node:crypto';
 
 import { createFakeInvoiceIssuer } from '../../src/adapters/afip-fake/index.js';
+import { createFakeArchiveStore } from '../../src/adapters/archive-fake/index.js';
 import { createFakeBotChallenge } from '../../src/adapters/bot-challenge-fake/index.js';
 import { createFakePrescriptionProvider } from '../../src/adapters/erx-fake/index.js';
 import { createFakeEmailSender } from '../../src/adapters/fake-email/index.js';
 import { createLocalKeyManagement } from '../../src/adapters/local-kek/index.js';
 import { createMemoryObjectStorage } from '../../src/adapters/memory-storage/index.js';
+import { createFakePaymentsGateway } from '../../src/adapters/mercadopago-fake/index.js';
 import { createFakeVideoLinkProvider } from '../../src/adapters/video-fake/index.js';
 import { createFakeWhatsAppSender } from '../../src/adapters/whatsapp-fake/index.js';
 import {
@@ -44,6 +46,8 @@ export function createTestAdapterResolver(
         botChallenge: { real: undefined, demo: fake(createFakeBotChallenge()) },
         invoiceIssuer: { real: undefined, demo: fake(createFakeInvoiceIssuer()) },
         prescriptionProvider: { real: undefined, demo: fake(createFakePrescriptionProvider()) },
+        paymentsGateway: { real: undefined, demo: fake(createFakePaymentsGateway()) },
+        archiveStore: { real: undefined, demo: fake(createFakeArchiveStore()) },
       },
     ]),
   );

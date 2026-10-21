@@ -54,6 +54,11 @@ const extras = import.meta.glob<Partial<Allowlist>>('./no-delete/*.json', {
   import: 'default',
 });
 
+/** The files the glob found (`booking.json`, ...), so a test can tell when the glob is stale. */
+export const EXTRA_ALLOWLIST_FILES: readonly string[] = Object.keys(extras).map((path) =>
+  path.replace('./no-delete/', ''),
+);
+
 export const ALLOWLIST: Allowlist = mergeAllowlists([
   base,
   ...Object.values(extras).map((list) => ({

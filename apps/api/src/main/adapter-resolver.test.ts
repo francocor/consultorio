@@ -3,11 +3,13 @@ import { randomBytes } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
 
 import { createFakeInvoiceIssuer } from '../adapters/afip-fake/index.js';
+import { createFakeArchiveStore } from '../adapters/archive-fake/index.js';
 import { createFakeBotChallenge } from '../adapters/bot-challenge-fake/index.js';
 import { createFakePrescriptionProvider } from '../adapters/erx-fake/index.js';
 import { createFakeEmailSender } from '../adapters/fake-email/index.js';
 import { createLocalKeyManagement } from '../adapters/local-kek/index.js';
 import { createMemoryObjectStorage } from '../adapters/memory-storage/index.js';
+import { createFakePaymentsGateway } from '../adapters/mercadopago-fake/index.js';
 import { createFakeVideoLinkProvider } from '../adapters/video-fake/index.js';
 import { createFakeWhatsAppSender } from '../adapters/whatsapp-fake/index.js';
 
@@ -43,6 +45,10 @@ function registry(overrides: Partial<AdapterRegistry> = {}): AdapterRegistry {
     invoiceIssuer: { real: undefined, demo: fake(createFakeInvoiceIssuer()) },
     // Stage 5: the prescription provider. Customers run on the simulator the prescriptions track registers.
     prescriptionProvider: { real: undefined, demo: fake(createFakePrescriptionProvider()) },
+    // Stage 6: the payments gateway and the archive store. Customers run on the local Mercado Pago
+    // and the local MinIO bucket that the subscriptions and retention tracks register.
+    paymentsGateway: { real: undefined, demo: fake(createFakePaymentsGateway()) },
+    archiveStore: { real: undefined, demo: fake(createFakeArchiveStore()) },
     ...overrides,
   };
 }
@@ -50,11 +56,13 @@ function registry(overrides: Partial<AdapterRegistry> = {}): AdapterRegistry {
 describe('adapter resolver', () => {
   it('registers every port the application depends on', () => {
     expect([...ADAPTER_PORTS].sort()).toEqual([
+      'archiveStore',
       'botChallenge',
       'email',
       'invoiceIssuer',
       'keyManagement',
       'objectStorage',
+      'paymentsGateway',
       'prescriptionProvider',
       'videoLink',
       'whatsapp',
@@ -166,6 +174,8 @@ describe('assembling the registry from the modules', () => {
     botChallenge,
     invoiceIssuer,
     prescriptionProvider,
+    paymentsGateway,
+    archiveStore,
   } = registry();
   const complete = {
     email,
@@ -176,6 +186,8 @@ describe('assembling the registry from the modules', () => {
     botChallenge,
     invoiceIssuer,
     prescriptionProvider,
+    paymentsGateway,
+    archiveStore,
   };
 
   it('joins what the composition root and each module register into one complete registry', () => {
@@ -186,6 +198,8 @@ describe('assembling the registry from the modules', () => {
       { botChallenge },
       { invoiceIssuer },
       { prescriptionProvider },
+      { paymentsGateway },
+      { archiveStore },
     ]);
 
     expect(Object.keys(assembled).sort()).toEqual([...ADAPTER_PORTS].sort());
@@ -206,6 +220,12 @@ describe('assembling the registry from the modules', () => {
         { email, objectStorage, keyManagement, whatsapp, videoLink, botChallenge },
       ]),
     ).toThrow(/invoiceIssuer/);
+    expect(() => assembleAdapterRegistry([{ ...complete, paymentsGateway: undefined }])).toThrow(
+      /paymentsGateway/,
+    );
+    expect(() => assembleAdapterRegistry([{ ...complete, archiveStore: undefined }])).toThrow(
+      /archiveStore/,
+    );
     expect(() => assembleAdapterRegistry([])).toThrow(/email.*whatsapp|whatsapp.*email/s);
   });
 
@@ -216,6 +236,12 @@ describe('assembling the registry from the modules', () => {
     );
     expect(() => assembleAdapterRegistry([complete, { prescriptionProvider }])).toThrow(
       /prescriptionProvider.*twice/,
+    );
+    expect(() => assembleAdapterRegistry([complete, { paymentsGateway }])).toThrow(
+      /paymentsGateway.*twice/,
+    );
+    expect(() => assembleAdapterRegistry([complete, { archiveStore }])).toThrow(
+      /archiveStore.*twice/,
     );
   });
 });

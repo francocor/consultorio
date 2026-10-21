@@ -1,5 +1,5 @@
 import { canGrantRoles, canManageRoles, type Role, type StaffRole } from '@consultorio/contracts';
-import { eq } from 'drizzle-orm';
+import { and, eq } from 'drizzle-orm';
 
 import { membership, userAccount } from '../../../db/schema/identity.js';
 import { professional } from '../../../db/schema/staff.js';
@@ -16,6 +16,10 @@ import {
   type SessionRevoker,
 } from '../../access/index.js';
 import type { Invitations } from '../../identity/index.js';
+import {
+  assertProfessionalSeatAvailable,
+  takesProfessionalSeat,
+} from '../../subscriptions/index.js';
 import { readOrganizationName } from '../../tenancy/index.js';
 
 export interface InviteInput {
@@ -86,6 +90,8 @@ export function createLifecycleService(deps: {
       if (!canGrantRoles(input.actorRoles, input.roles)) {
         throw new AccessRefused('invite_above_ceiling');
       }
+      // A professional takes a priced seat of the plan (Stage 6): the limit is enforced here.
+      if (takesProfessionalSeat(input.roles)) await assertProfessionalSeatAvailable(tx);
       const email = input.email.trim().toLowerCase();
 
       // Someone who already works here (or worked here) is reactivated, not invited again.
@@ -166,6 +172,13 @@ export function createLifecycleService(deps: {
     async reactivate(tx, input) {
       const { target } = await lockedPair(tx, input);
       if (target.status === 'active') return 'active';
+
+      // Bringing a professional back takes their seat again (Stage 6): the plan limit applies.
+      const [dormant] = await tx
+        .select({ id: professional.id })
+        .from(professional)
+        .where(and(eq(professional.membershipId, target.id), eq(professional.status, 'inactive')));
+      if (dormant) await assertProfessionalSeatAvailable(tx);
 
       try {
         await tx.update(membership).set({ status: 'active' }).where(eq(membership.id, target.id));

@@ -92,6 +92,10 @@ export const PUBLIC_ROUTE_PREFIXES = [
   '/public/',
   '/files/',
   '/webhooks/',
+  // The pages of the local provider simulators that the payer or the visitor opens without the
+  // product's session (Stage 6: the hosted checkout of the local Mercado Pago). The routes exist only
+  // while `LOCAL_PROVIDERS_CONSOLE` is on; with it off the path is the 404 of any unknown one.
+  '/local-providers/',
   // The platform operator console: it answers only on the platform host and has its own guard.
   '/operator/',
   // The installable app's manifest: a browser asks for it without credentials.

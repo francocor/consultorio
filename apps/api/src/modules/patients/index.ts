@@ -9,6 +9,7 @@ import type { TenantKeys } from '../../platform/crypto/tenant-keys.js';
 import type { WithTenant } from '../../platform/db/tenant-context.js';
 import type { ExportRegistry } from '../tenancy/index.js';
 
+import { exportAnamnesis } from './application/anamnesis-export.js';
 import { createAnamnesisService } from './application/anamnesis.js';
 import { createAssignmentService } from './application/assignments.js';
 import { createConsentService } from './application/consent.js';
@@ -25,9 +26,16 @@ import { patientRoutes } from './http/patient-routes.js';
 import { representativeRoutes } from './http/representative-routes.js';
 import { rightsRoutes } from './http/rights-routes.js';
 
-/** Registers what patients contributes to the cancellation export. */
-export function registerPatientsExportContributors(registry: ExportRegistry): void {
+/**
+ * Registers what patients contributes to the cancellation export: the demographics (administrative)
+ * and, per professional, the anamnesis (clinical, it needs the key service).
+ */
+export function registerPatientsExportContributors(
+  registry: ExportRegistry,
+  deps: { keys?: TenantKeys } = {},
+): void {
   registry.registerExportContributor('administrative', 'patients', exportPatients);
+  registry.registerExportContributor('clinical', 'patients', exportAnamnesis(deps.keys));
 }
 
 export { hasDataProcessingConsent } from './application/consent.js';

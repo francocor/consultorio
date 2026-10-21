@@ -1,6 +1,7 @@
 import type {
   AuditAction,
   BILLING_AUDIT_ACTIONS,
+  CANCELLATION_AUDIT_ACTIONS,
   CONSENT_AUDIT_ACTIONS,
   INVOICING_AUDIT_ACTIONS,
   NOTIFICATION_AUDIT_ACTIONS,
@@ -8,11 +9,14 @@ import type {
   PORTAL_AUDIT_ACTIONS,
   PRESCRIPTION_AUDIT_ACTIONS,
   REPORTS_AUDIT_ACTIONS,
+  SIGNUP_AUDIT_ACTIONS,
+  SUBSCRIPTION_AUDIT_ACTIONS,
   TELECONSULTATION_AUDIT_ACTIONS,
   WAITLIST_AUDIT_ACTIONS,
 } from '@consultorio/contracts';
 
 import { BILLING_SCENARIOS } from './audit-scenarios/billing.js';
+import { CANCELLATION_SCENARIOS } from './audit-scenarios/cancellation.js';
 import { CONSENT_SCENARIOS } from './audit-scenarios/consent.js';
 import { INVOICING_SCENARIOS } from './audit-scenarios/invoicing.js';
 import { NOTIFICATION_SCENARIOS } from './audit-scenarios/notifications.js';
@@ -20,6 +24,8 @@ import { ONLINE_BOOKING_SCENARIOS } from './audit-scenarios/online-booking.js';
 import { PORTAL_SCENARIOS } from './audit-scenarios/portal.js';
 import { PRESCRIPTION_SCENARIOS } from './audit-scenarios/prescriptions.js';
 import { REPORTS_SCENARIOS } from './audit-scenarios/reports.js';
+import { SIGNUP_SCENARIOS } from './audit-scenarios/signup.js';
+import { SUBSCRIPTION_SCENARIOS } from './audit-scenarios/subscriptions.js';
 import { TELECONSULTATION_SCENARIOS } from './audit-scenarios/teleconsultation.js';
 import { WAITLIST_SCENARIOS } from './audit-scenarios/waitlist.js';
 
@@ -49,7 +55,10 @@ type ModuleAuditAction =
   | (typeof INVOICING_AUDIT_ACTIONS)[number]
   | (typeof CONSENT_AUDIT_ACTIONS)[number]
   | (typeof PRESCRIPTION_AUDIT_ACTIONS)[number]
-  | (typeof PORTAL_AUDIT_ACTIONS)[number];
+  | (typeof PORTAL_AUDIT_ACTIONS)[number]
+  | (typeof SUBSCRIPTION_AUDIT_ACTIONS)[number]
+  | (typeof SIGNUP_AUDIT_ACTIONS)[number]
+  | (typeof CANCELLATION_AUDIT_ACTIONS)[number];
 
 const PLATFORM_SCENARIOS: Record<Exclude<AuditAction, ModuleAuditAction>, AuditScenario> = {
   // Authentication.
@@ -72,7 +81,6 @@ const PLATFORM_SCENARIOS: Record<Exclude<AuditAction, ModuleAuditAction>, AuditS
   'auth.2fa.recovery_regenerated': t('two-factor-routes.test.ts'),
   'auth.2fa.disabled': t('two-factor-routes.test.ts'),
   'auth.invitation.accepted': t('invitation-accept.test.ts'),
-  'auth.portal.sign_in': { pending: 'Stage 5: patient portal sign-in by one-time code' },
 
   // Clinical records.
   'clinical.note.read': t('clinical-notes-api.test.ts'),
@@ -96,9 +104,7 @@ const PLATFORM_SCENARIOS: Record<Exclude<AuditAction, ModuleAuditAction>, AuditS
   'patient.created': t('patients-api.test.ts'),
   'patient.updated': t('patients-api.test.ts'),
   'patient.read': t('patients-api.test.ts'),
-  'patient.bulk_read': {
-    pending: 'Stage 6: export of patient identity data (cancellation export)',
-  },
+  'patient.bulk_read': t('cancellation-export.test.ts'),
   'patient.deactivated': t('patients-api.test.ts'),
   'patient.reactivated': t('patients-api.test.ts'),
   'patient.representative.changed': t('patients-minors.test.ts'),
@@ -164,8 +170,6 @@ const PLATFORM_SCENARIOS: Record<Exclude<AuditAction, ModuleAuditAction>, AuditS
   'day_off.removed': t('scheduling-config-api.test.ts'),
 
   // Exports and archive.
-  'export.created': { pending: 'Stage 6: cancellation export' },
-  'archive.read': { pending: 'Stage 6: archive access' },
   'audit.exported': t('audit-viewer.test.ts'),
 
   // The guided first run.
@@ -180,7 +184,7 @@ const PLATFORM_SCENARIOS: Record<Exclude<AuditAction, ModuleAuditAction>, AuditS
   'support.grant.created': t('operator-support.test.ts'),
   'support.grant.revoked': t('operator-support.test.ts'),
   'tenant.created': t('operator-tenants.test.ts'),
-  'tenant.demo_reset': { pending: 'S1.36 (task 1.124): demo reset' },
+  'tenant.demo_reset': t('operator-tenants.test.ts'),
 
   // Denials.
   'access.denied': t('admin-denied.test.ts'),
@@ -202,4 +206,7 @@ export const AUDIT_SCENARIOS: Record<AuditAction, AuditScenario> = {
   ...CONSENT_SCENARIOS,
   ...PRESCRIPTION_SCENARIOS,
   ...PORTAL_SCENARIOS,
+  ...SUBSCRIPTION_SCENARIOS,
+  ...SIGNUP_SCENARIOS,
+  ...CANCELLATION_SCENARIOS,
 };

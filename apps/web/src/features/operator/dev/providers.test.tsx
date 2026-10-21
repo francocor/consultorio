@@ -5,6 +5,7 @@ import { I18nextProvider } from 'react-i18next';
 import { describe, expect, it } from 'vitest';
 
 import { createI18n } from '../../../app/i18n.js';
+import { LOCALE_RESOURCES } from '../../../shared/lib/locale-all.js';
 import { a11yViolations } from '../../../shared/test/a11y.js';
 import { renderApp } from '../../../shared/test/render-app.js';
 import { jsonResponse, problemResponse } from '../../../shared/test/render.js';
@@ -32,7 +33,7 @@ const tab = (id: string, text: string): DevTab => ({
 });
 
 function open(tabs: readonly DevTab[]) {
-  const i18n = createI18n();
+  const i18n = createI18n({ resources: LOCALE_RESOURCES });
   return render(
     <I18nextProvider i18n={i18n}>
       <ProvidersPage providers={PROVIDERS} tabs={tabs} />

@@ -1,0 +1,7 @@
+{
+  "export_package_not_ready": "El paquete de exportación todavía no está listo. Vuelva a intentarlo en unos minutos.",
+  "archive_release_same_operator": "La persona que registró la solicitud o verificó la identidad no puede aprobarla: la aprueba otra persona del equipo.",
+  "archive_release_wrong_step": "La solicitud no está en el paso que necesita esta acción. Verifique la identidad primero y apruebe después.",
+  "archive_release_no_archive": "La organización indicada no tiene un archivo escrito, así que no hay nada para liberar.",
+  "operator_cancel_has_subscription": "La organización tiene una suscripción: su cierre se hace desde la suscripción, que primero cancela el cobro en el proveedor de pagos."
+}

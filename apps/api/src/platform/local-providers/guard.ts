@@ -22,6 +22,8 @@ export interface ProviderSelection {
   afip: 'local' | 'afip' | 'off';
   /** `ERX_PROVIDER`: the e-prescription platform (Stage 5). The real provider key arrives with its adapter. */
   erx: 'local' | 'off';
+  /** `PAYMENTS_PROVIDER`: the payments gateway of the platform subscriptions (Stage 6). The real Mercado Pago key arrives with its adapter. */
+  payments: 'local' | 'off';
 }
 
 const VARIABLE_OF: Record<keyof ProviderSelection, string> = {
@@ -30,6 +32,7 @@ const VARIABLE_OF: Record<keyof ProviderSelection, string> = {
   botChallenge: 'BOT_CHALLENGE',
   afip: 'AFIP_PROVIDER',
   erx: 'ERX_PROVIDER',
+  payments: 'PAYMENTS_PROVIDER',
 };
 
 /** The names of the variables whose value is a local simulator, in a stable order. */

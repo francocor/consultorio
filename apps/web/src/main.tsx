@@ -2,7 +2,7 @@ import { RouterProvider } from '@tanstack/react-router';
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 
-import { createI18n } from './app/i18n.js';
+import { createI18n, loadRemainingCatalogs } from './app/i18n.js';
 import { onPlatformHost } from './app/platform-host.js';
 import { AppProviders } from './app/providers.js';
 import { createAppRouter, createOperatorRouter } from './app/router.js';
@@ -20,9 +20,12 @@ if (!container) {
 installZodMessages();
 const services = createAppServices({ isOnline: () => navigator.onLine });
 const i18n = createI18n();
+// The sign-in page needs only the catalogs that came with this bundle; every other frame loads the
+// rest before it draws.
+const catalogs = () => loadRemainingCatalogs(i18n);
 const router = onPlatformHost()
-  ? createOperatorRouter({ services })
-  : createAppRouter({ services });
+  ? createOperatorRouter({ services, catalogs })
+  : createAppRouter({ services, catalogs });
 
 createRoot(container).render(
   <StrictMode>

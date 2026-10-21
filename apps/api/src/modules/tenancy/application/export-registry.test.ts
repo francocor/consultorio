@@ -69,3 +69,49 @@ describe('every module registers an export contributor (hook for the cancellatio
     );
   });
 });
+
+describe('the cancellation export has a part for everything the organization owns (task 6.35)', () => {
+  const registry = createExportRegistry();
+  registerAllExportContributors(registry);
+  const names = (kind: 'administrative' | 'clinical') =>
+    registry
+      .list(kind)
+      .map((entry) => entry.name)
+      .sort();
+
+  it('lists, for the owner, every module that keeps administrative data from Stages 4 to 6', () => {
+    expect(names('administrative')).toEqual(
+      expect.arrayContaining([
+        // Stage 4: charges and payments, invoices and their fiscal data, the message log, the waitlist.
+        'billing',
+        'invoicing',
+        'reports',
+        'notifications',
+        'waitlist',
+        // Stage 5: the consent templates and the portal identities.
+        'consent',
+        'portal',
+        // Stage 6: the plan and the statements, and the answers of the wizard.
+        'subscriptions',
+        'onboarding',
+      ]),
+    );
+  });
+
+  it('lists, for each professional, everything a clinical record is made of', () => {
+    // Entries and their addenda, anamnesis, clinical documents, prescriptions and signed consents.
+    expect(names('clinical')).toEqual([
+      'clinical',
+      'consent',
+      'documents',
+      'patients',
+      'prescriptions',
+    ]);
+  });
+
+  it('does not let a module be both in a part it does not belong to: the clinical names are not administrative twins by accident', () => {
+    // A name appearing in both parts is allowed only where one module owns data of both kinds.
+    const both = names('clinical').filter((name) => names('administrative').includes(name));
+    expect(both).toEqual(['consent', 'documents', 'patients']);
+  });
+});

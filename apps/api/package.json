@@ -20,10 +20,13 @@
     "build": "tsx scripts/build.ts",
     "demo:seed": "tsx --env-file-if-exists=../../.env scripts/demo-seed.ts",
     "demo:reset": "tsx --env-file-if-exists=../../.env scripts/demo-reset.ts",
+    "demo:platform": "tsx --env-file-if-exists=../../.env scripts/demo-platform.ts",
     "e2e:stack": "tsx scripts/e2e-stack.ts --port 3100 --info ../web/e2e/.stack/info.json",
     "demo:stack": "tsx scripts/e2e-stack.ts --port 3000 --minio-port 9100 --banner",
     "backup:local": "tsx scripts/backup-local.ts",
+    "drill:restore": "tsx --env-file-if-exists=../../.env scripts/restore-drill.ts",
     "dev:afip-cert": "tsx scripts/dev-afip-cert.ts",
+    "archive:legal-erase": "tsx --env-file-if-exists=../../.env scripts/archive-legal-erase.ts",
     "bench:clinical": "tsx scripts/bench-clinical-readable.ts"
   },
   "dependencies": {

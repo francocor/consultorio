@@ -16,6 +16,10 @@
     {
       "file": "src/db/migrations/0018_demo_reset.sql",
       "why": "app.demo_reset: the one function that clears a demo organization. It refuses unless the organization is flagged is_demo and can only be executed by the operator console's role."
+    },
+    {
+      "file": "src/db/migrations/0681_subscription_event_purge.sql",
+      "why": "app.subscription_event_purge: a notice of the payments provider is only a nudge to ask and one older than a month is of no use. The function removes only the rows of the organization of the transaction, never anything younger than seven days; the runtime role has no DELETE (JD-S6 R1, S6-9)."
     }
   ],
   "ephemeralTables": [
