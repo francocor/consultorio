@@ -6,6 +6,8 @@ import { defineConfig, type ProxyOptions } from 'vite';
 import { VitePWA } from 'vite-plugin-pwa';
 
 import { cspPlugin } from './vite/csp-plugin.js';
+import { firstBundleChunks } from './vite/first-bundle-chunks.js';
+import { fontPreloadPlugin } from './vite/font-preload-plugin.js';
 import { pwaOptions } from './vite/pwa-config.js';
 import { themeBootPlugin } from './vite/theme-boot-plugin.js';
 
@@ -45,6 +47,8 @@ export default defineConfig({
     react(),
     tailwindcss(),
     VitePWA(pwaOptions),
+    // The font of the sign-in page downloads with the scripts, not after the first layout.
+    fontPreloadPlugin(),
   ],
   server: {
     // Organizations live at {slug}.localhost; the platform console at platform.localhost.
@@ -54,5 +58,15 @@ export default defineConfig({
   preview: {
     allowedHosts: ['.localhost'],
     proxy,
+  },
+  build: {
+    // dist/.vite/manifest.json lists the chunks of the first bundle (vite/first-bundle.build-test.ts).
+    manifest: true,
+    rolldownOptions: {
+      output: {
+        // The first bundle is a few files, not thirty-eight (see vite/first-bundle-chunks.ts).
+        codeSplitting: { groups: [{ name: firstBundleChunks() }] },
+      },
+    },
   },
 });
