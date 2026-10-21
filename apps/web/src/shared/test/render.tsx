@@ -4,6 +4,7 @@ import type { ReactElement } from 'react';
 import { createI18n } from '../../app/i18n.js';
 import { AppProviders } from '../../app/providers.js';
 import { createAppServices, type AppServices } from '../../app/services.js';
+import { LOCALE_RESOURCES } from '../lib/locale-all.js';
 
 /** The URL of whatever `fetch` was called with. */
 export function urlOf(input: string | URL | Request): string {
@@ -75,6 +76,7 @@ export interface AppRenderResult extends RenderResult {
 export function renderWithApp(ui: ReactElement, options: RenderOptions = {}): AppRenderResult {
   const missingKeys: string[] = [];
   const i18n = createI18n({
+    resources: LOCALE_RESOURCES,
     onMissing: (key) => {
       missingKeys.push(key);
     },

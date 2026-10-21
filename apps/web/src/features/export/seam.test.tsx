@@ -61,8 +61,10 @@ describe('the export registrations (the owner page, the professional page and th
     expect(screen.queryByRole('link', { name: 'Exportación' })).not.toBeInTheDocument();
   });
 
-  it('registers the entry with the permission of the owner and no deployment restriction', () => {
-    const entry = defaultRegistry().navItems.find((item) => item.id === 'export');
+  it('registers the entry with the permission of the owner and no deployment restriction', async () => {
+    const registry = defaultRegistry();
+    await registry.ready();
+    const entry = registry.navItems.find((item) => item.id === 'export');
 
     expect(entry).toMatchObject({ to: '/export', anyOf: ['billing.manage'] });
     expect(entry?.multiModeOnly).toBeUndefined();

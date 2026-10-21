@@ -66,8 +66,9 @@ describe('the subscription registrations (route and navigation entry)', () => {
     ).not.toBeInTheDocument();
   });
 
-  it('registers the route in the authed mount and the entry for the owner layout only', () => {
+  it('registers the route in the authed mount and the entry for the owner layout only', async () => {
     const registry = defaultRegistry();
+    await registry.ready();
 
     expect(registry.routes.some((route) => route.mount === 'authed')).toBe(true);
     const entry = registry.navItems.find((item) => item.id === 'subscription');

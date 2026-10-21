@@ -57,16 +57,20 @@ describe('the consent registrations (route, navigation entry, patient tab and ap
     expect(screen.queryByRole('link', { name: 'Consentimientos' })).not.toBeInTheDocument();
   });
 
-  it('registers the warning of the appointment drawer for whoever reads the schedule', () => {
-    const warning = defaultRegistry().slots.find(
+  it('registers the warning of the appointment drawer for whoever reads the schedule', async () => {
+    const registry = defaultRegistry();
+    await registry.ready();
+    const warning = registry.slots.find(
       (piece) => piece.slot === 'appointment-drawer' && piece.id === 'consent.warning',
     );
 
     expect(warning).toMatchObject({ anyOf: ['scheduling.read'] });
   });
 
-  it('registers a tab of the patient record for whoever asks for consents or runs the templates', () => {
-    const tab = defaultRegistry().slots.find(
+  it('registers a tab of the patient record for whoever asks for consents or runs the templates', async () => {
+    const registry = defaultRegistry();
+    await registry.ready();
+    const tab = registry.slots.find(
       (piece) => piece.slot === 'patient-detail-tab' && piece.id === 'consent.list',
     );
 

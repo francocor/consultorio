@@ -1,6 +1,12 @@
+import { readdirSync, readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
+
 import { describe, expect, it } from 'vitest';
 
-import { buildResources, namespaceOfFile, LOCALE_RESOURCES } from './locale-files.js';
+import { LOCALE_RESOURCES } from './locale-all.js';
+import { CORE_RESOURCES } from './locale-core.js';
+import { buildResources, mergeResources, namespaceOfFile } from './locale-files.js';
+import { REST_RESOURCES } from './locale-rest.js';
 
 describe('the namespace of a catalog file', () => {
   it('is the name of the file', () => {
@@ -54,5 +60,57 @@ describe('building the resources from the catalog files', () => {
 
     expect(message).toMatch(/factura/);
     expect(message).toMatch(/pago/);
+  });
+});
+
+describe('joining resources that were built apart', () => {
+  it('puts the files of one namespace together, whichever part they came in', () => {
+    const merged = mergeResources(
+      { errors: { forbidden: 'Sin acceso' }, common: { ok: 'Aceptar' } },
+      { errors: { 'waitlist.entry_exists': 'Ya está en la lista' }, waitlist: { title: 'Lista' } },
+    );
+
+    expect(merged).toEqual({
+      errors: { forbidden: 'Sin acceso', 'waitlist.entry_exists': 'Ya está en la lista' },
+      common: { ok: 'Aceptar' },
+      waitlist: { title: 'Lista' },
+    });
+  });
+
+  it('refuses a key that both parts give to one namespace', () => {
+    expect(() => mergeResources({ errors: { shared: 'a' } }, { errors: { shared: 'b' } })).toThrow(
+      /shared/,
+    );
+  });
+});
+
+describe('the two parts of the catalog (the sign-in page carries only the first)', () => {
+  const folder = resolve(import.meta.dirname, '../../locales/es-AR');
+  const names = readdirSync(folder).filter((name) => name.endsWith('.json'));
+  const read = (name: string) =>
+    JSON.parse(readFileSync(resolve(folder, name), 'utf8')) as Record<string, string>;
+
+  it('are the whole folder between them: no file is left out and none is counted twice', () => {
+    const everything = buildResources(
+      Object.fromEntries(names.map((name) => [`../../locales/es-AR/${name}`, read(name)])),
+    );
+
+    expect(mergeResources(CORE_RESOURCES, REST_RESOURCES)).toEqual(everything);
+  });
+
+  it('keep to the first bundle only what the sign-in page and the frame of every screen show', () => {
+    expect(Object.keys(CORE_RESOURCES).sort()).toEqual(['auth', 'common', 'errors', 'shell']);
+    expect(CORE_RESOURCES['errors']).toEqual(read('errors.json'));
+  });
+
+  it('leave the catalogs of the features and of the error codes of the modules to the rest', () => {
+    const rest = Object.keys(REST_RESOURCES);
+
+    expect(rest).toEqual(expect.arrayContaining(['scheduling', 'patients', 'billing', 'errors']));
+    for (const core of ['auth', 'common', 'shell']) expect(rest).not.toContain(core);
+    expect(REST_RESOURCES['errors']).not.toHaveProperty('forbidden');
+    expect(REST_RESOURCES['errors']).toHaveProperty(
+      Object.keys(read('errors.billing.json'))[0] ?? '',
+    );
   });
 });

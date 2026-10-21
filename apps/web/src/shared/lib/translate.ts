@@ -1,16 +1,24 @@
 import type { TFunction } from 'i18next';
 
 import { isApiError } from './api-client.js';
-import { LOCALE_RESOURCES } from './locale-files.js';
 
-/** The namespaces of the catalog: one per file of `locales/es-AR` (found by `locale-files.ts`), plus the country validators. */
-export const NAMESPACES: readonly string[] = [...Object.keys(LOCALE_RESOURCES), 'country'];
 export type Namespace = string;
+
+/**
+ * The namespaces that are loaded: one per file of `locales/es-AR` (see `locale-files.ts`), plus the
+ * country validators. Each i18n instance registers the ones it is given, so the namespaces of the
+ * second part of the catalog (`loadRemainingCatalogs`) count from the moment they arrive.
+ */
+const KNOWN_NAMESPACES = new Set<Namespace>(['country']);
+
+export function registerNamespaces(namespaces: Iterable<Namespace>): void {
+  for (const namespace of namespaces) KNOWN_NAMESPACES.add(namespace);
+}
 
 const MISSING = '\u0000missing';
 
 function isNamespace(value: string | undefined): value is Namespace {
-  return value !== undefined && NAMESPACES.includes(value);
+  return value !== undefined && KNOWN_NAMESPACES.has(value);
 }
 
 /**

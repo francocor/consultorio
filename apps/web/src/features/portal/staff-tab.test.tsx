@@ -39,8 +39,10 @@ function open(extra: Record<string, FetchHandler | Response>) {
 }
 
 describe('the portal tab of the patient record', () => {
-  it('is registered for whoever manages the portal accounts', () => {
-    const tab = defaultRegistry().slots.find(
+  it('is registered for whoever manages the portal accounts', async () => {
+    const registry = defaultRegistry();
+    await registry.ready();
+    const tab = registry.slots.find(
       (piece) => piece.slot === 'patient-detail-tab' && piece.id === 'portal.invitation',
     );
 
