@@ -84,14 +84,18 @@ describe('the four organizations of the platform demo', () => {
   });
 
   it('builds each one in its state through the services of the subscription', async () => {
+    // Another file of the suite (platform-metrics) seeds the same four organizations in the shared
+    // database, and which file runs first depends on the order the runner chooses: an organization
+    // that is already there is reported as not created, whoever made it.
+    const lookup = createTenantLookup(runtime.db);
+    const existing = await Promise.all(
+      PLATFORM_DEMO_TENANTS.map(async (entry) => Boolean(await lookup(entry.slug))),
+    );
     const result = await seedPlatformDemo(deps);
 
-    expect(result.map((entry) => [entry.state, entry.created])).toEqual([
-      ['trial', true],
-      ['active', true],
-      ['past_due', true],
-      ['read_only', true],
-    ]);
+    expect(result.map((entry) => [entry.state, entry.created])).toEqual(
+      PLATFORM_DEMO_TENANTS.map((entry, index) => [entry.state, !existing[index]]),
+    );
     const bySlug = Object.fromEntries(
       await Promise.all(
         PLATFORM_DEMO_TENANTS.map(async (entry) => [entry.state, await subscriptionOf(entry.slug)]),
