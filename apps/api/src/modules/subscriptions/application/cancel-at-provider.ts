@@ -1,97 +1,135 @@
-import { eq } from 'drizzle-orm';
+import { and, eq } from 'drizzle-orm';
 
-import { subscription } from '../../../db/schema/subscriptions.js';
+import { subscription, subscriptionAttempt } from '../../../db/schema/subscriptions.js';
+import { audit } from '../../../platform/audit/writer.js';
 import { SYSTEM_USER_ID, type Tx } from '../../../platform/db/tenant-context.js';
 
-import {
-  lockAttempt,
-  markAttempt,
-  nextAttemptNumber,
-  noteUnknownOutcome,
-  openAttempts,
-  resolveAttempt,
-} from './attempts.js';
-import type { CancelPreapprovalResult } from './ports.js';
-import { UNKNOWN_OUTCOME, callWithin, gatewayOf, type SubscriptionDeps } from './provider.js';
-import { lockSubscription } from './store.js';
+import { blocksProvider, clearAttention } from './attempts.js';
+import { SYSTEM_ACTOR } from './common.js';
+import { cancelLivePreapprovals } from './preapprovals.js';
+import { gatewayOf, type SubscriptionDeps } from './provider.js';
+import { findSubscription, lockSubscription } from './store.js';
 
 export type CancelAtProviderOutcome = 'nothing' | 'cancelled' | 'unavailable' | 'in_progress';
 
 /**
- * Stops the charges at the provider for a subscription that is cancelling (or ended). It is a write,
- * so it has a mark, a bounded call and an answer; cancelling a preapproval is its own undo-proof (the
- * provider answers the same for a cancelled one), and after an unknown outcome the reconcile reads the
- * preapproval and either adopts the cancellation or, after the settle window, tries again.
+ * Stops the charges at the provider for a subscription that is cancelling (or ended). Cancelling is a
+ * write, so every preapproval it stops has a mark, a bounded call and an answer
+ * (`preapprovals.ts`), and an unknown outcome is settled by reading that preapproval.
+ *
+ * It cancels EVERY live preapproval of the subscription the platform can find, not only the one it
+ * holds: a preapproval that was paused, one it asked for earlier and one that landed late all charge
+ * (JD-S6 R1, C2). It works while the subscription is parked for a person: a parked subscription is
+ * exactly the one that must not keep charging an organization that asked to leave, and a preapproval
+ * the platform could not identify is searched by the reference it asked with (JD-S6 R1, C1).
+ *
+ * `settle` reads and decides a cancellation whose outcome was not known once its window is over (the
+ * clock of the dates passes the reconcile; the owner's own cancel does not wait for one).
+ *
+ * The authorization becomes `none` only when none is left. Until then the subscription stays
+ * `cancelling`, and the end of the paid period does not turn it into `cancelled`.
  */
 export async function cancelAtProvider(
   deps: SubscriptionDeps,
   tenantId: string,
+  options: { settle?: () => Promise<void> } = {},
 ): Promise<CancelAtProviderOutcome> {
-  const gateway = gatewayOf(deps);
-  if (!gateway) return 'unavailable';
-  const as2 = <T>(work: (tx: Tx) => Promise<T>) =>
+  if (!gatewayOf(deps)) return 'unavailable';
+  const as = <T>(work: (tx: Tx) => Promise<T>) =>
     deps.withTenant({ tenantId, userId: SYSTEM_USER_ID }, work);
 
-  const planned = await as2(async (tx) => {
-    const row = await lockSubscription(tx);
-    if (!row || row.providerPreapprovalId === null) return null;
-    if (row.status !== 'cancelling' && row.status !== 'cancelled') return null;
-    if (row.authorizationState === 'none' || row.authorizationState === 'lost') return null;
-    if (row.attentionReason !== null) return 'in_progress' as const;
-    const now = deps.clock();
-    const open = (await openAttempts(tx, row.id)).filter((attempt) => attempt.kind === 'cancel');
-    if (open.length > 0) return 'in_progress' as const;
-    const number = await nextAttemptNumber(tx, row.id, 'cancel');
-    const attempt = await markAttempt(tx, {
-      subscriptionId: row.id,
-      kind: 'cancel',
-      externalReference: `cancel:${row.id}:${String(number)}`,
-      now,
-      settleWindowMs: gateway.settleWindowMs + (deps.providerTimeoutMs ?? 20_000),
-    });
+  const before = await as(async (tx) => {
+    const row = await findSubscription(tx);
+    if (!row) return null;
+    // Parked creations: the provider may hold a preapproval the platform never adopted.
+    const [parked] = await tx
+      .select({ id: subscriptionAttempt.id })
+      .from(subscriptionAttempt)
+      .where(
+        and(
+          eq(subscriptionAttempt.subscriptionId, row.id),
+          eq(subscriptionAttempt.kind, 'preapproval'),
+          eq(subscriptionAttempt.state, 'parked'),
+        ),
+      )
+      .limit(1);
     return {
-      attemptId: attempt.id,
-      key: attempt.idempotencyKey,
-      preapprovalId: row.providerPreapprovalId,
+      status: row.status,
+      authorization: row.authorizationState,
+      parked: parked !== undefined,
     };
   });
-  if (planned === null) return 'nothing';
-  if (planned === 'in_progress') return 'in_progress';
+  if (!before) return 'nothing';
+  if (before.status !== 'cancelling' && before.status !== 'cancelled') return 'nothing';
+  if (before.authorization === 'none' && !before.parked) return 'nothing';
 
-  const sent = await callWithin(
-    deps,
-    (signal) => gateway.cancelPreapproval(planned.preapprovalId, planned.key, signal),
-    UNKNOWN_OUTCOME as CancelPreapprovalResult,
-  );
-  const timedOut = sent.timedOut || sent.threw;
+  const swept = await cancelLivePreapprovals(deps, tenantId, {
+    why: 'cancelling',
+    includeParked: true,
+    waitForCreation: true,
+    ...(options.settle ? { settle: options.settle } : {}),
+  });
+  if (swept.status === 'in_progress') return 'in_progress';
+  if (swept.status !== 'clear') return 'unavailable';
 
-  return as2(async (tx) => {
+  return as(async (tx): Promise<CancelAtProviderOutcome> => {
     const now = deps.clock();
     const row = await lockSubscription(tx);
-    const attempt = await lockAttempt(tx, planned.attemptId);
-    if (!row || !attempt || attempt.state !== 'marked') return 'in_progress';
-    const answer = sent.value;
-    if (answer.status === 'cancelled') {
-      await resolveAttempt(tx, attempt, {
-        state: 'confirmed',
-        resourceId: planned.preapprovalId,
-        now,
-      });
+    if (!row) return 'nothing';
+    if (row.status !== 'cancelling' && row.status !== 'cancelled') return 'nothing';
+    let changed = false;
+    if (row.authorizationState !== 'none') {
       await tx
         .update(subscription)
         .set({ authorizationState: 'none', version: row.version + 1 })
         .where(eq(subscription.id, row.id));
-      return 'cancelled';
+      changed = true;
     }
-    if (answer.status === 'rejected') {
-      await resolveAttempt(tx, attempt, { state: 'rejected', now, message: answer.message });
-      return 'unavailable';
+    // Everything the provider held under a request that was parked is now cancelled, so there is
+    // nothing left for a person to decide: the parked requests are released and the cause is cleared
+    // (JD-S6 R1, C1: cancelling is a way out of a parked subscription).
+    const released = await tx
+      .update(subscriptionAttempt)
+      .set({ state: 'released', resolvedAt: now, message: 'cancelled_with_the_subscription' })
+      .where(
+        and(
+          eq(subscriptionAttempt.subscriptionId, row.id),
+          eq(subscriptionAttempt.kind, 'preapproval'),
+          eq(subscriptionAttempt.state, 'parked'),
+        ),
+      )
+      .returning({ id: subscriptionAttempt.id });
+    if (released.length > 0) changed = true;
+    // A write of another kind that is parked (a refund nobody could tell the outcome of) still waits
+    // for a person, and so does the cause.
+    const [stillParked] = await tx
+      .select({ id: subscriptionAttempt.id })
+      .from(subscriptionAttempt)
+      .where(
+        and(
+          eq(subscriptionAttempt.subscriptionId, row.id),
+          eq(subscriptionAttempt.state, 'parked'),
+        ),
+      )
+      .limit(1);
+    if (blocksProvider(row) && stillParked === undefined) {
+      await clearAttention(tx, row.id);
+      await audit(tx, {
+        action: 'subscription.state_changed',
+        outcome: 'allow',
+        actor: SYSTEM_ACTOR,
+        resourceType: 'subscription',
+        resourceId: row.id,
+        reason: 'attention_cleared',
+        metadata: {
+          from: row.status,
+          to: row.status,
+          attention: 'cleared',
+          cause: row.attentionReason,
+        },
+      });
+      changed = true;
     }
-    if (!answer.outcomeUnknown && !timedOut) {
-      await resolveAttempt(tx, attempt, { state: 'released', now, message: answer.message });
-    } else {
-      await noteUnknownOutcome(tx, attempt.id, answer.message);
-    }
-    return 'unavailable';
+    return changed ? 'cancelled' : 'nothing';
   });
 }

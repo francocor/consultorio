@@ -2,6 +2,7 @@ import { CheckoutResponse, OperatorSubscriptionDto } from '@consultorio/contract
 import { sql } from 'drizzle-orm';
 import { afterAll, beforeAll, describe, expect, inject, it } from 'vitest';
 
+import { deliveryKeyOf } from '../../src/adapters/mercadopago-fake/mp-signature.js';
 import {
   deliver,
   paymentNotices,
@@ -140,10 +141,15 @@ describe('the webhook refuses what is not the provider and changes nothing (task
     const org = await world.organization();
     await org.checkout();
     const preapprovalId = String((await org.subscription())['provider_preapproval_id']);
-    const eventId = nextEvent();
-    const accepted = await world.post(
-      await world.notice(noticeBody(eventId, 'subscription_preapproval', preapprovalId)),
+    const request = await world.notice(
+      noticeBody(nextEvent(), 'subscription_preapproval', preapprovalId),
     );
+    const eventId = deliveryKeyOf({
+      id: preapprovalId,
+      requestId: request.headers['x-request-id'] ?? '',
+      ts: Number(/ts=(\d+)/.exec(request.headers['x-signature'] ?? '')?.[1]),
+    });
+    const accepted = await world.post(request);
 
     expect(accepted.statusCode, accepted.body).toBe(200);
     expect(accepted.json()).toEqual({ accepted: true });
@@ -184,6 +190,53 @@ describe('the webhook refuses what is not the provider and changes nothing (task
     expect([first.statusCode, second.statusCode]).toEqual([200, 200]);
     expect(await eventsOf(org)).toHaveLength(1);
     expect(queuedFor(org)).toHaveLength(1);
+  });
+
+  it('keys a delivery by what the provider signed: a replay with another body id cannot take the key of the next delivery (JD-S6 R1, S6-9)', async () => {
+    const org = await world.organization();
+    await org.checkout();
+    const preapprovalId = String((await org.subscription())['provider_preapproval_id']);
+    const captured = await world.notice(
+      noticeBody('evt-captured', 'subscription_preapproval', preapprovalId),
+    );
+    expect((await world.post(captured)).statusCode).toBe(200);
+    expect(await eventsOf(org)).toHaveLength(1);
+
+    // An attacker holding the captured request changes the id of the body, which the signature does
+    // not cover, to the id the next real delivery will carry.
+    const replay = {
+      headers: captured.headers,
+      rawBody: captured.rawBody.replace('evt-captured', 'evt-next-real'),
+    };
+    expect((await world.post(replay)).statusCode).toBe(200);
+    expect(await eventsOf(org)).toHaveLength(1);
+
+    // The next real delivery (another request id) is a delivery of its own: it is recorded and queued.
+    world.advance(1_000);
+    const real = await world.notice(
+      noticeBody('evt-next-real', 'subscription_preapproval', preapprovalId),
+    );
+    expect((await world.post(real)).statusCode).toBe(200);
+    expect(await eventsOf(org)).toHaveLength(2);
+  });
+
+  it('purges the notices that are older than a month with the reconcile, and keeps the recent ones (JD-S6 R1, S6-9)', async () => {
+    const org = await world.organization();
+    await org.checkout();
+    const preapprovalId = String((await org.subscription())['provider_preapproval_id']);
+    await org.run(sql`
+      insert into subscription_event (tenant_id, event_id, topic, resource_id, signed_at, received_at)
+      values (current_setting('app.tenant_id')::uuid, 'old-1', 'preapproval', 'PRE-OLD',
+              now() - interval '40 days', now() - interval '40 days'),
+             (current_setting('app.tenant_id')::uuid, 'recent-1', 'preapproval', 'PRE-RECENT',
+              now() - interval '2 days', now() - interval '2 days')`);
+
+    await reconcileSubscription(world.deps, org.tenant.id);
+
+    const left = (await eventsOf(org)).map((row) => row['event_id']);
+    expect(left).toContain('recent-1');
+    expect(left).not.toContain('old-1');
+    expect(preapprovalId).toBeTruthy();
   });
 
   it('acknowledges a notice about something no subscription holds, with the same answer and no trace', async () => {

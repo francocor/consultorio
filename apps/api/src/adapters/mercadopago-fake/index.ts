@@ -33,6 +33,7 @@ import {
   FAKE_PAYMENT_METHOD_LABEL,
   KEY_REUSED_MESSAGE,
   NOT_AUTHORIZED_MESSAGE,
+  NOT_PAUSED_MESSAGE,
   NOT_REFUNDABLE_MESSAGE,
   REFUND_EXCEEDS_MESSAGE,
   SERVICE_DOWN_MESSAGE,
@@ -91,6 +92,13 @@ export interface FakePaymentsGateway extends PaymentsGateway {
   setMode(mode: PaymentsSimulatorMode): void;
   /** What the payer does on the hosted page of a preapproval: authorizes it (and the new amount, if one waits). */
   authorize(preapprovalId: string): void;
+  /** The provider (or the payer, on its page) pauses an authorized preapproval: it stops charging. */
+  pause(preapprovalId: string): void;
+  /**
+   * The payer resumes a paused preapproval: it charges again. A cancelled one never does, which is the
+   * one thing the platform can rely on to stop a charge for good.
+   */
+  resume(preapprovalId: string): void;
   /** The billing cycle for an authorized preapproval: the provider charges the payer. */
   chargeCycle(preapprovalId: string, outcome: 'approved' | 'rejected'): PaymentDescription;
   /** What the payer does on the hosted page of a payment link: pays it. */
@@ -270,6 +278,19 @@ export function createFakePaymentsGateway(
         state.amountCents = state.pendingAmountCents;
         delete state.pendingAmountCents;
       }
+    },
+
+    pause(preapprovalId) {
+      const state = preapprovals.get(preapprovalId);
+      if (!state) throw new Error(UNKNOWN_PREAPPROVAL_MESSAGE);
+      if (state.status === 'authorized') state.status = 'paused';
+    },
+
+    resume(preapprovalId) {
+      const state = preapprovals.get(preapprovalId);
+      if (!state) throw new Error(UNKNOWN_PREAPPROVAL_MESSAGE);
+      if (state.status !== 'paused') throw new Error(NOT_PAUSED_MESSAGE);
+      state.status = 'authorized';
     },
 
     chargeCycle(preapprovalId, outcome) {

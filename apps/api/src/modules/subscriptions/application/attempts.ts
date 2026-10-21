@@ -34,8 +34,17 @@ export interface MarkInput {
   statementId?: string | null;
   paymentId?: string | null;
   refundIdsBefore?: string[] | null;
-  /** The instant the request is about to be sent. */
-  now: Date;
+  /**
+   * For a write about a resource that already exists (the cancellation of a preapproval): the id of
+   * that resource, so the settlement of an unknown outcome reads the one that was meant.
+   */
+  resourceId?: string | null;
+  /**
+   * The clock, read when the row is written and not before: the window of a request that is given up
+   * on counts from the instant of the mark, never from one read earlier in the transaction (JD-S6 R1,
+   * S6-13).
+   */
+  clock: () => Date;
   /** How long a request that is given up on may still land (`PaymentsGateway.settleWindowMs`). */
   settleWindowMs: number;
 }
@@ -46,6 +55,7 @@ export interface MarkInput {
  * unique index lets one write of a kind be open at a time: a second caller finds the first one's row.
  */
 export async function markAttempt(tx: Tx, input: MarkInput): Promise<SubscriptionAttemptRow> {
+  const now = input.clock();
   const [row] = await tx
     .insert(subscriptionAttempt)
     .values({
@@ -60,9 +70,10 @@ export async function markAttempt(tx: Tx, input: MarkInput): Promise<Subscriptio
       statementId: input.statementId ?? null,
       paymentId: input.paymentId ?? null,
       refundIdsBefore: input.refundIdsBefore ?? null,
+      resourceId: input.resourceId ?? null,
       state: 'marked',
-      markedAt: input.now,
-      settleUntil: new Date(input.now.getTime() + input.settleWindowMs),
+      markedAt: now,
+      settleUntil: new Date(now.getTime() + input.settleWindowMs),
     })
     .returning();
   if (!row) throw new Error('the attempt could not be recorded');
@@ -125,15 +136,26 @@ export async function resolveAttempt(
  * Notes that the request was sent and the outcome is not known (a timeout, an abort, an answer that
  * did not come, an adapter that cannot tell). The pin stays: nothing is sent again, adopted blindly
  * or released until the settle window has passed and the provider has been asked.
+ *
+ * The window counts from the instant the caller GAVE UP, which is what `settleWindowMs` means for the
+ * provider: a request that sat between its mark and its sending, or whose call took longer than
+ * planned, may land that long after now. So the pin is never earlier than `now` plus the window; it
+ * only ever grows (the database refuses to shorten it).
  */
 export async function noteUnknownOutcome(
   tx: Tx,
   attemptId: string,
   message: string | null,
+  gaveUp: { now: Date; settleWindowMs: number },
 ): Promise<void> {
+  const until = new Date(gaveUp.now.getTime() + gaveUp.settleWindowMs);
   await tx
     .update(subscriptionAttempt)
-    .set({ outcomeUnknown: true, message })
+    .set({
+      outcomeUnknown: true,
+      message,
+      settleUntil: sql`greatest(${subscriptionAttempt.settleUntil}, ${until.toISOString()}::timestamptz)`,
+    })
     .where(eq(subscriptionAttempt.id, attemptId));
 }
 
@@ -163,6 +185,18 @@ export async function parkSubscription(
       metadata: { from: row.status, to: row.status, attention: reason },
     });
   }
+}
+
+/**
+ * Whether the cause a subscription was parked for stops the platform from talking to the provider.
+ * An ambiguity (two resources could be ours, one is not what was asked, a state nobody expected)
+ * does: whatever is sent could be a second charge. `reauthorization_needed` does not: the provider is
+ * charging as it was told, the owner has been asked to authorize the right amount, and nothing is sent
+ * in the meantime by the paths that look at the cause itself (the collection of a statement). Cancelling,
+ * refunding and the clocks keep working for it.
+ */
+export function blocksProvider(row: Pick<SubscriptionRow, 'attentionReason'>): boolean {
+  return row.attentionReason !== null && row.attentionReason !== 'reauthorization_needed';
 }
 
 /** Lets a subscription go again once a person decided (the operator, or a settled outcome). */

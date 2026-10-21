@@ -40,7 +40,10 @@ import {
   createStaff,
   type MatriculaRules,
 } from '../modules/staff/index.js';
-import { createSubscriptionPlanImpact } from '../modules/subscriptions/index.js';
+import {
+  assertProfessionalSeatAvailable,
+  createSubscriptionPlanImpact,
+} from '../modules/subscriptions/index.js';
 import {
   createBranding,
   createSupportAccess,
@@ -273,6 +276,8 @@ export function createApplication(options: ApplicationOptions): FastifyInstance 
     withTenant,
     auditDeny,
     sessions: identity.sessions,
+    // Giving the professional role back to a member with an active profile takes a seat of the plan.
+    seats: { assertAvailable: (tx) => assertProfessionalSeatAvailable(tx) },
     grants,
     defaultTimeZone: countryTimeZone,
     settingsSections,
@@ -426,6 +431,9 @@ export function createApplication(options: ApplicationOptions): FastifyInstance 
             ...(devRoutes ? [devRoutes] : []),
             ...operatorExtensionsOf(options.wiring ?? [], {
               run: createOperatorRun(options.operator.database.db),
+              withTenant,
+              ...(options.adapters ? { adapters: options.adapters } : {}),
+              ...(options.jobs ? { jobs: options.jobs } : {}),
               tenantCancelled: tenantLifecycle,
               email: options.email,
               origins,

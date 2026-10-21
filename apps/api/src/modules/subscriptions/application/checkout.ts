@@ -1,4 +1,4 @@
-import { eq } from 'drizzle-orm';
+import { and, eq } from 'drizzle-orm';
 
 import { userAccount } from '../../../db/schema/identity.js';
 import {
@@ -14,6 +14,7 @@ import type { Tx } from '../../../platform/db/tenant-context.js';
 import { preapprovalMatches } from '../domain/attempt-decisions.js';
 
 import {
+  blocksProvider,
   lockAttempt,
   markAttempt,
   nextAttemptNumber,
@@ -23,7 +24,14 @@ import {
   resolveAttempt,
 } from './attempts.js';
 import type { CreatePreapprovalResult, PaymentsGateway, PreapprovalRequest } from './ports.js';
-import { UNKNOWN_OUTCOME, callWithin, gatewayOf, type SubscriptionDeps } from './provider.js';
+import { cancelLivePreapprovals } from './preapprovals.js';
+import {
+  UNKNOWN_OUTCOME,
+  callWithin,
+  gatewayOf,
+  settleWindowOf,
+  type SubscriptionDeps,
+} from './provider.js';
 import { reconcileSubscription } from './reconcile.js';
 import {
   CURRENT_TENANT,
@@ -56,6 +64,8 @@ export interface CheckoutInput {
 type Step =
   | { kind: 'done'; result: CheckoutResult }
   | { kind: 'reconcile' }
+  /** An earlier preapproval may be alive: it is stopped before another one is asked for. */
+  | { kind: 'supersede' }
   | { kind: 'reuse'; preapprovalId: string; url: string | null }
   | {
       kind: 'send';
@@ -87,6 +97,7 @@ async function begin(
   deps: SubscriptionDeps,
   gateway: PaymentsGateway,
   input: CheckoutInput,
+  earlierStopped: boolean,
 ): Promise<Step> {
   const billing = await readTenantBilling(tx);
   if (billing.exempt) return done({ status: 'not_allowed', reason: 'exempt' });
@@ -99,7 +110,7 @@ async function begin(
   }
   if (!row) throw new Error('the subscription could not be created');
   if (row.status === 'cancelled') return done({ status: 'not_allowed', reason: 'cancelled' });
-  if (row.attentionReason !== null) return done({ status: 'attention' });
+  if (blocksProvider(row)) return done({ status: 'attention' });
   if (row.authorizationState === 'authorized') {
     return done({ status: 'not_allowed', reason: 'already_subscribed' });
   }
@@ -118,12 +129,34 @@ async function begin(
     const [confirmed] = await tx
       .select()
       .from(subscriptionAttempt)
-      .where(eq(subscriptionAttempt.resourceId, row.providerPreapprovalId));
+      .where(
+        and(
+          eq(subscriptionAttempt.kind, 'preapproval'),
+          eq(subscriptionAttempt.resourceId, row.providerPreapprovalId),
+        ),
+      );
     return {
       kind: 'reuse',
       preapprovalId: row.providerPreapprovalId,
       url: confirmed?.resourceUrl ?? null,
     };
+  }
+
+  // A preapproval the platform asked for before, or that it still holds, may be alive at the provider
+  // (paused, lost, or landed late). A second authorization next to it charges the payer twice, so
+  // nothing new is asked for until every earlier one is provably not alive (JD-S6 R1, C2).
+  if (!earlierStopped) {
+    const [earlier] = await tx
+      .select({ id: subscriptionAttempt.id })
+      .from(subscriptionAttempt)
+      .where(
+        and(
+          eq(subscriptionAttempt.subscriptionId, row.id),
+          eq(subscriptionAttempt.kind, 'preapproval'),
+        ),
+      )
+      .limit(1);
+    if (earlier || row.providerPreapprovalId !== null) return { kind: 'supersede' };
   }
 
   const plan = await findPlan(tx, row.planId);
@@ -143,7 +176,7 @@ async function begin(
     externalReference,
     amountCents,
     payerEmail: account.email,
-    now,
+    clock: deps.clock,
     settleWindowMs: gateway.settleWindowMs + (deps.providerTimeoutMs ?? 20_000),
   });
   return {
@@ -240,7 +273,10 @@ async function finish(
   if (!answer.outcomeUnknown && !timedOut) {
     await resolveAttempt(tx, attempt, { state: 'released', now, message: answer.message });
   } else {
-    await noteUnknownOutcome(tx, attempt.id, answer.message);
+    await noteUnknownOutcome(tx, attempt.id, answer.message, {
+      now,
+      settleWindowMs: settleWindowOf(deps),
+    });
   }
   return { status: 'unavailable' };
 }
@@ -265,11 +301,29 @@ export async function startCheckout(
   const as = <T>(work: (tx: Tx) => Promise<T>) =>
     deps.withTenant({ tenantId: input.tenantId, userId: input.userId }, work);
 
-  for (let pass = 0; pass < 3; pass += 1) {
-    const step = await as((tx) => begin(tx, deps, gateway, input));
+  let earlierStopped = false;
+  for (let pass = 0; pass < 4; pass += 1) {
+    const step = await as((tx) => begin(tx, deps, gateway, input, earlierStopped));
     switch (step.kind) {
       case 'done':
         return step.result;
+
+      case 'supersede': {
+        const swept = await cancelLivePreapprovals(deps, input.tenantId, {
+          why: 'superseded',
+          includeParked: false,
+          waitForCreation: false,
+          settle: async () => {
+            await reconcileSubscription(deps, input.tenantId);
+          },
+        });
+        if (swept.status === 'clear') {
+          earlierStopped = true;
+          continue;
+        }
+        if (swept.status === 'attention') return { status: 'attention' };
+        return { status: swept.status === 'in_progress' ? 'in_progress' : 'unavailable' };
+      }
 
       case 'reconcile':
         // The window of an unknown request passed: ask the provider what it holds, then decide.

@@ -16,6 +16,7 @@ import { ErrorState } from '../../../shared/ui/states/error-state.js';
 import { ListSkeleton } from '../../../shared/ui/states/loading-skeleton.js';
 import { operatorApi, operatorKeys } from '../api/operator-api.js';
 
+import { PaymentsPanel, ResolveParkedButton } from './BillingActions.js';
 import { operatorSubscriptionKeys, operatorSubscriptionsApi } from './subscriptions-api.js';
 
 const TONES: Record<SubscriptionStatus, BadgeTone> = {
@@ -85,6 +86,7 @@ function SubscriptionRow({
 }) {
   const { t } = useTranslation('subscription');
   const [showUsage, setShowUsage] = useState(false);
+  const [showPayments, setShowPayments] = useState(false);
   const name = tenant?.name ?? subscription.id.slice(0, 8);
   const flags: string[] = [];
   if (subscription.attentionReason !== null) {
@@ -133,7 +135,7 @@ function SubscriptionRow({
         ) : (
           <p className="text-muted-foreground">{t('operator.flag.none')}</p>
         )}
-        <div>
+        <div className="flex flex-wrap gap-2">
           <Button
             type="button"
             size="sm"
@@ -147,8 +149,25 @@ function SubscriptionRow({
           >
             {t('operator.usage.show')}
           </Button>
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            className={WRAPPING_LABEL}
+            aria-expanded={showPayments}
+            aria-label={t('operator.payments.showLabel', { name })}
+            onClick={() => {
+              setShowPayments((current) => !current);
+            }}
+          >
+            {t('operator.payments.show')}
+          </Button>
+          {subscription.attentionReason !== null ? (
+            <ResolveParkedButton tenantId={subscription.id} name={name} />
+          ) : null}
         </div>
         {showUsage ? <UsagePanel tenantId={subscription.id} name={name} /> : null}
+        {showPayments ? <PaymentsPanel tenantId={subscription.id} name={name} /> : null}
       </article>
     </li>
   );

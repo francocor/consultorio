@@ -2,7 +2,11 @@ import { z } from 'zod';
 
 import { USAGE_STATES } from './notifications.js';
 
-export { SUBSCRIPTION_ERRORS, SUBSCRIPTION_AUDIT_ACTIONS } from './subscriptions-catalog.js';
+export {
+  SUBSCRIPTION_ERRORS,
+  SUBSCRIPTION_AUDIT_ACTIONS,
+  SUBSCRIPTION_PLATFORM_AUDIT_ACTIONS,
+} from './subscriptions-catalog.js';
 
 /**
  * Contracts of the subscriptions module (the platform subscription of an organization: plans, the
@@ -197,6 +201,73 @@ export const OperatorSubscriptionsResponse = z.strictObject({
   subscriptions: z.array(OperatorSubscriptionDto),
 });
 export type OperatorSubscriptionsResponse = z.infer<typeof OperatorSubscriptionsResponse>;
+
+// What the operator does about a subscription (JD-S6 R1, C1 and S6-6) -----------------------------------
+
+/** The reason an operator gives for a decision on billing: it goes into both trails, so it is short and plain. */
+export const OPERATOR_BILLING_REASON_MIN = 10;
+export const OPERATOR_BILLING_REASON_MAX = 300;
+const OperatorBillingReason = z
+  .string()
+  .trim()
+  .min(OPERATOR_BILLING_REASON_MIN)
+  .max(OPERATOR_BILLING_REASON_MAX);
+
+/** `POST /operator/tenants/:id/subscription/resolve-parked`: lets a parked subscription go. */
+export const OperatorResolveParkedRequest = z.strictObject({ reason: OperatorBillingReason });
+export type OperatorResolveParkedRequest = z.infer<typeof OperatorResolveParkedRequest>;
+
+export const OperatorResolveParkedResponse = z.strictObject({
+  status: z.enum(['resolved']),
+  /** What the subscription was parked for. */
+  was: z.string(),
+});
+export type OperatorResolveParkedResponse = z.infer<typeof OperatorResolveParkedResponse>;
+
+/** A payment of an organization as the operator sees it: amounts and flags, never a payer or a card. */
+export const OperatorPaymentDto = z.strictObject({
+  /** The id of the platform (`subscription_payment.id`), which is what the operator acts on. */
+  id: z.uuid(),
+  purpose: z.enum(['charge', 'overdue', 'statement']),
+  amountCents: Cents,
+  status: z.string(),
+  refundedCents: Cents,
+  period: z.string().nullable(),
+  surplus: z.boolean(),
+  surplusReviewedAt: Instant.nullable(),
+  createdAt: Instant,
+});
+export type OperatorPaymentDto = z.infer<typeof OperatorPaymentDto>;
+
+export const OperatorPaymentsResponse = z.strictObject({ payments: z.array(OperatorPaymentDto) });
+export type OperatorPaymentsResponse = z.infer<typeof OperatorPaymentsResponse>;
+
+/**
+ * `POST /operator/tenants/:id/subscription/payments/:paymentId/refund`. The token is made by the
+ * console when the operator opens the confirmation and travels with every retry of THAT request, so a
+ * double click or a retry after a timeout gives one refund, not two.
+ */
+export const OperatorRefundRequest = z.strictObject({
+  amountCents: Cents.refine((value) => value > 0, { message: 'positive' }),
+  reason: OperatorBillingReason,
+  token: z.uuid(),
+  /** The console asked "are you sure?" and the operator said yes. */
+  confirmed: z.literal(true),
+});
+export type OperatorRefundRequest = z.infer<typeof OperatorRefundRequest>;
+
+export const OperatorRefundResponse = z.strictObject({
+  status: z.enum(['refunded']),
+  amountCents: Cents,
+});
+export type OperatorRefundResponse = z.infer<typeof OperatorRefundResponse>;
+
+/** `POST .../payments/:paymentId/review`: the operator looked at a flagged surplus and left it. */
+export const OperatorSurplusReviewRequest = z.strictObject({ reason: OperatorBillingReason });
+export type OperatorSurplusReviewRequest = z.infer<typeof OperatorSurplusReviewRequest>;
+
+export const OperatorSurplusReviewResponse = z.strictObject({ status: z.enum(['reviewed']) });
+export type OperatorSurplusReviewResponse = z.infer<typeof OperatorSurplusReviewResponse>;
 
 // The local Mercado Pago simulator (provider console) ---------------------------------------------
 

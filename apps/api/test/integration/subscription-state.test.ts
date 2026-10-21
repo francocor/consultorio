@@ -616,3 +616,54 @@ describe('the support view of the platform operator (task 6.8)', () => {
     }
   });
 });
+
+describe('the professional role given back counts against the plan (JD-S6 R1, A-T3)', () => {
+  let full: ClinicalWorld;
+
+  beforeAll(async () => {
+    full = await createClinicalWorld(runtime, 'sub-seats', { clock: () => NOW });
+    await full.professional();
+    await full.professional();
+    await asTenant(runtime, full.tenant.id, (tx) =>
+      starter.startTrial(tx, { tenantId: full.tenant.id }),
+    );
+    const roomForTwo = await planWithRoom(2);
+    await asTenant(runtime, full.tenant.id, (tx) =>
+      tx.execute(sql`UPDATE subscription SET plan_id = ${roomForTwo}`),
+    );
+  }, 180_000);
+
+  afterAll(async () => {
+    await full.close();
+  });
+
+  it('refuses to give the role back to a member whose profile is still active when the plan has no room', async () => {
+    const [first] = await asTenant(runtime, full.tenant.id, async (tx) => {
+      const result = await tx.execute<{ membership_id: string }>(
+        sql`SELECT membership_id FROM professional ORDER BY created_at LIMIT 1`,
+      );
+      return result.rows;
+    });
+    if (!first) throw new Error('no professional');
+    const url = `/members/${first.membership_id}/roles`;
+
+    // Taking the role away frees a seat...
+    const demoted = await full.api.put(url, full.owner, { roles: ['reception'] });
+    expect(demoted.statusCode, demoted.body).toBe(200);
+    // ...which somebody else takes.
+    const invited = await full.api.post('/staff/invitations', full.owner, {
+      email: 'nueva@example.test',
+      roles: ['professional'],
+    });
+    expect(invited.statusCode, invited.body).toBe(201);
+
+    // Giving it back would make three professionals on a plan for two.
+    const back = await full.api.put(url, full.owner, { roles: ['professional'] });
+
+    expect(back.statusCode).toBe(409);
+    expect(back.json()).toMatchObject({ code: 'subscription_professional_limit' });
+    // A role that takes no seat is not asked about.
+    const reception = await full.api.put(url, full.owner, { roles: ['reception', 'admin'] });
+    expect(reception.statusCode, reception.body).toBe(200);
+  });
+});

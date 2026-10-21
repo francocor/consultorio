@@ -37,6 +37,11 @@ export function gatewayOf(deps: Pick<SubscriptionDeps, 'adapters'>): PaymentsGat
   return deps.adapters?.forTenant(PLATFORM, 'paymentsGateway');
 }
 
+/** How long after the caller gave up a write may still land at the provider (0 when there is none). */
+export function settleWindowOf(deps: Pick<SubscriptionDeps, 'adapters'>): number {
+  return gatewayOf(deps)?.settleWindowMs ?? 0;
+}
+
 /** The provider is a simulator: the screens and the emails say so. */
 export function isSimulated(gateway: PaymentsGateway | undefined): boolean {
   return (gateway as { simulated?: unknown } | undefined)?.simulated === true;

@@ -2,6 +2,7 @@ import type { StaffRole } from '@consultorio/contracts';
 import { eq } from 'drizzle-orm';
 
 import { membership } from '../../../db/schema/identity.js';
+import { professional } from '../../../db/schema/staff.js';
 import { audit, type AuditActor } from '../../../platform/audit/writer.js';
 import type { Tx } from '../../../platform/db/tenant-context.js';
 import { AppError } from '../../../platform/http/problem.js';
@@ -49,7 +50,18 @@ async function memberName(tx: Tx, membershipId: string): Promise<string | undefi
   return row?.name ?? undefined;
 }
 
-export function createRoleService(deps: { sessions: SessionRevoker }): RoleService {
+/**
+ * The limit of professionals of the plan, asked by whoever composes the application (the subscriptions
+ * module owns it; access does not depend on it). Absent: no limit is asked, as in a test of roles alone.
+ */
+export interface SeatLimit {
+  assertAvailable(tx: Tx): Promise<void>;
+}
+
+export function createRoleService(deps: {
+  sessions: SessionRevoker;
+  seats?: SeatLimit;
+}): RoleService {
   return {
     async changeRoles(tx, input) {
       // Everything below reads the roles as they are now, after any concurrent change: the roles of
@@ -74,6 +86,17 @@ export function createRoleService(deps: { sessions: SessionRevoker }): RoleServi
         if (verdict.reason === 'inactive_target') throw new AppError('conflict');
         if (verdict.reason === 'invalid_roles') throw new AppError('validation_failed');
         throw new AccessRefused(`role_change_${verdict.reason}`);
+      }
+
+      // Giving the professional role back to a member whose profile is still active makes them count
+      // again at once: it takes a seat of the plan like any other professional (JD-S6 R1, A-T3). A
+      // member with no profile takes none until the profile is made, which asks for the seat itself.
+      if (input.newRoles.includes('professional') && !target.roles.includes('professional')) {
+        const [profile] = await tx
+          .select({ status: professional.status })
+          .from(professional)
+          .where(eq(professional.membershipId, target.id));
+        if (profile?.status === 'active') await deps.seats?.assertAvailable(tx);
       }
 
       const previousRoles = target.roles;

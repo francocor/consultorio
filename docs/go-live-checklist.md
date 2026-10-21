@@ -64,11 +64,16 @@ The application refuses to start in production without these, and says which one
 - A real key service for the encryption of the clinical fields (`KMS_PROVIDER=aws`, `AWS_REGION`,
   `AWS_KMS_KEY_ID`), never the local key. The key has its own escrow (`docs/runbooks/backup-restore.md`).
 - A real mail server (`SMTP_HOST`, `SMTP_SECURITY`) and `ADDRESS_HASH_PEPPER`.
-- `DB_POOL_MAX` of at least 34: eight families of jobs hold a connection while a provider answers
-  (`docs/runbooks/deploy.md`). The example file says 36.
+- `DB_POOL_MAX` of at least 46: eleven families of jobs hold a connection while a provider answers
+  or a mail goes out (`docs/runbooks/deploy.md`). The example file says 48. Both the API and the worker
+  open that many, so `max_connections` of the database must cover both with room to spare (150 is
+  a sound number for one API, one worker, the releaser and the migrator).
 - The archive: `ARCHIVE_S3_*`, the public half of the key of the releaser in the API and the worker
   (`ARCHIVE_RELEASER_PUBLIC_KEY`), the private half only in the releaser (`ARCHIVE_RELEASER_KEK`).
-- `PAYMENTS_PROVIDER` and the other providers, set to a real adapter or to `off`.
+- `PAYMENTS_PROVIDER` and the other providers, set to a real adapter or to `off`. With `off` the dates of
+  the billing hold (nobody can subscribe, so a trial that ends or a grace that runs out is not walked
+  toward read-only for a debt nobody can pay): every organization stays as it is. Set it to a real
+  adapter before the first trial ends, or the trials never turn into customers.
 - The metrics port of each process (`METRICS_PORT`, `METRICS_HOST`, `METRICS_TOKEN`) and the scraper
   that loads `infra/alerts/rules.yml`.
 

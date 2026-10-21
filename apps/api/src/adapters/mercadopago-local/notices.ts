@@ -60,13 +60,14 @@ export function deliveryPlan(notices: readonly Notice[], mode: PaymentsSimulator
   return mode === 'duplicate_events' ? ordered.flatMap((notice) => [notice, notice]) : ordered;
 }
 
-/** Signs a notice and posts it to the webhook of the application; true when the webhook accepted it. */
-async function post(
-  server: Pick<FastifyInstance, 'inject'>,
-  gateway: Pick<LocalPaymentsGateway, 'sign'>,
-  notice: Notice,
-): Promise<boolean> {
-  const signed = gateway.sign(bodyOf(notice));
+/** The same signed request, posted as it is (a repeated delivery is the same bytes and the same headers). */
+interface Signed {
+  rawBody: string;
+  headers: Record<string, string>;
+}
+
+/** Posts a signed notice to the webhook of the application; true when the webhook accepted it. */
+async function post(server: Pick<FastifyInstance, 'inject'>, signed: Signed): Promise<boolean> {
   const response = await server.inject({
     method: 'POST',
     url: '/webhooks/mercadopago',
@@ -76,16 +77,23 @@ async function post(
   return response.statusCode === 200;
 }
 
-/** Delivers notices in the order the mode says; returns how many the webhook accepted. */
+/**
+ * Delivers notices in the order the mode says; returns how many the webhook accepted. A notice is
+ * signed once however many times it is delivered: the key of a delivery is what the provider signed
+ * (the request id, the resource and the time), so a repeated delivery is the same request again.
+ */
 export async function deliver(
   server: Pick<FastifyInstance, 'inject'>,
   gateway: Pick<LocalPaymentsGateway, 'sign'>,
   mode: PaymentsSimulatorMode,
   notices: readonly Notice[],
 ): Promise<number> {
+  const signed = new Map<Notice, Signed>();
   let accepted = 0;
   for (const notice of deliveryPlan(notices, mode)) {
-    if (await post(server, gateway, notice)) accepted += 1;
+    const request = signed.get(notice) ?? gateway.sign(bodyOf(notice));
+    signed.set(notice, request);
+    if (await post(server, request)) accepted += 1;
   }
   return accepted;
 }

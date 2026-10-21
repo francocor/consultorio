@@ -69,4 +69,23 @@ export const SUBSCRIPTION_AUDIT_ACTIONS = [
   // A second approved payment for a period that was already paid: recorded and flagged, not collected.
   'subscription.surplus_flagged',
   'subscription.refunded',
+  // A preapproval that was superseded or that charged next to the one the subscription holds was
+  // cancelled at the provider (the metadata says which and why).
+  'subscription.preapproval_cancelled',
+  // The platform operator looked at a subscription parked for a person and let it go, with a reason.
+  'subscription.parked_resolved',
+  // The platform operator looked at a payment flagged as a surplus and decided (refund it, or leave it).
+  'subscription.surplus_reviewed',
+] as const;
+
+/**
+ * What the platform operator does to the billing of an organization, written in the platform trail
+ * with the operator's id (the same entry is written in the trail of the organization, which is part of
+ * what it takes with it). The operator never reads a payer or a card: the entries carry the ids of
+ * the platform and of the provider, the amounts and the reason the operator gave.
+ */
+export const SUBSCRIPTION_PLATFORM_AUDIT_ACTIONS = [
+  'subscription.parked_resolved',
+  'subscription.refunded',
+  'subscription.surplus_reviewed',
 ] as const;

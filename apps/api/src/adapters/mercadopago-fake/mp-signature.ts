@@ -1,4 +1,4 @@
-import { createHmac, timingSafeEqual } from 'node:crypto';
+import { createHash, createHmac, timingSafeEqual } from 'node:crypto';
 
 import type {
   WebhookHeaders,
@@ -41,6 +41,17 @@ export function manifestFor({ id, requestId, ts }: ManifestParts): string {
   return `id:${normalized};request-id:${requestId};ts:${String(ts)};`;
 }
 
+/**
+ * The key of idempotence of a delivery: derived ONLY from what the provider signed (the request id,
+ * the resource and the time), never from the `id` of the body, which the signature does not cover. A
+ * captured notice that is replayed with another body id would otherwise be recorded as a delivery
+ * that never happened, and the real one, arriving later with that id, would be dropped as a repeat
+ * (JD-S6 R1, S6-9). The same signed request delivered twice has the same key.
+ */
+export function deliveryKeyOf(parts: ManifestParts): string {
+  return createHash('sha256').update(manifestFor(parts)).digest('hex');
+}
+
 function hmacHex(secret: string, text: string): string {
   return createHmac('sha256', secret).update(text).digest('hex');
 }
@@ -56,6 +67,7 @@ function firstHeader(headers: WebhookHeaders, name: string): string | undefined 
 }
 
 interface Reading {
+  /** The `id` of the body: NOT signed, so it is only checked to be there, never used as a key. */
   eventId: string;
   type: string;
   /** What the manifest is signed over: the id the body names, or empty when it names none. */
@@ -145,7 +157,11 @@ export function verifyMercadoPagoWebhook(input: VerifyInput): WebhookVerificatio
   return {
     valid: true,
     notice: {
-      eventId: reading.eventId,
+      eventId: deliveryKeyOf({
+        id: reading.resourceId,
+        requestId,
+        ts: signature.ts,
+      }),
       topic,
       resourceId: reading.resourceId,
       signedAt: new Date(signature.ts),

@@ -33,7 +33,13 @@ export const STAGE6_WRITTEN_OUTSIDE_ROUTES: Readonly<Record<string, string>> = {
   'subscription.surplus_flagged':
     'Written by the settlement of the payments (a job, as the system) when a second approved payment arrives for a period already paid: it is recorded as surplus and flagged for the operator.',
   'subscription.refunded':
-    'Written by the refund of a payment (the operator asks, the service refunds through the gateway and writes the entry in the tenant trail). No route of the console reaches it yet: it runs from the service, and the contract tests prove it.',
+    'Written by the refund of a payment: the operator asks through the console (`POST /operator/tenants/:id/subscription/payments/:paymentId/refund`, whose routes live in the operator console and not in the tenant application), or the platform gives back a duplicate of an overdue link by itself; the service refunds through the gateway and writes the entry in the tenant trail, and the console writes the same one in the platform trail with the operator id.',
+  'subscription.preapproval_cancelled':
+    'Written by the job that reconciles the subscription, or by the checkout, when a preapproval that was superseded or that charged next to the one the subscription holds is cancelled at the provider (as the system).',
+  'subscription.parked_resolved':
+    'Written by the operator console (`POST /operator/tenants/:id/subscription/resolve-parked`): the operator looked at a subscription parked for a person and let it go, with a reason. The console is not part of the tenant application, so no tenant route declares it.',
+  'subscription.surplus_reviewed':
+    'Written by the operator console (`POST /operator/tenants/:id/subscription/payments/:paymentId/review`): the operator looked at a payment flagged as a surplus and decided. The console is not part of the tenant application, so no tenant route declares it.',
 };
 
 /**

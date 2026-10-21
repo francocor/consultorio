@@ -48,7 +48,8 @@ export interface PaymentsGatewayHarness {
     ts?: number,
   ) => Promise<{ rawBody: string; headers: Record<string, string> }>;
   /**
-   * Only for a provider that can be slowed down (the fake): holds the next write until `release()`.
+   * Only for a provider that can be slowed down (the fake, and the local one through the harness of
+   * the tests, which holds its writes in front of the database): holds the next write until `release()`.
    * With `completeLate` a caller that gives up (aborts) does not stop the write: it lands at
    * `release()`, like a request the transport could not take back. Without it, an aborted write
    * never lands.
@@ -741,8 +742,25 @@ export function describePaymentsGatewayContract(target: PaymentsGatewayContractT
 
         expect(result).toMatchObject({
           valid: true,
-          notice: { eventId: '424242', topic: 'preapproval', resourceId: 'PRE-1' },
+          notice: { topic: 'preapproval', resourceId: 'PRE-1' },
         });
+      });
+
+      it('keys a delivery by what it signed: the unsigned id of the body cannot be used to take the key of another delivery (JD-S6 R1, S6-9)', async () => {
+        const harness = await target.make();
+        const request = await harness.sign(body);
+        const eventIdOf = (rawBody: string, headers: Record<string, string>) => {
+          const result = harness.gateway.verifyWebhook(rawBody, headers, { now: harness.now() });
+          if (!result.valid) throw new Error(`refused: ${result.reason}`);
+          return result.notice.eventId;
+        };
+
+        const original = eventIdOf(request.rawBody, request.headers);
+
+        expect(eventIdOf(request.rawBody, request.headers)).toBe(original);
+        expect(eventIdOf(body.replace('424242', '999999'), request.headers)).toBe(original);
+        const another = await harness.sign(body);
+        expect(eventIdOf(another.rawBody, another.headers)).not.toBe(original);
       });
 
       it('refuses a notice that was altered, forged or sent without a signature', async () => {

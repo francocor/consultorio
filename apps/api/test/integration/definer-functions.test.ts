@@ -45,6 +45,9 @@ const ALLOWED: Record<string, readonly string[]> = {
   'app.portal_prescription(uuid)': ['app_rw'],
   // The worker removes what the demo outbox kept for more than a day (the runtime role has no DELETE).
   'app.demo_outbox_purge(timestamp with time zone)': ['app_rw'],
+  // The reconcile of a subscription removes the notices of the payments provider that are older than a
+  // month, for the organization of the transaction only (the runtime role has no DELETE; JD-S6 R1, S6-9).
+  'app.subscription_event_purge(timestamp with time zone)': ['app_rw'],
   // The signup (Stage 6): what an address is for it (an account, a signup waiting for its link, or
   // free: ids only), and the purge of the signups nobody confirmed (retention exception 2). The
   // purge refuses anything but an `unverified` organization older than a day, and lets a foreign key

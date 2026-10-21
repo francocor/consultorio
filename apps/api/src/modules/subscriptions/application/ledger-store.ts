@@ -2,6 +2,7 @@ import { and, eq, sql } from 'drizzle-orm';
 
 import {
   subscription,
+  subscriptionAttempt,
   subscriptionPayment,
   subscriptionRefund,
   type SubscriptionPaymentRow,
@@ -11,6 +12,7 @@ import { audit } from '../../../platform/audit/writer.js';
 import type { Tx } from '../../../platform/db/tenant-context.js';
 import {
   planLedger,
+  type LedgerOwnership,
   type LedgerPlan,
   type PaymentPurpose,
   type RecordedPayment,
@@ -68,9 +70,17 @@ export async function applyLedger(
   tx: Tx,
   row: SubscriptionRow,
   payments: readonly PaymentDescription[],
+  alsoEarlier: ReadonlySet<string> = new Set(),
 ): Promise<LedgerApplied> {
   const { recorded, lastPaidPeriod } = await loadRecorded(tx, row.id);
-  const plan = planLedger({ payments, recorded, lastPaidPeriod, paidThrough: row.paidThrough });
+  const ownership = await loadOwnership(tx, row, alsoEarlier);
+  const plan = planLedger({
+    payments,
+    recorded,
+    lastPaidPeriod,
+    paidThrough: row.paidThrough,
+    ownership,
+  });
 
   for (const operation of plan.operations) {
     const payment = operation.payment;
@@ -119,14 +129,14 @@ export async function applyLedger(
     }
   }
 
-  for (const paymentId of plan.effects.surplusPaymentIds) {
+  for (const { paymentId, reason } of plan.effects.flagged) {
     await audit(tx, {
       action: 'subscription.surplus_flagged',
       outcome: 'allow',
       actor: SYSTEM_ACTOR,
       resourceType: 'subscription',
       resourceId: row.id,
-      metadata: { providerPaymentId: paymentId },
+      metadata: { providerPaymentId: paymentId, reason },
     });
   }
 
@@ -142,6 +152,49 @@ export async function applyLedger(
     if (moved) current = moved;
   }
   return { plan, row: current };
+}
+
+/**
+ * What the platform owns of what the provider can answer: the preapproval the subscription charges
+ * through, the ones it held before (and the ones found alive after it gave them up), and the links it
+ * made. A payment is credited only when it belongs to one of them (JD-S6 R1, A-W10).
+ */
+async function loadOwnership(
+  tx: Tx,
+  row: SubscriptionRow,
+  alsoEarlier: ReadonlySet<string>,
+): Promise<LedgerOwnership> {
+  const confirmed = await tx
+    .select({
+      kind: subscriptionAttempt.kind,
+      reference: subscriptionAttempt.externalReference,
+      amountCents: subscriptionAttempt.amountCents,
+      resourceId: subscriptionAttempt.resourceId,
+    })
+    .from(subscriptionAttempt)
+    .where(
+      and(
+        eq(subscriptionAttempt.subscriptionId, row.id),
+        eq(subscriptionAttempt.state, 'confirmed'),
+      ),
+    );
+  const earlier = new Set<string>(alsoEarlier);
+  for (const attempt of confirmed) {
+    if (attempt.kind === 'preapproval' && attempt.resourceId !== null)
+      earlier.add(attempt.resourceId);
+  }
+  if (row.providerPreapprovalId !== null) earlier.delete(row.providerPreapprovalId);
+  return {
+    preapprovalId: row.providerPreapprovalId,
+    earlierPreapprovalIds: earlier,
+    links: confirmed
+      .filter((attempt) => attempt.kind === 'payment_link')
+      .map((attempt) => ({
+        externalReference: attempt.reference,
+        amountCents: attempt.amountCents,
+        linkId: attempt.resourceId,
+      })),
+  };
 }
 
 /** Every refund the provider reports becomes an entry; the ones recorded already are left as they are. */

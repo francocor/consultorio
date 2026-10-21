@@ -76,6 +76,8 @@ export const TRACK_RANGES: Readonly<Record<string, Range & { label: string }>> =
   '6a': { start: 610, end: 639, label: 'Stage 6, A subscriptions' },
   '6b': { start: 640, end: 649, label: 'Stage 6, B signup' },
   '6c': { start: 650, end: 679, label: 'Stage 6, C retention' },
+  // The gap 0680 - 0689 is the judgment day of Stage 6, round 1: 6jd1 is the payments half (6jd2 is the retention half).
+  '6jd1': { start: 680, end: 684, label: 'Stage 6, judgment day round 1, payments' },
   '6d': { start: 690, end: 699, label: 'Stage 6, D readiness' },
 };
 

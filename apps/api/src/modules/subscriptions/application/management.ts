@@ -1,5 +1,5 @@
 import type { PlanDto } from '@consultorio/contracts';
-import { and, asc, eq } from 'drizzle-orm';
+import { and, asc, desc, eq } from 'drizzle-orm';
 
 import { userAccount } from '../../../db/schema/identity.js';
 import {
@@ -16,6 +16,7 @@ import { linkMatches } from '../domain/attempt-decisions.js';
 import { coverageEnd } from '../domain/subscription-state.js';
 
 import {
+  blocksProvider,
   lockAttempt,
   markAttempt,
   nextAttemptNumber,
@@ -27,7 +28,13 @@ import {
 import { cancelAtProvider } from './cancel-at-provider.js';
 import { DAY_MS } from './common.js';
 import type { CreatePaymentLinkResult } from './ports.js';
-import { UNKNOWN_OUTCOME, callWithin, gatewayOf, type SubscriptionDeps } from './provider.js';
+import {
+  UNKNOWN_OUTCOME,
+  callWithin,
+  gatewayOf,
+  settleWindowOf,
+  type SubscriptionDeps,
+} from './provider.js';
 import { planDtoOf } from './read-model.js';
 import { reconcileSubscription } from './reconcile.js';
 import {
@@ -267,11 +274,40 @@ type Planned =
     };
 
 /**
+ * What is overdue: the amount of the recurring charge that failed last (the newest rejected charge of
+ * the preapproval), because that is what the owner owes for the period it was meant to pay. The amount
+ * the preapproval is authorized for now can be another one (a statement may have moved it to what is
+ * left of one), so it is not what is asked for. With no charge that failed (a trial that ended before
+ * anybody subscribed) it is the price of the plan for the professionals active now (JD-S6 R1, S6-6).
+ */
+async function overdueAmount(tx: Tx, row: SubscriptionRow, priceNow: number): Promise<number> {
+  const [failed] = await tx
+    .select({ amountCents: subscriptionPayment.amountCents })
+    .from(subscriptionPayment)
+    .where(
+      and(
+        eq(subscriptionPayment.subscriptionId, row.id),
+        eq(subscriptionPayment.purpose, 'charge'),
+        eq(subscriptionPayment.status, 'rejected'),
+      ),
+    )
+    .orderBy(desc(subscriptionPayment.providerCreatedAt))
+    .limit(1);
+  return failed?.amountCents ?? row.authorizedAmountCents ?? priceNow;
+}
+
+/**
  * `POST /subscription/retry-payment`: a one-off link for the overdue amount, for an owner whose
  * subscription is past due or read-only. It is the owner's way to pay at any moment, whatever the
  * recurring charge is doing. The link is a write to the provider (mark, call, answer); a second click
  * hands out the link already made while it is valid and unpaid. The provider decides when it was paid:
  * the reconcile that follows the notice settles the debt.
+ *
+ * The preapproval may still retry the same month while the owner pays the link, and nothing here can
+ * stop that retry (the port has no pause). So the second payment is not prevented but caught: the
+ * ledger records a recurring charge for a month that an overdue link paid as a duplicate of it, flags
+ * it, and the reconcile gives it back by itself (`refundDuplicates`), once, through the same marks
+ * and settle window as every refund. The link is audited when the provider confirms it.
  */
 export async function createOverdueLink(
   deps: SubscriptionDeps,
@@ -289,7 +325,7 @@ export async function createOverdueLink(
       if (row?.status !== 'past_due' && row?.status !== 'read_only') {
         return { kind: 'done', outcome: { status: 'not_allowed', reason: 'nothing_due' } };
       }
-      if (row.attentionReason !== null) return { kind: 'done', outcome: { status: 'attention' } };
+      if (blocksProvider(row)) return { kind: 'done', outcome: { status: 'attention' } };
       const now = deps.clock();
       const open = (await openAttempts(tx, row.id)).filter(
         (attempt) =>
@@ -339,9 +375,11 @@ export async function createOverdueLink(
       }
 
       const plan = await findPlan(tx, row.planId);
-      const amountCents =
-        row.authorizedAmountCents ??
-        Math.max(1, await countActiveProfessionalsNow(tx)) * plan.pricePerProfessionalCents;
+      const amountCents = await overdueAmount(
+        tx,
+        row,
+        Math.max(1, await countActiveProfessionalsNow(tx)) * plan.pricePerProfessionalCents,
+      );
       const [account] = await tx
         .select({ email: userAccount.email })
         .from(userAccount)
@@ -359,7 +397,7 @@ export async function createOverdueLink(
         externalReference,
         amountCents,
         payerEmail: account.email,
-        now,
+        clock: deps.clock,
         settleWindowMs: gateway.settleWindowMs + (deps.providerTimeoutMs ?? 20_000),
       });
       return {
@@ -422,6 +460,20 @@ export async function createOverdueLink(
           resourceUrl: answer.link.url,
           now,
         });
+        await audit(tx, {
+          action: 'subscription.state_changed',
+          outcome: 'allow',
+          actor: owner.actor,
+          resourceType: 'subscription',
+          resourceId: row.id,
+          reason: 'overdue_link_created',
+          metadata: {
+            from: row.status,
+            to: row.status,
+            reference: step.request.externalReference,
+            amountCents: step.request.amountCents,
+          },
+        });
         return { status: 'ready', paymentUrl: answer.link.url };
       }
       if (answer.status === 'rejected') {
@@ -431,7 +483,10 @@ export async function createOverdueLink(
       if (!answer.outcomeUnknown && !timedOut) {
         await resolveAttempt(tx, attempt, { state: 'released', now, message: answer.message });
       } else {
-        await noteUnknownOutcome(tx, attempt.id, answer.message);
+        await noteUnknownOutcome(tx, attempt.id, answer.message, {
+          now,
+          settleWindowMs: settleWindowOf(deps),
+        });
       }
       return { status: 'unavailable' };
     });
