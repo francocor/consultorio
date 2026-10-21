@@ -153,6 +153,21 @@ describe('the subscription state machine: what a date does', () => {
     expect(due.tenantStatus).toBe('cancelled');
     expect(early).toMatchObject({ changed: false, publishCancelled: false });
   });
+
+  it('never ends a cancelling subscription while the provider may still be charging it (JD-S6 R1, C1)', () => {
+    const due = facts('cancelling', { paidThrough: at(-1) });
+
+    expect(run({ ...due, providerHolds: true }, { type: 'period_ended' })).toMatchObject({
+      changed: false,
+      to: 'cancelling',
+      publishCancelled: false,
+      reason: 'not_allowed',
+    });
+    expect(run({ ...due, providerHolds: false }, { type: 'period_ended' })).toMatchObject({
+      changed: true,
+      to: 'cancelled',
+    });
+  });
 });
 
 describe('the subscription state machine: what the owner does', () => {

@@ -98,6 +98,16 @@ export interface AccountPieces {
 export interface OperatorWiringContext {
   /** Runs a callback in one transaction of the operator connection (the `app_operator` role). */
   run: OperatorRun;
+  /**
+   * Runs a callback in one transaction of the runtime connection, for what the operator DECIDES and
+   * the platform then carries out as it does for the jobs (a refund, letting a parked subscription
+   * go). The operator role itself cannot write a payment or reach the provider.
+   */
+  withTenant: WithTenant;
+  /** Which provider serves which service; the billing decisions of the operator reach the payments one. */
+  adapters?: AdapterResolver | undefined;
+  /** Queues the jobs a decision asks for (a new look at the subscription). */
+  jobs?: JobClient | undefined;
   /** The door that says an organization was cancelled; the operator action publishes through it. */
   tenantCancelled: TenantCancelledPort;
   email: EmailSender;

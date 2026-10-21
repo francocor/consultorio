@@ -13,9 +13,13 @@ export const JOB_LOCAL_CONCURRENCY = 2;
  * - `afip.issue`: the call to the authority; the mark of the attempt is committed on the second one;
  * - `erx.reconcile`: the questions to the e-prescription provider, one short transaction at a time;
  * - `portal.notice_sweep`: the messages of the notices, with the claim and the mark in short ones;
- * - `subscription.reconcile` and `dunning.step`: the questions to the payments provider, asked
- *   between two short transactions, with the mark of every write committed before its call (Stage 6,
- *   track A);
+ * - `subscription.reconcile`, `dunning.step` and `trial.end`: the questions to the payments provider,
+ *   asked between two short transactions, with the mark of every write committed before its call
+ *   (Stage 6, track A); `trial.end` asks the provider before a date moves an organization, like the
+ *   dunning does (JD-S6 R1, A-W4);
+ * - `usage.snapshot` and `statement.generate`: they do their work in short transactions of their own
+ *   (`deps.withTenant`) and send the owner's email after them, with the framework's transaction idle
+ *   meanwhile (JD-S6 R1, A-W4);
  * - `export.build`: the package of a cancelled organization, streamed to the files bucket while the
  *   lock of the build is held on the transaction of the framework (the reads are short ones of their own);
  * - `archive.write` and `archive.verify`: the write-once store, the same way.
@@ -29,6 +33,9 @@ export const CONNECTION_HOLDING_JOBS = [
   'portal.notice_sweep',
   'subscription.reconcile',
   'dunning.step',
+  'trial.end',
+  'usage.snapshot',
+  'statement.generate',
   'export.build',
   'archive.write',
   'archive.verify',

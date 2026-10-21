@@ -46,7 +46,8 @@ export interface ApplyEventResult {
  *
  * - the subscription row, with its new status, its grace and the end of what is paid;
  * - `tenant.status`, which is DERIVED from the subscription and never set on its own: read-only sets
- *   `read_only_since`, going back to active clears it, cancelled leaves it as it was;
+ *   `read_only_since`, going back to active clears it, and cancelled is terminal (it never changes
+ *   again, whatever the subscription does later);
  * - the dunning bookkeeping: the grace counts from the instant it began, and a settlement clears it;
  * - the audit entry `subscription.state_changed`, and `tenant.cancelled` when the subscription ends;
  * - the delivery of `TenantCancelled`, so retention starts in the very transaction that cancelled.
@@ -62,6 +63,8 @@ export async function applyEvent(input: ApplyEventInput): Promise<ApplyEventResu
       graceEndsAt: row.graceEndsAt,
       paidThrough: row.paidThrough,
       authorized: row.authorizationState === 'authorized',
+      // Anything but `none`: the provider may still be charging, so the end waits for the cancellation.
+      providerHolds: row.authorizationState !== 'none',
     },
     input.event,
     { now, graceDays: plan.graceDays },
@@ -156,6 +159,10 @@ async function syncTenantStatus(
     .from(tenant)
     .where(eq(tenant.id, CURRENT_TENANT));
   if (!current || current.status === derived) return;
+  // A cancelled organization is terminal: nothing the subscription says later (a trial that ends, a
+  // grace that runs out, a payment that is approved) gives it back. The database refuses it too
+  // (migration 0680); here it is simply not tried (JD-S6 R1, S6-2).
+  if (current.status === 'cancelled') return;
   await tx
     .update(tenant)
     .set({

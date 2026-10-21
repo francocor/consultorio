@@ -25,7 +25,13 @@ import {
 import { DAY_MS } from './common.js';
 import { claimNotice, ownerEmails } from './notices.js';
 import type { CreatePaymentLinkResult, UpdatePreapprovalAmountResult } from './ports.js';
-import { UNKNOWN_OUTCOME, callWithin, gatewayOf, type SubscriptionDeps } from './provider.js';
+import {
+  UNKNOWN_OUTCOME,
+  callWithin,
+  gatewayOf,
+  settleWindowOf,
+  type SubscriptionDeps,
+} from './provider.js';
 import { AMOUNT_CHANGE_REFUSED, REAUTHORIZATION_REQUIRED } from './statements.js';
 import { CURRENT_TENANT, lockSubscription, readTenantBilling } from './store.js';
 
@@ -76,10 +82,12 @@ export async function allocatePayments(tx: Tx, subscriptionId: string, now: Date
       ),
     )
     .orderBy(asc(subscriptionPayment.providerCreatedAt), asc(subscriptionPayment.id));
+  // A payment flagged as a surplus (a duplicate, or one that is not ours) is never booked against a
+  // statement: it is money to give back, not money collected.
   const candidates = payments.filter(
     (payment) =>
-      payment.purpose === 'statement' ||
-      (payment.purpose === 'charge' && payment.credited && !payment.surplus),
+      !payment.surplus &&
+      (payment.purpose === 'statement' || (payment.purpose === 'charge' && payment.credited)),
   );
   if (candidates.length === 0) return;
 
@@ -266,7 +274,7 @@ async function plan(tx: Tx, deps: SubscriptionDeps, settleWindowMs: number): Pro
     amountCents: outstanding,
     previousAmountCents: authorized,
     statementId: oldest.id,
-    now,
+    clock: deps.clock,
     settleWindowMs: settleWindowMs + (deps.providerTimeoutMs ?? 20_000),
   });
   return {
@@ -282,6 +290,26 @@ async function plan(tx: Tx, deps: SubscriptionDeps, settleWindowMs: number): Pro
   };
 }
 
+/**
+ * Whether the reason a subscription was parked for `reauthorization_needed` is gone: nothing is left to
+ * collect, or what the preapproval is authorized to charge no longer exceeds what is owed.
+ */
+export async function reauthorizationSettled(
+  tx: Tx,
+  sub: Pick<SubscriptionRow, 'id' | 'authorizedAmountCents'>,
+): Promise<boolean> {
+  const [oldest] = await tx
+    .select()
+    .from(statement)
+    .where(
+      and(eq(statement.subscriptionId, sub.id), lt(statement.collectedCents, statement.totalCents)),
+    )
+    .orderBy(asc(statement.period))
+    .limit(1);
+  if (!oldest) return true;
+  return (sub.authorizedAmountCents ?? 0) <= oldest.totalCents - oldest.collectedCents;
+}
+
 /** The provider will not change the amount: the difference is asked by a link, or a person decides. */
 async function planDifference(
   tx: Tx,
@@ -293,14 +321,6 @@ async function planDifference(
   settleWindowMs: number,
 ): Promise<Planned> {
   const now = deps.clock();
-  if (difference <= 0) {
-    // The recurring charge would take MORE than is owed and the provider will not lower it: it is not
-    // charged blindly. A person looks at it, and the owner is asked to authorize the right amount.
-    await parkSubscription(tx, sub, 'reauthorization_needed', now);
-    await claimNotice(tx, sub.id, 'reauthorization_needed', oldest.id);
-    return { kind: 'done', outcome: 'asked' };
-  }
-
   const links = attempts.filter((attempt) => attempt.kind === 'payment_link');
   if (links.some((attempt) => attempt.state === 'marked' || attempt.state === 'parked')) {
     return { kind: 'done', outcome: 'waiting' };
@@ -325,7 +345,20 @@ async function planDifference(
       !paid.has(attempt.externalReference) &&
       now.getTime() < attempt.markedAt.getTime() + LINK_LIFETIME_DAYS * DAY_MS,
   );
+  // A link the owner can still pay is looked at FIRST. The recurring charge that lands while a
+  // difference link is payable makes `difference` zero or negative, and that is the link doing its
+  // job, not a reason to park the subscription: what is left to ask is what the link does not cover.
   if (alive) return { kind: 'done', outcome: 'nothing' };
+
+  if (difference <= 0) {
+    // The recurring charge would take MORE than is owed and the provider will not lower it: it is not
+    // charged blindly. A person looks at it, and the owner is asked to authorize the right amount.
+    // The cause settles by itself (the charge lands and is booked, or the amount is authorized again)
+    // and the reconcile then lets the subscription go (`reauthorizationSettled`).
+    await parkSubscription(tx, sub, 'reauthorization_needed', now);
+    await claimNotice(tx, sub.id, 'reauthorization_needed', oldest.id);
+    return { kind: 'done', outcome: 'asked' };
+  }
 
   const [owner] = await ownerEmails(tx);
   const [org] = await tx
@@ -342,7 +375,7 @@ async function planDifference(
     amountCents: difference,
     payerEmail: owner,
     statementId: oldest.id,
-    now,
+    clock: deps.clock,
     settleWindowMs: settleWindowMs + (deps.providerTimeoutMs ?? 20_000),
   });
   return {
@@ -409,7 +442,10 @@ async function answerChange(
   if (!answer.outcomeUnknown && !unreachable) {
     await resolveAttempt(tx, attempt, { state: 'released', now, message: answer.message });
   } else {
-    await noteUnknownOutcome(tx, attempt.id, answer.message);
+    await noteUnknownOutcome(tx, attempt.id, answer.message, {
+      now,
+      settleWindowMs: settleWindowOf(deps),
+    });
   }
 }
 
@@ -457,6 +493,9 @@ async function answerLink(
   if (!answer.outcomeUnknown && !unreachable) {
     await resolveAttempt(tx, attempt, { state: 'released', now, message: answer.message });
   } else {
-    await noteUnknownOutcome(tx, attempt.id, answer.message);
+    await noteUnknownOutcome(tx, attempt.id, answer.message, {
+      now,
+      settleWindowMs: settleWindowOf(deps),
+    });
   }
 }

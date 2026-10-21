@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   DEFAULT_WEBHOOK_TOLERANCE_MS,
+  deliveryKeyOf,
   manifestFor,
   signWebhook,
   verifyMercadoPagoWebhook,
@@ -49,12 +50,41 @@ describe('verifyMercadoPagoWebhook', () => {
     expect(result).toEqual({
       valid: true,
       notice: {
-        eventId: '987654',
+        eventId: deliveryKeyOf({ id: '55501234', requestId: 'req-0001', ts: now.getTime() }),
         topic: 'payment',
         resourceId: '55501234',
         signedAt: now,
       },
     });
+  });
+
+  it('keys a delivery by what the provider signed, never by the unsigned id of the body (JD-S6 R1, S6-9)', () => {
+    const request = signedAt(0);
+    const verify = (rawBody: string, headers: Record<string, string>) => {
+      const result = verifyMercadoPagoWebhook({ secret, rawBody, headers, now });
+      if (!result.valid) throw new Error(`refused: ${result.reason}`);
+      return result.notice.eventId;
+    };
+
+    const original = verify(request.rawBody, request.headers);
+
+    // The same signed request delivered twice is the same delivery.
+    expect(verify(request.rawBody, request.headers)).toBe(original);
+    // A captured request replayed with another body id (the signature does not cover it) is the SAME
+    // delivery, so it cannot occupy the key of a delivery that has not arrived yet.
+    expect(verify(request.rawBody.replace('987654', '111'), request.headers)).toBe(original);
+    // Another request id, another time or another resource is another delivery.
+    const other = signWebhook({ secret, body, requestId: 'req-0002', ts: now.getTime() });
+    expect(verify(other.rawBody, other.headers)).not.toBe(original);
+    const later = signWebhook({ secret, body, requestId: 'req-0001', ts: now.getTime() + 1 });
+    expect(verify(later.rawBody, later.headers)).not.toBe(original);
+    const elsewhere = signWebhook({
+      secret,
+      body: body.replace('55501234', '55501235'),
+      requestId: 'req-0001',
+      ts: now.getTime(),
+    });
+    expect(verify(elsewhere.rawBody, elsewhere.headers)).not.toBe(original);
   });
 
   it('maps the topics of the provider to the ones of the port', () => {

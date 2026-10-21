@@ -31,6 +31,8 @@ export const NOT_REFUNDABLE_MESSAGE = 'El pago no fue aprobado, por lo que no se
 export const REFUND_EXCEEDS_MESSAGE = 'El reembolso supera lo que queda del pago.';
 export const AMOUNT_CHANGE_REFUSED_MESSAGE =
   'El proveedor no permite cambiar el importe de una autorización vigente.';
+export const NOT_PAUSED_MESSAGE =
+  'La suscripción no está pausada, por lo que no se puede reanudar (una suscripción cancelada no vuelve).';
 export const NOT_AUTHORIZED_MESSAGE =
   'La suscripción no está autorizada, por lo que no se puede modificar.';
 

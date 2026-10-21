@@ -220,7 +220,12 @@ export const WEBHOOK_TOPICS = ['preapproval', 'payment', 'authorized_payment'] a
 export type WebhookTopic = (typeof WEBHOOK_TOPICS)[number];
 
 export interface WebhookNotice {
-  /** The provider's id of this delivery, the key of idempotence (`subscription_event`). */
+  /**
+   * The key of idempotence of this delivery (`subscription_event`), derived from what the provider
+   * SIGNED (request id, resource and time), never from the unsigned `id` of the body: the same signed
+   * request delivered twice has the same key, and a replay with another body cannot take the key of a
+   * delivery that has not arrived yet.
+   */
   eventId: string;
   topic: WebhookTopic;
   /** The preapproval or the payment to ask about. */

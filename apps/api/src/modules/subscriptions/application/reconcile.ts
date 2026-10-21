@@ -1,5 +1,5 @@
 import type { SubscriptionStatus } from '@consultorio/contracts';
-import { and, eq, gt } from 'drizzle-orm';
+import { and, eq, gt, sql } from 'drizzle-orm';
 
 import {
   subscription,
@@ -9,6 +9,7 @@ import {
   type SubscriptionAttemptRow,
   type SubscriptionRow,
 } from '../../../db/schema/subscriptions.js';
+import { audit } from '../../../platform/audit/writer.js';
 import { SYSTEM_USER_ID, type Tx } from '../../../platform/db/tenant-context.js';
 import {
   decideAmountChangeAttempt,
@@ -20,9 +21,9 @@ import {
   type Verdict,
 } from '../domain/attempt-decisions.js';
 
-import { openAttempts, parkSubscription, resolveAttempt } from './attempts.js';
+import { clearAttention, openAttempts, parkSubscription, resolveAttempt } from './attempts.js';
 import { cancelAtProvider } from './cancel-at-provider.js';
-import { allocatePayments, collectStatements } from './collection.js';
+import { allocatePayments, collectStatements, reauthorizationSettled } from './collection.js';
 import { DAY_MS, SYSTEM_ACTOR } from './common.js';
 import { applyLedger } from './ledger-store.js';
 import { claimNotice, sendPendingNotices } from './notices.js';
@@ -32,8 +33,9 @@ import type {
   PaymentsGateway,
   PreapprovalDescription,
 } from './ports.js';
+import { cancelStrays, findLivePreapprovals } from './preapprovals.js';
 import { callWithin, gatewayOf, type Read, type SubscriptionDeps } from './provider.js';
-import { recordRefund } from './refunds.js';
+import { automaticReasonOf, recordRefund, refundDuplicates } from './refunds.js';
 import { findPlan, findSubscription, lockSubscription, readTenantBilling } from './store.js';
 import { applyEvent } from './transitions.js';
 
@@ -79,6 +81,8 @@ interface Snapshot {
   attempts: SubscriptionAttemptRow[];
   /** One-off links already confirmed, whose payments are still looked for. */
   links: SubscriptionAttemptRow[];
+  /** Every request for a preapproval the platform ever made, however it ended. */
+  creations: SubscriptionAttemptRow[];
 }
 
 /** What the provider answered. A field is absent when there was nothing to ask. */
@@ -87,9 +91,26 @@ interface Facts {
   payments: Read<PaymentDescription[]> | undefined;
   /** What each open write was searched for. */
   searches: Map<string, Read<unknown>>;
+  /** Preapprovals alive at the provider under a reference the platform had given up on. */
+  strays: PreapprovalDescription[];
+  /** The preapprovals of this subscription that are not the one it holds, whose payments are not ours to credit. */
+  earlier: Set<string>;
 }
 
 const LINK_WATCH_DAYS = 60;
+
+/**
+ * How long after a request for a preapproval the platform keeps looking for one that landed late. A
+ * request that was given up on can land only within minutes of the settle window, so a fortnight is
+ * far more than needed, and an abandoned checkout is not asked about for ever.
+ */
+const STRAY_WATCH_DAYS = 14;
+
+/** The requests for a preapproval recent enough to be looked for under their reference. */
+function recentCreations(snapshot: Snapshot, now: Date): SubscriptionAttemptRow[] {
+  const since = now.getTime() - STRAY_WATCH_DAYS * DAY_MS;
+  return snapshot.creations.filter((attempt) => attempt.markedAt.getTime() > since);
+}
 
 async function readSnapshot(tx: Tx, now: Date): Promise<Snapshot | null> {
   const billing = await readTenantBilling(tx);
@@ -109,7 +130,16 @@ async function readSnapshot(tx: Tx, now: Date): Promise<Snapshot | null> {
         gt(subscriptionAttempt.markedAt, new Date(now.getTime() - LINK_WATCH_DAYS * DAY_MS)),
       ),
     );
-  return { sub, plan, attempts, links };
+  const creations = await tx
+    .select()
+    .from(subscriptionAttempt)
+    .where(
+      and(
+        eq(subscriptionAttempt.subscriptionId, sub.id),
+        eq(subscriptionAttempt.kind, 'preapproval'),
+      ),
+    );
+  return { sub, plan, attempts, links, creations };
 }
 
 /** A read: the answer, or `'unavailable'` when the provider said "try later" or did not answer. */
@@ -128,7 +158,13 @@ async function readFacts(
   snapshot: Snapshot,
 ): Promise<Facts> {
   const { sub } = snapshot;
-  const facts: Facts = { preapproval: undefined, payments: undefined, searches: new Map() };
+  const facts: Facts = {
+    preapproval: undefined,
+    payments: undefined,
+    searches: new Map(),
+    strays: [],
+    earlier: new Set(),
+  };
 
   if (sub.providerPreapprovalId !== null) {
     const id = sub.providerPreapprovalId;
@@ -141,6 +177,27 @@ async function readFacts(
       return answer.status === 'found' ? answer.preapproval : 'unknown';
     });
   }
+
+  // A preapproval the platform asked for and gave up on, or replaced, may be alive: a request that
+  // landed after the caller stopped waiting, or one that was paused and resumed. It charges too, so it
+  // is looked for under every reference this subscription used, and its payments are looked at.
+  const spare = new Set(sub.providerPreapprovalId === null ? [] : [sub.providerPreapprovalId]);
+  const settledReferences = recentCreations(snapshot, deps.clock())
+    .filter((attempt) => attempt.state !== 'marked' && attempt.state !== 'parked')
+    .map((attempt) => attempt.externalReference);
+  if (settledReferences.length > 0) {
+    facts.strays = (await findLivePreapprovals(deps, gateway, settledReferences, spare)).live;
+  }
+  for (const attempt of snapshot.creations) {
+    if (
+      attempt.state === 'confirmed' &&
+      attempt.resourceId !== null &&
+      !spare.has(attempt.resourceId)
+    ) {
+      facts.earlier.add(attempt.resourceId);
+    }
+  }
+  for (const stray of facts.strays) facts.earlier.add(stray.preapprovalId);
 
   const found: PaymentDescription[] = [];
   const reading = { complete: true };
@@ -156,13 +213,14 @@ async function readFacts(
   if (sub.providerPreapprovalId !== null) {
     await collect({ preapprovalId: sub.providerPreapprovalId });
   }
+  for (const earlier of facts.earlier) await collect({ preapprovalId: earlier });
   for (const link of [
     ...snapshot.links,
     ...snapshot.attempts.filter((a) => a.kind === 'payment_link'),
   ]) {
     await collect({ externalReference: link.externalReference });
   }
-  if (sub.providerPreapprovalId !== null || snapshot.links.length > 0) {
+  if (sub.providerPreapprovalId !== null || snapshot.links.length > 0 || facts.earlier.size > 0) {
     facts.payments = reading.complete ? dedupe(found) : 'unavailable';
   }
 
@@ -202,8 +260,25 @@ async function readFacts(
           reply === 'unavailable' ? reply : reply.status === 'found' ? reply.payment : 'unknown',
         ),
       );
+    } else if (attempt.kind === 'cancel' && attempt.resourceId !== null) {
+      // A cancellation names the preapproval it was about: that one is read, not the current one.
+      const target = attempt.resourceId;
+      facts.searches.set(
+        attempt.id,
+        await ask(
+          deps,
+          (signal) => gateway.getPreapproval(target, signal),
+          (reply) => reply.status !== 'retryable',
+        ).then((reply) =>
+          reply === 'unavailable'
+            ? reply
+            : reply.status === 'found'
+              ? reply.preapproval
+              : 'unknown',
+        ),
+      );
     }
-    // The change of amount and the cancellation read the preapproval above.
+    // The change of amount and a cancellation of the current preapproval read it above.
   }
   return facts;
 }
@@ -217,14 +292,19 @@ const timingOf = (attempt: SubscriptionAttemptRow, now: Date): Timing => ({
   settleUntil: attempt.settleUntil,
 });
 
-/** What an attempt that is still open is decided to be, from what the provider says. */
+/**
+ * What an attempt that is still open is decided to be, from what the provider says. `searchedAt` is
+ * the instant the questions began, NOT the instant the answers are written: the provider answered as
+ * of the first one, so a window that closed in between does not make "nothing there" safe, because a
+ * request may have landed after the search read the provider (JD-S6 R1, S6-13).
+ */
 function verdictOf(
   attempt: SubscriptionAttemptRow,
   facts: Facts,
   sub: SubscriptionRow,
-  now: Date,
+  searchedAt: Date,
 ): Verdict<unknown> | null {
-  const timing = timingOf(attempt, now);
+  const timing = timingOf(attempt, searchedAt);
   const asked = {
     externalReference: attempt.externalReference,
     payerEmail: attempt.payerEmail ?? '',
@@ -250,9 +330,21 @@ function verdictOf(
         found: current,
         timing,
       });
-    case 'cancel':
+    case 'cancel': {
+      if (attempt.resourceId !== null) {
+        // The cancellation names the preapproval it was about. Nothing under that id at the provider
+        // is nothing alive, which is what a cancellation is for.
+        const target = facts.searches.get(attempt.id) as
+          PreapprovalDescription | 'unavailable' | 'unknown' | undefined;
+        if (target === undefined) return null;
+        return decideCancelAttempt({
+          found: target === 'unknown' ? { status: 'cancelled' } : target,
+          timing,
+        });
+      }
       if (sub.providerPreapprovalId === null || current === undefined) return null;
       return decideCancelAttempt({ found: current, timing });
+    }
     case 'refund': {
       const found = facts.searches.get(attempt.id) as
         PaymentDescription | 'unavailable' | 'unknown' | undefined;
@@ -277,6 +369,7 @@ async function settleAttempts(
   attempts: readonly SubscriptionAttemptRow[],
   facts: Facts,
   now: Date,
+  searchedAt: Date,
 ): Promise<SubscriptionRow> {
   let row = sub;
   for (const open of attempts) {
@@ -287,7 +380,7 @@ async function settleAttempts(
       .from(subscriptionAttempt)
       .where(eq(subscriptionAttempt.id, open.id));
     if (fresh?.state !== 'marked') continue;
-    const verdict = verdictOf(fresh, facts, row, now);
+    const verdict = verdictOf(fresh, facts, row, searchedAt);
     if (verdict === null || verdict.kind === 'wait') continue;
 
     if (verdict.kind === 'release') {
@@ -363,7 +456,16 @@ async function settleAttempts(
           ),
         );
       if (recorded && payment) {
-        await recordRefund(tx, SYSTEM_ACTOR, row.id, recorded, payment, found);
+        await recordRefund(
+          tx,
+          SYSTEM_ACTOR,
+          row.id,
+          recorded,
+          payment,
+          found,
+          now,
+          automaticReasonOf(fresh.externalReference),
+        );
       }
     } else {
       await resolveAttempt(tx, fresh, { state: 'confirmed', now });
@@ -396,10 +498,19 @@ export async function reconcileSubscription(
   const snapshot = await as((tx) => readSnapshot(tx, deps.clock()));
   if (!snapshot) return NOTHING;
   const { sub, attempts, links } = snapshot;
-  if (sub.providerPreapprovalId === null && attempts.length === 0 && links.length === 0) {
+  const watching = recentCreations(snapshot, deps.clock()).length > 0;
+  if (
+    sub.providerPreapprovalId === null &&
+    attempts.length === 0 &&
+    links.length === 0 &&
+    !watching
+  ) {
     return NOTHING;
   }
 
+  // The questions to the provider begin now: this instant, and no later one, is what "the window has
+  // passed" is judged against when the answers are written.
+  const searchedAt = deps.clock();
   const facts = await readFacts(deps, gateway, snapshot);
   const coreUnavailable = facts.preapproval === 'unavailable' || facts.payments === 'unavailable';
 
@@ -409,7 +520,7 @@ export async function reconcileSubscription(
     const now = deps.clock();
     const plan = await findPlan(tx, locked.planId);
     const fromStatus = locked.status as SubscriptionStatus;
-    let row = await settleAttempts(tx, locked, snapshot.attempts, facts, now);
+    let row = await settleAttempts(tx, locked, snapshot.attempts, facts, now, searchedAt);
 
     // What the provider says about the preapproval this subscription charges through.
     const preapproval = facts.preapproval;
@@ -419,7 +530,7 @@ export async function reconcileSubscription(
 
     // What the provider says about the payments.
     if (facts.payments !== undefined && facts.payments !== 'unavailable') {
-      row = await applyPayments(tx, deps, row, plan, facts.payments, now);
+      row = await applyPayments(tx, deps, row, plan, facts.payments, facts.earlier, now);
     }
 
     if (!coreUnavailable) {
@@ -428,6 +539,14 @@ export async function reconcileSubscription(
         .set({ lastReconciledAt: now })
         .where(eq(subscription.id, row.id));
     }
+    // A parked subscription whose cause has settled by itself goes again (JD-S6 R1, C1).
+    if (row.attentionReason === 'reauthorization_needed') {
+      row = await clearSettledReauthorization(tx, row);
+    }
+    // The notices of the provider are a nudge to ask, and one that is older than a month is of no use.
+    await tx.execute(
+      sql`select app.subscription_event_purge(${new Date(now.getTime() - 30 * DAY_MS).toISOString()}::timestamptz)`,
+    );
     const toStatus = row.status as SubscriptionStatus;
     return {
       outcome: coreUnavailable ? 'unavailable' : 'done',
@@ -438,11 +557,38 @@ export async function reconcileSubscription(
   // A published statement whose window passed moves the amount the provider charges (or asks for the
   // difference): its own short transactions, with the mark of every write committed before its call.
   if (result.outcome === 'done') await collectStatements(deps, tenantId).catch(() => 'nothing');
+  // A preapproval that charges next to the one this subscription holds is stopped (after the commit,
+  // with its own mark and call), and a duplicate of an overdue payment is given back.
+  if (result.outcome === 'done') {
+    await cancelStrays(deps, tenantId, facts.strays).catch(() => undefined);
+    await refundDuplicates(deps, tenantId).catch(() => undefined);
+  }
   // The owner is told what the changes above owe them: after the commit, outside any transaction.
   await sendPendingNotices(deps, tenantId).catch(() => 0);
   // A cancelling subscription whose authorization is still in force is told to the provider again.
   if (result.outcome === 'done') await cancelAtProvider(deps, tenantId).catch(() => 'unavailable');
   return result;
+}
+
+/** Clears the parked state of a subscription that waited for an authorization nobody needs any more. */
+async function clearSettledReauthorization(tx: Tx, row: SubscriptionRow): Promise<SubscriptionRow> {
+  if (!(await reauthorizationSettled(tx, row))) return row;
+  await clearAttention(tx, row.id);
+  await audit(tx, {
+    action: 'subscription.state_changed',
+    outcome: 'allow',
+    actor: SYSTEM_ACTOR,
+    resourceType: 'subscription',
+    resourceId: row.id,
+    reason: 'attention_cleared',
+    metadata: {
+      from: row.status,
+      to: row.status,
+      attention: 'cleared',
+      cause: row.attentionReason,
+    },
+  });
+  return (await findSubscription(tx)) ?? row;
 }
 
 async function applyPreapproval(
@@ -519,10 +665,19 @@ async function applyPayments(
   start: SubscriptionRow,
   plan: PlanRow,
   payments: readonly PaymentDescription[],
+  earlier: ReadonlySet<string>,
   now: Date,
 ): Promise<SubscriptionRow> {
-  const ledger = await applyLedger(tx, start, payments);
+  const ledger = await applyLedger(tx, start, payments, earlier);
   let row = ledger.row;
+  // A payment with no amount cannot be recorded and is skipped, so it cannot wedge the pass; the log
+  // says so (never who paid or how much).
+  if (ledger.plan.effects.skipped.length > 0) {
+    deps.log?.error(
+      { skipped: ledger.plan.effects.skipped.length },
+      'payments with no amount were skipped by the reconcile',
+    );
+  }
   // What the provider collected is booked against the statements it was owed for.
   await allocatePayments(tx, row.id, now);
   const { effects } = ledger.plan;

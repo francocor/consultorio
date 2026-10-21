@@ -1,8 +1,12 @@
 import type { OwnerProfessionalRequest, ProfessionalDto, Role } from '@consultorio/contracts';
+import { eq } from 'drizzle-orm';
 
+import { membership } from '../../../db/schema/identity.js';
+import { professional } from '../../../db/schema/staff.js';
 import type { AuditActor } from '../../../platform/audit/writer.js';
 import type { Tx } from '../../../platform/db/tenant-context.js';
 import { addProfessionalRoleToOwner } from '../../access/index.js';
+import { assertProfessionalSeatAvailable } from '../../subscriptions/index.js';
 
 import type { ProfileService } from './profile.js';
 
@@ -34,6 +38,20 @@ export function createOwnerProfessionalService(deps: {
 }): OwnerProfessionalService {
   return {
     async activate(tx, input) {
+      // An owner who already has an active profile (they were a professional before) counts again the
+      // moment the role is back, so the seat is asked for first. With no profile the first one asks
+      // (JD-S6 R1, A-T3). An owner who already holds the role takes nothing new.
+      const [member] = await tx
+        .select({ roles: membership.roles })
+        .from(membership)
+        .where(eq(membership.id, input.membershipId));
+      if (member && !member.roles.includes('professional')) {
+        const [profile] = await tx
+          .select({ status: professional.status })
+          .from(professional)
+          .where(eq(professional.membershipId, input.membershipId));
+        if (profile?.status === 'active') await assertProfessionalSeatAvailable(tx);
+      }
       await addProfessionalRoleToOwner(tx, {
         actor: input.actor,
         membershipId: input.membershipId,

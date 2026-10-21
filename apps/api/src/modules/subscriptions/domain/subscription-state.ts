@@ -42,6 +42,12 @@ export interface SubscriptionFacts {
   paidThrough: Date | null;
   /** The provider last confirmed that the authorization to charge is in force. */
   authorized: boolean;
+  /**
+   * The platform does not know that the provider has stopped charging: the authorization is anything
+   * but `none`. A subscription never reaches `cancelled` while this is true, because the provider
+   * would keep charging an organization that no longer exists (JD-S6 R1, C1). Absent means false.
+   */
+  providerHolds?: boolean;
 }
 
 export type SubscriptionEvent =
@@ -191,6 +197,8 @@ export function transition(
     case 'period_ended': {
       if (status !== 'cancelling') return unchanged(facts, 'no_effect');
       if (coverageEnd(facts).getTime() > now) return unchanged(facts, 'not_due');
+      // The charges are stopped at the provider first; until then the cancellation stays requested.
+      if (facts.providerHolds === true) return unchanged(facts, 'not_allowed');
       return moved(facts, 'cancelled', { publishCancelled: true });
     }
 

@@ -5,10 +5,11 @@ import { subscription } from '../../../db/schema/subscriptions.js';
 import { SYSTEM_USER_ID } from '../../../platform/db/tenant-context.js';
 import { coverageEnd } from '../domain/subscription-state.js';
 
-import { openAttempts } from './attempts.js';
+import { blocksProvider, openAttempts } from './attempts.js';
+import { cancelAtProvider } from './cancel-at-provider.js';
 import { DAY_MS } from './common.js';
 import { claimNotice, sendPendingNotices } from './notices.js';
-import type { SubscriptionDeps } from './provider.js';
+import { gatewayOf, type SubscriptionDeps } from './provider.js';
 import { reconcileSubscription } from './reconcile.js';
 import { findPlan, findSubscription, lockSubscription, readTenantBilling } from './store.js';
 import { applyEvent } from './transitions.js';
@@ -28,7 +29,12 @@ import { applyEvent } from './transitions.js';
  * - **Everything is idempotent.** A step is decided from the data (the dates and the counters of the
  *   subscription), not from a message that was delivered, so a job that ran twice, late or not at all
  *   ends in the same place; the notice of each step is claimed once.
- * - **An exempt organization has no subscription**, and nothing here touches it.
+ * - **An exempt organization has no subscription**, and nothing here touches it. Neither does a
+ *   cancelled organization: it is terminal, and a date must never give it back (JD-S6 R1, S6-2).
+ * - **Without a provider there are no dates.** With `PAYMENTS_PROVIDER=off` nobody can subscribe and
+ *   nothing can be collected, so a trial that ends or a grace that runs out would only walk every
+ *   clinic to read-only for a debt it has no way to pay. The clocks hold: they ask the provider, the
+ *   provider is not there, and the step is skipped (JD-S6 R1, B-T3).
  */
 
 export type ClockOutcome = 'skipped' | 'unavailable' | 'done';
@@ -36,10 +42,11 @@ export type ClockOutcome = 'skipped' | 'unavailable' | 'done';
 async function snapshot(deps: SubscriptionDeps, tenantId: string) {
   return deps.withTenant({ tenantId, userId: SYSTEM_USER_ID }, async (tx) => {
     const billing = await readTenantBilling(tx);
-    if (billing.exempt) return null;
+    if (billing.exempt || billing.status === 'cancelled') return null;
     const sub = await findSubscription(tx);
     if (!sub) return null;
-    return { sub, open: (await openAttempts(tx, sub.id)).length };
+    const open = await openAttempts(tx, sub.id);
+    return { sub, open: open.length, creating: open.some((a) => a.kind === 'preapproval') };
   });
 }
 
@@ -50,6 +57,8 @@ async function askProvider(
   sub: { providerPreapprovalId: string | null },
   open: number,
 ): Promise<'ready' | 'unavailable'> {
+  // No provider, no answer: a date alone never moves an organization toward read-only.
+  if (!gatewayOf(deps)) return 'unavailable';
   if (sub.providerPreapprovalId === null && open === 0) return 'ready';
   const result = await reconcileSubscription(deps, tenantId);
   return result.outcome === 'unavailable' ? 'unavailable' : 'ready';
@@ -72,13 +81,14 @@ export async function runTrialEnd(deps: SubscriptionDeps, tenantId: string): Pro
     sub.authorizationState !== 'authorized' &&
     now.getTime() >= coverageEnd(sub).getTime();
   if (!trialOver && !coverageOver) return 'skipped';
-  // Parked for a person: nothing advances until somebody decides.
-  if (sub.attentionReason !== null) return 'unavailable';
+  // Parked for a person because of an ambiguity at the provider: nothing advances until somebody
+  // decides. (A subscription waiting for the owner to authorize an amount is not stuck: its dates run.)
+  if (blocksProvider(sub)) return 'unavailable';
   if ((await askProvider(deps, tenantId, sub, snap.open)) === 'unavailable') return 'unavailable';
 
   await deps.withTenant({ tenantId, userId: SYSTEM_USER_ID }, async (tx) => {
     const locked = await lockSubscription(tx);
-    if (!locked || locked.attentionReason !== null) return;
+    if (!locked || blocksProvider(locked)) return;
     const plan = await findPlan(tx, locked.planId);
     let row = locked;
     for (const event of [{ type: 'trial_ended' }, { type: 'coverage_ended' }] as const) {
@@ -127,9 +137,23 @@ export async function runDunningStep(
 
   if (sub.status === 'cancelling') {
     if (now.getTime() < coverageEnd(sub).getTime()) return 'skipped';
-    await deps.withTenant({ tenantId, userId: SYSTEM_USER_ID }, async (tx) => {
+    // The charges are stopped at the provider BEFORE the subscription ends: an organization that is
+    // cancelled while its preapproval is alive keeps being charged for service it no longer has. If
+    // the provider cannot confirm that nothing is alive (an outage, an outcome nobody knows, a request
+    // in flight), the cancellation stays requested and the next pass tries again (JD-S6 R1, C1).
+    if (sub.authorizationState !== 'none') {
+      const stopped = await cancelAtProvider(deps, tenantId, {
+        settle: async () => {
+          await reconcileSubscription(deps, tenantId);
+        },
+      });
+      if (stopped === 'unavailable' || stopped === 'in_progress') return 'unavailable';
+    }
+    if (snap.creating) return 'unavailable';
+    const ended = await deps.withTenant({ tenantId, userId: SYSTEM_USER_ID }, async (tx) => {
       const locked = await lockSubscription(tx);
-      if (!locked) return;
+      // Whatever the machine says, a subscription the provider may still charge does not end.
+      if (locked?.authorizationState !== 'none') return false;
       const plan = await findPlan(tx, locked.planId);
       await applyEvent({
         tx,
@@ -139,12 +163,13 @@ export async function runDunningStep(
         now,
         tenantCancelled: deps.tenantCancelled,
       });
+      return true;
     });
-    return 'done';
+    return ended ? 'done' : 'unavailable';
   }
 
   if (sub.status !== 'past_due' && sub.status !== 'read_only') return 'skipped';
-  if (sub.attentionReason !== null) return 'unavailable';
+  if (blocksProvider(sub)) return 'unavailable';
   // The provider first: a payment approved a minute ago settles everything below.
   if ((await askProvider(deps, tenantId, sub, snap.open)) === 'unavailable') return 'unavailable';
 

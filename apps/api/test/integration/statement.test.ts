@@ -653,6 +653,52 @@ describe('collecting a published statement (task 6.24)', () => {
     ).toHaveLength(1);
   });
 
+  it('does not park the subscription when the recurring charge lands while the difference link is payable (JD-S6 R1, C1)', async () => {
+    const { org, preapprovalId } = await subscribed(2_580_000);
+    await provider.setMode('refuse_amount_change');
+    setNow('2026-11-04T15:00:00.000Z');
+    await reconcile(org);
+    await reconcile(org);
+    const link = (await attemptsOf(org)).find((a) => a['kind'] === 'payment_link');
+    expect(link).toMatchObject({ state: 'confirmed', amount_cents: '780000' });
+
+    // The recurring charge takes its 18.000 before the owner pays the link: what is left of the
+    // statement is now less than the authorization, and the link is still payable.
+    setNow('2026-11-06T15:00:00.000Z');
+    await provider.chargeCycle(preapprovalId, 'approved');
+    await reconcile(org);
+    await reconcile(org);
+
+    expect(await org.subscription()).toMatchObject({ attention_reason: null });
+    expect((await attemptsOf(org)).filter((a) => a['kind'] === 'payment_link')).toHaveLength(1);
+    await provider.payLink(String(link?.['resource_id']));
+    await reconcile(org);
+    expect(await statementOf(org)).toMatchObject({ collected_cents: '2580000' });
+  });
+
+  it('lets a subscription parked for an amount go by itself once the charge has landed and the statement is collected (JD-S6 R1, C1)', async () => {
+    const { org, preapprovalId } = await subscribed(1_200_000);
+    await provider.setMode('refuse_amount_change');
+    setNow('2026-11-04T15:00:00.000Z');
+    await reconcile(org);
+    await reconcile(org);
+    expect(await org.subscription()).toMatchObject({ attention_reason: 'reauthorization_needed' });
+    // It does not freeze the dates while it waits.
+    await reconcile(org);
+    expect(await org.subscription()).toMatchObject({ attention_reason: 'reauthorization_needed' });
+
+    setNow('2026-11-06T15:00:00.000Z');
+    await provider.chargeCycle(preapprovalId, 'approved');
+    await reconcile(org);
+
+    expect(await statementOf(org)).toMatchObject({ collected_cents: '1200000' });
+    expect(await org.subscription()).toMatchObject({ attention_reason: null, attention_at: null });
+    const cleared = await org.run(
+      sql`select 1 from audit_event where action = 'subscription.state_changed' and reason = 'attention_cleared'`,
+    );
+    expect(cleared).toHaveLength(1);
+  });
+
   it('collects the oldest statement first and the next one only when it is paid', async () => {
     const { org, preapprovalId } = await subscribed(2_580_000);
     await org.run(

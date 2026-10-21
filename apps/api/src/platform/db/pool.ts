@@ -24,10 +24,12 @@ export const CONNECTION_TIMEOUT_MS = 10_000;
  * (`DB_POOL_MAX`). Above the floor of the configuration (`MIN_DB_POOL_MAX`, which grows by four with
  * every family of jobs that holds a transaction idle: 14 for the three of Stages 4 and 5 (JD-S5 R4-2),
  * then 18 with the reconcile of the payments, 22 with the dunning, 26 with the export of a cancelled
- * organization, 30 and 34 with the two jobs of the archive: eight families in all). 36 leaves two for the rest.
- * `.env.example` still pins 16, the maintainer's line to change (see `docs/runbooks/deploy.md`).
+ * organization, 30 and 34 with the two jobs of the archive, and 38, 42 and 46 with the trial end, the
+ * metering and the statements, which also keep the framework's transaction idle while they work and
+ * send the mail: eleven families in all, JD-S6 R1 A-W4). 48 leaves two for the rest.
+ * `.env.example` pins `DB_POOL_MAX`, the maintainer's line to change (see `docs/runbooks/deploy.md`).
  */
-export const DEFAULT_RUNTIME_POOL_MAX = 36;
+export const DEFAULT_RUNTIME_POOL_MAX = 48;
 
 function open(connectionString: string, max: number): DbHandle {
   const pool = new Pool({ connectionString, max, connectionTimeoutMillis: CONNECTION_TIMEOUT_MS });

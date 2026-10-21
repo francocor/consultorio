@@ -12,13 +12,22 @@ import { z } from 'zod';
 import { plan, subscription, usageRecord } from '../../../db/schema/subscriptions.js';
 import { AppError } from '../../../platform/http/problem.js';
 import type { OperatorRun } from '../../operator/index.js';
+import type { SubscriptionDeps } from '../application/provider.js';
 import { earliestPeriodShown } from '../application/usage.js';
+
+import { subscriptionOperatorBillingRoutes } from './operator-billing-routes.js';
 
 /** The operator reads the subscription of an organization through the `app_operator` role. */
 export interface SubscriptionOperatorDeps {
   run: OperatorRun;
   /** The instant that is "now" (the periods shown are counted back from it). */
   clock?: () => Date;
+  /**
+   * The services that talk to the payments provider. With them the console also DECIDES: lets a
+   * parked subscription go, refunds a payment, marks a surplus as looked at. Without them (a test of
+   * the read-only view) it only shows.
+   */
+  billing?: SubscriptionDeps | undefined;
 }
 
 const TenantParams = z.strictObject({ id: z.uuid() });
@@ -160,5 +169,9 @@ export function subscriptionOperatorRoutes(deps: SubscriptionOperatorDeps) {
         return toDto(row);
       },
     );
+
+    if (deps.billing) {
+      subscriptionOperatorBillingRoutes({ run: deps.run, billing: deps.billing })(app);
+    }
   };
 }

@@ -147,7 +147,21 @@ export const subscriptionsWiring: ModuleWiring = {
   // A checkout, a plan change and the cancellation are made in a request and followed up by jobs.
   needsJobs: true,
   // The support view of the subscriptions, inside the operator console (behind its session).
-  operatorRoutes: (context) => subscriptionOperatorRoutes({ run: context.run }),
+  operatorRoutes: (context) =>
+    subscriptionOperatorRoutes({
+      run: context.run,
+      // What the operator decides (let a parked subscription go, refund, review a surplus) is carried
+      // out by the same services as the jobs, on the runtime connection, with the payments provider.
+      billing: {
+        withTenant: context.withTenant,
+        adapters: context.adapters,
+        jobs: context.jobs,
+        email: context.email,
+        origins: context.origins,
+        tenantCancelled: context.tenantCancelled,
+        clock: context.clock ?? (() => new Date()),
+      },
+    }),
   create: (context) => {
     const subscriptions = createSubscriptions({
       withTenant: context.withTenant,

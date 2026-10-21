@@ -15,7 +15,7 @@ import type { ExportRegistry } from '../tenancy/index.js';
 import { exportAccess } from './application/export-contributor.js';
 import { createGrants, type Grants } from './application/grants.js';
 import { createLocationService } from './application/locations.js';
-import { createRoleService, type SessionRevoker } from './application/roles.js';
+import { createRoleService, type SeatLimit, type SessionRevoker } from './application/roles.js';
 import { createSettingsService } from './application/settings.js';
 import { locationRoutes } from './http/location-routes.js';
 import { memberRoutes } from './http/member-routes.js';
@@ -41,13 +41,15 @@ export {
   sendProfessionalAddedNotice,
 } from './application/professional-notice.js';
 export type { ProfessionalAddedNotice } from './application/professional-notice.js';
-export type { SessionRevoker } from './application/roles.js';
+export type { SeatLimit, SessionRevoker } from './application/roles.js';
 
 export interface AccessOptions {
   withTenant: WithTenant;
   auditDeny: AuthzOptions['auditDeny'];
   /** Ends the sessions of a member whose roles changed. */
   sessions: SessionRevoker;
+  /** The limit of professionals of the plan, asked when a role that takes a seat is given back. */
+  seats?: SeatLimit;
   grants?: Grants;
   /** Time zone of a new location without one, from the country of the organization. */
   defaultTimeZone: (country: string) => string;
@@ -66,7 +68,10 @@ export interface Access {
 
 export function createAccess(options: AccessOptions): Access {
   const grants = options.grants ?? createGrants();
-  const roles = createRoleService({ sessions: options.sessions });
+  const roles = createRoleService({
+    sessions: options.sessions,
+    ...(options.seats ? { seats: options.seats } : {}),
+  });
   const members = memberRoutes({
     withTenant: options.withTenant,
     auditDeny: options.auditDeny,

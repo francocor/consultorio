@@ -3,7 +3,13 @@ import { describe, expect, it } from 'vitest';
 
 import type { PaymentDescription } from '../application/ports.js';
 
-import { movesForward, planLedger, purposeOf, type RecordedPayment } from './ledger.js';
+import {
+  movesForward,
+  planLedger as planWithOwnership,
+  purposeOf,
+  type LedgerOwnership,
+  type RecordedPayment,
+} from './ledger.js';
 
 const payment = (
   id: string,
@@ -22,6 +28,22 @@ const payment = (
   createdAt: at,
   ...overrides,
 });
+
+/** What the platform owns in these tests: the preapproval PRE-1 and the two links the payments name. */
+const OWNED: LedgerOwnership = {
+  preapprovalId: 'PRE-1',
+  earlierPreapprovalIds: new Set(['PRE-0']),
+  links: [
+    { externalReference: 'due:abc:1', amountCents: 3_600_000, linkId: 'LNK-1' },
+    { externalReference: 'stmt:abc:1', amountCents: 3_600_000, linkId: 'LNK-2' },
+  ],
+};
+
+const planLedger = (
+  input: Omit<Parameters<typeof planWithOwnership>[0], 'ownership'> & {
+    ownership?: LedgerOwnership;
+  },
+) => planWithOwnership({ ownership: OWNED, ...input });
 
 const MARCH_5 = '2026-03-05T15:00:00.000Z';
 const MARCH_20 = '2026-03-20T15:00:00.000Z';
@@ -127,6 +149,8 @@ describe('the ledger credits a billing period once', () => {
       approvedCountedAt: null,
       rejectedChargeAt: null,
       surplusPaymentIds: [],
+      flagged: [],
+      skipped: [],
       paidThrough: null,
     });
   });
@@ -306,5 +330,221 @@ describe('what a payment is for is read from the reference the server gave it', 
       }),
     ]);
     expect(plan.effects.paidThrough).toBeNull();
+  });
+});
+
+describe('the ledger credits only what is ours (JD-S6 R1, A-W10)', () => {
+  const plan = (
+    payments: PaymentDescription[],
+    recorded = none,
+    lastPaidPeriod: string | null = null,
+  ) => planLedger({ payments, recorded, lastPaidPeriod, paidThrough: null });
+
+  it('credits a charge of the preapproval the subscription holds', () => {
+    const result = plan([payment('PAY-1', MARCH_5)]);
+
+    expect(result.effects.approvedCounted).toBe(true);
+    expect(result.effects.flagged).toEqual([]);
+  });
+
+  it('flags a charge of a preapproval that was superseded as a surplus and credits nothing', () => {
+    const result = plan([payment('PAY-1', MARCH_5, { preapprovalId: 'PRE-0' })]);
+
+    expect(result.operations).toEqual([
+      expect.objectContaining({ type: 'insert', surplus: true, credited: true, period: null }),
+    ]);
+    expect(result.effects.flagged).toEqual([
+      { paymentId: 'PAY-1', reason: 'superseded_preapproval' },
+    ]);
+    expect(result.effects.approvedCounted).toBe(false);
+    expect(result.effects.paidThrough).toBeNull();
+  });
+
+  it('flags a charge of a preapproval nobody made for this subscription, and credits nothing', () => {
+    const result = plan([payment('PAY-1', MARCH_5, { preapprovalId: 'PRE-STRANGER' })]);
+
+    expect(result.effects.flagged).toEqual([{ paymentId: 'PAY-1', reason: 'foreign_preapproval' }]);
+    expect(result.effects.approvedCounted).toBe(false);
+  });
+
+  it('flags a payment that carries no preapproval and no link', () => {
+    const result = plan([payment('PAY-1', MARCH_5, { preapprovalId: undefined })]);
+
+    expect(result.effects.flagged).toEqual([{ paymentId: 'PAY-1', reason: 'foreign_preapproval' }]);
+  });
+
+  it('credits the payment of a link the platform made, and flags one for another amount or another link', () => {
+    const link = (id: string, overrides: Partial<PaymentDescription>) =>
+      payment(id, MARCH_5, {
+        preapprovalId: undefined,
+        linkId: 'LNK-1',
+        externalReference: 'due:abc:1',
+        ...overrides,
+      });
+
+    expect(plan([link('PAY-1', {})]).effects.approvedCounted).toBe(true);
+    expect(plan([link('PAY-2', { amountCents: 1 })]).effects.flagged).toEqual([
+      { paymentId: 'PAY-2', reason: 'foreign_link' },
+    ]);
+    expect(plan([link('PAY-3', { linkId: 'LNK-OTHER' })]).effects.flagged).toEqual([
+      { paymentId: 'PAY-3', reason: 'foreign_link' },
+    ]);
+    expect(plan([link('PAY-4', { externalReference: 'due:zzz:9' })]).effects.flagged).toEqual([
+      { paymentId: 'PAY-4', reason: 'foreign_link' },
+    ]);
+  });
+
+  it('flags a payment that is not in pesos, whatever the type says', () => {
+    const result = plan([payment('PAY-1', MARCH_5, { currency: 'USD' as 'ARS' })]);
+
+    expect(result.effects.flagged).toEqual([{ paymentId: 'PAY-1', reason: 'foreign_currency' }]);
+    expect(result.effects.approvedCounted).toBe(false);
+  });
+
+  it('skips a payment with no amount instead of wedging the pass: nothing is recorded, the operator is told', () => {
+    const result = plan([
+      payment('PAY-0', MARCH_5, { amountCents: 0 }),
+      payment('PAY-1', MARCH_20),
+    ]);
+
+    expect(result.effects.skipped).toEqual([{ paymentId: 'PAY-0', reason: 'no_amount' }]);
+    expect(result.operations).toHaveLength(1);
+    expect(result.effects.approvedCounted).toBe(true);
+  });
+
+  it('does not record what never became money from a door that is not ours', () => {
+    const result = plan([
+      payment('PAY-1', MARCH_5, { preapprovalId: 'PRE-STRANGER', status: 'pending' }),
+      payment('PAY-2', MARCH_5, { preapprovalId: 'PRE-0', status: 'rejected' }),
+    ]);
+
+    expect(result.operations).toEqual([]);
+    expect(result.effects.rejectedChargeAt).toBeNull();
+  });
+});
+
+describe('a payment first seen as given back credits nothing (JD-S6 R1, B-T2)', () => {
+  it.each(['refunded', 'charged_back'] as const)(
+    'records a payment first seen as %s without crediting its period or moving paid through',
+    (status) => {
+      const result = planLedger({
+        payments: [payment('PAY-1', MARCH_5, { status, refundedCents: 3_600_000 })],
+        recorded: none,
+        lastPaidPeriod: null,
+        paidThrough: null,
+      });
+
+      expect(result.operations).toEqual([
+        expect.objectContaining({ type: 'insert', period: null, surplus: false, credited: true }),
+      ]);
+      expect(result.effects.approvedCounted).toBe(false);
+      expect(result.effects.paidThrough).toBeNull();
+    },
+  );
+
+  it('does not credit a payment that was pending and is now already refunded', () => {
+    const result = planLedger({
+      payments: [payment('PAY-1', MARCH_5, { status: 'refunded', refundedCents: 3_600_000 })],
+      recorded: recordedOf({
+        providerPaymentId: 'PAY-1',
+        status: 'pending',
+        period: null,
+        credited: false,
+      }),
+      lastPaidPeriod: null,
+      paidThrough: null,
+    });
+
+    expect(result.operations).toEqual([expect.objectContaining({ type: 'update', credit: null })]);
+    expect(result.effects.paidThrough).toBeNull();
+  });
+
+  it('still credits a payment that is approved and partially refunded', () => {
+    const result = planLedger({
+      payments: [
+        payment('PAY-1', MARCH_5, { status: 'partially_refunded', refundedCents: 100_000 }),
+      ],
+      recorded: none,
+      lastPaidPeriod: null,
+      paidThrough: null,
+    });
+
+    expect(result.effects.approvedCounted).toBe(true);
+  });
+});
+
+describe('a rejected charge is history when the month is already paid (JD-S6 R1, B-T2)', () => {
+  const rejected = (id: string, at: string) =>
+    payment(id, at, { status: 'rejected', approvedAt: undefined });
+
+  it('ignores a rejected charge of a month that a payment recorded in an earlier pass covers', () => {
+    // March was paid in an earlier pass; this pass sees, for the first time, a March charge that failed.
+    const result = planLedger({
+      payments: [rejected('PAY-2', MARCH_5)],
+      recorded: recordedOf({ providerPaymentId: 'PAY-1', period: '2026-03' }),
+      lastPaidPeriod: '2026-03',
+      paidThrough: new Date('2026-04-01T03:00:00.000Z'),
+    });
+
+    expect(result.effects.rejectedChargeAt).toBeNull();
+  });
+
+  it('still counts a rejected charge of a month nobody paid', () => {
+    const result = planLedger({
+      payments: [rejected('PAY-2', APRIL_5)],
+      recorded: recordedOf({ providerPaymentId: 'PAY-1', period: '2026-03' }),
+      lastPaidPeriod: '2026-03',
+      paidThrough: new Date('2026-04-01T03:00:00.000Z'),
+    });
+
+    expect(result.effects.rejectedChargeAt?.toISOString()).toBe(APRIL_5);
+  });
+});
+
+describe('a recurring charge for a month an overdue link paid is flagged as such (JD-S6 R1, S6-6)', () => {
+  it('names the duplicate of an overdue link payment, so it can be given back', () => {
+    const link = payment('PAY-LINK', MARCH_5, {
+      preapprovalId: undefined,
+      linkId: 'LNK-1',
+      externalReference: 'due:abc:1',
+    });
+    const result = planLedger({
+      payments: [link, payment('PAY-CHARGE', MARCH_20)],
+      recorded: none,
+      lastPaidPeriod: null,
+      paidThrough: null,
+    });
+
+    expect(result.effects.flagged).toEqual([
+      { paymentId: 'PAY-CHARGE', reason: 'duplicate_of_overdue_link' },
+    ]);
+  });
+
+  it('names it too when the link was paid in an earlier pass', () => {
+    const result = planLedger({
+      payments: [payment('PAY-CHARGE', MARCH_20)],
+      recorded: recordedOf({
+        providerPaymentId: 'PAY-LINK',
+        purpose: 'overdue',
+        period: '2026-03',
+      }),
+      lastPaidPeriod: '2026-03',
+      paidThrough: new Date('2026-04-01T03:00:00.000Z'),
+    });
+
+    expect(result.effects.flagged).toEqual([
+      { paymentId: 'PAY-CHARGE', reason: 'duplicate_of_overdue_link' },
+    ]);
+  });
+
+  it('keeps the plain reason for two recurring charges', () => {
+    const result = planLedger({
+      payments: [payment('PAY-1', MARCH_5), payment('PAY-2', MARCH_20)],
+      recorded: none,
+      lastPaidPeriod: null,
+      paidThrough: null,
+    });
+
+    expect(result.effects.flagged).toEqual([{ paymentId: 'PAY-2', reason: 'duplicate_period' }]);
   });
 });
