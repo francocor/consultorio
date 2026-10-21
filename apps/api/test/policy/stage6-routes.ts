@@ -60,6 +60,10 @@ export const STAGE6_ROUTES: Readonly<Record<string, RouteCategory>> = {
   'GET /operator/subscriptions': 'read',
   'GET /operator/usage': 'read',
   'GET /operator/tenants/:id/subscription': 'read',
+  'GET /operator/tenants/:id/subscription/payments': 'read',
+  'POST /operator/tenants/:id/subscription/resolve-parked': 'write',
+  'POST /operator/tenants/:id/subscription/payments/:paymentId/refund': 'write',
+  'POST /operator/tenants/:id/subscription/payments/:paymentId/review': 'write',
   'POST /operator/tenants/:tenantId/cancel': 'write',
   'GET /operator/archives': 'read',
   'GET /operator/archive-releases': 'read',
@@ -83,7 +87,7 @@ const EXACT = [
   /^\/cancellation\//,
   /^\/public\/:slug\/archive-release\//,
   /^\/operator\/(subscriptions|usage|archives|archive-releases)(\/|$)/,
-  /^\/operator\/tenants\/:id\/subscription$/,
+  /^\/operator\/tenants\/:id\/subscription(\/|$)/,
   /^\/operator\/tenants\/:tenantId\/cancel$/,
 ];
 

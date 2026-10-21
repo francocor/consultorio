@@ -5,6 +5,7 @@ import {
   CANCELLATION_PLATFORM_AUDIT_ACTIONS,
 } from './cancellation-catalog.js';
 import { SIGNUP_PLATFORM_AUDIT_ACTIONS } from './signup-catalog.js';
+import { SUBSCRIPTION_PLATFORM_AUDIT_ACTIONS } from './subscriptions-catalog.js';
 
 /**
  * Contracts of the platform operator console: who runs the platform, how organizations are created
@@ -39,6 +40,8 @@ export const PLATFORM_AUDIT_ACTIONS = [
   ...SIGNUP_PLATFORM_AUDIT_ACTIONS,
   ...CANCELLATION_PLATFORM_AUDIT_ACTIONS,
   ...ARCHIVE_PLATFORM_AUDIT_ACTIONS,
+  // Billing decisions of the operator: letting a parked subscription go, a refund, a reviewed surplus.
+  ...SUBSCRIPTION_PLATFORM_AUDIT_ACTIONS,
 ] as const;
 export type PlatformAuditAction = (typeof PLATFORM_AUDIT_ACTIONS)[number];
 

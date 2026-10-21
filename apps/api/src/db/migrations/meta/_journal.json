@@ -855,6 +855,27 @@
       "when": 1792492313433,
       "tag": "0655_archive_release_cleanup",
       "breakpoints": true
+    },
+    {
+      "idx": 122,
+      "version": "7",
+      "when": 1792530515810,
+      "tag": "0680_tenant_cancelled_terminal",
+      "breakpoints": true
+    },
+    {
+      "idx": 123,
+      "version": "7",
+      "when": 1792530519584,
+      "tag": "0681_subscription_event_purge",
+      "breakpoints": true
+    },
+    {
+      "idx": 124,
+      "version": "7",
+      "when": 1792530522247,
+      "tag": "0682_validate_notice_kind_check",
+      "breakpoints": true
     }
   ]
 }

@@ -371,7 +371,9 @@ export type StatementRow = typeof statement.$inferSelect;
 
 /**
  * One notice of the provider that was accepted (`POST /webhooks/mercadopago`). The id the provider
- * gave the delivery is UNIQUE: the same notice delivered twice finds its row and does nothing. The
+ * gave the delivery is UNIQUE: the same notice delivered twice finds its row and does nothing. The id is
+ * derived from what the provider SIGNED (the request id, the resource and the time), never from the
+ * unsigned body, so a replay cannot take the id of a delivery that has not arrived yet. The
  * row says that something was ASKED about (a resource), never what the state is; the state is
  * whatever the provider answers when the reconcile job asks.
  */
@@ -396,6 +398,8 @@ export const subscriptionEvent = tenantTable(
       sql`${table.topic} in ('preapproval', 'payment', 'authorized_payment')`,
     ),
     index('subscription_event_resource_idx').on(table.tenantId, table.resourceId),
+    // The purge of the old ones (`app.subscription_event_purge`) reads by organization and age.
+    index('subscription_event_received_idx').on(table.tenantId, table.receivedAt),
   ],
 );
 
