@@ -152,6 +152,96 @@ decides whether to call.
 4. A refund or a duplicated payment is flagged for the operator on the same screen; the subscription
    service refunds it, with an entry in the trail of the organization.
 
+## A subscription is parked for a person
+
+**Alert `SubscriptionParked` (warning).** The payments service found something at the provider that it
+cannot tell apart (several preapprovals under one reference, an identity that does not match, a state it
+did not expect, or a request to authorize the amount again) and stopped sending anything to the
+provider for that subscription until a person decides. The label `reason` of the series says which.
+
+1. Open the tab "Suscripciones" of the console: the parked subscription shows the reason and since when.
+2. `ambiguous_preapproval` and `identity_mismatch`: look at the preapprovals of the reference in the
+   provider's panel. Keep the one the organization authorized, cancel the others there, and ask the
+   engineer on call to resolve the subscription.
+3. `reauthorization_needed`: the owner has been told by email to authorize the new amount; if they did,
+   the next reconciliation settles it. If it does not, call them.
+4. Nothing is lost while it is parked: the clock of the dates keeps its rules, and no charge is
+   attempted by the platform.
+
+## Reconciliation with the payments provider is stale
+
+**Alert `SubscriptionReconcileStale` (warning).** A subscription that has a preapproval was not
+reconciled for two hours; it is reconciled every five minutes. The usual cause is the provider (an
+outage or a revoked credential), then the worker.
+
+1. Check `MetricsCollectorSilent` and `WorkerDown`: if the worker is down, this is the same incident.
+2. Look at the worker log for `subscription.reconcile` failures: a code of the gateway (`unavailable`,
+   `unauthorized`) names the provider's side. A credential that expired is replaced in the
+   configuration of the worker.
+3. While it is stale nothing advances toward read-only for lack of an answer: the dates wait.
+
+## A surplus payment waits for review
+
+**Alert `SubscriptionSurplusUnreviewed` (warning).** A second approved payment for a period that was
+already paid is flagged as a surplus; it moves nothing and waits for an operator.
+
+1. The tab "Suscripciones" lists the flagged payments of the organization with the amounts.
+2. Decide: refund it (the console asks for confirmation) or mark it reviewed with the reason.
+3. A surplus that repeats for the same organization is a duplicated authorization at the provider:
+   treat it as a parked subscription.
+
+## An archive failed to write or to verify
+
+**Alerts `ArchiveVerifyProblem`, `ArchiveWriteFailed` (critical), `ArchiveVerifyOverdue` (warning).**
+The records of a cancelled organization are in custody and one of the checks failed. Nothing is
+released or erased by this alert; the hot rows of the organization still exist.
+
+1. The tab "Archivo" of the console lists the archives with their state and the last verification
+   (`corrupted`, `missing`, `overwritten`) and the number of problems, never an object name.
+2. `ArchiveWriteFailed`: the failure code is on the archive; read the worker log for `archive.write`.
+   The archive is written again by hand only after the cause is fixed.
+3. `corrupted` or `overwritten`: the object in the write-once bucket differs from the manifest. Do not
+   touch the bucket. Follow the section "Verifying and restoring" of `docs/runbooks/archive-release.md`
+   (the restore drill) with the engineer in charge of retention.
+4. `ArchiveVerifyOverdue`: the weekly verification did not run: the worker (`archive.verify`) or the
+   bucket is the problem; see "A queue is stuck".
+5. An archive that was erased by a legal order is not verified and does not raise this alert.
+
+## An approved release was not carried out
+
+**Alert `ArchiveReleaseNotCarriedOut` (critical).** Two operators approved the release of records to a
+patient or a professional and the releaser did not carry it out within fifteen minutes. The requester
+is waiting for records they are entitled to.
+
+1. First `ReleaserSilent`: if the releaser is down, start it (below) and the request is carried out on
+   its own.
+2. If the releaser is alive, read its log: `restore_*` and `scope_*` failures end the request as
+   `failed` with a code the operator sees; `email_failed` means the link did not reach the requester.
+   A new request is recorded after the cause is fixed.
+3. An approval is valid for seven days; after that the request expires and is recorded again.
+
+## The releaser is silent
+
+**Alert `ReleaserSilent` (critical).** The releaser writes a heartbeat every few seconds; none for two
+minutes means the process is down or cannot reach the database with its own login (`app_releaser`).
+
+1. Is the container running? `docker compose ... --profile app up -d releaser` (or the equivalent of the
+   deployment). It needs `ARCHIVE_RELEASER_KEK`, the archive and files buckets and
+   `RELEASER_DATABASE_URL`.
+2. A login that was rotated or a role that does not exist shows as an authentication error in its log.
+3. While it is down nothing is released and nothing is lost: approved requests wait, and expire after
+   seven days if nobody restarts it.
+
+## Signup emails are not going out
+
+**Alert `SignupEmailsUnsent` (warning).** Signups wait for their verification link and the email never
+left. The worker retries five times with a backoff and then stops; the person can ask for a new link.
+
+1. Check the mail provider (credentials, quota, the sender domain) and the worker log for
+   `a verification email of a signup could not be sent`.
+2. Once the provider answers, ask the person to use "Enviar el correo de nuevo" on the screen they are
+   on, or wait for the next retry if attempts remain. Unconfirmed signups are purged after seven days.
+
 ## After the incident
 
 Write the entry of the operations log, and for anything that took more than an hour add what would have

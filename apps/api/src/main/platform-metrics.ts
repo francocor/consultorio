@@ -1,9 +1,10 @@
 import { MESSAGE_STATUSES } from '@consultorio/contracts';
 import { sql } from 'drizzle-orm';
 
+import { ATTENTION_REASONS } from '../db/schema/subscriptions.js';
 import type { Db } from '../platform/db/pool.js';
 import { SYSTEM_USER_ID, createWithTenant } from '../platform/db/tenant-context.js';
-import { listTenantIds, tenantStatusCounts } from '../platform/jobs/tenant-scan.js';
+import { listTenantStatuses, tenantStatusCounts } from '../platform/jobs/tenant-scan.js';
 import type { Metrics } from '../platform/metrics.js';
 
 /**
@@ -15,8 +16,12 @@ import type { Metrics } from '../platform/metrics.js';
  *
  * The queues belong to nobody and are read as they are. Everything else is read organization by
  * organization, each in its own transaction as the system, so row level security holds and nothing
- * here can read across an organization; the answers are summed. Only counts and ages leave: the
- * labels are queue names, statuses and steps. The composition root owns this file because it reads
+ * here can read across an organization; the answers are summed. A CANCELLED organization is read only
+ * as far as its subscription: it keeps its rows for the retention period and scanning all of them
+ * every minute for ever would grow with the organizations that left. What no organization can answer
+ * (the archives of the cancelled ones, the release requests, the signups nobody confirmed, the
+ * heartbeat of the releaser) comes from one definer function, `app.platform_health()`. Only counts and
+ * ages leave: the labels are queue names, statuses, steps and short reason codes. The composition root owns this file because it reads
  * the tables of several modules, which no module may do.
  */
 
@@ -37,6 +42,9 @@ const TENANT_STATUSES = ['active', 'read_only', 'cancelled', 'unverified'] as co
 const DUNNING_STEPS = ['0', '1', '2', '3'] as const;
 const JOB_STATES = ['created', 'retry', 'active'] as const;
 
+const ATTENTION_REASON_LABELS: readonly string[] = ATTENTION_REASONS;
+const ARCHIVE_VERIFY_FINDINGS = ['corrupted', 'missing', 'overwritten'] as const;
+
 /** One figure of one organization: a metric, a label value (or none) and the amount. */
 interface Reading {
   metric: string;
@@ -53,8 +61,11 @@ const READINGS = sql`
     FROM invoice i
    WHERE i.status = 'pending'
      AND i.created_at < now() - make_interval(hours => coalesce(
-           (SELECT (t.settings -> 'invoicing' ->> 'outageThresholdHours')::int FROM tenant t
-             WHERE t.id = i.tenant_id), 24))
+           -- One organization with a threshold that is not a number must not stop the measurement of
+           -- the others: anything but a whole number of hours up to 9999 counts as the default.
+           (SELECT CASE WHEN t.settings -> 'invoicing' ->> 'outageThresholdHours' ~ '^[0-9]{1,4}$'
+                        THEN (t.settings -> 'invoicing' ->> 'outageThresholdHours')::int END
+              FROM tenant t WHERE t.id = i.tenant_id), 24))
   UNION ALL
   SELECT 'documents_scan_backlog', '', count(*)::float
     FROM document
@@ -75,6 +86,22 @@ const READINGS = sql`
   UNION ALL
   SELECT 'subscription_dunning_step', dunning_step::text, count(*)::float
     FROM subscription WHERE status = 'past_due' GROUP BY dunning_step
+  UNION ALL
+  SELECT 'subscriptions_parked', attention_reason, count(*)::float
+    FROM subscription WHERE attention_reason IS NOT NULL GROUP BY attention_reason
+  UNION ALL
+  SELECT 'subscription_reconcile_oldest_seconds', '',
+         coalesce(max(extract(epoch FROM now() - coalesce(last_reconciled_at, created_at))), 0)::float
+    FROM subscription WHERE provider_preapproval_id IS NOT NULL
+  UNION ALL
+  SELECT 'subscription_surplus_unreviewed', '', count(*)::float
+    FROM subscription_payment WHERE surplus AND surplus_reviewed_at IS NULL
+`;
+
+/** What a cancelled organization still contributes: its subscription by state, and nothing else. */
+const CANCELLED_READINGS = sql`
+  SELECT 'subscriptions' AS metric, status AS label, count(*)::float AS value
+    FROM subscription GROUP BY status
 `;
 
 /** Sums the readings of every organization; the oldest-wait figures take the maximum instead. */
@@ -83,6 +110,7 @@ function combine(readings: readonly Reading[]): Map<string, Map<string, number>>
   const maxima = new Set([
     'documents_scan_oldest_waiting_seconds',
     'audit_oldest_unsealed_seconds',
+    'subscription_reconcile_oldest_seconds',
   ]);
   for (const reading of readings) {
     const labels = byMetric.get(reading.metric) ?? new Map<string, number>();
@@ -143,6 +171,50 @@ async function measureQueues(db: Db, metrics: Metrics): Promise<void> {
 }
 
 /**
+ * What no organization can answer by itself, in one call (`app.platform_health()`, migration 0687): the
+ * archives of the cancelled organizations, the release requests, the signups nobody confirmed and the
+ * heartbeat of the releaser.
+ */
+async function measureHealth(db: Db, metrics: Metrics): Promise<void> {
+  const result = await db.transaction((tx) =>
+    tx.execute<{
+      archive_verify_corrupted: number;
+      archive_verify_missing: number;
+      archive_verify_overwritten: number;
+      archive_write_failed: number;
+      archive_verify_oldest_seconds: number;
+      release_approved_waiting: number;
+      release_approved_oldest_seconds: number;
+      releaser_heartbeat_age_seconds: number | null;
+      signup_unsent: number;
+      signup_oldest_unsent_seconds: number;
+    }>(sql`select * from app.platform_health()`),
+  );
+  const row = result.rows[0];
+  if (!row) throw new Error('the platform health function answered nothing');
+  metrics.replace(
+    'archive_verify_problems',
+    ARCHIVE_VERIFY_FINDINGS.map((status) => ({
+      labels: { status },
+      value: row[`archive_verify_${status}`],
+    })),
+  );
+  metrics.gauge('archive_write_failed', row.archive_write_failed);
+  metrics.gauge('archive_verify_oldest_seconds', row.archive_verify_oldest_seconds);
+  metrics.gauge('archive_release_approved_waiting', row.release_approved_waiting);
+  metrics.gauge('archive_release_approved_oldest_seconds', row.release_approved_oldest_seconds);
+  // Absent until a releaser ever ran: the alert reads the age, and a missing series is not an age.
+  metrics.replace(
+    'archive_releaser_heartbeat_age_seconds',
+    row.releaser_heartbeat_age_seconds === null
+      ? []
+      : [{ value: row.releaser_heartbeat_age_seconds }],
+  );
+  metrics.gauge('signup_emails_unsent', row.signup_unsent);
+  metrics.gauge('signup_oldest_unsent_seconds', row.signup_oldest_unsent_seconds);
+}
+
+/**
  * Measures the platform and sets the series. A failure is counted and rethrown (the worker logs it):
  * the series keep their last values, and `platform_metrics_collected_at_seconds` stops moving, which
  * is what the alert on a silent collector reads.
@@ -154,9 +226,12 @@ export async function collectPlatformMetrics(deps: PlatformMetricsDeps): Promise
 
     const withTenant = createWithTenant(db);
     const readings: Reading[] = [];
-    for (const tenantId of await listTenantIds(db)) {
+    for (const { id: tenantId, status } of await listTenantStatuses(db)) {
+      const live = status !== 'cancelled';
       const rows = await withTenant({ tenantId, userId: SYSTEM_USER_ID }, (tx) =>
-        tx.execute<{ metric: string; label: string; value: number }>(READINGS),
+        tx.execute<{ metric: string; label: string; value: number }>(
+          live ? READINGS : CANCELLED_READINGS,
+        ),
       );
       readings.push(...rows.rows);
     }
@@ -194,6 +269,22 @@ export async function collectPlatformMetrics(deps: PlatformMetricsDeps): Promise
       total.get('subscription_dunning_step'),
     );
     setLabelled(metrics, 'tenants', 'status', TENANT_STATUSES, await tenantStatusCounts(db));
+
+    // The parked subscriptions, the stalest reconciliation and the surplus nobody looked at.
+    setLabelled(
+      metrics,
+      'subscriptions_parked',
+      'reason',
+      ATTENTION_REASON_LABELS,
+      total.get('subscriptions_parked'),
+    );
+    for (const name of [
+      'subscription_reconcile_oldest_seconds',
+      'subscription_surplus_unreviewed',
+    ]) {
+      metrics.gauge(name, single(name));
+    }
+    await measureHealth(db, metrics);
 
     metrics.gauge('platform_metrics_collected_at_seconds', Math.floor(Date.now() / 1000));
   } catch (error) {
