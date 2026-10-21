@@ -116,7 +116,11 @@ export function subscriptionOperatorBillingRoutes(deps: OperatorBillingDeps) {
             resourceType: 'subscription',
             resourceId: tenantId,
             reason: request.body.reason,
-            metadata: { attention: outcome.was, released: outcome.released },
+            metadata: {
+              attention: outcome.was,
+              released: outcome.released,
+              reopened: outcome.reopened,
+            },
           }),
         );
         return { status: 'resolved' as const, was: outcome.was };

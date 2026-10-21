@@ -6,6 +6,7 @@ import { runDunningStep, runTrialEnd } from '../../src/modules/subscriptions/app
 import { requestCancellation } from '../../src/modules/subscriptions/application/management.js';
 import { resolveParked } from '../../src/modules/subscriptions/application/parked.js';
 import { reconcileSubscription } from '../../src/modules/subscriptions/application/reconcile.js';
+import { refundPayment } from '../../src/modules/subscriptions/application/refunds.js';
 import { SUBSCRIPTION_RECONCILE_JOB } from '../../src/modules/subscriptions/index.js';
 import { createRuntimeDb, type DbHandle } from '../../src/platform/db/pool.js';
 import { fakeHarness, type FakeHarness } from '../support/payments-harness.js';
@@ -151,6 +152,28 @@ describe('a parked subscription can be cancelled, and cancelling it stops every 
   });
 });
 
+describe('a cancelling subscription with a parked creation reaches the end (JD-S6 R2, B-W3)', () => {
+  it('sweeps what the parked request left at the provider at the end of the period, even with no authorization recorded', async () => {
+    const org = await ambiguous();
+    // The provider is down when the owner cancels: the sweep cannot run, the cancellation is requested.
+    await provider.setMode('down');
+    expect((await requestCancellation(world.deps, owner(org))).status).toBe('cancelling');
+    await provider.setMode('ok');
+    expect(await org.subscription()).toMatchObject({
+      status: 'cancelling',
+      authorization_state: 'none',
+    });
+    expect(await liveOf(org)).toHaveLength(2);
+
+    world.advance(20 * DAY);
+    const ended = await runDunningStep(world.deps, org.tenant.id);
+
+    expect(ended).toBe('done');
+    expect(await org.subscription()).toMatchObject({ status: 'cancelled' });
+    expect(await liveOf(org)).toHaveLength(0);
+  });
+});
+
 describe('the end of the paid period never cancels a subscription the provider may still charge (JD-S6 R1, C1)', () => {
   it('waits while the provider cannot confirm the cancellation, and ends once it has', async () => {
     const { org } = await subscribed();
@@ -233,7 +256,12 @@ describe('the operator lets a parked subscription go (JD-S6 R1, C1)', () => {
 
     const outcome = await resolveParked(world.deps, { tenantId: org.tenant.id, actor: operator });
 
-    expect(outcome).toEqual({ status: 'resolved', was: 'ambiguous_preapproval', released: 1 });
+    expect(outcome).toEqual({
+      status: 'resolved',
+      was: 'ambiguous_preapproval',
+      released: 1,
+      reopened: 0,
+    });
     expect(await org.subscription()).toMatchObject({ attention_reason: null, attention_at: null });
     expect(await org.rows('subscription_attempt')).toEqual([
       containing({
@@ -262,6 +290,97 @@ describe('the operator lets a parked subscription go (JD-S6 R1, C1)', () => {
     // ...and the owner can subscribe again: exactly one alive.
     expect((await checkout(org)).status).toBe('ready');
     expect(await liveOf(org)).toHaveLength(1);
+  });
+
+  /** A refund the platform could not tell the outcome of, parked for a person. */
+  async function withParkedRefund(refundedAtProvider: boolean) {
+    const { org, first } = await subscribed();
+    const charged = provider.fake.chargeCycle(first, 'approved');
+    await reconcile(org);
+    if (refundedAtProvider) {
+      const sent = await provider.gateway.refund(
+        { paymentId: charged.paymentId, amountCents: 500_000 },
+        'a-key-the-platform-never-saw',
+      );
+      expect(sent.status).toBe('refunded');
+    }
+    await org.run(
+      sql`insert into subscription_attempt (tenant_id, subscription_id, kind, external_reference,
+              idempotency_key, amount_cents, payment_id, refund_ids_before, state, message,
+              marked_at, settle_until)
+            select current_setting('app.tenant_id')::uuid, s.id, 'refund',
+                   'refund:' || s.id || ':' || ${charged.paymentId} || ':parked',
+                   'parked-' || gen_random_uuid(), 500000, ${charged.paymentId}, '[]'::jsonb,
+                   'parked', 'unexpected_state', ${clock.now.toISOString()}::timestamptz,
+                   ${clock.now.toISOString()}::timestamptz
+              from subscription s`,
+    );
+    await org.run(
+      sql`update subscription set attention_reason = 'unexpected_state', attention_at = now()`,
+    );
+    return { org, charged };
+  }
+  const refundAttempts = async (org: SubscriptionOrganization) =>
+    (await org.rows('subscription_attempt')).filter((row) => row['kind'] === 'refund');
+  const operatorActor = {
+    userId: '0192f3a0-6b2c-7000-8000-0000000000aa',
+    actingRole: null,
+    ip: null,
+    userAgent: null,
+    requestId: null,
+  };
+
+  it('does not release a parked refund that may have moved money: the provider is asked, and the refund that landed is adopted, never sent again (JD-S6 R2-4)', async () => {
+    const { org, charged } = await withParkedRefund(true);
+
+    const outcome = await resolveParked(world.deps, {
+      tenantId: org.tenant.id,
+      actor: operatorActor,
+    });
+
+    expect(outcome).toEqual({
+      status: 'resolved',
+      was: 'unexpected_state',
+      released: 0,
+      reopened: 1,
+    });
+    const [attempt] = await refundAttempts(org);
+    expect(attempt).toMatchObject({ kind: 'refund', state: 'marked' });
+    expect(attempt?.['resolved_at']).toBeNull();
+
+    world.advance(SETTLE_MS + TIMEOUT_MS + 1_000);
+    await reconcile(org);
+
+    expect(await refundAttempts(org)).toEqual([containing({ state: 'confirmed' })]);
+    expect(await org.rows('subscription_refund')).toHaveLength(1);
+    expect(
+      provider.fake.payments().find((p) => p.paymentId === charged.paymentId)?.refunds,
+    ).toHaveLength(1);
+  });
+
+  it('keeps a parked refund blocking a new refund until the provider was asked, and releases it only when the provider holds nothing (JD-S6 R2-4)', async () => {
+    const { org, charged } = await withParkedRefund(false);
+
+    await resolveParked(world.deps, { tenantId: org.tenant.id, actor: operatorActor });
+    const early = await refundPayment(world.deps, {
+      tenantId: org.tenant.id,
+      paymentId: String((await org.rows('subscription_payment'))[0]?.['id']),
+      amountCents: 500_000,
+      actor: operatorActor,
+      requestedBy: 'operator',
+      clientToken: 'a-new-token',
+    });
+
+    expect(early.status).toBe('in_progress');
+    expect(
+      provider.fake.payments().find((p) => p.paymentId === charged.paymentId)?.refunds,
+    ).toHaveLength(0);
+
+    world.advance(SETTLE_MS + TIMEOUT_MS + 1_000);
+    await reconcile(org);
+
+    expect(await refundAttempts(org)).toEqual([containing({ state: 'released' })]);
+    expect(await org.rows('subscription_refund')).toHaveLength(0);
   });
 
   it('says there is nothing to resolve when the subscription is not parked', async () => {

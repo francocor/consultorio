@@ -1,4 +1,4 @@
-import { and, eq } from 'drizzle-orm';
+import { and, eq, ne, sql } from 'drizzle-orm';
 
 import { subscriptionAttempt, type AttentionReason } from '../../../db/schema/subscriptions.js';
 import { audit, type AuditActor } from '../../../platform/audit/writer.js';
@@ -7,12 +7,12 @@ import { SYSTEM_USER_ID } from '../../../platform/db/tenant-context.js';
 import { clearAttention } from './attempts.js';
 import { reauthorizationSettled } from './collection.js';
 import { SUBSCRIPTION_RECONCILE_JOB } from './job-names.js';
-import type { SubscriptionDeps } from './provider.js';
+import { settleWindowOf, type SubscriptionDeps } from './provider.js';
 import { markSurplusReviewed } from './refunds.js';
 import { lockSubscription } from './store.js';
 
 export type ResolveParkedOutcome =
-  | { status: 'resolved'; was: AttentionReason; released: number }
+  | { status: 'resolved'; was: AttentionReason; released: number; reopened: number }
   | { status: 'not_parked' }
   /** The cause is still there (an amount the owner has to authorize): it clears itself when it settles. */
   | { status: 'cause_persists' };
@@ -31,8 +31,12 @@ export interface ResolveParkedInput {
  * what was asked, and from then on nothing is sent for it until a person decides. This is that
  * decision, and it is narrow on purpose:
  *
- * - it releases the writes that were parked (the platform treats them as abandoned, so the reference
- *   they carried is searched like any other the platform gave up on), and clears the cause;
+ * - it releases the parked requests for a PREAPPROVAL (the platform treats them as abandoned, so the
+ *   reference they carried is searched like any other the platform gave up on), and clears the cause;
+ * - a parked refund, payment link, change of amount or cancellation is NOT released: money may have
+ *   moved under it, and a release lets the same request be sent again. It goes back to `marked` with a
+ *   new settle window, so the reconcile asks the provider about it (by reference, or the payment for a
+ *   refund) and decides adopt, release or park exactly as it would have the first time (JD-S6 R2-4);
  * - it NEVER adopts anything and never sends anything. A preapproval that was found under a reference
  *   of this subscription and is not the one it holds is cancelled by the next reconcile, which is
  *   queued here, so what the operator decides is "start from what the provider confirms", not "pick
@@ -61,6 +65,29 @@ export async function resolveParked(
         and(
           eq(subscriptionAttempt.subscriptionId, row.id),
           eq(subscriptionAttempt.state, 'parked'),
+          eq(subscriptionAttempt.kind, 'preapproval'),
+        ),
+      )
+      .returning({ id: subscriptionAttempt.id });
+    // Anything else that was parked may have moved money: the provider is asked again before it is
+    // settled. The pin only grows (the database refuses to shorten it).
+    const until = new Date(
+      now.getTime() + settleWindowOf(deps) + (deps.providerTimeoutMs ?? 20_000),
+    );
+    const reopened = await tx
+      .update(subscriptionAttempt)
+      .set({
+        state: 'marked',
+        outcomeUnknown: true,
+        resolvedAt: null,
+        message: 'reopened_by_operator',
+        settleUntil: sql`greatest(${subscriptionAttempt.settleUntil}, ${until.toISOString()}::timestamptz)`,
+      })
+      .where(
+        and(
+          eq(subscriptionAttempt.subscriptionId, row.id),
+          eq(subscriptionAttempt.state, 'parked'),
+          ne(subscriptionAttempt.kind, 'preapproval'),
         ),
       )
       .returning({ id: subscriptionAttempt.id });
@@ -74,7 +101,7 @@ export async function resolveParked(
       // The operator's own words go into the platform trail (the console writes them there); the trail
       // of the organization keeps a code and the counts.
       reason: 'operator_decision',
-      metadata: { attention: was, released: released.length },
+      metadata: { attention: was, released: released.length, reopened: reopened.length },
     });
     // The reconcile asks the provider what it holds now and cancels what the platform has given up on.
     await deps.jobs?.enqueue(
@@ -83,7 +110,12 @@ export async function resolveParked(
       { tenantId: input.tenantId },
       { singletonKey: input.tenantId, singletonSeconds: 1 },
     );
-    return { status: 'resolved' as const, was, released: released.length };
+    return {
+      status: 'resolved' as const,
+      was,
+      released: released.length,
+      reopened: reopened.length,
+    };
   });
 }
 

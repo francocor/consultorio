@@ -141,7 +141,9 @@ export async function runDunningStep(
     // cancelled while its preapproval is alive keeps being charged for service it no longer has. If
     // the provider cannot confirm that nothing is alive (an outage, an outcome nobody knows, a request
     // in flight), the cancellation stays requested and the next pass tries again (JD-S6 R1, C1).
-    if (sub.authorizationState !== 'none') {
+    // A creation that is still open (parked, or sent and not answered) can have left a preapproval at
+    // the provider that was never adopted, so the sweep runs for it too (JD-S6 R2, B-W3).
+    if (sub.authorizationState !== 'none' || snap.creating) {
       const stopped = await cancelAtProvider(deps, tenantId, {
         settle: async () => {
           await reconcileSubscription(deps, tenantId);
@@ -149,7 +151,9 @@ export async function runDunningStep(
       });
       if (stopped === 'unavailable' || stopped === 'in_progress') return 'unavailable';
     }
-    if (snap.creating) return 'unavailable';
+    // Read again: the sweep above releases the parked creations it stopped at the provider.
+    const creating = (await snapshot(deps, tenantId))?.creating ?? snap.creating;
+    if (creating) return 'unavailable';
     const ended = await deps.withTenant({ tenantId, userId: SYSTEM_USER_ID }, async (tx) => {
       const locked = await lockSubscription(tx);
       // Whatever the machine says, a subscription the provider may still charge does not end.
