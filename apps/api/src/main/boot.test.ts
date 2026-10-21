@@ -4,6 +4,8 @@ import { fileURLToPath } from 'node:url';
 
 import { afterEach, describe, expect, it } from 'vitest';
 
+import { releaserPublicKeyOf } from '../modules/tenancy/archive/archive-crypto.js';
+
 /**
  * The production image is smoke-tested by running it with a database address nobody listens on and
  * asking `/health`: the process must start without a database (`/ready` is the database probe).
@@ -124,7 +126,7 @@ function runUntilExit(role: string, extra: NodeJS.ProcessEnv) {
 describe('who holds the key of the retention archive', () => {
   const ARCHIVE = {
     ARCHIVE_S3_BUCKET: 'consultorio-archive',
-    ARCHIVE_S3_ENDPOINT: 'http://127.0.0.1:1',
+    ARCHIVE_S3_ENDPOINT: 'https://127.0.0.1:1',
     ARCHIVE_S3_ACCESS_KEY_ID: 'archive-writer',
     ARCHIVE_S3_SECRET_ACCESS_KEY: 'placeholder-writer',
     ARCHIVE_RELEASER_KEK: Buffer.alloc(32, 7).toString('base64'),
@@ -147,5 +149,39 @@ describe('who holds the key of the retention archive', () => {
 
     expect(code).not.toBe(0);
     expect(output).toContain('ARCHIVE_RELEASER_KEK');
+  }, 60_000);
+
+  it('refuses to start the releaser role on the login of the API: it has a database login of its own', async () => {
+    const { code, output } = await runUntilExit('releaser', ARCHIVE);
+
+    expect(code).not.toBe(0);
+    expect(output).toContain('RELEASER_DATABASE_URL');
+    expect(output).toContain('is required for the releaser');
+  }, 60_000);
+
+  it.each(['api', 'worker'])(
+    'refuses to start the %s role when the login of the releaser is in its environment',
+    async (role) => {
+      const { code, output } = await runUntilExit(role, {
+        RELEASER_DATABASE_URL: 'postgres://app_releaser:placeholder@127.0.0.1:1/app',
+      });
+
+      expect(code).not.toBe(0);
+      expect(output).toContain('RELEASER_DATABASE_URL');
+      expect(output).toContain('only the releaser process may hold it');
+    },
+    60_000,
+  );
+
+  it('refuses to start the api in production with the identity that writes the archive', async () => {
+    const { ARCHIVE_RELEASER_KEK, ...writer } = ARCHIVE;
+    const { code, output } = await runUntilExit('api', {
+      ...writer,
+      ARCHIVE_RELEASER_PUBLIC_KEY: releaserPublicKeyOf(ARCHIVE_RELEASER_KEK),
+    });
+
+    expect(code).not.toBe(0);
+    expect(output).toContain('ARCHIVE_S3_ACCESS_KEY_ID');
+    expect(output).toContain('the API does not write the archive');
   }, 60_000);
 });

@@ -97,7 +97,7 @@ export interface SignupService {
 /**
  * How many cheap reads a branch that does not create the organization sends, to cost Postgres what
  * the branch that does create it costs (the pattern of the portal, `evenOut`). The counts are pinned
- * by `test/security/signup-nondisclosure.test.ts`: change what a branch writes and that test fails
+ * by `test/security/signup-abuse.test.ts` ("sends the database the same number of statements"): change what a branch writes and that test fails
  * until the number is adjusted.
  */
 export const EVEN_WORK = {

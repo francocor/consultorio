@@ -53,6 +53,8 @@ export function createArchiveKeyWriter(deps: {
   withTenant: WithTenant;
   /** The public half of the key of the releaser (32 bytes, base64). */
   releaserPublicKey: string;
+  /** Makes a key pair; replaceable in tests. */
+  generate?: () => Promise<TenantKeyPair>;
 }): ArchiveKeyWriter {
   return {
     async current(context) {
@@ -60,12 +62,19 @@ export function createArchiveKeyWriter(deps: {
       if (known) return known;
 
       // Generating 3072 bits takes a moment: it is done with no transaction open.
-      const pair: TenantKeyPair = await generateTenantKeyPair();
+      const pair: TenantKeyPair = await (deps.generate ?? generateTenantKeyPair)();
       const version = 1;
-      const wrapped = wrapPrivateKey(pair.privateKey, deps.releaserPublicKey, {
-        tenantId: context.tenantId,
-        version,
-      });
+      let wrapped: Buffer;
+      try {
+        wrapped = wrapPrivateKey(pair.privateKey, deps.releaserPublicKey, {
+          tenantId: context.tenantId,
+          version,
+        });
+      } finally {
+        // The writer must not be able to read the archive back: once the private half is sealed to
+        // the releaser, the plain copy in this process's memory is overwritten (JD-S6 R1-A-T8).
+        pair.privateKey.fill(0);
+      }
       return deps.withTenant(context, async (tx) => {
         await tx
           .insert(archiveKey)

@@ -32,6 +32,8 @@ export const STAGE6_AUDIT_ACTIONS: readonly AuditAction[] = [
 export const STAGE6_WRITTEN_OUTSIDE_ROUTES: Readonly<Record<string, string>> = {
   'subscription.surplus_flagged':
     'Written by the settlement of the payments (a job, as the system) when a second approved payment arrives for a period already paid: it is recorded as surplus and flagged for the operator.',
+  'export.cancellation.removed':
+    'Written by the worker pass that removes the plain export of a cancelled organization once the download window is over and the archive that replaces it was verified (removeSpentExports, as the system), one entry per package.',
   'subscription.refunded':
     'Written by the refund of a payment (the operator asks, the service refunds through the gateway and writes the entry in the tenant trail). No route of the console reaches it yet: it runs from the service, and the contract tests prove it.',
 };

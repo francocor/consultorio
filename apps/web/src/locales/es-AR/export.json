@@ -20,6 +20,8 @@
   "clinical.ready.description": "Un archivo ZIP con un resumen en PDF y, en JSON, las evoluciones y sus agregados, la anamnesis, los documentos clínicos, las recetas y los consentimientos de sus pacientes.",
   "clinical.download": "Descargar el paquete clínico",
   "queued.title": "Preparando el paquete",
+  "removed.title": "El paquete ya no está disponible",
+  "removed.description": "Pasó el plazo de descarga y sus registros ya están en custodia en un archivo cifrado y verificado, así que se retiró el paquete. Escriba a soporte indicando su organización si necesita una copia.",
   "failed.title": "No se pudo preparar el paquete",
   "failed.build_failed": "Ocurrió un problema al armar el paquete. Escriba a soporte indicando su organización: el equipo lo vuelve a preparar.",
   "failed.package_too_large": "El paquete supera el tamaño que admite un único archivo. Escriba a soporte indicando su organización: el equipo lo entrega por otra vía.",

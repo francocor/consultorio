@@ -17,6 +17,7 @@ import {
 
 import {
   findArchive,
+  isUnderErased,
   recordVerification,
   writeArchiveAudit,
   type VerifyStatus,
@@ -33,6 +34,9 @@ import type { ArchiveStore } from './ports.js';
  *   damaged copy), or the manifest itself is not the one that was recorded;
  * - `overwritten`: the key holds more than one version, so something wrote under it behind the
  *   store's back (the original is untouched and is what is served: see the local adapter).
+ *
+ * What a legal erasure removed (`tenant_archive.erased_prefixes`, JD-S6 R1-S6-7) is not looked for: an
+ * erased object is not `missing`, it is gone on purpose, and an archive erased whole is not verified.
  *
  * The worker that runs it cannot decrypt anything, so this checks the stored bytes. That the bytes
  * DO open (a test restore) is `restore.ts`, which needs the key of the releaser: it runs in the
@@ -98,6 +102,8 @@ export function createArchiveVerifyJob(
       const system: RequestContext = { tenantId, userId: SYSTEM_USER_ID };
       const archive = await deps.withTenant(system, findArchive);
       if (archive?.status !== 'written' || !archive.manifestKey || !archive.manifestSha256) return;
+      // Erased on purpose: the manifest (or the whole archive) is gone, there is nothing to compare.
+      if (archive.erasedAt !== null || isUnderErased(archive, archive.manifestKey)) return;
 
       const findings: Finding[] = [];
       // The manifest first: it is what says what the rest should be.
@@ -120,6 +126,7 @@ export function createArchiveVerifyJob(
         if (raw.status === 'found' && raw.object.versions > 1) findings.push('overwritten');
         for (const part of manifest.parts) {
           for (const object of part.objects) {
+            if (isUnderErased(archive, object.name)) continue;
             const finding = await check(deps.store, {
               name: object.name,
               sha256: object.sealedSha256,

@@ -15,8 +15,8 @@ import { afterAll, beforeAll, describe, expect, inject, it } from 'vitest';
 
 import { createLegalErasure } from '../../src/adapters/archive-local/erasure.js';
 import { createLocalArchiveStore } from '../../src/adapters/archive-local/index.js';
+import { createLegalEraseDatabase } from '../../src/modules/tenancy/archive/legal-erase-database.js';
 import { legalErase } from '../../src/modules/tenancy/archive/legal-erase.js';
-import { writePlatformAudit } from '../../src/platform/audit/platform-audit.js';
 import { createRuntimeDb, type DbHandle } from '../../src/platform/db/pool.js';
 import { createWithTenant } from '../../src/platform/db/tenant-context.js';
 import { startArchiveMinio, type ArchiveMinio } from '../support/archive-minio.js';
@@ -331,55 +331,135 @@ describe('the legal erasure procedure', () => {
     });
     const reference = 'Oficio 77/2031, Juzgado Civil 9, expediente 5120/2030';
     const withTenant = createWithTenant(operators.db.db);
-
-    const result = await legalErase(
-      {
-        eraser,
-        audit: (entry) =>
-          withTenant({ tenantId: organization.id, userId: organization.id }, (tx) =>
-            writePlatformAudit(tx, {
-              action: 'archive.erased',
-              outcome: 'allow',
-              actor: {
-                operatorId: null,
-                ip: null,
-                userAgent: 'archive:legal-erase',
-                requestId: null,
-              },
-              targetTenantId: organization.id,
-              reason: entry.reason,
-              resourceType: 'tenant_archive',
-              metadata: {
-                objects: entry.objects,
-                versions: entry.versions,
-                complete: entry.complete,
-              },
-            }),
-          ),
-      },
-      { tenantId: organization.id, reference },
-    );
-    eraser.close();
-
-    expect(result).toEqual({ objects: 1, versions: 1 });
-    expect(await versionsOf(erasure, mine)).toHaveLength(0);
-    expect(await versionsOf(erasure, theirs)).toHaveLength(1);
+    const runner = await operators.addOperator();
+    const approver = await operators.addOperator();
     const admin = new pg.Client({ connectionString: inject('adminUrl') });
     await admin.connect();
     try {
-      const trail = await admin.query<{ reason: string; metadata: Record<string, unknown> }>(
-        "select reason, metadata from platform_audit_event where action = 'archive.erased' and target_tenant_id = $1",
+      // The archive row of the organization, so the erasure has a state to record.
+      await admin.query(
+        `insert into tenant_archive (tenant_id, archive_id, key_version, status, manifest_key, manifest_sha256, objects_count, bytes_total, retain_until, archived_at)
+         values ($1, app.uuid_v7(), 1, 'written', $2, $3, 1, 10, now() + interval '3650 days', now())`,
+        [organization.id, mine, 'b'.repeat(64)],
+      );
+
+      const result = await legalErase(
+        {
+          eraser,
+          ...createLegalEraseDatabase({
+            withTenant,
+            tenantId: organization.id,
+            operatorId: runner.id,
+          }),
+        },
+        {
+          tenantId: organization.id,
+          reference,
+          operatorId: runner.id,
+          approverId: approver.id,
+        },
+      );
+      eraser.close();
+
+      expect(result).toEqual({ objects: 1, versions: 1 });
+      expect(await versionsOf(erasure, mine)).toHaveLength(0);
+      expect(await versionsOf(erasure, theirs)).toHaveLength(1);
+      // The intent is written before the erasure and the outcome after it, by the named operator, with
+      // the approver in the entry: two entries, append-only.
+      const trail = await admin.query<{
+        reason: string;
+        operator_id: string;
+        metadata: Record<string, unknown>;
+      }>(
+        "select reason, operator_id, metadata from platform_audit_event where action = 'archive.erased' and target_tenant_id = $1 order by occurred_at, id",
         [organization.id],
       );
+      const prefix = `tenants/${organization.id}/`;
       expect(trail.rows).toEqual([
-        { reason: reference, metadata: { objects: 1, versions: 1, complete: true } },
+        {
+          reason: reference,
+          operator_id: runner.id,
+          metadata: {
+            phase: 'intent',
+            objects: 1,
+            versions: 0,
+            complete: false,
+            approvedBy: approver.id,
+            prefix,
+          },
+        },
+        {
+          reason: reference,
+          operator_id: runner.id,
+          metadata: {
+            phase: 'done',
+            objects: 1,
+            versions: 1,
+            complete: true,
+            approvedBy: approver.id,
+            prefix,
+          },
+        },
       ]);
+      // And the database remembers: the archive is erased, so verification skips it and no release can
+      // be recorded for it.
+      const state = await admin.query<{ erased_prefixes: string[]; erased_at: Date | null }>(
+        'select erased_prefixes, erased_at from tenant_archive where tenant_id = $1',
+        [organization.id],
+      );
+      expect(state.rows[0]?.erased_prefixes).toEqual([prefix]);
+      expect(state.rows[0]?.erased_at).not.toBeNull();
+      const due = await admin.query<{ tenant_id: string }>(
+        'select * from app.archive_verify_due(0, 500) as tenant_id',
+      );
+      expect(JSON.stringify(due.rows)).not.toContain(organization.id);
+      const written = await admin.query<{ written: boolean }>(
+        'select app.archive_is_written($1) as written',
+        [organization.id],
+      );
+      expect(written.rows[0]?.written).toBe(false);
     } finally {
       await admin.end();
     }
   });
 
-  it('is refused to the writer of the application: its credential cannot erase, and nothing is written in the trail', async () => {
+  it('refuses a named operator who is not an active operator of the console, before anything is erased', async () => {
+    const organization = await createTestTenant(runtime, { slug: 'immutability-stranger' });
+    const name = `tenants/${organization.id}/archive-1/attempt-1/administrative/000001.enc`;
+    await archived(name, 'kept because nobody real ordered it');
+    const eraser = createLegalErasure({
+      bucket: minio.bucket,
+      region: minio.region,
+      endpoint: minio.endpoint,
+      credentials: minio.legalErasure,
+    });
+    const runner = await operators.addOperator();
+    const stranger = '0190a000-0000-7000-8000-00000000dead';
+
+    await expect(
+      legalErase(
+        {
+          eraser,
+          ...createLegalEraseDatabase({
+            withTenant: createWithTenant(operators.db.db),
+            tenantId: organization.id,
+            operatorId: runner.id,
+          }),
+        },
+        {
+          tenantId: organization.id,
+          reference: 'Oficio 78/2031, Juzgado Civil 9',
+          operatorId: runner.id,
+          approverId: stranger,
+        },
+      ),
+    ).rejects.toThrow(/active operators/);
+    eraser.close();
+
+    expect(await versionsOf(erasure, name)).toHaveLength(1);
+  });
+
+  it('is refused to the writer of the application: its credential cannot erase, nothing is marked erased, and the trail says it did not complete', async () => {
     const organization = await createTestTenant(runtime, { slug: 'immutability-refused' });
     const name = `tenants/${organization.id}/archive-1/attempt-1/administrative/000001.enc`;
     await archived(name, 'kept');
@@ -389,23 +469,36 @@ describe('the legal erasure procedure', () => {
       endpoint: minio.endpoint,
       credentials: minio.writer,
     });
-    let audited = 0;
+    const phases: string[] = [];
+    let marked = 0;
+    const [runner, approver] = [await operators.addOperator(), await operators.addOperator()];
 
     await expect(
       legalErase(
         {
           eraser,
-          audit: () => {
-            audited += 1;
+          verifyOperators: () => Promise.resolve(),
+          markErased: () => {
+            marked += 1;
+            return Promise.resolve();
+          },
+          audit: (entry) => {
+            phases.push(entry.phase);
             return Promise.resolve();
           },
         },
-        { tenantId: organization.id, reference: 'Oficio 88/2031' },
+        {
+          tenantId: organization.id,
+          reference: 'Oficio 88/2031',
+          operatorId: runner.id,
+          approverId: approver.id,
+        },
       ),
     ).rejects.toMatchObject({ name: 'AccessDenied' });
     eraser.close();
 
-    expect(audited).toBe(0);
+    expect(phases).toEqual(['intent', 'incomplete']);
+    expect(marked).toBe(0);
     expect(await versionsOf(writer, name)).toHaveLength(1);
   });
 });

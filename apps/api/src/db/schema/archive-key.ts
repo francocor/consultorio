@@ -74,6 +74,17 @@ export const tenantArchive = tenantTable(
     verifyStatus: text('verify_status'),
     verifyProblems: integer('verify_problems'),
     failureCode: text('failure_code'),
+    /**
+     * The folders of the archive that a legal erasure removed (`tenants/{tenant}/...`). Written only by
+     * the erasure command, through `app.archive_mark_erased`: the runtime roles have no UPDATE on it.
+     * Verification skips what is under one of them, and a release of it answers `erased`.
+     */
+    erasedPrefixes: text('erased_prefixes')
+      .array()
+      .notNull()
+      .default(sql`'{}'::text[]`),
+    /** When the WHOLE archive was erased; null while any of it remains. */
+    erasedAt: timestamp('erased_at', { withTimezone: true }),
   },
   (table) => [
     foreignKey({
@@ -95,6 +106,10 @@ export const tenantArchive = tenantTable(
     check(
       'tenant_archive_failed_check',
       sql`(${table.status} = 'failed') = (${table.failureCode} is not null)`,
+    ),
+    check(
+      'tenant_archive_erased_check',
+      sql`${table.erasedAt} is null or cardinality(${table.erasedPrefixes}) >= 1`,
     ),
   ],
 );

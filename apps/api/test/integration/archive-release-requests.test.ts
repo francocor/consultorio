@@ -30,14 +30,17 @@ import { asTenant, createTestTenant, type TestTenant } from '../support/tenants.
  */
 
 let runtime: DbHandle;
+let releaserDb: DbHandle;
 let harness: OperatorHarness;
 let clock: TestClock;
 let app: FastifyInstance;
 let admin: pg.Client;
 let first: TestOperator;
 let second: TestOperator;
+let third: TestOperator;
 let cookieOne: string;
 let cookieTwo: string;
+let cookieThree: string;
 let archived: TestTenant;
 let empty: TestTenant;
 
@@ -58,6 +61,7 @@ const CHECKLIST = {
 
 beforeAll(async () => {
   runtime = createRuntimeDb(inject('runtimeUrl'));
+  releaserDb = createRuntimeDb(inject('releaserUrl'));
   harness = createOperatorHarness();
   clock = createTestClock();
   app = buildTestApplication(runtime, {
@@ -67,8 +71,10 @@ beforeAll(async () => {
   });
   first = await harness.addOperator();
   second = await harness.addOperator();
+  third = await harness.addOperator();
   cookieOne = await operatorSession(app, first, clock);
   cookieTwo = await operatorSession(app, second, clock);
+  cookieThree = await operatorSession(app, third, clock);
   archived = await createTestTenant(runtime, { slug: 'release-requests-archived' });
   empty = await createTestTenant(runtime, { slug: 'release-requests-empty' });
   admin = new pg.Client({ connectionString: inject('adminUrl') });
@@ -86,6 +92,7 @@ afterAll(async () => {
   await admin.end();
   await app.close();
   await harness.close();
+  await releaserDb.close();
   await runtime.close();
 });
 
@@ -380,25 +387,35 @@ describe('what the operator can and cannot reach', () => {
     expect(await attempt(sql`delete from archive_release_request`)).toBe('42501');
   });
 
-  it('can not release a request itself: the status moves only along the steps of its role', async () => {
+  it('can not release a request itself: the status moves only along the steps of its role, with the name of the operator on the step', async () => {
     const created = (await record()).json<ArchiveReleaseRequestDto>();
-    const attempt = (target: string) =>
+    const attempt = (update: string, actor: string | null) =>
       harness.db.db
         .transaction(async (tx) => {
           await tx.execute(sql`select set_config('app.tenant_id', ${archived.id}, true)`);
+          if (actor !== null) {
+            await tx.execute(sql`select set_config('app.user_id', ${actor}, true)`);
+          }
           await tx.execute(
-            sql`update archive_release_request set status = ${target} where id = ${created.id}::uuid`,
+            sql.raw(
+              `update archive_release_request set ${update} where id = '${created.id}'::uuid`,
+            ),
           );
         })
         .then(
           () => 'allowed',
           (error: unknown) => (error as { cause?: { code?: string } }).cause?.code ?? 'error',
         );
+    const verify = (who: string) =>
+      `status = 'identity_verified', identity_verified_by = '${who}'::uuid, identity_verified_at = now(), identity_checklist = '{"documentChecked": true, "photoMatches": true, "contactConfirmed": true, "entitlementChecked": true}'::jsonb`;
 
     // Skipping the identity step, or releasing, is not the operator's.
-    expect(await attempt('approved')).toBe('42501');
-    expect(await attempt('released')).toBe('42501');
-    expect(await attempt('identity_verified')).toBe('allowed');
+    expect(await attempt(`status = 'approved'`, first.id)).toBe('42501');
+    expect(await attempt(`status = 'released'`, first.id)).toBe('42501');
+    // The step must carry the operator of the session: another name, or none, is refused.
+    expect(await attempt(verify(second.id), first.id)).toBe('42501');
+    expect(await attempt(verify(first.id), null)).toBe('42501');
+    expect(await attempt(verify(first.id), first.id)).toBe('allowed');
   });
 
   it('is invisible to the runtime role of another organization, and read-only for its own: it can not approve or insert', async () => {
@@ -458,5 +475,148 @@ describe('what the operator can and cannot reach', () => {
         `update archive_release_request set status = 'identity_verified', identity_verified_by = $2, identity_verified_at = now(), identity_checklist = '{"documentChecked": true}'::jsonb where id = $1`,
       ),
     ).toBe('23514');
+  });
+});
+
+describe('three pairs of eyes (JD-S6 R1-S6-4)', () => {
+  const verifyUrl = (id: string) => `/operator/archive-releases/${id}/verify-identity`;
+  const approveUrl = (id: string) => `/operator/archive-releases/${id}/approve`;
+
+  it('lets neither the operator who recorded the request nor the one who verified it approve; a third one can', async () => {
+    const created = (await record({}, cookieOne)).json<ArchiveReleaseRequestDto>();
+    await call('POST', verifyUrl(created.id), cookieTwo, CHECKLIST);
+
+    const byRecorder = await call('POST', approveUrl(created.id), cookieOne);
+    const byVerifier = await call('POST', approveUrl(created.id), cookieTwo);
+    const byThird = await call('POST', approveUrl(created.id), cookieThree);
+
+    expect(byRecorder.statusCode, byRecorder.body).toBe(409);
+    expect(byRecorder.json<Problem>().code).toBe('archive_release_same_operator');
+    expect(byVerifier.statusCode).toBe(409);
+    expect(byThird.statusCode, byThird.body).toBe(200);
+    expect(byThird.json<ArchiveReleaseRequestDto>().status).toBe('approved');
+  });
+
+  it('shows the recorder, and the verifier, that they may not approve, and the third operator that they may', async () => {
+    const created = (await record({}, cookieOne)).json<ArchiveReleaseRequestDto>();
+    await call('POST', verifyUrl(created.id), cookieTwo, CHECKLIST);
+
+    const seen = async (cookie: string) =>
+      (await call('GET', '/operator/archive-releases', cookie))
+        .json<ArchiveReleaseListResponse>()
+        .requests.find((entry) => entry.id === created.id)?.canApprove;
+
+    expect(await seen(cookieOne)).toBe(false);
+    expect(await seen(cookieTwo)).toBe(false);
+    expect(await seen(cookieThree)).toBe(true);
+  });
+
+  it('is held by the database: the approver is not the recorder, whatever the application does', async () => {
+    const created = (await record({}, cookieOne)).json<ArchiveReleaseRequestDto>();
+    const ticked = `'{"documentChecked": true, "photoMatches": true, "contactConfirmed": true, "entitlementChecked": true}'::jsonb`;
+
+    const result = await admin
+      .query(
+        `update archive_release_request set status = 'approved', identity_verified_by = $2, identity_verified_at = now(), identity_checklist = ${ticked}, approved_by = $3, approved_at = now(), expires_at = now() + interval '7 days' where id = $1`,
+        [created.id, second.id, first.id],
+      )
+      .then(
+        () => 'allowed',
+        (error: unknown) => (error as { constraint?: string }).constraint ?? 'error',
+      );
+
+    expect(result).toBe('archive_release_request_recorder_check');
+  });
+});
+
+describe('a request that waits for too long (JD-S6 R1-S6-4)', () => {
+  const age = (id: string, days: number) =>
+    admin.query(
+      `update archive_release_request set created_at = now() - make_interval(days => $2) where id = $1`,
+      [id, days],
+    );
+  const status = async (id: string) =>
+    (
+      await admin.query<{ status: string }>(
+        'select status from archive_release_request where id = $1',
+        [id],
+      )
+    ).rows[0]?.status;
+
+  it('can not be verified or approved after seven days', async () => {
+    const stale = (await record()).json<ArchiveReleaseRequestDto>();
+    const verifiedStale = (await record()).json<ArchiveReleaseRequestDto>();
+    await call(
+      'POST',
+      `/operator/archive-releases/${verifiedStale.id}/verify-identity`,
+      cookieOne,
+      CHECKLIST,
+    );
+    await age(stale.id, 8);
+    await age(verifiedStale.id, 8);
+
+    const verify = await call(
+      'POST',
+      `/operator/archive-releases/${stale.id}/verify-identity`,
+      cookieOne,
+      CHECKLIST,
+    );
+    const approve = await call(
+      'POST',
+      `/operator/archive-releases/${verifiedStale.id}/approve`,
+      cookieTwo,
+    );
+
+    expect(verify.statusCode, verify.body).toBe(409);
+    expect(approve.statusCode, approve.body).toBe(409);
+    expect(approve.json<Problem>().code).toBe('archive_release_wrong_step');
+  });
+
+  it('is closed by the releaser: requested and identity_verified expire, a fresh one and an approved one stay', async () => {
+    const requested = (await record()).json<ArchiveReleaseRequestDto>();
+    const verified = (await record()).json<ArchiveReleaseRequestDto>();
+    await call(
+      'POST',
+      `/operator/archive-releases/${verified.id}/verify-identity`,
+      cookieOne,
+      CHECKLIST,
+    );
+    const fresh = (await record()).json<ArchiveReleaseRequestDto>();
+    const approved = (await record()).json<ArchiveReleaseRequestDto>();
+    await call(
+      'POST',
+      `/operator/archive-releases/${approved.id}/verify-identity`,
+      cookieOne,
+      CHECKLIST,
+    );
+    await call('POST', `/operator/archive-releases/${approved.id}/approve`, cookieTwo);
+    for (const id of [requested.id, verified.id, approved.id]) await age(id, 9);
+
+    const closed = await releaserDb.db.transaction((tx) =>
+      tx.execute<{ closed: number }>(sql`select app.archive_release_expire_stale(7) as closed`),
+    );
+
+    expect(closed.rows[0]?.closed).toBeGreaterThanOrEqual(2);
+    expect(await status(requested.id)).toBe('expired');
+    expect(await status(verified.id)).toBe('expired');
+    expect(await status(fresh.id)).toBe('requested');
+    // An approved request has its own window (`expires_at`), which the releaser works.
+    expect(await status(approved.id)).toBe('approved');
+    expect((await platformTrail(requested.id)).at(-1)).toMatchObject({
+      action: 'archive.released',
+      operator_id: null,
+      metadata: { phase: 'expired' },
+    });
+  });
+
+  it('is a power of the releaser only: the role of the API and the worker can not call it', async () => {
+    const attempt = await asTenant(runtime, archived.id, (tx) =>
+      tx.execute(sql`select app.archive_release_expire_stale(7)`),
+    ).then(
+      () => 'allowed',
+      (error: unknown) => (error as { cause?: { code?: string } }).cause?.code ?? 'error',
+    );
+
+    expect(attempt).toBe('42501');
   });
 });

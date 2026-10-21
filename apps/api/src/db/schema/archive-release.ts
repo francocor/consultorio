@@ -4,6 +4,7 @@ import {
   check,
   foreignKey,
   index,
+  integer,
   jsonb,
   pgTable,
   text,
@@ -77,6 +78,13 @@ export const archiveReleaseRequest = pgTable(
     downloadedAt: timestamp('downloaded_at', { withTimezone: true }),
     /** When the package was taken out of the bucket: after the download, or when the link expired. */
     packageRemovedAt: timestamp('package_removed_at', { withTimezone: true }),
+    /**
+     * The lease of a download in progress, and how many times the link was tried. The download is
+     * counted when the transfer ends, so an aborted one can be retried within the life of the link
+     * (at most five attempts, one at a time).
+     */
+    downloadStartedAt: timestamp('download_started_at', { withTimezone: true }),
+    downloadAttempts: integer('download_attempts').notNull().default(0),
     failureCode: text('failure_code'),
   },
   (table) => [
@@ -103,11 +111,18 @@ export const archiveReleaseRequest = pgTable(
       'archive_release_request_text_check',
       sql`length(${table.requesterName}) between 2 and 120 and length(${table.requesterEmail}) between 3 and 254 and length(${table.reason}) between 5 and 500`,
     ),
-    // Two people: the one who verified the identity is never the one who approves.
+    // Two people: the one who verified the identity is never the one who approves (and the one who
+    // recorded the request is not the approver either: see the check below).
     check(
       'archive_release_request_four_eyes_check',
       sql`${table.approvedBy} is null or ${table.identityVerifiedBy} is null or ${table.approvedBy} <> ${table.identityVerifiedBy}`,
     ),
+    // The approver is not the person who recorded the request (JD-S6 R1-S6-4).
+    check(
+      'archive_release_request_recorder_check',
+      sql`${table.approvedBy} is null or ${table.approvedBy} <> ${table.recordedBy}`,
+    ),
+    check('archive_release_request_attempts_check', sql`${table.downloadAttempts} >= 0`),
     // Approved (and released) means both steps were taken, by someone each, with the checklist complete.
     check(
       'archive_release_request_approved_check',
@@ -135,3 +150,18 @@ export const archiveReleaseRequest = pgTable(
 );
 
 export type ArchiveReleaseRequestRow = typeof archiveReleaseRequest.$inferSelect;
+
+/**
+ * The heartbeat of the releaser (JD-S6 R1-S6-5): one row, rewritten every few seconds by the releaser
+ * through `app.releaser_beat`. The health function reads its age, so a releaser that died is an alert
+ * and not a silence. No privilege for any role: only the two definer functions touch it.
+ */
+export const releaserHeartbeat = pgTable(
+  'releaser_heartbeat',
+  {
+    id: text('id').primaryKey().default('releaser'),
+    startedAt: timestamp('started_at', { withTimezone: true }).notNull(),
+    beatAt: timestamp('beat_at', { withTimezone: true }).notNull(),
+  },
+  (table) => [check('releaser_heartbeat_id_check', sql`${table.id} = 'releaser'`)],
+);

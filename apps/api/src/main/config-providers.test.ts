@@ -2,7 +2,10 @@ import { readFileSync } from 'node:fs';
 
 import { describe, expect, it } from 'vitest';
 
-import { generateReleaserKeys } from '../modules/tenancy/archive/archive-crypto.js';
+import {
+  generateReleaserKeys,
+  releaserPublicKeyOf,
+} from '../modules/tenancy/archive/archive-crypto.js';
 
 import { PROVIDER_ENV_VARIABLES } from './config-providers.js';
 import { ConfigError, loadConfig } from './config.js';
@@ -310,10 +313,10 @@ describe('the retention archive settings', () => {
     const { archive: found } = loadConfig({
       ...archive,
       ARCHIVE_RETENTION_DAYS: '7300',
-      ARCHIVE_AFTER_DAYS: '0',
+      ARCHIVE_AFTER_DAYS: '1',
     }).providers;
 
-    expect(found).toMatchObject({ retentionDays: 7300, afterDays: 0 });
+    expect(found).toMatchObject({ retentionDays: 7300, afterDays: 1 });
     expect(() => loadConfig({ ...archive, ARCHIVE_RETENTION_DAYS: '0' })).toThrow(
       /ARCHIVE_RETENTION_DAYS/,
     );
@@ -363,5 +366,91 @@ describe('the retention archive settings', () => {
     }
     expect(message).toContain('ARCHIVE_RELEASER_PUBLIC_KEY');
     expect(message).not.toContain('bm90IGEga2V5');
+  });
+});
+
+describe('the retention archive in production (JD-S6 R1-A-T12)', () => {
+  const pair = generateReleaserKeys();
+  /** The public development key of the compose file: it protects nothing. */
+  const DEV_KEK = 'ZGV2X29ubHlfYXJjaGl2ZV9yZWxlYXNlcl9rZWtfMDA=';
+  const archiveInProduction = {
+    ...production,
+    ARCHIVE_S3_BUCKET: 'consultorio-archive',
+    ARCHIVE_S3_ENDPOINT: 'https://s3.sa-east-1.amazonaws.com',
+    ARCHIVE_S3_ACCESS_KEY_ID: 'archive-writer',
+    ARCHIVE_S3_SECRET_ACCESS_KEY: 'placeholder-writer-secret',
+    ARCHIVE_RELEASER_PUBLIC_KEY: pair.publicKey,
+  };
+
+  it('accepts a real key over https', () => {
+    expect(loadConfig(archiveInProduction).providers.archive?.releaserPublicKey).toBe(
+      pair.publicKey,
+    );
+  });
+
+  it('refuses the public development key of the releaser, as the private half or as the public one', () => {
+    const devPublic = releaserPublicKeyOf(DEV_KEK);
+
+    expect(() =>
+      loadConfig({
+        ...archiveInProduction,
+        ARCHIVE_RELEASER_KEK: DEV_KEK,
+        ARCHIVE_RELEASER_PUBLIC_KEY: devPublic,
+      }),
+    ).toThrow(/ARCHIVE_RELEASER_KEK/);
+    expect(() =>
+      loadConfig({ ...archiveInProduction, ARCHIVE_RELEASER_PUBLIC_KEY: devPublic }),
+    ).toThrow(/ARCHIVE_RELEASER_PUBLIC_KEY/);
+    // Outside production the development key is what the compose file runs on.
+    expect(
+      loadConfig({
+        ...base,
+        ARCHIVE_S3_BUCKET: 'consultorio-archive',
+        ARCHIVE_S3_ENDPOINT: 'http://127.0.0.1:9000',
+        ARCHIVE_S3_ACCESS_KEY_ID: 'archive-writer',
+        ARCHIVE_S3_SECRET_ACCESS_KEY: 'placeholder-writer-secret',
+        ARCHIVE_RELEASER_PUBLIC_KEY: devPublic,
+      }).providers.archive,
+    ).toBeDefined();
+  });
+
+  it('refuses plain http for the archive bucket: the records travel over a protected connection', () => {
+    expect(() =>
+      loadConfig({ ...archiveInProduction, ARCHIVE_S3_ENDPOINT: 'http://minio.internal:9000' }),
+    ).toThrow(/ARCHIVE_S3_ENDPOINT/);
+  });
+
+  it('wants at least one day between the cancellation and the archive, so the window of the export is real', () => {
+    expect(() => loadConfig({ ...archiveInProduction, ARCHIVE_AFTER_DAYS: '0' })).toThrow(
+      /ARCHIVE_AFTER_DAYS/,
+    );
+    expect(
+      loadConfig({ ...archiveInProduction, ARCHIVE_AFTER_DAYS: '1' }).providers.archive?.afterDays,
+    ).toBe(1);
+  });
+});
+
+describe('the releaser process (JD-S6 R1-S6-12)', () => {
+  const releaserUrl = 'postgres://app_releaser:placeholder@localhost:5432/app';
+  const withoutKms = Object.fromEntries(
+    Object.entries(base).filter(([name]) => name !== 'KMS_LOCAL_KEK_BASE64'),
+  );
+
+  it('needs no key of the organizations: the releaser opens the archive with its own key only', () => {
+    expect(() => loadConfig(withoutKms)).toThrow(/KMS_LOCAL_KEK_BASE64/);
+    expect(loadConfig(withoutKms, { role: 'releaser' }).databaseUrl).toContain('app_rw');
+    // The other roles still need it.
+    expect(() => loadConfig(withoutKms, { role: 'api' })).toThrow(/KMS_LOCAL_KEK_BASE64/);
+    expect(() => loadConfig(withoutKms, { role: 'worker' })).toThrow(/KMS_LOCAL_KEK_BASE64/);
+  });
+
+  it('reads its own database login, apart from the one of the API and the worker', () => {
+    expect(loadConfig(base).releaserDatabaseUrl).toBeUndefined();
+    expect(loadConfig({ ...base, RELEASER_DATABASE_URL: releaserUrl }).releaserDatabaseUrl).toBe(
+      releaserUrl,
+    );
+    expect(() => loadConfig({ ...base, RELEASER_DATABASE_URL: 'http://not-a-database' })).toThrow(
+      /RELEASER_DATABASE_URL/,
+    );
   });
 });

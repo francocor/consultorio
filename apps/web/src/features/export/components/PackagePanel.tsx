@@ -110,6 +110,16 @@ export function PackagePanel({ audience }: { audience: ExportAudience }) {
       </Alert>
     );
   }
+  if (entry.status === 'failed' && entry.failureCode === 'removed_after_archive') {
+    return (
+      <Alert tone="info">
+        <AlertDescription>
+          <span className="font-medium">{t('removed.title')}</span>
+          <span>{t('removed.description')}</span>
+        </AlertDescription>
+      </Alert>
+    );
+  }
   if (entry.status === 'failed') {
     return (
       <Alert tone="danger">

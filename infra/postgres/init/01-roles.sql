@@ -17,6 +17,12 @@
 --                 to seal and to verify. The API process never has this login, and neither app_rw
 --                 nor app_operator can switch to it (security review, finding 5).
 --
+-- and one login only the releaser uses (JD-S6 R1-S6-12):
+--   app_releaser  what the `releaser` process connects as (RELEASER_DATABASE_URL). It is a MEMBER of
+--                 app_rw, so it keeps everything the releaser used before, and it is the only role
+--                 that holds what migration 0688 takes away from app_rw: the delivery columns of
+--                 archive_release_request, the release audit entries and the list of what to carry out.
+--
 -- The passwords below are for local development and tests ONLY. Production roles are provisioned
 -- by the infrastructure with managed secrets and are never created from this file.
 
@@ -36,6 +42,13 @@ BEGIN
       NOSUPERUSER NOCREATEROLE NOCREATEDB NOBYPASSRLS NOREPLICATION;
   END IF;
 
+  IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'app_releaser') THEN
+    CREATE ROLE app_releaser LOGIN PASSWORD 'app_releaser_dev_only'
+      NOSUPERUSER NOCREATEROLE NOCREATEDB NOBYPASSRLS NOREPLICATION;
+  END IF;
+  -- Inherits the privileges of app_rw; migration 0688 gives it the ones app_rw loses.
+  GRANT app_rw TO app_releaser WITH INHERIT TRUE, SET FALSE;
+
   IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'audit_sealer') THEN
     CREATE ROLE audit_sealer LOGIN PASSWORD 'audit_sealer_dev_only'
       NOSUPERUSER NOCREATEROLE NOCREATEDB NOBYPASSRLS NOREPLICATION;
@@ -49,6 +62,6 @@ BEGIN
 
   -- The owner needs to create extensions and schemas in this database.
   EXECUTE format('ALTER DATABASE %I OWNER TO app_owner', current_database());
-  EXECUTE format('GRANT CONNECT ON DATABASE %I TO app_rw, app_operator, audit_sealer', current_database());
+  EXECUTE format('GRANT CONNECT ON DATABASE %I TO app_rw, app_operator, audit_sealer, app_releaser', current_database());
 END
 $$;

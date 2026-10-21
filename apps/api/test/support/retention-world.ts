@@ -57,8 +57,8 @@ export interface RetentionWorld {
     patientId: string,
     content: Record<string, unknown>,
   ): Promise<NoteDto>;
-  /** The operator cancels the organization (the route of task 6.36). */
-  cancel(tenantId?: string): Promise<LightMyRequestResponse>;
+  /** The operator cancels the organization (the route of task 6.36), with a reason unless told otherwise (`null`: no body at all). */
+  cancel(tenantId?: string, body?: unknown): Promise<LightMyRequestResponse>;
   /** What the worker does after a cancellation: looks for the request, queues the job, runs it. */
   buildPackages(overrides?: Partial<CancellationExportDeps>): Promise<void>;
   close(): Promise<void>;
@@ -135,12 +135,13 @@ export async function createRetentionWorld(
         await world.api.post(`/notes/${draft.id}/sign`, by.session, { expectedRevision: 1 })
       ).json<NoteDto>();
     },
-    cancel(tenantId = world.tenant.id) {
+    cancel(tenantId = world.tenant.id, body: unknown = { reason: 'Fin del contrato acordado' }) {
       return world.app.inject({
         method: 'POST',
         url: `/operator/tenants/${tenantId}/cancel`,
         headers: platformHeaders(cookie),
         remoteAddress: '10.97.0.1',
+        ...(body === null ? {} : { payload: body as object }),
       });
     },
     async buildPackages(overrides = {}) {

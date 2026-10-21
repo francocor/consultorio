@@ -49,6 +49,15 @@ export const ExportPackageResponse = z.strictObject({
 });
 export type ExportPackageResponse = z.infer<typeof ExportPackageResponse>;
 
+/**
+ * What the operator sends to cancel an organization: the reason, which goes to the platform trail with
+ * the operator's id. The route refuses an organization that has a subscription.
+ */
+export const OperatorCancelTenantRequest = z.strictObject({
+  reason: z.string().trim().min(5).max(500),
+});
+export type OperatorCancelTenantRequest = z.infer<typeof OperatorCancelTenantRequest>;
+
 /** What the operator console answers after it cancels an organization (counts and states only). */
 export const OperatorCancelTenantResponse = z.strictObject({
   status: z.literal('cancelled'),
@@ -58,6 +67,12 @@ export type OperatorCancelTenantResponse = z.infer<typeof OperatorCancelTenantRe
 // The break-glass release of archived records (S6.10) -------------------------------------------------
 
 /** Who may ask for archived records: the patient, for their own, or a verified professional, for their patients. */
+/**
+ * How many days a release request may wait in `requested` or `identity_verified`: after them the
+ * releaser closes it as `expired` and it cannot be approved (the database repeats the rule).
+ */
+export const ARCHIVE_RELEASE_OPEN_DAYS = 7;
+
 export const ARCHIVE_RELEASE_REQUESTER_KINDS = ['patient', 'professional'] as const;
 export type ArchiveReleaseRequesterKind = (typeof ARCHIVE_RELEASE_REQUESTER_KINDS)[number];
 

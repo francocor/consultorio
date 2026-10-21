@@ -7,6 +7,7 @@ import { join } from 'node:path';
 import { eq, sql } from 'drizzle-orm';
 import { z } from 'zod';
 
+import type { TenantArchiveRow } from '../../../db/schema/archive-key.js';
 import {
   archiveReleaseRequest,
   type ArchiveReleaseRequestRow,
@@ -29,7 +30,7 @@ import type { ActionTokens } from '../../../platform/tokens/index.js';
 import { readOrganizationName } from '../application/organization-name.js';
 import { ownerRecipients, tenantSlug } from '../cancellation/packages.js';
 
-import { findArchive, writeArchiveAudit } from './archive-state.js';
+import { findArchive, isUnderErased, partIsErased, writeReleaseAudit } from './archive-state.js';
 import type { ArchiveKeyReleaser } from './keys.js';
 import { parseManifest, type ArchiveManifest } from './manifest.js';
 import type { ArchiveStore } from './ports.js';
@@ -57,8 +58,14 @@ import { restoreParts, RestoreError } from './restore.js';
  *   carried out.
  * - **No transaction across the store.** The restore, the package and the upload run on no transaction;
  *   the one the framework holds for the job stays idle (it is a long job in its own process).
- * - **Idempotent.** A request that is not approved any more is left alone, and a retry after a partial
- *   run issues the link again (the earlier one is revoked).
+ * - **Idempotent.** A request that is not approved any more is left alone.
+ * - **The row first, then the email** (JD-S6 R1-S6-8). The request is marked `released` before the link
+ *   is emailed, so a link in a mailbox always belongs to a request that says so. If the email cannot be
+ *   sent the release is undone: the link is revoked, the request goes to `failed` and the package is
+ *   taken out of the bucket.
+ * - **A failed or expired release leaves no package.** Whatever ended the release removes the package
+ *   it may have stored (the sweep removes it later if that fails).
+ * - **Erased is erased** (JD-S6 R1-S6-7). A scope that a legal erasure removed is answered `erased`.
  */
 
 export const ARCHIVE_RELEASE_JOB = 'archive.release';
@@ -69,6 +76,13 @@ export type ArchiveReleasePayload = z.infer<typeof Payload>;
 /** How long the link lives (the token kind caps it at the same 72 hours). */
 const LINK_HOURS = 72;
 const RETRY_LIMIT = 1;
+/** How many times the email is tried before the release is undone. */
+const SEND_ATTEMPTS = 3;
+
+/** Where the package of a request waits for its link: derived from the ids, never from the request. */
+export function packageKeyOf(tenantId: string, requestId: string): string {
+  return tenantKey(tenantId, 'archive-release', `${requestId}.zip`);
+}
 
 export interface ArchiveReleaseDeps {
   withTenant: WithTenant;
@@ -140,7 +154,29 @@ export function createArchiveReleaseJob(
   });
 }
 
-/** Closes a request that will not be carried out, and says so in the platform trail. */
+/**
+ * Takes the package of a request out of the bucket and records that it is gone. The object goes first
+ * and the mark follows; if either fails the request keeps no `package_removed_at` and the sweep of the
+ * releaser (`app.archive_release_cleanup_due`) does it later.
+ */
+export async function removePackage(
+  deps: Pick<ArchiveReleaseDeps, 'withTenant' | 'storage' | 'clock'>,
+  system: RequestContext,
+  requestId: string,
+): Promise<void> {
+  await deps.storage.remove(system.tenantId, packageKeyOf(system.tenantId, requestId));
+  await deps.withTenant(system, (inner) =>
+    inner
+      .update(archiveReleaseRequest)
+      .set({ packageRemovedAt: deps.clock() })
+      .where(eq(archiveReleaseRequest.id, requestId)),
+  );
+}
+
+/**
+ * Closes a request that will not be carried out, says so in the platform trail, and removes whatever
+ * package an attempt may have stored before it failed (a failed or expired release leaves none).
+ */
 async function settle(
   deps: ArchiveReleaseDeps,
   system: RequestContext,
@@ -154,12 +190,14 @@ async function settle(
       .update(archiveReleaseRequest)
       .set({ status, ...(code === null ? {} : { failureCode: code }) })
       .where(eq(archiveReleaseRequest.id, request.id));
-    await writeArchiveAudit(inner, {
+    await writeReleaseAudit(inner, {
       action: 'archive.released',
-      resourceType: 'archive_release_request',
-      resourceId: request.id,
+      requestId: request.id,
       metadata: { phase, ...(code === null ? {} : { code }) },
     });
+  });
+  await removePackage(deps, system, request.id).catch(() => {
+    deps.log?.error({ job: ARCHIVE_RELEASE_JOB }, 'could not take the package out of the bucket');
   });
 }
 
@@ -174,6 +212,10 @@ async function carryOut(
   if (archive?.status !== 'written' || !archive.manifestKey || !archive.manifestSha256) {
     throw new ReleaseFailure('no_archive');
   }
+  // Erased is erased: say so, instead of failing to find what is gone.
+  if (archive.erasedAt !== null || isUnderErased(archive, archive.manifestKey)) {
+    throw new ReleaseFailure('erased');
+  }
   const manifestObject = await deps.store.get(archive.manifestKey);
   if (manifestObject.status === 'retryable') throw new Error('the archive store is not available');
   if (
@@ -186,10 +228,9 @@ async function carryOut(
 
   // Opening the archive is an access, with the reason that was stated, in the platform trail.
   await deps.withTenant(system, (inner) =>
-    writeArchiveAudit(inner, {
+    writeReleaseAudit(inner, {
       action: 'archive.accessed',
-      resourceType: 'archive_release_request',
-      resourceId: request.id,
+      requestId: request.id,
       reason: request.reason,
       metadata: { phase: 'decrypt', requesterKind: kind },
     }),
@@ -200,13 +241,16 @@ async function carryOut(
 
   const scratch = await mkdtemp(join(deps.workDir ?? tmpdir(), 'archive-release-'));
   try {
-    const built = await buildFor(deps, request, kind, manifest, privateKey, scratch, now);
+    const built = await buildFor(deps, request, kind, archive, manifest, privateKey, scratch, now);
+    // The private key of the organization is needed to decrypt and for nothing else: it does not
+    // outlive the decryption in the memory of the releaser (JD-S6 R1-A-T8).
+    privateKey.fill(0);
     const organizationName = await deps.withTenant(system, readOrganizationName);
     const slug = await deps.withTenant(system, tenantSlug);
     if (slug === null) throw new ReleaseFailure('organization_not_found');
 
     // The package waits in the bucket of the organization for the length of its link.
-    const objectKey = tenantKey(system.tenantId, 'archive-release', `${request.id}.zip`);
+    const objectKey = packageKeyOf(system.tenantId, request.id);
     await deps.storage.put(system.tenantId, objectKey, {
       body: createReadStream(built.path),
       contentType: 'application/zip',
@@ -222,20 +266,8 @@ async function carryOut(
         ttlMs: LINK_HOURS * 3_600_000,
       });
     });
-    const notice = requesterNotice({
-      organizationName,
-      requesterKind: kind,
-      link: `${deps.origins(slug)}/archive-release/${issued.token}`,
-      linkExpiresAt: issued.expiresAt,
-    });
-    // The address that was verified out of band: the only place the link goes.
-    await deps.email.send({
-      to: request.requesterEmail,
-      subject: notice.subject,
-      text: notice.text,
-      tenant: { id: system.tenantId, isDemo: false },
-    });
 
+    // The row first: from here on a link in a mailbox belongs to a request that says it was released.
     await deps.withTenant(system, async (inner) => {
       await inner
         .update(archiveReleaseRequest)
@@ -248,17 +280,91 @@ async function carryOut(
           linkExpiresAt: issued.expiresAt,
         })
         .where(eq(archiveReleaseRequest.id, request.id));
-      await writeArchiveAudit(inner, {
+      await writeReleaseAudit(inner, {
         action: 'archive.released',
-        resourceType: 'archive_release_request',
-        resourceId: request.id,
+        requestId: request.id,
         metadata: { phase: 'delivered', requesterKind: kind, bytes: built.sizeBytes },
       });
     });
+
+    const notice = requesterNotice({
+      organizationName,
+      requesterKind: kind,
+      link: `${deps.origins(slug)}/archive-release/${issued.token}`,
+      linkExpiresAt: issued.expiresAt,
+    });
+    // The address that was verified out of band: the only place the link goes.
+    const sent = await sendWithRetries(deps, () =>
+      deps.email.send({
+        to: request.requesterEmail,
+        subject: notice.subject,
+        text: notice.text,
+        tenant: { id: system.tenantId, isDemo: false },
+      }),
+    );
+    if (!sent) {
+      await undoRelease(deps, system, request);
+      return;
+    }
     await tellTheFormerContact(deps, system, organizationName, kind, now);
   } finally {
+    privateKey.fill(0);
     await rm(scratch, { recursive: true, force: true });
   }
+}
+
+/** A few tries at the email: a blip of the provider should not undo a release two people approved. */
+async function sendWithRetries(
+  deps: ArchiveReleaseDeps,
+  send: () => Promise<unknown>,
+): Promise<boolean> {
+  for (let attempt = 1; attempt <= SEND_ATTEMPTS; attempt += 1) {
+    try {
+      await send();
+      return true;
+    } catch {
+      deps.log?.error(
+        { job: ARCHIVE_RELEASE_JOB, attempt },
+        'the release link could not be emailed',
+      );
+    }
+  }
+  return false;
+}
+
+/**
+ * The link did not reach the requester: it is revoked, the request goes to `failed` with no package
+ * (the row says it was never delivered), and the package leaves the bucket. The operator sees
+ * `email_failed` and records a new request.
+ */
+async function undoRelease(
+  deps: ArchiveReleaseDeps,
+  system: RequestContext,
+  request: ArchiveReleaseRequestRow,
+): Promise<void> {
+  await deps.withTenant(system, async (inner) => {
+    await deps.tokens.revokeForSubject(inner, 'archive_release', request.id);
+    await inner
+      .update(archiveReleaseRequest)
+      .set({
+        status: 'failed',
+        failureCode: 'email_failed',
+        releasedAt: null,
+        packageKey: null,
+        packageSha256: null,
+        packageBytes: null,
+        linkExpiresAt: null,
+      })
+      .where(eq(archiveReleaseRequest.id, request.id));
+    await writeReleaseAudit(inner, {
+      action: 'archive.released',
+      requestId: request.id,
+      metadata: { phase: 'failed', code: 'email_failed' },
+    });
+  });
+  await removePackage(deps, system, request.id).catch(() => {
+    deps.log?.error({ job: ARCHIVE_RELEASE_JOB }, 'could not take the package out of the bucket');
+  });
 }
 
 /** Restores the parts the requester is entitled to and builds what is handed over. */
@@ -266,6 +372,7 @@ async function buildFor(
   deps: ArchiveReleaseDeps,
   request: ArchiveReleaseRequestRow,
   kind: 'patient' | 'professional',
+  archive: TenantArchiveRow,
   manifest: ArchiveManifest,
   privateKey: Buffer,
   scratch: string,
@@ -280,6 +387,7 @@ async function buildFor(
       matricula: request.scopeMatricula,
     });
     if (!part) throw new ReleaseFailure('scope_not_found');
+    if (partIsErased(archive, part)) throw new ReleaseFailure('erased');
     // Only the part of this professional is decrypted: the rest of the archive stays closed.
     const [restored] = await restoreParts({
       store: deps.store,
@@ -297,6 +405,10 @@ async function buildFor(
   }
   const adminPart = manifest.parts.find((part) => part.kind === 'administrative');
   if (!adminPart) throw new ReleaseFailure('scope_not_found');
+  // A patient's records are the identity part and every clinical part: one erased is a gap.
+  if (manifest.parts.some((part) => partIsErased(archive, part))) {
+    throw new ReleaseFailure('erased');
+  }
   const [admin] = await restoreParts({
     store: deps.store,
     manifest,

@@ -58,6 +58,7 @@ export { enqueuePendingExports, subscribeCancellationExport } from './cancellati
 export { operatorCancelRoutes } from './cancellation/http/operator-cancel-routes.js';
 export { createArchive } from './archive/archive.js';
 export { enqueueDueArchives, enqueueDueVerifications } from './archive/due.js';
+export { removeSpentExports } from './cancellation/export-cleanup.js';
 export { createArchiveKeyReleaser, createArchiveKeyWriter } from './archive/keys.js';
 export type { ArchiveKeyReleaser, ArchiveKeyWriter } from './archive/keys.js';
 export { createArchiveVerifyJob, ARCHIVE_VERIFY_JOB } from './archive/verify-archive.js';

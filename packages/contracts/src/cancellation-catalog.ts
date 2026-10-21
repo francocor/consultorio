@@ -12,12 +12,19 @@
 export const CANCELLATION_ERRORS = {
   // The package is not a file yet (still being made) or could not be made: nothing to download.
   export_package_not_ready: { status: 409, i18nKey: 'errors.export_package_not_ready' },
-  // The person who verified the identity of a requester cannot approve the same request: two people.
+  // The person who recorded a request, or verified the identity of its requester, cannot approve it:
+  // the approver is a third pair of eyes (JD-S6 R1-S6-4).
   archive_release_same_operator: { status: 409, i18nKey: 'errors.archive_release_same_operator' },
   // The request is not in the step this action needs (verify the identity first, then approve).
   archive_release_wrong_step: { status: 409, i18nKey: 'errors.archive_release_wrong_step' },
   // The organization named has no archive written, so there is nothing to release.
   archive_release_no_archive: { status: 409, i18nKey: 'errors.archive_release_no_archive' },
+  // The organization has a subscription: its end goes through the subscription (which cancels at the
+  // provider first), not through the operator's cancel (JD-S6 R1-S6-2).
+  operator_cancel_has_subscription: {
+    status: 409,
+    i18nKey: 'errors.operator_cancel_has_subscription',
+  },
 } as const satisfies Record<string, { status: number; i18nKey: string }>;
 
 /**
@@ -28,6 +35,8 @@ export const CANCELLATION_AUDIT_ACTIONS = [
   'tenant.cancelled',
   'export.cancellation.requested',
   'export.cancellation.downloaded',
+  // The plaintext package left the bucket once the archive that replaces it was verified (JD-S6 R1-A-W7).
+  'export.cancellation.removed',
 ] as const;
 
 /** The operator cancelled an organization (single-tenant deployments and local testing). */

@@ -486,6 +486,35 @@ describe('the verification', () => {
 
     expect(await archiveRow()).toMatchObject({ verifyStatus: 'corrupted' });
   });
+
+  it('does not look for what a legal erasure removed: it is gone on purpose, not missing (JD-S6 R1-S6-7)', async () => {
+    const admin = new pg.Client({ connectionString: inject('adminUrl') });
+    await admin.connect();
+    try {
+      const before = await archiveRow();
+      const entriesBefore = (await platformEntries('archive.verified')).length;
+      await admin.query(
+        'update tenant_archive set erased_prefixes = $2::text[], erased_at = now() where tenant_id = $1',
+        [org.world.tenant.id, [`tenants/${org.world.tenant.id}/`]],
+      );
+
+      const result = await runVerify();
+      const jobs = createRecordingJobClient();
+      await enqueueDueVerifications(runtime.db, jobs, { everyDays: 0 });
+
+      expect(result.status).toBe('completed');
+      // Nothing was recorded: the verification of an erased archive does not run.
+      expect((await archiveRow())?.verifiedAt?.getTime()).toBe(before?.verifiedAt?.getTime());
+      expect((await platformEntries('archive.verified')).length).toBe(entriesBefore);
+      expect(jobs.jobs.some((job) => job.payload.tenantId === org.world.tenant.id)).toBe(false);
+    } finally {
+      await admin.query(
+        "update tenant_archive set erased_prefixes = '{}', erased_at = null where tenant_id = $1",
+        [org.world.tenant.id],
+      );
+      await admin.end();
+    }
+  });
 });
 
 describe('a store that fails', () => {

@@ -27,6 +27,7 @@ describe('cancellation and archive catalogues', () => {
       'tenant.cancelled',
       'export.cancellation.requested',
       'export.cancellation.downloaded',
+      'export.cancellation.removed',
     ]);
     for (const action of CANCELLATION_AUDIT_ACTIONS) {
       expect(

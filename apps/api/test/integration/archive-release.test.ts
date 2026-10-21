@@ -10,9 +10,16 @@ import {
 } from '../../src/adapters/archive-fake/index.js';
 import { generateReleaserKeys } from '../../src/modules/tenancy/archive/archive-crypto.js';
 import {
+  abandonDownload,
+  claimDownload,
+  completeDownload,
+  MAX_DOWNLOAD_ATTEMPTS,
+} from '../../src/modules/tenancy/archive/download.js';
+import {
   createArchiveKeyReleaser,
   createArchiveKeyWriter,
 } from '../../src/modules/tenancy/archive/keys.js';
+import { parseManifest } from '../../src/modules/tenancy/archive/manifest.js';
 import {
   ARCHIVE_RELEASE_JOB,
   createArchiveReleaseJob,
@@ -24,7 +31,7 @@ import {
   createArchiveWriteJob,
 } from '../../src/modules/tenancy/archive/write-archive.js';
 import { createRuntimeDb, type DbHandle } from '../../src/platform/db/pool.js';
-import { createWithTenant } from '../../src/platform/db/tenant-context.js';
+import { createWithTenant, SYSTEM_USER_ID, type Tx } from '../../src/platform/db/tenant-context.js';
 import { runJob } from '../../src/platform/jobs/define-job.js';
 import { createActionTokens } from '../../src/platform/tokens/index.js';
 import { browserHeaders } from '../support/app.js';
@@ -45,6 +52,8 @@ import { allTextOf, readZip } from '../support/zip-reader.js';
  */
 
 let runtime: DbHandle;
+/** The connection of the releaser: its own database role (`app_releaser`), JD-S6 R1-S6-12. */
+let releaserDb: DbHandle;
 let org: RetentionWorld;
 let admin: pg.Client;
 let store: FakeArchiveStore;
@@ -63,11 +72,17 @@ const SLUG = 'archive-release';
 const REQUESTER = 'ana.rios@ejemplo.test';
 
 const withTenant = () => createWithTenant(runtime.db);
+const releaserWithTenant = () => createWithTenant(releaserDb.db);
+/** The API serves the link as the runtime role: its steps of the download run as it does. */
+const runtimeWithTenant = <T>(
+  context: { tenantId: string; userId: string },
+  work: (tx: Tx) => Promise<T>,
+) => withTenant()(context, work);
 const clock = () => org.operator.clock.read();
 
 function releaseJob(overrides: Partial<ArchiveReleaseDeps> = {}) {
   return createArchiveReleaseJob({
-    withTenant: withTenant(),
+    withTenant: releaserWithTenant(),
     store,
     storage: org.storage,
     keys: createArchiveKeyReleaser({ kek: releaser.kek }),
@@ -84,7 +99,7 @@ const runRelease = (
   retryCount = 0,
   overrides: Partial<ArchiveReleaseDeps> = {},
 ) =>
-  runJob(runtime.db, releaseJob(overrides), {
+  runJob(releaserDb.db, releaseJob(overrides), {
     id: randomUUID(),
     name: ARCHIVE_RELEASE_JOB,
     data: { tenantId: org.world.tenant.id, requestId },
@@ -168,6 +183,16 @@ async function requestRow(id: string) {
   return result.rows[0];
 }
 
+/** The download is recorded when the transfer ends, after the answer: wait for it. */
+async function downloaded(id: string) {
+  for (let attempt = 0; attempt < 100; attempt += 1) {
+    const row = await requestRow(id);
+    if (row?.downloaded_at) return row;
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  return requestRow(id);
+}
+
 async function trail(requestId: string) {
   const result = await admin.query<{
     action: string;
@@ -183,6 +208,7 @@ async function trail(requestId: string) {
 
 beforeAll(async () => {
   runtime = createRuntimeDb(inject('runtimeUrl'));
+  releaserDb = createRuntimeDb(inject('releaserUrl'));
   admin = new pg.Client({ connectionString: inject('adminUrl') });
   await admin.connect();
   releaser = generateReleaserKeys();
@@ -264,6 +290,7 @@ beforeAll(async () => {
 afterAll(async () => {
   await admin.end();
   await org.close();
+  await releaserDb.close();
   await runtime.close();
 });
 
@@ -277,8 +304,8 @@ describe('a patient asks for their own records', () => {
 
     // The releaser looks for approved requests and queues the job for each.
     const swept = await sweepReleases({
-      db: runtime.db,
-      withTenant: withTenant(),
+      db: releaserDb.db,
+      withTenant: releaserWithTenant(),
       client: jobs,
       storage: org.storage,
       clock,
@@ -351,6 +378,8 @@ describe('a patient asks for their own records', () => {
   });
 
   it('can not be used a second time, by the link or by looking at it', async () => {
+    // The use of the link is counted when the transfer ends.
+    expect((await downloaded(requestId))?.downloaded_at).not.toBeNull();
     const again = await linkCall('POST', token);
     const looking = await linkCall('GET', token);
 
@@ -543,8 +572,8 @@ describe('a link that ends unused', () => {
     const late = await linkCall('POST', token);
     const lateLook = await linkCall('GET', token);
     const swept = await sweepReleases({
-      db: runtime.db,
-      withTenant: withTenant(),
+      db: releaserDb.db,
+      withTenant: releaserWithTenant(),
       client: createRecordingJobClient(),
       storage: org.storage,
       clock,
@@ -557,12 +586,242 @@ describe('a link that ends unused', () => {
     expect((await requestRow(id))?.package_removed_at).not.toBeNull();
     // Once cleared, the next sweep has nothing more to clear.
     const again = await sweepReleases({
-      db: runtime.db,
-      withTenant: withTenant(),
+      db: releaserDb.db,
+      withTenant: releaserWithTenant(),
       client: createRecordingJobClient(),
       storage: org.storage,
       clock,
     });
     expect(again.removed).toBe(0);
+  });
+});
+
+describe('a release that goes wrong leaves nothing behind (JD-S6 R1-S6-8)', () => {
+  const stored = async (id: string) =>
+    (await org.storage.head(
+      org.world.tenant.id,
+      `t/${org.world.tenant.id}/archive-release/${id}.zip`,
+    )) !== null;
+
+  it('sets the row to released before the email, and undoes the release when the email never goes out', async () => {
+    const id = await approvedRequest({ requesterEmail: 'sinmail@ejemplo.test' });
+    const seen: string[] = [];
+    const flaky = {
+      ...org.email,
+      send: async (message: { to: string }) => {
+        // When the email is tried the row already says released, and the package is in the bucket.
+        if (message.to === 'sinmail@ejemplo.test') {
+          seen.push((await requestRow(id))?.status ?? '');
+          seen.push(String(await stored(id)));
+          throw new Error('the mail server is down');
+        }
+      },
+    } as unknown as ArchiveReleaseDeps['email'];
+
+    const result = await runRelease(id, 0, { email: flaky });
+    const row = await requestRow(id);
+
+    expect(result.status).toBe('completed');
+    expect(seen.slice(0, 2)).toEqual(['released', 'true']);
+    expect(row).toMatchObject({
+      status: 'failed',
+      failure_code: 'email_failed',
+      package_key: null,
+    });
+    // No package, no link: nothing that was sent or could be used is left.
+    expect(await stored(id)).toBe(false);
+    expect(row?.package_removed_at).not.toBeNull();
+    expect(row?.link_expires_at).toBeNull();
+    expect(org.email.lastTo('sinmail@ejemplo.test')).toBeUndefined();
+    expect((await trail(id)).at(-1)?.metadata).toMatchObject({
+      phase: 'failed',
+      code: 'email_failed',
+    });
+  });
+
+  it('takes the package out of the bucket when a release fails for good after storing it', async () => {
+    const id = await approvedRequest({ requesterEmail: 'fallo@ejemplo.test' });
+    const tokens = createActionTokens({ clock });
+    const broken = {
+      ...tokens,
+      issue: () => Promise.reject(new Error('the tokens are not available')),
+    } as unknown as ArchiveReleaseDeps['tokens'];
+
+    // First delivery: the package is stored, the queue tries again. Last delivery: the request ends.
+    await expect(runRelease(id, 0, { tokens: broken })).rejects.toThrow();
+    expect(await stored(id)).toBe(true);
+    const last = await runRelease(id, 1, { tokens: broken });
+
+    expect(last.status).toBe('completed');
+    expect(await requestRow(id)).toMatchObject({
+      status: 'failed',
+      failure_code: 'release_failed',
+    });
+    expect(await stored(id)).toBe(false);
+    expect((await requestRow(id))?.package_removed_at).not.toBeNull();
+  });
+
+  it('clears the package that a failed or expired release left behind, when the sweep finds it', async () => {
+    const id = await approvedRequest({ requesterEmail: 'huerfano@ejemplo.test' });
+    const key = `t/${org.world.tenant.id}/archive-release/${id}.zip`;
+    // A crash after the upload and before the settlement: the request ended with a package in the bucket.
+    await org.storage.put(org.world.tenant.id, key, {
+      body: Buffer.from('records'),
+      contentType: 'application/zip',
+      contentLength: 7,
+    });
+    await admin.query(
+      "update archive_release_request set status = 'failed', failure_code = 'release_failed', updated_at = now() - interval '1 hour' where id = $1",
+      [id],
+    );
+
+    const swept = await sweepReleases({
+      db: releaserDb.db,
+      withTenant: releaserWithTenant(),
+      client: createRecordingJobClient(),
+      storage: org.storage,
+      clock,
+    });
+
+    expect(swept.removed).toBeGreaterThanOrEqual(1);
+    expect(await org.storage.head(org.world.tenant.id, key)).toBeNull();
+    expect((await requestRow(id))?.package_removed_at).not.toBeNull();
+  });
+});
+
+describe('a download that breaks can be tried again (JD-S6 R1-S6-8)', () => {
+  const asSystem = () => ({ tenantId: org.world.tenant.id, userId: SYSTEM_USER_ID });
+  const tokens = () => createActionTokens({ clock });
+
+  async function releasedRequest(email: string) {
+    const id = await approvedRequest({ requesterEmail: email });
+    await runRelease(id);
+    return { id, token: tokenFrom(email) };
+  }
+
+  it('spends the link when the transfer ends and not when it starts, one download at a time', async () => {
+    const { id, token } = await releasedRequest('corte@ejemplo.test');
+    const run = <T>(work: (tx: Tx) => Promise<T>) => runtimeWithTenant(asSystem(), work);
+
+    const first = await run((tx) => claimDownload(tx, tokens(), token, clock()));
+    // A second download while the first is in progress, and a look at the link: the lease holds.
+    const second = await run((tx) => claimDownload(tx, tokens(), token, clock()));
+    const looking = await linkCall('GET', token);
+    // The first one breaks: the lease is given back, the link is not spent.
+    await run((tx) => abandonDownload(tx, id));
+    const third = await run((tx) => claimDownload(tx, tokens(), token, clock()));
+
+    expect(first).toMatchObject({ id });
+    expect(second).toBeNull();
+    expect(looking.statusCode).toBe(200);
+    expect(third).toMatchObject({ id });
+    expect((await requestRow(id))?.downloaded_at).toBeNull();
+
+    // The retry finishes: now the link is spent, the entry is written once, and nobody claims again.
+    const done = await run((tx) => completeDownload(tx, tokens(), token, id, clock()));
+    const again = await run((tx) => claimDownload(tx, tokens(), token, clock()));
+    const entries = (await trail(id)).filter((step) => step.metadata.phase === 'downloaded');
+    expect(done).toBe(true);
+    expect(again).toBeNull();
+    expect((await requestRow(id))?.downloaded_at).not.toBeNull();
+    expect(entries).toHaveLength(1);
+    expect((await linkCall('GET', token)).statusCode).toBe(404);
+  });
+
+  it('bounds the retries: after five attempts the link answers like one that does not work', async () => {
+    const { id, token } = await releasedRequest('muchos@ejemplo.test');
+    const run = <T>(work: (tx: Tx) => Promise<T>) => runtimeWithTenant(asSystem(), work);
+
+    for (let attempt = 0; attempt < MAX_DOWNLOAD_ATTEMPTS; attempt += 1) {
+      expect(await run((tx) => claimDownload(tx, tokens(), token, clock()))).not.toBeNull();
+      await run((tx) => abandonDownload(tx, id));
+    }
+    const over = await run((tx) => claimDownload(tx, tokens(), token, clock()));
+    const download = await linkCall('POST', token);
+
+    expect(over).toBeNull();
+    expect(download.statusCode).toBe(404);
+  });
+
+  it('gives the lease back when the package cannot be read, so the link still works', async () => {
+    const { id, token } = await releasedRequest('perdido@ejemplo.test');
+    const key = `t/${org.world.tenant.id}/archive-release/${id}.zip`;
+    await org.storage.remove(org.world.tenant.id, key);
+
+    const download = await linkCall('POST', token);
+
+    expect(download.statusCode).toBe(404);
+    const row = await admin.query<{ download_started_at: Date | null; download_attempts: number }>(
+      'select download_started_at, download_attempts from archive_release_request where id = $1',
+      [id],
+    );
+    expect(row.rows[0]).toMatchObject({ download_started_at: null, download_attempts: 1 });
+  });
+});
+
+describe('what a legal erasure removed is answered erased (JD-S6 R1-S6-7)', () => {
+  async function setErased(prefixes: string[], whole: boolean) {
+    await admin.query(
+      'update tenant_archive set erased_prefixes = $2::text[], erased_at = $3 where tenant_id = $1',
+      [org.world.tenant.id, prefixes, whole ? new Date() : null],
+    );
+  }
+  const restore = () =>
+    admin.query(
+      "update tenant_archive set erased_prefixes = '{}', erased_at = null where tenant_id = $1",
+      [org.world.tenant.id],
+    );
+
+  it('fails a release of an archive that was erased, with the code erased, and sends nothing', async () => {
+    const id = await approvedRequest({ requesterEmail: 'borrado@ejemplo.test' });
+    await setErased([`tenants/${org.world.tenant.id}/`], true);
+    try {
+      await runRelease(id);
+    } finally {
+      await restore();
+    }
+
+    expect(await requestRow(id)).toMatchObject({ status: 'failed', failure_code: 'erased' });
+    expect(org.email.lastTo('borrado@ejemplo.test')).toBeUndefined();
+  });
+
+  it('answers erased for the part of a professional that was erased, and for a patient whose records span it', async () => {
+    const archive = await admin.query<{ manifest_key: string }>(
+      'select manifest_key from tenant_archive where tenant_id = $1',
+      [org.world.tenant.id],
+    );
+    const raw = await store.get(archive.rows[0]?.manifest_key ?? '');
+    if (raw.status !== 'found') throw new Error('the manifest is not there');
+    const manifest = parseManifest(raw.body);
+    const clinical = manifest.parts.filter((part) => part.kind === 'clinical');
+    const ofA = clinical.find((part) => part.professional?.matricula === matriculaOfA.number);
+    const erasedName = ofA?.objects[0]?.name ?? '';
+    expect(erasedName).not.toBe('');
+
+    const professional = await approvedRequest({
+      requesterKind: 'professional',
+      requesterName: 'Dra. Prueba',
+      requesterEmail: 'borrada@ejemplo.test',
+      documentType: undefined,
+      document: undefined,
+      matriculaJurisdiction: matriculaOfA.jurisdiction,
+      matricula: matriculaOfA.number,
+      reason: 'Continuidad de la atención de mis pacientes',
+    });
+    const patient = await approvedRequest({ requesterEmail: 'borrada.paciente@ejemplo.test' });
+    await setErased([erasedName], false);
+    try {
+      await runRelease(professional);
+      await runRelease(patient);
+    } finally {
+      await restore();
+    }
+
+    expect(await requestRow(professional)).toMatchObject({
+      status: 'failed',
+      failure_code: 'erased',
+    });
+    // A patient's records span every part: one erased is a gap, so the answer is the same.
+    expect(await requestRow(patient)).toMatchObject({ status: 'failed', failure_code: 'erased' });
   });
 });

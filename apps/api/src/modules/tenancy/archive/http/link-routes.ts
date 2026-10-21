@@ -1,5 +1,5 @@
 import { ArchiveReleaseLinkResponse } from '@consultorio/contracts';
-import { and, eq } from 'drizzle-orm';
+import { eq } from 'drizzle-orm';
 import type { FastifyInstance, FastifyRequest } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
@@ -13,7 +13,7 @@ import {
 import { denied } from '../../../../platform/http/problem.js';
 import type { ObjectStorage } from '../../../../platform/storage/object-storage.js';
 import type { ActionTokens } from '../../../../platform/tokens/index.js';
-import { writeArchiveAudit } from '../archive-state.js';
+import { abandonDownload, claimDownload, completeDownload } from '../download.js';
 
 const Params = z.strictObject({
   slug: z.string().min(1).max(63),
@@ -36,8 +36,9 @@ export interface LinkRoutesDeps {
  *
  * - `GET` only looks: it says when the link ends, and spends nothing, so a mail scanner that opens the
  *   link before the person does not use it up.
- * - `POST` spends the link and hands over the package once. The package is taken out of the bucket
- *   when the download ends.
+ * - `POST` hands over the package. The link is spent when the transfer ENDS, not when it starts: a
+ *   download that breaks can be tried again while the link lives (a few times, one at a time, see
+ *   `download.ts`). The package is taken out of the bucket when a download completes.
  *
  * An unknown link, an expired one, one already used and one whose package is gone all get the same
  * answer. The routes are allowed in a cancelled organization (category `export`): that is the only
@@ -114,60 +115,51 @@ export function releaseLinkRoutes(deps: LinkRoutesDeps) {
         void reply.header('cache-control', 'no-store');
         const where = contextOf(request);
         if (!where || !deps.storage) return denied(request, reply);
-
-        const delivery = await deps.withTenant(where.context, async (tx) => {
-          const redeemed = await deps.tokens.redeem(tx, 'archive_release', request.params.token);
-          if (!redeemed) return null;
-          const [row] = await tx
-            .select()
-            .from(archiveReleaseRequest)
-            .where(
-              and(
-                eq(archiveReleaseRequest.id, redeemed.subjectId),
-                eq(archiveReleaseRequest.status, 'released'),
-              ),
-            );
-          if (
-            !row ||
-            row.packageKey === null ||
-            row.downloadedAt !== null ||
-            !row.linkExpiresAt ||
-            row.linkExpiresAt.getTime() < deps.clock().getTime()
-          ) {
-            return null;
-          }
-          await tx
-            .update(archiveReleaseRequest)
-            .set({ downloadedAt: deps.clock() })
-            .where(eq(archiveReleaseRequest.id, row.id));
-          await writeArchiveAudit(tx, {
-            action: 'archive.released',
-            resourceType: 'archive_release_request',
-            resourceId: row.id,
-            metadata: { phase: 'downloaded', requesterKind: row.requesterKind },
-          });
-          return { id: row.id, key: row.packageKey };
-        });
-        if (!delivery) return denied(request, reply);
-
-        const stored = await deps.storage.get(where.tenantId, delivery.key);
-        if (!stored) return denied(request, reply);
         const { storage } = deps;
-        // When the download ends (or breaks) the package leaves the bucket: it was for this link only.
-        stored.stream.once('close', () => {
+        const { token } = request.params;
+
+        // The lease first; the link is spent only when the transfer ends (see `download.ts`).
+        const claim = await deps.withTenant(where.context, (tx) =>
+          claimDownload(tx, deps.tokens, token, deps.clock()),
+        );
+        if (!claim) return denied(request, reply);
+
+        const release = () =>
+          deps
+            .withTenant(where.context, (tx) => abandonDownload(tx, claim.id))
+            .catch(() => {
+              // The lease runs out by itself in minutes.
+            });
+        const stored = await storage.get(where.tenantId, claim.key).catch(() => null);
+        if (!stored) {
+          await release();
+          return denied(request, reply);
+        }
+
+        let finished = false;
+        reply.raw.once('finish', () => {
+          finished = true;
           void (async () => {
             try {
-              await storage.remove(where.tenantId, delivery.key);
+              await deps.withTenant(where.context, (tx) =>
+                completeDownload(tx, deps.tokens, token, claim.id, deps.clock()),
+              );
+              // The package was for this link only: it leaves the bucket once the transfer is done.
+              await storage.remove(where.tenantId, claim.key);
               await deps.withTenant(where.context, (tx) =>
                 tx
                   .update(archiveReleaseRequest)
                   .set({ packageRemovedAt: deps.clock() })
-                  .where(eq(archiveReleaseRequest.id, delivery.id)),
+                  .where(eq(archiveReleaseRequest.id, claim.id)),
               );
             } catch {
-              // The sweep of expired packages takes it out when the link ends.
+              // The sweep of the releaser takes the package out when the link ends.
             }
           })();
+        });
+        reply.raw.once('close', () => {
+          // A transfer that did not finish gives the link back: it can be tried again while it lives.
+          if (!finished) void release();
         });
         return reply
           .header('content-type', 'application/zip')

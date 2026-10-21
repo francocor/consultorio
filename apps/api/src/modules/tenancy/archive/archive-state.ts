@@ -90,6 +90,22 @@ export async function markArchiveFailed(tx: Tx, id: string, code: string): Promi
     .where(and(eq(tenantArchive.id, id), eq(tenantArchive.status, 'pending')));
 }
 
+/** True when the object (a key of the archive store) is under a folder a legal erasure removed. */
+export function isUnderErased(
+  archive: Pick<TenantArchiveRow, 'erasedPrefixes'>,
+  name: string,
+): boolean {
+  return archive.erasedPrefixes.some((prefix) => name.startsWith(prefix));
+}
+
+/** True when any object of the part was erased: a part is whole or it is not there. */
+export function partIsErased(
+  archive: Pick<TenantArchiveRow, 'erasedPrefixes'>,
+  part: { objects: readonly { name: string }[] },
+): boolean {
+  return part.objects.some((object) => isUnderErased(archive, object.name));
+}
+
 export type VerifyStatus = 'ok' | 'corrupted' | 'missing' | 'overwritten';
 
 export async function recordVerification(
@@ -103,14 +119,15 @@ export async function recordVerification(
     .where(eq(tenantArchive.id, id));
 }
 
-export type ArchiveAuditAction =
-  'archive.written' | 'archive.verified' | 'archive.accessed' | 'archive.released';
+/** The two actions the worker writes about an archive (`archive.write`, `archive.verify`). */
+export type ArchiveAuditAction = 'archive.written' | 'archive.verified';
 
 /**
- * One entry of the platform trail about the organization of the transaction. The runtime role cannot
- * write that table, so it goes through the definer function of migration 0653, which takes these four
- * actions and no other. The metadata is flat scalars, checked like any audit metadata (no content,
- * no secret).
+ * One entry of the platform trail about the organization of the transaction, for the jobs of the
+ * worker. The runtime role cannot write that table, so it goes through the definer function of
+ * migration 0653 (restricted to these two actions in 0688). The entries of a release have functions of
+ * their own that only the releaser (`writeReleaseAudit`) and the API (`writeDownloadAudit`) can call.
+ * The metadata is flat scalars, checked like any audit metadata (no content, no secret).
  */
 export async function writeArchiveAudit(
   tx: Tx,
@@ -126,4 +143,29 @@ export async function writeArchiveAudit(
   await tx.execute(sql`select app.write_archive_audit(
     ${entry.action}, ${entry.resourceType}, ${entry.resourceId}::uuid,
     ${entry.reason ?? null}, ${JSON.stringify(metadata)}::jsonb)`);
+}
+
+/**
+ * An entry of the release: the archive was opened (`archive.accessed`) or a request was delivered,
+ * failed or expired (`archive.released`). Only the releaser's role may call the function, and only
+ * about an approved request of the organization of the transaction (migration 0688).
+ */
+export async function writeReleaseAudit(
+  tx: Tx,
+  entry: {
+    action: 'archive.accessed' | 'archive.released';
+    requestId: string;
+    reason?: string;
+    metadata?: AuditMetadata;
+  },
+): Promise<void> {
+  const metadata = AuditMetadata.parse(entry.metadata ?? {});
+  await tx.execute(sql`select app.write_release_audit(
+    ${entry.action}, ${entry.requestId}::uuid, ${entry.reason ?? null},
+    ${JSON.stringify(metadata)}::jsonb)`);
+}
+
+/** The entry that says a released package was handed over (written by the API, which serves the link). */
+export async function writeDownloadAudit(tx: Tx, requestId: string): Promise<void> {
+  await tx.execute(sql`select app.write_download_audit(${requestId}::uuid)`);
 }

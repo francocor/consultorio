@@ -1,4 +1,4 @@
-import { OperatorCancelTenantResponse } from '@consultorio/contracts';
+import { OperatorCancelTenantRequest, OperatorCancelTenantResponse } from '@consultorio/contracts';
 import { sql } from 'drizzle-orm';
 import type { FastifyInstance } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
@@ -19,10 +19,13 @@ export interface OperatorCancelDeps {
 const Params = z.strictObject({ tenantId: z.uuid() });
 
 /**
- * `POST /operator/tenants/:tenantId/cancel`: the operator ends an organization (task 6.36). It exists
- * for single-tenant deployments, where nobody subscribes, and for testing the end of an organization
- * locally; in a multi-tenant deployment the subscription ending is what cancels (`TenantCancelled`
- * is published by billing, source `subscription`).
+ * `POST /operator/tenants/:tenantId/cancel`: the operator ends an organization (task 6.36). It is for an
+ * organization nobody bills (provisioned by the operator, or a deployment without billing) and for
+ * testing the end of an organization locally. An organization that HAS a subscription is refused
+ * (JD-S6 R1-S6-2): cancelling its row here would leave the preapproval charging at the provider and
+ * let the next event of the subscription move the organization back. Its end is the subscription's own
+ * cancellation, which cancels at the provider first and publishes `TenantCancelled` (source
+ * `subscription`). The operator states a reason, which goes to the platform trail with their id.
  *
  * The operator role cannot update the tenant row, so the change is the definer function of migration
  * 0651, which refuses a demo organization and one that is already cancelled. The cancellation, the
@@ -39,7 +42,11 @@ export function operatorCancelRoutes(deps: OperatorCancelDeps) {
       '/operator/tenants/:tenantId/cancel',
       {
         config: { readOnly: 'write', auth: 'public', operatorAuth: 'session' },
-        schema: { params: Params, response: { 200: OperatorCancelTenantResponse } },
+        schema: {
+          params: Params,
+          body: OperatorCancelTenantRequest,
+          response: { 200: OperatorCancelTenantResponse },
+        },
       },
       async (request) => {
         const operator = operatorOf(request);
@@ -52,6 +59,8 @@ export function operatorCancelRoutes(deps: OperatorCancelDeps) {
           );
           const outcome = result.rows[0]?.outcome;
           if (outcome === 'unknown') throw new AppError('not_found');
+          if (outcome === 'has_subscription')
+            throw new AppError('operator_cancel_has_subscription');
           if (outcome !== 'cancelled') throw new AppError('conflict');
 
           await writePlatformAudit(tx, {
@@ -59,6 +68,7 @@ export function operatorCancelRoutes(deps: OperatorCancelDeps) {
             outcome: 'allow',
             actor: { ...meta, operatorId: operator.id },
             targetTenantId: tenantId,
+            reason: request.body.reason,
             resourceType: 'tenant',
             resourceId: tenantId,
             metadata: { source: 'operator' },
