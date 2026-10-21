@@ -176,8 +176,9 @@ async function requestRow(id: string) {
     downloaded_at: Date | null;
     package_removed_at: Date | null;
     link_expires_at: Date | null;
+    emailed_at: Date | null;
   }>(
-    'select status, failure_code, package_key, downloaded_at, package_removed_at, link_expires_at from archive_release_request where id = $1',
+    'select status, failure_code, package_key, downloaded_at, package_removed_at, link_expires_at, emailed_at from archive_release_request where id = $1',
     [id],
   );
   return result.rows[0];
@@ -639,6 +640,55 @@ describe('a release that goes wrong leaves nothing behind (JD-S6 R1-S6-8)', () =
     });
   });
 
+  it('records when the link was emailed, and sends a new one when that email was lost (JD-S6 R2, B-W6)', async () => {
+    const id = await approvedRequest({ requesterEmail: 'perdido@ejemplo.test' });
+    await runRelease(id);
+    expect((await requestRow(id))?.emailed_at).not.toBeNull();
+    const firstToken = tokenFrom('perdido@ejemplo.test');
+
+    // The process died between the row and the email: released, nothing emailed, for an hour.
+    await admin.query(
+      "update archive_release_request set emailed_at = null, released_at = now() - interval '1 hour' where id = $1",
+      [id],
+    );
+    const before = org.email.sent.length;
+    const swept = await sweepReleases({
+      db: releaserDb.db,
+      withTenant: releaserWithTenant(),
+      client: createRecordingJobClient(),
+      storage: org.storage,
+      clock,
+      redeliver: {
+        tokens: createActionTokens({ clock }),
+        email: org.email,
+        origins: (slug) => `https://${slug}.consultorio.test`,
+      },
+    });
+
+    expect(swept.redelivered).toBeGreaterThanOrEqual(1);
+    expect(org.email.sent.length).toBeGreaterThan(before);
+    expect((await requestRow(id))?.emailed_at).not.toBeNull();
+    const newToken = tokenFrom('perdido@ejemplo.test');
+    expect(newToken).not.toBe(firstToken);
+    // Only the new link works.
+    expect((await linkCall('GET', firstToken)).statusCode).toBe(404);
+    expect((await linkCall('GET', newToken)).statusCode).toBe(200);
+    // And the next sweep has nothing left to send.
+    const again = await sweepReleases({
+      db: releaserDb.db,
+      withTenant: releaserWithTenant(),
+      client: createRecordingJobClient(),
+      storage: org.storage,
+      clock,
+      redeliver: {
+        tokens: createActionTokens({ clock }),
+        email: org.email,
+        origins: (slug) => `https://${slug}.consultorio.test`,
+      },
+    });
+    expect(again.redelivered).toBe(0);
+  });
+
   it('takes the package out of the bucket when a release fails for good after storing it', async () => {
     const id = await approvedRequest({ requesterEmail: 'fallo@ejemplo.test' });
     const tokens = createActionTokens({ clock });
@@ -708,7 +758,7 @@ describe('a download that breaks can be tried again (JD-S6 R1-S6-8)', () => {
     const second = await run((tx) => claimDownload(tx, tokens(), token, clock()));
     const looking = await linkCall('GET', token);
     // The first one breaks: the lease is given back, the link is not spent.
-    await run((tx) => abandonDownload(tx, id));
+    await run((tx) => abandonDownload(tx, id, first?.startedAt ?? clock()));
     const third = await run((tx) => claimDownload(tx, tokens(), token, clock()));
 
     expect(first).toMatchObject({ id });
@@ -728,13 +778,30 @@ describe('a download that breaks can be tried again (JD-S6 R1-S6-8)', () => {
     expect((await linkCall('GET', token)).statusCode).toBe(404);
   });
 
+  it('gives the lease back only to the claim that holds it (JD-S6 R2)', async () => {
+    const { id, token } = await releasedRequest('ajeno@ejemplo.test');
+    const run = <T>(work: (tx: Tx) => Promise<T>) => runtimeWithTenant(asSystem(), work);
+    const claimed = await run((tx) => claimDownload(tx, tokens(), token, clock()));
+
+    // A download whose lease ran out and was replaced by another one breaks: it clears nothing.
+    await run((tx) => abandonDownload(tx, id, new Date(0)));
+    const stolen = await run((tx) => claimDownload(tx, tokens(), token, clock()));
+    await run((tx) => abandonDownload(tx, id, claimed?.startedAt ?? clock()));
+    const afterOwn = await run((tx) => claimDownload(tx, tokens(), token, clock()));
+
+    expect(claimed).toMatchObject({ id });
+    expect(stolen).toBeNull();
+    expect(afterOwn).toMatchObject({ id });
+  });
+
   it('bounds the retries: after five attempts the link answers like one that does not work', async () => {
     const { id, token } = await releasedRequest('muchos@ejemplo.test');
     const run = <T>(work: (tx: Tx) => Promise<T>) => runtimeWithTenant(asSystem(), work);
 
     for (let attempt = 0; attempt < MAX_DOWNLOAD_ATTEMPTS; attempt += 1) {
-      expect(await run((tx) => claimDownload(tx, tokens(), token, clock()))).not.toBeNull();
-      await run((tx) => abandonDownload(tx, id));
+      const claimed = await run((tx) => claimDownload(tx, tokens(), token, clock()));
+      expect(claimed).not.toBeNull();
+      await run((tx) => abandonDownload(tx, id, claimed?.startedAt ?? clock()));
     }
     const over = await run((tx) => claimDownload(tx, tokens(), token, clock()));
     const download = await linkCall('POST', token);

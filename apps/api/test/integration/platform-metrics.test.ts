@@ -167,7 +167,7 @@ describe('what the worker measures across the organizations', () => {
     );
     const steps = await admin.query<{ step: number; n: number }>(
       `select dunning_step as step, count(*)::int as n from subscription
-        where status = 'past_due' group by dunning_step`,
+        where status = 'past_due' and tenant_id in (${LIVE}) group by dunning_step`,
     );
 
     expect(states.rows.map((row) => row.status)).toEqual(
@@ -343,6 +343,42 @@ describe('what the alert rules of Stage 6 read (JD-S6 R1-S6-5)', () => {
     expect(measured.get('messages_last_day', { status: 'failed' })).toBe(failedLive.n);
     // Its subscription is still counted, so the series by state keeps adding up.
     expect(measured.get('subscriptions', { status: 'cancelled' })).toBe(cancelledSubscriptions.n);
+  });
+
+  it('keeps counting what a cancelled organization still has parked, its stale reconciliation and its unreviewed surplus (JD-S6 R2-5)', async () => {
+    const gone = await createTestTenant(runtime, { slug: 'metrics-cancelled-parked' });
+    await admin.query('SET session_replication_role = replica');
+    await admin.query(
+      `insert into subscription (tenant_id, plan_id, status, trial_ends_at, overage_cap_messages,
+                                 provider_preapproval_id, external_reference, last_reconciled_at,
+                                 attention_reason, attention_at)
+       select $1, id, 'cancelled', now() - interval '30 days', 300, 'PRE-METRICS-GONE',
+              'sub:metrics-gone', now() - interval '9 hours', 'unexpected_state', now()
+         from plan where key = 'standard'`,
+      [gone.id],
+    );
+    await admin.query(
+      `insert into subscription_payment (tenant_id, subscription_id, provider_payment_id, purpose, reference,
+                                         amount_cents, status, surplus, credited, provider_created_at)
+       select $1, s.id, 'PAY-METRICS-GONE', 'charge', 'sub:metrics-gone', 3600000, 'approved', true, true, now()
+         from subscription s where s.tenant_id = $1`,
+      [gone.id],
+    );
+    await admin.query(`update tenant set status = 'cancelled' where id = $1`, [gone.id]);
+    await admin.query('SET session_replication_role = DEFAULT');
+
+    const measured = await fresh();
+
+    const parkedAll = await ONE<{ n: number }>(
+      `select count(*)::int as n from subscription where attention_reason = 'unexpected_state'`,
+    );
+    const unreviewedAll = await ONE<{ n: number }>(
+      `select count(*)::int as n from subscription_payment where surplus and surplus_reviewed_at is null`,
+    );
+    expect(parkedAll.n).toBeGreaterThanOrEqual(1);
+    expect(measured.get('subscriptions_parked', { reason: 'unexpected_state' })).toBe(parkedAll.n);
+    expect(measured.get('subscription_surplus_unreviewed')).toBe(unreviewedAll.n);
+    expect(measured.get('subscription_reconcile_oldest_seconds')).toBeGreaterThanOrEqual(9 * 3600);
   });
 
   it('measures the archives, the release requests, the signups and the releaser as the health function counts them', async () => {

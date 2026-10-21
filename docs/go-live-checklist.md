@@ -95,7 +95,8 @@ The application refuses to start in production without these, and says which one
       release that was not carried out, a silent releaser and signup emails that never went out: each
       names its section of the runbook.
 - [ ] The releaser is running and `ReleaserSilent` is quiet (it writes a heartbeat every few seconds). An
-      approved release that nobody carries out is `ArchiveReleaseNotCarriedOut`.
+      approved release that nobody carries out is `ArchiveReleaseNotCarriedOut`, and a release whose link was
+      not emailed is `ArchiveReleaseNotEmailed`.
 - [ ] The cancellation of an organization was rehearsed from the console to the release of the archive
       (`docs/runbooks/tenant-cancellation.md`, `docs/runbooks/archive-release.md`).
 - [ ] The switch to a real provider was rehearsed in staging with the runbook

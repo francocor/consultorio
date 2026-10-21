@@ -78,10 +78,14 @@ function scopeOf(row: ArchiveReleaseRequestRow): string {
  * trigger, 42501): to the operator that is a request that is no longer at a step to take.
  */
 function staleStep(error: unknown): never {
-  const code =
-    (error as { cause?: { code?: string }; code?: string } | null)?.cause?.code ??
-    (error as { code?: string } | null)?.code;
-  if (code === '42501') throw new AppError('archive_release_wrong_step');
+  const e = error as { cause?: { code?: string; message?: string }; code?: string } | null;
+  const code = e?.cause?.code ?? e?.code;
+  const message = e?.cause?.message ?? (error as { message?: string } | null)?.message ?? '';
+  // Only the refusal of a STEP is a request that is not at that step: any other 42501 (a privilege, a
+  // row level security policy, the guard of who took a step) is a defect and must not be hidden.
+  if (code === '42501' && message.includes('cannot go from')) {
+    throw new AppError('archive_release_wrong_step');
+  }
   throw error;
 }
 

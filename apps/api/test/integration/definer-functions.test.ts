@@ -116,6 +116,7 @@ const ALLOWED: Record<string, readonly string[]> = {
   'app.archive_release_cleanup_due(integer)': ['app_releaser'],
   // The releaser closes the requests nobody carried on for seven days, and writes its heartbeat.
   'app.archive_release_expire_stale(integer)': ['app_releaser'],
+  'app.archive_release_unsent(integer,integer)': ['app_releaser'],
   'app.releaser_beat(timestamp with time zone)': ['app_releaser'],
   // The entries of a release (the archive was opened, a request was delivered, failed or expired): the
   // releaser alone, and only about an approved request of the organization of the transaction. The API

@@ -190,6 +190,14 @@ groups:
         annotations:
           summary: 'A release approved by two operators was not carried out within fifteen minutes'
           runbook: 'docs/runbooks/incident.md#an-approved-release-was-not-carried-out'
+      - alert: ArchiveReleaseNotEmailed
+        expr: 'archive_release_unsent > 0'
+        for: 15m
+        labels:
+          severity: critical
+        annotations:
+          summary: 'A release was marked released but its link was not emailed to the requester'
+          runbook: 'docs/runbooks/incident.md#a-release-was-not-emailed'
       - alert: ReleaserSilent
         expr: 'archive_releaser_heartbeat_age_seconds > 120'
         for: 5m

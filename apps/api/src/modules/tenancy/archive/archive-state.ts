@@ -95,7 +95,10 @@ export function isUnderErased(
   archive: Pick<TenantArchiveRow, 'erasedPrefixes'>,
   name: string,
 ): boolean {
-  return archive.erasedPrefixes.some((prefix) => name.startsWith(prefix));
+  // A folder ends in a slash, so `part-1` never matches `part-10` (JD-S6 R2).
+  return archive.erasedPrefixes.some(
+    (prefix) => name === prefix || name.startsWith(prefix.endsWith('/') ? prefix : `${prefix}/`),
+  );
 }
 
 /** True when any object of the part was erased: a part is whole or it is not there. */

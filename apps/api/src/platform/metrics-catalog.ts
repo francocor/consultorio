@@ -146,6 +146,10 @@ export const METRIC_CATALOG: Readonly<Record<string, CatalogEntry>> = {
     type: 'gauge',
     help: 'Age of the oldest approved release request that was not carried out.',
   },
+  archive_release_unsent: {
+    type: 'gauge',
+    help: 'Release requests marked released whose link was not emailed for more than ten minutes.',
+  },
   archive_releaser_heartbeat_age_seconds: {
     type: 'gauge',
     help: 'Seconds since the releaser process last wrote its heartbeat. Absent while no releaser ever ran.',

@@ -98,10 +98,25 @@ const READINGS = sql`
     FROM subscription_payment WHERE surplus AND surplus_reviewed_at IS NULL
 `;
 
-/** What a cancelled organization still contributes: its subscription by state, and nothing else. */
+/**
+ * What a cancelled organization still contributes: its subscription by state, and the three readings of
+ * money that may still be owed attention. A cancelled organization can hold a parked refund, a surplus
+ * payment nobody looked at, or a preapproval the platform is still asked about, so a parked subscription
+ * or an unreviewed surplus does not disappear from the page when the organization ends (JD-S6 R2-5).
+ */
 const CANCELLED_READINGS = sql`
   SELECT 'subscriptions' AS metric, status AS label, count(*)::float AS value
     FROM subscription GROUP BY status
+  UNION ALL
+  SELECT 'subscriptions_parked', attention_reason, count(*)::float
+    FROM subscription WHERE attention_reason IS NOT NULL GROUP BY attention_reason
+  UNION ALL
+  SELECT 'subscription_reconcile_oldest_seconds', '',
+         coalesce(max(extract(epoch FROM now() - coalesce(last_reconciled_at, created_at))), 0)::float
+    FROM subscription WHERE provider_preapproval_id IS NOT NULL
+  UNION ALL
+  SELECT 'subscription_surplus_unreviewed', '', count(*)::float
+    FROM subscription_payment WHERE surplus AND surplus_reviewed_at IS NULL
 `;
 
 /** Sums the readings of every organization; the oldest-wait figures take the maximum instead. */
@@ -188,6 +203,7 @@ async function measureHealth(db: Db, metrics: Metrics): Promise<void> {
       releaser_heartbeat_age_seconds: number | null;
       signup_unsent: number;
       signup_oldest_unsent_seconds: number;
+      release_unsent: number;
     }>(sql`select * from app.platform_health()`),
   );
   const row = result.rows[0];
@@ -210,6 +226,7 @@ async function measureHealth(db: Db, metrics: Metrics): Promise<void> {
       ? []
       : [{ value: row.releaser_heartbeat_age_seconds }],
   );
+  metrics.gauge('archive_release_unsent', row.release_unsent);
   metrics.gauge('signup_emails_unsent', row.signup_unsent);
   metrics.gauge('signup_oldest_unsent_seconds', row.signup_oldest_unsent_seconds);
 }

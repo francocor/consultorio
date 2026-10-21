@@ -236,6 +236,17 @@ is waiting for records they are entitled to.
    A new request is recorded after the cause is fixed.
 3. An approval is valid for seven days; after that the request expires and is recorded again.
 
+## A release was not emailed
+
+**Alert `ArchiveReleaseNotEmailed` (critical).** A release is marked `released` and its link was not
+emailed to the requester for more than ten minutes (the releaser died between the row and the email, or the
+mail provider is down).
+
+1. The sweep of the releaser sends a new link by itself every 15 seconds; if the alert stays, the mail
+   provider or the releaser is the problem (`ReleaserSilent`, the log of the releaser).
+2. Do not record a second request: the package is in the bucket and the link lives 72 hours from the release.
+   When the provider is back the next sweep emails a fresh link and clears the alert.
+
 ## The releaser is silent
 
 **Alert `ReleaserSilent` (critical).** The releaser writes a heartbeat every few seconds; none for two

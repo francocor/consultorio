@@ -86,6 +86,12 @@ export const archiveReleaseRequest = pgTable(
     downloadStartedAt: timestamp('download_started_at', { withTimezone: true }),
     downloadAttempts: integer('download_attempts').notNull().default(0),
     failureCode: text('failure_code'),
+    /**
+     * When the link was emailed to the requester. A request that is `released` with no `emailed_at` after
+     * a few minutes is one whose email was lost (a crash between the row and the email): the releaser's
+     * sweep sends it again with a new link (JD-S6 R2, B-W6).
+     */
+    emailedAt: timestamp('emailed_at', { withTimezone: true }),
   },
   (table) => [
     foreignKey({

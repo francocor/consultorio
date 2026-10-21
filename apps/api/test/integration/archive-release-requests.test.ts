@@ -529,6 +529,83 @@ describe('three pairs of eyes (JD-S6 R1-S6-4)', () => {
   });
 });
 
+describe('who took a step cannot be rewritten (JD-S6 R2-2)', () => {
+  const verifyUrl = (id: string) => `/operator/archive-releases/${id}/verify-identity`;
+  /** A connection as the operator role, with the operator of the session set the way the application sets it. */
+  async function asOperator<T>(operatorId: string, work: (client: pg.Client) => Promise<T>) {
+    const client = new pg.Client({ connectionString: inject('operatorUrl') });
+    await client.connect();
+    try {
+      await client.query("select set_config('app.user_id', $1, false)", [operatorId]);
+      return await work(client);
+    } finally {
+      await client.end();
+    }
+  }
+  const refusal = (client: pg.Client, sql: string, values: unknown[]) =>
+    client.query(sql, values).then(
+      () => 'allowed',
+      (error: unknown) => (error as { message?: string }).message ?? 'error',
+    );
+
+  it('refuses a same-status update that rewrites who verified or approved, and an approval that overwrites the verifier', async () => {
+    const approved = (await record({}, cookieOne)).json<ArchiveReleaseRequestDto>();
+    await call('POST', verifyUrl(approved.id), cookieTwo, CHECKLIST);
+    const verified = (await record({}, cookieOne)).json<ArchiveReleaseRequestDto>();
+    await call('POST', verifyUrl(verified.id), cookieTwo, CHECKLIST);
+    await call('POST', `/operator/archive-releases/${approved.id}/approve`, cookieThree);
+
+    await asOperator(third.id, async (client) => {
+      // Same status: nobody can put another name on a step that was taken.
+      expect(
+        await refusal(
+          client,
+          'update archive_release_request set identity_verified_by = $2 where id = $1',
+          [approved.id, third.id],
+        ),
+      ).toMatch(/does not change/);
+      expect(
+        await refusal(client, 'update archive_release_request set approved_by = $2 where id = $1', [
+          approved.id,
+          first.id,
+        ]),
+      ).toMatch(/does not change/);
+      expect(
+        await refusal(client, 'update archive_release_request set recorded_by = $2 where id = $1', [
+          approved.id,
+          third.id,
+        ]),
+      ).toMatch(/does not change|permission denied/);
+      // An approval that also overwrites the verifier is refused, even with the approver's own name.
+      expect(
+        await refusal(
+          client,
+          "update archive_release_request set status = 'approved', approved_by = $2, approved_at = now(), identity_verified_by = $2, expires_at = now() + interval '7 days' where id = $1",
+          [verified.id, third.id],
+        ),
+      ).toMatch(/does not change/);
+    });
+    const row = await admin.query<{ identity_verified_by: string; approved_by: string | null }>(
+      'select identity_verified_by, approved_by from archive_release_request where id = any($1)',
+      [[approved.id, verified.id]],
+    );
+    expect(row.rows.map((entry) => entry.identity_verified_by)).toEqual([second.id, second.id]);
+  });
+
+  it('binds the recorder to the operator of the session when a request is inserted', async () => {
+    const result = await asOperator(first.id, (client) =>
+      refusal(
+        client,
+        `insert into archive_release_request (target_tenant_id, requester_kind, requester_name, requester_email, scope_document_type, scope_document, reason, recorded_by)
+         values ($1, 'patient', 'Ana', 'ana@ejemplo.test', 'dni', '123', 'una razon larga y suficiente', $2)`,
+        [archived.id, second.id],
+      ),
+    );
+
+    expect(result).toMatch(/recorded by the operator of the session/);
+  });
+});
+
 describe('a request that waits for too long (JD-S6 R1-S6-4)', () => {
   const age = (id: string, days: number) =>
     admin.query(

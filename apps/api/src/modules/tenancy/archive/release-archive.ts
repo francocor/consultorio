@@ -306,11 +306,94 @@ async function carryOut(
       await undoRelease(deps, system, request);
       return;
     }
+    await markEmailed(deps, system, request.id);
     await tellTheFormerContact(deps, system, organizationName, kind, now);
   } finally {
     privateKey.fill(0);
     await rm(scratch, { recursive: true, force: true });
   }
+}
+
+/** Records that the link reached the mail provider: from now on the sweep does not look for this request. */
+async function markEmailed(
+  deps: Pick<ArchiveReleaseDeps, 'withTenant' | 'clock'>,
+  system: RequestContext,
+  requestId: string,
+): Promise<void> {
+  await deps.withTenant(system, (inner) =>
+    inner
+      .update(archiveReleaseRequest)
+      .set({ emailedAt: deps.clock() })
+      .where(eq(archiveReleaseRequest.id, requestId)),
+  );
+}
+
+/**
+ * A request that was released and whose email was lost (the process died between the row and the
+ * email, or the undo of a failed email did not complete): a new link is issued, because the token is
+ * stored hashed and the first one cannot be sent again, and it is emailed to the verified address. The
+ * old link is revoked first, so only the one in the new email works. If the email fails again the
+ * request stays as it is for the next sweep (and the alert on unsent releases fires meanwhile).
+ */
+export async function redeliverRelease(
+  deps: ArchiveReleaseDeps,
+  system: RequestContext,
+  requestId: string,
+): Promise<boolean> {
+  const request = await deps.withTenant(system, async (inner) => {
+    const [row] = await inner
+      .select()
+      .from(archiveReleaseRequest)
+      .where(eq(archiveReleaseRequest.id, requestId));
+    return row ?? null;
+  });
+  const now = deps.clock();
+  if (
+    request?.status !== 'released' ||
+    request.emailedAt !== null ||
+    request.packageRemovedAt !== null ||
+    request.linkExpiresAt === null ||
+    request.linkExpiresAt.getTime() <= now.getTime()
+  ) {
+    return false;
+  }
+  const linkEnds = request.linkExpiresAt;
+  const kind = request.requesterKind === 'professional' ? 'professional' : 'patient';
+  const organizationName = await deps.withTenant(system, readOrganizationName);
+  const slug = await deps.withTenant(system, tenantSlug);
+  if (slug === null) return false;
+  const issued = await deps.withTenant(system, async (inner) => {
+    await deps.tokens.revokeForSubject(inner, 'archive_release', request.id);
+    return deps.tokens.issue(inner, {
+      kind: 'archive_release',
+      subjectId: request.id,
+      ttlMs: Math.max(linkEnds.getTime() - now.getTime(), 60_000),
+    });
+  });
+  const notice = requesterNotice({
+    organizationName,
+    requesterKind: kind,
+    link: `${deps.origins(slug)}/archive-release/${issued.token}`,
+    linkExpiresAt: issued.expiresAt,
+  });
+  const sent = await sendWithRetries(deps, () =>
+    deps.email.send({
+      to: request.requesterEmail,
+      subject: notice.subject,
+      text: notice.text,
+      tenant: { id: system.tenantId, isDemo: false },
+    }),
+  );
+  if (!sent) return false;
+  await markEmailed(deps, system, request.id);
+  await deps.withTenant(system, (inner) =>
+    writeReleaseAudit(inner, {
+      action: 'archive.released',
+      requestId: request.id,
+      metadata: { phase: 'redelivered', requesterKind: kind },
+    }),
+  );
+  return true;
 }
 
 /** A few tries at the email: a blip of the provider should not undo a release two people approved. */

@@ -30,6 +30,8 @@ export interface ClaimedDownload {
   id: string;
   /** Where the package waits. */
   key: string;
+  /** The instant of the lease: it identifies THIS claim, so only it can give the lease back. */
+  startedAt: Date;
 }
 
 /** Takes the lease of the download for the link, or answers null (the link is not usable now). */
@@ -67,7 +69,7 @@ export async function claimDownload(
     .update(archiveReleaseRequest)
     .set({ downloadStartedAt: now, downloadAttempts: row.downloadAttempts + 1 })
     .where(eq(archiveReleaseRequest.id, row.id));
-  return { id: row.id, key: row.packageKey };
+  return { id: row.id, key: row.packageKey, startedAt: now };
 }
 
 /** The transfer ended: spends the link, records the download and writes its entry of the trail. */
@@ -90,10 +92,20 @@ export async function completeDownload(
   return true;
 }
 
-/** The transfer broke: the lease is released so the link can be tried again (the attempt stays counted). */
-export async function abandonDownload(tx: Tx, id: string): Promise<void> {
+/**
+ * The transfer broke: the lease is released so the link can be tried again (the attempt stays counted).
+ * Only the claim that took the lease gives it back: a lease that ran out and was taken by another
+ * download is not cleared by the one that broke (JD-S6 R2).
+ */
+export async function abandonDownload(tx: Tx, id: string, startedAt: Date): Promise<void> {
   await tx
     .update(archiveReleaseRequest)
     .set({ downloadStartedAt: null })
-    .where(and(eq(archiveReleaseRequest.id, id), isNull(archiveReleaseRequest.downloadedAt)));
+    .where(
+      and(
+        eq(archiveReleaseRequest.id, id),
+        isNull(archiveReleaseRequest.downloadedAt),
+        eq(archiveReleaseRequest.downloadStartedAt, startedAt),
+      ),
+    );
 }

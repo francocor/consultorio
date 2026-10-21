@@ -126,7 +126,7 @@ export function releaseLinkRoutes(deps: LinkRoutesDeps) {
 
         const release = () =>
           deps
-            .withTenant(where.context, (tx) => abandonDownload(tx, claim.id))
+            .withTenant(where.context, (tx) => abandonDownload(tx, claim.id, claim.startedAt))
             .catch(() => {
               // The lease runs out by itself in minutes.
             });
@@ -141,9 +141,12 @@ export function releaseLinkRoutes(deps: LinkRoutesDeps) {
           finished = true;
           void (async () => {
             try {
-              await deps.withTenant(where.context, (tx) =>
+              const completed = await deps.withTenant(where.context, (tx) =>
                 completeDownload(tx, deps.tokens, token, claim.id, deps.clock()),
               );
+              // The completion was not recorded (the link was spent, or the lease was lost): the package
+              // stays where it is and the sweep of the releaser takes it out when the link ends.
+              if (!completed) return;
               // The package was for this link only: it leaves the bucket once the transfer is done.
               await storage.remove(where.tenantId, claim.key);
               await deps.withTenant(where.context, (tx) =>

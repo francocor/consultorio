@@ -99,10 +99,19 @@ export async function legalErase(
   if (!prefix.startsWith(root)) {
     throw new Error('The prefix to erase must be inside the archive of the organization');
   }
+  // A folder ends in a slash: `tenants/<id>/clinical` would also match `clinical-2` (JD-S6 R2).
+  if (!prefix.endsWith('/')) {
+    throw new Error('The prefix to erase is a folder and must end with a slash');
+  }
   await deps.verifyOperators([input.operatorId, input.approverId]);
 
   const found = await deps.eraser.list(prefix);
-  if (found.length === 0) return { objects: 0, versions: 0 };
+  if (found.length === 0) {
+    // A rerun of an erasure that went through the objects but died before the marker: nothing is left in
+    // the folder, so the database is told it is gone (the operation is idempotent).
+    await deps.markErased(prefix);
+    return { objects: 0, versions: 0 };
+  }
 
   const entry = (
     phase: LegalEraseAuditEntry['phase'],

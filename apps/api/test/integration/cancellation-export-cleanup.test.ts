@@ -118,6 +118,32 @@ describe('the plain export of a cancelled organization', () => {
     expect(await stored()).toBe((await packages()).length);
   });
 
+  it('is due too when the archive was erased whole by a legal order, verified or not (JD-S6 R2-3)', async () => {
+    const due = async () =>
+      (
+        await admin.query<{ tenant: string }>(
+          'select app.export_cleanup_due($1, 500)::text as tenant',
+          [AFTER_DAYS],
+        )
+      ).rows.map((row) => row.tenant);
+    await archive('corrupted', new Date().toISOString());
+
+    const whileCorrupted = await due();
+    await admin.query(
+      `update tenant_archive set erased_at = now(), erased_prefixes = array[$2::text] where tenant_id = $1`,
+      [org.world.tenant.id, `tenants/${org.world.tenant.id}/`],
+    );
+    const whenErased = await due();
+    // Back to a written, unerased archive for the tests that follow.
+    await admin.query(
+      `update tenant_archive set erased_at = null, erased_prefixes = '{}' where tenant_id = $1`,
+      [org.world.tenant.id],
+    );
+
+    expect(whileCorrupted).not.toContain(org.world.tenant.id);
+    expect(whenErased).toContain(org.world.tenant.id);
+  });
+
   it('is removed when the window is over and the archive was verified: the object goes, the row says so, the trail records it', async () => {
     await archive('ok', new Date().toISOString());
     const count = (await packages()).length;

@@ -61,7 +61,9 @@ export function createLegalEraseDatabase(deps: {
             objects: entry.objects,
             versions: entry.versions,
             complete: entry.phase === 'done',
-            approvedBy: entry.approverId,
+            // Named by the person who ran the command: an attribution checked against the console, not
+            // an approval (docs/runbooks/archive-release.md).
+            namedSecondOperator: entry.approverId,
             prefix: entry.prefix,
           },
         }),

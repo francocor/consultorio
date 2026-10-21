@@ -117,7 +117,10 @@ may be the same operator, the approver is neither):
    The server refuses anything less.
 3. **Approve** (operator B, a DIFFERENT person from the one who recorded and the one who verified): two
    database constraints refuse it, and the console hides the button from them. Each step also carries the
-   operator of the session (a trigger refuses a step that names anybody else). A request that waits seven
+   operator of the session (a trigger refuses a step that names anybody else, and refuses any later change of
+   who recorded, verified, approved or rejected: on every update, not only on a change of status; JD-S6 R2-2).
+   The setting that carries the operator (`app.user_id`) protects against bugs and misuse of the console, NOT
+   against a hostile database credential, which can set it to anything. A request that waits seven
    days in `requested` or `identity_verified` is closed as `expired` by the releaser and cannot be
    approved late. An approval is valid for seven days; after that the request expires.
 4. **Delivery**: the releaser finds the approved request (it looks every 15 seconds), opens only the scope of the
@@ -153,6 +156,13 @@ Record a new one once the cause is clear.
   the bucket's versions or from the backup of the bucket, then verify again. Escalate: the archive is
   the legal record.
 
+### A release whose email was lost
+
+The row is marked `released` before the email goes out. If the releaser dies in between, or the undo of a
+failed email cannot complete, the request stays `released` with no `emailed_at`. After ten minutes the sweep
+of the releaser issues a NEW link (the old token is stored hashed and revoked) and emails it to the
+recorded address; `ArchiveReleaseNotEmailed` fires if that does not happen (JD-S6 R2, B-W6).
+
 ## Legal erasure
 
 The archive is kept for the legal term. The ONLY way an archived object is removed is a legal order
@@ -177,7 +187,11 @@ ARCHIVE_LEGAL_ERASURE_SECRET_ACCESS_KEY='...' \
   like the application, but the credential is its own: the writer cannot erase.
 - The platform trail (`archive.erased`) gets the INTENT first (before the first object goes; the trail is
   append-only, so a command that dies halfway leaves its trace), then the outcome (`done`, or
-  `incomplete`), each with the legal reference, the operator as the actor and the approver in the entry.
+  `incomplete`), each with the legal reference, the operator as the actor and the second operator named in
+  the entry (`namedSecondOperator`). That is an ATTRIBUTION, not an approval: nobody has to confirm it, so the
+  erasure does not have two-person control in the database (JD-S6 R2, B-W5). The control is the credential of
+  the `legal-erasure` identity and the legal order; a real second approval (a console-written approval row
+  the command requires) is open work. A folder is given with its trailing slash (`tenants/<id>/part/`).
 - The folder erased is recorded on the archive (`erased_prefixes`, `erased_at` when the whole archive
   went): `archive.verify` stops looking for it, no release can be recorded for an archive that is gone,
   and a release whose scope touches what was erased ends `failed` with `erased`.

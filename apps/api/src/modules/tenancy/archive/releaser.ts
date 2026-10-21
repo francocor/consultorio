@@ -18,7 +18,13 @@ import { createActionTokens } from '../../../platform/tokens/index.js';
 
 import { createArchiveKeyReleaser } from './keys.js';
 import type { ArchiveStore } from './ports.js';
-import { ARCHIVE_RELEASE_JOB, createArchiveReleaseJob, packageKeyOf } from './release-archive.js';
+import {
+  ARCHIVE_RELEASE_JOB,
+  createArchiveReleaseJob,
+  packageKeyOf,
+  redeliverRelease,
+  type ArchiveReleaseDeps,
+} from './release-archive.js';
 
 /**
  * The `releaser` process role: the one process that holds `ARCHIVE_RELEASER_KEK` and therefore the
@@ -37,6 +43,8 @@ import { ARCHIVE_RELEASE_JOB, createArchiveReleaseJob, packageKeyOf } from './re
  */
 
 const SWEEP_LIMIT = 50;
+/** Minutes a released request may wait for its email before the sweep sends it again. */
+const UNSENT_AFTER_MINUTES = 10;
 const DEFAULT_SWEEP_MS = 15_000;
 const DEFAULT_POOL = 6;
 
@@ -70,7 +78,9 @@ export async function sweepReleases(deps: {
   client: JobClient;
   storage: ObjectStorage;
   clock: () => Date;
-}): Promise<{ queued: number; removed: number; expired: number }> {
+  /** What it takes to send a link again (the releaser has it; a test of the sweep alone may not). */
+  redeliver?: Pick<ArchiveReleaseDeps, 'tokens' | 'email' | 'origins'>;
+}): Promise<{ queued: number; removed: number; expired: number; redelivered: number }> {
   const expired = await deps.db.transaction(async (tx) => {
     const result = await tx.execute<{ closed: number }>(
       sql`select app.archive_release_expire_stale(${ARCHIVE_RELEASE_OPEN_DAYS}) as closed`,
@@ -121,7 +131,26 @@ export async function sweepReleases(deps: {
     );
     removed += 1;
   }
-  return { queued: due.length, removed, expired };
+
+  // A release whose email was lost (a crash between the row and the email): a new link goes out.
+  let redelivered = 0;
+  if (deps.redeliver) {
+    const unsent = await deps.db.transaction(async (tx) => {
+      const result = await tx.execute<{ request_id: string; tenant_id: string }>(
+        sql`select * from app.archive_release_unsent(${UNSENT_AFTER_MINUTES}, ${SWEEP_LIMIT})`,
+      );
+      return result.rows;
+    });
+    for (const row of unsent) {
+      const ok = await redeliverRelease(
+        { ...deps.redeliver, withTenant: deps.withTenant, clock: deps.clock } as ArchiveReleaseDeps,
+        { tenantId: row.tenant_id, userId: SYSTEM_USER_ID },
+        row.request_id,
+      ).catch(() => false);
+      if (ok) redelivered += 1;
+    }
+  }
+  return { queued: due.length, removed, expired, redelivered };
 }
 
 export async function createReleaser(options: ReleaserOptions): Promise<Releaser> {
@@ -133,6 +162,7 @@ export async function createReleaser(options: ReleaserOptions): Promise<Releaser
 
   const withTenant = createWithTenant(handle.db);
   const startedAt = clock();
+  const tokens = createActionTokens({ clock });
   await registerJobs(
     boss,
     { db: handle.db, log: options.log },
@@ -142,7 +172,7 @@ export async function createReleaser(options: ReleaserOptions): Promise<Releaser
         store: options.store,
         storage: options.storage,
         keys: createArchiveKeyReleaser({ kek: options.kek }),
-        tokens: createActionTokens({ clock }),
+        tokens,
         email: options.email,
         origins: options.origins,
         clock,
@@ -161,7 +191,14 @@ export async function createReleaser(options: ReleaserOptions): Promise<Releaser
       await handle.db.execute(
         sql`select app.releaser_beat(${startedAt.toISOString()}::timestamptz)`,
       );
-      await sweepReleases({ db: handle.db, withTenant, client, storage: options.storage, clock });
+      await sweepReleases({
+        db: handle.db,
+        withTenant,
+        client,
+        storage: options.storage,
+        clock,
+        redeliver: { tokens, email: options.email, origins: options.origins },
+      });
     },
     onError: (error) => {
       options.log.error(

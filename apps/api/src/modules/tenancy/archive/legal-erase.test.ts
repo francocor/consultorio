@@ -105,7 +105,16 @@ describe('the legal erasure procedure', () => {
     expect(narrow).toEqual({ objects: 1, versions: 1 });
     expect(erased).toEqual([`tenants/${TENANT}/b/two`]);
     expect(marked).toEqual([`tenants/${TENANT}/b/`]);
-    for (const prefix of [`tenants/${OTHER}/`, 'tenants/', '', `tenants/${TENANT}`]) {
+    // A folder without its trailing slash would also match its neighbours (`b` and `b-2`).
+    await expect(
+      legalErase(deps, {
+        tenantId: TENANT,
+        reference: REFERENCE,
+        prefix: `tenants/${TENANT}/b`,
+        ...WHO,
+      }),
+    ).rejects.toThrow(/end with a slash/);
+    for (const prefix of [`tenants/${OTHER}/`, 'tenants/', '']) {
       await expect(
         legalErase(deps, { tenantId: TENANT, reference: REFERENCE, prefix, ...WHO }),
         prefix,
@@ -148,14 +157,15 @@ describe('the legal erasure procedure', () => {
     expect(marked).toEqual([]);
   });
 
-  it('says so when there is nothing to erase, and writes no entry', async () => {
-    const { deps, trail, marked } = fixture({});
+  it('says so when there is nothing to erase, writes no entry, and marks the folder as erased so a crash before the marker is repaired (JD-S6 R2)', async () => {
+    const { deps, erased, trail, marked } = fixture({});
 
     const result = await legalErase(deps, { tenantId: TENANT, reference: REFERENCE, ...WHO });
 
     expect(result).toEqual({ objects: 0, versions: 0 });
+    expect(erased).toEqual([]);
     expect(trail).toEqual([]);
-    expect(marked).toEqual([]);
+    expect(marked).toEqual([`tenants/${TENANT}/`]);
   });
 
   it('keeps the intent and records what was erased even when it stops halfway, and then fails', async () => {
