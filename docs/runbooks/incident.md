@@ -156,42 +156,33 @@ decides whether to call.
    by the platform itself; you only see it as reviewed. Do not refund from the provider's own panel
    without telling the platform: if you did, the next reconcile records the refund.
 
-## A subscription parked for a person
-
-**The operator console shows "Requiere revisión" on an organization.** The payments provider holds
-something the platform cannot tell apart (two preapprovals under one reference, one that is not what
-was asked, a state nobody expected). Nothing is sent for it and its dates wait, because anything
-sent could charge the payer twice. It is not an outage.
-
-1. Open the organization and read the cause. Look at the provider's panel for the references of the
-   organization (`sub:<subscription id>:<number>`): which preapprovals exist, for which payer and amount.
-2. If the owner asked to cancel, nothing is needed: cancelling stops every preapproval the platform can
-   find and clears the cause.
-3. Otherwise use "Dejar seguir" with the reason you found. The platform releases the parked requests and
-   asks the provider again; it cancels any preapproval it did not adopt under those references. It never
-   picks one for you. The owner subscribes again from their screen, and exactly one stays alive. Tell
-   the owner first if what the provider held was theirs.
-4. `reauthorization_needed` is different: the owner has to authorize the right amount (the screen says
-   so), or the charge lands and the statement is collected. It clears by itself and "Dejar seguir"
-   refuses it until then.
-5. If the provider refuses to cancel something the platform must not leave alive, the subscription
-   parks as `unexpected_state`: cancel it in the provider's panel, then "Dejar seguir".
-
 ## A subscription is parked for a person
 
-**Alert `SubscriptionParked` (warning).** The payments service found something at the provider that it
-cannot tell apart (several preapprovals under one reference, an identity that does not match, a state it
-did not expect, or a request to authorize the amount again) and stopped sending anything to the
-provider for that subscription until a person decides. The label `reason` of the series says which.
+**Alert `SubscriptionParked` (warning); the console shows "Requiere revisión" on the organization.**
+The payments provider holds something the platform cannot tell apart (several preapprovals under one
+reference, an identity that does not match, one that is not what was asked, a state nobody expected).
+The platform stopped sending anything to the provider for that subscription until a person decides,
+because anything sent could charge the payer twice. The label `reason` of the series `subscriptions_parked`
+says which. It is not an outage.
 
-1. Open the tab "Suscripciones" of the console: the parked subscription shows the reason and since when.
-2. `ambiguous_preapproval` and `identity_mismatch`: look at the preapprovals of the reference in the
-   provider's panel. Keep the one the organization authorized, cancel the others there, and ask the
-   engineer on call to resolve the subscription.
-3. `reauthorization_needed`: the owner has been told by email to authorize the new amount; if they did,
-   the next reconciliation settles it. If it does not, call them.
-4. Nothing is lost while it is parked: the clock of the dates keeps its rules, and no charge is
-   attempted by the platform.
+1. Open the tab "Suscripciones" of the console and the organization: it shows the reason and since when.
+   Look at the provider's panel for the references of the organization (`sub:<subscription id>:<number>`):
+   which preapprovals exist, for which payer and amount.
+2. If the owner asked to cancel, nothing is needed: cancelling works while the subscription is parked, stops
+   every preapproval the platform can find and clears the cause.
+3. `ambiguous_preapproval`, `identity_mismatch` and `unexpected_state`: use "Dejar seguir" with the reason you
+   found. The platform releases the parked requests and asks the provider again; it cancels any preapproval
+   it did not adopt under those references. It never picks one for you. The owner subscribes again from
+   their screen, and exactly one stays alive. Tell the owner first if what the provider held was theirs.
+   If the provider refuses to cancel something the platform must not leave alive, the subscription parks as
+   `unexpected_state`: cancel it in the provider's panel, then "Dejar seguir".
+4. `reauthorization_needed` is not an ambiguity and does not raise `SubscriptionParked`: the owner has been
+   told by email to authorize the right amount (the screen says so), or the charge lands and the statement
+   is collected. It clears by itself at the next reconciliation and "Dejar seguir" refuses it until then.
+   `SubscriptionReauthorizationWaiting` (info) rises after a day; if the owner still has not done it, call
+   them.
+5. Nothing is lost while it is parked: the clock of the dates keeps its rules, and no charge is attempted
+   by the platform.
 
 ## Reconciliation with the payments provider is stale
 

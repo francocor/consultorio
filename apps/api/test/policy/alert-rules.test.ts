@@ -108,6 +108,18 @@ describe('the alert rules', () => {
     }
   });
 
+  it('does not call a person for a subscription that only waits for its owner to authorize an amount', () => {
+    const parked = rules.find((rule) => rule.alert === 'SubscriptionParked');
+    const waiting = rules.find((rule) => rule.alert === 'SubscriptionReauthorizationWaiting');
+
+    // `reauthorization_needed` is not an ambiguity at the provider: it clears by itself when the owner
+    // authorizes, so the page about subscriptions parked for a person leaves it out.
+    expect(parked?.expr).toContain('subscriptions_parked{reason!="reauthorization_needed"}');
+    expect(waiting?.expr).toContain('subscriptions_parked{reason="reauthorization_needed"}');
+    expect(waiting?.severity).toBe('info');
+    expect(waiting?.runbook).toBe(parked?.runbook);
+  });
+
   it('is refused by the check itself when a rule reads a name nobody exposes', () => {
     const broken = rulesOf(
       `groups:\n  - name: x\n    rules:\n      - alert: Typo\n        expr: "queue_jobz > 5"\n`,

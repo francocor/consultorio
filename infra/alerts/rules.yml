@@ -124,12 +124,20 @@ groups:
           summary: 'Organizations are read-only for lack of payment'
           runbook: 'docs/runbooks/incident.md#subscriptions-in-dunning'
       - alert: SubscriptionParked
-        expr: 'sum(subscriptions_parked) > 0'
+        expr: 'sum(subscriptions_parked{reason!="reauthorization_needed"}) > 0'
         for: 30m
         labels:
           severity: warning
         annotations:
           summary: 'A subscription is parked for a person: nothing more is sent to the provider for it'
+          runbook: 'docs/runbooks/incident.md#a-subscription-is-parked-for-a-person'
+      - alert: SubscriptionReauthorizationWaiting
+        expr: 'sum(subscriptions_parked{reason="reauthorization_needed"}) > 0'
+        for: 24h
+        labels:
+          severity: info
+        annotations:
+          summary: 'An owner was asked to authorize a new amount and has not yet: nothing is wrong at the provider'
           runbook: 'docs/runbooks/incident.md#a-subscription-is-parked-for-a-person'
       - alert: SubscriptionReconcileStale
         expr: 'subscription_reconcile_oldest_seconds > 7200'
