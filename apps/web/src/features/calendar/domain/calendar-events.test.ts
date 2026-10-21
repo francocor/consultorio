@@ -7,6 +7,7 @@ import {
 import { describe, expect, it } from 'vitest';
 
 import { createI18n } from '../../../app/i18n.js';
+import { LOCALE_RESOURCES } from '../../../shared/lib/locale-all.js';
 
 import {
   backgroundsOf,
@@ -17,7 +18,7 @@ import {
 } from './calendar-events.js';
 
 const ID = (n: number) => `0190a000-0000-7000-8000-${String(n).padStart(12, '0')}`;
-const t = createI18n().t;
+const t = createI18n({ resources: LOCALE_RESOURCES }).t;
 
 function entry(overrides: Partial<CalendarEntryDto> = {}): CalendarEntryDto {
   return {

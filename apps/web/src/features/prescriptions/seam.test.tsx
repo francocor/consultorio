@@ -53,8 +53,10 @@ describe('the prescriptions feature (route, navigation entry, settings tab and p
     expect(screen.queryByRole('link', { name: 'Recetas' })).not.toBeInTheDocument();
   });
 
-  it('registers a tab of the patient record for whoever may read prescriptions', () => {
-    const tab = defaultRegistry().slots.find(
+  it('registers a tab of the patient record for whoever may read prescriptions', async () => {
+    const registry = defaultRegistry();
+    await registry.ready();
+    const tab = registry.slots.find(
       (piece) => piece.slot === 'patient-detail-tab' && piece.id === 'prescriptions.list',
     );
 

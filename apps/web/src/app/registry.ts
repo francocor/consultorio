@@ -16,6 +16,11 @@ import { NAV_ITEMS } from './nav/nav-config.js';
  *
  * The build finds them with `import.meta.glob`; the translations are found the same way (see
  * `i18n.ts`). A feature reaches another feature only through that feature's `index.ts` (lint rule).
+ *
+ * The routes travel with the first bundle (the router needs every address to answer the first one).
+ * The navigation and the slots are only read inside the signed-in frame, so they are a chunk of
+ * their own (`registry-contributions.ts`) that the signed-in route waits for with `registry.ready()`:
+ * the sign-in page does not pay for them.
  */
 
 // Routes -----------------------------------------------------------------------------------------
@@ -171,9 +176,17 @@ export function collectSlots(
 
 export interface AppRegistry {
   routes: readonly FeatureRoute[];
+  /**
+   * The entries of the navigation, the settings tabs and the slot pieces. A registry built from
+   * modules has them at once; the one of the application loads them with the signed-in frame, so
+   * read them only after `ready()` has resolved (they throw before that: an empty list would hide
+   * a screen that forgot to wait).
+   */
   navItems: readonly ContributedNavItem[];
   settingsTabs: readonly ContributedSettingsTab[];
   slots: readonly AnySlotContribution[];
+  /** Resolves when the navigation and the slots can be read. Safe to call again and again. */
+  ready(): Promise<void>;
 }
 
 export function createRegistry(sources: {
@@ -187,6 +200,62 @@ export function createRegistry(sources: {
     navItems: nav.items,
     settingsTabs: nav.settingsTabs,
     slots: collectSlots(sources.slots),
+    ready: () => Promise.resolve(),
+  };
+}
+
+/** The navigation and slot modules of the features, as `import.meta.glob` gives them. */
+export interface ContributionModules {
+  nav: Modules<NavContribution>;
+  slots: Modules<readonly AnySlotContribution[]>;
+}
+
+/**
+ * Like `createRegistry`, but the navigation and the slots come from `load`, which runs the first
+ * time `ready()` is called. The routes are known at once.
+ */
+export function createDeferredRegistry(sources: {
+  routes: Modules<readonly FeatureRoute[]>;
+  load: () => Promise<ContributionModules>;
+}): AppRegistry {
+  let loaded: Pick<AppRegistry, 'navItems' | 'settingsTabs' | 'slots'> | undefined;
+  let loading: Promise<void> | undefined;
+
+  function read() {
+    if (!loaded) {
+      throw new Error(
+        'The navigation and the slots of the features are not loaded yet: wait for registry.ready().',
+      );
+    }
+    return loaded;
+  }
+
+  return {
+    routes: collectRoutes(sources.routes),
+    get navItems() {
+      return read().navItems;
+    },
+    get settingsTabs() {
+      return read().settingsTabs;
+    },
+    get slots() {
+      return read().slots;
+    },
+    ready() {
+      loading ??= sources.load().then(({ nav, slots }) => {
+        const collected = collectNav(nav);
+        loaded = {
+          navItems: collected.items,
+          settingsTabs: collected.settingsTabs,
+          slots: collectSlots(slots),
+        };
+      });
+      // A failed load (the chunk did not arrive) is tried again by the next call, not remembered.
+      loading.catch(() => {
+        loading = undefined;
+      });
+      return loading;
+    },
   };
 }
 
@@ -194,15 +263,11 @@ let registry: AppRegistry | undefined;
 
 /** The registry of the real application: whatever the features contribute at build time. */
 export function defaultRegistry(): AppRegistry {
-  registry ??= createRegistry({
+  registry ??= createDeferredRegistry({
     routes: import.meta.glob<{ default: readonly FeatureRoute[] }>('../features/**/routes.tsx', {
       eager: true,
     }),
-    nav: import.meta.glob<{ default: NavContribution }>('../features/**/nav.ts', { eager: true }),
-    slots: import.meta.glob<{ default: readonly AnySlotContribution[] }>(
-      '../features/**/slots.tsx',
-      { eager: true },
-    ),
+    load: () => import('./registry-contributions.js'),
   });
   return registry;
 }
