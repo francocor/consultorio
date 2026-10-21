@@ -2,15 +2,25 @@ import { and, eq, isNull } from 'drizzle-orm';
 
 import { signupPending } from '../../../../db/schema/signup.js';
 import { tenant } from '../../../../db/schema/tenant.js';
+import { evenOut } from '../../../../platform/db/even-work.js';
 import { SYSTEM_USER_ID, type WithTenant } from '../../../../platform/db/tenant-context.js';
 import type { PublicOrigins } from '../../../../platform/http/public-origin.js';
 import type { EmailSender } from '../../../../platform/mail/email-sender.js';
 import { TOKEN_KIND_REGISTRY, type ActionTokens } from '../../../../platform/tokens/index.js';
 
 import { renderVerificationEmail } from './mail.js';
+import { EVEN_WORK } from './service.js';
 
 /** The path of the page of the web app that follows the link (`features/onboarding/signup`). */
 export const VERIFY_PATH = '/signup/verify';
+
+/**
+ * A link sent less than this long ago is still the owner's: a manual request for a new one does not
+ * replace it. The token is stored hashed, so the same one cannot be sent again; the owner waits for
+ * the email that is already on its way, and a third party who types their address cannot rotate it
+ * out from under them (JD-S6 R2-6).
+ */
+export const RESEND_COOLDOWN_MS = 30 * 60_000;
 
 /** The most times the verification email is sent on its own; the visitor can ask for more. */
 export const MAX_AUTOMATIC_SENDS = 5;
@@ -50,6 +60,17 @@ export function createVerificationMailer(deps: VerificationMailerDeps): Verifica
           .where(isNull(signupPending.verifiedAt))
           .for('update');
         if (!row) return null;
+        const sentAt = row.verificationSentAt;
+        if (
+          options.manual &&
+          sentAt !== null &&
+          deps.clock().getTime() - sentAt.getTime() < RESEND_COOLDOWN_MS
+        ) {
+          // The live link is young: nothing is replaced and nothing is sent. The same statements are
+          // sent to the database as when a link is issued, so the two cannot be told apart.
+          await evenOut(tx, EVEN_WORK.prepare - 1);
+          return 'cooling' as const;
+        }
         await tokens.revokeForSubject(tx, 'signup_verification', row.id);
         const issued = await tokens.issue(tx, { kind: 'signup_verification', subjectId: row.id });
         await tx
@@ -73,6 +94,10 @@ export function createVerificationMailer(deps: VerificationMailerDeps): Verifica
           token: issued.token,
         };
       });
+      if (prepared === 'cooling') {
+        await withTenant({ tenantId, userId: SYSTEM_USER_ID }, (tx) => evenOut(tx, EVEN_WORK.mark));
+        return;
+      }
       if (!prepared) return;
 
       const rendered = renderVerificationEmail({

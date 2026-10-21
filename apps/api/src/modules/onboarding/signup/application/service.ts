@@ -29,6 +29,7 @@ import type { TrialStarter } from '../../../subscriptions/index.js';
 import {
   LINKS_PER_CLIENT,
   OVERALL_COUNTER,
+  RESENDS_PER_ADDRESS,
   SIGNUPS_OVERALL,
   SIGNUPS_PER_CLIENT,
   SIGNUP_EMAILS_PER_ADDRESS,
@@ -175,7 +176,11 @@ export function createSignupService(deps: SignupServiceDeps): SignupService {
       options.creating
         ? await hit(origin, clientCounter(origin.actor.ip), SIGNUPS_PER_CLIENT)
         : await hit(origin, clientCounter(origin.actor.ip, 'link'), LINKS_PER_CLIENT),
-      email === null ? true : await hit(origin, addressCounter(email), SIGNUP_EMAILS_PER_ADDRESS),
+      email === null
+        ? true
+        : options.creating
+          ? await hit(origin, addressCounter(email), SIGNUP_EMAILS_PER_ADDRESS)
+          : await hit(origin, addressCounter(email, 'resend'), RESENDS_PER_ADDRESS),
       options.creating
         ? await hit(origin, OVERALL_COUNTER, SIGNUPS_OVERALL, { failClosed: true })
         : true,

@@ -32,6 +32,12 @@ export const SIGNUPS_PER_CLIENT: SignupLimit = { max: 5, windowMs: HOUR };
  */
 export const LINKS_PER_CLIENT: SignupLimit = { max: 10, windowMs: HOUR };
 export const SIGNUP_EMAILS_PER_ADDRESS: SignupLimit = { max: 3, windowMs: HOUR };
+/**
+ * Asking for a new link for an address has a counter of its own per address, apart from the one of
+ * signups: a third party who types somebody's address into the resend form must not use up the count
+ * that the owner of that address needs to sign up (JD-S6 R2-6).
+ */
+export const RESENDS_PER_ADDRESS: SignupLimit = { max: 3, windowMs: HOUR };
 export const SIGNUPS_OVERALL: SignupLimit = { max: 300, windowMs: HOUR };
 
 /** The counter of a client; clients of one IPv6 /64 are one client. */
@@ -55,11 +61,11 @@ function mailboxOf(email: string): string {
 }
 
 /** The counter of an address: a hash of it, never the address, so the store holds no personal data. */
-export function addressCounter(email: string): string {
+export function addressCounter(email: string, kind: 'signup' | 'resend' = 'signup'): string {
   const digest = createHash('sha256')
-    .update(`signup|${mailboxOf(email)}`)
+    .update(`${kind === 'signup' ? 'signup' : 'resend'}|${mailboxOf(email)}`)
     .digest('hex');
-  return `signup|address|${digest.slice(0, 32)}`;
+  return `signup|${kind === 'signup' ? 'address' : 'resend-address'}|${digest.slice(0, 32)}`;
 }
 
 export const OVERALL_COUNTER = 'signup|overall';

@@ -386,6 +386,8 @@ describe('asking for a new link', () => {
     const first = world.linkTo(form.email);
     const unknown = `nadie-${crypto.randomUUID().slice(0, 6)}@example.test`;
     const sentBefore = world.email.sent.length;
+    // The link sent a moment ago is still the owner's (JD-S6 R2-6): a new one is made after the cooldown.
+    world.advance(31 * 60_000);
 
     const known = await world.resend(form.email);
     const stranger = await world.resend(unknown);
@@ -399,10 +401,37 @@ describe('asking for a new link', () => {
     expect(world.linkTo(form.email).token).not.toBe(first.token);
   });
 
+  it('does not replace a link sent a moment ago, whoever asks, and the asking cannot use up the count of a signup (JD-S6 R2-6)', async () => {
+    const { form } = await world.signUp();
+    await world.idle();
+    const first = world.linkTo(form.email);
+    const sentBefore = world.email.sent.length;
+
+    // A stranger types the address of the pending signup, again and again.
+    for (let asked = 0; asked < 3; asked += 1) {
+      expect((await world.resend(form.email)).statusCode).toBe(200);
+    }
+    await world.idle();
+
+    expect(world.email.sent.length).toBe(sentBefore);
+    expect(world.linkTo(form.email).token).toBe(first.token);
+    expect((await world.verify(first)).statusCode).toBe(200);
+
+    // The count of resends is apart from the count of signups: a visitor whose address was typed into
+    // the resend form many times can still sign up.
+    const victim = world.form();
+    for (let asked = 0; asked < 5; asked += 1) await world.resend(victim.email);
+    const { response } = await world.signUp({ email: victim.email });
+    await world.idle();
+    expect(response.statusCode, response.body).toBe(200);
+    expect(world.email.lastTo(victim.email)).toBeDefined();
+  });
+
   it('sends it from the page of the link itself, which names nobody', async () => {
     const { form } = await world.signUp();
     await world.idle();
     const first = world.linkTo(form.email);
+    world.advance(31 * 60_000);
 
     const renewed = await world.renew(first.slug);
     await world.idle();
