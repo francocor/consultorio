@@ -34,7 +34,7 @@ describe('loadConfig', () => {
     expect(loadConfig(validEnv).dbPoolMax).toBe(DEFAULT_RUNTIME_POOL_MAX);
     expect(DEFAULT_RUNTIME_POOL_MAX).toBe(48);
     expect(DEFAULT_RUNTIME_POOL_MAX).toBeGreaterThanOrEqual(MIN_DB_POOL_MAX);
-    expect(loadConfig({ ...validEnv, DB_POOL_MAX: '40' }).dbPoolMax).toBe(40);
+    expect(loadConfig({ ...validEnv, DB_POOL_MAX: '50' }).dbPoolMax).toBe(50);
     for (const bad of ['0', '-1', '1.5', 'abc', '101']) {
       expect(() => loadConfig({ ...validEnv, DB_POOL_MAX: bad }), bad).toThrow(/DB_POOL_MAX/);
     }
