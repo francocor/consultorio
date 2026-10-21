@@ -98,7 +98,7 @@ for five minutes, or it does not answer the scraper. Everything that runs in the
 sealing the audit trail, reminders, scans, invoices, dunning, exports, the archive.
 
 1. Is the process alive? Restart it. The first thing it logs is any configuration error (a variable
-   missing, `DB_POOL_MAX` under 34, a login that does not work).
+   missing, `DB_POOL_MAX` under 46, a login that does not work).
 2. Is the database reachable? `/ready` of the API says so.
 3. Did the pool run out? A burst of connection-holding jobs with a pool under the floor looks like a
    hang (`docs/runbooks/deploy.md`, "Size the connection pool").
@@ -149,8 +149,33 @@ decides whether to call.
 3. The owner of an organization comes back by paying what is due (the button "Pagar lo adeudado" of the
    subscription screen). The organization is active again as soon as the provider confirms the payment;
    what was blocked in the meantime is not replayed.
-4. A refund or a duplicated payment is flagged for the operator on the same screen; the subscription
-   service refunds it, with an entry in the trail of the organization.
+4. A refund or a duplicated payment is flagged for the operator on the same screen ("Pagos" of the
+   organization). Refund it from there: give the reason, confirm, and the console makes one refund
+   however many times it is pressed. The entry is in the trail of the organization and in the platform
+   trail with your name. A second recurring charge for a month that an overdue link paid is given back
+   by the platform itself; you only see it as reviewed. Do not refund from the provider's own panel
+   without telling the platform: if you did, the next reconcile records the refund.
+
+## A subscription parked for a person
+
+**The operator console shows "Requiere revisión" on an organization.** The payments provider holds
+something the platform cannot tell apart (two preapprovals under one reference, one that is not what
+was asked, a state nobody expected). Nothing is sent for it and its dates wait, because anything
+sent could charge the payer twice. It is not an outage.
+
+1. Open the organization and read the cause. Look at the provider's panel for the references of the
+   organization (`sub:<subscription id>:<number>`): which preapprovals exist, for which payer and amount.
+2. If the owner asked to cancel, nothing is needed: cancelling stops every preapproval the platform can
+   find and clears the cause.
+3. Otherwise use "Dejar seguir" with the reason you found. The platform releases the parked requests and
+   asks the provider again; it cancels any preapproval it did not adopt under those references. It never
+   picks one for you. The owner subscribes again from their screen, and exactly one stays alive. Tell
+   the owner first if what the provider held was theirs.
+4. `reauthorization_needed` is different: the owner has to authorize the right amount (the screen says
+   so), or the charge lands and the statement is collected. It clears by itself and "Dejar seguir"
+   refuses it until then.
+5. If the provider refuses to cancel something the platform must not leave alive, the subscription
+   parks as `unexpected_state`: cancel it in the provider's panel, then "Dejar seguir".
 
 ## After the incident
 

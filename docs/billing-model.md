@@ -66,6 +66,35 @@ The recurring charge of the provider is always an amount the owner has seen: the
 
 A statement is collected one month in arrears: the charge that lands in month `M + 1` pays the statement of month `M` and credits the coverage of `M + 1`. The first charge, made at the end of the trial, is the amount shown at checkout.
 
+## One authorization, never two
+
+A preapproval is the payer's authorization to be charged every month, and a provider that is not idempotent can hold more than one for a subscription: a paused one that resumes, a request that lands after the platform gave up on it, a resend it did not recognize. Two live ones charge the payer twice and nobody sees it unless the platform looks. So:
+
+1. **Before a new preapproval is asked for, every earlier one is stopped.** The checkout reads each preapproval the subscription ever held, and searches the provider by every reference it asked with, and cancels what is alive (with the usual mark, bounded call and answer). If a cancellation cannot be confirmed, nothing new is created: the owner is told to wait, or the subscription is parked when the provider refuses.
+2. **The reconcile keeps looking.** Under every reference of a request the platform released, rejected or adopted, a live preapproval that is not the one the subscription holds is cancelled (it landed late), for a fortnight after the request. A reference whose request is still pinned is left to the settlement of that request, which adopts, releases or parks it.
+3. **What a stray charged is never credited.** The payments of a preapproval the subscription no longer holds are recorded as a surplus, flagged for the operator and refundable; `paid_through` does not move because of them. The same goes for any payment that is not ours: the payment of a link the platform did not make (same reference, same amount), a payment not in pesos, a payment of a preapproval nobody made for this subscription. A payment with no amount is skipped and logged, so it cannot wedge the reconcile.
+4. **Money that came back is not counted.** A payment first seen as refunded or charged back credits nothing; a rejected charge of a month that a recorded payment already covers is history, not a failure.
+
+## A subscription parked for a person
+
+When more than one resource at the provider could be ours, or one is not what was asked (`ambiguous_preapproval`, `identity_mismatch`, `unexpected_state`), the subscription is parked: nothing more is sent to the provider for it until a person decides, and the dates (the end of the trial, the dunning) wait too. A parked subscription is not stuck for good:
+
+- **The owner can cancel it.** Cancelling stops every preapproval the platform can find, parked or not, searching by the references it asked with, and then the parked requests are released and the cause is cleared, because nothing is left alive to decide about.
+- **The operator can let it go** (`POST /operator/tenants/:id/subscription/resolve-parked`, with a reason, audited with the operator). It releases the parked requests and queues a reconcile, which cancels what the provider holds under those references. It never adopts one of them and never sends anything: it means "start from what the provider confirms".
+- **`reauthorization_needed` is not an ambiguity.** It means the preapproval is authorized for more than a statement leaves to collect and the provider will not lower it. Nothing is sent meanwhile and the dates are not held; it clears by itself when the charge has been booked or the amount is authorized again, and the operator cannot waive it before.
+- **A difference link is looked at first.** The recurring charge that lands while the owner can still pay a difference link makes the difference zero or negative; that is the link doing its job, and it never parks the subscription.
+- **The end of the paid period never cancels a subscription the provider may still charge.** The dunning step stops the preapprovals first; while the provider cannot confirm it (an outage, a cancellation whose outcome is not known, a request in flight) the subscription stays `cancelling` and the next pass tries again.
+
+## Refunds
+
+A refund is an entry of its own (`subscription_refund`) and is not safe to repeat blindly. The operator refunds from the console (`POST /operator/tenants/:id/subscription/payments/:paymentId/refund`) with a reason, an explicit confirmation and a token that the console makes when the confirmation opens. The token is part of the reference of the refund: the same token is the same refund, so a double click, a retry after a timeout and a second operator pressing the same button give one refund and the same answer. The payment and its refunds are read again under the lock of the subscription, so two refunds at once cannot be planned from the same numbers. A surplus that is refunded in full is marked as looked at; the operator can also mark one as looked at without refunding it.
+
+The one refund the platform makes by itself is the duplicate of an overdue link: the owner pays the link of the overdue month while the recurring charge can still retry that month, and the retry succeeds. The ledger names it (`duplicate_of_overdue_link`) and the reconcile gives it back once, through the same marks and settle window. The overdue link asks for the amount of the charge that failed, not for whatever the preapproval is authorized for now, and creating it is audited.
+
+## Without a payments provider
+
+With `PAYMENTS_PROVIDER=off` nobody can subscribe and nothing can be collected, so the dates hold: a trial that ended is not turned past due, a grace is not run out toward read-only, and a cancelled paid period with a live authorization does not end. A trial that was cancelled before anybody subscribed has nothing to stop at a provider and ends on its date. A cancelled organization is terminal whatever the subscription says later: the database refuses to reopen it.
+
 ## What this model does not do
 
 - It does not backfill a day the worker missed: the snapshot is hourly, and a professional active and deactivated within the same hour is not recorded.

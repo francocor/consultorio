@@ -1,7 +1,7 @@
 import type { OperatorSubscriptionDto, OperatorTenantDto } from '@consultorio/contracts';
 import { screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { a11yViolations } from '../../../shared/test/a11y.js';
 import { renderInRouter } from '../../../shared/test/render-app.js';
@@ -38,6 +38,10 @@ const subscription = (
   surplusFlags: 0,
   ...overrides,
 });
+
+/** The JSON body a request carried. */
+const sentBody = (init: RequestInit): unknown =>
+  JSON.parse(typeof init.body === 'string' ? init.body : '{}') as unknown;
 
 let missing: string[] | undefined;
 afterEach(() => {
@@ -132,6 +136,90 @@ describe('the subscriptions tab of the operator console', () => {
     expect(usage).toHaveTextContent('Profesional 11111111: 20 días activo, 230 mensajes');
     expect(usage).toHaveTextContent('ni mensajes ni pacientes');
     expect(usage.textContent).not.toMatch(/@|paciente [A-Z]/);
+  });
+
+  it('lets the operator pick up a parked subscription only with a reason and a confirmation, and says who decided in the request', async () => {
+    const user = userEvent.setup();
+    const sent: unknown[] = [];
+    open([subscription({ attentionReason: 'identity_mismatch' })], {
+      [`POST /api/operator/tenants/${TENANT_A}/subscription/resolve-parked`]: (_url, init) => {
+        sent.push(sentBody(init));
+        return jsonResponse({ status: 'resolved', was: 'identity_mismatch' });
+      },
+    });
+
+    await user.click(
+      await screen.findByRole('button', {
+        name: 'Dejar seguir la suscripción de Centro Médico Aillu',
+      }),
+    );
+    const dialog = await screen.findByRole('dialog');
+    const submit = within(dialog).getByRole('button', { name: 'Dejar seguir' });
+    expect(submit).toBeDisabled();
+    await user.type(
+      within(dialog).getByLabelText('Motivo'),
+      'Lo miré en el panel del proveedor y no hay cobros.',
+    );
+    expect(submit).toBeDisabled();
+    await user.click(within(dialog).getByRole('checkbox'));
+    await user.click(submit);
+
+    await vi.waitFor(() => {
+      expect(sent).toEqual([{ reason: 'Lo miré en el panel del proveedor y no hay cobros.' }]);
+    });
+  });
+
+  it('lists the payments without a payer, refunds one with a token made once, and marks a surplus as looked at', async () => {
+    const user = userEvent.setup();
+    const refunds: { token: string; amountCents: number; confirmed: boolean }[] = [];
+    const payment = {
+      id: '0190a000-0000-7000-8000-0000000000c3',
+      purpose: 'charge' as const,
+      amountCents: 1_800_000,
+      status: 'approved',
+      refundedCents: 0,
+      period: '2026-10',
+      surplus: true,
+      surplusReviewedAt: null,
+      createdAt: '2026-10-20T15:00:00.000Z',
+    };
+    open([subscription({ surplusFlags: 1 })], {
+      [`GET /api/operator/tenants/${TENANT_A}/subscription/payments`]: () =>
+        jsonResponse({ payments: [payment] }),
+      [`POST /api/operator/tenants/${TENANT_A}/subscription/payments/${payment.id}/refund`]: (
+        _url,
+        init,
+      ) => {
+        refunds.push(sentBody(init) as (typeof refunds)[number]);
+        return jsonResponse({ status: 'refunded', amountCents: 500_000 });
+      },
+    });
+
+    await user.click(
+      await screen.findByRole('button', { name: 'Ver los pagos de Centro Médico Aillu' }),
+    );
+    const panel = await screen.findByRole('region', { name: 'Pagos de Centro Médico Aillu' });
+    expect(panel).toHaveTextContent('$ 18.000,00');
+    expect(panel).toHaveTextContent('Pago de más, sin revisar');
+    expect(panel.textContent).not.toMatch(/@|PAY-/);
+
+    await user.click(within(panel).getByRole('button', { name: 'Reembolsar' }));
+    const dialog = await screen.findByRole('dialog');
+    await user.type(within(dialog).getByLabelText(/Importe a devolver/), '5000');
+    await user.type(
+      within(dialog).getByLabelText('Motivo'),
+      'El cliente pagó dos veces el mismo mes.',
+    );
+    const submit = within(dialog).getByRole('button', { name: 'Reembolsar' });
+    expect(submit).toBeDisabled();
+    await user.click(within(dialog).getByRole('checkbox'));
+    await user.click(submit);
+
+    await vi.waitFor(() => {
+      expect(refunds).toHaveLength(1);
+    });
+    expect(refunds[0]).toMatchObject({ amountCents: 500_000, confirmed: true });
+    expect(refunds[0]?.token).toMatch(/^[0-9a-f-]{36}$/);
   });
 
   it('says there are no subscriptions when there are none', async () => {
