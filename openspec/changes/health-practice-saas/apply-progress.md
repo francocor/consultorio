@@ -3311,3 +3311,55 @@ The machine is slower than the reporter's (2,644 ms for the same code), so compa
 - `pnpm --filter @consultorio/web build` (includes `tsc --noEmit`) and `test:build`: 6 checks pass; the same checks fail on the previous build (catalogs and slots found in the first bundle).
 - Web unit tests: 178 files, 2,070 tests; one file (`appointment-drawer.test.tsx`) needed `await defaultRegistry().ready()`, then 46 of 46 pass.
 - Lint of the touched files and `format:check`: clean. Full e2e (`E2E_WEB_PORT=5072 E2E_API_PORT=4070 E2E_MINIO_PORT=9070`, `DB_POOL_MAX=36`, `--workers=2`, Playwright-managed): **243 passed, 0 failed** (11.8 min). No container of mine was left.
+
+## Stage 6 integration 2 (Judgment Day round 1 fixes: payments and retention merged)
+
+Branch `feat/stage-6-signup-subscriptions`, from `66473585` (login LCP fix and the maintainer's `.env.example` commit). The two fix branches were merged with `--no-ff`, in this order, with `pnpm db:restamp` and `pnpm db:check` after each: `origin/fix/stage-6-6jd1` (payments, tip `e2c6fa71`, migrations 0680 - 0682) as `8fd46916`, then `origin/fix/stage-6-6jd2` (signup, retention and ops, tip `c49c2f19`, migrations 0685 - 0689) as `6a9cb437`. No PR, no merge to main, CI not polled.
+
+### Conflicts and how they were resolved
+
+The payments merge was clean. The retention merge conflicted in four files; everything else that both branches touched (`stage6-routes.ts`, `stage6-audit.ts`, `definer-functions.test.ts`, `no-delete` allowlists, `operator.ts`, `application.ts`, `wiring/types.ts`, `incident.md`, `asvs-l2-final.md`, `deploy.md`) merged without a textual conflict and was proven by the policy, unit and integration suites.
+
+| File | Conflict | Resolution |
+| --- | --- | --- |
+| `scripts/migration-journal.ts` | `TRACK_RANGES` | Union: `6jd1` (680 - 684) and `6jd2` (685 - 689) |
+| `docs/migration-ranges.md` | The table, and the Stage 6 paragraph | Union: one row per track, and the paragraph names the migrations of both halves |
+| `meta/_journal.json` | Both sides appended after 0581 | The payments entries 0680, 0681, 0682 kept as they were (idx 122 - 124); the five of retention appended after them (idx 125 - 129); `db:restamp` raised the stamp of 0685 above 0682 and re-chained the snapshot of 0685; the last snapshot (0689) was rebuilt from the schema |
+| `docs/go-live-checklist.md` | `DB_POOL_MAX` and the archive bullets | Both kept: pool floor 46 (payments), the archive identity for the worker and the releaser only, the role `app_releaser` created before the migrations, and the payments provider text |
+
+`docs/runbooks/incident.md` merged textually but had two sections for the same alert (`A subscription parked for a person` and `A subscription is parked for a person`); they are one now (see fixes).
+
+### Journal order
+
+0610, 0612, 0614, 0616, 0618 (A), 0640, 0641 (B), 0650 - 0655 (C), 0680, 0681, 0682 (6jd1), 0685, 0686, 0687, 0688, 0689 (6jd2): idx 0 to 129, 130 entries, `idx` unique and contiguous, `when` strictly rising, every applied entry untouched. Pool: `MIN_DB_POOL_MAX` stays 46 (eleven families) and `DEFAULT_RUNTIME_POOL_MAX` 48; retention added no family. `.env.example` was neither read nor edited (it says 36, so `pnpm dev` refuses to start until the maintainer sets 48; the e2e and the smoke pass `DB_POOL_MAX=48`).
+
+### Cross-branch checks
+
+1. **The collector and the payments signals.** `collectPlatformMetrics` reads the subscription of each organization through the runtime login in that organization's transaction (not `app_operator`), so `last_reconciled_at` (not in the `app_operator` column grant of 0614) is readable; `platform-metrics.test.ts` asserts the stale-reconciliation figure against the real table. The other figures come from `app.platform_health()`.
+2. **The parked gauge splits by reason**, already (label `reason`, every known reason present). The gap was the alert: `SubscriptionParked` read `sum(subscriptions_parked)`, so `reauthorization_needed` (which clears by itself when the owner authorizes) woke a person for something that is not an ambiguity at the provider. Fixed test-first (see fixes).
+3. **The demo journey and the semantics of both branches.** `stage6-demo.spec.ts` (retention) asks the operator to cancel the new organization (409 `operator_cancel_has_subscription`, migration 0689) and then cancels through the subscription (`En cancelación`); with the payments rules (cancelling works while parked, `period_ended` never cancels while the provider holds, `tenant_cancelled_is_terminal` of 0680) it passes. The two guards do not overlap: 0689 refuses the operator to END an organization that has a subscription, 0680 refuses anything to REOPEN a cancelled one; the only way to `cancelled` for a billed organization is its own subscription.
+
+### Fixes (each in its own commit)
+
+1. `046da215` `fix(ops)`: test first (`alert-rules.test.ts` failed on `sum(subscriptions_parked) > 0`), then `SubscriptionParked` excludes `reason="reauthorization_needed"` and a new info alert `SubscriptionReauthorizationWaiting` (24 h) covers it; both point to one runbook section, which merges the two that the branches had written.
+2. `f45ddf3b` `fix(test)`: `demo-platform.test.ts` expected the four demo organizations to be created by itself, but `platform-metrics.test.ts` seeds the same ones in the shared database and which file runs first depends on the order the runner chooses (the order changed when the vitest cache was deleted). The expectation now follows what existed before the seed. The failure was seen in the full run; the fixed pair passes together.
+
+### Verification (after the last change, Node v24, pnpm 10.34.7, Docker running)
+
+| Command | Result |
+| --- | --- |
+| `pnpm install --frozen-lockfile`, `pnpm typecheck`, `pnpm format:check`, `pnpm build`, `pnpm db:check` | exit 0; "No migration drift" |
+| `pnpm lint` (sharded, 10 shards) | exit 0 |
+| `pnpm test` | **499 files, 6,267 tests passed, 2 skipped**, no file needed a re-run |
+| `pnpm test:integration` (Testcontainers) | **325 files, 5,100 tests: 5,087 passed, 11 skipped, 2 failed.** The two: `demo-platform.test.ts` (the order dependency fixed above) and `worker.test.ts` (sealing within 15 s, a timing test that fails under load); both pass when re-run alone (13 tests), and the fixed `demo-platform` passes after `platform-metrics` |
+| `pnpm --filter @consultorio/web test:build` (the LCP guard) | exit 0, 6 checks pass |
+| e2e, `E2E_WEB_PORT=5102 E2E_API_PORT=4100 E2E_MINIO_PORT=9100`, `DB_POOL_MAX=48`, `--workers=2`, Playwright-managed | **243 passed, 0 failed, 0 flaky, 0 skipped** (9.2 min); includes `stage6-demo`, `stage6-signup`, `stage6-subscription`, `stage6-archive` |
+| Docker smoke | Image built; fresh `postgres:17.11` with `infra/postgres/init` (creates `app_releaser`); `db:migrate` twice, both exit 0, **130 migrations recorded**; production configuration (`NODE_ENV=production`, `KMS_PROVIDER=aws`, `DB_POOL_MAX=48`): api `/health` `{"status":"ok"}`; the worker starts; the releaser starts with `RELEASER_DATABASE_URL` as `app_releaser` (one session of that role, `app.platform_health()` shows its heartbeat); the api exits 1 with `RELEASER_DATABASE_URL`, with `ARCHIVE_S3_ACCESS_KEY_ID` and with `ARCHIVE_RELEASER_KEK`; `DB_POOL_MAX=36` is refused ("must be at least 46", eleven families) |
+
+Only the containers, the network and the image of the smoke were created and removed (the container list is identical to the one before). The vitest caches were deleted after the merges and again at the end. Logs are in `$TEMP/s6r1int-*.log`.
+
+### Risks and follow-ups
+
+- **Maintainer:** `.env.example` says 36 and must say 48 (floor 46); until then `pnpm dev` refuses to start.
+- The sealing test of `worker.test.ts` and some unit files are timing-sensitive on this machine; re-run alone when they fail under load.
+- `SubscriptionReauthorizationWaiting` is new and untested against a real Prometheus (`promtool` runs in CI).
