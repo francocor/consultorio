@@ -3273,3 +3273,41 @@ The other shared lists (`definer-functions.test.ts`, `operator-privileges.test.t
 - **Maintainer:** `.env.example` still says `DB_POOL_MAX=16`, which every process now refuses (floor 34). Change it to `DB_POOL_MAX=36`. The test "`.env.example` is accepted by the config schema as it is" passes today only because it reads the floor from code when the file pins less.
 - Track D: the Stage 6 demo (S6.12), the demo exemptions of A, B and C to remove as tables are seeded, 6.32 (left unchecked: the signup and subscription journeys now run in one suite, but the task also names a reception write refused in a read-only organization, which was not checked here), judgment day.
 - The unit and integration suites are heavy for this machine: re-run alone any file that times out.
+
+## Login LCP regression (Stage 6 branch, after track D)
+
+The Lighthouse job failed: median LCP 2,644 ms against the 2,500 ms budget on the sign-in page (48 files, 414 KB gzip; 28 files and 258 KB when Stage 3 met the budget at 2,439 ms).
+
+### Root cause
+
+LCP on `/login` is the paint of React's first render, and what comes before it is a chain, not a sum of bytes:
+
+1. **Requests, not bytes.** Modules shared between the entry and the lazy screens were cut into tiny chunks (icons, Radix pieces, `button`, `format`, the schemas), and the app modules import each other in cycles, so the bundler never folded them back. The browser fetched 38 scripts over six connections at 170 ms of round trip: about seven rounds, then the Inter font as one more round after the first layout (the swap repaint is what the browser reports as LCP). Measured with the budget's own throttling, the last script arrived at 1,655 ms and LCP followed at 3,740 ms.
+2. **Work the sign-in page does not need.** The texts of every feature (about 83 KB gzip, all of `locales/es-AR`), the `nav.ts` and `slots.tsx` registrations, and the waitlist slot that was not lazy (it dragged the dialog and `sonner`, 33 KB, into the entry).
+3. What did **not** help, measured: removing the catalogs alone (bytes 414 to 331 KB, LCP unchanged within noise). This explains why the earlier attempts (`json.stringify`, 7 catalogs) sat in the noise.
+
+### Changes (two commits)
+
+- `99f0b0bb` catalogs, navigation and slots after sign-in: `locale-core` (common, auth, shell, `errors.json`) in the bundle; `locale-rest` is one chunk that the signed-in route, the portal, the public pages and the platform host wait for (`loadRemainingCatalogs`, `beforeLoad`); a visitor sent to sign-in downloads none of it. `registry.ready()` loads `registry-contributions` (nav and slots); reading them before throws. The waitlist slot is `lazySlot`. Tests build their i18n with `locale-all` and wait for the registry.
+- `5b19715e` first bundle in two files and the font preloaded: a Rolldown chunking group gathers the app modules the entry imports (packages and `@consultorio/contracts` are left to the bundler on purpose: a group pulls in what it captures even when unused, and every schema costs start-up time); `<link rel="preload">` for the Latin subset of Inter; `build.manifest` and `pnpm --filter @consultorio/web test:build` (run by the Lighthouse job) that fail when a feature catalog, the navigation or the slots reach the first bundle, when it passes 6 files, or 235 KB gzip.
+
+### Numbers (Lighthouse, repo config, mobile, 3 runs; the port was 4190 because 4173 was taken)
+
+| | LCP (median) | LCP runs | Performance | Accessibility | CLS | Files | Transfer |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| Before (tip `26ce261e`) | 3,095 ms on this machine | 3,095 / 2,795 / 19,641 (machine busy) | 0.88 | 1.00 | 0.0012 | 48 | 414 KB |
+| After | **2,237 ms** | 2,237 / 2,225 / 2,242 | 0.97 | 1.00 | 0 | 13 | 289 KB |
+
+The machine is slower than the reporter's (2,644 ms for the same code), so compare the two rows, not the absolute value. The simulated LCP follows the CPU time the trace saw, so runs on a busy machine are noisy (an unrelated 19 s run in the baseline).
+
+### Design notes
+
+- `ready()` is required on `AppRegistry`; `createRegistry` (fixtures) is ready at once. `createI18n()` starts with the core catalogs; tests pass `resources: LOCALE_RESOURCES`.
+- Why the group lists no packages: a first attempt listed them and captured whole barrels (all icons, the Radix umbrella, every contract), 740 KB and slower. The module graph by `importers` over-approximates because of barrels; the app code does not use any.
+- Not done: the schemas of `@consultorio/contracts` still build at start-up for what `api-client` and `session` import (about 35 KB raw, roughly 170 ms at 4x CPU). Narrower imports would cut it further.
+
+### Verification
+
+- `pnpm --filter @consultorio/web build` (includes `tsc --noEmit`) and `test:build`: 6 checks pass; the same checks fail on the previous build (catalogs and slots found in the first bundle).
+- Web unit tests: 178 files, 2,070 tests; one file (`appointment-drawer.test.tsx`) needed `await defaultRegistry().ready()`, then 46 of 46 pass.
+- Lint of the touched files and `format:check`: clean. Full e2e (`E2E_WEB_PORT=5072 E2E_API_PORT=4070 E2E_MINIO_PORT=9070`, `DB_POOL_MAX=36`, `--workers=2`, Playwright-managed): **243 passed, 0 failed** (11.8 min). No container of mine was left.
