@@ -72,8 +72,11 @@ const refundReference = (
 
 /**
  * The answer of a request that was made already with the same token: the refund it made, or the
- * refusal it got. `null` when there is none (or the one that was made was released, so the provider
- * provably did nothing and the request may be sent).
+ * refusal it got. A token can have more than one attempt (the first was released because the provider
+ * provably did nothing, so the same request was sent again), so EVERY attempt of the reference is read,
+ * never only the oldest: a confirmed one answers first, then a rejected one, then one that is still in
+ * flight. `null` only when every attempt was released (or there is none), so the request may be sent
+ * (JD-S6 R2-1).
  */
 async function answerOfEarlier(
   tx: Tx,
@@ -82,7 +85,7 @@ async function answerOfEarlier(
   input: Pick<RefundInput, 'clientToken' | 'amountCents'>,
 ): Promise<RefundOutcome | null> {
   if (input.clientToken === undefined) return null;
-  const [earlier] = await tx
+  const attempts = await tx
     .select()
     .from(subscriptionAttempt)
     .where(
@@ -95,16 +98,24 @@ async function answerOfEarlier(
         ),
       ),
     )
-    .orderBy(asc(subscriptionAttempt.markedAt))
-    .limit(1);
-  if (!earlier) return null;
-  if (earlier.amountCents !== input.amountCents) return { status: 'not_refundable' };
-  if (earlier.state === 'confirmed' && earlier.resourceId !== null) {
-    return { status: 'refunded', refundId: earlier.resourceId, amountCents: earlier.amountCents };
+    .orderBy(asc(subscriptionAttempt.markedAt));
+  const confirmed = attempts.find((a) => a.state === 'confirmed' && a.resourceId !== null);
+  if (confirmed?.resourceId != null) {
+    if (confirmed.amountCents !== input.amountCents) return { status: 'not_refundable' };
+    return {
+      status: 'refunded',
+      refundId: confirmed.resourceId,
+      amountCents: confirmed.amountCents,
+    };
   }
-  if (earlier.state === 'rejected') {
-    return { status: 'rejected', message: earlier.message ?? 'rejected' };
+  const rejected = attempts.find((a) => a.state === 'rejected');
+  if (rejected) {
+    if (rejected.amountCents !== input.amountCents) return { status: 'not_refundable' };
+    return { status: 'rejected', message: rejected.message ?? 'rejected' };
   }
+  // One that may be running at the provider: nothing is sent again under this token.
+  if (attempts.some((a) => a.state === 'parked')) return { status: 'attention' };
+  if (attempts.some((a) => a.state === 'marked')) return { status: 'in_progress' };
   return null;
 }
 

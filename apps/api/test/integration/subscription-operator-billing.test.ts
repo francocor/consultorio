@@ -305,6 +305,50 @@ describe('an operator refund is made once, whatever the clicks and the provider 
     expect(await org.rows('subscription_refund')).toHaveLength(1);
   });
 
+  it('answers a token from every attempt it made, so a released one then a confirmed one never gives a second refund (JD-S6 R2-1)', async () => {
+    const { org, charged, id } = await paid();
+    const token = randomUUID();
+    const asked = {
+      tenantId: org.tenant.id,
+      paymentId: id,
+      amountCents: 500_000,
+      actor: { userId: operatorId, actingRole: null, ip: null, userAgent: null, requestId: null },
+      requestedBy: operatorId,
+      clientToken: token,
+    };
+
+    // The first attempt is released (the provider answered that it did nothing), the second is confirmed.
+    const refusing = {
+      ...world.deps,
+      adapters: {
+        forTenant: () => ({
+          ...provider.gateway,
+          getPayment: provider.gateway.getPayment.bind(provider.gateway),
+          refund: () =>
+            Promise.resolve({
+              status: 'retryable' as const,
+              message: 'service unavailable',
+              outcomeUnknown: false,
+            }),
+        }),
+      },
+    } as unknown as typeof world.deps;
+    const first = await refundPayment(refusing, asked);
+    const second = await refundPayment(world.deps, asked);
+    // The same token a third time: the answer of the confirmed attempt, not a new partial refund.
+    const third = await refundPayment(world.deps, asked);
+
+    expect(first.status).toBe('unavailable');
+    expect(second.status).toBe('refunded');
+    expect(third).toEqual(second);
+    expect(refundsAt(charged.paymentId)).toHaveLength(1);
+    expect(await org.rows('subscription_refund')).toHaveLength(1);
+    const attempts = await org.run(
+      sql`select state from subscription_attempt where kind = 'refund' order by marked_at`,
+    );
+    expect(attempts).toEqual([{ state: 'released' }, { state: 'confirmed' }]);
+  });
+
   it('marks a surplus as looked at when it is given back in full', async () => {
     const { org, preapprovalId } = await paid();
     const twice = provider.fake.chargeCycle(preapprovalId, 'approved');
