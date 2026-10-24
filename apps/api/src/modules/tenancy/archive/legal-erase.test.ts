@@ -14,13 +14,18 @@ const APPROVER = '0190a000-0000-7000-8000-0000000000a2';
 const REFERENCE = 'Oficio 123/2031, Juzgado Civil y Comercial 4, expediente 998/2030';
 const WHO = { operatorId: OPERATOR, approverId: APPROVER };
 
-function fixture(objects: Record<string, number>, options: { known?: readonly string[] } = {}) {
+function fixture(
+  objects: Record<string, number>,
+  options: { known?: readonly string[]; started?: readonly string[] } = {},
+) {
   /** What happened, in order: the trail, the mark in the database and each erased object. */
   const events: string[] = [];
   const erased: string[] = [];
   const trail: LegalEraseAuditEntry[] = [];
   const marked: string[] = [];
   const known = options.known ?? [OPERATOR, APPROVER];
+  /** The folders an erasure was already started for: the intents the platform trail holds. */
+  const started = options.started ?? [];
   const deps: LegalEraseDeps = {
     eraser: {
       list: (prefix) =>
@@ -40,6 +45,10 @@ function fixture(objects: Record<string, number>, options: { known?: readonly st
       return ids.every((id) => known.includes(id))
         ? Promise.resolve()
         : Promise.reject(new Error('The operator and the approver must be active operators'));
+    },
+    hasIntent: (prefix) => {
+      events.push('intent?');
+      return Promise.resolve(started.some((begun) => prefix.startsWith(begun)));
     },
     markErased: (prefix) => {
       marked.push(prefix);
@@ -157,15 +166,54 @@ describe('the legal erasure procedure', () => {
     expect(marked).toEqual([]);
   });
 
-  it('says so when there is nothing to erase, writes no entry, and marks the folder as erased so a crash before the marker is repaired (JD-S6 R2)', async () => {
+  it('refuses an empty folder when no erasure of it was ever started, and marks and writes nothing (JD-S6 R3-1)', async () => {
+    // Nothing found can be a wrong bucket, a listing credential with the wrong scope or a lagging
+    // listing: marking the folder erased would delete the plaintext export of an archive that is intact.
     const { deps, erased, trail, marked } = fixture({});
+
+    await expect(
+      legalErase(deps, { tenantId: TENANT, reference: REFERENCE, ...WHO }),
+    ).rejects.toThrow(/confirm the bucket/i);
+
+    expect(erased).toEqual([]);
+    expect(trail).toEqual([]);
+    expect(marked).toEqual([]);
+  });
+
+  it('does not take the intent of another folder for the one asked: a narrower intent does not cover the whole archive', async () => {
+    const { deps, trail, marked } = fixture({}, { started: [`tenants/${TENANT}/b/`] });
+
+    await expect(
+      legalErase(deps, { tenantId: TENANT, reference: REFERENCE, ...WHO }),
+    ).rejects.toThrow(/confirm the bucket/i);
+
+    expect(trail).toEqual([]);
+    expect(marked).toEqual([]);
+  });
+
+  it('repairs a crash before the marker: an empty folder after an intent is audited as a rerun, with the operators and the reference, and only then marked (JD-S6 R2, R3-1)', async () => {
+    const { deps, erased, trail, marked, events } = fixture(
+      {},
+      { started: [`tenants/${TENANT}/`] },
+    );
 
     const result = await legalErase(deps, { tenantId: TENANT, reference: REFERENCE, ...WHO });
 
     expect(result).toEqual({ objects: 0, versions: 0 });
     expect(erased).toEqual([]);
-    expect(trail).toEqual([]);
+    expect(trail).toEqual([
+      {
+        phase: 'rerun',
+        reason: REFERENCE,
+        ...WHO,
+        prefix: `tenants/${TENANT}/`,
+        objects: 0,
+        versions: 0,
+      },
+    ]);
     expect(marked).toEqual([`tenants/${TENANT}/`]);
+    // The trail first, then the mark: a mark with no trace is what this refuses.
+    expect(events).toEqual(['verify', 'intent?', 'audit rerun', 'mark']);
   });
 
   it('keeps the intent and records what was erased even when it stops halfway, and then fails', async () => {

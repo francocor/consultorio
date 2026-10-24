@@ -18,7 +18,10 @@ import type { ErasableObject } from '../../../adapters/archive-local/erasure.js'
  *   is complete;
  * - it records in the database which folder was erased (`app.archive_mark_erased`) as soon as the
  *   first object is gone (not before: a credential that is refused erases nothing and marks nothing),
- *   so verification stops looking for what is meant to be gone and a release answers `erased`.
+ *   so verification stops looking for what is meant to be gone and a release answers `erased`. A folder
+ *   found EMPTY is marked only when the trail already holds an intent for it (a rerun of an erasure
+ *   that was started), after a `rerun` entry; otherwise it is refused, because an empty listing can be
+ *   a wrong bucket or the wrong scope of a credential (JD-S6 R3-1).
  *
  * What it does NOT do: the hot rows of the organization (its database) stay as they are, and so do the
  * backups of both; those are removed by their own retention (docs/runbooks/archive-release.md). The id
@@ -32,8 +35,11 @@ import type { ErasableObject } from '../../../adapters/archive-local/erasure.js'
  */
 
 export interface LegalEraseAuditEntry {
-  /** `intent` before the first object goes, then `done`, or `incomplete` when it stopped halfway. */
-  phase: 'intent' | 'done' | 'incomplete';
+  /**
+   * `intent` before the first object goes, then `done`, or `incomplete` when it stopped halfway.
+   * `rerun` when the folder was found empty after an intent: nothing left to erase, only the marker.
+   */
+  phase: 'intent' | 'done' | 'incomplete' | 'rerun';
   reason: string;
   /** The operator who runs the command. */
   operatorId: string;
@@ -55,6 +61,12 @@ export interface LegalEraseDeps {
   };
   /** Throws unless every id is an active operator of the console. */
   verifyOperators(ids: readonly string[]): Promise<void>;
+  /**
+   * Whether the platform trail already holds an `intent` of an erasure that covers this folder (the same
+   * folder or one that contains it): proof that an erasure was started, and not an empty listing for
+   * some other reason (JD-S6 R3-1).
+   */
+  hasIntent(prefix: string): Promise<boolean>;
   /** Records in the database that the folder of the archive is erased (once the first object is gone). */
   markErased(prefix: string): Promise<void>;
   /** Writes the entry of the platform trail (`archive.erased`). Append-only. */
@@ -105,14 +117,6 @@ export async function legalErase(
   }
   await deps.verifyOperators([input.operatorId, input.approverId]);
 
-  const found = await deps.eraser.list(prefix);
-  if (found.length === 0) {
-    // A rerun of an erasure that went through the objects but died before the marker: nothing is left in
-    // the folder, so the database is told it is gone (the operation is idempotent).
-    await deps.markErased(prefix);
-    return { objects: 0, versions: 0 };
-  }
-
   const entry = (
     phase: LegalEraseAuditEntry['phase'],
     objects: number,
@@ -126,6 +130,24 @@ export async function legalErase(
     objects,
     versions,
   });
+
+  const found = await deps.eraser.list(prefix);
+  if (found.length === 0) {
+    // An empty listing is the proof of an erasure only when one was started: a rerun of an erasure that
+    // went through the objects but died before the marker. For any other reason (a wrong bucket, a
+    // listing credential with the wrong scope, a listing that lags) marking the folder erased would
+    // delete the plaintext export of an archive that is intact (JD-S6 R3-1), so nothing is marked.
+    if (!(await deps.hasIntent(prefix))) {
+      throw new Error(
+        `Nothing was found under ${prefix} and no erasure of it was ever started. Confirm the bucket (ARCHIVE_S3_BUCKET, ARCHIVE_S3_ENDPOINT) and the scope of the credential; nothing was marked.`,
+      );
+    }
+    // The trail says it before the database does: a mark with no trace is not allowed.
+    await deps.audit(entry('rerun', 0, 0));
+    await deps.markErased(prefix);
+    return { objects: 0, versions: 0 };
+  }
+
   // The intent first: if anything below dies, the trail already says who ordered what and why.
   await deps.audit(entry('intent', found.length, 0));
 

@@ -423,6 +423,79 @@ describe('the legal erasure procedure', () => {
     }
   });
 
+  it('refuses an empty listing when no erasure was started, marks nothing and writes nothing; after an intent it audits a rerun and then marks (JD-S6 R3-1)', async () => {
+    const organization = await createTestTenant(runtime, { slug: 'immutability-empty' });
+    const name = `tenants/${organization.id}/archive-1/attempt-1/administrative/000001.enc`;
+    const reference = 'Oficio 79/2031, Juzgado Civil 9, expediente 5121/2030';
+    const runner = await operators.addOperator();
+    const approver = await operators.addOperator();
+    const eraser = createLegalErasure({
+      bucket: minio.bucket,
+      region: minio.region,
+      endpoint: minio.endpoint,
+      credentials: minio.legalErasure,
+    });
+    const run = () =>
+      legalErase(
+        {
+          eraser,
+          ...createLegalEraseDatabase({
+            withTenant: createWithTenant(operators.db.db),
+            tenantId: organization.id,
+            operatorId: runner.id,
+          }),
+        },
+        { tenantId: organization.id, reference, operatorId: runner.id, approverId: approver.id },
+      );
+    const admin = new pg.Client({ connectionString: inject('adminUrl') });
+    await admin.connect();
+    try {
+      await admin.query(
+        `insert into tenant_archive (tenant_id, archive_id, key_version, status, manifest_key, manifest_sha256, objects_count, bytes_total, retain_until, archived_at)
+         values ($1, app.uuid_v7(), 1, 'written', $2, $3, 1, 10, now() + interval '3650 days', now())`,
+        [organization.id, name, 'c'.repeat(64)],
+      );
+      const state = async () =>
+        (
+          await admin.query<{ erased_at: Date | null; entries: string }>(
+            `select a.erased_at,
+                    (select count(*) from platform_audit_event e
+                      where e.action = 'archive.erased' and e.target_tenant_id = a.tenant_id) as entries
+               from tenant_archive a where a.tenant_id = $1`,
+            [organization.id],
+          )
+        ).rows[0];
+
+      // Nothing under the prefix and no intent in the trail: it could be the wrong bucket.
+      await expect(run()).rejects.toThrow(/confirm the bucket/i);
+      expect(await state()).toMatchObject({ erased_at: null, entries: '0' });
+
+      // An erasure that is started and completed leaves the intent in the trail; if the marker is lost
+      // and the command is run again, the empty folder is audited as a rerun and then marked.
+      await archived(name, 'records to erase by order');
+      await run();
+      await admin.query(
+        "update tenant_archive set erased_at = null, erased_prefixes = '{}' where tenant_id = $1",
+        [organization.id],
+      );
+      expect(await run()).toEqual({ objects: 0, versions: 0 });
+      eraser.close();
+
+      expect((await state())?.erased_at).not.toBeNull();
+      const phases = await admin.query<{ phase: string; operator_id: string; reason: string }>(
+        "select metadata ->> 'phase' as phase, operator_id, reason from platform_audit_event where action = 'archive.erased' and target_tenant_id = $1 order by occurred_at, id",
+        [organization.id],
+      );
+      expect(phases.rows).toEqual([
+        { phase: 'intent', operator_id: runner.id, reason: reference },
+        { phase: 'done', operator_id: runner.id, reason: reference },
+        { phase: 'rerun', operator_id: runner.id, reason: reference },
+      ]);
+    } finally {
+      await admin.end();
+    }
+  });
+
   it('refuses a named operator who is not an active operator of the console, before anything is erased', async () => {
     const organization = await createTestTenant(runtime, { slug: 'immutability-stranger' });
     const name = `tenants/${organization.id}/archive-1/attempt-1/administrative/000001.enc`;
@@ -478,6 +551,7 @@ describe('the legal erasure procedure', () => {
         {
           eraser,
           verifyOperators: () => Promise.resolve(),
+          hasIntent: () => Promise.resolve(false),
           markErased: () => {
             marked += 1;
             return Promise.resolve();

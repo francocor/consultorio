@@ -20,7 +20,7 @@ export function createLegalEraseDatabase(deps: {
   tenantId: string;
   /** The operator who runs the command: the actor of every entry. */
   operatorId: string;
-}): Pick<LegalEraseDeps, 'verifyOperators' | 'markErased' | 'audit'> {
+}): Pick<LegalEraseDeps, 'verifyOperators' | 'hasIntent' | 'markErased' | 'audit'> {
   return {
     async verifyOperators(ids) {
       const wanted = [...new Set(ids.map((id) => id.toLowerCase()))];
@@ -34,6 +34,22 @@ export function createLegalEraseDatabase(deps: {
       if (wanted.some((id) => !active.has(id))) {
         throw new Error('The operator and the approver must be active operators of the console');
       }
+    },
+
+    async hasIntent(prefix) {
+      // An intent for this folder or for one that contains it (the whole archive covers a narrower rerun).
+      const found = await deps.withTenant({ tenantId: PLATFORM, userId: PLATFORM }, (tx) =>
+        tx.execute<{ found: boolean }>(
+          sql`select exists (
+                select 1 from platform_audit_event
+                 where action = 'archive.erased'
+                   and target_tenant_id = ${deps.tenantId}::uuid
+                   and metadata ->> 'phase' = 'intent'
+                   and starts_with(${prefix}, metadata ->> 'prefix')
+              ) as found`,
+        ),
+      );
+      return found.rows[0]?.found === true;
     },
 
     async markErased(prefix) {
@@ -60,7 +76,7 @@ export function createLegalEraseDatabase(deps: {
             phase: entry.phase,
             objects: entry.objects,
             versions: entry.versions,
-            complete: entry.phase === 'done',
+            complete: entry.phase === 'done' || entry.phase === 'rerun',
             // Named by the person who ran the command: an attribution checked against the console, not
             // an approval (docs/runbooks/archive-release.md).
             namedSecondOperator: entry.approverId,
