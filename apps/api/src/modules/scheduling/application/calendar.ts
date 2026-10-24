@@ -12,10 +12,11 @@ import { AppError } from '../../../platform/http/problem.js';
 import { AccessRefused } from '../../access/index.js';
 
 import type { BlockService } from './blocks.js';
-import { auditDelegatedView, isAdministrative, viewsOthersCalendar } from './delegated-view.js';
+import { auditDelegatedView, viewsOthersCalendar } from './delegated-view.js';
 import { toAppointmentDto } from './drizzle-ports.js';
 import type { HolidayService } from './holidays.js';
 import { locationAccessOf } from './location-access.js';
+import { blockVisibility, defaultProfessionals } from './visible-blocks.js';
 
 /** The most appointments one answer carries; a month of a busy center is far below it. */
 const DEFAULT_MAX_ENTRIES = 2000;
@@ -32,15 +33,6 @@ export interface CalendarInput {
   query: CalendarQuery;
   actor: Actor;
   auditActor: AuditActor & { userId: string };
-}
-
-/** Whose appointments a viewer asks for when they name nobody: everyone, or their own calendars. */
-function defaultProfessionals(actor: Actor): string[] | 'everyone' {
-  if (isAdministrative(actor)) return 'everyone';
-  return [
-    ...(actor.professionalId ? [actor.professionalId] : []),
-    ...(actor.delegatedProfessionalIds ?? []),
-  ];
 }
 
 async function selectEntries(
@@ -214,16 +206,7 @@ export function createCalendar(deps: CalendarDeps) {
       const appointments = truncated ? found.slice(0, maxEntries) : found;
 
       const blocks = (await deps.blocks.list(tx, { from: query.from, to: query.to })).filter(
-        (block) =>
-          (professionals === 'everyone' ||
-            block.professionalId === null ||
-            professionals.includes(block.professionalId)) &&
-          (assigned === null ||
-            block.locationId === null ||
-            (query.locationId === undefined
-              ? assigned.includes(block.locationId)
-              : block.locationId === query.locationId && assigned.includes(block.locationId)) ||
-            (own !== null && block.professionalId === own)),
+        blockVisibility({ professionals, assigned, own, locationId: query.locationId }),
       );
       const holidays = await deps.holidays.holidaysBetween(
         tx,

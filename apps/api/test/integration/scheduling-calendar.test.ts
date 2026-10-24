@@ -378,6 +378,102 @@ describe('a professional sees their own calendar by default', () => {
   });
 });
 
+describe('the block list is scoped like the calendar feed (JD-S2 R3-1)', () => {
+  const blockBody = (weeksAfter: number, extra: Record<string, string>, reason: string) => ({
+    startsAt: `${world.monday(weeksAfter)}T09:00:00-03:00`,
+    endsAt: `${world.monday(weeksAfter)}T11:00:00-03:00`,
+    reason,
+    ...extra,
+  });
+  const listBlocks = (query: string, who: Parameters<typeof world.api.get>[1]) =>
+    world.api.get(`/schedule-blocks?${query}`, who);
+  const reasons = (response: Awaited<ReturnType<typeof world.api.get>>) =>
+    response.json<{ blocks: { reason: string }[] }>().blocks.map((block) => block.reason);
+
+  it('keeps the blocks of a colleague from a professional without a delegation', async () => {
+    await world.api.post(
+      '/schedule-blocks',
+      world.owner,
+      blockBody(20, { professionalId: world.colleague.professionalId }, 'Colleague course'),
+    );
+    await world.api.post(
+      '/schedule-blocks',
+      world.owner,
+      blockBody(20, { professionalId: world.doctor.professionalId }, 'Own course'),
+    );
+    const before = await auditCount('appointment.calendar_viewed');
+
+    const unnamed = await listBlocks(window(20), world.doctor);
+    const named = await listBlocks(
+      `${window(20)}&professionalId=${world.colleague.professionalId}`,
+      world.doctor,
+    );
+    const own = await listBlocks(
+      `${window(20)}&professionalId=${world.doctor.professionalId}`,
+      world.doctor,
+    );
+
+    expect(reasons(unnamed)).toEqual(['Own course']);
+    // As the free time of a colleague's calendar: a refusal, not an empty list.
+    expect(named.statusCode).toBe(403);
+    expect(reasons(own)).toEqual(['Own course']);
+    expect(await auditCount('appointment.calendar_viewed')).toBe(before);
+  });
+
+  it('gives them the blocks of a delegated calendar, audits the look, and stops when it is revoked', async () => {
+    await world.api.post(
+      '/schedule-blocks',
+      world.owner,
+      blockBody(21, { professionalId: world.colleague.professionalId }, 'Delegated course'),
+    );
+    const ask = () =>
+      listBlocks(`${window(21)}&professionalId=${world.colleague.professionalId}`, world.doctor);
+
+    await world.delegateCalendar(world.doctor, [world.colleague.professionalId]);
+    const viewsBefore = await auditCount('appointment.calendar_viewed');
+    const delegated = await ask();
+    const viewsAfter = await auditCount('appointment.calendar_viewed');
+    const byDefault = await listBlocks(window(21), world.doctor);
+    const viewsDefault = await auditCount('appointment.calendar_viewed');
+    await world.revokeDelegation(world.doctor);
+    const revoked = await ask();
+    const own = await listBlocks(window(21), world.doctor);
+
+    expect(delegated.statusCode).toBe(200);
+    expect(reasons(delegated)).toEqual(['Delegated course']);
+    expect(viewsAfter).toBe(viewsBefore + 1);
+    expect(reasons(byDefault)).toEqual(['Delegated course']);
+    expect(viewsDefault).toBe(viewsAfter + 1);
+    expect(revoked.statusCode).toBe(403);
+    expect(reasons(own)).toEqual([]);
+  });
+
+  it('keeps the blocks of another location from reception, and denies asking for it (audited)', async () => {
+    await world.api.post(
+      '/schedule-blocks',
+      world.owner,
+      blockBody(22, { locationId: world.norte }, 'Norte closure'),
+    );
+    await world.api.post(
+      '/schedule-blocks',
+      world.owner,
+      blockBody(22, { locationId: world.centro }, 'Centro closure'),
+    );
+    const before = await auditCount('access.denied');
+
+    const all = await listBlocks(window(22), world.reception);
+    const adminAll = await listBlocks(window(22), world.admin);
+    const denied = await listBlocks(`${window(22)}&locationId=${world.norte}`, world.reception);
+    const mine = await listBlocks(`${window(22)}&locationId=${world.centro}`, world.reception);
+
+    expect(reasons(all)).toEqual(['Centro closure']);
+    expect(reasons(adminAll).sort()).toEqual(['Centro closure', 'Norte closure']);
+    expect(denied.statusCode).toBe(403);
+    expect(await auditCount('access.denied')).toBe(before + 1);
+    expect(reasons(mine)).toEqual(['Centro closure']);
+  });
+});
+
 describe('looking at one appointment, its history or free time in a delegated calendar', () => {
   const availability = (professionalId: string, who: typeof world.doctor | typeof world.admin) =>
     world.api.get(

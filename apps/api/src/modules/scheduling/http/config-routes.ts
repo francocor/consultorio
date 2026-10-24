@@ -28,6 +28,7 @@ import type { AppointmentTypeService } from '../application/appointment-types.js
 import type { BlockService } from '../application/blocks.js';
 import type { HolidayService } from '../application/holidays.js';
 import type { HoursPeriodService } from '../application/hours-periods.js';
+import { listVisibleBlocks } from '../application/visible-blocks.js';
 
 export interface ConfigRoutesDeps {
   withTenant: WithTenant;
@@ -150,9 +151,31 @@ export function configRoutes(deps: ConfigRoutesDeps) {
         schema: { querystring: BlockListQuery, response: { 200: BlockListResponse } },
       },
       async (request) => {
-        const { context } = actorOf(request);
-        const blocks = await deps.withTenant(context, (tx) => deps.blocks.list(tx, request.query));
-        return { blocks };
+        const { actor, audit, context } = actorOf(request);
+        try {
+          const blocks = await deps.withTenant(context, (tx) =>
+            listVisibleBlocks(tx, {
+              blocks: deps.blocks,
+              query: request.query,
+              actor,
+              auditActor: audit,
+            }),
+          );
+          return { blocks };
+        } catch (error) {
+          // The same refusals as the calendar feed: a calendar that is not theirs, a location that
+          // is not assigned.
+          if (error instanceof AccessRefused) {
+            return await refuseRequest(deps.auditDeny, request, {
+              reason: error.reason,
+              resourceType: 'calendar',
+              ...(request.query.professionalId === undefined
+                ? {}
+                : { resourceId: request.query.professionalId }),
+            });
+          }
+          throw error;
+        }
       },
     );
 
