@@ -257,13 +257,13 @@ describe('asking for the email again', () => {
     return opened;
   }
 
-  it('sends the address again with a new proof and tells the old link stopped working', async () => {
+  it('sends the address again with a new proof and tells the person to use the latest email', async () => {
     const user = userEvent.setup();
     const { bodies } = await toTheCheckScreen(user);
 
     await user.click(screen.getByRole('button', { name: 'Enviar el correo de nuevo' }));
 
-    expect(await screen.findByText(/enviamos un correo nuevo/)).toBeInTheDocument();
+    expect(await screen.findByText(/Si recibe más de uno, use el último/)).toBeInTheDocument();
     expect(bodies['resend']).toEqual([{ email: 'ana@example.test', challengeProof: 'not-needed' }]);
   });
 

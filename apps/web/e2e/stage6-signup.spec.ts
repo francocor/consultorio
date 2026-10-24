@@ -149,7 +149,7 @@ test('the check-your-email screen can ask for the message again, and the young l
 
   await page.getByRole('button', { name: 'Enviar el correo de nuevo' }).click();
 
-  await expect(page.getByText(/enviamos un correo nuevo/)).toBeVisible();
+  await expect(page.getByText(/Si recibe más de uno, use el último/)).toBeVisible();
   await expectLinkKept(signup.email, first);
 
   // The page of the link does not activate until both documents are accepted (the form of the
