@@ -3429,3 +3429,25 @@ Both judges reviewed `9a4f75c4..d4575c3e` and approved it, with no CRITICAL find
 | `signup.test.tsx` | 31 passed |
 
 Stage 6 is closed. The items still open are listed in the last section of `docs/security/asvs-l2-final.md` and in `docs/go-live-checklist.md`.
+
+## Judgment Day Stage 2, round 3
+
+Both judges reviewed Stage 2 again. Stage 2 had one WARNING, now fixed; Stage 3 was APPROVED by both.
+
+- **R3-1** `GET /schedule-blocks` was open to anyone with `scheduling.read` and never received the actor. A professional with no delegation could list every colleague's blocks, free-text `reason` included; reception could list the blocks of locations it is not assigned to; and delegated looks were not audited. The calendar feed applies all of those rules to the same data.
+  - **Fix:** `listVisibleBlocks` (`modules/scheduling/application/visible-blocks.ts`) takes the actor and applies the feed's rules: `calendarAccess` for the calendars, `locationAccessOf` for the assigned locations, and the `appointment.calendar_viewed` audit when the look is at a colleague's calendar. The feed and the list share one visibility rule (`blockVisibility`) and one default (`defaultProfessionals`), so they cannot disagree. Location-wide blocks follow the location scoping.
+  - **Refusals:** an explicit `professionalId` for a calendar the actor cannot see is a 403 `forbidden` with a `not_own_calendar` denial, audited, as `/availability` and the feed answer; an unassigned `locationId` is `location_not_assigned`, as in the feed. The permission stays `scheduling.read`: reception still reads the blocks of its locations (the test "lists blocks that touch a window, to everyone who can read the schedule" is unchanged).
+  - **Tests** (`scheduling-calendar.test.ts`, "the block list is scoped like the calendar feed"): a professional without a delegation gets none of a colleague's blocks and a 403 when naming the colleague, with no audit; with a delegation they get them, by name and by default, and each look is audited, and after revoking they are refused again; reception assigned to Centro does not get the Norte blocks, is denied (audited) when it asks for Norte, and admin gets both.
+
+### Verification
+
+| Command | Result |
+| --- | --- |
+| `tsc --noEmit` (api), `eslint` and `prettier --check` on the changed files | exit 0 |
+| `vitest run --config vitest.integration.config.ts` on `scheduling-scope.test.ts`, `scheduling-config-api.test.ts`, `scheduling-calendar.test.ts` | 3 files, 60 passed |
+| `vitest run src/modules/scheduling` (unit) | 18 files, 452 passed |
+
+### Observations recorded, not fixed (below the WARNING threshold, raised by judge A)
+
+- The `document_classification` policy lets the nil user see clinical rows; it could be restricted to `app.actor_kind = 'job'`.
+- Webhooks share the `tenant-public|none` rate-limit bucket, so a flood can delay legitimate webhooks. The providers retry.
