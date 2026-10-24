@@ -52,18 +52,16 @@ export function connectOriginsFrom(list: string | undefined): string[] {
  * - Everything else (API calls, fonts, the manifest, the service worker) is the same origin,
  *   images may also be `data:` (the QR code of the second factor) or `blob:` (a logo preview).
  *
- * The development policy adds `unsafe-inline` for scripts (the React refresh preamble the dev
- * server injects is inline) and websockets (hot reload); nothing else changes, so a request to a
+ * The development policy allows inline scripts with `unsafe-inline` instead of the hashes (the
+ * React refresh preamble the dev server injects is inline, and a browser ignores `unsafe-inline`
+ * when a hash is listed) and websockets (hot reload); nothing else changes, so a request to a
  * foreign origin is still caught while developing.
  */
 export function contentSecurityPolicy(options: CspOptions): string {
   const development = options.mode === 'development';
   const directives: [string, readonly string[]][] = [
     ['default-src', ["'self'"]],
-    [
-      'script-src',
-      ["'self'", ...options.scriptHashes, ...(development ? ["'unsafe-inline'"] : [])],
-    ],
+    ['script-src', ["'self'", ...(development ? ["'unsafe-inline'"] : options.scriptHashes)]],
     ['style-src', ["'self'", "'unsafe-inline'"]],
     ['img-src', ["'self'", 'data:', 'blob:']],
     ['font-src', ["'self'"]],

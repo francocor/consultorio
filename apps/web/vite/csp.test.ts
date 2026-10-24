@@ -67,8 +67,10 @@ describe('Content Security Policy of the web bundle (ASVS 14.4.7)', () => {
   it('allows the dev server what it needs and nothing about the real policy changes', () => {
     const development = contentSecurityPolicy({ scriptHashes: [hash], mode: 'development' });
 
-    // The React refresh preamble is an inline module script and hot reload uses a websocket.
-    expect(directive(development, 'script-src')).toContain("'unsafe-inline'");
+    // The React refresh preamble is an inline module script and hot reload uses a websocket. A hash
+    // in the list makes the browser ignore 'unsafe-inline', which blocked the preamble and left the
+    // page blank, so the development policy carries no hash.
+    expect(directive(development, 'script-src')).toEqual(["'self'", "'unsafe-inline'"]);
     expect(directive(development, 'connect-src')).toEqual(["'self'", 'ws:', 'wss:']);
     expect(directive(development, 'object-src')).toEqual(["'none'"]);
     expect(directive(development, 'frame-ancestors')).toEqual(["'none'"]);
