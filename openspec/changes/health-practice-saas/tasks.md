@@ -754,7 +754,7 @@ Depends: S2.31. May slip to Stage 3 without blocking the Stage 2 gate. Blocked b
 
 Depends: S2.31.
 
-- [ ] 2.100 Fresh-context review (`judgment-day`) of scheduling concurrency, clinical access and the documents pipeline; fix findings. Test: review report attached. (PENDING, for the orchestrator: a fresh-context review cannot be run by the executor. The executor read the three areas again while integrating and found the defects recorded in apply-progress "Stage 2 integration 2"; the independent `judgment-day` review is still to be run and its report attached.)
+- [x] 2.100 Fresh-context review (`judgment-day`) of scheduling concurrency, clinical access and the documents pipeline; fix findings. Test: review report attached. **DONE:** Judgment Day approved in round 3 at `b51e70e3`. The one WARNING (the block list ignored the calendar and location scope) is fixed in `4d13fc4e`; apply-progress "Judgment Day Stage 2, round 3".
 - [ ] 2.101 `docs/legacy-parity.md` mapping legacy domains (auth, pacientes, profesionales, turnos, horarios, atencion, historias clinicas, asistencias) to the new features; facturacion and recetas stay reference-only until Stages 4 and 5 and remain recoverable from the legacy repository. Owner signs off. Test: checklist. (Document written: `docs/legacy-parity.md`. The owner's sign-off is pending.)
 
 ## S2.34 Legacy removal (N/A: legacy lives in a separate repo)
@@ -974,8 +974,8 @@ Start: tracks A to D merged. Done when: every public surface is enumerated, limi
 Start: S3.16, S3.17. Done when: the Stage 3 demo runs locally end to end. Verify: the e2e spec plus a fresh review. Rollback: default.
 
 - [x] 3.77 `e2e/stage3-demo.spec.ts`: public booking, reminder in Mailpit and in the WhatsApp simulator, confirm by link, a cancellation offered to the waitlist and accepted. [OBK-04, NTF-02, NTF-03, WTL-03] Test: that spec. **DONE at Stage 3 integration 3**: one journey on a real organization (online booking, approval, reminder in Mailpit and the WhatsApp simulator, confirmation by link, BAJA, email, a virtual appointment whose link follows, the professional joins, a cancellation offered to the waitlist and accepted) plus a test of the demonstration data, axe at 360 and 1280.
-- [ ] 3.78 Fresh-context review (`judgment-day`) of public routes, tokens and webhooks; fix findings. Test: review report attached to the PR. **OPEN**: an executor cannot launch the fresh-context reviewers; the orchestrator runs it on the diff of PR #16 (`docs/security/public-surface-stage3.md` is the map for the reviewers).
-- [ ] 3.79 Update `docs/external-dependencies.md` (WhatsApp, video, bot challenge: local adapter in use, real adapter deferred) and re-run `sdd-init`. Test: none. **PARTLY DONE**: the document is updated (a table of tasks 3.80 to 3.83 with the credentials each needs); re-running `sdd-init` is left to the orchestrator.
+- [x] 3.78 Fresh-context review (`judgment-day`) of public routes, tokens and webhooks; fix findings. Test: review report attached to the PR. **DONE:** Judgment Day approved by both judges in round 3 at `b51e70e3`, with no CRITICAL or WARNING; apply-progress "Judgment Day Stage 2, round 3" records the verdicts.
+- [x] 3.79 Update `docs/external-dependencies.md` (WhatsApp, video, bot challenge: local adapter in use, real adapter deferred) and re-run `sdd-init`. Test: none. **DONE:** the document is updated (a table of tasks 3.80 to 3.83 with the credentials each needs), and the testing capabilities were refreshed with `sdd-init` in `ca67265d`.
 
 ## S3.D Deferred real-provider adapters (no gate depends on them)
 
