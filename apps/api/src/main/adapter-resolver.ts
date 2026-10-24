@@ -1,4 +1,4 @@
-import type { InvoiceIssuer } from '@consultorio/contracts';
+import type { InvoiceIssuer, PrescriptionProvider } from '@consultorio/contracts';
 
 import type { WhatsAppSender } from '../modules/notifications/application/ports.js';
 import type { VideoLinkProvider } from '../modules/teleconsultation/application/ports.js';
@@ -29,6 +29,8 @@ export interface AdapterPorts {
   botChallenge: BotChallenge;
   /** Electronic invoices (Stage 4): ARCA/AFIP WSFE, a local simulator, an in-memory fake. */
   invoiceIssuer: InvoiceIssuer;
+  /** Electronic prescriptions (Stage 5): the authorized platform, a local simulator, an in-memory fake. */
+  prescriptionProvider: PrescriptionProvider;
 }
 export type AdapterPort = keyof AdapterPorts;
 
@@ -41,6 +43,7 @@ export const ADAPTER_PORTS = [
   'videoLink',
   'botChallenge',
   'invoiceIssuer',
+  'prescriptionProvider',
 ] as const satisfies readonly AdapterPort[];
 
 export interface Marked<A> {

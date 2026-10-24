@@ -13,7 +13,10 @@ import {
 } from '../../src/modules/identity/domain/password-policy.js';
 import { createTenantKeys } from '../../src/platform/crypto/tenant-keys.js';
 import { createRuntimeDb } from '../../src/platform/db/pool.js';
-import { findUnlistedPublicRoutes } from '../../src/platform/http/auth-guard.js';
+import {
+  findMisplacedPortalRoutes,
+  findUnlistedPublicRoutes,
+} from '../../src/platform/http/auth-guard.js';
 import { buildTestApplication } from '../support/app.js';
 import { createRecordingJobClient } from '../support/jobs.js';
 
@@ -135,6 +138,7 @@ const ABUSE = 'test/security/public-abuse.test.ts';
 const TOKENS = 'test/security/public-tokens.test.ts';
 const SELF_SERVICE = 'test/integration/booking-self-service.test.ts';
 const WAITLIST_JOIN = 'test/integration/waitlist-join.test.ts';
+const PORTAL_SIGNIN = 'test/integration/portal-signin.test.ts';
 
 const DECLARED: Record<string, Declaration> = {
   'GET /public/boot': { guards: ['open-metadata'], probes: [SURFACE_PROBES] },
@@ -197,9 +201,33 @@ const DECLARED: Record<string, Declaration> = {
     guards: ['token', 'rate-limit'],
     probes: ['test/integration/video-join-public.test.ts'],
   },
+  // The patient portal (Stage 5): register and sign in with a code. The answers never say whether an
+  // account, a document or a patient exists; the probes prove it.
+  'POST /public/:slug/portal/register': {
+    guards: ['bot-challenge', 'rate-limit'],
+    probes: [PORTAL_SIGNIN],
+  },
+  'POST /public/:slug/portal/register/verify': {
+    guards: ['otp', 'rate-limit'],
+    probes: [PORTAL_SIGNIN],
+  },
+  'POST /public/:slug/portal/otp': {
+    guards: ['bot-challenge', 'rate-limit'],
+    probes: [PORTAL_SIGNIN],
+  },
+  'POST /public/:slug/portal/otp/verify': {
+    guards: ['otp', 'rate-limit'],
+    probes: [PORTAL_SIGNIN],
+  },
   'POST /webhooks/whatsapp': {
     guards: ['signature'],
     probes: ['test/integration/whatsapp-webhook.test.ts'],
+  },
+  // The e-prescription provider tells us a prescription changed state; the signature is checked over
+  // the raw bytes, the state is whatever the provider says when asked.
+  'POST /webhooks/erx': {
+    guards: ['signature'],
+    probes: ['test/integration/prescription-lifecycle.test.ts'],
   },
 };
 
@@ -212,6 +240,13 @@ const surfaceRoutes = () =>
     .sort();
 
 describe('the public surface of the whole product', () => {
+  it('keeps the portal on its side of the line: portal routes live under /portal/ and only they do', () => {
+    const portal = [...surface.routeAuth].filter(([, auth]) => auth === 'portal');
+
+    expect(portal.length).toBeGreaterThanOrEqual(3);
+    expect(findMisplacedPortalRoutes(surface.routeAuth)).toEqual([]);
+  });
+
   it('enumerates the routes under /public/ and /webhooks/ (the list is not silently empty)', () => {
     expect(surfaceRoutes().length).toBeGreaterThanOrEqual(20);
   });
@@ -258,6 +293,10 @@ describe('the public surface of the whole product', () => {
       'POST /public/:slug/booking/holds',
       'POST /public/:slug/booking/holds/:id/submission',
       'GET /public/challenge',
+      'POST /public/:slug/portal/register',
+      'POST /public/:slug/portal/register/verify',
+      'POST /public/:slug/portal/otp',
+      'POST /public/:slug/portal/otp/verify',
     ]) {
       expect(surface.routeDeclarations.get(route)?.rateLimited, route).toBe(true);
     }

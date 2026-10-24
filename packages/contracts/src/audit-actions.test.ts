@@ -189,3 +189,69 @@ describe('Stage 4 audit actions (revenue)', () => {
     expect(AuditMetadata.safeParse({ PRIVATE_KEY: 'x' }).success).toBe(false);
   });
 });
+
+describe('Stage 5 audit actions (consent, e-prescription, portal)', () => {
+  const stage5 = [
+    'consent.template.created',
+    'consent.template.published',
+    'consent.template.retired',
+    'consent.requested',
+    'consent.signed',
+    'consent.revoked',
+    'consent.read',
+    'consent.expired',
+    'prescription.issued',
+    'prescription.cancelled',
+    'prescription.read',
+    'prescription.downloaded',
+    'prescription.failed',
+    'prescription.registered_manually',
+    'portal.identity.created',
+    'portal.identity.linked',
+    'portal.identity.deactivated',
+    'portal.signin.success',
+    'portal.signin.failure',
+    'portal.read',
+    'portal.download',
+    'portal.profile.changed',
+    'portal.denied',
+  ];
+
+  it('are all catalogued, once each', () => {
+    for (const action of stage5) {
+      expect(isAuditAction(action), action).toBe(true);
+      expect(
+        AUDIT_ACTIONS.filter((known) => known === action),
+        action,
+      ).toHaveLength(1);
+    }
+  });
+
+  it('accept the identifiers and states a consent, a prescription or a portal entry carries', () => {
+    expect(
+      AuditMetadata.safeParse({ templateVersion: 3, method: 'in_person', status: 'signed' })
+        .success,
+    ).toBe(true);
+    expect(
+      AuditMetadata.safeParse({ section: 'prescriptions', outcome: 'allow', count: 2 }).success,
+    ).toBe(true);
+  });
+
+  it('refuse the medications, signatures and evidence a prescription or a consent could tempt someone to log', () => {
+    for (const key of [
+      'prescription',
+      'items',
+      'medication',
+      'medications',
+      'signature',
+      'evidence',
+      'content',
+      'otp',
+    ]) {
+      expect(AuditMetadata.safeParse({ status: 'issued', [key]: 'x' }).success, key).toBe(false);
+    }
+    // Case and underscores do not hide a key, and a plain count of lines is fine.
+    expect(AuditMetadata.safeParse({ Medi_cations: 'x' }).success).toBe(false);
+    expect(AuditMetadata.safeParse({ itemCount: 3, status: 'issued' }).success).toBe(true);
+  });
+});

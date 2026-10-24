@@ -1,6 +1,6 @@
 # The demo organization
 
-"Centro Médico Aillu" is a fictitious medical center that ships with the product. It exists to show the whole product built so far (scheduling, clinical records, documents, the guided first run, the patient side of Stage 3: online booking, reminders, the waitlist and video visits, and Stage 4: prices, charges, cash registers, invoices and reports) with realistic content, to run the browser test suite against, and to be reset to a known state in seconds. Nothing in it is real: names, documents, phones, emails and clinical notes are invented.
+"Centro Médico Aillu" is a fictitious medical center that ships with the product. It exists to show the whole product built so far (scheduling, clinical records, documents, the guided first run, the patient side of Stage 3: online booking, reminders, the waitlist and video visits, Stage 4: prices, charges, cash registers, invoices and reports, and Stage 5: matricula verification, consent, e-prescription and the patient portal) with realistic content, to run the browser test suite against, and to be reset to a known state in seconds. Nothing in it is real: names, documents, phones, emails and clinical notes are invented.
 
 ## Run it on your machine
 
@@ -168,6 +168,33 @@ pnpm --filter @consultorio/web exec playwright test e2e/stage4-demo.spec.ts --pr
 
 It looks at every screen of billing, cash, invoices and reports with this data in them (wide tables, long lists, vouchers of every kind), closes the register of the day in the second organization, issues an invoice, checks that its PDF is a real PDF, rides out an outage and checks that the invoice is issued once after it.
 
+## Stage 5: matricula, consent, prescriptions and the patient portal
+
+The demo organizations open on their Stage 5 data. It was written through the same services the API and the worker run, so the rules are the real ones and every step is in the audit trail, and nothing leaves the process: the prescriptions go through the in-memory fake of the provider (every screen and PDF says "simulada"), and the emails of the demo are kept, not sent.
+
+| Area          | Content                                                                                                                                                                                                                                                                                                                                                                                                |
+| ------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Matricula     | The cardiologist's registration (`AR-C 41258`) is **verified**, through the same function the operator console runs, so she can prescribe. The pediatrician's and the psychologist's wait in the queue of the console, on purpose: the matricula and prescription journeys of the browser suite rely on it                                                                                             |
+| Consent       | A template that went through **two versions** (the edit published version 2 and left version 1 as it was), a second template with one version and a draft. Consents in every state: signed at the reception device (one with a hand-drawn mark, one for a minor signed by the father as representative), declined, waiting at the device, and signed and **revoked** (from the portal and at the desk) |
+| Prescriptions | Valentina Gómez has one the provider confirmed and an older one a pharmacy dispensed; Joaquín López has one confirmed; Martina Fernández has one cancelled with a reason. The connection of the organization is switched on for the simulator                                                                                                                                                          |
+| Portal        | **Valentina Gómez** (`valentina.gomez@demo.invalid`) has access to her own record, with a consent waiting for her signature (version 2) and a document shared with her. **Paula Navarro** (`paula.navarro@demo.invalid`) is the representative of her newborn, Ian. Nobody is signed in                                                                                                                |
+
+**The portal code without a mailbox.** A demonstration organization never sends an email. What it would have sent is written to the **demo outbox**, and the platform console lists it: sign in as the operator, Proveedores > "Correo de la demo", filter by the address and read the message. The tab refreshes by itself every three seconds. The outbox is emptied by the reset of the organization. (Outside production the development mail catcher also receives a copy, so Mailpit keeps working for the specs that read it; in production nothing is forwarded.)
+
+**1. The operator.** In the console, Matrículas > "Verificadas": the cardiologist's registration with the note the seed left. Withdraw it with "Retirar la verificación de Dra. Lucía Paz Ferrer": she lands in "Pendientes" and the prescriptions tab of her patients says "Su matrícula todavía no está verificada". Verify it again from the queue.
+
+**2. The professional.** Sign in as `cardiologia@`, open Valentina Gómez (search "99000001"), tab "Recetas": the two the seed left, and "Emitir receta" to make another (type "amox" and pick Amoxicilina). The provider confirms it and the PDF says it is simulated. Tab "Consentimientos": her revoked consent (version 1) and the one waiting (version 2). Reception sees the consents under a neutral label and no prescription at all.
+
+**3. The patient.** Open **http://aillu.localhost:5173/portal** (best in a 360 px window), write `valentina.gomez@demo.invalid` and press "Enviarme un código". Read the code in the demo outbox of the console and type it. In "Consentimientos" the one that waits says "Para firmar": read it, write the name, tick the box, draw the signature and press "Firmar el documento"; then download the signed record. In "Recetas" the newest is the one just issued: download it. Paula's access is the other way to see the portal: she is the representative of a newborn, so her portal shows Ian's record and nothing else.
+
+`apps/web/e2e/stage5-demo.spec.ts` is steps 1 to 3, automated at 360 px with accessibility and width checked on every screen (it needs a fresh stack: it signs the consent that waits):
+
+```bash
+pnpm --filter @consultorio/web exec playwright test e2e/stage5-demo.spec.ts --project=desktop
+```
+
+The seed verifies the matricula only when it can reach the platform operator's database role: `pnpm demo:stack`, the console's reset button and `pnpm demo:reset` can; `pnpm demo:seed` can when `OPERATOR_DATABASE_URL` is set. Without it the demo has no prescriptions, and the consents and the portal accounts are still there. A command-line seed runs in another process than the API, so the provider console does not know the prescriptions it issued; the stack and the console's reset do.
+
 ## Resetting the demo
 
 A demo organization can be put back to its starting content. It is the only place where the product deletes tenant data, and it is deliberately narrow:
@@ -175,7 +202,7 @@ A demo organization can be put back to its starting content. It is the only plac
 - The database function `app.demo_reset` refuses unless the organization is flagged `is_demo` (fixed when it is created) and can only be run by the operator console's database role. The API and the worker cannot call it.
 - It removes everything the organization holds, **including its audit trail**, and keeps the organization, its key and its feature flags. Other organizations are untouched and their audit chains still verify.
 - The platform trail records `demo.chain_reset` with the sequence number and hash where the removed chain ended, as proof of the cut.
-- With a bucket configured, the demo's files are removed from it and new ones are stored. The seed then fills the organization again (about ten seconds, with the agenda, the consultations, the documents, the charges and the invoices). Sessions end, so everyone is signed out.
+- With a bucket configured, the demo's files are removed from it and new ones are stored. The seed then fills the organization again (about ten seconds, with the agenda, the consultations, the documents, the charges, the invoices, the consents, the prescriptions and the portal accounts). Sessions end, so everyone is signed out.
 
 ```bash
 pnpm demo:reset                 # organization "aillu", documented password
@@ -188,7 +215,8 @@ pnpm demo:reset --rotate        # new random passwords, printed once
 ## Safety rules the demo follows
 
 - The seed refuses `NODE_ENV=production` with the public password and refuses any organization that is not flagged as a demo.
-- Demo organizations never reach real services: the adapter resolver (`apps/api/src/main/adapter-resolver.ts`) gives them the fake email sender, the fake WhatsApp sender, the fake video provider and the fake bot challenge, and refuses a configuration that would not. The Stage 3 seed writes rows and queues nothing.
+- Demo organizations never reach real services: the adapter resolver (`apps/api/src/main/adapter-resolver.ts`) gives them the email sender of the demo (it writes to `demo_outbox`), the fake WhatsApp sender, the fake video provider and the fake bot challenge, and refuses a configuration that would not. The Stage 3 seed writes rows and queues nothing.
+- The email of a demo organization is kept in the demo outbox, a platform table with no `tenant_id`, readable only in the provider console (behind the operator session, and only where `LOCAL_PROVIDERS_CONSOLE` is on). The reset removes the rows of the organization it resets. A prescription of the demo is issued by the in-memory fake of the provider, never by a simulator that keeps state in Postgres.
 - The in-memory fake of AFIP lives in each process. The demonstration stack runs the API and the worker in one process, so the "down" mode that the platform console sets is the one the worker's retries see; a deployment that runs them as two processes (`main.ts api` and `main.ts worker`) has two fakes, and the console reaches only the one of the API process. Until the fake keeps its mode in Postgres like the local simulator does, put a demonstration in an outage with the stack of this page, not in a split deployment (judgment day Stage 4 round 1, A-T9).
 - The invoices of the Stage 4 seed go through an in-memory fake of AFIP and hold no certificate; the payments are rows written by the seed. A demonstration organization cannot reach a real fiscal service even if the configuration says so.
 - Demo organizations are exempt from billing.

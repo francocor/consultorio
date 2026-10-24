@@ -11,13 +11,17 @@ import {
  * `docs/dev-setup.md` (a test checks it). Every later stage that adds a provider adds its
  * variables here, so the shared `config.ts` stays untouched. `AFIP_PROVIDER` (Stage 4) is the
  * electronic-invoicing issuer: the local simulator, the real ARCA adapter (deferred) or none.
+ * `ERX_PROVIDER` (Stage 5) is the e-prescription platform: the local simulator or none; the key of
+ * the real provider is added with its adapter (task 5.53).
  */
 export const PROVIDER_ENV_VARIABLES = [
   'WHATSAPP_PROVIDER',
   'VIDEO_PROVIDER',
   'BOT_CHALLENGE',
   'AFIP_PROVIDER',
+  'ERX_PROVIDER',
   'WHATSAPP_APP_SECRET',
+  'ERX_WEBHOOK_SECRET',
   'VIDEO_ALLOWED_DOMAINS',
   'VIDEO_LOCAL_BASE_URL',
   'ALLOW_LOCAL_PROVIDERS',
@@ -31,6 +35,7 @@ const HOSTNAME =
 
 const MIN_APP_SECRET_LENGTH = 16;
 const MIN_PEPPER_LENGTH = 32;
+const MIN_WEBHOOK_SECRET_LENGTH = 16;
 
 /** The Jitsi server of the local video provider: https, no credentials, no query or fragment. */
 function isServerAddress(value: string): boolean {
@@ -55,8 +60,11 @@ const providerEnv = z.object({
   VIDEO_PROVIDER: z.enum(['local', 'jaas', 'off']).optional(),
   BOT_CHALLENGE: z.enum(['local', 'turnstile']).optional(),
   AFIP_PROVIDER: z.enum(['local', 'afip', 'off']).optional(),
+  ERX_PROVIDER: z.enum(['local', 'off']).optional(),
   /** Signs the WhatsApp webhook (`X-Hub-Signature-256`). Only a secret, never a default. */
   WHATSAPP_APP_SECRET: z.string().min(MIN_APP_SECRET_LENGTH).optional(),
+  /** Signs the webhook of the e-prescription provider (HMAC). Only a secret, never a default. */
+  ERX_WEBHOOK_SECRET: z.string().min(MIN_WEBHOOK_SECRET_LENGTH).optional(),
   /** Comma-separated host names a professional's manual video link may point at. */
   VIDEO_ALLOWED_DOMAINS: z
     .string()
@@ -87,6 +95,8 @@ const providerEnv = z.object({
 export interface ProviderConfig extends ProviderSelection {
   /** Set when `WHATSAPP_APP_SECRET` is. Required for the real provider. */
   readonly whatsappAppSecret?: string;
+  /** Set when `ERX_WEBHOOK_SECRET` is. The provider webhook is refused without it. */
+  readonly erxWebhookSecret?: string;
   /** Keys the address hashes of the message log; set in production, optional elsewhere. */
   readonly addressHashPepper?: string;
   readonly videoAllowedDomains: readonly string[];
@@ -126,6 +136,7 @@ export function readProviderConfig(
     video: value.VIDEO_PROVIDER ?? (production ? 'off' : 'local'),
     botChallenge: value.BOT_CHALLENGE ?? (production ? 'turnstile' : 'local'),
     afip: value.AFIP_PROVIDER ?? (production ? 'off' : 'local'),
+    erx: value.ERX_PROVIDER ?? (production ? 'off' : 'local'),
   };
 
   const problems: ProviderEnvProblem[] = checkLocalProviders({
@@ -154,6 +165,9 @@ export function readProviderConfig(
       ...(value.WHATSAPP_APP_SECRET === undefined
         ? {}
         : { whatsappAppSecret: value.WHATSAPP_APP_SECRET }),
+      ...(value.ERX_WEBHOOK_SECRET === undefined
+        ? {}
+        : { erxWebhookSecret: value.ERX_WEBHOOK_SECRET }),
       ...(value.ADDRESS_HASH_PEPPER === undefined
         ? {}
         : { addressHashPepper: value.ADDRESS_HASH_PEPPER }),

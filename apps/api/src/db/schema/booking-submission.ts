@@ -20,6 +20,10 @@ export const OTP_PURPOSES = [
   'waitlist_join',
   'portal_registration',
   'portal_sign_in',
+  // A challenge written for an address that must not receive a code, so the answer of the portal
+  // takes the same time (JD-S5 R1-A-T3). Born spent; no code check and no count of sends reads it
+  // (JD-S5 R2-1): it can neither end a live code nor use up the sends of an address.
+  'portal_decoy',
 ] as const;
 
 const KINDS_SQL = `('${SUBMISSION_KINDS.join("', '")}')`;

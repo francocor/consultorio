@@ -43,6 +43,23 @@ export type { DocumentRules } from './application/patients.js';
 // Track A (messaging): how to reach a patient, without the rest of the demographics.
 export { readPatientContact, readPatientContacts } from './application/contact.js';
 export type { PatientContact } from './application/contact.js';
+// Consent (Stage 5, track A2): is a person a minor on a day, by the age of majority of the country.
+export { isMinor } from './domain/majority.js';
+
+// Track B of Stage 5 (patient portal): who a patient is, to invite them or to link a dependent.
+export {
+  createPortalRightsRequest,
+  listPortalRightsRequests,
+  readPatientBasics,
+  readPortalProfile,
+  updatePortalContact,
+} from './application/portal-source.js';
+export type {
+  PatientBasics,
+  PortalContactChanges,
+  PortalPatientProfile,
+  PortalRightsRequest,
+} from './application/portal-source.js';
 // Track A of Stage 4 (billing): the payer plan a patient is covered by on a day.
 export { readPatientPayerPlan } from './application/payer-plan.js';
 export type { PatientPayerPlan } from './application/payer-plan.js';

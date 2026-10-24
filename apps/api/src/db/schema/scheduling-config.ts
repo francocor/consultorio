@@ -42,6 +42,13 @@ export const appointmentType = tenantTable(
      */
     invoiceDescription: text('invoice_description'),
     requiresApproval: boolean('requires_approval').notNull().default(false),
+    /**
+     * The consent template an appointment of this type needs a valid signature of (consent, S5.14).
+     * Set and read by the consent module; scheduling never looks at it. Absent means no consent.
+     * A trigger (migration 0512) keeps it pointing at a template of the organization. A foreign key
+     * would have meant lifting row level security on both tables for the length of the migration.
+     */
+    requiresConsentTemplateId: uuid('requires_consent_template_id'),
     color: text('color'),
     professionalIds: uuid('professional_ids')
       .array()

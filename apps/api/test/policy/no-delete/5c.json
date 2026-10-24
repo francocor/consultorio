@@ -1,0 +1,15 @@
+{
+  "description": "Stage 5 integration (track C). The demo reset also removes the demo outbox of the organization it resets, and the worker removes what the outbox kept for more than a day.",
+  "code": [],
+  "sql": [
+    {
+      "file": "src/db/migrations/0590_demo_outbox.sql",
+      "why": "app.demo_reset, replaced with one more step: it removes the demo_outbox rows (the email a demo organization 'sent') of the organization it resets. Same guard as 0018: it refuses unless the organization is flagged is_demo and only the operator console's role can run it. The application role cannot delete from demo_outbox."
+    },
+    {
+      "file": "src/db/migrations/0594_demo_outbox_retention.sql",
+      "why": "app.demo_outbox_purge: the retention of the demo outbox (JD-S5 R1). The rows are fictitious email read in the provider console and are useless a day later. The application role has no DELETE on the table; this definer function, executable by it, removes only rows older than the cutoff it is given and never anything younger than an hour."
+    }
+  ],
+  "ephemeralTables": []
+}

@@ -1,6 +1,13 @@
-import type { SlotContribution } from '../../app/registry.js';
+import { lazySlot } from '../../app/lazy-slot.js';
+import type { SlotContribution, SlotProps } from '../../app/registry.js';
 
-import { CloseEntryPrompt } from './components/CloseEntryPrompt.js';
+// The prompt loads when an appointment drawer opens: the sign-in page does not pay for it (it
+// brings the dialog, the toast library and the waitlist client along).
+const CloseEntryPrompt = lazySlot<SlotProps['appointment-drawer']>(() =>
+  import('./components/CloseEntryPrompt.js').then((module) => ({
+    default: module.CloseEntryPrompt,
+  })),
+);
 
 /**
  * What the waitlist mounts inside screens that other features own: in the appointment drawer, the

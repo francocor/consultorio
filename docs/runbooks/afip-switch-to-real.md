@@ -340,12 +340,14 @@ loaded.
   gives up after a lock timeout (`markLockTimeoutMs`, 5 seconds): a pool full of attempts fails and
   the sweeper retries, it does not wait on itself. The mark's timeout is at least 1 millisecond (a
   zero would switch the lock timeout off). A mark that gives up on a lock logs it. Size the pool for the
-  number of attempts the worker runs at once plus one connection each with `DB_POOL_MAX` (6 to 100,
-  default 10; the API and the worker both read it). The configuration refuses fewer than 6
-  (`MIN_DB_POOL_MAX`; 6 is a FLOOR, not a recommended size, and a deployment that set a smaller value
-  now refuses to start): each of the 2 attempts the worker runs at once holds 2 connections, and 2 more
-  serve the sweeper and the other jobs. With fewer, two attempts would each hold one connection and wait
-  for the other's (JD-S4 R4-B-T5). A value of `markLockTimeoutMs` that is not a finite number is the
+  number of attempts the worker runs at once plus one connection each with `DB_POOL_MAX` (14 to 100,
+  default 16; the API and the worker both read it). The configuration refuses fewer than 14
+  (`MIN_DB_POOL_MAX`; 14 is a FLOOR, not a recommended size, and a deployment that set a smaller value
+  now refuses to start): the worker runs 2 jobs at once of each of the 3 families that wait for an
+  outside service while their `runJob` transaction sits idle (`afip.issue`, `erx.reconcile` and
+  `portal.notice_sweep`, listed in `CONNECTION_HOLDING_JOBS`), each holds 2 connections, and 2 more
+  serve the sweeper and the other jobs. With fewer, jobs would each hold one connection and wait for
+  the other's (JD-S4 R4-B-T5, widened to the three families in JD-S5 R4-2). A value of `markLockTimeoutMs` that is not a finite number is the
   default (5 seconds), not an error (JD-S4 R4-B-T4).
 - **A foreign voucher in the window (INFO, JD-S4 R3-B-T3, R5-1).** If somebody issues a voucher outside
   the product while an invoice waits (another tool of the issuer, a person on the website of the
@@ -452,7 +454,7 @@ loaded.
 - **`DB_POOL_MAX` below 6 refuses to start**, in the API and in the worker. 6 is a floor (2 connections
   for each of the 2 attempts the worker runs at once, and 2 for the sweeper and the other jobs), not a
   size: the default is 10, and a busy worker wants more. Check the value of every deployment before the
-  upgrade.
+  upgrade. (Round 4 of Stage 5 raised the floor to 14 and the default to 16, see below.)
 - **Migrations 0482 and 0483** (track `4jd`): `invoice.authority_last_at_mark` (nullable), and the
   condition of `app.refresh_invoiced` on the status of a credit note. An invoice that is
   `awaiting_reconciliation` when the code arrives has no `authority_last_at_mark` and is parked with its
@@ -502,6 +504,20 @@ loaded.
   `last_sent_at` settles from the moment its wait began (never from its last look).
 - **Misses of the lookup count only when they follow each other**, and the item `voucher_taken_by_other`
   no longer says that the outcome is unknown.
+
+## Upgrade notes (judgment day, Stage 5, round 4)
+
+- **`DB_POOL_MAX` below 14 refuses to start**, in the API and in the worker; the default is now 16. Three
+  families of jobs keep the transaction `runJob` opens for them idle while they wait for something
+  outside the database, and need a second connection for their own work: `afip.issue` (the authority),
+  `erx.reconcile` (the e-prescription provider) and `portal.notice_sweep` (the mail server). The floor is
+  `families x JOB_LOCAL_CONCURRENCY x 2 + 2` = 3 x 2 x 2 + 2 = 14 (`MIN_DB_POOL_MAX`, computed from
+  `CONNECTION_HOLDING_JOBS` in `platform/jobs/concurrency.ts`; a new job that waits like these must be
+  added to the list). A deployment that sets `DB_POOL_MAX` between 6 and 13 started before this round and
+  does not now: raise it (and check `max_connections` of the database: the API and the worker each open
+  up to that many). `.env.example` has `DB_POOL_MAX=16`.
+- **Migration 0581** (track `5jd`): the guard of `patient_record_change` refuses to give a notice up
+  (`notice_expired_at`) unless `registration_requires_invitation` is true in the same write.
 
 ## Rollback
 

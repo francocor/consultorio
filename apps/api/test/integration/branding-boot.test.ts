@@ -184,6 +184,26 @@ describe('GET /public/boot', () => {
     }
   });
 
+  it('says so when the prescription simulator serves the deployment, apart from the invoice issuer', async () => {
+    const simulated = buildTestApplication(runtime, {
+      storage: createMemoryObjectStorage(),
+      localProviders: { console: false, providers: [], simulated: { afip: false, erx: true } },
+    });
+    await simulated.ready();
+    try {
+      const response = await simulated.inject({
+        method: 'GET',
+        url: '/public/boot',
+        headers: browserHeaders('boot-clinic'),
+        remoteAddress: '10.98.0.1',
+      });
+
+      expect(BootPayload.parse(response.json()).localProviders).toEqual({ afip: false, erx: true });
+    } finally {
+      await simulated.close();
+    }
+  });
+
   it('lists only the features that are on', async () => {
     const boot = (await get('/public/boot', 'boot-clinic')).json<BootPayload>();
 

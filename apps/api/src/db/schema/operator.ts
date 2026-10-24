@@ -15,6 +15,7 @@ import {
 } from 'drizzle-orm/pg-core';
 
 import { bytea, citext, tenantTable } from './_helpers.js';
+import { professional } from './staff.js';
 import { tenant } from './tenant.js';
 
 /**
@@ -156,6 +157,46 @@ export const supportGrant = tenantTable(
       sql`${table.expiresAt} <= ${table.startsAt} + interval '7 days'`,
     ),
     index('support_grant_tenant_idx').on(table.tenantId, table.expiresAt),
+  ],
+);
+
+/**
+ * The operator's working note on one registration ("consulted the college, waiting for an answer").
+ * One row per professional, plain text. It is platform data, like the operator's sessions and trail:
+ * no `tenant_id` column and no row level security, because the application role has no privilege on
+ * the table at all (migration 0505) and only the operator role reads or writes it. The organization
+ * that is the subject of a note never sees it. The composite key to the professional keeps a note
+ * from naming a professional of another organization, and a demo reset that removes the professional
+ * removes the note with it.
+ */
+export const matriculaOperatorNote = pgTable(
+  'matricula_operator_note',
+  {
+    id: uuid('id')
+      .primaryKey()
+      .default(sql`app.uuid_v7()`),
+    targetTenantId: uuid('target_tenant_id').notNull(),
+    professionalId: uuid('professional_id').notNull(),
+    note: text('note').notNull().default(''),
+    /** The operator who wrote the current text. */
+    updatedBy: uuid('updated_by').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true })
+      .notNull()
+      .defaultNow()
+      .$onUpdate(() => new Date()),
+  },
+  (table) => [
+    foreignKey({
+      name: 'matricula_operator_note_professional_fkey',
+      columns: [table.targetTenantId, table.professionalId],
+      foreignColumns: [professional.tenantId, professional.id],
+    }).onDelete('cascade'),
+    uniqueIndex('matricula_operator_note_professional_key').on(
+      table.targetTenantId,
+      table.professionalId,
+    ),
+    check('matricula_operator_note_length_check', sql`char_length(${table.note}) <= 500`),
   ],
 );
 

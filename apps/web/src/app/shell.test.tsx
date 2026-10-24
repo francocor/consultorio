@@ -2,6 +2,7 @@ import { screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it } from 'vitest';
 
+import { signedOutRoutes } from '../features/portal/portal-fixtures.js';
 import { a11yViolations } from '../shared/test/a11y.js';
 import { bootFor, meFor } from '../shared/test/fixtures.js';
 import { renderApp, renderInRouter } from '../shared/test/render-app.js';
@@ -269,10 +270,10 @@ describe('FirstRunSlot', () => {
 
 describe('minimal shells for the portal and public booking', () => {
   it('/portal is a separate, minimal shell with no staff navigation', async () => {
-    renderApp({ me: null, path: '/portal' });
+    renderApp({ me: null, path: '/portal', routes: signedOutRoutes() });
 
     expect(
-      await screen.findByRole('heading', { level: 1, name: 'Portal de pacientes' }),
+      await screen.findByRole('heading', { level: 1, name: 'Ingresar al portal de pacientes' }),
     ).toBeInTheDocument();
     expect(screen.queryByRole('navigation')).not.toBeInTheDocument();
   });

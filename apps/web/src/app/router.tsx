@@ -66,8 +66,16 @@ function RoutePending() {
   );
 }
 
+/**
+ * Resolves when the catalogs the first bundle does not carry are in the i18n instance. The sign-in
+ * page never waits for it; every other frame does, before it draws (see `loadRemainingCatalogs`).
+ */
+export type LoadCatalogs = () => Promise<void>;
+
+const CATALOGS_IN_HAND: LoadCatalogs = () => Promise.resolve();
+
 /** One route tree per router, so tests (and a tenant switch) never share route state. */
-function buildRouteTree(registry: AppRegistry) {
+function buildRouteTree(registry: AppRegistry, catalogs: LoadCatalogs) {
   /** The routes that features contribute under a mount point. */
   const contributed = (mount: RouteMount, parent: AnyRoute) =>
     registry.routes.filter((entry) => entry.mount === mount).map((entry) => entry.create(parent));
@@ -128,7 +136,7 @@ function buildRouteTree(registry: AppRegistry) {
     getParentRoute: () => rootRoute,
     id: 'authed',
     beforeLoad: async ({ context, location }) => {
-      const { queryClient, api } = context.services;
+      const { queryClient, api, registry: contributions } = context.services;
       let me;
       try {
         me = await queryClient.query(meQueryOptions(api));
@@ -139,6 +147,9 @@ function buildRouteTree(registry: AppRegistry) {
       if (!me) {
         throw redirect({ to: '/login', search: { redirect: safeRedirect(location.href) } });
       }
+      // Only a visitor with a session pays for the frame: the navigation and slots of the features
+      // and the texts of their screens. Somebody sent to sign-in downloads none of it.
+      await Promise.all([contributions.ready(), catalogs()]);
       const enrolling = location.pathname.startsWith('/account');
       if (me.scope === 'two_factor_enrollment' && !enrolling) {
         throw redirect({ to: '/account/security' });
@@ -367,17 +378,20 @@ function buildRouteTree(registry: AppRegistry) {
     component: NotFoundPage,
   });
 
-  // The patient portal and public booking have their own minimal shell.
+  // Public booking has its own minimal shell.
   const minimalRoute = createRoute({
     getParentRoute: () => rootRoute,
     id: 'minimal',
+    beforeLoad: catalogs,
     component: MinimalShell,
   });
 
-  const portalRoute = createRoute({
-    getParentRoute: () => minimalRoute,
-    path: '/portal',
-    component: lazyRouteComponent(() => import('../features/portal/PortalPage.js'), 'PortalPage'),
+  // The patient portal has a shell of its own; the portal feature mounts its routes in it.
+  const portalShellRoute = createRoute({
+    getParentRoute: () => rootRoute,
+    id: 'portal-shell',
+    beforeLoad: catalogs,
+    component: lazyRouteComponent(() => import('./PortalShell.js'), 'PortalShell'),
   });
 
   return rootRoute.addChildren([
@@ -409,12 +423,13 @@ function buildRouteTree(registry: AppRegistry) {
       ...contributed('authed', authedRoute),
       unknownRoute,
     ]),
-    minimalRoute.addChildren([portalRoute, ...contributed('minimal', minimalRoute)]),
+    minimalRoute.addChildren(contributed('minimal', minimalRoute)),
+    portalShellRoute.addChildren(contributed('portal', portalShellRoute)),
   ]);
 }
 
 /** The platform host has one screen: the operator console decides between sign-in and content. */
-function buildOperatorRouteTree() {
+function buildOperatorRouteTree(catalogs: LoadCatalogs) {
   const rootRoute = createRootRouteWithContext<RouterContext>()({
     component: RootLayout,
     notFoundComponent: function RedirectHome() {
@@ -424,6 +439,7 @@ function buildOperatorRouteTree() {
   const consoleRoute = createRoute({
     getParentRoute: () => rootRoute,
     path: '/',
+    beforeLoad: catalogs,
     component: lazyRouteComponent(
       () => import('../features/operator/OperatorConsole.js'),
       'OperatorConsole',
@@ -435,12 +451,15 @@ function buildOperatorRouteTree() {
 export function createAppRouter({
   services,
   history,
+  catalogs = CATALOGS_IN_HAND,
 }: {
   services: AppServices;
   history?: RouterHistory;
+  /** Loads the catalogs of the screens; missing when the i18n instance has them all already. */
+  catalogs?: LoadCatalogs;
 }) {
   const router = createRouter({
-    routeTree: buildRouteTree(services.registry),
+    routeTree: buildRouteTree(services.registry, catalogs),
     context: { services },
     ...(history ? { history } : {}),
     defaultPendingComponent: RoutePending,
@@ -467,12 +486,15 @@ export function createAppRouter({
 export function createOperatorRouter({
   services,
   history,
+  catalogs = CATALOGS_IN_HAND,
 }: {
   services: AppServices;
   history?: RouterHistory;
+  /** Loads the catalogs of the screens; missing when the i18n instance has them all already. */
+  catalogs?: LoadCatalogs;
 }) {
   return createRouter({
-    routeTree: buildOperatorRouteTree(),
+    routeTree: buildOperatorRouteTree(catalogs),
     context: { services },
     ...(history ? { history } : {}),
     defaultPendingComponent: RoutePending,

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { BILLING_ERRORS } from './billing.js';
+import { CONSENT_ERRORS } from './consent.js';
 import {
   ERROR_CATALOG,
   ERROR_CODES,
@@ -11,6 +12,8 @@ import {
 import { INVOICING_ERRORS } from './invoicing.js';
 import { NOTIFICATION_ERRORS } from './notifications.js';
 import { ONLINE_BOOKING_ERRORS } from './online-booking.js';
+import { PORTAL_ERRORS } from './portal.js';
+import { PRESCRIPTION_ERRORS } from './prescriptions.js';
 import { REPORTS_ERRORS } from './reports.js';
 import { TELECONSULTATION_ERRORS } from './teleconsultation.js';
 import { WAITLIST_ERRORS } from './waitlist-catalog.js';
@@ -120,6 +123,9 @@ describe('the error catalogs of the modules', () => {
     billing: BILLING_ERRORS,
     reports: REPORTS_ERRORS,
     invoicing: INVOICING_ERRORS,
+    consent: CONSENT_ERRORS,
+    prescriptions: PRESCRIPTION_ERRORS,
+    portal: PORTAL_ERRORS,
   };
 
   it.each(Object.entries(modules))(

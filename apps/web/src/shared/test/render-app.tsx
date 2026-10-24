@@ -16,9 +16,11 @@ import {
   createAppRouter,
   createOperatorRouter,
   type AppRouter,
+  type LoadCatalogs,
   type OperatorRouter,
 } from '../../app/router.js';
 import { createAppServices, type AppServices } from '../../app/services.js';
+import { LOCALE_RESOURCES } from '../lib/locale-all.js';
 
 import { bootFor } from './fixtures.js';
 import { jsonResponse, problemResponse, urlOf, type FetchHandler } from './render.js';
@@ -32,6 +34,8 @@ export interface RenderAppOptions {
   platform?: boolean;
   /** Replaces what the features contribute (fixture features). */
   registry?: AppRegistry;
+  /** What loads the catalogs of the screens, like the application does; missing means they are all in hand. */
+  catalogs?: LoadCatalogs;
   /** Extra API routes, keyed "METHOD /api/path". */
   routes?: Record<string, FetchHandler | Response>;
 }
@@ -82,6 +86,7 @@ function setup(options: RenderAppOptions) {
     retry: () => false,
   });
   const i18n = createI18n({
+    resources: LOCALE_RESOURCES,
     onMissing: (key) => {
       missingKeys.push(key);
     },
@@ -93,9 +98,10 @@ function setup(options: RenderAppOptions) {
 export function renderApp(options: RenderAppOptions = {}): RenderedApp {
   const { services, i18n, requests, missingKeys } = setup(options);
   const history = createMemoryHistory({ initialEntries: [options.path ?? '/'] });
+  const catalogs = options.catalogs ? { catalogs: options.catalogs } : {};
   const router = options.platform
-    ? createOperatorRouter({ services, history })
-    : createAppRouter({ services, history });
+    ? createOperatorRouter({ services, history, ...catalogs })
+    : createAppRouter({ services, history, ...catalogs });
   const result = render(
     <AppProviders services={services} i18n={i18n}>
       <RouterProvider router={router} />

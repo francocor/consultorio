@@ -1,12 +1,22 @@
+import { randomBytes } from 'node:crypto';
+
 import { ROUTE_CATEGORIES, type RouteCategory } from '@consultorio/contracts';
 import { describe, expect, it } from 'vitest';
 
+import { createLocalKeyManagement } from '../../src/adapters/local-kek/index.js';
 import { buildServer } from '../../src/main/server.js';
+import { createOperatorSecrets } from '../../src/modules/operator/index.js';
 import { createRuntimeDb } from '../../src/platform/db/pool.js';
 import { testTenancy } from '../../src/testing/tenancy.js';
 import { buildTestApplication } from '../support/app.js';
 
 import { findStage4RouteProblems, isStage4Route, STAGE4_ROUTES } from './stage4-routes.js';
+import {
+  findStage5RouteProblems,
+  isStage5Route,
+  LINK_ONLY_ROUTES,
+  STAGE5_ROUTES,
+} from './stage5-routes.js';
 
 /**
  * Every route of the real application (all feature routes enabled, multi mode) must declare a
@@ -113,5 +123,91 @@ describe('the routes of Stage 4', () => {
       .map(([key]) => key)
       .sort();
     expect(open).toEqual(['POST /billing/exports', 'POST /billing/exports/:id/download']);
+  });
+});
+
+/**
+ * Stage 5 (matricula verification, consent, prescriptions, the patient portal): the categories are
+ * listed route by route in `stage5-routes.ts`. A new route of these modules fails here until
+ * somebody decides its category, and the four changes that stay open in a read-only organization
+ * (the patient's own protection) are exactly the ones the table names.
+ */
+describe('the routes of Stage 5', () => {
+  async function stage5Routes() {
+    const db = createRuntimeDb('postgres://nobody:nothing@127.0.0.1:1/none');
+    // With the operator console, so the routes of the matricula verification exist too.
+    const app = buildTestApplication(db, {
+      operator: {
+        database: db,
+        secrets: createOperatorSecrets(
+          createLocalKeyManagement(randomBytes(32).toString('base64')),
+        ),
+      },
+    });
+    await app.ready();
+    const routes = new Map(app.routeCategories);
+    await app.close();
+    return routes;
+  }
+
+  it('lists every route of these modules with the category the table gives it', async () => {
+    const routes = await stage5Routes();
+
+    const registered = [...routes.keys()].filter((key) => isStage5Route(key));
+    expect(registered.length).toBeGreaterThan(80);
+    expect(findStage5RouteProblems(routes)).toEqual([]);
+  });
+
+  it('refuses a route that is not in the table, one that went missing and one in the wrong category', () => {
+    const routes = new Map<string, RouteCategory>(
+      Object.entries(STAGE5_ROUTES).map(([key, category]) => [key, category]),
+    );
+    routes.set('POST /portal/surprise', 'write');
+    routes.delete('GET /prescriptions/catalog');
+    routes.set('POST /consents/requests/:id/sign', 'read');
+    routes.set('POST /consents/requests/:id/revoke', 'write');
+
+    expect(findStage5RouteProblems(routes)).toEqual([
+      'POST /portal/surprise is registered but not in the table of Stage 5 routes',
+      'GET /prescriptions/catalog is in the table but not registered',
+      'POST /consents/requests/:id/sign is filed as "read" but the table says "write"',
+      'POST /consents/requests/:id/revoke is filed as "write" but the table says "patient_protective"',
+      'POST /consents/requests/:id/sign changes data and is filed as "read", which a read-only organization may call',
+    ]);
+  });
+
+  it('never files a change as a read (but the links to a file), and never a read as a write', () => {
+    const wrong = Object.entries(STAGE5_ROUTES).filter(([key, category]) => {
+      const reads = key.startsWith('GET ');
+      return reads ? category !== 'read' : category === 'read' && !LINK_ONLY_ROUTES.includes(key);
+    });
+
+    expect(wrong).toEqual([]);
+  });
+
+  it('keeps open in a read-only organization only what protects the patient, signing in and the notice of the provider', () => {
+    const open = Object.entries(STAGE5_ROUTES)
+      .filter(([key, category]) => !key.startsWith('GET ') && category !== 'write')
+      .filter(([key]) => !LINK_ONLY_ROUTES.includes(key))
+      .map(([key, category]) => `${key} ${category}`)
+      .sort();
+
+    expect(open).toEqual([
+      'DELETE /portal/sessions/:id auth',
+      'POST /consents/requests/:id/revoke patient_protective',
+      'POST /patients/:id/consent/revoke patient_protective',
+      'POST /portal/appointments/:id/cancel patient_protective',
+      'POST /portal/consents/:id/revoke patient_protective',
+      'POST /portal/copy-requests patient_protective',
+      'POST /portal/links/:id/revoke patient_protective',
+      'POST /portal/logout auth',
+      'POST /portal/rectification-requests patient_protective',
+      'POST /portal/subject auth',
+      'POST /public/:slug/portal/otp auth',
+      'POST /public/:slug/portal/otp/verify auth',
+      'POST /public/:slug/portal/register auth',
+      'POST /public/:slug/portal/register/verify auth',
+      'POST /webhooks/erx webhook',
+    ]);
   });
 });

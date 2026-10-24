@@ -162,10 +162,27 @@ export const PERMISSIONS = [
   // Uploads a clinical document, hides it, or reclassifies one. Never grantable.
   'clinical.document.write',
   'clinical.prescription.read',
+  // Issues, cancels and registers a prescription. Professionals only, never grantable (Stage 5).
+  'clinical.prescription.write',
+  // Opens a signed consent (its content and evidence). Professionals only, never grantable (Stage 5).
+  'clinical.consent.read',
   'clinical.search',
-  // Patient portal.
+  // Consent (Stage 5): the template library and the requests made to patients. Neither is clinical.
+  'consent.template.manage',
+  'consent.request',
+  // Patient portal: what the staff do about portal accounts, and what the portal actor itself may do.
+  'portal.manage',
+  // Changes the email an account signs in with. Whoever holds the mailbox holds the account, so this
+  // is owner and admin only, never reception (JD-S5 R1-A-C1).
+  'portal.identity.email',
   'portal.self.read',
   'portal.appointment.cancel',
+  'portal.consent.sign',
+  'portal.consent.revoke',
+  'portal.document.read',
+  'portal.prescription.read',
+  'portal.invoice.read',
+  'portal.profile.write',
 ] as const;
 export type Permission = (typeof PERMISSIONS)[number];
 
@@ -214,6 +231,26 @@ const ADMINISTRATION = [
   'invoicing.configure',
   'invoicing.credit_note',
   'invoicing.manual',
+  // Stage 5: the consent templates, and inviting, linking and deactivating portal accounts.
+  'consent.template.manage',
+  'portal.manage',
+  'portal.identity.email',
+] as const satisfies readonly Permission[];
+
+/**
+ * What the portal actor (a patient or the representative of one) may do. It is a closed list: the
+ * portal never holds a staff permission, and `can()` refuses a portal actor anything outside it,
+ * including `portal.manage`, which is for the staff who run the accounts.
+ */
+export const PORTAL_ACTOR_PERMISSIONS = [
+  'portal.self.read',
+  'portal.appointment.cancel',
+  'portal.consent.sign',
+  'portal.consent.revoke',
+  'portal.document.read',
+  'portal.prescription.read',
+  'portal.invoice.read',
+  'portal.profile.write',
 ] as const satisfies readonly Permission[];
 
 export const ROLE_PERMISSIONS: Record<Role, readonly Permission[]> = {
@@ -233,6 +270,9 @@ export const ROLE_PERMISSIONS: Record<Role, readonly Permission[]> = {
     'payments.read',
     // Reports are scoped on the server: a professional reads the figures of their own appointments.
     'reports.read',
+    // Consent: the library of templates, and asking a patient to sign one.
+    'consent.template.manage',
+    'consent.request',
     ...CLINICAL,
   ],
   // Reception holds patient administration and the cash register by default.
@@ -254,8 +294,11 @@ export const ROLE_PERMISSIONS: Record<Role, readonly Permission[]> = {
     'invoicing.issue',
     // Operational reports and the cash report of their own locations, never revenue by professional.
     'reports.read',
+    // Asks a patient to sign a consent and runs the portal accounts; never reads the content.
+    'consent.request',
+    'portal.manage',
   ],
-  patient: ['portal.self.read', 'portal.appointment.cancel'],
+  patient: PORTAL_ACTOR_PERMISSIONS,
 };
 
 /**

@@ -460,8 +460,8 @@ describe('the mark written before the call (JD-S4 R2-3)', () => {
     const sized = createRuntimeDb(inject('runtimeUrl'), { max: 4 });
     try {
       expect(handle.pool.options.connectionTimeoutMillis).toBe(10_000);
-      // Ten connections unless the configuration says otherwise (`DB_POOL_MAX`).
-      expect(handle.pool.options.max).toBe(10);
+      // Sixteen connections unless the configuration says otherwise (`DB_POOL_MAX`).
+      expect(handle.pool.options.max).toBe(16);
       expect(sized.pool.options.max).toBe(4);
     } finally {
       void handle.close();

@@ -69,6 +69,8 @@ export const TRACK_RANGES: Readonly<Record<string, Range & { label: string }>> =
   '5a2': { start: 510, end: 529, label: 'Stage 5, A2 consent' },
   '5a3': { start: 530, end: 549, label: 'Stage 5, A3 e-prescription' },
   '5b': { start: 550, end: 579, label: 'Stage 5, B portal' },
+  // The gap 0580 - 0589 was reserved; 0590 - 0599 of 5c are full, so judgment day follow-ups go here.
+  '5jd': { start: 580, end: 589, label: 'Stage 5, judgment day follow-ups' },
   '5c': { start: 590, end: 599, label: 'Stage 5, C integration' },
   '6seam': { start: 600, end: 609, label: 'Stage 6 seams' },
   '6a': { start: 610, end: 639, label: 'Stage 6, A subscriptions' },

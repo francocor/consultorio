@@ -1,5 +1,6 @@
 import type { VideoJoinRegistry } from '../../modules/notifications/index.js';
 import type { WorklistService } from '../../modules/scheduling/index.js';
+import type { PortalActor } from '../../platform/authz/actor.js';
 import type { AuthzOptions } from '../../platform/authz/guard.js';
 import type { TenantKeys } from '../../platform/crypto/tenant-keys.js';
 import type { Db } from '../../platform/db/pool.js';
@@ -55,6 +56,12 @@ export interface WiringContext {
    * registers the resource of its token kind here, in `create`; the route is not its own.
    */
   fileResources: FileResourceRegistry;
+  /**
+   * What the patient portal's own door serves (Stage 5). A separate registry from `fileResources`:
+   * its resources redeem for the `PortalActor` of the session, and a staff resource never opens a
+   * patient's link or the other way round. Only the portal module registers here.
+   */
+  portalFileResources: FileResourceRegistry<PortalActor>;
 }
 
 /** What the module needs to fill its slots of the adapter registry. */

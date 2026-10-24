@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 
+import type { PortalActor } from '../authz/actor.js';
 import type { Tx } from '../db/tenant-context.js';
 
 import {
@@ -128,5 +129,67 @@ describe('the file resource registry (what /files/:token serves)', () => {
 
     expect(registry.audits()).toEqual(['document.downloaded', 'export.requested']);
     expect(registry.kinds()).toEqual(['document_download', 'export_download']);
+  });
+});
+
+describe('the registry of the patient portal (a door of its own, with the portal actor)', () => {
+  const portalActor: PortalActor = {
+    kind: 'portal',
+    tenantId: '0190a000-0000-7000-8000-0000000000e1',
+    identityId: '0190a000-0000-7000-8000-0000000000c1',
+    linkId: '0190a000-0000-7000-8000-0000000000c2',
+  };
+  const portalInput = { ...input, actor: portalActor } satisfies FileRedeemInput<PortalActor>;
+
+  const portalResource = (
+    kind: FileResource['kind'],
+    redeem: FileResource<PortalActor>['redeem'],
+  ): FileResource<PortalActor> => ({ kind, audits: ['portal.download'], redeem });
+
+  it('keeps the resources of the portal apart from the staff ones, even for the same kind of link', async () => {
+    const staff = createFileResourceRegistry();
+    const portal = createFileResourceRegistry<PortalActor>();
+    staff.register(resource('document_download', () => Promise.resolve(delivery('staff-file'))));
+    portal.register(
+      portalResource('document_download', () => Promise.resolve(delivery('portal-file'))),
+    );
+
+    await expect(portal.redeem(tx, portalInput)).resolves.toEqual(delivery('portal-file'));
+    await expect(staff.redeem(tx, input)).resolves.toEqual(delivery('staff-file'));
+  });
+
+  it('hands the resource the portal actor of the session, so it can authorize the subject again', async () => {
+    const portal = createFileResourceRegistry<PortalActor>();
+    const redeem = vi.fn((_tx: Tx, received: FileRedeemInput<PortalActor>) =>
+      Promise.resolve(delivery(received.actor.linkId ?? 'no-subject')),
+    );
+    portal.register(portalResource('document_download', redeem));
+
+    await expect(portal.redeem(tx, portalInput)).resolves.toEqual(
+      delivery('0190a000-0000-7000-8000-0000000000c2'),
+    );
+    expect(redeem).toHaveBeenCalledWith(tx, portalInput);
+  });
+
+  it('fails closed for a link that only a staff resource would open', async () => {
+    const staff = createFileResourceRegistry();
+    const portal = createFileResourceRegistry<PortalActor>();
+    staff.register(resource('document_download', () => Promise.resolve(delivery('staff-file'))));
+
+    await expect(portal.redeem(tx, portalInput)).rejects.toMatchObject({
+      reason: 'file_link_invalid',
+    });
+  });
+
+  it('declares the audit actions of its own resources, not the staff ones', () => {
+    const staff = createFileResourceRegistry();
+    const portal = createFileResourceRegistry<PortalActor>();
+    staff.register(
+      resource('document_download', () => Promise.resolve(null), ['document.downloaded']),
+    );
+    portal.register(portalResource('document_download', () => Promise.resolve(null)));
+
+    expect(portal.audits()).toEqual(['portal.download']);
+    expect(staff.audits()).toEqual(['document.downloaded']);
   });
 });

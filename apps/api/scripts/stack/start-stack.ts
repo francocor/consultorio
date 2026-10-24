@@ -29,6 +29,7 @@ import { documentWorker } from '../../src/main/document-jobs.js';
 import { createConfiguredEmail } from '../../src/main/email.js';
 import { loadPasswordValidator } from '../../src/main/password-validator.js';
 import { MODULE_WIRINGS, combineWorkerContributions } from '../../src/main/wiring/index.js';
+import { demoPrescriptionProviderOf } from '../../src/main/wiring/prescriptions.js';
 import { createPasswordHasher } from '../../src/modules/identity/index.js';
 import { createVideoJoinRegistry } from '../../src/modules/notifications/index.js';
 import { createOperatorAdminFor, createOperatorSecrets } from '../../src/modules/operator/index.js';
@@ -206,6 +207,24 @@ export async function startStack(options: StackOptions): Promise<Stack> {
     const hasher = createPasswordHasher();
     const withTenant = createWithTenant(runtime.db);
 
+    // The same composition as `main`: the modules, their adapters (the local simulators), the
+    // provider console and the jobs of the worker, so a browser journey runs the real thing.
+    const config = loadConfig({
+      DATABASE_URL: runtimeUrl,
+      BASE_DOMAIN: baseDomain,
+      PLATFORM_HOST: platformHost,
+      KMS_LOCAL_KEK_BASE64: kek,
+      LOCAL_PROVIDERS_CONSOLE: 'true',
+      // The worker wiring (exports, invoice PDFs) builds its storage from this configuration, the
+      // same bucket and credentials the API got above.
+      S3_BUCKET: BUCKET,
+      S3_REGION: 'us-east-1',
+      S3_ENDPOINT: storageUrl,
+      S3_FORCE_PATH_STYLE: 'true',
+      S3_ACCESS_KEY_ID: MINIO_USER,
+      S3_SECRET_ACCESS_KEY: MINIO_PASSWORD,
+    });
+
     // Two demo organizations with different looks.
     log('Seeding demo organizations');
     const deps = {
@@ -215,6 +234,13 @@ export async function startStack(options: StackOptions): Promise<Stack> {
       consentText: consentTextFor(runtime.db),
       clock: () => new Date(),
       documents: { storage, scanner },
+      // The platform operator verifies the matricula of the cardiologist of each demo organization
+      // (the only professional who may prescribe, like an organization that went through the
+      // operator's queue); the other professionals stay unverified. Only the operator's role can.
+      operatorDb: operatorDb.db,
+      // What the demo issues is held by the fake the application serves the demo with, so the
+      // provider console knows it.
+      prescriptionProvider: demoPrescriptionProviderOf(config),
     };
     const aillu = await ensureDemoTenant(runtime.db, withTenant, 'aillu');
     await seedDemoTenant(deps, aillu.id);
@@ -245,23 +271,6 @@ export async function startStack(options: StackOptions): Promise<Stack> {
     closers.unshift(() => jobsBoss.stop({ graceful: false }));
 
     const passwordValidator = await loadPasswordValidator({ breachCheck: false });
-    // The same composition as `main`: the modules, their adapters (the local simulators), the
-    // provider console and the jobs of the worker, so a browser journey runs the real thing.
-    const config = loadConfig({
-      DATABASE_URL: runtimeUrl,
-      BASE_DOMAIN: baseDomain,
-      PLATFORM_HOST: platformHost,
-      KMS_LOCAL_KEK_BASE64: kek,
-      LOCAL_PROVIDERS_CONSOLE: 'true',
-      // The worker wiring (exports, invoice PDFs) builds its storage from this configuration, the
-      // same bucket and credentials the API got above.
-      S3_BUCKET: BUCKET,
-      S3_REGION: 'us-east-1',
-      S3_ENDPOINT: storageUrl,
-      S3_FORCE_PATH_STYLE: 'true',
-      S3_ACCESS_KEY_ID: MINIO_USER,
-      S3_SECRET_ACCESS_KEY: MINIO_PASSWORD,
-    });
     const adapters = createAdapterResolver(
       buildAdapterRegistry({
         config,
@@ -287,7 +296,10 @@ export async function startStack(options: StackOptions): Promise<Stack> {
       localProviders: {
         console: config.providers.localProvidersConsole,
         providers: MODULE_WIRINGS.flatMap((module) => module.devProviders?.({ config }) ?? []),
-        simulated: { afip: config.providers.afip === 'local' },
+        simulated: {
+          afip: config.providers.afip === 'local',
+          erx: config.providers.erx === 'local',
+        },
       },
       passwordValidator,
       storage,

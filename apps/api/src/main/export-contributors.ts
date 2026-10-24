@@ -2,6 +2,7 @@ import { registerAccessExportContributors } from '../modules/access/index.js';
 import { registerAuditExportContributors } from '../modules/audit/index.js';
 import { registerBillingExportContributors } from '../modules/billing/index.js';
 import { registerClinicalExportContributors } from '../modules/clinical/index.js';
+import { registerConsentExportContributors } from '../modules/consent/index.js';
 import { registerDocumentsExportContributors } from '../modules/documents/index.js';
 import { registerIdentityExportContributors } from '../modules/identity/index.js';
 import { registerInvoicingExportContributors } from '../modules/invoicing/index.js';
@@ -9,6 +10,8 @@ import { registerNotificationsExportContributors } from '../modules/notification
 import { registerOnboardingExportContributors } from '../modules/onboarding/index.js';
 import { registerOnlineBookingExportContributors } from '../modules/online-booking/index.js';
 import { registerPatientsExportContributors } from '../modules/patients/index.js';
+import { registerPortalExportContributors } from '../modules/portal/index.js';
+import { registerPrescriptionsExportContributors } from '../modules/prescriptions/index.js';
 import { registerReportsExportContributors } from '../modules/reports/index.js';
 import { registerSchedulingExportContributors } from '../modules/scheduling/index.js';
 import { registerStaffExportContributors } from '../modules/staff/index.js';
@@ -45,4 +48,7 @@ export function registerAllExportContributors(
   registerBillingExportContributors(registry);
   registerInvoicingExportContributors(registry);
   registerReportsExportContributors(registry);
+  registerConsentExportContributors(registry, deps);
+  registerPrescriptionsExportContributors(registry, deps);
+  registerPortalExportContributors(registry);
 }

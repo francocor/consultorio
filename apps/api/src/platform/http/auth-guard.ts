@@ -1,4 +1,10 @@
-import { PERMISSIONS, type Permission, type Role, type SessionScope } from '@consultorio/contracts';
+import {
+  PERMISSIONS,
+  PORTAL_ACTOR_PERMISSIONS,
+  type Permission,
+  type Role,
+  type SessionScope,
+} from '@consultorio/contracts';
 import type { FastifyInstance } from 'fastify';
 
 import { setAuditActor } from '../audit/request-context.js';
@@ -23,8 +29,20 @@ export type Authenticate = (
   tenantId: string,
 ) => Promise<AuthenticatedSession | null>;
 
-/** `public` needs no session; `session` needs any valid one. */
-export type RouteAuth = 'public' | 'session';
+/**
+ * `public` needs no session; `session` needs any valid one; `portal` needs a session of the patient
+ * portal (the `psid` cookie, a door of its own: the staff cookie opens none of these and this one
+ * opens no other route).
+ */
+export type RouteAuth = 'public' | 'session' | 'portal';
+
+/**
+ * Where the authenticated routes of the patient portal live. Every route under it is a `portal`
+ * route and every `portal` route is under it, so the staff guard and the portal guard never share a
+ * route (the boot hook below refuses the rest, `findMisplacedPortalRoutes` proves it on the real
+ * application).
+ */
+export const PORTAL_ROUTE_PREFIX = '/portal/';
 
 declare module 'fastify' {
   interface FastifyContextConfig {
@@ -35,6 +53,11 @@ declare module 'fastify' {
      * Every other route answers it 403 `two_factor_enrollment_required`.
      */
     allowEnrollmentScope?: boolean;
+    /**
+     * What a portal route asks of the portal actor, from `PORTAL_ACTOR_PERMISSIONS`. The portal
+     * guard decides it before the handler runs. Mandatory with `auth: 'portal'`.
+     */
+    portalPermission?: Permission;
   }
   interface FastifyRequest {
     /** The verified session, or null on public routes and before authentication. */
@@ -96,8 +119,26 @@ export function findUnlistedPublicRoutes(routes: ReadonlyMap<string, RouteAuth>)
     .map(([route]) => route);
 }
 
+/**
+ * Routes on the wrong side of the line of the portal, as `"METHOD /url"` strings: a `portal` route
+ * outside `/portal/`, or a route under `/portal/` that is not a `portal` one. The policy test runs
+ * it over the real application.
+ */
+export function findMisplacedPortalRoutes(routes: ReadonlyMap<string, RouteAuth>): string[] {
+  return [...routes]
+    .filter(([route, auth]) => {
+      const path = route.slice(route.indexOf(' ') + 1);
+      return (auth === 'portal') !== path.startsWith(PORTAL_ROUTE_PREFIX);
+    })
+    .map(([route]) => route);
+}
+
 function isRouteAuth(value: unknown): value is RouteAuth {
-  return value === 'public' || value === 'session';
+  return value === 'public' || value === 'session' || value === 'portal';
+}
+
+function isPortalActorPermission(value: unknown): value is Permission {
+  return PORTAL_ACTOR_PERMISSIONS.some((known) => known === value);
 }
 
 /** Highest-privilege role first: used to label audit entries. */
@@ -148,6 +189,29 @@ export function registerAuthGuard(app: FastifyInstance, options: AuthGuardOption
     };
     for (const method of methods) routeDeclarations.set(`${method} ${route.url}`, declaration);
 
+    // The patient portal is a door of its own: its routes are `portal` and live under /portal/.
+    const portalPermission: unknown = route.config?.portalPermission;
+    const underPortal = route.url.startsWith(PORTAL_ROUTE_PREFIX);
+    if (auth === 'portal' || underPortal) {
+      if (auth !== 'portal' || !underPortal) {
+        throw new Error(
+          `Route ${label} must be config.auth 'portal' exactly when it lives under ${PORTAL_ROUTE_PREFIX}`,
+        );
+      }
+      if (permission !== undefined) {
+        throw new Error(
+          `Route ${label} cannot be a portal route and have both kinds of permission`,
+        );
+      }
+      if (!isPortalActorPermission(portalPermission)) {
+        throw new Error(
+          `Route ${label} needs config.portalPermission, one that the portal actor holds`,
+        );
+      }
+      for (const method of methods) routeAuth.set(`${method} ${route.url}`, 'portal');
+      return;
+    }
+
     if (permission !== undefined) {
       if (typeof permission !== 'string' || !PERMISSIONS.some((known) => known === permission)) {
         throw new Error(`Route ${label} declares a permission that is not in the catalog`);
@@ -177,7 +241,9 @@ export function registerAuthGuard(app: FastifyInstance, options: AuthGuardOption
 
   app.addHook('onRequest', async (request, reply) => {
     if (request.is404) return;
+    // A portal route is not the staff's: the portal guard reads its own cookie.
     if (request.routeOptions.config.auth === 'public') return;
+    if (request.routeOptions.config.auth === 'portal') return;
 
     const context = request.hostContext;
     const token = readSessionCookie(request.headers.cookie, { secure: options.cookieSecure });

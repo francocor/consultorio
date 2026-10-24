@@ -41,6 +41,18 @@ export const JOB_CATEGORIES: Readonly<Record<string, RouteCategory>> = {
   'invoice.pdf': 'export',
   'invoice.deliver': 'write',
   'export.build': 'export',
+  // Stage 5. Issuing a prescription is refused in a read-only tenant, so its retry is cancelled; the
+  // mirror of the provider's status is the same as its webhook and keeps running; an expired request
+  // is a write; a dependent who turns 18 is protected whatever the subscription says.
+  'erx.submit': 'write',
+  'erx.reconcile': 'webhook',
+  'consent.expire': 'write',
+  'portal.majority_review': 'patient_protective',
+  // The code to sign in to the portal: authentication stays open in a read-only organization.
+  'portal.code_send': 'auth',
+  // The warnings about a change to the access of a person protect that person (JD-S5 R2-2).
+  'portal.notice_send': 'patient_protective',
+  'portal.notice_sweep': 'patient_protective',
 };
 
 /** The category of a queue. A queue nobody classified is refused, not guessed. */

@@ -1,9 +1,12 @@
 import { z } from 'zod';
 
 import { BILLING_AUDIT_ACTIONS } from './billing-catalog.js';
+import { CONSENT_AUDIT_ACTIONS } from './consent-catalog.js';
 import { INVOICING_AUDIT_ACTIONS } from './invoicing-catalog.js';
 import { NOTIFICATION_AUDIT_ACTIONS } from './notifications-catalog.js';
 import { ONLINE_BOOKING_AUDIT_ACTIONS } from './online-booking-catalog.js';
+import { PORTAL_AUDIT_ACTIONS } from './portal-catalog.js';
+import { PRESCRIPTION_AUDIT_ACTIONS } from './prescriptions-catalog.js';
 import { REPORTS_AUDIT_ACTIONS } from './reports-catalog.js';
 import { TELECONSULTATION_AUDIT_ACTIONS } from './teleconsultation-catalog.js';
 import { WAITLIST_AUDIT_ACTIONS } from './waitlist-catalog.js';
@@ -72,6 +75,8 @@ export const AUDIT_ACTIONS = [
   // Decision D19: a non-clinical actor assigned a patient to a professional added in the last 7 days.
   'assignment.review_flag',
   'matricula.verified',
+  // The platform operator withdrew the verification of a professional's registration.
+  'matricula.unverified',
   'setting.reception_sees_clinical_metadata.changed',
   // Branding: the identity of the organization and its logo.
   'branding.updated',
@@ -147,6 +152,10 @@ export const AUDIT_ACTIONS = [
   ...BILLING_AUDIT_ACTIONS,
   ...REPORTS_AUDIT_ACTIONS,
   ...INVOICING_AUDIT_ACTIONS,
+  // Compliance and portal (Stage 5). Each module declares its own actions next to its contracts.
+  ...CONSENT_AUDIT_ACTIONS,
+  ...PRESCRIPTION_AUDIT_ACTIONS,
+  ...PORTAL_AUDIT_ACTIONS,
   // Denials.
   'access.denied',
   'cross_tenant.denied',
@@ -193,6 +202,12 @@ export const FORBIDDEN_METADATA_KEYS = [
   'certificate',
   'privateKey',
   'pem',
+  // Prescriptions, signatures and their evidence are clinical or personal content (Stage 5).
+  'items',
+  'medication',
+  'medications',
+  'signature',
+  'evidence',
 ] as const;
 
 const FORBIDDEN = new Set(

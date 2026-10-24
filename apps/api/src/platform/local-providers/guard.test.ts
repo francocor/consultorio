@@ -7,18 +7,22 @@ const local: ProviderSelection = {
   video: 'local',
   botChallenge: 'local',
   afip: 'local',
+  erx: 'local',
 };
 const real: ProviderSelection = {
   whatsapp: 'meta',
   video: 'jaas',
   botChallenge: 'turnstile',
   afip: 'afip',
+  // The authorized e-prescription platform has no key yet (task 5.53): the real provider is none.
+  erx: 'off',
 };
 const off: ProviderSelection = {
   whatsapp: 'off',
   video: 'off',
   botChallenge: 'turnstile',
   afip: 'off',
+  erx: 'off',
 };
 
 describe('localProvidersIn', () => {
@@ -28,9 +32,11 @@ describe('localProvidersIn', () => {
       'VIDEO_PROVIDER',
       'BOT_CHALLENGE',
       'AFIP_PROVIDER',
+      'ERX_PROVIDER',
     ]);
     expect(localProvidersIn({ ...real, video: 'local' })).toEqual(['VIDEO_PROVIDER']);
     expect(localProvidersIn({ ...real, afip: 'local' })).toEqual(['AFIP_PROVIDER']);
+    expect(localProvidersIn({ ...real, erx: 'local' })).toEqual(['ERX_PROVIDER']);
   });
 
   it('names nothing when every provider is real or switched off', () => {
@@ -66,7 +72,13 @@ describe('checkLocalProviders (environment x provider x allow flag)', () => {
       selection: local,
       allow: false,
       console: false,
-      problems: ['WHATSAPP_PROVIDER', 'VIDEO_PROVIDER', 'BOT_CHALLENGE', 'AFIP_PROVIDER'],
+      problems: [
+        'WHATSAPP_PROVIDER',
+        'VIDEO_PROVIDER',
+        'BOT_CHALLENGE',
+        'AFIP_PROVIDER',
+        'ERX_PROVIDER',
+      ],
     },
     // A fiscal simulator would pretend to issue invoices in production: the same refusal.
     {
@@ -75,6 +87,21 @@ describe('checkLocalProviders (environment x provider x allow flag)', () => {
       allow: false,
       console: false,
       problems: ['AFIP_PROVIDER'],
+    },
+    // A prescription simulator would pretend to issue prescriptions in production: the same refusal.
+    {
+      nodeEnv: 'production',
+      selection: { ...real, erx: 'local' },
+      allow: false,
+      console: false,
+      problems: ['ERX_PROVIDER'],
+    },
+    {
+      nodeEnv: 'production',
+      selection: { ...off, erx: 'local' },
+      allow: true,
+      console: false,
+      problems: [],
     },
     {
       nodeEnv: 'production',

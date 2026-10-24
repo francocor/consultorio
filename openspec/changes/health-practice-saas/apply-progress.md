@@ -2223,6 +2223,381 @@ Suspect items:
 - Incident: none. Logs are in `$TEMP/jd4r1-*.log`.
 
 
+## Stage 5 seam: S5.00 (tasks 5.1 to 5.4)
+
+Branch `feat/stage-5-compliance-portal`, started from the tip of `feat/stage-4-revenue` (`7abca49`, the final Judgment Day round of Stage 4) so that Stage 5 can move in parallel; the Stage 4 fixes are merged into it later. Mode: automatic, strict TDD, work-unit commits. Worktree `consultorio-wt-s5`. The seam registers every shared Stage 5 piece once so that the tracks (A1 matricula, A2 consent, A3 e-Rx, B portal, C integration) only add files. The per-track boundaries, the ports and read functions each one consumes and exports, and the gotchas are in `docs/stage5-tracks.md`; the migration numbers are in `docs/migration-ranges.md`. The seam has no tables and adds no migration.
+
+### Commits (in order)
+
+| Task    | Commit    | What                                                                                                                                                                                                                           |
+| ------- | --------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| 5.2     | `dbb8af8` | Eight permissions (`clinical.prescription.write`, `clinical.consent.read` professional only; `consent.template.manage`, `consent.request`, `portal.manage`; six portal actor ones), 23 audit actions, `operator.matricula.*` platform actions, `consent`/`prescriptions`/`portal` contract files with `-catalog.ts`, audit scenario files, es-AR labels, and `can()` limited to `PORTAL_ACTOR_PERMISSIONS` |
+| 5.1     | `02325bd` | `PrescriptionProvider` gains `cancel`, `findByKey`, `status`; `adapters/erx-fake/` (in memory, modes, `advance`) with the shared rules; `adapters/prescription-provider.contract.ts` (12 tests, run on the fake)                 |
+| 5.1     | `e08921d` | `ERX_PROVIDER` (`local\|off`), `ERX_WEBHOOK_SECRET`, the production guard, `BootPayload.localProviders.erx`, `docs/dev-setup.md`                                                                                                |
+| 5.2     | `4d4f9e8` | The error catalogs of the skeleton tests typed for the tracks                                                                                                                                                                  |
+| 5.3     | `81a6c43` | Queues `erx.submit`, `erx.reconcile`, `consent.expire`, `portal.majority_review` and their read-only categories                                                                                                                  |
+| 5.3     | `1a4ae43` | `PortalActor` (tenant, identity, selected link), `isPortalActor`, `can()` for it (default deny)                                                                                                                                 |
+| 5.3     | `6dd388c` | `FileResourceRegistry` generic over who redeems, so the portal has a door of its own                                                                                                                                           |
+| 5.1/5.3 | `2225d3a` | `prescriptionProvider` in the adapter resolver; three module skeletons and wirings; export contributors; `portalFileResources` in the wiring context; five empty schema files pre-exported; `test/support/adapters.ts`            |
+| 5.4     | `7826fdc` | `RouteMount` `'portal'`, `app/PortalShell.tsx`, the portal route moved to `features/portal/routes.tsx`                                                                                                                          |
+| 5.4     | `0fcb005` | `features/prescriptions` and `features/consent` stubs (routes, nav, patient tabs), locale files, `prescriptions` back in the navigation                                                                                          |
+| docs    | this unit | `docs/stage5-tracks.md`, Stage 5 paragraph in `docs/migration-ranges.md`, tasks 5.1 to 5.4 marked, this section                                                                                                                  |
+
+### Migration convention for the Stage 5 tracks
+
+The ranges were already in `scripts/migration-journal.ts` and `docs/migration-ranges.md` (`5seam` 0500-0504, `5a1` 0505-0509, `5a2` 0510-0529, `5a3` 0530-0549, `5b` 0550-0579, `5c` 0590-0599; 0580-0589 reserved), so no tool change was needed. The seam has no tables. Tracks run `pnpm db:new 5a1|5a2|5a3|5b|5c <name>` (with `--number` for the numbers `tasks.md` names: A2 0510, 0512; A3 0530, 0532; B 0550, 0552; C 0590), then `pnpm db:restamp` and `pnpm db:check` after every merge. The journal is out of number order on purpose (0431 sits after 0499, the 0490s after it): `db:restamp` and `db:check` were run at the tip and report "Stamps: already rising", "Snapshots: already chained", "No migration drift".
+
+### Extra seam work (not listed as tasks, or listed under other slices)
+
+1. **`can()` no longer treats the `portal.` prefix as the portal actor's.** The old check allowed any `portal.*` permission to a patient-kind actor. `portal.manage` (staff: invite, link, deactivate accounts) starts with that prefix, so without the change a portal session would have held it. The rule is now the closed list `PORTAL_ACTOR_PERMISSIONS`; `roles.ts` exports it and `ROLE_PERMISSIONS.patient` is that list. The RED run of the new tests showed the hole (`portal.manage` allowed).
+2. **The portal's door to files.** Task 5.35 has the portal redeem downloads through "the `/files/:token` registry resolvers", but the registry takes a staff `Actor`, holds one resource per kind (`document_download` belongs to documents) and its route is a staff route (`permission: 'patients.read'`). The registry is now generic over who redeems and the wiring context carries a second registry, `portalFileResources`, for `FileResource<PortalActor>`. Track B writes the route and registers ONE `document_download` resource that dispatches on the token's `resourceType` to the read functions of each module. The staff registry and route are unchanged.
+3. **`ERX_WEBHOOK_SECRET`** (task 5.19 needs it in `config.providers`; `main/config-providers.ts` is a seam-only file), and **`BootPayload.localProviders.erx`** (optional boolean, so the five invoicing tests and the web fixtures that build `{ afip }` keep compiling) for the "simulated" notice on prescription screens.
+4. **`operator.matricula.verified|unverified` live in `PLATFORM_AUDIT_ACTIONS`** (`operator.ts`), not in the tenant `AUDIT_ACTIONS`: task 5.2 lists them among the audit actions, but task 5.5 says "a platform audit event" and the operator console writes the platform trail. The tenant trail already has `matricula.verified`.
+5. **Forbidden audit metadata keys** gained `items`, `medication`, `medications`, `signature`, `evidence` (a prescription's lines and a consent's signature are clinical or personal content).
+6. **Shell navigation:** `prescriptions` was already a shell entry hidden by `NOT_BUILT_YET`; it is now shown (route `/prescriptions` behind `clinical.prescription.read`). Consent contributes `consents` through `nav.ts`.
+7. **Pre-exported schema files** `consent`, `prescriptions`, `local-erx`, `portal`, `demo-outbox`, and **one demo `FakePrescriptionProvider` per configuration** (`demoPrescriptionProviderOf(config)`) shared by the registry and the console, as for AFIP.
+
+### TDD cycle evidence
+
+| Task    | Tests                                                                                                                                                                                              | RED                                                                                 | GREEN  | Notes                                                                                                                                       |
+| ------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------- | ------ | ------------------------------------------------------------------------------------------------------------------------------------------- |
+| 5.2     | `roles.test.ts` (Stage 5 describe, 14), `audit-actions.test.ts` (Stage 5, 3), `consent`/`portal`/`prescriptions`/`operator.test.ts`, `errors.test.ts`, `can.test.ts` (patient actor)               | 15 failed (7 files)                                                                 | passed | `can.test.ts` failed first on `portal.manage` allowed for the patient actor; the skeleton tests loop over empty catalogs on purpose (they bind when a track adds a code) |
+| 5.1     | `erx-fake/index.test.ts` (6) + `prescription-provider.contract.ts` (12)                                                                                                                             | module missing                                                                      | passed | contract written first; triangulated by outage, lost answer, key reuse, dispensed and expired                                                |
+| 5.1     | `guard.test.ts` (matrix with `erx`), `config-providers.test.ts` (4 new), `branding-boot.test.ts` (integration)                                                                                      | 10 failed                                                                           | passed |                                                                                                                                             |
+| 5.3     | `jobs.test.ts` (2 new), `job-queues.test.ts` (integration, 4 queues)                                                                                                                                | unclassified queue                                                                  | passed | `erx.reconcile` and `portal.majority_review` stay open in a read-only tenant                                                                 |
+| 5.3     | `can.test.ts` (portal actor, 7)                                                                                                                                                                     | 6 failed                                                                            | passed |                                                                                                                                             |
+| 5.3     | `file-resources.test.ts` (4 new)                                                                                                                                                                    | typed only: the runtime was already per instance                                    | passed | a typecheck RED; the behavior tests lock the isolation of the two doors                                                                       |
+| 5.1/5.3 | `adapter-resolver.test.ts`, `wiring.test.ts` (modules, ports, console entry, file registries), `schema-index.test.ts`, `export-contributor.test.ts` x2, `export-registry.test.ts`                 | 6 failed                                                                            | passed |                                                                                                                                             |
+| 5.4     | `registry-router.test.tsx` (2 new), `nav-config.test.ts`, `seam.test.tsx` x3 (prescriptions 9, consent 12, portal 2)                                                                                | portal route not found; seams missing                                               | passed | the unit runner caches the transform of `registry.ts`: new glob files were invisible until `node_modules/.vitest-cache` was removed (a gotcha for the tracks, in the doc) |
+
+### Deviations from the tasks and the design
+
+1. **Stub pages, tabs and a nav entry exist (task 5.4 asks for them), unlike the Stage 4 seam.** The Stage 4 seam left nav, slots and routes to the tracks to avoid dead links; 5.4 names them as seam work, so each stub shows a short "will appear here" text and is replaced by its track. The locale files are not empty: they hold the five or so keys the stubs reference (`portal.json` and the three `errors.*.json` are empty).
+2. **`shell: 'portal'` is `mount: 'portal'`** in the route registry, with `app/PortalShell.tsx` (branded header with the portal's name, no staff navigation). The `/portal` page moved from `router.tsx` to `features/portal/routes.tsx`.
+3. **The port is the Stage 1 `PrescriptionProvider` of `packages/contracts/src/ports.ts`** (as for `InvoiceIssuer`), extended: `PrescriptionResult.retryable` now carries `outcomeUnknown`, and `findByKey` returns the issued result or null. The key is global (no tenant reference in the request, unlike the invoice), so the server derives it from the organization and the prescription.
+4. **No settings section, token kind or `local-erx` migration** was pre-declared: `portal_activation` and `document_download` already exist and are enabled; the tables belong to the tracks.
+5. **The matricula note and the demo outbox have no pre-created table**; `5a1` is empty unless the operator note needs one.
+
+### Risks and follow-ups
+
+- `apply-progress.md` and `main/wiring/types.ts` / `platform/files/file-resources.ts` can conflict when the Stage 4 fixes are merged (both branches append a section to this file; keep both).
+- Track B declares an exception in `platform/http/auth-guard.ts` (how an authenticated `/portal/*` route is declared: today a route is `public` under an allowed prefix, or has a staff permission). The policy tests of public routes will need to know it.
+- A staff download link for a prescription PDF would need a new file token kind (a seam change); `tasks.md` only has the portal download.
+- Lighthouse, CI, the e2e suite and Docker builds were not run for this unit (no e2e was added: the stubs are covered by component tests).
+
+### Verification (tip before this progress commit, Node v24.22.0, pnpm 10.34.7, Docker running and shared with the Stage 4 fix agent)
+
+| Command | Result |
+| --- | --- |
+| `corepack pnpm install --frozen-lockfile` | exit 0 |
+| `corepack pnpm typecheck` | exit 0 (contracts, api, web) |
+| `corepack pnpm lint` / `format:check` | exit 0 |
+| `corepack pnpm test` | **393 files, 5,017 tests passed, 1 skipped** (`boot.test.ts`, the Lighthouse budget test, `route-categories`, `audit-coverage` and the money invariants inside) |
+| targeted `test:integration` files (roles, tenancy schema and isolation, definer functions, no-delete privileges, provider console, admin denied, file resources, documents download and export, migration lanes, stage 3 export, wiring, queues, boot payload, worker, security, demo seed and reset, demo coverage and Stage 3/4 demos) | **30 files, 638 tests passed** |
+| `corepack pnpm build` | exit 0 (the entry chunk gained nothing: the new pages are lazy chunks) |
+| `corepack pnpm db:check` / `db:restamp` | No migration drift; stamps already rising; snapshots already chained |
+
+The full integration and e2e suites were not run (the Stage 4 fix agent owns the shared Docker). No `.env` file was read or written. Logs are in `$TEMP/s5seam-*.log`.
+
+## Stage 5 integration 1
+
+The four Stage 5 tracks merged into `feat/stage-5-compliance-portal` (A1 matricula `d9c6b7e`, A2 consent `151c10b`, A3 e-Rx `aad7385`, B portal `a4218a0`), the portal wired to the real consent and prescriptions modules, and the cross-track issues fixed. Node v24, pnpm 10.34.7, Docker shared with the Stage 4 fix agent.
+
+### Merges and conflicts
+
+| Merge | Conflicts | Resolution |
+| --- | --- | --- |
+| A1 | none | `db:restamp` and `db:check` clean |
+| A2 | `_journal.json` (idx 82 taken by both) | 0505 kept at 82, 0510 at 83, 0512 at 84; `when` made strictly rising; restamp re-chained snapshot 0510 |
+| A3 | `_journal.json` | 0530 at 85, 0532 at 86; restamp re-chained 0530 |
+| B | `_journal.json`, `modules/patients/index.ts` | 0550 at 87, 0552 at 88 (journal: 89 entries, idx unique and contiguous, `when` rising); `index.ts` keeps both exports (`isMinor` of A2, the portal source of B). `tasks.md`, the shared tests of token kinds, queues, definer functions and public routes merged without conflict |
+
+Beyond the textual conflicts, one semantic one: A3 and B both exported a `PortalPrescriptionDto` from `@consultorio/contracts` (typecheck error TS2308). A3's narrower module listing is now `PortalPrescriptionListing`; the portal's DTO keeps its name.
+
+### Wiring and fixes (commit per concern)
+
+| # | Change | Test that binds it |
+| --- | --- | --- |
+| 1 | `main/wiring/portal.ts`: `createPortalWiring` takes the ports or a function of the wiring context; `portalWiring` builds `adaptConsentModule(createConsentPortal({ keys }))` and `adaptPrescriptionModule({ list, openDocument })` from the real `keys`, `withTenant` and a `PrescriptionDeps` made from the context | `portal-consent-prescriptions.test.ts` (3, new): a portal patient lists, reads, signs and downloads a consent, lists and downloads a prescription, and cannot open another patient's. The application is the one `main` builds; only the e-prescription provider is the in-memory fake |
+| 2 | Doubled audit: the door asks a module twice per download (to issue the link, to redeem it). `purpose: 'link' \| 'download'` goes through `PortalConsentPort.document`, `PortalPrescriptionPort.document`, the two adapters and the modules; `prescription.downloaded` and `consent.read` are written only for `download` (absent means `download`) | same file: exactly one `prescription.downloaded` and one `consent.read` per download, none when only the link is asked (verified red by making the audit unconditional) |
+| 3 | The consent notice is `renderPortalNoticeEmail({ kind: 'consent_request' })` of the portal; the consent module's own renderer and test were removed | `consent-signing.test.ts` (subject and text of the portal notice, no title, no "consentimiento"); the e2e reads the email |
+| 4 | `ConsentDetail.tsx` signs with the shared `SignaturePad` (draw, or the typed-name alternative) and shows `ConsentStatusBadge`; the full name of the signer is asked apart | `sections.test.tsx` (typed, drawn, no mark); `stage5-portal.spec.ts` signs by drawing at 360 px with axe and width checks, and downloads the signed PDF |
+| 5 | `hasDocument` is the module's answer: `listPrescriptionsForPatient(..., { canRender })` says yes for a confirmed, not cancelled prescription when the document is kept or can be made (a bucket exists). The download button answers a 404 with an es-AR sentence | adapter unit tests, `sections.test.tsx` |
+| 6 | Tabs at 360 px: the cause was `flex-shrink` on `TabsTrigger` in a scrolling row (each button shrank to 44 px under its own label, so a click on the label hit the neighbour's box). Triggers are `shrink-0`; `TabsList` scrolls the open tab into view. The `focus()` workaround is gone from the e-Rx spec | `patients.tabs.responsive.spec.ts` (clicks every tab forward, backward and the two far ones; red before the fix at "Documentos"), `tabs.test.tsx` (5) |
+| 7 | Matricula in the stack: `start-stack.ts` unchanged (verifies the cardiologist `41258` as the operator, still works). The matricula journey verifies and withdraws the pediatrician, whom the e-Rx journey needs unverified: it now takes the same lock as the e-Rx journey, so two workers never overlap | e2e, both specs green on two workers |
+
+The two worlds of the portal tests that mean "no module behind the portal" now say `ports: {}`, because the default is the real wiring.
+
+### Verification (tip before this section)
+
+| Command | Result |
+| --- | --- |
+| `install --frozen-lockfile`, `typecheck`, `lint`, `format:check` | exit 0 |
+| `pnpm test` | **427 files, 5,387 tests passed, 1 skipped** |
+| `pnpm test:integration` (full) | first run **259 files: 253 passed, 1 skipped, 5 failed; 4,088 tests passed, 8 skipped, 5 failed**. Two files were my change (the portal worlds that expected "no module", fixed above). Three were load flakes that pass alone: `financial-report` (audit count under load), `worker` (sealing timing budget), `backup-restore` ("socket hang up"). The five files re-run together: **79 passed** |
+| `pnpm build`, `pnpm db:check` | exit 0, no drift |
+| Playwright, `--workers=2`, ports 4960/3960/9960, fresh stack | **218 passed, 2 failed of 220**. `patients.responsive` "edit dialog": `ERR_CONNECTION_REFUSED` to the preview server, passes alone (23 of 23 in that file). `stage4-demo` "closes the register": "the page is 10px wider than the screen" on the charges to invoice. NOT from this unit: the long patient name in the button is fixed on `feat/stage-4-revenue` (`ChargesToInvoice.tsx`, the Judgment Day fixes). With only that file taken from that branch the journey passes. It will pass once that branch is merged |
+| Docker | `infra/Dockerfile` built; fresh `postgres:17` with `infra/postgres/init`; `db:migrate` twice (both exit 0, 89 migrations recorded, `consent_request`, `prescription` and `portal_identity` exist). Production configuration (`NODE_ENV=production` of the image, `ADDRESS_HASH_PEPPER`, `CLAMAV_HOST`, `S3_BUCKET`, AWS KMS, SMTP): `/health` `{"status":"ok"}` with `ERX_PROVIDER` unset and with `off`; `ERX_PROVIDER=local` is refused at startup (exit 1, names only `ERX_PROVIDER`) and starts with `ALLOW_LOCAL_PROVIDERS=true`. Containers `s5int-smoke-*` and the image removed |
+
+### Risks
+
+- Merging the Stage 4 fix branch will touch `apply-progress.md` and `ChargesToInvoice.tsx`'s neighbours; keep both sections.
+- `hasDocument` says yes when a document can be made on request; if rendering then fails (storage down) the download answers 404 and the button says so.
+- The portal notice for a consent no longer greets by name nor says "consentimiento" (privacy over friendliness, as the portal's other notices).
+- The e2e journeys of Stage 4 and Stage 5 (e-Rx, cash register) are not re-runnable on a used stack: they need a fresh one.
+
+## Judgment Day Stage 5, round 1
+
+Fresh-context review of `feat/stage-5-compliance-portal` at `b1767a7` (two judges, both: NEEDS FIX). Every finding both judges confirmed (S5-1 to S5-11) was fixed, the one MUST FIX of a single judge (A-C1, staff insider bypass) was fixed with a failing test first, and every suspect item was reproduced with a failing test before it was touched. Strict TDD: the red runs were made on a detached sibling worktree at `b1767a7` (logs `$TEMP/jd5r1-red-*.log`), the green runs on the branch. Five fix commits: `4e2e2f7` (db), `bdb35de` (prescriptions), `296398a` (consent), `2be9b1f` (operator), `b42c64a` (portal).
+
+### Confirmed findings
+
+| Id | Fix | Test |
+| --- | --- | --- |
+| S5-1 | The portal reads prescriptions on the transaction of its own request (`listPrescriptionsForPatient(tx, ...)`, `openPortalDocument(tx, ...)`, the adapter uses its `tx`); `storeDocument` no longer opens a connection of its own. The staff submit is phased: the write-ahead mark (`markIntent`) commits on its own connection and the request holds no connection across the provider call (`attemptSubmitDetached`). | `portal-prescription-door.test.ts` (12 concurrent lists, links and downloads on a pool of 10) |
+| S5-2 | Portal transactions carry `app.actor_kind = 'portal'`; the clinical policies of `prescription` and `prescription_guard` stop treating the nil user as the system when it is set (0591). The portal reads through two hardened SECURITY DEFINER functions, `app.portal_prescriptions()` and `app.portal_prescription(uuid)`, bound to `app.portal_link_id` and `app.portal_identity_id` and re-checked against the tables (link live, identity matches, patient matches). Both are on the definer allowlist. | `portal-prescription-door.test.ts` (no row from the table, no write, forged settings open nothing) |
+| S5-3 | `markIntent` returns its row count (0 means `skipped`, no provider call); `cancelPrescription` and `registerManually` take the advisory lock `erx-prescription\|<id>` (`prescription_attempt_in_progress` when held); `provider_contacted_at` (0591) is never cleared by `park`, and a row with it asks `findByKey` before a local cancel or manual register. An attempt that holds a lease (`attempt_lease_until`) outside a transaction is respected the same way. | `prescription-hardening.test.ts` |
+| S5-4 | `submission_version` (0591); the key is `issueKeyOf(org, id, version)`; the guard lets the version rise only on the correction after a refusal. | `prescription-hardening.test.ts` (a real refusal of the fake, then correct and resend issues), `prescription-lifecycle.test.ts` |
+| S5-5 | The mark is decoded with `sharp(...).metadata()` (size and pixel limits), the prefix and base64 are checked, a typed mark is capped at 120 characters, the signer kind comes from the link (representative link: representative; a minor needs a representative), and `signerName` is stored and printed. | `consent-hardening.test.ts`, `consent-adapter.test.ts`, `consent.test.ts` (contracts) |
+| S5-6 | A minor cannot be registered or invited as `self` (`portal_minor_requires_representative`). | `portal-staff-hardening.test.ts` |
+| S5-7 | `resolveSubject`, `sessions.resolve` and `portal_shared_document(s)` (0592) require `majority_review_on IS NULL OR majority_review_on > today` in the time zone of the organization; a trigger on the patient recomputes `majority_review_on` when the birth date changes (`app.majority_review_date`). | `portal-staff-hardening.test.ts` (access the day after the 18th birthday with the job not run; birth date correction) |
+| S5-8 | The rendered consent PDF is streamed from memory (`FileDelivery.bytes`); nothing is stored under `portal-rendered/`. | `portal-staff-hardening.test.ts` |
+| S5-9 | The extra sign-in lock is keyed by address and client (`triesKey`), not by address alone; the responses stay identical. | `portal-staff-hardening.test.ts` |
+| S5-10 | `consent.declined` is audited with the author (catalog, es-AR text, `audit-coverage`, scenarios). | `consent-hardening.test.ts`, audit scenarios |
+| S5-11 | Documented in `docs/security/asvs-l2-portal.md` as defence in depth; every definer function re-checks the settings against the tables. | `portal-prescription-door.test.ts` (forged settings) |
+
+### MUST FIX of one judge
+
+A-C1 (staff insider bypass), all four parts, failing tests first: (1) a representative link needs a minor (`portal_representation_requires_minor`); an adult is represented only through `authorizeByAdult` from their own session; (2) changing an identity's email needs the new permission `portal.identity.email` (owner and administrators, not reception; contract, roles invariants, route categories), and the old address receives a notice with no link (`renderPortalSecurityNoticeEmail`), every session revoked; (3) a representative link for a minor sends a notice to the email of the patient's record, audited as `portal.notice.sent`; (4) `reverifyLink` cannot reactivate a link after majority. Tests: `portal-staff-hardening.test.ts`, `portal-dependents.test.ts`, `portal-identity.test.ts`. Spec updated (`specs/patient-portal/spec.md`).
+
+### Suspect items
+
+| Id | Outcome |
+| --- | --- |
+| B-W7 | Reproduced. The signed PDF prints an integrity block when `fingerprintValid` is false and the read audits `consent.integrity_failed`. |
+| B-W8 | Reproduced. The export contributor exports identities, links and session dates (no token hash). |
+| B-T2 / B-S5 | B-S5 reproduced and fixed: revoking a representative is `patient_protective`. B-T2 NOT changed on purpose: the spec says that a cancel is blocked while the organization is read-only, so `write` stays; documented as an accepted decision. |
+| B-T3 | Reproduced. The webhook carries a signed timestamp (window of 300 s) in the local adapter and its dev route, plus a rate limit (240 per minute) and a warn log for failed signatures. |
+| B-T4 | Reproduced. At send time the prescriber matricula and jurisdiction must equal the verified registration; otherwise the prescription parks. |
+| B-T5 | Reproduced. The spec says a retired template cannot be signed: refused. |
+| B-T7 | Reproduced. Guard triggers (0592) make the link, session and share keys immutable and `revoked` terminal. |
+| B-T9 | Reproduced. `activateInvitation` rechecks the email against the patient record. |
+| B-T10 | Reproduced. Provider calls are bounded (`withinTime`, 20 s) and map to unknown outcome. Unit test `common.test.ts`. |
+| A-T3 | Reproduced (the work differed between the branches). The decoy path does the same work. |
+| A-T5 | Format of the identifier validated (`PRESCRIPTION_IDENTIFIER_PATTERN`), matricula rechecked at manual register. "Webhook lookups bound to the provider" is documented as an accepted risk: the external id is looked up inside the tenant of the signed webhook. |
+| A-T6 | Reproduced. `reception_prescription_existence` has `issued_at IS NOT NULL` (0591). |
+| A-S matricula.unverified | Reproduced. Audit action in the tenant trail and in `operator_audit_scope` (0593). |
+| A-S demo_outbox | Reproduced. `app.demo_outbox_purge` (0594, never younger than one hour), hourly schedule, TTL 24 h. |
+| B-S1 | Reproduced. `/portal/me` does not show the name for a suspended link. |
+| B-S3 | Reproduced. One audit entry per list call. |
+| B-S4 | Reproduced. The sign body carries `contentHash`; a mismatch is refused (`consent.integrity_failed`). |
+
+INFO notes, in `docs/security/asvs-l2-portal.md`: the fingerprints are an unkeyed SHA-256 (an HMAC with the tenant key is a later improvement); failed webhook signatures now write a log line.
+
+### Migrations (range `5c`, 0596 to 0599 left free)
+
+`0591_prescription_hardening`, `0592_portal_guards`, `0593_operator_audit_unverified`, `0594_demo_outbox_retention`, `0595_portal_session_guard_foreign_key` (found by the full integration run: the guard of the portal session raised its own error ahead of the composite foreign key that the generated isolation suite expects, and `portal-tenancy` counted the revoke of a representative, now `patient_protective`, among the routes open in read-only; both tests were updated or satisfied). `db:restamp` ("already rising") and `db:check` (no drift). The new definer functions (`app.portal_prescriptions()`, `app.portal_prescription(uuid)`, `app.demo_outbox_purge(timestamptz)`) are hardened (`search_path` with `pg_catalog` first and `pg_temp` last, `REVOKE` from PUBLIC, narrow `GRANT`) and on the allowlist.
+
+### Deviations and notes
+
+- Resolved in "Stage 5 integration 2": `connectionTimeoutMillis` and `DB_POOL_MAX` of the Stage 4 fix branch arrived with the merge and were not duplicated here. S5-1 was fixed at the cause (no second connection while holding one), not by pool settings.
+- B-T2: not changed (see above).
+- A-T5: the webhook is bound to the tenant of the signed notice, not to the provider; accepted risk, documented.
+
+### Verification (tip before this note, Node v24, pnpm 10.34.7, Docker shared with other agents)
+
+- `pnpm install --frozen-lockfile`, `pnpm typecheck`, `pnpm lint`, `pnpm format:check`: exit 0 (also after the repair of the incident below).
+- `pnpm test` (unit): **430 files, 5,418 tests passed, 1 skipped**. `boot.test.ts` passed. After the repair of the incident one run had a load failure in `financial-report-page.test.tsx` that passes alone (26 of 26).
+- `pnpm test:integration` (full, one run, Testcontainers Postgres 17): **266 files: 262 passed, 1 skipped, 3 failed; 4,204 tests passed, 4 skipped, 3 failed**. Two were this round and fixed in it: `portal-tenancy` (the revoke of a representative is `patient_protective`, so it is one of the writes open in read-only: the expectation lists it) and the generated isolation test of `portal_session_link_fkey` (the guard of the session raised 23000 before the composite foreign key that says 23503; migration 0595 leaves a missing link to the foreign key). The third, `worker` "seals new audit events", is a load timing flake. The three files plus `portal-staff-hardening` re-run together: **4 files, 426 tests passed**.
+- `pnpm build`, `pnpm db:check`: exit 0, no drift. `db:restamp`: chained.
+- Full e2e (`E2E_WEB_PORT=4960 E2E_API_PORT=3960 E2E_MINIO_PORT=9960`, `--workers=2`): **216 passed, 5 failed of 221 (16.5 minutes)**. Two are the known ones, reported and not fixed: `stage4-demo` "every screen of Stage 4 fits a phone" (25 px wider on `/cash`) and "reception closes the register" (10 px wider on the charges to invoice), both fixed on the Stage 4 branch. The other three (`settings.responsive` Seguridad, `shell.responsive` "no access", `staff.spec` invitation) passed alone on a fresh stack (`4961/3961/9961`, 28 passed, 1.3 minutes): load flakes. `stage3-booking` passed in this run (it depends on the time of the day).
+- Docker: `infra/Dockerfile` built; fresh `postgres:17.11` with `infra/postgres/init`; `db:migrate` twice (both exit 0, 95 migrations recorded); the image started with `NODE_ENV=production` (the image's), multi-tenant, AWS KMS, `S3_BUCKET`, `CLAMAV_HOST`, SMTP starttls and `ADDRESS_HASH_PEPPER`: `GET /health` answered `{"status":"ok"}`. The containers `jd5r1-api` and `jd5r1-pg`, the network `jd5r1-net` and the image `consultorio-api:jd5r1` were removed by name.
+- Kept green: `boot.test.ts`, the determinism and reset timing of the demonstration (inside the integration run), the shared prescription-provider contract suite. The Lighthouse budget is a CI job and was not run; the web change is one prop sent in `ConsentDetail.tsx` and strings, no import in the entry chunk.
+
+### Incident
+
+Removing my sibling red worktree (`consultorio-wt-s5-red`, junctions to the `node_modules` of this worktree) with `git worktree remove --force` followed the junctions and deleted the tracked files of `packages/config` and `packages/contracts` and parts of `node_modules` of this worktree (nothing else). Repaired: `git checkout -- packages` (clean status, tip unchanged), `node_modules` removed with `rmdir` (which does not follow junctions) and reinstalled from the frozen lockfile; typecheck, lint, format and the unit suite re-run after it. Lesson: unlink junctions (non-recursive delete) before removing a worktree that has them. The Playwright stacks of this run (`postgres:17`, Mailpit, MinIO, Ryuk on ports 9960 and 9961, ids in the report) were NOT removed: the permission system refused the removal.
+
+
+## Judgment Day Stage 5, round 2
+
+Fresh-context review of `feat/stage-5-compliance-portal` at `0827e6d` (diff `b1767a7..0827e6d`; two judges, no CRITICAL, both NEEDS FIX). Every finding both judges confirmed (R2-1 to R2-12) was fixed with the failing test first; every suspect item was reproduced with a failing test before it was touched. Red runs were made on this worktree by neutralizing the fix in the working copy (or by writing the test before the code), logs `$TEMP/jd5r2-red-*.log`; no sibling worktree was created. R2-2 implements the product rule decided by the owner ("an administrator never reads clinical data") as written, with one addition (see "Deviations").
+
+### Confirmed findings
+
+| Id | Fix | Test |
+| --- | --- | --- |
+| R2-1 | A decoy challenge has the purpose `portal_decoy` (check of `otp_challenge.purpose`, 0597). `checkCode` looks for the newest challenge of the purpose it serves and `sendsInLastHour` skips the decoy, so a stranger who asks with a wrong document neither ends the live code nor uses up the three sends. Same writes and timing as before. The hourly purge of the booking removes every challenge an hour after it expired, decoys included (earlier than the 24 hours asked for). | `portal-codes-round2.test.ts` (same address, wrong document: the victim's code still works and the send count is unchanged; real sends still capped at three) |
+| R2-2 | (1) A trigger of `patient` writes `patient_record_change` in the same transaction as any change of the e-mail or the birth date, whoever makes it (0598); the sweep `portal.notice_sweep` (every minute per organization) tells the PREVIOUS address, with no link, no value, no name (es-AR text "Se modificaron datos de contacto/nacimiento en su ficha de ..."), clears the address afterwards and audits `portal.notice.sent` (kind `record_changed`). (2) For seven days (clock of the database) inviting the patient, inviting or linking a representative and restoring a suspended link need an owner or an administrator (`application/staff-gate.ts`); reception gets `portal_recent_identity_change` and a deny entry; the owner/admin use is marked `afterRecordChange` in the trail. (3) The notice of an e-mail change of an account (and the one of a representative) is queued in the transaction of the change (`portal.notice_send`), not sent after the commit. (4) A representative for a minor whose record has no e-mail needs an owner or an administrator (`portal_owner_or_admin_required`). | `portal-record-change.test.ts` (13 tests: each path, reception refused and allowed again after the week, administrators allowed, no address on the record, the same address in other letters, the table cannot be edited); red run with the gate disabled: 7 failed |
+| R2-3 | `PrescriptionProvider` methods take an optional `AbortSignal`; `callWithin` aborts it when the caller stops waiting and reports `timedOut`; a timed-out `issue` sets `provider_in_flight_until` (now + `inFlightPinMs`, default 10 minutes, tunable) and the next attempt waits for it; until then no attempt (not even forced), cancel and manual register answer `prescription_attempt_in_progress`. The adapters honour the signal; the fake has `hold()`; the contract suite proves that a concurrent second `issue` with the same key never creates two prescriptions (both adapters) and that an aborted call issues nothing. | `prescription-round2.test.ts` ("pins the prescription..."), `common.test.ts`, contract suite of the fake and of the local simulator |
+| R2-4 | The try budget is per (challenge, client): five each, with a cap of twenty on the challenge in the database; six code requests per client and hour; the ASVS rows and the comments are corrected and the residual (the three sends per address and hour) is documented. | `portal-codes-round2.test.ts`, `code.test.ts` |
+| R2-5 | `document_classification` is closed to a transaction of the portal (`app.actor_kind = 'portal'`): neither the nil user branch nor the administrative branch lets it through (0597); every policy of the migrations was grepped for the nil user (only `prescription` and `document` named it). | `portal-guards-round2.test.ts` (a portal transaction reads 0 rows of `document`, administrative or clinical; the shared document still reaches the patient through the definer function) |
+| R2-6 | `markIntent` no longer returns early for a row that is marked already: the status-gated update always runs. | `prescription-round2.test.ts` ("sends nothing for a prescription that was already marked and left the queue meanwhile") |
+| R2-7 | `attempt_lease_token` (0596): the lease is taken with a token (`application/lease.ts`) and released only `WHERE attempt_lease_token = :mine`; the attempt that finds the row already issued by the one that took over answers `skipped` and not `orphaned`. | `prescription-round2.test.ts` ("leaves the lease of the attempt that took over when the one that overran lets go") |
+| R2-8 | Staff submit with a pool of TWO connections and a blocked provider (a third request is served), lease expiry and takeover, a job skipped because of a lease, the early-return path. | `prescription-pool.test.ts`, `prescription-round2.test.ts` |
+| R2-9 | The `only_document` exception of `app.prescription_guard` needs `OLD.external_id IS NOT NULL` and `NEW.document_key LIKE 't/' \|\| NEW.tenant_id \|\| '/prescriptions/%'` (0596). | `prescription-schema.test.ts` ("records a document only for an issued prescription, under the prefix of its own organization"); the older test now uses the real prefix |
+| R2-10 | `mayHoldAtProvider` falls back to `last_attempt_at IS NOT NULL` for rows without the marks. | `prescription-round2.test.ts` ("does not cancel locally a prescription the provider holds when only last_attempt_at tells it was sent") |
+| R2-11 | `VALIDATE CONSTRAINT prescription_submission_version_check` in 0596. The runner (`runMigrations`) already validated every NOT VALID constraint after the migrator, so the constraint was valid in a migrated database; the statement makes it explicit. | `prescription-schema.test.ts` ("has the check of the submission version validated") (green before and after, by design) |
+| R2-12 | `cancelPrescriptionPhased` and `registerManuallyPhased` (run through `runPhasedAsProfessional`): a short transaction takes the row and the lease, the provider is asked holding nothing, a last short transaction writes the answer and lets the lease go (also the cancellation of an issued prescription through the provider). The single-transaction `cancelPrescription` / `registerManually` remain for the seed. | `prescription-pool.test.ts` (two cancellations and a retry, then two manual registrations, with the provider blocked on a pool of two) |
+
+### Suspect items
+
+| Id | Outcome |
+| --- | --- |
+| A-W3 | Reproduced. Facts version 2 covers `signerName` (`SignaturePayload.v` 1 or 2; a record of version 1 verifies as it was signed). `fingerprint.test.ts`, `signed-record.test.ts`. |
+| B-W2 | Reproduced (a cancellation of a row the pass was done with waited for the pass: a deadlock until the provider timed out). `reconcileOrganization` works each row in transactions of its own (`withTenant` + `attemptSubmitDetached`). `prescription-round2.test.ts` ("lets a cancellation through for a row that is not the one the pass is working on"). |
+| B-T6, A-S trigger | Documented, as decided (Argentina-first): comments on `app.majority_review_date`, `app.patient_birth_date_changed` and `app.portal_today` (0599) and a note in `country/ar/index.ts`. The trigger stays SECURITY INVOKER: only the application role and the owner update `patient.birth_date`, and both can update `portal_link`. No test (documentation). |
+| B-T7 | Reproduced. PARTLY fixed: the PROFESSIONAL can close a prescription the provider may hold when no provider is connected, with `acknowledgeUnknownOutcome: true` (the entry says `unconfirmed`); never while a provider is connected. The owner/administrator variant and the worklist item were NOT built (see "Deviations"). `prescription-round2.test.ts`. |
+| B-S3 | Reproduced. The entry of the list of the professional carries the patient ids (each once, at most 50: the limit of a list in the metadata of an entry, with `patientIdsTruncated`). |
+| B-S4 | Reproduced (`LEAST` ignores NULL: a NULL cutoff purged everything older than an hour). `app.demo_outbox_purge` is STRICT (0597). `demo-outbox.test.ts`. |
+| B-S5 | Reproduced. `app.portal_prescriptions(before, id, limit)` (0599, replaces the function without parameters, definer allowlist updated), opaque cursor, pages of a hundred, `nextCursor` in the response and "Ver más recetas" in the portal. `portal-prescriptions-round2.test.ts` (105 prescriptions, each reached once, newest first; malformed cursors answer 400; a cursor opens nothing of anybody else), `sections.test.tsx`, `prescription-adapter.test.ts`. |
+| B-S7 | Reproduced. A link for a prescription whose PDF was not stored is issued only after the PDF was rendered once; if it cannot be made the link answers 404 and no token is created. `portal-prescriptions-round2.test.ts`. |
+| A-S | Webhook replay inside the window accepted and the grant of `app.demo_outbox_purge` noted in the ASVS page; a comment on `findByKey` (`rejected` is final) in the contract and in `submit.ts`. |
+
+### Migrations (range `5c`; 0596 to 0599, the range is now full; no `5jd` track was needed)
+
+`0596_prescription_in_flight` (columns `attempt_lease_token` and `provider_in_flight_until`, guard of the document key, VALIDATE), `0597_portal_decoy_and_document_policy` (purpose `portal_decoy`, policy of `document`, STRICT purge), `0598_patient_record_change` (table with RLS, the trigger of `patient`, a guard of the table, no DELETE), `0599_portal_prescriptions_paging` (the paged definer function, hardened: `search_path` with `pg_catalog` first and `pg_temp` last, `REVOKE` from PUBLIC, grant to `app_rw` only, on the allowlist; the comments that say which rules are Argentina's). No applied migration was edited. `db:restamp` ("already rising", "already chained") and `db:check` (no drift).
+
+New things in the contracts: `portal_recent_identity_change` and `portal_owner_or_admin_required` (es-AR texts in `errors.portal.json`), `acknowledgeUnknownOutcome`, `PortalPrescriptionsQuery`, `nextCursor`, the signal in `PrescriptionProvider`. New queues `portal.notice_send` and `portal.notice_sweep` (both `patient_protective`). No new permission and no new audit action: `portal.notice.sent`, `access.denied` and the existing `portal.identity.*` carry the new facts in their metadata.
+
+### Deviations and notes
+
+- **Public registration is refused during the week as well** (R2-2). The rule lists invitations and representative links; leaving the public form open would let whoever changed the address register with it. A registration with the document and the new address answers like any other mismatch. Said in the spec and in the ASVS page.
+- **B-T7 is partial.** An owner or an administrator never reads a prescription (the policies of the table), so closing one for them needs a door of its own (a permission, a system-run service, a definer function or a column), and the worklist item needs a new kind (a migration and the es-AR labels). Built: the professional's acknowledgement. Recorded in the ASVS page and the runbook for the next round.
+- The notices of a representative and of an e-mail change carry the address in the payload of a pg-boss job (documented as accepted); the notice of a changed record keeps the previous address in `patient_record_change.notice_email` only until it is told.
+- The week of R2-2 is counted by the clock of the database (the trigger writes the row), not by the clock of the application.
+- A parked row that was never sent now also asks the provider before it is cancelled (`last_attempt_at` is set by `park`); with the provider down that cancellation answers "unavailable" until it is back.
+- `prettier --write` was run on the files this round touched, never on `apps/api/src` as a whole; `db/migrations/meta` was not touched by hand.
+- Docs updated: `docs/security/asvs-l2-portal.md`, the patient-portal spec, `docs/stage5-tracks.md`, `docs/migration-ranges.md`, and a new `docs/runbooks/e-prescription.md`.
+
+### Verification (tip before this note, Node v24, pnpm 10.34.7)
+
+- `pnpm install --frozen-lockfile`, `pnpm typecheck`, `pnpm lint`, `pnpm format:check`: exit 0 (after the last change as well).
+- `pnpm test` (unit): **431 files, 5,438 tests passed, 1 skipped**. `boot.test.ts` passed; the contract suite of the prescription provider passed for the in-memory fake (unit) and the local simulator (integration), with the three new assertions.
+- `pnpm test:integration` (full, Testcontainers Postgres 17), four runs while the round was closed. The last one, at the tip before this note: **272 files: 270 passed, 1 skipped, 1 failed; 4,260 tests passed, 4 skipped, 1 failed** (39 minutes). The one failure is `worker.test.ts` "seals new audit events of every tenant by itself, shortly after they are written", the load timing flake of round 1 (it needs 15 seconds of sealing on a busy machine); it passes alone (**5 of 5**, run after the full run). The earlier runs found three things that were fixed in the round and re-run: the fingerprint test of `consent-signing` (a record signed now is of the second version), the demo coverage (the demo leaves `patient_record_change` empty: exemption with its reason) and the queue test of the matricula, which is order dependent: the queue lists the OLDEST two hundred unverified registrations of the shared database and the new worlds pushed the ones it creates out of them, so its `beforeAll` marks the registrations the earlier files left unverified (only those with a number, as the queue lists them; the first version of that statement also hit a check constraint, found by the third full run). The determinism and the reset timing of the demonstration are inside this run.
+- `pnpm build`, `pnpm db:check`: exit 0, no drift. `db:restamp`: "already rising", "already chained".
+- Full e2e (`E2E_WEB_PORT=4960 E2E_API_PORT=3960 E2E_MINIO_PORT=9960`, `--workers=2`, stack started by Playwright): **219 passed, 2 failed of 221 (8.1 minutes)**. The two are the known ones, reported and not fixed here: `stage4-demo` "every screen of Stage 4 fits a phone" and "reception closes the register", fixed on the Stage 4 branch.
+- Docker: `infra/Dockerfile` built; a fresh `postgres:17.11` with `infra/postgres/init`; `db:migrate` twice (both exit 0, **99 migrations** recorded, platform catalogs loaded; the check of 0591 is validated); the image started with `NODE_ENV=production` (the image's), multi-tenant, AWS KMS, `S3_BUCKET`, `CLAMAV_HOST`, SMTP starttls and `ADDRESS_HASH_PEPPER`: `GET /health` answered `{"status":"ok"}`. Containers `jd5r2-api` and `jd5r2-pg`, the network `jd5r2-net` and the image `consultorio-api:jd5r2` were removed by name; the three containers of the Playwright stack (`1e35764b6a88` postgres, `386aae409ea7` MinIO on 9960, `7cd6865d41f7` Mailpit) were removed by id.
+- Not run: the Lighthouse budget (a CI job). The web change of the round is one state and one button in a lazy route of the portal and two strings; it adds no import to the entry chunk.
+
+## Judgment Day Stage 5, round 3
+
+Fresh-context review of `feat/stage-5-compliance-portal` at `703b00c` (diff `0827e6d..703b00c`; two judges, no CRITICAL, both NEEDS FIX). Every finding both judges confirmed (R3-1 to R3-8) and the one real single-judge item (B-W2) was fixed with the failing test first; the suspect items were reproduced first and fixed only where the test failed. Work started from `5e669cf` (Stage 4 final already merged).
+
+### Confirmed findings
+
+| Id | Fix | Test |
+| --- | --- | --- |
+| R3-1 | One count of the real sends of an address (`platform/db/otp-sends.ts`, `realSendsInLastHour`) shared by the portal, the booking and the waitlist: it skips `portal_decoy`. A decoy has a cap of its own of three an hour per address, counted among decoys only (`decoysInLastHour`, `PORTAL_DECOYS_PER_HOUR`); above it `openChallenge` answers the same but writes and queues nothing. | `portal-codes-round3.test.ts` |
+| R3-2 | `settleFromProvider` is `settleFromProviderPhased`: a short transaction reads the row and the provider, the question is asked with nothing held and inside `withinTime` (signal aborted at the timeout; a hang gives `unavailable`), and a last short transaction locks and writes. Every other call to the provider was already bounded (grepped: `issue`, `findByKey`, `status`, `cancel` all go through `callWithin`/`withinTime`). A reconcile pass stops after three prescriptions in a row that the provider did not answer, or five minutes, and logs it. | `prescription-round3.test.ts` ("gives up on a status that never answers", "stops a pass after three...", "does not hold the row...") |
+| R3-3 | `markIntent` writes `provider_in_flight_until = sentAt + pin` in the same committed write as the mark, BEFORE the call, with `sentAt` read from the clock again (after the question about the key). `settle` clears it on issued and rejected, `defer` clears it unless the outcome is unknown AND the request was sent (`inFlight`): a timeout, a call that threw and an adapter-reported `outcomeUnknown: true` keep it; an adapter-reported `outcomeUnknown: false` (the adapter's claim that the request never left) and a question that failed before the send clear it. `nextAttemptAt` waits for the pin. The job path needs no lease: the pin is what stops the others. New code `prescription_provider_in_flight` (409; "Hay un envío de esta receta en curso...") for a cancellation or a manual registration while it lasts; `prescription_attempt_in_progress` stays for a lease and the advisory lock. | `prescription-round3.test.ts` ("is written before the call, on the time of the send", "keeps the pin when the call throws...", "...adapter says the outcome is unknown", "clears the pin on a refusal before sending", "survives a crash"); the "failed fast" test of round 2 still holds for `outcomeUnknown: false` |
+| R3-4 | `patient_record_change.registration_requires_invitation` (0580): the trigger sets it when the record had no address and the change gives one; the sweep sets it when a notice is given up. While one such row has no `invitation_opened_at`, `registrationCandidate` answers like any mismatch (no code), reception cannot invite the patient or a representative (`portal_owner_or_admin_required`), and an owner or an administrator inviting the patient opens it (`openRegistration`) and writes `portal.registration.opened`. Spec, ASVS page, runbook and the help text of the registration page updated. | `portal-record-change-round3.test.ts` (R3-4 block) |
+| R3-5 | `sendRecordChangeNotices` claims one row in a short transaction (`notice_claimed_at`, `notice_attempts`), sends with nothing open, marks it sent (the address leaves the row) in another, and writes the audit entry in a third: a failed audit never repeats the notice. A failed send is logged and retried after 1, 5, 15 and 60 minutes (`notice_next_attempt_at`), five times at most. A notice that cannot be told (the week ended, or the fifth failure) is given up: `notice_expired_at`, the address cleared, `portal.notice.expired` audited, one log line, and the registration closes (R3-4). The logger is wired (`wiring/portal.ts`: the sweep moved from `tenantJobs` to `jobs` + a `schedules` fan-out, because it needs the database and the log of the worker). | `portal-record-change-round3.test.ts` (R3-5 block: failure logged and retried after a wait, give up after five, week over, claim committed while the message is in flight, no duplicate after an audit failure, two sweeps at once) |
+| R3-6 | Restrictive policy `patient_record_change_no_portal` (`actor_kind <> 'portal'`, or the owner), `REVOKE INSERT` from `app_rw`, `app.patient_record_changed()` is SECURITY DEFINER with the pinned search path, no EXECUTE for anybody, and is on the allowlist of definer functions (`[]`); the guard of the update refuses to clear an address that was neither told nor expired, to set both marks, to rewrite what was written once, or to lower the flag. The generated isolation suite goes through the trigger (the fixture changes an e-mail) and expects 42501 for the foreign-key override of this table; the key is proven with the owner role. | `portal-record-change-round3.test.ts` (R3-6 block), `definer-functions.test.ts`, `isolation.generated.test.ts` |
+| R3-7 | The counters of a client without an address are keyed by a hash of its user agent too (`clientKey(client, userAgent)` in `requestsKey`, `triesKey`, `challengeTriesKey`); the store stays per process, documented with a TODO for a shared store before the first multi-instance deployment in the ASVS page and `docs/runbooks/deploy.md`. | `domain/code.test.ts` |
+| R3-8 | `ownedRow` also requires `attempt_lease_until > now`; the pin is anchored on the send time (R3-3). | `prescription-round3.test.ts` ("does not record a cancellation answered after the lease ran out...") |
+| B-W2 | `app.patient_birth_date_changed` sets `majority_review_on = LEAST(old, new)` (0580): a later birth date leaves the link as it is, an earlier one brings it forward. | `portal-record-change-round3.test.ts` (B-W2 block: reception moves a 17 years and 11 months child a year later; the representative loses access at the original day), `portal-staff-hardening.test.ts` (updated: later does not move, earlier does) |
+
+### Suspect items
+
+| Id | Outcome |
+| --- | --- |
+| A-W6 | Reproduced (the subject said "ficha"). The notice of a changed record is generic: "Se registró un cambio en datos asociados a esta dirección en <organization>. Si no lo reconoce, contacte a la institución."; no "ficha", no "paciente", no field. `mail.test.ts`, `portal-record-change.test.ts`. |
+| reverifyLink queues no notice | Reproduced. `reverifyLink` returns the address of the record and the route queues `representative_added` in the same transaction, like the first time. `portal-record-change-round3.test.ts`. |
+| message of the pin | Reproduced; fixed with the new code `prescription_provider_in_flight` (see R3-3). |
+| 0596 VALIDATE comment | 0596 is not edited (it may be applied). The correction is in the header of 0580 and in `docs/migration-ranges.md`: its VALIDATE runs in the single transaction of the migrator; harmless here. |
+| `only_document` bound to the prescription | Reproduced (a colleague could point the row at the PDF of another prescription of the organization). 0580 requires `t/<organization>/prescriptions/<NEW.id>.pdf`; `storeDocument` writes that key and no longer removes an unrecorded object (the key is the same for every attempt). `prescription-schema.test.ts`. |
+| contract test `if (!hold) return;` | Reproduced as a silent pass. Explicit `context.skip('this target cannot hold a call')` (the local simulator shows as skipped). |
+| register without an acknowledgement path | Reproduced. `RegisterManualPrescriptionRequest.acknowledgeUnknownOutcome` mirrors the cancellation: with no provider connected and the acknowledgement, the prescription is registered (the entry says `unconfirmed`); without it, `prescription_provider_not_connected`. The web form was NOT given a checkbox (the API path exists; no screen asks for it yet). `prescription-round3.test.ts`. |
+| cursor with month 13 gives a 500 | Reproduced. The cursor is validated as a real date and time (`existsAsDate`): `validation_failed`. `portal-prescriptions-round2.test.ts`. |
+| microseconds in the cursor | NOT reproduced: 105 prescriptions issued microseconds apart page completely (the driver gives the text of the database, with its microseconds). Test kept; no change. |
+| a patient whose e-mail was corrected is refused with no explanation | Accepted UX cost. The help text of the registration page now says that a person who does not receive the code or changed their address recently should contact the organization (same text for every visitor); the runbook tells the staff. |
+
+### Flake fixed
+
+`erx-world.ts` `patientWithDocument` drew a DNI as `30000000 + counter + rand(9000)`, so two patients of one organization could collide (409 in `prescription-issue.test.ts`). It is now `base + counter`, where the base comes from the id of the organization of the world: unique and deterministic.
+
+### Migration (track `5jd`, new; range 0580 - 0589)
+
+`0580_record_change_hardening` (columns and index of `patient_record_change`, the NOT VALID check of the attempts, the restrictive policy, no INSERT for the runtime role, the hardened definer trigger function, the stricter guard, the `LEAST` of the birth date trigger, the guard of `prescription` bound to the id). `5jd` is added to `scripts/migration-journal.ts` and documented in `docs/migration-ranges.md`. `pnpm db:restamp` found nothing to change; `pnpm db:check`: no drift. The journal now has 108 entries.
+
+New things in the contracts: errors `prescription_provider_in_flight`; audit actions `portal.notice.expired` and `portal.registration.opened` (with their es-AR labels, the scenarios table and the "written outside the routes" table of the policy tests); `acknowledgeUnknownOutcome` on the manual registration.
+
+### Deviations and notes
+
+- **The transaction of a job is the framework's.** `defineJob` wraps every handler in a transaction (it writes the marker of idempotence). The sweep of notices and the reconcile pass open short transactions of their own for every step, so the framework's holds no row; it is still one connection that stays idle while a message is sent or the provider is waited for. The reconcile pass stops after three unanswered prescriptions or five minutes, and the sweep after twenty notices or fifty seconds, so that idle time is bounded.
+- **Every unknown outcome delays the retry by the pin (ten minutes).** Before, only a timeout did. An adapter that answers a 5xx should say `outcomeUnknown: true`; the next attempt asks for the key first anyway, so the wait is the price of never sending blindly. Eight existing tests that retried or cancelled at once after an unknown outcome now move the clock past the pin (`world.pastPin`).
+- **The sweep of notices is built in `jobs` and fanned out by a `schedules` entry** (no longer a `tenantJobs` entry), because `tenantJobs` are built without the database and the log. The queue and the cadence (a minute) are the same.
+- **Not done:** a checkbox for the acknowledgement in the manual registration form; a shared store for the rate-limit counters (documented, with the TODO).
+- `prettier --write` was run on the docs this round touched only; `apps/api/src` and `db/migrations/meta` were not formatted by hand (the pre-commit hook formats the staged TypeScript, as always).
+
+### Verification (Node v24.22.0, pnpm 10.34.7, a machine shared with other agents)
+
+- `pnpm install --frozen-lockfile`, `pnpm typecheck`, `pnpm lint`, `pnpm format:check`: green.
+- Unit (`pnpm test`): 415 files, 5102 tests passed and 1 skipped; 5 tests of 3 files (`migration-journal`, `new-migration`, `reports-page`) timed out in the full run under load and passed alone.
+- Integration (Testcontainers, Postgres 17): 288 files, 284 passed, 1 skipped, 3 failed in the full run (`worker.test.ts` x2 sealing and fan-out under load, `invoice-r8.test.ts` x1 at 30 s, `storage-s3.test.ts` MinIO container start); the 4442 other tests passed; the three files pass alone (27 tests).
+- `pnpm build`: green. `pnpm db:check`: no drift.
+- Full e2e (`E2E_WEB_PORT=4960 E2E_API_PORT=3960 E2E_MINIO_PORT=9960`, `--workers=2`, Playwright-managed stack): 229 passed, 0 failed (8.4 minutes).
+- Docker: `infra/Dockerfile` built (`consultorio-api:jd5r3`, image `9fd74eae3131`); a fresh `postgres:17` (`c7a6e97b77cc`) with `infra/postgres/init/01-roles.sql`; `db:migrate` twice (both: migrations applied, platform catalogs loaded; 108 migrations recorded); the image started with a production-like environment against that database (`50e9f6afdc53`): `/health` answered `{"status":"ok"}`. Both containers and the image were removed; nobody else's containers were touched.
+- Logs: `$TEMP/jd5r3-*.log`.
+
+## Judgment Day Stage 5, round 4
+
+Fresh-context review of `feat/stage-5-compliance-portal` at `f2d4f5f` (two judges: A approved, B NEEDS FIX for one real defect). Every item both judges agreed on (R4-1 to R4-7) was fixed with the failing test first, except where noted below. Work started from `f2d4f5f`.
+
+### Items
+
+| Id | Fix | Test |
+| --- | --- | --- |
+| R4-1 | The day-7 gap of the registration gate is closed fail-safe: `isRegistrationClosed` (and `openRegistration`) now also count a row of the patient with `notice_email IS NOT NULL AND notice_sent_at IS NULL AND notice_expired_at IS NULL` and no `invitation_opened_at`, whatever its age. A stopped worker no longer opens the public registration or reception invitations of a record whose previous address was never warned; an owner or an administrator invitation opens those rows too (and writes `portal.registration.opened`). Two older tests that aged a change 8 days without running the sweep now run `world.sweepNotices()` first (the notice was told). | `portal-record-change-round4.test.ts` (day 8, sweep skipped: public registration refused, reception 409, owner 201, activation works; a told notice opens it by itself) |
+| R4-2 | `MIN_DB_POOL_MAX = families x JOB_LOCAL_CONCURRENCY x 2 + 2` computed from `CONNECTION_HOLDING_JOBS` (`afip.issue`, `erx.reconcile`, `portal.notice_sweep`) = 14; the default (`DEFAULT_RUNTIME_POOL_MAX`, `.env.example`) is 16. The comments of `notice-job.ts` and `settle.ts` that said the job transaction "holds nothing" now say it holds a connection, idle. Runbook (`afip-switch-to-real.md`, new upgrade notes), `deploy.md` (new section) and the ASVS page updated. The config error message names the three families. | `config.test.ts` (default 16 and above the floor; floor 14 from the list; 2, 6, 10 and 13 refused with the number), `invoice-series.test.ts` (default of the pool 16). The config test was written before the code but not run red on its own. |
+| R4-3 | `expireNotices` sets `invitation_opened_at` of the row it expires to the latest invitation opened AFTER that row was written (subquery), so a give-up never closes again a registration an owner opened. | `portal-record-change-round4.test.ts` (state built with the owner connection: rows 1 and 2 untold, row 3 flagged and opened later; after the sweep no row closes the registration) |
+| R4-4 | `existsAsDate` of the prescriptions cursor: year below 1 (`0000`), zone offsets beyond +-15:59 (hours and minutes, with or without colon, `+16`), and the year is set with `setUTCFullYear` instead of `Date.UTC` (years 0 to 99). A tampered cursor is `400 validation_failed`. | `portal-prescriptions-round2.test.ts` (refused: year 0, +-16:00, +99:00, +1600, +16, +05:60, 0001/0003/0100-02-29; answered 200: 0004-02-29, 0001-01-01, +-15:59, +0530, microseconds) |
+| R4-5 | `openChallenge` calls `evenOut(tx, 2)` before the `limited` return of the real path and `evenOut(tx, 1)` before the one of the decoy path, for the update and the insert they skip. The queueing of the job is the same single call in both normal paths, so it does not separate real from decoy. | `public-nondisclosure.test.ts` (new block with a portal world: four requests each for an account and for an unknown address, the third and fourth above the cap of each: statement counts and answer shapes are the same in all eight; red before: `[11, 11, 9, 9]` against `[11, 11, 11, 10]`) |
+| R4-6 | Migration 0581: the guard of `patient_record_change` refuses to set `notice_expired_at` unless `registration_requires_invitation` is true in the same write. | `portal-record-change-round4.test.ts` (23000 with the flag down, accepted with it up) |
+| R4-7 | Documentation: delivery of the notice is at-least-once when the mark fails after a send (comment of `sendRecordChangeNotices`, ASVS page); the bucket of a client with no address is not a security boundary (`clientKey`, ASVS, `deploy.md`); the public portal routes log the warning "the client address of a portal request is unknown" each time `ip` is null (organization and route only, never the e-mail or the user agent). | `portal-unknown-client.test.ts` (the warning for an address with a zone id, none for a known one); `PortalWorld` accepts a `logStream`. |
+
+### Migration (track `5jd`)
+
+`0581_expiry_requires_flag` (the guard function of `patient_record_change` replaced: the rest is the one of 0580). `pnpm db:restamp` found nothing to change; `pnpm db:check`: no drift. The journal now has 109 entries.
+
+### Notes
+
+- A reproduction of the day-7 gap needed the sweep skipped, which `world.sweepNotices()` makes explicit; the two older tests that relied on the gap (aging 8 days with no sweep and expecting the registration open) now run the sweep first, which is the behavior the spec describes (the previous address was told).
+- R4-3 is defensive: with R4-1 an invitation opens every untold row of the patient at once, so the state the test builds (an opening that did not reach an older untold row) can only come from data written by an earlier version.
+- The pool default moved from 10 to 16 in `pool.ts` (`DEFAULT_RUNTIME_POOL_MAX`), `config.ts` and `.env.example`; a deployment that sets `DB_POOL_MAX` between 6 and 13 now refuses to start (runbook, "Upgrade notes").
+- The null-IP warning is logged in the public portal routes (`public-routes.ts`, `contextOf`), the only place where the user-agent bucket is used; the authenticated portal routes do not use it.
+
+### Verification (Node v24.22.0, pnpm 10.34.7, a machine shared with other agents)
+
+- `pnpm typecheck`, `pnpm lint`, `pnpm format:check`: green.
+- Unit (`pnpm test`): 435 files, 5533 tests passed and 1 skipped.
+- Integration (Testcontainers, Postgres 17): 290 files, 287 passed, 1 skipped, 2 failed in the full run (`storage-s3.test.ts` MinIO stream tests, `worker.test.ts` sealing under load: 3 tests); the 4467 other tests passed; both files pass alone (22 tests).
+- `pnpm build`: green. `pnpm db:check`: no drift.
+- Full e2e (`E2E_WEB_PORT=4960 E2E_API_PORT=3960 E2E_MINIO_PORT=9960`, `--workers=2`, Playwright-managed stack): 228 passed, 1 failed in each of three full runs (`calendar.day.spec.ts` "book, confirm, check in, start and attend", desktop: the booking dialog opened without the professional preselected, so the group "Horarios disponibles" never rendered); the same spec passes alone (2 passed, 45 s). Nothing of `apps/web` changed in this round; the dialog preselects the professional in `useState` only when the list it gets has one entry (`BookingDialog.tsx`), probably a race of the screen with the filter (not proven), in code this round does not touch. Not fixed here.
+- Docker: `infra/Dockerfile` built (`consultorio-api:jd5r4`, image `191d670bd1a5`); a fresh `postgres:17` (`76f2f5b7f6c7`) with `infra/postgres/init/01-roles.sql`; `db:migrate` twice (both: migrations applied, platform catalogs loaded; 109 migrations recorded); the image started with a production-like environment against that database (`de2f6ebb9243`): `/health` answered `{"status":"ok"}` and `/ready` 200. Both containers and the image were removed; nobody else's containers were touched.
+- Logs: `$TEMP/jd5r4-*.log`.
+
+## Judgment Day Stage 5, round 5
+
+Fresh-context review of `feat/stage-5-compliance-portal` at `d046962` (two judges, both found the same single real defect; everything else approved). Work started from `cef337b` (the e2e fix of another agent). No migration.
+
+### Items
+
+| Id | Fix | Test |
+| --- | --- | --- |
+| R5-1 | `expireNotices` set `invitation_opened_at` to the subquery maximum with no `IS NULL` filter. Since R4-1 an untold row can already carry an opening (row A opened at T1, a later row opened at T3, then A expires): the update moved A to T3 and the 0581 guard ("written once") raised 23000. `expireNotices` runs at the start of `sendRecordChangeNotices` with no try/catch, so the job threw on every tick and the notices of the whole organization stopped. Now the column is `coalesce(patient_record_change.invitation_opened_at, (select max(...)))`, and the two top-level give-up passes run in a try/catch that logs the error code (never an address) and goes on to the send loop. | `portal-record-change-round4.test.ts`, block "R5-1": (1) A untold and opened by an owner, a later row B opened by the owner, both aged 8 days, the sweep gives them up: no error, A and B keep their openings, another patient's recent notice is still sent, no address in the log. Red before: 23000 `what happened to a change is written once`. (2) `withTenant` that fails the first two transactions (the two give-up passes): the sweep does not throw, the notice is sent, the log holds no address. Red before: the sweep threw. |
+| Suggestion | `codes.ts`, comment of `REAL_WRITES`/`DECOY_WRITES`: the limited paths skip `enqueue`, which in production runs statements, so only "real and decoy match each other in every state" is claimed. `public-nondisclosure.test.ts`: the docblock says the same and the assertion `new Set(real).size === 1` (same across turns) is removed. | `public-nondisclosure.test.ts` (the `decoy` equals `real` turn by turn assertion stays) |
+| Suggestion | `public-routes.ts`, `contextOf`: the warning about a client with no known address is logged at most once a minute per organization (an in-memory map in the route registration). | `portal-unknown-client.test.ts` (two more requests after a warning add no line). Red before: 4 lines against 2. |
+
+### Verification (Node v24.22.0, pnpm 10.34.7, a machine shared with other agents)
+
+- `tsc --noEmit` (apps/api), `eslint apps/api/src/modules/portal apps/api/test`, `prettier --check apps/api`: green.
+- Unit (`apps/api`, `vitest run`): 237 files, 3059 tests passed and 1 skipped.
+- Integration (Testcontainers, Postgres 17), full run: 290 files, 287 passed, 1 skipped, 2 failed (`demo-reset.test.ts` x7 and `worker.test.ts` x1, under load); 4465 tests passed, 5 skipped. Both files pass alone (22 tests). All `portal-*` files, `public-nondisclosure` and the rest of the security suite are in the passing set.
+- Containers: the Postgres 17 and the Ryuk of my runs removed themselves; nobody else's container was touched.
+- Logs: `$TEMP/jd5r5-*.log`.
+
 ## Judgment Day Stage 4, round 2
 
 Fresh-context review of `feat/stage-4-revenue` at `7abca49` (diff `9cd11e9..7abca49`; two judges, no CRITICAL, both: NEEDS FIX). Seven findings confirmed by both (R2-1 to R2-7) were fixed; six suspect items (one judge) were reproduced with a failing test first. Strict TDD: each fix has a test that failed on the code before it (the run of `invoice-series.test.ts` against the old `issue-attempt.ts` and `pool.ts` failed 11 of 12 tests; `invoice-guard-races.test.ts` failed 4 of 6 before the migration). Race tests are real two-connection tests. Exceptions to "red first", all disclosed: the contract-suite tests and the web dialog test were written after the code they cover (the contract tests assert fields that did not exist, so they could not have passed); the test "credit note and void of the same charge" in `invoice-guard-races.test.ts` passes before and after (see R2-5).
@@ -2727,3 +3102,51 @@ None needed: the merge was green without a fix commit.
 - Full e2e (`E2E_WEB_PORT=4890 E2E_API_PORT=3890 E2E_MINIO_PORT=9890`, `--workers=2`): 214 passed, 0 failed (7.8 minutes).
 - Docker: `infra/Dockerfile` built; a fresh `postgres:17` with `infra/postgres/init/01-roles.sql`; `db:migrate` run twice (both: migrations applied, platform catalogs loaded; 90 migrations recorded; the three invoice wait columns exist); the image started as `api` with `NODE_ENV=production`, multi-tenant, KMS `aws`, `S3_BUCKET`, `CLAMAV_HOST`, SMTP starttls and `ADDRESS_HASH_PEPPER`: `GET /health` answered `{"status":"ok"}`. Removed by id: the postgres and api containers, the image, and the three containers of the e2e stack (postgres, MinIO, Mailpit). A `postgres:17` (`06078eadeeb1`) that appeared during the run belongs to another agent and was left.
 - Incident: none. Logs are in `$TEMP/s4close-*.log`.
+
+## Stage 5 integration 2 (Stage 4 final merged)
+
+Merge of `origin/feat/stage-4-revenue` at `b3e47fd` (Stage 4 Judgment Day approved in round 9, B7 merged) into `feat/stage-5-compliance-portal` (from `703b00c`). Merge-base was `7abca49`. Merge commit `ee4fb48`; no fix commit was needed.
+
+### Conflicts and how they were resolved
+
+- `apps/api/src/db/migrations/meta/_journal.json` (eight hunks): rebuilt, not hand-merged. The 82 entries both sides share keep their position; then the eight Stage 4 entries that were missing (`0497`, `0480` to `0486`), in the order Stage 4 lists them; then the 17 Stage 5 entries (`0505` to `0599`). Every tag appears once. `pnpm db:restamp` renumbered `idx`, raised the Stage 5 stamps that no longer rose (`0505` to `0598`), re-chained snapshot `0505` to the one before it and rebuilt snapshot `0599` from the schema. `pnpm db:check`: no drift. Result: 107 entries, `idx` 0 to 106 unique and contiguous, `when` strictly rising.
+- `openspec/changes/health-practice-saas/apply-progress.md`: both histories kept (the Stage 5 sections, then the Stage 4 rounds 2 to 9 and the close). The S5 note that waited for `connectionTimeoutMillis` and `DB_POOL_MAX` is marked resolved.
+- Auto-merged with no conflict and checked: `tasks.md`, contracts (`InvoiceIssuer` and `PrescriptionProvider` ports, roles, permissions, audit actions, `reply_to_review` and the Stage 5 worklist kinds), locale files, `WorklistItemCard.tsx`, policy tables, definer-functions allowlist, demo contributors and exemptions, queues, `start-stack.ts`, `docs/migration-ranges.md`.
+- `platform/db/pool.ts` and `main/config.ts`: Stage 4's version (`connectionTimeoutMillis`, `DB_POOL_MAX`, floor `MIN_DB_POOL_MAX`) came in as is; Stage 5 had no pool code. The `DB_POOL_MAX` text of `.env.example` is Stage 4's.
+- `shared/ui/tabs.tsx` keeps both behaviours (`min-w-0` default of Stage 4 and the `shrink-0` tab with scroll of Stage 5); `button.tsx` has `WRAPPING_LABEL`.
+- Notifications: no caller of the removed `optOutChannel` exists in Stage 5 code (typecheck is clean), so nothing had to be adapted.
+
+### Migration order (journal positions 78 to 106)
+
+`0493`, `0494`, `0495`, `0496`, `0497`, `0480`, `0481`, `0482`, `0483`, `0484`, `0485`, `0486` (Stage 4), then `0505`, `0510`, `0512`, `0530`, `0532`, `0550`, `0552`, `0590` to `0599` (Stage 5). A fresh database applies all 107 in this order, twice in a row, without error (Docker smoke and the integration suite).
+
+### Verification (tip before this note, Node v24.22.0, pnpm 10.34.7, machine shared with the judges)
+
+- `pnpm install --frozen-lockfile`, `pnpm typecheck`, `pnpm lint`, `pnpm format:check`: green.
+- Unit (`pnpm test`): 424 of 435 files and 5520 of 5532 tests passed in the full run; the 11 failures were timeouts under load (`check-migration-drift`, `boot`, `render-invoice`, `module-boundaries`, `country-isolation`, `auth-guard`, `pdf/render`, `read-only/index`, `clinical-chart`, `documents`, `reports-page`). Re-run: ten files passed together; `pdf/render.test.ts` passed alone. Net: 5531 passed, 1 skipped, 0 failed.
+- Integration (Testcontainers, Postgres 17): 282 files passed, 1 skipped; 4424 tests passed, 4 skipped; 2 failed in the full run. `worker.test.ts` (known sealing load flake) and `prescription-issue.test.ts` (patient creation answered 409: `patientWithDocument` draws a DNI as `30000000 + counter + random(9000)`, so two patients of one tenant can collide) both passed on re-run (36 tests). Net: 4426 passed, 0 failed.
+- `pnpm build`: green. `pnpm db:check`: no drift.
+- Full e2e (`E2E_WEB_PORT=4960 E2E_API_PORT=3960 E2E_MINIO_PORT=9960`, `--workers=2`): 229 passed, 0 failed (10.7 minutes). The `stage4-demo` layout specs now pass.
+- Docker: `infra/Dockerfile` built (`consultorio-api:s45m`, image `1e495b0d3aca`); a fresh `postgres:17` (`9eeaa622e733`) with `infra/postgres/init/01-roles.sql`; `db:migrate` run twice from the repository (both: migrations applied, platform catalogs loaded; 107 migrations recorded; `invoice.refused_not_next`, `lookup_misses`, `last_sent_at`, `prescription` and `portal_identity` exist); the image started as `api` (`4247013449a5`; `NODE_ENV=production`, multi-tenant, KMS `aws`, `S3_BUCKET`, `CLAMAV_HOST`, SMTP starttls, `ADDRESS_HASH_PEPPER` of 32+ characters, `ERX_PROVIDER=off`): `GET /health` answered `{"status":"ok"}`. Removed by id: the two containers, the network `8a4aec337bc4` and the image. The e2e stack containers were reaped by Testcontainers; no other container was touched.
+- Incident: none. Logs are in `$TEMP/s45merge-*.log`.
+
+### Risks
+
+- The Stage 4 entries `0480` to `0486`/`0497` now sit before Stage 5's `0505` and later, so a development database that applied Stage 5 before this merge would not re-run them in order; fresh databases (CI, Docker, tests) are unaffected. Nothing of Stage 5 is released.
+- `prescription-issue.test.ts` has a rare birthday collision in its generated DNI (see above); not caused by the merge, not fixed here.
+
+## Stage 5 Judgment Day: APPROVED (round 5, 2026-10-20)
+
+Both judges approved the Stage 5 Judgment Day after five rounds. The last real defect, R5-1, was fixed in 5e1ac48 exactly as both judges asked (a coalesce plus a guarded give-up pass), with a test that failed before the fix. The defect: giving up a notice overwrote an opening that the guard writes only once.
+
+The rounds closed these problems:
+
+- A nested transaction that could exhaust the connection pool.
+- The portal reading clinical tables as the system user.
+- A staff path to an adult's clinical content through portal invitations. It is now closed by the owner-confirmed 7-day rule, the record-change notice, and a registration that needs an owner or administrator invitation.
+- Decoy codes that could cancel or rate-limit a real one.
+- Prescriptions issued twice while a request was still in flight. Fixed with a write-ahead mark, a pin, a lease token, and a phased cancel and register.
+- The signature mark and the signer.
+- The majority boundary.
+
+See the per-round sections above. Task 5.51 is done. Tasks 5.53 and 5.54 stay deferred until there is a real e-prescription provider.

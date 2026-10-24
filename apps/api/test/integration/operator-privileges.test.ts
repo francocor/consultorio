@@ -78,11 +78,13 @@ describe('the operator database role is an allowlist', () => {
       'holiday_catalog',
       // Administrative configuration, readable only under a support grant.
       'location',
+      // The operator's working note on a registration (the application role has no privilege on it).
+      'matricula_operator_note',
       // The operator's own accounts, sessions and trail.
       'operator_session',
       'operator_user',
       'platform_audit_event',
-      // Matricula verification (the one write the operator makes on a professional).
+      // Matricula verification: the one write the operator makes on a professional.
       'professional',
       'tenant',
       'tenant_feature',
@@ -207,6 +209,24 @@ describe('the operator role reaches no more than it needs (security review, find
     const first = await asOperatorOf(fresh.id, insertKey(fresh.id, 1));
     expect(first.rowCount).toBe(1);
     await expect(asOperatorOf(fresh.id, insertKey(fresh.id, 1))).rejects.toThrow();
+  });
+
+  it('writes into the trail of an organization only the entries its own work produces', async () => {
+    const audited = await createTestTenant(runtime, { slug: 'op-priv-audit' });
+    const entry = (action: string) =>
+      sql`INSERT INTO audit_event (tenant_id, action, outcome) VALUES (${audited.id}, ${action}, 'allow')`;
+
+    for (const action of [
+      'tenant.created',
+      'support.access',
+      'matricula.verified',
+      'matricula.unverified',
+    ]) {
+      expect((await asOperatorOf(audited.id, entry(action))).rowCount, action).toBe(1);
+    }
+    for (const action of ['patient.created', 'matricula.revoked', 'staff.profile_updated']) {
+      await expectPrivilegeError(asOperatorOf(audited.id, entry(action)), action);
+    }
   });
 
   it('reads the registration of a professional, but not the rest of the profile', async () => {

@@ -24,8 +24,20 @@ describe('navigation at the stage that ships (Stage 2, screens built so far)', (
     expect(ids).not.toContain('prescriptions');
   });
 
-  it('a professional sees today, the agenda and patients until the clinical screens are built', () => {
-    expect(idsFor(['professional'])).toEqual(['home', 'today', 'calendar', 'patients']);
+  it('a professional sees today, the agenda, patients and prescriptions until the clinical drafts are built', () => {
+    expect(idsFor(['professional'])).toEqual([
+      'home',
+      'today',
+      'calendar',
+      'patients',
+      'prescriptions',
+    ]);
+  });
+
+  it('only whoever may read prescriptions sees the entry', () => {
+    for (const roles of [['reception'], ['owner'], ['admin'], ['patient']] as const) {
+      expect(idsFor(roles), roles.join()).not.toContain('prescriptions');
+    }
   });
 
   it('owner and admin see the agenda, settings, staff and audit, and still no clinical entry point', () => {
@@ -53,6 +65,7 @@ describe('navigation at the stage that ships (Stage 2, screens built so far)', (
       'today',
       'calendar',
       'patients',
+      'prescriptions',
       'worklist',
       'staff',
       'audit',
@@ -316,6 +329,7 @@ describe('the revenue screens (Stage 4) contribute their own entries', () => {
       'today',
       'calendar',
       'patients',
+      'prescriptions',
       'charges',
       'reports',
     ]);

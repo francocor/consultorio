@@ -20,6 +20,14 @@ const COUNTRY = 'AR';
 /**
  * Builds the Argentina pack. Validators are the pure functions shared with the web app
  * (`@consultorio/contracts`); holidays and payers come from the platform catalogs.
+ *
+ * Argentina is the only country there is (owner decision: the product is Argentina-first), and three
+ * rules of the DATABASE assume it: the age of majority is 18 and the day is the one of Buenos Aires in
+ * `app.majority_review_date`, `app.patient_birth_date_changed` (the trigger that moves the review day
+ * of a representative when a birth date is corrected) and `app.portal_today` (migrations 0591 and
+ * 0592). The application reads the age and the zone from this pack (`majorityAge`, `timeZone`); the
+ * trigger and the two functions do not. A second country pack must turn those three into data of the
+ * pack (a column or a setting of the organization) before the first organization of that country.
  */
 export function createArPack(catalogs: CatalogReader): CountryPack {
   return {

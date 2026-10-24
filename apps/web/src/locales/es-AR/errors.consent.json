@@ -1,0 +1,19 @@
+{
+  "consent_template_retired": "La plantilla está retirada: ya no admite cambios ni se ofrece para nuevas firmas.",
+  "consent_template_not_draft": "Solo se puede publicar una plantilla que está en borrador. Para cambiar una ya publicada, edítela.",
+  "consent_appointment_type_unknown": "El tipo de turno elegido no existe en la organización.",
+  "consent_starter_unknown": "La plantilla de ejemplo elegida no existe.",
+  "consent_template_not_offered": "Esta plantilla no está publicada o fue retirada, por lo que no se puede solicitar.",
+  "consent_request_pending": "Este paciente ya tiene una solicitud de este consentimiento pendiente de firma.",
+  "consent_request_expired": "La solicitud venció y ya no se puede firmar. Genere una nueva.",
+  "consent_request_closed": "Esta solicitud ya no espera una firma: fue firmada, rechazada, vencida o revocada.",
+  "consent_acceptance_required": "Para firmar hay que aceptar de forma expresa el texto del consentimiento.",
+  "consent_version_mismatch": "El texto que se mostró no es el de esta solicitud. Vuelva a abrir el consentimiento para leerlo.",
+  "consent_representative_required": "El paciente es menor de edad: el consentimiento lo firma su representante, con nombre, documento y vínculo.",
+  "consent_representative_unexpected": "Se completaron datos de un representante, pero la firma es del propio paciente.",
+  "consent_signer_not_allowed": "Un representante no puede firmar por una persona adulta: la firma es de la propia persona, desde su acceso al portal.",
+  "consent_mark_invalid": "La firma dibujada no es una imagen válida. Dibújela de nuevo o escriba el nombre.",
+  "consent_not_signed": "Solo se puede revocar un consentimiento que fue firmado.",
+  "consent_already_revoked": "Este consentimiento ya fue revocado.",
+  "consent_method_mismatch": "Este consentimiento se firma de otra manera: en el consultorio o desde el portal, según cómo se pidió."
+}

@@ -1,5 +1,6 @@
 import { randomBytes } from 'node:crypto';
 
+import { createDemoOutboxEmailSender, demoEmailPolicy } from '../adapters/demo-outbox/index.js';
 import { createFakeEmailSender } from '../adapters/fake-email/index.js';
 import { createLocalKeyManagement } from '../adapters/local-kek/index.js';
 import { createMemoryObjectStorage } from '../adapters/memory-storage/index.js';
@@ -31,13 +32,22 @@ export interface AdapterRegistryInput {
  */
 export function buildAdapterRegistry(input: AdapterRegistryInput): AdapterRegistry {
   const { config, email, storage, kms } = input;
+  // What a demo organization "sends" is kept in `demo_outbox` for the provider console (task 5.48),
+  // wherever somebody can read it; it never reaches a real mail server.
+  const outbox = demoEmailPolicy(config);
+  const demoEmail = outbox.record
+    ? createDemoOutboxEmailSender({
+        db: input.db,
+        forward: outbox.forward ? email.sender : undefined,
+      })
+    : createFakeEmailSender();
   return assembleAdapterRegistry([
     {
       email: {
         real: email.kind === 'smtp' ? real(email.sender) : fake(email.sender),
         // Outside production the configured SMTP server is a development catcher (Mailpit): a demo
-        // organization's invitations show up there. In production nothing is ever delivered.
-        demo: fake(config.nodeEnv === 'production' ? createFakeEmailSender() : email.sender),
+        // organization's invitations show up there too. In production nothing is ever delivered.
+        demo: fake(demoEmail),
       },
       objectStorage: {
         real: storage ? real(storage) : undefined,

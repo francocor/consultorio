@@ -26,17 +26,42 @@ const ALLOWED: Record<string, readonly string[]> = {
   'app.active_support_grant_id(uuid)': ['app_operator'],
   'app.tenant_is_unclaimed(uuid)': ['app_operator'],
   'app.demo_reset(uuid)': ['app_operator'],
+  // Matricula verification: the name of one professional of the transaction's organization.
+  'app.operator_professional_name(uuid)': ['app_operator'],
   // Documents: tell a clinical document the caller may not read from one that does not exist,
   // and give reception the metadata of clinical documents when the organization allows it.
   'app.document_probe(uuid)': ['app_rw'],
   'app.reception_clinical_documents(uuid)': ['app_rw'],
+  // The patient portal reads the documents shared with the patient of its own session, which the
+  // RESTRICTIVE policies of `document` would hide (clinical ones). No parameter names a patient or a
+  // link: they answer for the link and the identity the request validated (runtime role).
+  'app.portal_shared_documents()': ['app_rw'],
+  'app.portal_shared_document(uuid)': ['app_rw'],
+  // The portal's door to its patient's prescriptions (JD-S5 R1-S5-2): SELECT only, bound to the
+  // link and the identity of the request and re-checked against the tables. The portal is not a
+  // professional, so the policies of `prescription` hide the table from it. The list names no
+  // medication; the single one also gives the encrypted content the PDF is made from.
+  'app.portal_prescriptions(timestamp with time zone,uuid,integer)': ['app_rw'],
+  'app.portal_prescription(uuid)': ['app_rw'],
+  // The worker removes what the demo outbox kept for more than a day (the runtime role has no DELETE).
+  'app.demo_outbox_purge(timestamp with time zone)': ['app_rw'],
   // The WhatsApp webhook finds the organization of an event from our own record of what we sent
   // (runtime role). They return tenant ids and nothing else (judgment day finding C10).
   'app.message_tenants_by_provider_id(text)': ['app_rw'],
   'app.whatsapp_reply_context_tenants(text,text)': ['app_rw'],
   // The same, for a number held under several hashes at once (judgment day round 4, finding T1).
   'app.whatsapp_reply_tenants_any(text[],timestamp with time zone,integer)': ['app_rw'],
+  // E-prescription (Stage 5): a notice from the provider carries no organization, so the webhook
+  // finds it from our record of the identifier (ids only); reception learns that a prescription
+  // exists when the organization allows it (id, status, day: no content).
+  'app.erx_prescription_by_external_id(text)': ['app_rw'],
+  'app.reception_prescription_existence(uuid)': ['app_rw'],
+  // Tells a prescription the caller may not read from one that does not exist (the trail names who asked).
+  'app.prescription_probe(uuid)': ['app_rw'],
   // Called only by triggers, never directly.
+  // The record changes of a patient (JD-S5 R3-6): the trigger of `patient` writes the row as the owner,
+  // because the runtime role has no INSERT on `patient_record_change`.
+  'app.patient_record_changed()': [],
   'app.care_adjust(uuid,uuid,uuid,integer,integer)': [],
   'app.care_assignment_sync()': [],
   'app.care_set_assigned(uuid,uuid,uuid,boolean)': [],

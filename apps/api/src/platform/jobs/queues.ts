@@ -68,4 +68,31 @@ export const QUEUES: readonly QueueDefinition[] = [
   { name: 'invoice.deliver', options: { retryLimit: 3, retryDelay: 60, expireInSeconds: 300 } },
   // Builds a CSV, xlsx or PDF export (billing exports and reports) and stores the result.
   { name: 'export.build', options: { retryLimit: 2, retryDelay: 30, expireInSeconds: 900 } },
+
+  // Stage 5, compliance and portal. Same rule: the owning track writes the handler, the queue exists
+  // from the seam.
+  // Submits (or retries) a prescription the provider has not confirmed. The handler asks the
+  // provider for the key before it issues, and chooses its own backoff by queuing itself again.
+  { name: 'erx.submit', options: { retryLimit: 2, retryDelay: 30, expireInSeconds: 300 } },
+  // Asks the provider where the prescriptions of an organization stand (dispensed, expired,
+  // cancelled) and settles the ones whose answer was lost.
+  { name: 'erx.reconcile', options: { retryLimit: 1, retryDelay: 60, expireInSeconds: 600 } },
+  // Daily, per organization: closes the consent requests whose time ran out.
+  { name: 'consent.expire', options: { retryLimit: 1, retryDelay: 300, expireInSeconds: 900 } },
+  // Daily, per organization: suspends the representative links of the dependents who turned 18.
+  {
+    name: 'portal.majority_review',
+    options: { retryLimit: 1, retryDelay: 300, expireInSeconds: 900 },
+  },
+  // Emails the sign-in code of the patient portal (track B, S5.07). It is not `otp.send`: signing in
+  // to the portal is authentication, which a read-only organization keeps, while the code of the
+  // public booking is a plain write that ends cancelled there.
+  { name: 'portal.code_send', options: { retryLimit: 3, retryDelay: 15, expireInSeconds: 120 } },
+  // Emails a warning about a change to the access of the portal that the staff made (an account moved
+  // to another address, a representative given access to a minor). Queued in the transaction of the
+  // change (JD-S5 R2-2). A person is protected whatever the state of the subscription.
+  { name: 'portal.notice_send', options: { retryLimit: 5, retryDelay: 60, expireInSeconds: 120 } },
+  // Every minute, per organization: tells the address a record HAD that its e-mail or birth date was
+  // changed (the change is written by the database, in the transaction of the update).
+  { name: 'portal.notice_sweep', options: { retryLimit: 1, retryDelay: 60, expireInSeconds: 300 } },
 ];

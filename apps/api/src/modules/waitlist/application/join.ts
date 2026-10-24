@@ -3,12 +3,13 @@ import type {
   WaitlistChannel,
   WaitlistTimeRange,
 } from '@consultorio/contracts';
-import { and, desc, eq, gt, sql } from 'drizzle-orm';
+import { and, desc, eq, sql } from 'drizzle-orm';
 
 import { bookingSubmission, otpChallenge } from '../../../db/schema/booking-submission.js';
 import { audit, type AuditActor } from '../../../platform/audit/writer.js';
 import type { TenantKeys } from '../../../platform/crypto/tenant-keys.js';
 import { evenOut } from '../../../platform/db/even-work.js';
+import { realSendsInLastHour } from '../../../platform/db/otp-sends.js';
 import type { Tx } from '../../../platform/db/tenant-context.js';
 import { uuidv7 } from '../../../platform/db/uuid.js';
 import { AppError } from '../../../platform/http/problem.js';
@@ -153,18 +154,9 @@ async function recordSuspicious(
   });
 }
 
-/** How many codes were sent to an address in the last hour, whatever they were for. */
-async function sendsInLastHour(tx: Tx, email: string, now: Date): Promise<number> {
-  const rows = await tx
-    .select({ n: sql<number>`count(*)::int` })
-    .from(otpChallenge)
-    .where(
-      and(
-        eq(otpChallenge.email, email),
-        gt(otpChallenge.createdAt, new Date(now.getTime() - HOUR)),
-      ),
-    );
-  return rows[0]?.n ?? 0;
+/** How many codes were sent to an address in the last hour, whatever they were for (a decoy sends none). */
+function sendsInLastHour(tx: Tx, email: string, now: Date): Promise<number> {
+  return realSendsInLastHour(tx, email, now);
 }
 
 /**

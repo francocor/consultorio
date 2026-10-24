@@ -50,11 +50,24 @@ const publicRoutes: readonly FeatureRoute[] = [
   },
 ];
 
+const portalRoutes: readonly FeatureRoute[] = [
+  {
+    mount: 'portal',
+    create: (parent) =>
+      createRoute({
+        getParentRoute: () => parent,
+        path: '/fixture-portal',
+        component: () => <p>Fixture portal page</p>,
+      }),
+  },
+];
+
 const registry = createRegistry({
   routes: {
     '../features/links/routes.tsx': { default: bookingRoutes },
     '../features/messaging/routes.tsx': { default: messagingRoutes },
     '../features/public/routes.tsx': { default: publicRoutes },
+    '../features/portal/routes.tsx': { default: portalRoutes },
   },
   nav: {
     '../features/links/nav.ts': {
@@ -150,6 +163,24 @@ describe('features that register through routes.tsx and nav.ts', () => {
 
     expect(await screen.findByText('Fixture public page')).toBeInTheDocument();
     expect(screen.queryByRole('navigation')).not.toBeInTheDocument();
+  });
+
+  it('mounts a portal route in the shell of the portal: branded, with no staff navigation', async () => {
+    renderApp({ me: null, boot, path: '/fixture-portal', registry, routes });
+
+    expect(await screen.findByText('Fixture portal page')).toBeInTheDocument();
+    expect(screen.queryByRole('navigation')).not.toBeInTheDocument();
+    // The portal's own header names the organization and says which door this is.
+    const header = screen.getByRole('banner');
+    expect(await within(header).findByText('Centro Médico Aillu')).toBeInTheDocument();
+    expect(within(header).getByText('Portal de pacientes')).toBeInTheDocument();
+  });
+
+  it('does not give the public booking frame the portal header: the two shells are apart', async () => {
+    renderApp({ me: null, boot, path: '/fixture-public', registry, routes });
+
+    expect(await screen.findByText('Fixture public page')).toBeInTheDocument();
+    expect(within(screen.getByRole('banner')).queryByText('Portal de pacientes')).toBeNull();
   });
 
   it('keeps an address nobody registered as not found', async () => {

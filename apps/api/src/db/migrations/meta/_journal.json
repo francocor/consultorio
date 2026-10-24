@@ -631,6 +631,139 @@
       "when": 1792429659084,
       "tag": "0486_invoice_refused_not_next",
       "breakpoints": true
+    },
+    {
+      "idx": 90,
+      "version": "7",
+      "when": 1792429659085,
+      "tag": "0505_matricula_operator_note",
+      "breakpoints": true
+    },
+    {
+      "idx": 91,
+      "version": "7",
+      "when": 1792429659086,
+      "tag": "0510_consent_templates",
+      "breakpoints": true
+    },
+    {
+      "idx": 92,
+      "version": "7",
+      "when": 1792429659087,
+      "tag": "0512_consent_signing",
+      "breakpoints": true
+    },
+    {
+      "idx": 93,
+      "version": "7",
+      "when": 1792429659088,
+      "tag": "0530_prescriptions",
+      "breakpoints": true
+    },
+    {
+      "idx": 94,
+      "version": "7",
+      "when": 1792429659089,
+      "tag": "0532_local_erx",
+      "breakpoints": true
+    },
+    {
+      "idx": 95,
+      "version": "7",
+      "when": 1792429659090,
+      "tag": "0550_portal_identity",
+      "breakpoints": true
+    },
+    {
+      "idx": 96,
+      "version": "7",
+      "when": 1792429659091,
+      "tag": "0552_document_share",
+      "breakpoints": true
+    },
+    {
+      "idx": 97,
+      "version": "7",
+      "when": 1792429659092,
+      "tag": "0590_demo_outbox",
+      "breakpoints": true
+    },
+    {
+      "idx": 98,
+      "version": "7",
+      "when": 1792429659093,
+      "tag": "0591_prescription_hardening",
+      "breakpoints": true
+    },
+    {
+      "idx": 99,
+      "version": "7",
+      "when": 1792429659094,
+      "tag": "0592_portal_guards",
+      "breakpoints": true
+    },
+    {
+      "idx": 100,
+      "version": "7",
+      "when": 1792429659095,
+      "tag": "0593_operator_audit_unverified",
+      "breakpoints": true
+    },
+    {
+      "idx": 101,
+      "version": "7",
+      "when": 1792429659096,
+      "tag": "0594_demo_outbox_retention",
+      "breakpoints": true
+    },
+    {
+      "idx": 102,
+      "version": "7",
+      "when": 1792429659097,
+      "tag": "0595_portal_session_guard_foreign_key",
+      "breakpoints": true
+    },
+    {
+      "idx": 103,
+      "version": "7",
+      "when": 1792429659098,
+      "tag": "0596_prescription_in_flight",
+      "breakpoints": true
+    },
+    {
+      "idx": 104,
+      "version": "7",
+      "when": 1792429659099,
+      "tag": "0597_portal_decoy_and_document_policy",
+      "breakpoints": true
+    },
+    {
+      "idx": 105,
+      "version": "7",
+      "when": 1792429659100,
+      "tag": "0598_patient_record_change",
+      "breakpoints": true
+    },
+    {
+      "idx": 106,
+      "version": "7",
+      "when": 1792432873010,
+      "tag": "0599_portal_prescriptions_paging",
+      "breakpoints": true
+    },
+    {
+      "idx": 107,
+      "version": "7",
+      "when": 1792456895198,
+      "tag": "0580_record_change_hardening",
+      "breakpoints": true
+    },
+    {
+      "idx": 108,
+      "version": "7",
+      "when": 1792464632300,
+      "tag": "0581_expiry_requires_flag",
+      "breakpoints": true
     }
   ]
 }

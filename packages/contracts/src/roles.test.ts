@@ -7,6 +7,7 @@ import {
   canManageRoles,
   rolesInviterMayGrant,
   PERMISSIONS,
+  PORTAL_ACTOR_PERMISSIONS,
   ROLES,
   ROLE_PERMISSIONS,
   effectivePermissions,
@@ -274,5 +275,87 @@ describe('Stage 4 permissions (revenue)', () => {
   it('gives reports to the roles the spec scopes on the server: professional (own) and reception', () => {
     expect(holders('reports.read')).toEqual(['owner', 'admin', 'professional', 'reception']);
     expect(ROLE_PERMISSIONS.patient).not.toContain('reports.read');
+  });
+});
+
+describe('Stage 5 permissions (compliance and portal)', () => {
+  const holders = (permission: Permission) =>
+    ROLES.filter((role) => ROLE_PERMISSIONS[role].includes(permission));
+
+  it.each(['clinical.prescription.write', 'clinical.consent.read'] as const)(
+    'keeps %s with the professional only, and out of the grantable list',
+    (permission) => {
+      expect(isClinicalPermission(permission)).toBe(true);
+      expect(holders(permission)).toEqual(['professional']);
+      expect(GRANTABLE).not.toContain(permission);
+    },
+  );
+
+  it('still finds no clinical permission outside the professional role once Stage 5 is in', () => {
+    expect(findClinicalLeaks(ROLE_PERMISSIONS, GRANTABLE)).toEqual([]);
+    for (const role of ROLES.filter((known) => known !== 'professional')) {
+      expect(ROLE_PERMISSIONS[role].filter(isClinicalPermission), role).toEqual([]);
+    }
+    // An owner who is also a professional holds them through the professional role only.
+    expect(effectivePermissions(['owner'], ['clinical.prescription.write'])).not.toContain(
+      'clinical.prescription.write',
+    );
+  });
+
+  it('lets the owner, the admin and the professional manage consent templates', () => {
+    expect(holders('consent.template.manage')).toEqual(['owner', 'admin', 'professional']);
+  });
+
+  it('lets a professional and reception request a consent, and nobody else', () => {
+    expect(holders('consent.request')).toEqual(['professional', 'reception']);
+  });
+
+  it('lets the owner, the admin and reception invite, link and deactivate portal accounts', () => {
+    expect(holders('portal.manage')).toEqual(['owner', 'admin', 'reception']);
+  });
+
+  it('keeps changing the email of a portal account from reception: only the owner and the admin (JD-S5 R1-A-C1)', () => {
+    expect(holders('portal.identity.email')).toEqual(['owner', 'admin']);
+  });
+  it.each([
+    'portal.consent.sign',
+    'portal.consent.revoke',
+    'portal.document.read',
+    'portal.prescription.read',
+    'portal.invoice.read',
+    'portal.profile.write',
+  ] as const)('gives the portal actor %s and no staff role', (permission) => {
+    expect(holders(permission)).toEqual(['patient']);
+  });
+
+  it('lists exactly what the portal actor may hold, and none of it is staff administration', () => {
+    expect([...PORTAL_ACTOR_PERMISSIONS].sort()).toEqual(
+      [
+        'portal.appointment.cancel',
+        'portal.consent.revoke',
+        'portal.consent.sign',
+        'portal.document.read',
+        'portal.invoice.read',
+        'portal.prescription.read',
+        'portal.profile.write',
+        'portal.self.read',
+      ].sort(),
+    );
+    expect(PORTAL_ACTOR_PERMISSIONS).not.toContain('portal.manage');
+    expect(PORTAL_ACTOR_PERMISSIONS).not.toContain('portal.identity.email');
+    expect(PORTAL_ACTOR_PERMISSIONS.filter(isClinicalPermission)).toEqual([]);
+  });
+
+  it('adds none of the new permissions to the grantable list', () => {
+    for (const permission of [
+      'consent.template.manage',
+      'consent.request',
+      'portal.manage',
+      'portal.identity.email',
+    ] as const) {
+      expect(GRANTABLE).not.toContain(permission);
+      expect(isClinicalPermission(permission)).toBe(false);
+    }
+    expect(GRANTABLE.length).toBe(7);
   });
 });

@@ -1,6 +1,7 @@
 import { z } from 'zod';
 
-import { JOB_LOCAL_CONCURRENCY } from '../platform/jobs/concurrency.js';
+import { DEFAULT_RUNTIME_POOL_MAX } from '../platform/db/pool.js';
+import { CONNECTION_HOLDING_JOBS, JOB_LOCAL_CONCURRENCY } from '../platform/jobs/concurrency.js';
 
 import { readProviderConfig, type ProviderConfig } from './config-providers.js';
 import { readScannerConfig, type ScannerConfig } from './config-scanner.js';
@@ -14,11 +15,13 @@ const HOSTNAME =
 const TENANT_SLUG = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])$/;
 const KEK_BYTES = 32;
 /**
- * The smallest runtime pool: an attempt to issue an invoice holds two connections (the transaction
- * that spans the call to the authority and the one of its mark), the worker runs
- * `JOB_LOCAL_CONCURRENCY` of them at once, and two more serve the sweeper and the other jobs.
+ * The smallest runtime pool: a job of the families in `CONNECTION_HOLDING_JOBS` (an attempt to issue
+ * an invoice, a reconcile pass of e-prescriptions, a sweep of portal notices) holds the transaction
+ * of `runJob` idle and asks for a second connection for its own work, so it needs two; the worker
+ * runs `JOB_LOCAL_CONCURRENCY` of each family at once, and two more serve the sweeper and the other
+ * jobs (JD-S4 R4-B-T5; the families other than invoicing joined in JD-S5 R4-2).
  */
-export const MIN_DB_POOL_MAX = 2 * JOB_LOCAL_CONCURRENCY + 2;
+export const MIN_DB_POOL_MAX = CONNECTION_HOLDING_JOBS.length * JOB_LOCAL_CONCURRENCY * 2 + 2;
 /** `name@host` or `Display Name <name@host>`. */
 const MAIL_FROM_PATTERN = /^(?:[^<>\r\n]+ <[^\s<>@]+@[^\s<>@]+>|[^\s<>@]+@[^\s<>@]+)$/;
 
@@ -46,20 +49,20 @@ const envSchema = z
     NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
     DATABASE_URL: z.url({ protocol: /^postgres(ql)?$/ }),
     /**
-     * The most connections the runtime pool opens (default 10). An attempt to issue an invoice holds
-     * one for the whole call to the authority and asks for a second one for its mark, so the pool is
-     * sized for the attempts the worker runs at once (docs/runbooks/afip-switch-to-real.md). At least
-     * `MIN_DB_POOL_MAX`: with fewer, two attempts each hold one connection and wait for the other's
-     * (JD-S4 R4-B-T5).
+     * The most connections the runtime pool opens (default 16). A job that waits for the authority,
+     * the e-prescription provider or the mail server holds the transaction `runJob` opened for it and
+     * asks for a second connection for its own work, so the pool is sized for the jobs the worker runs
+     * at once (docs/runbooks/afip-switch-to-real.md). At least `MIN_DB_POOL_MAX`: with fewer, jobs
+     * each hold one connection and wait for the other's (JD-S4 R4-B-T5, JD-S5 R4-2).
      */
     DB_POOL_MAX: z.coerce
       .number()
       .int()
       .min(MIN_DB_POOL_MAX, {
-        message: `must be at least ${String(MIN_DB_POOL_MAX)}: each of the ${String(JOB_LOCAL_CONCURRENCY)} attempts to issue an invoice that run at once holds 2 connections, and 2 more serve the sweeper and the other jobs`,
+        message: `must be at least ${String(MIN_DB_POOL_MAX)}: each of the ${String(JOB_LOCAL_CONCURRENCY)} jobs of each of the ${String(CONNECTION_HOLDING_JOBS.length)} families that wait for an outside service (${CONNECTION_HOLDING_JOBS.join(', ')}) that run at once holds 2 connections, and 2 more serve the sweeper and the other jobs`,
       })
       .max(100)
-      .default(10),
+      .default(DEFAULT_RUNTIME_POOL_MAX),
     /**
      * The login of the platform operator console (role `app_operator`). Without it the console
      * does not exist: every `/operator/*` path answers 404. Multi-tenant mode only.

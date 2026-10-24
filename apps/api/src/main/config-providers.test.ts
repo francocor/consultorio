@@ -30,6 +30,7 @@ describe('provider configuration', () => {
       video: 'local',
       botChallenge: 'local',
       afip: 'local',
+      erx: 'local',
       videoAllowedDomains: [],
       allowLocalProviders: false,
       localProvidersConsole: false,
@@ -42,6 +43,7 @@ describe('provider configuration', () => {
       video: 'off',
       botChallenge: 'turnstile',
       afip: 'off',
+      erx: 'off',
     });
   });
 
@@ -52,6 +54,32 @@ describe('provider configuration', () => {
     );
     expect(() => loadConfig({ ...production, BOT_CHALLENGE: 'local' })).toThrow(/BOT_CHALLENGE/);
     expect(() => loadConfig({ ...production, AFIP_PROVIDER: 'local' })).toThrow(/AFIP_PROVIDER/);
+    expect(() => loadConfig({ ...production, ERX_PROVIDER: 'local' })).toThrow(/ERX_PROVIDER/);
+  });
+
+  it('runs the prescription simulator in development, selects none by name, and refuses an unknown provider', () => {
+    expect(loadConfig({ ...base, ERX_PROVIDER: 'off' }).providers.erx).toBe('off');
+    expect(loadConfig({ ...base, ERX_PROVIDER: 'local' }).providers.erx).toBe('local');
+    expect(loadConfig({ ...production, ERX_PROVIDER: 'off' }).providers.erx).toBe('off');
+    // A real provider key is added by task 5.53, with its adapter: until then only these two exist.
+    expect(() => loadConfig({ ...base, ERX_PROVIDER: 'recetario' })).toThrow(/ERX_PROVIDER/);
+  });
+
+  it('keeps the secret that signs the provider webhook, and never prints it', () => {
+    const secret = 'placeholder-erx-webhook-secret-0123';
+
+    expect(loadConfig({ ...base, ERX_WEBHOOK_SECRET: secret }).providers.erxWebhookSecret).toBe(
+      secret,
+    );
+    expect(loadConfig(base).providers.erxWebhookSecret).toBeUndefined();
+    let message = '';
+    try {
+      loadConfig({ ...base, ERX_WEBHOOK_SECRET: 'tiny' });
+    } catch (error) {
+      message = error instanceof Error ? error.message : '';
+    }
+    expect(message).toContain('ERX_WEBHOOK_SECRET');
+    expect(message).not.toContain('tiny');
   });
 
   it('runs the AFIP simulator in development and selects the real provider or none by name', () => {
@@ -68,6 +96,7 @@ describe('provider configuration', () => {
       VIDEO_PROVIDER: 'local',
       BOT_CHALLENGE: 'local',
       AFIP_PROVIDER: 'local',
+      ERX_PROVIDER: 'local',
       ALLOW_LOCAL_PROVIDERS: 'true',
       LOCAL_PROVIDERS_CONSOLE: 'true',
     });
@@ -75,6 +104,7 @@ describe('provider configuration', () => {
     expect(config.providers).toMatchObject({
       whatsapp: 'local',
       afip: 'local',
+      erx: 'local',
       allowLocalProviders: true,
       localProvidersConsole: true,
     });
@@ -163,6 +193,8 @@ describe('provider configuration', () => {
 
     expect(PROVIDER_ENV_VARIABLES.length).toBeGreaterThanOrEqual(7);
     expect(PROVIDER_ENV_VARIABLES).toContain('AFIP_PROVIDER');
+    expect(PROVIDER_ENV_VARIABLES).toContain('ERX_PROVIDER');
+    expect(PROVIDER_ENV_VARIABLES).toContain('ERX_WEBHOOK_SECRET');
     for (const name of PROVIDER_ENV_VARIABLES) expect(guide, name).toContain(name);
   });
 });
