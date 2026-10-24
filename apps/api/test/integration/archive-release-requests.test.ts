@@ -606,6 +606,65 @@ describe('who took a step cannot be rewritten (JD-S6 R2-2)', () => {
   });
 });
 
+describe('two operators at the same step at once (JD-S6 R3-2)', () => {
+  const verifyUrl = (id: string) => `/operator/archive-releases/${id}/verify-identity`;
+  const approveUrl = (id: string) => `/operator/archive-releases/${id}/approve`;
+  const rejectUrl = (id: string) => `/operator/archive-releases/${id}/reject`;
+  const outcome = (responses: { statusCode: number; json(): unknown }[]) =>
+    responses
+      .map((response) => [
+        response.statusCode,
+        response.statusCode === 200 ? 'ok' : (response.json() as Problem).code,
+      ])
+      .sort((a, b) => Number(a[0]) - Number(b[0]));
+
+  it('lets one verification through and answers the other that the request is no longer at that step', async () => {
+    const created = (await record({}, cookieOne)).json<ArchiveReleaseRequestDto>();
+
+    const answers = await Promise.all([
+      call('POST', verifyUrl(created.id), cookieTwo, CHECKLIST),
+      call('POST', verifyUrl(created.id), cookieThree, CHECKLIST),
+    ]);
+
+    expect(outcome(answers)).toEqual([
+      [200, 'ok'],
+      [409, 'archive_release_wrong_step'],
+    ]);
+  });
+
+  it('lets one approval through and answers the other that the request is no longer at that step', async () => {
+    const fourth = await harness.addOperator();
+    const cookieFour = await operatorSession(app, fourth, clock);
+    const created = (await record({}, cookieOne)).json<ArchiveReleaseRequestDto>();
+    await call('POST', verifyUrl(created.id), cookieTwo, CHECKLIST);
+
+    const answers = await Promise.all([
+      call('POST', approveUrl(created.id), cookieThree),
+      call('POST', approveUrl(created.id), cookieFour),
+    ]);
+
+    expect(outcome(answers)).toEqual([
+      [200, 'ok'],
+      [409, 'archive_release_wrong_step'],
+    ]);
+  });
+
+  it('lets one rejection through and answers the other that the request is no longer at that step', async () => {
+    const created = (await record({}, cookieOne)).json<ArchiveReleaseRequestDto>();
+    const reason = { reason: 'La persona no pudo acreditar su identidad' };
+
+    const answers = await Promise.all([
+      call('POST', rejectUrl(created.id), cookieTwo, reason),
+      call('POST', rejectUrl(created.id), cookieThree, reason),
+    ]);
+
+    expect(outcome(answers)).toEqual([
+      [200, 'ok'],
+      [409, 'archive_release_wrong_step'],
+    ]);
+  });
+});
+
 describe('a request that waits for too long (JD-S6 R1-S6-4)', () => {
   const age = (id: string, days: number) =>
     admin.query(

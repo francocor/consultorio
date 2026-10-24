@@ -5,7 +5,7 @@ import {
   type RecordArchiveReleaseRequest,
   type VerifyArchiveReleaseIdentityRequest,
 } from '@consultorio/contracts';
-import { desc, eq, sql } from 'drizzle-orm';
+import { and, desc, eq, sql } from 'drizzle-orm';
 
 import {
   archiveReleaseRequest,
@@ -74,8 +74,10 @@ function scopeOf(row: ArchiveReleaseRequestRow): string {
 }
 
 /**
- * The database refuses a step on a request that waited more than `ARCHIVE_RELEASE_OPEN_DAYS` (a
- * trigger, 42501): to the operator that is a request that is no longer at a step to take.
+ * The database refuses a step on a request that is not at it any more (a trigger, 42501): one that
+ * waited more than `ARCHIVE_RELEASE_OPEN_DAYS`, or that another session moved on: to the operator that
+ * is a request that is no longer at a step to take. Each step also updates `WHERE status = <expected>`,
+ * so a request that moved between the lock and the write answers the same way (JD-S6 R3-2).
  */
 function staleStep(error: unknown): never {
   const e = error as { cause?: { code?: string; message?: string }; code?: string } | null;
@@ -235,10 +237,12 @@ export function createReleaseRequests(deps: {
             identityVerifiedBy: operator.id,
             identityVerifiedAt: now(),
           })
-          .where(eq(archiveReleaseRequest.id, id))
+          .where(
+            and(eq(archiveReleaseRequest.id, id), eq(archiveReleaseRequest.status, 'requested')),
+          )
           .returning()
           .catch(staleStep);
-        if (!row) throw new Error('the release request was not updated');
+        if (!row) throw new AppError('archive_release_wrong_step');
         await trail(tx, row, operator, meta, 'identity_verified');
         return toRequestDto(row, operator);
       });
@@ -262,10 +266,15 @@ export function createReleaseRequests(deps: {
             approvedAt: at,
             expiresAt: new Date(at.getTime() + ARCHIVE_RELEASE_WINDOW_DAYS * DAY_MS),
           })
-          .where(eq(archiveReleaseRequest.id, id))
+          .where(
+            and(
+              eq(archiveReleaseRequest.id, id),
+              eq(archiveReleaseRequest.status, 'identity_verified'),
+            ),
+          )
           .returning()
           .catch(staleStep);
-        if (!row) throw new Error('the release request was not updated');
+        if (!row) throw new AppError('archive_release_wrong_step');
         await trail(tx, row, operator, meta, 'approved');
         return toRequestDto(row, operator);
       });
@@ -279,9 +288,12 @@ export function createReleaseRequests(deps: {
         const [row] = await tx
           .update(archiveReleaseRequest)
           .set({ status: 'rejected', rejectedBy: operator.id, rejectedReason: reason })
-          .where(eq(archiveReleaseRequest.id, id))
-          .returning();
-        if (!row) throw new Error('the release request was not updated');
+          .where(
+            and(eq(archiveReleaseRequest.id, id), eq(archiveReleaseRequest.status, current.status)),
+          )
+          .returning()
+          .catch(staleStep);
+        if (!row) throw new AppError('archive_release_wrong_step');
         await trail(tx, row, operator, meta, 'rejected');
         return toRequestDto(row, operator);
       });
