@@ -2,7 +2,7 @@ import { expect, test, type Page } from '@playwright/test';
 
 import { orgUrl, platformOrg, signInTo } from './support/platform-demo.js';
 import { expectFitsAndAccessible } from './support/public-booking.js';
-import { emailOf, emailTo, linkIn, localLink, stack, urlOf } from './support/stack.js';
+import { emailCount, emailOf, emailTo, linkIn, localLink, stack, urlOf } from './support/stack.js';
 
 /**
  * Self-service signup on the real stack (Stage 6, track B), as a visitor on a phone: opens the form
@@ -108,7 +108,20 @@ test('a visitor signs up, opens the emailed link on the new organization and act
   });
 });
 
-test('a link that does not work offers a new one, and the new one arrives', async ({ page }) => {
+/**
+ * A link sent a moment ago is still the owner's: asking for a new one replaces nothing and sends
+ * nothing (JD-S6 R2-6), and the screen answers the same either way. The new link that arrives after the
+ * cooldown is in `signup.test.ts`, which moves the clock; this stack cannot.
+ */
+async function expectLinkKept(email: string, first: string) {
+  await new Promise((resolve) => setTimeout(resolve, 3_000));
+  expect(await emailCount(email, /Confirme su correo/)).toBe(1);
+  expect(linkIn(await emailTo(email, /Confirme su correo/), '/signup/verify')).toBe(first);
+}
+
+test('a link that does not work offers to ask for a new one, and a link sent a moment ago is kept', async ({
+  page,
+}) => {
   const signup = newSignup();
   await signUp(page, signup);
   const first = linkIn(await emailTo(signup.email, /Confirme su correo/), '/signup/verify');
@@ -124,15 +137,12 @@ test('a link that does not work offers a new one, and the new one arrives', asyn
   await page.getByRole('button', { name: 'Pedir un enlace nuevo' }).click();
   await expect(page.getByRole('heading', { level: 1, name: 'Revise su correo' })).toBeVisible();
 
-  // A new message arrives with a different link, and the first one stopped working.
-  await expect
-    .poll(async () => linkIn(await emailTo(signup.email, /Confirme su correo/), '/signup/verify'), {
-      timeout: 20_000,
-    })
-    .not.toBe(first);
+  await expectLinkKept(signup.email, first);
 });
 
-test('the check-your-email screen can ask for the message again', async ({ page }) => {
+test('the check-your-email screen can ask for the message again, and the young link keeps working', async ({
+  page,
+}) => {
   const signup = newSignup();
   await signUp(page, signup);
   const first = linkIn(await emailTo(signup.email, /Confirme su correo/), '/signup/verify');
@@ -140,16 +150,11 @@ test('the check-your-email screen can ask for the message again', async ({ page 
   await page.getByRole('button', { name: 'Enviar el correo de nuevo' }).click();
 
   await expect(page.getByText(/enviamos un correo nuevo/)).toBeVisible();
-  await expect
-    .poll(async () => linkIn(await emailTo(signup.email, /Confirme su correo/), '/signup/verify'), {
-      timeout: 20_000,
-    })
-    .not.toBe(first);
+  await expectLinkKept(signup.email, first);
 
-  // The page of the new link does not activate until both documents are accepted (the form of the
+  // The page of the link does not activate until both documents are accepted (the form of the
   // signup is limited to five an hour per client, so this rides on a signup the file already makes).
-  const fresh = linkIn(await emailTo(signup.email, /Confirme su correo/), '/signup/verify');
-  await page.goto(localLink(fresh));
+  await page.goto(localLink(first));
   await fillActivation(page, { acceptDataProcessing: false });
   await page.getByRole('button', { name: 'Activar mi organización' }).click();
   await expect(page.getByText('Para activar la cuenta debe aceptar este punto.')).toBeVisible();

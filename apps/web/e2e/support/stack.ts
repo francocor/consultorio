@@ -125,6 +125,18 @@ interface MailpitMessage {
   To: { Address: string }[];
 }
 
+/** How many messages to an address (with this subject) the mail catcher holds right now. */
+export async function emailCount(address: string, subject?: RegExp): Promise<number> {
+  const list = (await (await fetch(`${stack.mailpitUrl}/api/v1/messages`)).json()) as {
+    messages: MailpitMessage[];
+  };
+  return list.messages.filter(
+    (message) =>
+      message.To.some((to) => to.Address.toLowerCase() === address.toLowerCase()) &&
+      (subject === undefined || subject.test(message.Subject)),
+  ).length;
+}
+
 /** Waits for an email to an address and returns its text body (Mailpit's API). */
 export async function emailTo(address: string, subject?: RegExp): Promise<string> {
   const deadline = Date.now() + 20_000;
