@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { bootFor, meFor } from '../shared/test/fixtures.js';
 import { renderApp } from '../shared/test/render-app.js';
+import { jsonResponse } from '../shared/test/render.js';
 
 import { createRegistry, type AppRegistry, type FeatureRoute } from './registry.js';
 
@@ -28,7 +29,6 @@ function fixtureRegistry(): { registry: AppRegistry; ready: ReturnType<typeof vi
           page('authed', '/fixture-authed', 'Fixture signed-in screen'),
           page('minimal', '/fixture-public', 'Fixture public page'),
           page('portal', '/fixture-portal', 'Fixture portal page'),
-          page('platform', '/fixture-platform', 'Fixture platform page'),
         ],
       },
     },
@@ -114,26 +114,35 @@ describe('the catalogs and the contributions of the features', () => {
     expect(await screen.findByText(text)).toBeInTheDocument();
   });
 
-  it('are waited for by the pages of the platform host before they draw', async () => {
+  it('are waited for by the operator console of the platform host before it draws', async () => {
     const { registry } = fixtureRegistry();
     const { catalogs, open } = gate();
 
     renderApp({
       me: null,
       boot: bootFor(),
-      path: '/fixture-platform',
+      path: '/',
       platform: true,
       registry,
       catalogs,
+      routes: {
+        'GET /api/operator/me': () =>
+          jsonResponse({
+            id: '0190a000-0000-7000-8000-0000000000c1',
+            email: 'operador@demo.invalid',
+            displayName: 'Operador de la plataforma',
+          }),
+        'GET /api/operator/tenants': () => jsonResponse({ tenants: [] }),
+      },
     });
 
     await waitFor(() => {
       expect(catalogs).toHaveBeenCalled();
     });
-    expect(screen.queryByText('Fixture platform page')).not.toBeInTheDocument();
+    expect(screen.queryByRole('tab', { name: 'Organizaciones' })).not.toBeInTheDocument();
 
     open();
 
-    expect(await screen.findByText('Fixture platform page')).toBeInTheDocument();
+    expect(await screen.findByRole('tab', { name: 'Organizaciones' })).toBeInTheDocument();
   });
 });
