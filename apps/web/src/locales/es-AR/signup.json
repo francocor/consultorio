@@ -25,7 +25,7 @@
   "sent.description": "Le enviamos un mensaje a {{email}} con un enlace para confirmar su dirección y activar su organización. El enlace sirve una sola vez y vence en 24 horas.",
   "sent.spam": "Si no lo encuentra, revise la carpeta de correo no deseado. Puede tardar unos minutos.",
   "sent.resend": "Enviar el correo de nuevo",
-  "sent.resent": "Si corresponde, enviamos un correo nuevo. El enlace anterior dejó de funcionar.",
+  "sent.resent": "Si corresponde, le enviamos el enlace a su correo. Si recibe más de uno, use el último.",
   "sent.change": "Usar otro correo",
   "verify.title": "Active su organización",
   "verify.description": "Elija su contraseña y acepte los términos para activar {{organization}} y empezar el período de prueba.",
