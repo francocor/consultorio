@@ -1,3 +1,5 @@
+import { randomUUID } from 'node:crypto';
+
 import { sql } from 'drizzle-orm';
 import { afterAll, beforeAll, describe, expect, inject, it, vi } from 'vitest';
 
@@ -7,8 +9,13 @@ import { requestCancellation } from '../../src/modules/subscriptions/application
 import { resolveParked } from '../../src/modules/subscriptions/application/parked.js';
 import { reconcileSubscription } from '../../src/modules/subscriptions/application/reconcile.js';
 import { refundPayment } from '../../src/modules/subscriptions/application/refunds.js';
-import { SUBSCRIPTION_RECONCILE_JOB } from '../../src/modules/subscriptions/index.js';
+import {
+  createSubscriptionJobs,
+  SUBSCRIPTION_RECONCILE_JOB,
+} from '../../src/modules/subscriptions/index.js';
 import { createRuntimeDb, type DbHandle } from '../../src/platform/db/pool.js';
+import { runJob } from '../../src/platform/jobs/define-job.js';
+import { listTenantIds } from '../../src/platform/jobs/tenant-scan.js';
 import { fakeHarness, type FakeHarness } from '../support/payments-harness.js';
 import {
   createSubscriptionWorld,
@@ -435,6 +442,37 @@ describe('a cancelled organization stays cancelled (JD-S6 R1, S6-2)', () => {
     for (const status of ['active', 'read_only']) {
       await expect(org.run(sql.raw(`update tenant set status = '${status}'`))).rejects.toThrow();
     }
+  });
+});
+
+describe('a cancelled organization is still asked about (JD-S6 R3-4)', () => {
+  it('keeps moving last_reconciled_at under the scheduled reconcile, so its reading never goes stale on its own', async () => {
+    const { org } = await subscribed();
+    expect((await requestCancellation(world.deps, owner(org))).status).toBe('cancelling');
+    world.advance(20 * DAY);
+    expect(await runDunningStep(world.deps, org.tenant.id)).toBe('done');
+    await org.run(sql`update tenant set status = 'cancelled'`);
+    const held = await org.subscription();
+    expect(held).toMatchObject({ status: 'cancelled', authorization_state: 'none' });
+    // The preapproval is never cleared: the reading would count this subscription for ever if the
+    // reconcile did not keep touching it.
+    expect(held['provider_preapproval_id']).not.toBeNull();
+
+    // The clock of the reconcile lists every organization that is not an unconfirmed signup, and the
+    // job runs in a cancelled one (`webhook` is allowed when the organization has ended).
+    expect(await listTenantIds(runtime.db)).toContain(org.tenant.id);
+    world.advance(2 * DAY);
+    const result = await runJob(runtime.db, createSubscriptionJobs(world.deps).reconcile, {
+      id: randomUUID(),
+      name: SUBSCRIPTION_RECONCILE_JOB,
+      data: { tenantId: org.tenant.id },
+      enqueuedAt: world.clock.now,
+      retryCount: 0,
+    });
+
+    expect(result).toEqual({ status: 'completed' });
+    const after = await org.subscription();
+    expect(new Date(String(after['last_reconciled_at'])).getTime()).toBe(world.clock.now.getTime());
   });
 });
 
