@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { readFile } from 'node:fs/promises';
 
 import type { ArchiveReleaseRequestDto, Problem } from '@consultorio/contracts';
 import pg from 'pg';
@@ -687,6 +688,90 @@ describe('a release that goes wrong leaves nothing behind (JD-S6 R1-S6-8)', () =
       },
     });
     expect(again.redelivered).toBe(0);
+  });
+
+  it('counts as unsent only what the sweep would send: a link that expired or a package that was removed clears the alert (JD-S6 R3-3)', async () => {
+    const unsent = async () =>
+      (
+        await admin.query<{ release_unsent: number }>(
+          'select release_unsent from app.platform_health()',
+        )
+      ).rows[0]?.release_unsent ?? -1;
+    const released = async (email: string) => {
+      const id = await approvedRequest({ requesterEmail: email });
+      await runRelease(id);
+      await admin.query(
+        "update archive_release_request set emailed_at = null, released_at = now() - interval '1 hour' where id = $1",
+        [id],
+      );
+      return id;
+    };
+    const before = await unsent();
+
+    const live = await released('viva@ejemplo.test');
+    expect(await unsent()).toBe(before + 1);
+    const expired = await released('vencida@ejemplo.test');
+    await admin.query(
+      "update archive_release_request set link_expires_at = now() - interval '1 minute' where id = $1",
+      [expired],
+    );
+    const removed = await released('retirada@ejemplo.test');
+    await admin.query(
+      'update archive_release_request set package_removed_at = now() where id = $1',
+      [removed],
+    );
+
+    // The one the sweep would send is counted; the expired link and the removed package are not.
+    expect(await unsent()).toBe(before + 1);
+    await admin.query('update archive_release_request set emailed_at = released_at where id = $1', [
+      live,
+    ]);
+    expect(await unsent()).toBe(before);
+  });
+
+  it('marks the requests released before the mark existed as emailed, so they are not counted or sent again (JD-S6 R3-3)', async () => {
+    const old = await approvedRequest({ requesterEmail: 'antigua@ejemplo.test' });
+    const recent = await approvedRequest({ requesterEmail: 'reciente@ejemplo.test' });
+    for (const id of [old, recent]) await runRelease(id);
+    await admin.query(
+      "update archive_release_request set emailed_at = null, released_at = '2026-01-15 10:00:00+00' where id = $1",
+      [old],
+    );
+    await admin.query('update archive_release_request set emailed_at = null where id = $1', [
+      recent,
+    ]);
+
+    // The backfill of the migration, run the way the migration runs it: as the owner, under FORCE.
+    const migration = await readFile(
+      new URL('../../src/db/migrations/0657_release_unsent_health.sql', import.meta.url),
+      'utf8',
+    );
+    const [policy, update, drop] = migration
+      .split('--> statement-breakpoint')
+      .map((statement) => statement.trim())
+      .filter((statement) => /^(CREATE POLICY|UPDATE|DROP POLICY)/m.test(statement));
+    const owner = new pg.Client({ connectionString: inject('ownerUrl') });
+    await owner.connect();
+    try {
+      for (const statement of [policy, update, drop]) await owner.query(statement ?? '');
+    } finally {
+      await owner.end();
+    }
+
+    const oldRow = await admin.query<{ same: boolean }>(
+      'select emailed_at = released_at as same from archive_release_request where id = $1',
+      [old],
+    );
+    expect(oldRow.rows[0]?.same).toBe(true);
+    expect((await requestRow(recent))?.emailed_at).toBeNull();
+    // And the policy of the backfill does not stay behind.
+    const left = await admin.query(
+      "select 1 from pg_policies where tablename = 'archive_release_request' and policyname = 'owner_backfill_emailed'",
+    );
+    expect(left.rows).toHaveLength(0);
+    await admin.query('update archive_release_request set emailed_at = now() where id = $1', [
+      recent,
+    ]);
   });
 
   it('takes the package out of the bucket when a release fails for good after storing it', async () => {
