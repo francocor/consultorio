@@ -38,14 +38,25 @@ export function createLegalEraseDatabase(deps: {
 
     async hasIntent(prefix) {
       // An intent for this folder or for one that contains it (the whole archive covers a narrower rerun).
+      // An intent followed by an incomplete run that erased nothing proves nothing was erased: it does not
+      // count, or a later listing of the wrong bucket would mark an intact archive erased (JD-S6 R4).
       const found = await deps.withTenant({ tenantId: PLATFORM, userId: PLATFORM }, (tx) =>
         tx.execute<{ found: boolean }>(
           sql`select exists (
-                select 1 from platform_audit_event
-                 where action = 'archive.erased'
-                   and target_tenant_id = ${deps.tenantId}::uuid
-                   and metadata ->> 'phase' = 'intent'
-                   and starts_with(${prefix}, metadata ->> 'prefix')
+                select 1 from platform_audit_event i
+                 where i.action = 'archive.erased'
+                   and i.target_tenant_id = ${deps.tenantId}::uuid
+                   and i.metadata ->> 'phase' = 'intent'
+                   and starts_with(${prefix}, i.metadata ->> 'prefix')
+                   and not exists (
+                     select 1 from platform_audit_event e
+                      where e.action = 'archive.erased'
+                        and e.target_tenant_id = i.target_tenant_id
+                        and e.metadata ->> 'phase' = 'incomplete'
+                        and e.metadata ->> 'prefix' = i.metadata ->> 'prefix'
+                        and (e.metadata ->> 'objects')::int = 0
+                        and e.occurred_at >= i.occurred_at
+                   )
               ) as found`,
         ),
       );

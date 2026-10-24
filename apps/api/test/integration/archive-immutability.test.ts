@@ -496,6 +496,42 @@ describe('the legal erasure procedure', () => {
     }
   });
 
+  it('does not count an intent whose run was refused before erasing anything (JD-S6 R4)', async () => {
+    const organization = await createTestTenant(runtime, { slug: 'immutability-stale-intent' });
+    const name = `tenants/${organization.id}/archive-1/attempt-1/administrative/000001.enc`;
+    await archived(name, 'kept because the first run was refused');
+    const [runner, approver] = [await operators.addOperator(), await operators.addOperator()];
+    const database = createLegalEraseDatabase({
+      withTenant: createWithTenant(operators.db.db),
+      tenantId: organization.id,
+      operatorId: runner.id,
+    });
+    // The writer credential cannot erase: the run writes the intent, then an incomplete with no object.
+    const eraser = createLegalErasure({
+      bucket: minio.bucket,
+      region: minio.region,
+      endpoint: minio.endpoint,
+      credentials: minio.writer,
+    });
+
+    await expect(
+      legalErase(
+        { eraser, ...database },
+        {
+          tenantId: organization.id,
+          reference: 'Oficio 91/2031',
+          operatorId: runner.id,
+          approverId: approver.id,
+        },
+      ),
+    ).rejects.toMatchObject({ name: 'AccessDenied' });
+    eraser.close();
+
+    // A later empty listing (a wrong bucket) must not find a usable intent in the trail.
+    expect(await database.hasIntent(`tenants/${organization.id}/`)).toBe(false);
+    expect(await versionsOf(erasure, name)).toHaveLength(1);
+  });
+
   it('refuses a named operator who is not an active operator of the console, before anything is erased', async () => {
     const organization = await createTestTenant(runtime, { slug: 'immutability-stranger' });
     const name = `tenants/${organization.id}/archive-1/attempt-1/administrative/000001.enc`;
