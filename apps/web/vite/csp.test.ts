@@ -72,6 +72,9 @@ describe('Content Security Policy of the web bundle (ASVS 14.4.7)', () => {
     // page blank, so the development policy carries no hash.
     expect(directive(development, 'script-src')).toEqual(["'self'", "'unsafe-inline'"]);
     expect(directive(development, 'connect-src')).toEqual(["'self'", 'ws:', 'wss:']);
+    // When the dev server restarts, its client waits for it from a shared worker built from a blob.
+    expect(directive(development, 'worker-src')).toEqual(["'self'", 'blob:']);
+    expect(directive(production, 'worker-src')).toEqual(["'self'"]);
     expect(directive(development, 'object-src')).toEqual(["'none'"]);
     expect(directive(development, 'frame-ancestors')).toEqual(["'none'"]);
   });

@@ -54,8 +54,9 @@ export function connectOriginsFrom(list: string | undefined): string[] {
  *
  * The development policy allows inline scripts with `unsafe-inline` instead of the hashes (the
  * React refresh preamble the dev server injects is inline, and a browser ignores `unsafe-inline`
- * when a hash is listed) and websockets (hot reload); nothing else changes, so a request to a
- * foreign origin is still caught while developing.
+ * when a hash is listed), websockets (hot reload) and `blob:` workers (after a restart the dev
+ * client waits for the server from a shared worker built from a blob); nothing else changes, so a
+ * request to a foreign origin is still caught while developing.
  */
 export function contentSecurityPolicy(options: CspOptions): string {
   const development = options.mode === 'development';
@@ -70,7 +71,7 @@ export function contentSecurityPolicy(options: CspOptions): string {
       ["'self'", ...(options.connectSources ?? []), ...(development ? ['ws:', 'wss:'] : [])],
     ],
     ['manifest-src', ["'self'"]],
-    ['worker-src', ["'self'"]],
+    ['worker-src', ["'self'", ...(development ? ['blob:'] : [])]],
     ['object-src', ["'none'"]],
     ['base-uri', ["'self'"]],
     ['form-action', ["'self'"]],
