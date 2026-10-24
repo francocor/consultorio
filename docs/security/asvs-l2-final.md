@@ -151,4 +151,24 @@ review", and the task stays open until then.
 
 ## Findings of the review
 
-_(to be filled by the review that the orchestrator runs)_
+The fresh-context review ran as a Judgment Day: two blind judges, four rounds, on the whole Stage 6 diff. Each
+round's findings and fixes are in `openspec/changes/health-practice-saas/apply-progress.md`.
+
+- **Round 1:** two CRITICAL findings, both closed. A subscription whose creation was parked could be charged
+  twice. A superseded preapproval kept charging after a new checkout: it is now cancelled first, and its
+  charges are flagged as surplus.
+- **Rounds 2 and 3:** no CRITICAL findings. Among the fixes:
+  - a refund token answered from every attempt;
+  - a four-eyes trigger that covers every `*_by` column;
+  - export cleanup after a legal erasure;
+  - resend without rotating a young link;
+  - status-guarded release steps;
+  - an empty legal-erasure listing that needs a prior intent.
+- **Round 4:** both judges approved. Both raised one WARNING: an `intent` whose run was refused before
+  erasing anything still counted as proof. It is fixed: `hasIntent` ignores an intent followed by an
+  `incomplete` entry with no object erased, and an integration test covers it.
+- **Open, accepted for version 1:**
+  - The legal erasure names a second operator but records no separate approval. The runbook says so.
+  - The supersede step does not reconcile first, so a charge not yet seen is flagged as surplus instead of
+    being credited. An operator reviews it.
+  - `lastReconciledAt` moves even after an incomplete search for strays.

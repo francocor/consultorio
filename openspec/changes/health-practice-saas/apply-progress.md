@@ -3410,3 +3410,22 @@ Neither judge found a CRITICAL. Four small items, each test first (commits `6091
 - **Copy:** `sent.resent` ("Si corresponde, enviamos un correo nuevo. El enlace anterior dejó de funcionar.") is no longer true for a link younger than 30 minutes, which keeps working. Product to decide; not changed here.
 - The integration suite and some unit files are timing-sensitive on this machine; re-run alone when they fail under load.
 - Still open from round 2: a real second approval for the legal erasure (B-W5 proper), the supersede reconcile pass, and the SUGGESTIONS.
+
+## Judgment Day Stage 6, round 4: APPROVED
+
+Both judges reviewed `9a4f75c4..d4575c3e` and approved it, with no CRITICAL findings. Both raised the same non-blocking WARNING, and it is fixed.
+
+- **R4-1** (`legal-erase-database.ts` `hasIntent`): an `intent` whose run was refused before erasing anything (an `incomplete` entry with `objects = 0` for the same prefix after it) no longer counts as proof. A later empty listing from a wrong bucket therefore cannot mark an intact archive erased. Integration test: a run with the writer credential is refused, then `hasIntent` is false and the object is intact.
+- **Copy:** `sent.resent` now reads "Si corresponde, le enviamos el enlace a su correo. Si recibe más de uno, use el último.", which holds both inside and after the 30-minute cooldown. The unit test and the e2e journey were updated to match.
+- **`.env.example`:** the `DB_POOL_MAX` comment now gives the real floor (46) and default (48).
+
+### Verification
+
+| Command | Result |
+| --- | --- |
+| `vitest run --config vitest.integration.config.ts test/integration/archive-immutability.test.ts` | 12 passed |
+| `tsc --noEmit` (api), `prettier --check` on the changed files | exit 0 |
+| `pnpm build` (web), then `playwright test e2e/stage6-signup.spec.ts --project=desktop` | 9 passed. A first run had used a stale `dist` and failed one journey on the old copy |
+| `signup.test.tsx` | 31 passed |
+
+Stage 6 is closed. The items still open are listed in the last section of `docs/security/asvs-l2-final.md` and in `docs/go-live-checklist.md`.
