@@ -94,7 +94,13 @@ Si la copia es de una versión de Consulvia más nueva que la instalada, Consulv
 | Copias de seguridad               | `Documentos\Consulvia\Copias`       |
 | Programa                          | `%LOCALAPPDATA%\Programs\Consulvia` |
 
-`%APPDATA%` es normalmente `C:\Users\<usuario>\AppData\Roaming`. **No mueva, renombre ni borre estas carpetas con Consulvia abierto.** Las claves de `config.json` están protegidas con la cuenta de Windows: solo ese usuario de Windows puede abrir los datos. Si se crea otro usuario de Windows en la computadora, instale y use Consulvia siempre con el mismo.
+`%APPDATA%` es normalmente `C:\Users\<usuario>\AppData\Roaming`. **No mueva, renombre ni borre estas carpetas con Consulvia abierto.** Las claves de `config.json` están protegidas con la cuenta de Windows. Si se crea otro usuario de Windows en la computadora, instale y use Consulvia siempre con el mismo.
+
+## Qué protege Consulvia y qué le corresponde a usted
+
+- **Las copias de seguridad** están cifradas y autenticadas por Consulvia: sin la clave de la instalación no se pueden leer ni modificar, y Consulvia no restaura una que haya sido alterada.
+- **La base de datos y los documentos que están en la computadora NO están cifrados por Consulvia.** Cualquier persona con acceso al disco (una computadora robada, un administrador de Windows, quien arranque desde otro sistema) puede leerlos. Para esta versión de una sola computadora eso se resuelve cifrando el disco de Windows: active **BitLocker** (Windows 10/11 Pro) o el **cifrado de dispositivo** (Windows 11 Home), y use una contraseña de Windows que solo conozca el personal autorizado. **Se recomienda hacerlo antes de cargar datos reales.**
+- **Quién usa la sesión de Windows:** quien tenga abierta la sesión de Windows de esta computadora puede abrir Consulvia. Para cambiar la contraseña de la propietaria o ver la clave de recuperación se pide la clave de recuperación, que solo debe tener la propietaria.
 
 ## Desinstalar
 
