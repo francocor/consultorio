@@ -44,7 +44,9 @@ export type RestoreErrorCode =
   | 'wrong_recovery_key'
   | 'restore_failed'
   /** The data is restored and in use, but the services could not be started again. Nothing was rolled back. */
-  | 'restore_incomplete';
+  | 'restore_incomplete'
+  /** The backup authenticated, but what it did to the database or the roles is not what a backup does. Nothing was kept. */
+  | 'unsafe_backup';
 
 export class RestoreError extends Error {
   constructor(
@@ -87,12 +89,25 @@ export interface RestoreDeps {
   /**
    * The backup is restored into a database of its own, and that database replaces the real one only when
    * the restore has finished. Creating, renaming and dropping databases is the only thing done as the
-   * superuser, and none of it uses anything from the backup.
+   * superuser, and none of it runs inside the database a backup wrote: what the backup did to the roles and the
+   * database is checked (`audit`) before the swap.
    */
   scratch: {
     create: () => Promise<void>;
     swapIn: () => Promise<void>;
     drop: () => Promise<void>;
+  };
+  /**
+   * Facts about the cluster that a backup (a program for `pg_restore`, run as `app_owner`) must not change: who
+   * is a member of `audit_sealer`, the parameters of the roles and of the database, the password of `app_owner`,
+   * what the application may do to the audit trail, and that the table of the migrations is a table (see
+   * `restore-audit.ts`). `snapshot` is read before the restore; `check` after it, before anything is swapped, and
+   * says what is wrong; `revert` puts the roles back as the snapshot had them, and is run again after the swap.
+   */
+  audit: {
+    snapshot: () => Promise<unknown>;
+    check: (snapshot: unknown) => Promise<string[]>;
+    revert: (snapshot: unknown) => Promise<void>;
   };
   migrationCount: number;
   /** Stops the API and the worker. The database stays up. */
@@ -281,6 +296,7 @@ export async function restoreBackup(
     await deps.scratch.create();
     state.scratch = true;
     await advance('restoring');
+    const snapshot = await deps.audit.snapshot();
 
     // Pass 2: the work. The dump is piped into `pg_restore` as it is decrypted, and never written to disk.
     const found: {
@@ -344,6 +360,14 @@ export async function restoreBackup(
       throw new RestoreError('invalid_backup', 'the manifest does not match the content');
     }
 
+    // What the dump did besides filling tables: nothing of it may stay if it touched the roles or the database.
+    const problems = await deps.audit.check(snapshot);
+    if (problems.length > 0) {
+      deps.log?.(`a backup was refused: ${problems.join('; ')}`);
+      await deps.audit.revert(snapshot).catch(() => undefined);
+      throw new RestoreError('unsafe_backup', problems.join('; '));
+    }
+
     // The documents: the old folder is moved aside, the unpacked one takes its place.
     try {
       await rename(deps.paths.files, aside);
@@ -372,6 +396,8 @@ export async function restoreBackup(
     await deps.scratch.swapIn();
     state.swapped = true;
     state.scratch = false;
+    // The roles are as they were before: said again, in case anything touched them since the check.
+    await deps.audit.revert(snapshot).catch(() => undefined);
     deps.log?.('backup restored');
   } catch (error) {
     if (!state.swapped) await undo(deps, journal, state);

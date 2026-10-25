@@ -86,6 +86,8 @@ export const TEXT = {
     newerVersion:
       'Esta copia se hizo con una versión más nueva de Consulvia. Instale la versión más reciente e intente de nuevo.',
     wrongKey: 'La clave de recuperación no es correcta.',
+    unsafe:
+      'La copia de seguridad hace cosas que una copia no debe hacer (cambia permisos o la configuración de la base de datos). No se restauró nada y los datos actuales no se modificaron.',
     incomplete:
       'Los datos de la copia ya están en uso, pero Consulvia no pudo volver a iniciar todos sus servicios. No se deshizo nada. Cierre Consulvia con Salir en el icono y ábralo de nuevo; si el problema continúa, abra los registros.',
     diskFull:

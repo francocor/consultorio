@@ -245,6 +245,15 @@ function build(
       return port;
     },
     isInitialized: () => existsSync(join(paths.pgdata, 'PG_VERSION')),
+    clusterFacts: () =>
+      Promise.resolve({
+        memberships: [],
+        roleSettings: [],
+        ownerPasswordHash: 'hash',
+        auditPrivileges: [],
+      }),
+    scratchFacts: () => Promise.resolve({ migrationsKind: 'r', databaseSettings: [] }),
+    executeStatements: () => Promise.resolve(),
     ping: () => Promise.resolve(databaseAlive),
     appliedMigrationCount: () => Promise.resolve(appliedMigrations),
     listDatabases: () => Promise.resolve([...databaseNames]),

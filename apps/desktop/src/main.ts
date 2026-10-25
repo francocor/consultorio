@@ -310,6 +310,7 @@ async function run(): Promise<void> {
         pgdata: paths.pgdata,
         logFile: join(paths.logs, 'postgres.log'),
         superuserPassword: secrets.pgSuperuserPassword,
+        ownerPassword: secrets.appOwnerPassword,
         runner,
         connect: (target) => new pg.Client(target),
         freePort: () => findFreePort(),

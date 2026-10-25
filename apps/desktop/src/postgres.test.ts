@@ -62,6 +62,7 @@ function cluster(
     pgdata,
     logFile: join(folder, 'logs', 'postgres.log'),
     superuserPassword: 'super-secret-password-0123456789',
+    ownerPassword: 'owner-secret-password-0123456789',
     runner,
     connect: (target): SqlClient => ({
       connect: () => {
@@ -166,9 +167,14 @@ describe('the migrations a database has had applied', () => {
 
     expect(await pg.appliedMigrationCount()).toBe(77);
 
+    // As app_owner, never as the superuser: a restored database can make this table a view that runs as the reader.
     expect(queries.at(-1)).toMatchObject({
       sql: expect.stringContaining('drizzle.__drizzle_migrations') as string,
-      target: { database: 'consultorio' },
+      target: {
+        database: 'consultorio',
+        user: 'app_owner',
+        password: 'owner-secret-password-0123456789',
+      },
     });
   });
 
@@ -178,6 +184,56 @@ describe('the migrations a database has had applied', () => {
     missingTable = true;
 
     expect(await pg.appliedMigrationCount()).toBeNull();
+  });
+});
+
+describe('reading what a backup may have written', () => {
+  it('reads the scratch database as app_owner, and the catalogs of the cluster in the postgres database', async () => {
+    const pg = cluster();
+    await pg.start();
+
+    await pg.scratchFacts('consultorio_restore');
+
+    const inScratch = queries.filter((query) => query.target.database === 'consultorio_restore');
+    expect(inScratch.length).toBeGreaterThan(0);
+    for (const query of inScratch) expect(query.target.user).toBe('app_owner');
+    const inCatalogs = queries.filter((query) => query.target.database === 'postgres');
+    expect(inCatalogs.length).toBeGreaterThan(0);
+  });
+
+  it('never runs a query of the superuser inside a database a backup may have written', async () => {
+    const pg = cluster();
+    await pg.start();
+    await pg.clusterFacts('consultorio');
+    await pg.scratchFacts('consultorio_restore');
+    await pg.appliedMigrationCount();
+
+    const superuserInside = queries.filter(
+      (query) =>
+        query.target.user === 'postgres' &&
+        (query.target.database === 'consultorio' ||
+          query.target.database === 'consultorio_restore'),
+    );
+    expect(superuserInside).toEqual([]);
+  });
+
+  it('refuses a name that is not a plain database name', async () => {
+    const pg = cluster();
+    await pg.start();
+
+    await expect(pg.scratchFacts('x; drop database consultorio')).rejects.toThrow(/unsafe/);
+  });
+
+  it('runs the statements that put the roles back, as the superuser, in the postgres database', async () => {
+    const pg = cluster();
+    await pg.start();
+
+    await pg.executeStatements(['REVOKE "audit_sealer" FROM "app_rw" GRANTED BY "app_owner"']);
+
+    expect(queries.at(-1)).toMatchObject({
+      sql: 'REVOKE "audit_sealer" FROM "app_rw" GRANTED BY "app_owner"',
+      target: { user: 'postgres', database: 'postgres' },
+    });
   });
 });
 

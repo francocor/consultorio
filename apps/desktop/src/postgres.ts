@@ -1,6 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 
+import type { ClusterFacts, ScratchFacts } from './restore-audit.js';
 import { rotateBySize } from './rotating-log.js';
 import type { Runner } from './runner.js';
 
@@ -32,6 +33,12 @@ export interface PostgresOptions {
   /** Where PostgreSQL writes its own log. */
   logFile: string;
   superuserPassword: string;
+  /**
+   * The password of `app_owner`. Anything that reads a database that a backup may have written is done as this
+   * role and not as the superuser: SQL that is inside a restored database (a view, a function, a trigger) runs
+   * with the power of whoever reads it.
+   */
+  ownerPassword: string;
   runner: Runner;
   connect: (target: ConnectionTarget) => SqlClient;
   freePort: () => Promise<number>;
@@ -213,7 +220,9 @@ export class PostgresCluster {
    */
   async appliedMigrationCount(): Promise<number | null> {
     try {
-      return await this.asSuperuser(DATABASE_NAME, async (client) => {
+      // As `app_owner`, who ran the migrations: a restored database can make this table a view whose function
+      // runs as whoever reads it, and the superuser must never be the one.
+      return await this.asOwner(DATABASE_NAME, async (client) => {
         const found = await client.query(
           'SELECT count(*)::int AS n FROM drizzle.__drizzle_migrations',
         );
@@ -302,12 +311,26 @@ export class PostgresCluster {
 
   /** Runs `work` with a connection of the superuser to `database`. */
   async asSuperuser<T>(database: string, work: (client: SqlClient) => Promise<T>): Promise<T> {
+    return this.asRole(SUPERUSER, this.options.superuserPassword, database, work);
+  }
+
+  /** Runs `work` with a connection of `app_owner` to `database`: for reading what a backup may have written. */
+  async asOwner<T>(database: string, work: (client: SqlClient) => Promise<T>): Promise<T> {
+    return this.asRole(OWNER, this.options.ownerPassword, database, work);
+  }
+
+  private async asRole<T>(
+    user: string,
+    password: string,
+    database: string,
+    work: (client: SqlClient) => Promise<T>,
+  ): Promise<T> {
     if (this.port === null) throw new PostgresError('the database server is not running');
     const client = this.options.connect({
       host: '127.0.0.1',
       port: this.port,
-      user: SUPERUSER,
-      password: this.options.superuserPassword,
+      user,
+      password,
       database,
     });
     await client.connect();
@@ -371,6 +394,97 @@ export class PostgresCluster {
     });
   }
 
+  /**
+   * What a restore must leave as it was: memberships among the roles of the application, their parameters, the
+   * password of `app_owner`, and (when `auditDatabase` is given) what the application roles may do to the audit
+   * trail in that database. The cluster-wide part is read in the `postgres` database, as the superuser; the
+   * part inside a database is read as `app_owner`.
+   */
+  async clusterFacts(auditDatabase: string | null): Promise<ClusterFacts> {
+    const roles = [...APPLICATION_ROLES];
+    const facts = await this.asSuperuser('postgres', async (client) => {
+      const memberships = await client.query(
+        `SELECT r.rolname AS role, m.rolname AS member, g.rolname AS grantor,
+                am.admin_option AS admin, am.inherit_option AS inherit, am.set_option AS "set"
+           FROM pg_auth_members am
+           JOIN pg_roles r ON r.oid = am.roleid
+           JOIN pg_roles m ON m.oid = am.member
+           JOIN pg_roles g ON g.oid = am.grantor
+          WHERE r.rolname = ANY($1) OR m.rolname = ANY($1)
+          ORDER BY 1, 2, 3`,
+        [roles],
+      );
+      const settings = await client.query(
+        `SELECT r.rolname AS role, s.setting
+           FROM pg_db_role_setting d
+           JOIN pg_roles r ON r.oid = d.setrole
+           CROSS JOIN LATERAL unnest(d.setconfig) AS s(setting)
+          WHERE r.rolname = ANY($1)`,
+        [roles],
+      );
+      const password = await client.query(
+        `SELECT rolpassword AS hash FROM pg_authid WHERE rolname = 'app_owner'`,
+      );
+      return {
+        memberships: memberships.rows.map((row) => ({
+          role: String(row['role']),
+          member: String(row['member']),
+          grantor: String(row['grantor']),
+          admin: row['admin'] === true,
+          inherit: row['inherit'] === true,
+          set: row['set'] === true,
+        })),
+        roleSettings: settings.rows.map(
+          (row) => `${String(row['role'])}=${String(row['setting'])}`,
+        ),
+        ownerPasswordHash:
+          typeof password.rows[0]?.['hash'] === 'string' ? password.rows[0]['hash'] : '',
+      };
+    });
+    const auditPrivileges =
+      auditDatabase === null
+        ? []
+        : await this.asOwner(auditDatabase, async (client) => {
+            const found = await client.query(AUDIT_PRIVILEGES_SQL);
+            return found.rows.map((row) => String(row['fact']));
+          });
+    return { ...facts, auditPrivileges };
+  }
+
+  /** What is true of a scratch database that a backup was restored into. */
+  async scratchFacts(name: string): Promise<ScratchFacts> {
+    assertDatabaseName(name);
+    const databaseSettings = await this.asSuperuser('postgres', async (client) => {
+      const found = await client.query(
+        `SELECT s.setting
+           FROM pg_db_role_setting d
+           JOIN pg_database db ON db.oid = d.setdatabase
+           CROSS JOIN LATERAL unnest(d.setconfig) AS s(setting)
+          WHERE db.datname = $1`,
+        [name],
+      );
+      return found.rows.map((row) => String(row['setting']));
+    });
+    const migrationsKind = await this.asOwner(name, async (client) => {
+      const found = await client.query(
+        `SELECT c.relkind AS kind
+           FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+          WHERE n.nspname = 'drizzle' AND c.relname = '__drizzle_migrations'`,
+      );
+      const kind = found.rows[0]?.['kind'];
+      return typeof kind === 'string' ? kind : null;
+    });
+    return { migrationsKind, databaseSettings };
+  }
+
+  /** Runs statements built by `revertStatements`, as the superuser, in the `postgres` database. */
+  async executeStatements(statements: readonly string[]): Promise<void> {
+    if (statements.length === 0) return;
+    await this.asSuperuser('postgres', async (client) => {
+      for (const statement of statements) await client.query(statement);
+    });
+  }
+
   /** The names of the databases of the server. */
   async listDatabases(): Promise<string[]> {
     return this.asSuperuser('postgres', async (client) => {
@@ -412,6 +526,31 @@ export class PostgresCluster {
     return `postgres://${encodeURIComponent(role)}:${encodeURIComponent(password)}@127.0.0.1:${String(this.port)}/${DATABASE_NAME}`;
   }
 }
+
+/** The roles the application uses: what a restore compares before and after. */
+const APPLICATION_ROLES = [
+  'app_owner',
+  'app_rw',
+  'app_operator',
+  'app_releaser',
+  'audit_sealer',
+] as const;
+
+const OWNER = 'app_owner';
+
+/** `role:privilege:table` for what the application roles may do to the audit trail, read inside a database. */
+const AUDIT_PRIVILEGES_SQL = `
+  SELECT r.rolname || ':' || p.priv || ':' || c.relname AS fact
+    FROM pg_class c
+    JOIN pg_namespace n ON n.oid = c.relnamespace
+   CROSS JOIN (VALUES ('app_rw'), ('app_operator'), ('app_releaser')) AS r(rolname)
+   CROSS JOIN (VALUES ('INSERT'), ('UPDATE'), ('DELETE'), ('TRUNCATE'), ('REFERENCES'), ('TRIGGER')) AS p(priv)
+   WHERE n.nspname = 'public'
+     AND c.relname IN ('audit_event', 'platform_audit_event')
+     AND c.relkind IN ('r', 'p')
+     AND (has_table_privilege(r.rolname, c.oid, p.priv)
+          OR (p.priv IN ('INSERT', 'UPDATE', 'REFERENCES') AND has_any_column_privilege(r.rolname, c.oid, p.priv)))
+`;
 
 /** Database names are built by the shell, never typed, but they go into SQL as identifiers all the same. */
 function assertDatabaseName(name: string): void {

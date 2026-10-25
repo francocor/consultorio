@@ -32,6 +32,12 @@ import {
 import { createBackup, type Manifest } from './backup.js';
 import { DiskFullError } from './disk.js';
 import type { DataPaths } from './paths.js';
+import {
+  auditProblems,
+  revertStatements,
+  type ClusterFacts,
+  type ScratchFacts,
+} from './restore-audit.js';
 import { journalFile, readJournal } from './restore-journal.js';
 import {
   readBackupInfo,
@@ -47,6 +53,24 @@ let events: string[];
 let restored: Buffer[];
 let restoreResult: { code: number | null; stderr: string };
 let adopted: AdoptedSecrets | null;
+/** What the cluster looks like before the restore, and what the restored database left behind. */
+const CLEAN: ClusterFacts = {
+  memberships: [
+    {
+      role: 'audit_sealer',
+      member: 'app_owner',
+      grantor: 'postgres',
+      admin: true,
+      inherit: false,
+      set: false,
+    },
+  ],
+  roleSettings: [],
+  ownerPasswordHash: 'SCRAM-SHA-256$4096:aaa$bbb:ccc',
+  auditPrivileges: ['app_rw:INSERT:audit_event'],
+};
+let leftBehind: { cluster: ClusterFacts; scratch: ScratchFacts };
+let reverted: string[][];
 let failSwap: boolean;
 let failAdopt: boolean;
 let install: TestInstall;
@@ -100,6 +124,15 @@ function restoreDeps(overrides: Partial<RestoreDeps> = {}): RestoreDeps {
     reloadSecrets: () => {
       events.push('reload secrets');
     },
+    audit: {
+      snapshot: () => Promise.resolve(CLEAN),
+      check: () => Promise.resolve(auditProblems(CLEAN, leftBehind.cluster, leftBehind.scratch)),
+      revert: () => {
+        events.push('revert roles');
+        reverted.push(revertStatements(CLEAN, leftBehind.cluster, 'owner-password'));
+        return Promise.resolve();
+      },
+    },
     dataBytes: () => Promise.resolve(1000),
     freeBytes: () => Promise.resolve(10 ** 13),
     now: () => new Date(2026, 9, 25, 8, 0, 0),
@@ -138,6 +171,8 @@ beforeEach(() => {
   adopted = null;
   failSwap = false;
   failAdopt = false;
+  leftBehind = { cluster: CLEAN, scratch: { migrationsKind: 'r', databaseSettings: [] } };
+  reverted = [];
   install = newTestInstall();
   other = newTestInstall();
 });
@@ -191,7 +226,14 @@ describe('restoring a backup of this installation', () => {
 
     await restoreBackup(restoreDeps(), path);
 
-    expect(events).toEqual(['stop', 'create scratch', 'pg_restore', 'swap', 'start']);
+    expect(events).toEqual([
+      'stop',
+      'create scratch',
+      'pg_restore',
+      'swap',
+      'revert roles',
+      'start',
+    ]);
     expect(restored.map((dump) => dump.toString())).toEqual(['PGDMP-the-dump-of-the-backup']);
     expect(readDoc('t/a/docs/1.obj')).toBe('from the backup');
     expect(existsSync(join(paths.files, 't', 'a', 'docs', 'newer.obj'))).toBe(false);
@@ -255,7 +297,14 @@ describe('restoring a backup of this installation', () => {
 
     await restoreBackup(restoreDeps(), path);
 
-    expect(events).toEqual(['stop', 'create scratch', 'pg_restore', 'swap', 'start']);
+    expect(events).toEqual([
+      'stop',
+      'create scratch',
+      'pg_restore',
+      'swap',
+      'revert roles',
+      'start',
+    ]);
   });
 });
 
@@ -388,6 +437,98 @@ describe('a restore that fails half way, or is cut off', () => {
     expect(failure).toBeInstanceOf(DiskFullError);
     untouched();
     expect(existsSync(journalFile(paths))).toBe(false);
+  });
+});
+
+describe('a backup that authenticates but does things a backup has no business doing', () => {
+  const refused = async (change: () => void) => {
+    const path = await makeBackup(install, { 't/a/docs/1.obj': 'from the backup' });
+    writeFileSync(join(paths.files, 't', 'a', 'docs', '1.obj'), 'current data');
+    change();
+
+    const failure = await restoreBackup(restoreDeps(), path).catch((error: unknown) => error);
+
+    expect(failure).toMatchObject({ code: 'unsafe_backup' });
+    // Before the swap: the databases never traded places, the documents are the current ones, the scratch is gone.
+    expect(events).not.toContain('swap');
+    expect(events).toContain('drop scratch');
+    expect(events).toContain('revert roles');
+    expect(readDoc('t/a/docs/1.obj')).toBe('current data');
+    expect(existsSync(journalFile(paths))).toBe(false);
+    return failure as RestoreError;
+  };
+
+  it('refuses a dump that made the table of the migrations a view, which the superuser used to read at boot', async () => {
+    const failure = await refused(() => {
+      leftBehind = { ...leftBehind, scratch: { migrationsKind: 'v', databaseSettings: [] } };
+    });
+
+    expect(failure.detail).toContain('is not a table');
+  });
+
+  it('refuses a dump that sets a parameter of the database', async () => {
+    const failure = await refused(() => {
+      leftBehind = {
+        ...leftBehind,
+        scratch: { migrationsKind: 'r', databaseSettings: ['search_path=evil'] },
+      };
+    });
+
+    expect(failure.detail).toContain('search_path=evil');
+  });
+
+  it('refuses a dump that grants audit_sealer to another role, and says which statement would undo it', async () => {
+    const failure = await refused(() => {
+      leftBehind = {
+        ...leftBehind,
+        cluster: {
+          ...CLEAN,
+          memberships: [
+            ...CLEAN.memberships,
+            {
+              role: 'audit_sealer',
+              member: 'app_rw',
+              grantor: 'app_owner',
+              admin: false,
+              inherit: false,
+              set: true,
+            },
+          ],
+        },
+      };
+    });
+
+    expect(failure.detail).toContain('audit_sealer to app_rw');
+    expect(reverted[0]).toEqual(['REVOKE "audit_sealer" FROM "app_rw" GRANTED BY "app_owner"']);
+  });
+
+  it('refuses a dump that opens the audit trail to the application role', async () => {
+    const failure = await refused(() => {
+      leftBehind = {
+        ...leftBehind,
+        cluster: {
+          ...CLEAN,
+          auditPrivileges: [...CLEAN.auditPrivileges, 'app_rw:UPDATE:audit_event'],
+        },
+      };
+    });
+
+    expect(failure.detail).toContain('app_rw:UPDATE:audit_event');
+  });
+
+  it('lets a clean backup through, and re-applies the known state after the swap', async () => {
+    const path = await makeBackup(install, { 't/a/docs/1.obj': 'one' });
+
+    await restoreBackup(restoreDeps(), path);
+
+    expect(events).toEqual([
+      'stop',
+      'create scratch',
+      'pg_restore',
+      'swap',
+      'revert roles',
+      'start',
+    ]);
   });
 });
 
@@ -608,7 +749,15 @@ describe('restoring a backup of another installation', () => {
     });
 
     // The keys are adopted before the databases trade places, with a way back.
-    expect(events).toEqual(['stop', 'create scratch', 'pg_restore', 'adopt', 'swap', 'start']);
+    expect(events).toEqual([
+      'stop',
+      'create scratch',
+      'pg_restore',
+      'adopt',
+      'swap',
+      'revert roles',
+      'start',
+    ]);
     expect(adopted).toMatchObject({
       payload: other.secrets,
       backupKeyBase64: other.backupKey.toString('base64'),

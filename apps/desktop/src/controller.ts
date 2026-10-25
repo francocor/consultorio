@@ -44,6 +44,7 @@ import { DATABASE_NAME, type PostgresCluster, PostgresError, SUPERUSER } from '.
 import { normalizeRecoveryKey } from './recovery-key.js';
 import { redact } from './redact.js';
 import { migrationCountOf, missingResources, type Resources } from './resources.js';
+import { auditProblems, revertStatements, type ClusterFacts } from './restore-audit.js';
 import { reconcileInterruptedRestore } from './restore-journal.js';
 import { readBackupInfo, restoreBackup, RestoreError, type AdoptedSecrets } from './restore.js';
 import { parameterizeRolesScript } from './roles.js';
@@ -987,6 +988,12 @@ export class Controller {
   private backupDeps() {
     return {
       paths: this.deps.paths,
+      // `pg_dump` runs as the superuser, and that is a choice with a reason: every table has FORCE ROW LEVEL
+      // SECURITY, which applies to its owner too, so `app_owner` (and every role without BYPASSRLS) would dump
+      // only the rows its policies let it see, and a backup that silently leaves rows out is worse than none. It
+      // is safe because what it reads is the LIVE database, which only the application has written: a restored
+      // database passes `restore-audit.ts` before it becomes the live one, and nothing else of the superuser runs
+      // inside a database a backup could have written (`postgres.test.ts` checks that).
       startDump: () =>
         this.deps.pgTools.dump(
           this.deps.resources.pgDump,
@@ -1204,7 +1211,10 @@ export class Controller {
       paths: this.deps.paths,
       backupKey: () => Buffer.from(this.config.secrets.backupKeyBase64, 'base64'),
       // As `app_owner`, not as the superuser: what a backup contains never runs with more power than the
-      // application's own owner has.
+      // application's own owner has. The ACLs of the dump are KEPT (no `--no-acl`): they are the privileges
+      // that `app_rw`, `app_operator`, `audit_sealer` and `app_releaser` have on the tables, set by the migrations
+      // that are already applied and never set again, so without them the program would not run. What a dump could
+      // do with them is what `restore-audit.ts` looks at before the swap (roles, parameters, the audit trail).
       restoreDump: (source: Readable) =>
         this.deps.pgTools.restore(
           this.deps.resources.pgRestore,
@@ -1225,6 +1235,21 @@ export class Controller {
         create: () => this.cluster.createScratchDatabase(SCRATCH_DATABASE),
         swapIn: () => this.cluster.swapInDatabase(SCRATCH_DATABASE),
         drop: () => this.cluster.dropDatabase(SCRATCH_DATABASE),
+      },
+      audit: {
+        snapshot: () => this.cluster.clusterFacts(DATABASE_NAME),
+        check: async (snapshot: unknown) =>
+          auditProblems(
+            snapshot as ClusterFacts,
+            await this.cluster.clusterFacts(SCRATCH_DATABASE),
+            await this.cluster.scratchFacts(SCRATCH_DATABASE),
+          ),
+        revert: async (snapshot: unknown) => {
+          const now = await this.cluster.clusterFacts(null);
+          await this.cluster.executeStatements(
+            revertStatements(snapshot as ClusterFacts, now, this.config.secrets.appOwnerPassword),
+          );
+        },
       },
       migrationCount: migrationCountOf(this.deps.resources),
       dataBytes: async () =>
@@ -1277,6 +1302,8 @@ export class Controller {
           return TEXT.restore.wrongKey;
         case 'restore_incomplete':
           return TEXT.restore.incomplete;
+        case 'unsafe_backup':
+          return TEXT.restore.unsafe;
         default:
           return TEXT.restore.generic;
       }
