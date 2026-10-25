@@ -390,6 +390,9 @@ async function run(): Promise<void> {
   const drawMenu = () => {
     if (!tray) return;
     const ready = controller.phase === 'ready';
+    tray.setToolTip(
+      controller.recoveryPending ? TEXT.tray.tooltipRecoveryPending : TEXT.tray.tooltip,
+    );
     tray.setContextMenu(
       Menu.buildFromTemplate([
         {
@@ -421,7 +424,15 @@ async function run(): Promise<void> {
             void controller.openResetPassword();
           },
         },
-        { label: TEXT.tray.recoveryKey, click: () => void controller.showRecoveryKey() },
+        {
+          label: controller.recoveryPending
+            ? TEXT.tray.confirmRecoveryKey
+            : TEXT.tray.checkRecoveryKey,
+          enabled: ready,
+          click: () => {
+            controller.openRecoveryKey();
+          },
+        },
         { type: 'separator' },
         { label: TEXT.tray.logs, click: () => void controller.openLogs() },
         {

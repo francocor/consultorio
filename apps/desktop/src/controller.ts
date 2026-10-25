@@ -40,6 +40,7 @@ import { loadCommonPasswordsSync, messagesForIssues } from './password-check.js'
 import type { DataPaths } from './paths.js';
 import { chooseServerPort, findFreePort, type PortRetry } from './ports.js';
 import { DATABASE_NAME, type PostgresCluster, PostgresError, SUPERUSER } from './postgres.js';
+import { normalizeRecoveryKey } from './recovery-key.js';
 import { redact } from './redact.js';
 import { migrationCountOf, missingResources, type Resources } from './resources.js';
 import { reconcileInterruptedRestore } from './restore-journal.js';
@@ -152,6 +153,9 @@ const HOUR_MS = 60 * 60 * 1000;
 /** Wrong recovery keys the reset page accepts before its address stops working. */
 const MAX_RESET_ATTEMPTS = 5;
 
+/** How often the person is reminded to copy the backups off this PC. */
+const COPY_REMINDER_MS = 30 * 24 * HOUR_MS;
+
 /** Where a backup is restored before it replaces the live database. */
 const SCRATCH_DATABASE = 'consultorio_restore';
 
@@ -219,6 +223,8 @@ export class Controller {
   private movedFromPort: number | null = null;
   /** Wrong recovery keys typed on the reset page that is open. */
   private resetAttempts = 0;
+  /** Wrong tails of the recovery key typed on the page that confirms it, and wrong keys typed to check it. */
+  private keyPageAttempts = 0;
   private readonly listeners = new Set<() => void>();
 
   constructor(private readonly deps: ControllerDeps) {}
@@ -622,6 +628,8 @@ export class Controller {
       }
       this.config = this.deps.store.update((config) => {
         config.provisioned = true;
+        // The reminders to copy the backups off this PC start counting now.
+        config.settings.lastCopyReminder = this.deps.now().toISOString();
       });
       this.log('organization created');
       try {
@@ -633,7 +641,13 @@ export class Controller {
       }
       this.vault.revoke(PURPOSE.setup);
       this.finishStart({ keepWindow: true });
-      return { ok: true, recoveryKey: this.config.secrets.recoveryKey ?? '' };
+      this.keyPageAttempts = 0;
+      return {
+        ok: true,
+        recoveryKey: this.config.secrets.recoveryKey ?? '',
+        // The setup token is revoked above; this one lets the page confirm the key it just showed.
+        ackToken: this.vault.issue(PURPOSE.ack, 24 * HOUR_MS),
+      };
     } catch (error) {
       this.log(`setup failed: ${describeError(error).detail}`);
       return { ok: false, message: describeError(error).message };
@@ -788,11 +802,44 @@ export class Controller {
       })
       .catch(() => undefined);
     void this.maybeDailyBackup();
+    if (options.keepWindow !== true) {
+      // Just after the setup the person is looking at the key; later starts remind them if it is not confirmed.
+      if (this.recoveryPending) {
+        this.deps.ui.notify(TEXT.recoveryKey.reminderTitle, TEXT.recoveryKey.reminder);
+      }
+      this.maybeRemindCopy();
+    }
     clearInterval(this.dailyTimer);
     this.dailyTimer = setInterval(() => {
       void this.maybeDailyBackup();
+      this.maybeRemindCopy();
     }, HOUR_MS);
     this.dailyTimer.unref();
+  }
+
+  /** True when the install has its organization but the owner has not confirmed the recovery key. */
+  get recoveryPending(): boolean {
+    return this.loaded !== null && this.loaded.provisioned && !this.loaded.recoveryAcknowledged;
+  }
+
+  /** Reminds the person, every 30 days, to copy the backups off this PC: a copy on the same disk is lost with it. */
+  private maybeRemindCopy(): void {
+    if (this.currentPhase !== 'ready') return;
+    const now = this.deps.now();
+    const last = this.config.settings.lastCopyReminder;
+    const due = last === null || now.getTime() - Date.parse(last) >= COPY_REMINDER_MS;
+    if (!due) return;
+    // The first run of the counter (an old configuration) only starts it.
+    if (last !== null) this.deps.ui.notify(TEXT.backup.copyReminderTitle, TEXT.backup.copyReminder);
+    try {
+      this.config = this.deps.store.update((config) => {
+        config.settings.lastCopyReminder = now.toISOString();
+      });
+    } catch (error) {
+      this.log(
+        `could not write the reminder down: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
   }
 
   // ---- backups ----------------------------------------------------------------------------------
@@ -1164,6 +1211,22 @@ export class Controller {
     return this.commonPasswordSet;
   }
 
+  /** A wrong answer on a page about the recovery key: five of them and the address stops working. */
+  private keyPageMiss(
+    purpose: typeof PURPOSE.ack | typeof PURPOSE.check,
+    field: string,
+    message: string,
+  ): { ok: false; errors?: Record<string, string>; message?: string } {
+    this.keyPageAttempts += 1;
+    this.log(`recovery key page: wrong answer (attempt ${String(this.keyPageAttempts)})`);
+    if (this.keyPageAttempts >= MAX_RESET_ATTEMPTS) {
+      this.vault.revoke(purpose);
+      this.deps.ui.closeAuxWindow();
+      return { ok: false, message: TEXT.recoveryKey.tooManyAttempts };
+    }
+    return { ok: false, errors: { [field]: message } };
+  }
+
   private pageActions(): PageActions {
     return {
       isProvisioned: () => this.loaded?.provisioned ?? false,
@@ -1213,6 +1276,37 @@ export class Controller {
         // One reset per page: the address is good for nothing once it has done its job.
         this.vault.revoke(PURPOSE.reset);
         return { ok: true, email: outcome.email, secondFactorCleared: outcome.secondFactorCleared };
+      },
+      recoveryKeyToShow: () =>
+        this.config.recoveryAcknowledged ? null : this.config.secrets.recoveryKey,
+      confirmRecoveryKey: (lastFour) => {
+        const stored = this.config.secrets.recoveryKey;
+        if (this.config.recoveryAcknowledged || stored === null) {
+          return Promise.resolve({ ok: false, message: TEXT.recoveryKey.gone });
+        }
+        if (normalizeRecoveryKey(lastFour) !== normalizeRecoveryKey(stored).slice(-4)) {
+          return Promise.resolve(
+            this.keyPageMiss(PURPOSE.ack, 'recoveryKeyLast4', TEXT.recoveryKey.wrongLast4),
+          );
+        }
+        this.config = this.deps.store.update((config) => {
+          config.recoveryAcknowledged = true;
+          // From here only the hash is kept: whoever sits at this PC cannot read the key.
+          config.secrets.recoveryKey = null;
+        });
+        this.vault.revoke(PURPOSE.ack);
+        this.log('the recovery key was confirmed by the owner and is no longer kept');
+        this.changed();
+        return Promise.resolve({ ok: true });
+      },
+      checkRecoveryKey: (typed) => {
+        if (!verifyRecoveryKey(typed, this.config.secrets.recoveryKeyHash)) {
+          return Promise.resolve(
+            this.keyPageMiss(PURPOSE.check, 'recoveryKey', TEXT.recoveryKey.wrong),
+          );
+        }
+        this.vault.revoke(PURPOSE.check);
+        return Promise.resolve({ ok: true });
       },
       submitRecoveryKey: async (key) => {
         const pending = this.pendingRestore;
@@ -1277,20 +1371,20 @@ export class Controller {
     if (this.loaded) this.deps.ui.setAutoStart(this.loaded.settings.autoStart);
   }
 
-  async showRecoveryKey(): Promise<void> {
-    const key = this.loaded?.secrets.recoveryKey;
-    if (!key) {
-      await this.deps.ui.message('info', TEXT.recoveryKey.title, TEXT.recoveryKey.gone);
-      return;
-    }
-    const choice = await this.deps.ui.choose({
-      kind: 'info',
-      title: TEXT.recoveryKey.title,
-      message: `${TEXT.recoveryKey.message}\n\n${key}`,
-      detail: TEXT.recoveryKey.detail,
-      buttons: [TEXT.recoveryKey.copy, TEXT.recoveryKey.close],
-    });
-    if (choice === 0) this.deps.ui.copyToClipboard(key);
+  /**
+   * The tray's item about the recovery key. Until the owner confirms having saved it, it opens the page that
+   * shows it with the box that confirms it; after that the key is not kept, and the page only checks a typed one.
+   */
+  openRecoveryKey(): void {
+    if (this.currentPhase !== 'ready') return;
+    this.keyPageAttempts = 0;
+    const pending = this.recoveryPending;
+    const token = this.vault.issue(pending ? PURPOSE.ack : PURPOSE.check, 15 * 60_000);
+    const page = pending ? '/__ack' : '/__check';
+    this.deps.ui.openAuxWindow(
+      `${this.appUrl}${page}?t=${token}`,
+      pending ? TEXT.recoveryKey.windowTitle : TEXT.recoveryKey.checkWindowTitle,
+    );
   }
 
   async about(): Promise<void> {

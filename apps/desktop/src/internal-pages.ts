@@ -4,6 +4,8 @@ import {
   PAGE_CSP,
   PAGE_CSS,
   PAGE_JS,
+  renderAckPage,
+  renderCheckPage,
   renderKeyPage,
   renderResetPage,
   renderSetupPage,
@@ -13,13 +15,22 @@ import { validateNewPassword, validateSetup } from './setup-validation.js';
 import type { TokenVault } from './tokens.js';
 
 export type SetupOutcome =
-  { ok: true; recoveryKey: string } | { ok: false; errors?: FieldErrors; message?: string };
+  | {
+      ok: true;
+      recoveryKey: string;
+      /** Lets the page that shows the key confirm it, after the setup token is gone. */
+      ackToken: string;
+    }
+  | { ok: false; errors?: FieldErrors; message?: string };
 
 export type ResetOutcome =
   | { ok: true; email: string; secondFactorCleared: boolean }
   | { ok: false; errors?: Record<string, string>; message?: string };
 
 export type KeyOutcome = { ok: true } | { ok: false; message: string };
+
+export type ConfirmOutcome =
+  { ok: true } | { ok: false; errors?: Record<string, string>; message?: string };
 
 /** What the pages do. The shell implements these; this module only speaks HTTP. */
 export interface PageActions {
@@ -39,9 +50,21 @@ export interface PageActions {
   }): Promise<ResetOutcome>;
   /** The recovery key typed for the backup that is being restored. */
   submitRecoveryKey(key: string): Promise<KeyOutcome>;
+  /** The recovery key while the owner has not confirmed it; `null` once it was (it is not kept after that). */
+  recoveryKeyToShow(): string | null;
+  /** The owner typed the last four characters of the key: the key is confirmed and no longer kept. */
+  confirmRecoveryKey(lastFour: string): Promise<ConfirmOutcome>;
+  /** Tells whether a recovery key typed from the paper copy is the one of this install. */
+  checkRecoveryKey(typed: string): Promise<ConfirmOutcome>;
 }
 
-export const PURPOSE = { setup: 'setup', reset: 'reset', key: 'key' } as const;
+export const PURPOSE = {
+  setup: 'setup',
+  reset: 'reset',
+  key: 'key',
+  ack: 'ack',
+  check: 'check',
+} as const;
 
 const MAX_BODY_BYTES = 16 * 1024;
 
@@ -82,11 +105,20 @@ async function readJson(request: IncomingMessage): Promise<unknown> {
   return JSON.parse(Buffer.concat(chunks).toString('utf8')) as unknown;
 }
 
-const PAGES: Record<string, { purpose: string; render: () => string }> = {
-  '/__setup': { purpose: PURPOSE.setup, render: renderSetupPage },
-  '/__reset': { purpose: PURPOSE.reset, render: renderResetPage },
-  '/__key': { purpose: PURPOSE.key, render: renderKeyPage },
-};
+const PAGES: Record<string, { purpose: string; render: (actions: PageActions) => string | null }> =
+  {
+    '/__setup': { purpose: PURPOSE.setup, render: renderSetupPage },
+    '/__reset': { purpose: PURPOSE.reset, render: renderResetPage },
+    '/__key': { purpose: PURPOSE.key, render: renderKeyPage },
+    '/__ack': {
+      purpose: PURPOSE.ack,
+      render: (actions) => {
+        const key = actions.recoveryKeyToShow();
+        return key === null ? null : renderAckPage(key);
+      },
+    },
+    '/__check': { purpose: PURPOSE.check, render: renderCheckPage },
+  };
 
 /**
  * The pages of the shell. A page is shown only with its token, and the setup page only while the
@@ -204,12 +236,32 @@ export function createInternalPages(vault: TokenVault, actions: PageActions) {
       return;
     }
 
+    if (purpose === PURPOSE.ack) {
+      const lastFour =
+        typeof input['recoveryKeyLast4'] === 'string' ? input['recoveryKeyLast4'] : '';
+      if (lastFour.trim().length < 4) {
+        sendJson(response, 422, {
+          ok: false,
+          errors: { recoveryKeyLast4: 'Escriba los últimos 4 caracteres de la clave.' },
+        });
+        return;
+      }
+      const outcome = await actions.confirmRecoveryKey(lastFour);
+      sendJson(response, outcome.ok ? 200 : 422, outcome);
+      return;
+    }
+
     const key = typeof input['recoveryKey'] === 'string' ? input['recoveryKey'] : '';
     if (key.trim() === '') {
       sendJson(response, 422, {
         ok: false,
         errors: { recoveryKey: 'Ingrese la clave de recuperación.' },
       });
+      return;
+    }
+    if (purpose === PURPOSE.check) {
+      const outcome = await actions.checkRecoveryKey(key);
+      sendJson(response, outcome.ok ? 200 : 422, outcome);
       return;
     }
     const outcome = await actions.submitRecoveryKey(key);
@@ -249,7 +301,9 @@ export function createInternalPages(vault: TokenVault, actions: PageActions) {
       sendNotFound(response);
       return true;
     }
-    sendHtml(response, page.render());
+    const html = page.render(actions);
+    if (html === null) sendNotFound(response);
+    else sendHtml(response, html);
     return true;
   }
 

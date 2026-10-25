@@ -67,6 +67,24 @@ ${hint}<p class="error" id="err-${options.name}" role="alert"></p>
 
 const FORM_ERROR = '<p class="error form-error" id="form-error" role="alert"></p>';
 
+/**
+ * The box that asks for the last four characters of the recovery key: typing them is the proof that the key
+ * was read and not only skipped past. `extra` holds the attributes that tell the script where the form sends
+ * its answer and what it shows afterwards.
+ */
+function confirmKeyForm(
+  formId: string,
+  extra: string,
+  ids: { submit: string; busy: string; error: string },
+): string {
+  return `<form id="${formId}" data-endpoint="/__ack" data-submit="${ids.submit}" data-busy="${ids.busy}" data-error="${ids.error}" ${extra} novalidate>
+${field({ name: 'recoveryKeyLast4', label: 'Para confirmar que la guardó, escriba los últimos 4 caracteres de la clave', maxlength: 4 })}
+<p class="error form-error" id="${ids.error}" role="alert"></p>
+<button type="submit" id="${ids.submit}">La guardé</button>
+<p class="busy" id="${ids.busy}" hidden>Comprobando…</p>
+</form>`;
+}
+
 export function renderSetupPage(): string {
   const zones = TIME_ZONES.map(
     (zone) =>
@@ -98,14 +116,20 @@ ${FORM_ERROR}
 </div>
 <div id="done" hidden>
 <h1>Su consultorio está listo</h1>
-<p class="lead">Guarde esta clave de recuperación en un lugar seguro, por ejemplo impresa. Sirve para abrir una copia de seguridad en otra computadora; sin ella, las copias solo se pueden restaurar en esta.</p>
+<p class="lead">Guarde esta clave de recuperación en un lugar seguro, por ejemplo impresa. Sirve para abrir una copia de seguridad en otra computadora y para restablecer la contraseña de la propietaria; sin ella no se puede hacer ninguna de las dos cosas.</p>
 <p class="key" id="recovery-key" data-fill="recoveryKey" aria-label="Clave de recuperación"></p>
-<p class="hint">Si la pierde, puede volver a verla desde el icono de Consulvia, junto al reloj de Windows.</p>
+<p class="hint">Cuando confirme que la guardó, Consulvia deja de mostrarla en esta computadora: nadie que use la computadora podrá verla después.</p>
 <div class="actions">
 <button type="button" class="secondary" data-action="print">Imprimir</button>
 <button type="button" class="secondary" data-action="copy" data-copy="recovery-key">Copiar</button>
-<button type="button" data-action="go-home">Abrir Consulvia</button>
 </div>
+${confirmKeyForm('ack-box', 'data-token-from="ackToken" data-hide="ack-box" data-show="ack-done"', { submit: 'ack-submit', busy: 'ack-busy', error: 'ack-error' })}
+<div id="ack-done" hidden>
+<p class="lead"><strong>Listo.</strong> La clave quedó confirmada.</p>
+<div class="actions"><button type="button" data-action="go-home">Abrir Consulvia</button></div>
+</div>
+<div class="actions"><button type="button" class="secondary" data-action="go-home">Confirmar más tarde y abrir Consulvia</button></div>
+<p class="hint">Si todavía no la confirmó, Consulvia se lo recuerda desde el icono junto al reloj de Windows.</p>
 </div>`,
   );
 }
@@ -134,6 +158,51 @@ ${FORM_ERROR}
 <h1>La contraseña se actualizó</h1>
 <p class="lead">La cuenta <strong data-fill="email"></strong> ya puede ingresar con la contraseña nueva.</p>
 <p class="hint" id="second-factor-note" data-fill="secondFactorNote"></p>
+<div class="actions"><button type="button" data-action="close">Cerrar</button></div>
+</div>`,
+  );
+}
+
+/** The recovery key of an install that has not confirmed it yet, with the box that confirms it. */
+export function renderAckPage(key: string): string {
+  return layout(
+    'Consulvia: clave de recuperación',
+    `<div id="step-form">
+<h1>Confirmar la clave de recuperación</h1>
+<p class="lead">Guarde esta clave en un lugar seguro, por ejemplo impresa. Sirve para abrir una copia de seguridad en otra computadora y para restablecer la contraseña de la propietaria.</p>
+<p class="key" id="recovery-key" aria-label="Clave de recuperación">${key}</p>
+<div class="actions">
+<button type="button" class="secondary" data-action="print">Imprimir</button>
+<button type="button" class="secondary" data-action="copy" data-copy="recovery-key">Copiar</button>
+</div>
+<p class="hint">Cuando confirme que la guardó, Consulvia deja de mostrarla en esta computadora.</p>
+${confirmKeyForm('form', '', { submit: 'submit', busy: 'busy', error: 'form-error' })}
+</div>
+<div id="done" hidden>
+<h1>La clave quedó confirmada</h1>
+<p class="lead">Consulvia ya no la muestra. Si más adelante quiere comprobar que su copia es correcta, use <strong>Comprobar la clave de recuperación</strong> en el icono junto al reloj de Windows.</p>
+<div class="actions"><button type="button" data-action="close">Cerrar</button></div>
+</div>`,
+  );
+}
+
+/** Checks a key typed from the paper copy against the install, and shows nothing. */
+export function renderCheckPage(): string {
+  return layout(
+    'Consulvia: comprobar la clave de recuperación',
+    `<div id="step-form">
+<h1>Comprobar la clave de recuperación</h1>
+<p class="lead">Escriba la clave tal como la tiene anotada. Consulvia le dice si es la correcta; no la muestra.</p>
+<form id="form" data-endpoint="/__check" novalidate>
+${field({ name: 'recoveryKey', label: 'Clave de recuperación', hint: 'Son 30 letras y números, en grupos de cinco.', maxlength: 64 })}
+${FORM_ERROR}
+<button type="submit" id="submit">Comprobar</button>
+<p class="busy" id="busy" hidden>Comprobando…</p>
+</form>
+</div>
+<div id="done" hidden>
+<h1>La clave es correcta</h1>
+<p class="lead">Es la clave de recuperación de esta instalación.</p>
 <div class="actions"><button type="button" data-action="close">Cerrar</button></div>
 </div>`,
   );
@@ -190,14 +259,16 @@ button:disabled { opacity: 0.6; cursor: progress; }
 `;
 
 /**
- * One script for the three pages. A form with `data-endpoint` is sent as JSON with the one-time token of
- * the address (`?t=`) in a header that another page cannot add without the browser asking first. The
- * answer is `{ ok, errors, message, ...values }`; the values fill the elements marked `data-fill`.
+ * One script for every page. A form with `data-endpoint` is sent as JSON with the one-time token of the
+ * address (`?t=`), or with the token the last answer handed over (`data-token-from`), in a header that
+ * another page cannot add without the browser asking first. The answer is `{ ok, errors, message, ...values }`;
+ * the values fill the elements marked `data-fill`. On success the form hides `data-hide` and shows
+ * `data-show` (by default the form step and the done step of the page).
  */
 export const PAGE_JS = `(function () {
   'use strict';
   var token = new URLSearchParams(window.location.search).get('t') || '';
-  var form = document.getElementById('form');
+  var answers = {};
 
   function byId(id) { return document.getElementById(id); }
   function setText(id, text) { var el = byId(id); if (el) { el.textContent = text || ''; } }
@@ -209,18 +280,18 @@ export const PAGE_JS = `(function () {
     for (var j = 0; j < inputs.length; j += 1) { inputs[j].removeAttribute('aria-invalid'); }
   }
 
-  function showErrors(errors, message) {
+  function showErrors(errors, message, errorId) {
     var first = null;
     Object.keys(errors || {}).forEach(function (name) {
       setText('err-' + name, errors[name]);
       var input = byId(name);
       if (input) { input.setAttribute('aria-invalid', 'true'); if (!first) { first = input; } }
     });
-    setText('form-error', message || '');
+    setText(errorId, message || '');
     if (first) { first.focus(); }
   }
 
-  function collect() {
+  function collect(form) {
     var data = {};
     var controls = form.elements;
     for (var i = 0; i < controls.length; i += 1) {
@@ -231,43 +302,57 @@ export const PAGE_JS = `(function () {
     return data;
   }
 
-  function finish(body) {
+  function finish(form, body) {
+    Object.keys(body).forEach(function (name) { answers[name] = body[name]; });
     var fills = document.querySelectorAll('[data-fill]');
     for (var i = 0; i < fills.length; i += 1) {
       var value = body[fills[i].getAttribute('data-fill')];
       if (typeof value === 'string') { fills[i].textContent = value; }
     }
-    byId('step-form').hidden = true;
-    byId('done').hidden = false;
-    var heading = document.querySelector('#done h1');
-    if (heading) { heading.setAttribute('tabindex', '-1'); heading.focus(); }
+    var hide = byId(form.getAttribute('data-hide') || 'step-form');
+    var show = byId(form.getAttribute('data-show') || 'done');
+    if (hide) { hide.hidden = true; }
+    if (show) {
+      show.hidden = false;
+      var heading = show.querySelector('h1') || show;
+      heading.setAttribute('tabindex', '-1');
+      heading.focus();
+    }
   }
 
-  if (form) {
+  function wire(form) {
+    var submitId = form.getAttribute('data-submit') || 'submit';
+    var busyId = form.getAttribute('data-busy') || 'busy';
+    var errorId = form.getAttribute('data-error') || 'form-error';
     form.addEventListener('submit', function (event) {
       event.preventDefault();
       clearErrors();
-      var submit = byId('submit');
+      var submit = byId(submitId);
+      var busy = byId(busyId);
       submit.disabled = true;
-      byId('busy').hidden = false;
+      if (busy) { busy.hidden = false; }
+      var from = form.getAttribute('data-token-from');
       fetch(form.getAttribute('data-endpoint'), {
         method: 'POST',
-        headers: { 'content-type': 'application/json', 'x-consulvia-token': token },
-        body: JSON.stringify(collect())
+        headers: { 'content-type': 'application/json', 'x-consulvia-token': from ? (answers[from] || '') : token },
+        body: JSON.stringify(collect(form))
       }).then(function (response) {
         return response.json().catch(function () { return {}; });
       }).then(function (body) {
-        if (body && body.ok) { finish(body); return; }
+        if (body && body.ok) { finish(form, body); return; }
         submit.disabled = false;
-        byId('busy').hidden = true;
-        showErrors(body && body.errors, (body && body.message) || 'No se pudo completar la operación. Intente de nuevo.');
+        if (busy) { busy.hidden = true; }
+        showErrors(body && body.errors, (body && body.message) || 'No se pudo completar la operación. Intente de nuevo.', errorId);
       }).catch(function () {
         submit.disabled = false;
-        byId('busy').hidden = true;
-        showErrors({}, 'No se pudo comunicar con Consulvia. Intente de nuevo.');
+        if (busy) { busy.hidden = true; }
+        showErrors({}, 'No se pudo comunicar con Consulvia. Intente de nuevo.', errorId);
       });
     });
   }
+
+  var forms = document.querySelectorAll('form[data-endpoint]');
+  for (var f = 0; f < forms.length; f += 1) { wire(forms[f]); }
 
   document.addEventListener('click', function (event) {
     var target = event.target;

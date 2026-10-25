@@ -32,8 +32,11 @@ La primera vez, Consulvia prepara la base de datos. Tarda uno o dos minutos y mu
 1. Escriba el **nombre del consultorio**, su **nombre y apellido**, su **correo electrónico** (con él va a ingresar) y la **zona horaria**.
 2. Elija una **contraseña** de al menos 12 caracteres. Una frase larga es una buena opción. Consulvia rechaza las contraseñas muy comunes.
 3. Pulse **Crear mi consultorio** y espere unos segundos.
-4. Se muestra la **clave de recuperación**: 30 letras y números en grupos de cinco. **Imprímala o anótela y guárdela en un lugar seguro.** Sirve para abrir una copia de seguridad en otra computadora. Si la pierde, puede volver a verla desde el icono de Consulvia (_Clave de recuperación…_).
-5. Pulse **Abrir Consulvia** e ingrese con su correo y su contraseña.
+4. Se muestra la **clave de recuperación**: 30 letras y números en grupos de cinco. **Imprímala o anótela y guárdela en un lugar seguro.** Sirve para abrir una copia de seguridad en otra computadora y para restablecer la contraseña de la propietaria.
+5. Para seguir, **escriba los últimos 4 caracteres de la clave** y pulse **La guardé**. Es la forma de confirmar que la leyó y la anotó. **Desde ese momento Consulvia ya no vuelve a mostrarla** en esta computadora (se conserva solo una huella que permite comprobarla): así nadie que use la computadora puede verla. Si la pierde, no se puede recuperar.
+6. Pulse **Abrir Consulvia** e ingrese con su correo y su contraseña.
+
+Si elige _Confirmar más tarde_, Consulvia lo recuerda cada vez que se abre y en el icono junto al reloj (_Confirmar que guardó la clave de recuperación…_) hasta que lo haga.
 
 Esa cuenta es la de la **propietaria** del consultorio. Desde Configuración puede invitar a más personas (profesionales, recepción).
 
@@ -46,19 +49,20 @@ Esa cuenta es la de la **propietaria** del consultorio. Desde Configuración pue
 
 El menú del icono tiene:
 
-| Opción                                    | Qué hace                                                             |
-| ----------------------------------------- | -------------------------------------------------------------------- |
-| Abrir Consulvia                           | Muestra la ventana                                                   |
-| Abrir en el navegador                     | Abre Consulvia en su navegador                                       |
-| Correos salientes                         | Abre la carpeta con los correos que Consulvia generó (ver más abajo) |
-| Hacer copia de seguridad                  | Hace una copia ahora                                                 |
-| Restaurar copia…                          | Reemplaza los datos por los de una copia                             |
-| Restablecer contraseña de la propietaria… | Para cuando la propietaria olvidó su contraseña                      |
-| Clave de recuperación…                    | Muestra la clave de recuperación                                     |
-| Ver registros                             | Abre la carpeta con los registros (para enviar a soporte)            |
-| Iniciar con Windows                       | Marca o desmarca el inicio automático                                |
-| Acerca de                                 | Versión y ubicación de los datos                                     |
-| Salir                                     | Cierra Consulvia por completo                                        |
+| Opción                                    | Qué hace                                                              |
+| ----------------------------------------- | --------------------------------------------------------------------- |
+| Abrir Consulvia                           | Muestra la ventana                                                    |
+| Abrir en el navegador                     | Abre Consulvia en su navegador                                        |
+| Correos salientes                         | Abre la carpeta con los correos que Consulvia generó (ver más abajo)  |
+| Hacer copia de seguridad                  | Hace una copia ahora                                                  |
+| Restaurar copia…                          | Reemplaza los datos por los de una copia                              |
+| Restablecer contraseña de la propietaria… | Para cuando la propietaria olvidó su contraseña                       |
+| Confirmar que guardó la clave…            | Mientras no se confirmó: muestra la clave y pide confirmarla          |
+| Comprobar la clave de recuperación…       | Una vez confirmada: dice si la clave que usted escribe es la correcta |
+| Ver registros                             | Abre la carpeta con los registros (para enviar a soporte)             |
+| Iniciar con Windows                       | Marca o desmarca el inicio automático                                 |
+| Acerca de                                 | Versión y ubicación de los datos                                      |
+| Salir                                     | Cierra Consulvia por completo                                         |
 
 ## Copias de seguridad
 
@@ -67,6 +71,7 @@ El menú del icono tiene:
 - **Si el disco está lleno**, Consulvia lo avisa antes de empezar (una copia necesita aproximadamente el doble de lo que ocupan los datos libre en la unidad de `Documentos`). Libere espacio y vuelva a intentar.
 - Para hacer una copia en cualquier momento: icono de Consulvia, **Hacer copia de seguridad**.
 - Las copias están en **`Documentos\Consulvia\Copias`**, con el nombre `consulvia-diaria-AAAA-MM-DD_HHMM.cvb` (o `consulvia-manual-…`). Cada una es **un solo archivo cifrado y autenticado**: incluye la base de datos y todos los documentos de los pacientes, y no se puede leer ni modificar sin la clave de esta instalación. Consulvia se niega a restaurar un archivo que se modificó, se cortó o no corresponde a esta instalación, y no lee nada de él.
+- Consulvia se lo recuerda **cada 30 días** con un aviso, porque no puede saber si usted ya copió la carpeta a otro lugar.
 - **Una copia en la misma computadora no protege de un robo, un incendio o un disco roto.** Una vez por semana, copie la carpeta `Copias` a un pendrive, a un disco externo o a un servicio de almacenamiento de su confianza, y guárdelo fuera del consultorio. Las copias contienen datos de salud: trátelas con el mismo cuidado que la historia clínica en papel.
 
 ## Restaurar una copia
@@ -83,7 +88,7 @@ Si la copia es de una versión de Consulvia más nueva que la instalada, Consulv
 
 ## Olvidé la contraseña
 
-- **De la propietaria:** en esta computadora, icono de Consulvia, **Restablecer contraseña de la propietaria…**. Escriba la contraseña nueva dos veces. Si perdió también el teléfono de la verificación en dos pasos, marque **Quitar también la verificación en dos pasos**; la propietaria podrá volver a activarla desde su cuenta. Se cierran las sesiones abiertas de esa cuenta.
+- **De la propietaria:** en esta computadora, icono de Consulvia, **Restablecer contraseña de la propietaria…**. Consulvia pide confirmar y luego la **clave de recuperación** (la de la primera pantalla): quien solo tiene abierta la sesión de Windows no puede cambiar la contraseña. Después escriba la contraseña nueva dos veces. Con 5 claves erróneas la ventana se cierra y hay que empezar de nuevo. Si perdió también el teléfono de la verificación en dos pasos, marque **Quitar también la verificación en dos pasos**; la propietaria podrá volver a activarla desde su cuenta. Se cierran las sesiones abiertas de esa cuenta, queda registrado en el historial de auditoría como un cambio hecho desde la computadora (no como si lo hubiera hecho la propietaria) y se deja un aviso para la propietaria en **Correos salientes**.
 - **De otra persona:** en la pantalla de ingreso use _¿Olvidó su contraseña?_. Como esta instalación no tiene servidor de correo, el mensaje no sale por internet: queda guardado en **Correos salientes** (icono de Consulvia). Abra el archivo `.eml` más reciente con su programa de correo, o abra el `.json` que lo acompaña, y copie el enlace a la persona. Los correos con más de 60 días se borran solos.
 
 ## Dónde están los datos
@@ -105,7 +110,7 @@ Si la copia es de una versión de Consulvia más nueva que la instalada, Consulv
 
 - **Las copias de seguridad** están cifradas y autenticadas por Consulvia: sin la clave de la instalación no se pueden leer ni modificar, y Consulvia no restaura una que haya sido alterada.
 - **La base de datos y los documentos que están en la computadora NO están cifrados por Consulvia.** Cualquier persona con acceso al disco (una computadora robada, un administrador de Windows, quien arranque desde otro sistema) puede leerlos. Para esta versión de una sola computadora eso se resuelve cifrando el disco de Windows: active **BitLocker** (Windows 10/11 Pro) o el **cifrado de dispositivo** (Windows 11 Home), y use una contraseña de Windows que solo conozca el personal autorizado. **Se recomienda hacerlo antes de cargar datos reales.**
-- **Quién usa la sesión de Windows:** quien tenga abierta la sesión de Windows de esta computadora puede abrir Consulvia. Para cambiar la contraseña de la propietaria o ver la clave de recuperación se pide la clave de recuperación, que solo debe tener la propietaria.
+- **Quién usa la sesión de Windows:** quien tenga abierta la sesión de Windows de esta computadora puede abrir Consulvia. Para cambiar la contraseña de la propietaria se pide la clave de recuperación, que solo debe tener la propietaria y que Consulvia no guarda a la vista en la computadora.
 
 ## Desinstalar
 

@@ -41,6 +41,7 @@ let server: LocalServer;
 let port: number;
 let vault: TokenVault;
 let provisioned = false;
+let keyShown = true;
 let setupCalls: unknown[];
 let setupGate: Promise<void> | null = null;
 
@@ -50,7 +51,7 @@ const actions: PageActions = {
   setup: async (values) => {
     setupCalls.push(values);
     if (setupGate) await setupGate;
-    return { ok: true, recoveryKey: 'ABCDE-FGHJK' };
+    return { ok: true, recoveryKey: 'ABCDE-FGHJK', ackToken: 'ack-token-for-the-page' };
   },
   resetPassword: (input) =>
     Promise.resolve({
@@ -58,6 +59,17 @@ const actions: PageActions = {
       email: 'ana@clinica.example',
       secondFactorCleared: input.clearSecondFactor,
     }),
+  recoveryKeyToShow: () => (keyShown ? 'ABCDE-FGHJK-LMNPQ' : null),
+  confirmRecoveryKey: (lastFour) =>
+    Promise.resolve(
+      lastFour.toUpperCase() === 'NPQ'.padStart(4, 'M')
+        ? { ok: true }
+        : { ok: false, errors: { recoveryKeyLast4: 'No coincide.' } },
+    ),
+  checkRecoveryKey: (typed) =>
+    Promise.resolve(
+      typed === 'ABCDE-FGHJK-LMNPQ' ? { ok: true } : { ok: false, errors: { recoveryKey: 'No.' } },
+    ),
   submitRecoveryKey: (key) =>
     Promise.resolve(
       key === 'ABCDE'
@@ -485,7 +497,11 @@ describe('the pages of the shell', () => {
     expect([noToken.status, wrongToken.status, otherSite.status]).toEqual([404, 404, 404]);
     expect(notJson.status).toBe(415);
     expect(good.status).toBe(200);
-    expect(JSON.parse(good.body.toString())).toEqual({ ok: true, recoveryKey: 'ABCDE-FGHJK' });
+    expect(JSON.parse(good.body.toString())).toEqual({
+      ok: true,
+      recoveryKey: 'ABCDE-FGHJK',
+      ackToken: 'ack-token-for-the-page',
+    });
     expect(setupCalls).toHaveLength(1);
     expect(setupCalls[0]).toMatchObject({
       ownerEmail: 'ana@clinica.example',
@@ -616,6 +632,79 @@ describe('the pages of the shell', () => {
       secondFactorNote: expect.stringContaining('verificación en dos pasos') as string,
     });
     expect(mismatch.status).toBe(422);
+  });
+
+  it('shows the recovery key with the box that confirms it, only while it is not confirmed', async () => {
+    const token = vault.issue(PURPOSE.ack);
+    keyShown = true;
+
+    const page = await call(`/__ack?t=${token}`);
+    keyShown = false;
+    const confirmed = await call(`/__ack?t=${vault.issue(PURPOSE.ack)}`);
+    keyShown = true;
+
+    expect(page.status).toBe(200);
+    expect(page.body.toString()).toContain('ABCDE-FGHJK-LMNPQ');
+    expect(page.body.toString()).toContain('name="recoveryKeyLast4"');
+    expect(confirmed.status).toBe(404);
+  });
+
+  it('confirms the key with its last four characters, and refuses fewer or a wrong tail', async () => {
+    const token = vault.issue(PURPOSE.ack);
+    const headers = { ...json, 'x-consulvia-token': token };
+    const post = (value: unknown) =>
+      call('/__ack', {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ recoveryKeyLast4: value }),
+      });
+
+    expect((await post('MNPQ')).status).toBe(200);
+    expect((await post('ZZZZ')).status).toBe(422);
+    expect((await post('MN')).status).toBe(422);
+    expect((await post(42)).status).toBe(422);
+  });
+
+  it('accepts the confirmation with the token the setup handed over, and not with the one of another page', async () => {
+    const ack = vault.issue(PURPOSE.ack);
+    const reset = vault.issue(PURPOSE.reset);
+    const body = JSON.stringify({ recoveryKeyLast4: 'MNPQ' });
+
+    const withReset = await call('/__ack', {
+      method: 'POST',
+      headers: { ...json, 'x-consulvia-token': reset },
+      body,
+    });
+    const withAck = await call('/__ack', {
+      method: 'POST',
+      headers: { ...json, 'x-consulvia-token': ack },
+      body,
+    });
+
+    expect(withReset.status).toBe(404);
+    expect(withAck.status).toBe(200);
+  });
+
+  it('checks a typed key without showing anything', async () => {
+    const token = vault.issue(PURPOSE.check);
+    const headers = { ...json, 'x-consulvia-token': token };
+    const page = await call(`/__check?t=${token}`);
+
+    const right = await call('/__check', {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ recoveryKey: 'ABCDE-FGHJK-LMNPQ' }),
+    });
+    const wrong = await call('/__check', {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ recoveryKey: 'AAAAA' }),
+    });
+
+    expect(page.status).toBe(200);
+    expect(page.body.toString()).not.toContain('ABCDE-FGHJK-LMNPQ');
+    expect(right.status).toBe(200);
+    expect(wrong.status).toBe(422);
   });
 
   it('take the recovery key of a backup from another installation', async () => {

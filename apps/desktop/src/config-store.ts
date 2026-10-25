@@ -31,6 +31,8 @@ export interface InstallSettings {
   trayHintShown: boolean;
   /** `YYYY-MM-DD` (local date) of the last automatic backup. */
   lastDailyBackup: string | null;
+  /** When the person was last reminded to copy the backups off this PC (ISO); starts at the setup. */
+  lastCopyReminder: string | null;
 }
 
 /** How far the first-run work got. A crash before `ready` is repaired by starting that part again. */
@@ -93,6 +95,7 @@ const PublicSchema = z.strictObject({
     autoStart: z.boolean(),
     trayHintShown: z.boolean(),
     lastDailyBackup: z.string().nullable(),
+    lastCopyReminder: z.string().nullable(),
   }),
 });
 
@@ -112,7 +115,12 @@ export function newInstallConfig(port: number, secrets: InstallSecrets): Install
     databaseState: 'new',
     provisioned: false,
     recoveryAcknowledged: false,
-    settings: { autoStart: false, trayHintShown: false, lastDailyBackup: null },
+    settings: {
+      autoStart: false,
+      trayHintShown: false,
+      lastDailyBackup: null,
+      lastCopyReminder: null,
+    },
     secrets,
   };
 }

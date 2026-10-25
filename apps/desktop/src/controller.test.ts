@@ -647,6 +647,160 @@ describe('the port of the local server', () => {
   });
 });
 
+describe('the recovery key', () => {
+  async function setUp(): Promise<{ ack: string }> {
+    await harness.controller.start();
+    const url = setupUrl() ?? '';
+    const answer = await post(new URL('/__setup', url).href, tokenOf(url), form);
+    return { ack: String(answer.body['ackToken']) };
+  }
+
+  const lastFour = () => (harness.config().secrets.recoveryKey ?? '').slice(-4);
+  const confirm = (ack: string, value: string) =>
+    post(`http://localhost:${String(harness.config().port)}/__ack`, ack, {
+      recoveryKeyLast4: value,
+    });
+
+  it('hands the page that shows the key a token to confirm it, because the setup token is gone', async () => {
+    const { ack } = await setUp();
+
+    expect(ack).toMatch(/^[\w-]{20,}$/);
+    expect(harness.controller.recoveryPending).toBe(true);
+  });
+
+  it('is confirmed by typing its last four characters, and is not kept on this PC after that', async () => {
+    const { ack } = await setUp();
+    const key = harness.config().secrets.recoveryKey ?? '';
+
+    const wrong = await confirm(ack, 'ZZZZ');
+    const right = await confirm(ack, lastFour().toLowerCase());
+
+    expect(wrong.status).toBe(422);
+    expect(right.status).toBe(200);
+    const config = harness.config();
+    expect(config.recoveryAcknowledged).toBe(true);
+    expect(config.secrets.recoveryKey).toBeNull();
+    expect(JSON.stringify(readFileSync(harness.paths.configFile, 'utf8'))).not.toContain(key);
+    expect(harness.controller.recoveryPending).toBe(false);
+    // The token worked once.
+    expect((await confirm(ack, lastFour())).status).toBe(404);
+  });
+
+  it('closes the page after five wrong tails', async () => {
+    const { ack } = await setUp();
+
+    for (let attempt = 0; attempt < 5; attempt += 1) await confirm(ack, 'ZZZZ');
+    const sixth = await confirm(ack, lastFour());
+
+    expect(sixth.status).toBe(404);
+    expect(harness.config().recoveryAcknowledged).toBe(false);
+  });
+
+  it('opens the page that shows it and confirms it from the tray, until it is confirmed', async () => {
+    const { ack } = await setUp();
+    harness.uiCalls.length = 0;
+
+    harness.controller.openRecoveryKey();
+
+    const opened = harness.uiCalls.find((call) => call[0] === 'openAuxWindow');
+    expect(String(opened?.[1])).toContain('/__ack?t=');
+    await confirm(ack, 'ZZZZ'); // the older token is no longer good
+    const url = String(opened?.[1]);
+    const done = await post(new URL('/__ack', url).href, tokenOf(url), {
+      recoveryKeyLast4: lastFour(),
+    });
+    expect(done.status).toBe(200);
+  });
+
+  it('opens a check page instead once it is confirmed, and the check says yes only to the real key', async () => {
+    const { ack } = await setUp();
+    const key = harness.config().secrets.recoveryKey ?? '';
+    await confirm(ack, lastFour());
+    harness.uiCalls.length = 0;
+
+    harness.controller.openRecoveryKey();
+
+    const opened = harness.uiCalls.find((call) => call[0] === 'openAuxWindow');
+    const url = String(opened?.[1]);
+    expect(url).toContain('/__check?t=');
+    const no = await post(new URL('/__check', url).href, tokenOf(url), {
+      recoveryKey: 'AAAAA-AAAAA-AAAAA-AAAAA-AAAAA-AAAAA',
+    });
+    const yes = await post(new URL('/__check', url).href, tokenOf(url), {
+      recoveryKey: key.toLowerCase(),
+    });
+    expect(no.status).toBe(422);
+    expect(yes.status).toBe(200);
+  });
+
+  it('reminds the person at every start until the key is confirmed, and then stops', async () => {
+    const { ack } = await setUp();
+    await harness.controller.quit();
+
+    const again = build(harness.folder);
+    await again.controller.start();
+    const reminded = again.uiCalls.filter(
+      (call) => call[0] === 'notify' && call[1] === 'Falta confirmar la clave de recuperación',
+    );
+    expect(reminded).toHaveLength(1);
+    await again.controller.quit();
+
+    await confirm(ack, lastFour()).catch(() => undefined);
+    const store = new ConfigStore(harness.paths.configFile, cipher);
+    store.update((config) => {
+      config.recoveryAcknowledged = true;
+      config.secrets.recoveryKey = null;
+    });
+    const last = build(harness.folder);
+    await last.controller.start();
+    expect(last.uiCalls.some((call) => call[0] === 'notify')).toBe(false);
+  });
+});
+
+describe('the reminder to copy the backups off this PC', () => {
+  const DAY = 24 * 60 * 60 * 1000;
+
+  async function provisioned(): Promise<void> {
+    await harness.controller.start();
+    const url = setupUrl() ?? '';
+    await post(new URL('/__setup', url).href, tokenOf(url), form);
+    await harness.controller.quit();
+  }
+
+  const reminders = (target: Harness) =>
+    target.uiCalls.filter(
+      (call) => call[0] === 'notify' && call[1] === 'Copia de seguridad fuera de la computadora',
+    );
+
+  it('starts counting at the setup, and says nothing before 30 days', async () => {
+    await provisioned();
+    expect(harness.config().settings.lastCopyReminder).toBe(clock.toISOString());
+
+    clock = new Date(clock.getTime() + 29 * DAY);
+    const again = build(harness.folder);
+    await again.controller.start();
+
+    expect(reminders(again)).toHaveLength(0);
+  });
+
+  it('reminds after 30 days, once, and counts from the reminder', async () => {
+    await provisioned();
+    const setupTime = clock;
+    clock = new Date(setupTime.getTime() + 31 * DAY);
+
+    const again = build(harness.folder);
+    await again.controller.start();
+
+    expect(reminders(again)).toHaveLength(1);
+    expect(again.config().settings.lastCopyReminder).toBe(clock.toISOString());
+    await again.controller.quit();
+
+    const third = build(harness.folder);
+    await third.controller.start();
+    expect(reminders(third)).toHaveLength(0);
+  });
+});
+
 describe('the first run', () => {
   it('creates the cluster, the database and the roles once, migrates, and waits at the setup screen', async () => {
     await harness.controller.start();
@@ -693,7 +847,11 @@ describe('the first run', () => {
     const answer = await post(new URL('/__setup', url).href, tokenOf(url), form);
 
     expect(answer.status).toBe(200);
-    expect(answer.body).toEqual({ ok: true, recoveryKey: harness.config().secrets.recoveryKey });
+    expect(answer.body).toEqual({
+      ok: true,
+      recoveryKey: harness.config().secrets.recoveryKey,
+      ackToken: expect.any(String) as string,
+    });
     const provision = harness.commandCalls.find((call) => call.command === 'provision');
     expect(provision?.input).toEqual({
       organizationName: 'Clínica Prueba',
@@ -1288,18 +1446,6 @@ describe('the settings of the tray', () => {
     harness.controller.markTrayHintShown();
     expect(harness.controller.trayHintShown).toBe(true);
     expect(harness.config().settings.trayHintShown).toBe(true);
-  });
-
-  it('shows the recovery key and copies it on request', async () => {
-    await harness.controller.start();
-    chooseAnswers = [0];
-
-    await harness.controller.showRecoveryKey();
-
-    const key = harness.config().secrets.recoveryKey;
-    expect(harness.uiCalls).toContainEqual(['copy', key]);
-    const shown = harness.uiCalls.find((call) => call[0] === 'choose');
-    expect(shown?.[1]).toBe('Clave de recuperación');
   });
 
   it('opens the outbox and the logs', async () => {

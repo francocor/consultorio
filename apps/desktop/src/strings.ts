@@ -19,7 +19,9 @@ export const TEXT = {
     backup: 'Hacer copia de seguridad',
     restore: 'Restaurar copia…',
     resetPassword: 'Restablecer contraseña de la propietaria…',
-    recoveryKey: 'Clave de recuperación…',
+    confirmRecoveryKey: 'Confirmar que guardó la clave de recuperación…',
+    checkRecoveryKey: 'Comprobar la clave de recuperación…',
+    tooltipRecoveryPending: 'Consulvia: falta confirmar que guardó la clave de recuperación',
     logs: 'Ver registros',
     autoStart: 'Iniciar con Windows',
     about: 'Acerca de',
@@ -40,6 +42,9 @@ export const TEXT = {
     dailyFailed:
       'No se pudo hacer la copia de seguridad diaria. Abra Consulvia e intente hacerla manualmente.',
     notReady: 'Consulvia todavía se está iniciando. Espere unos segundos e intente de nuevo.',
+    copyReminderTitle: 'Copia de seguridad fuera de la computadora',
+    copyReminder:
+      'Recuerde copiar la carpeta Documentos\\Consulvia\\Copias a un pendrive o a un disco externo y guardarlo fuera del consultorio. Una copia que está solo en esta computadora se pierde con ella.',
     diskFull:
       'El disco está lleno. Libere espacio en la unidad donde se guardan las copias y vuelva a intentar. Una copia necesita aproximadamente el doble de lo que ocupan los datos.',
     diskNeeds: (neededGb: string, freeGb: string) =>
@@ -114,13 +119,16 @@ export const TEXT = {
 
   recoveryKey: {
     windowTitle: 'Consulvia: clave de recuperación',
-    title: 'Clave de recuperación',
-    message: 'Guarde esta clave en un lugar seguro, por ejemplo impresa.',
-    detail:
-      'Sirve para abrir una copia de seguridad en otra computadora. Sin ella, las copias solo se pueden restaurar en esta.',
-    gone: 'La clave de recuperación ya se confirmó y no se vuelve a mostrar, para que nadie que use esta computadora pueda verla. Si la perdió, consulte a quien le brinda soporte antes de hacer cambios en esta instalación.',
-    copy: 'Copiar',
-    close: 'Cerrar',
+    checkWindowTitle: 'Consulvia: comprobar la clave de recuperación',
+    gone: 'La clave de recuperación ya se confirmó y Consulvia no la vuelve a mostrar, para que nadie que use esta computadora pueda verla. Si la tiene anotada, puede comprobarla desde el icono de Consulvia.',
+    wrongLast4:
+      'No coincide con el final de la clave. Revise la clave y vuelva a escribir los últimos 4 caracteres.',
+    wrong: 'No es la clave de recuperación de esta instalación.',
+    tooManyAttempts:
+      'Se superó el número de intentos. Cierre esta ventana y vuelva a empezar desde el icono de Consulvia.',
+    reminderTitle: 'Falta confirmar la clave de recuperación',
+    reminder:
+      'Todavía no confirmó que guardó la clave de recuperación. Sin ella no se puede abrir una copia de seguridad en otra computadora. Abra el icono de Consulvia, junto al reloj de Windows, y elija "Confirmar que guardó la clave de recuperación".',
   },
 
   about: {
