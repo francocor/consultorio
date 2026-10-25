@@ -1,8 +1,6 @@
 import type { Configuration } from 'electron-builder';
 
 export interface BuilderPaths {
-  /** The folder electron-builder packs as the application: `package.json` and `dist/main.cjs` only. */
-  appDir: string;
   /** `stage/`: the API, the web app, PostgreSQL, the tools, the SQL and the icons. */
   stageDir: string;
   /** Where `icon.ico` is. */
@@ -27,7 +25,7 @@ export function builderConfig(paths: BuilderPaths): Configuration {
     appId: 'ar.consulvia.desktop',
     productName: 'Consulvia',
     copyright: 'Consulvia',
-    directories: { app: paths.appDir, buildResources: paths.buildDir, output: paths.outputDir },
+    directories: { buildResources: paths.buildDir, output: paths.outputDir },
     asar: true,
     // The shell is one bundled file with no native modules: there is nothing to rebuild.
     npmRebuild: false,

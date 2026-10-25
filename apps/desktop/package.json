@@ -12,7 +12,8 @@
     "test": "vitest run",
     "start": "tsx scripts/start.ts",
     "stage": "tsx scripts/stage.ts",
-    "dist": "tsx scripts/dist.ts"
+    "dist": "tsx scripts/dist.ts",
+    "verify:installer": "tsx scripts/verify-installer.ts"
   },
   "devDependencies": {
     "@consultorio/config": "workspace:*",

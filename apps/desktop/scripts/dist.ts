@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { createReadStream } from 'node:fs';
+import { createReadStream, existsSync } from 'node:fs';
 import { copyFile, mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { pipeline } from 'node:stream/promises';
@@ -47,19 +47,32 @@ async function sha256Of(file: string): Promise<string> {
   return hash.digest('hex');
 }
 
-export async function dist(options: { skipBuild?: boolean } = {}): Promise<string> {
+export async function dist(
+  options: { skipBuild?: boolean; reuseStage?: boolean } = {},
+): Promise<string> {
   const manifest = JSON.parse(await readFile(join(desktopRoot, 'package.json'), 'utf8')) as {
     version: string;
+    devDependencies: Record<string, string>;
   };
+  const electronVersion = manifest.devDependencies['electron'];
+  if (electronVersion === undefined || !/^\d+\.\d+\.\d+$/.test(electronVersion)) {
+    throw new Error('apps/desktop/package.json must pin electron to an exact version');
+  }
   await buildShell();
-  await stage({ skipBuild: options.skipBuild === true });
+  if (options.reuseStage === true && existsSync(join(stageDir, 'STAGED.txt'))) {
+    console.log('[dist] reusing stage/ as it is');
+  } else {
+    await stage({ skipBuild: options.skipBuild === true });
+  }
   const appDir = await appDirectory(manifest.version);
 
   await rm(releaseDir, { recursive: true, force: true });
   await build({
-    projectDir: desktopRoot,
+    // The packed application is the folder written above, with no dependency list of its own: pointing the
+    // builder at the workspace package instead would pack the PostgreSQL binaries a second time as a "dependency".
+    projectDir: appDir,
     targets: Platform.WINDOWS.createTarget('nsis', Arch.x64),
-    config: builderConfig({ appDir, stageDir, buildDir, outputDir: releaseDir }),
+    config: { ...builderConfig({ stageDir, buildDir, outputDir: releaseDir }), electronVersion },
   });
 
   const installer = join(releaseDir, `Consulvia-Setup-${manifest.version}.exe`);
@@ -73,5 +86,8 @@ export async function dist(options: { skipBuild?: boolean } = {}): Promise<strin
 }
 
 if (process.argv[1] !== undefined && fileURLToPath(import.meta.url) === process.argv[1]) {
-  await dist({ skipBuild: process.argv.includes('--skip-build') });
+  await dist({
+    skipBuild: process.argv.includes('--skip-build'),
+    reuseStage: process.argv.includes('--reuse-stage'),
+  });
 }

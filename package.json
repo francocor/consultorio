@@ -33,6 +33,7 @@
     "backup:local": "pnpm --filter @consultorio/api backup:local",
     "drill:restore": "pnpm --filter @consultorio/api drill:restore",
     "dev:afip-cert": "pnpm --filter @consultorio/api dev:afip-cert",
+    "desktop:dist": "pnpm --filter @consultorio/desktop dist",
     "archive:legal-erase": "pnpm --filter @consultorio/api archive:legal-erase"
   },
   "prettier": "@consultorio/config/prettier.config.js",
