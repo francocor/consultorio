@@ -12,7 +12,7 @@ import {
   type LongRunningRole,
   type RuntimeContext,
 } from './api-env.js';
-import { verifyRecoveryKey } from './backup-crypto.js';
+import { verifyRecoveryKey, keyIdOf } from './backup-crypto.js';
 import {
   BackupError,
   createBackup,
@@ -226,7 +226,10 @@ export class Controller {
   private databaseMisses = 0;
   private lastDailyFailure: string | null = null;
   private commonPasswordSet: ReadonlySet<string> | null = null;
-  private pendingRestore: { archive: string } | null = null;
+  /** The restore that is waiting for its keys: which file, and which keys it asked for. */
+  private pendingRestore: { archive: string; needsCurrent: boolean; needsBackup: boolean } | null =
+    null;
+  private restoreAttempts = 0;
   /** A new install after "start over": the restore is offered as soon as it is up. */
   private offerRestoreAfterBoot = false;
   /** Where data without a configuration was set aside at this start, to tell the person. */
@@ -1282,8 +1285,13 @@ export class Controller {
   }
 
   /**
-   * The tray's "Restaurar copia…": choose the file, confirm, make a safety backup, restore. The tests of
-   * the installer pass the file themselves (`--restore=<file>`) and skip the confirmation.
+   * The tray's "Restaurar copia…": choose the file, confirm, and then prove who is asking. On an install that is
+   * in use EVERY restore needs the recovery key of THIS install (checked against its stored hash, five tries),
+   * and a backup from another install needs that one's key too: without it, whoever sits at the tray could restore
+   * a backup of their own making, adopt its keys and its owner, and take the clinic over. Only a new install that
+   * is still waiting for its setup (or the one "Empezar de nuevo" makes) has nothing to protect and skips it.
+   * The tests of the installer pass the file themselves (`--restore=<file>`), skip the question and read the
+   * address of the keys page from the log, like the other pages.
    */
   async restoreFlow(file?: string): Promise<boolean> {
     // On a new install that is still waiting for its setup the restore takes the place of the setup.
@@ -1306,16 +1314,59 @@ export class Controller {
       await this.deps.ui.message('error', TEXT.restore.failed, this.restoreMessage(error));
       return false;
     }
+    const ownKeyId = keyIdOf(Buffer.from(this.config.secrets.backupKeyBase64, 'base64'));
+    const foreign = info.header.keyId !== ownKeyId;
     if (file === undefined || !this.deps.testMode) {
       const confirmed = await this.deps.ui.confirm({
         title: TEXT.restore.confirmTitle,
         message: TEXT.restore.confirmMessage,
-        detail: TEXT.restore.confirmDetail(new Date(info.header.createdAt).toLocaleString('es-AR')),
+        detail: TEXT.restore.confirmDetail(
+          new Date(info.header.createdAt).toLocaleString('es-AR'),
+          TEXT.restore.kinds[info.header.kind],
+          foreign,
+          info.header.keyId.slice(0, 8),
+        ),
         confirm: TEXT.restore.confirmButton,
         cancel: TEXT.restore.cancelButton,
       });
       if (!confirmed) return false;
     }
+    if (this.currentPhase === 'ready') {
+      this.askForRestoreKeys({ archive, needsCurrent: true, needsBackup: foreign });
+      return false;
+    }
+    // A new install: nothing to lose, and only a backup of another install needs its key.
+    const outcome = await this.runRestore(archive);
+    if (outcome === 'busy') return false;
+    if (outcome.ok) return this.finishRestore();
+    if (outcome.needsKey) {
+      this.askForRestoreKeys({ archive, needsCurrent: false, needsBackup: true });
+      return false;
+    }
+    await this.deps.ui.message('error', TEXT.restore.failed, this.restoreMessage(outcome.error));
+    return false;
+  }
+
+  /** Opens the page that asks for the keys of a restore that is waiting. */
+  private askForRestoreKeys(pending: {
+    archive: string;
+    needsCurrent: boolean;
+    needsBackup: boolean;
+  }): void {
+    this.pendingRestore = pending;
+    this.restoreAttempts = 0;
+    const token = this.vault.issue(PURPOSE.key, 15 * 60_000);
+    const url = `${this.appUrl}/__key?t=${token}`;
+    this.deps.ui.openAuxWindow(url, TEXT.recoveryKey.windowTitle);
+    // Like the setup and reset addresses: written down only for the tests of the installer.
+    if (this.deps.testMode) this.log(`restore keys url: ${url}`);
+  }
+
+  /** Makes the safety backup (on an install in use) and restores. */
+  private async runRestore(
+    archive: string,
+    recoveryKey?: string,
+  ): Promise<'busy' | { ok: true } | { ok: false; needsKey: boolean; error?: unknown }> {
     const outcome = await this.exclusive(async () => {
       this.deps.ui.showSplash(TEXT.splash.restoring);
       try {
@@ -1324,34 +1375,29 @@ export class Controller {
           const safety = await createBackup(this.backupDeps(), 'safety');
           this.log(`safety backup before restoring: ${safety.path}`);
         }
-        await restoreBackup(this.restoreDeps(), archive);
+        await restoreBackup(this.restoreDeps(), archive, {
+          ...(recoveryKey === undefined ? {} : { recoveryKey }),
+        });
         return { ok: true as const };
       } catch (error) {
         if (error instanceof RestoreError && error.code === 'recovery_key_required') {
-          return { ok: false as const, needsKey: true as const };
+          return { ok: false as const, needsKey: true };
         }
         this.log(
           `restore failed: ${error instanceof RestoreError ? `${error.code}: ${error.detail}` : String(error)}`,
         );
-        return { ok: false as const, needsKey: false as const, error };
+        return { ok: false as const, needsKey: false, error };
       }
     }, 'restore');
-    if (outcome === 'busy') return false;
     this.deps.ui.loadUrl(this.appUrl);
-    if (outcome.ok) {
-      this.log('restore finished');
-      this.endSetupAfterRestore();
-      await this.deps.ui.message('info', TEXT.restore.done, TEXT.restore.doneBody);
-      return true;
-    }
-    if (outcome.needsKey) {
-      this.pendingRestore = { archive };
-      const token = this.vault.issue(PURPOSE.key, 15 * 60_000);
-      this.deps.ui.openAuxWindow(`${this.appUrl}/__key?t=${token}`, TEXT.recoveryKey.windowTitle);
-      return false;
-    }
-    await this.deps.ui.message('error', TEXT.restore.failed, this.restoreMessage(outcome.error));
-    return false;
+    return outcome;
+  }
+
+  private async finishRestore(): Promise<true> {
+    this.log('restore finished');
+    this.endSetupAfterRestore();
+    await this.deps.ui.message('info', TEXT.restore.done, TEXT.restore.doneBody);
+    return true;
   }
 
   /** A restore on an install that was waiting for its setup: the organization came with the backup. */
@@ -1492,31 +1538,53 @@ export class Controller {
         this.vault.revoke(PURPOSE.check);
         return Promise.resolve({ ok: true });
       },
-      submitRecoveryKey: async (key) => {
+      restoreKeyNeeds: () => ({
+        current: this.pendingRestore?.needsCurrent ?? true,
+        backup: this.pendingRestore?.needsBackup ?? false,
+      }),
+      submitRecoveryKey: async (keys) => {
         const pending = this.pendingRestore;
         if (!pending) return { ok: false, message: TEXT.restore.generic };
-        const outcome = await this.exclusive(async () => {
-          this.deps.ui.showSplash(TEXT.splash.restoring);
-          try {
-            await restoreBackup(this.restoreDeps(), pending.archive, { recoveryKey: key });
-            return null;
-          } catch (error) {
-            return error;
+        const miss = (errors: Record<string, string>) => {
+          this.restoreAttempts += 1;
+          this.log(`restore keys: wrong answer (attempt ${String(this.restoreAttempts)})`);
+          if (this.restoreAttempts >= MAX_RESET_ATTEMPTS) {
+            this.vault.revoke(PURPOSE.key);
+            this.pendingRestore = null;
+            this.deps.ui.closeAuxWindow();
+            return { ok: false as const, message: TEXT.restore.tooManyAttempts };
           }
-        }, 'restore');
+          return { ok: false as const, errors };
+        };
+        if (pending.needsCurrent) {
+          if (keys.current.trim() === '') {
+            return { ok: false, errors: { currentKey: TEXT.restore.currentKeyRequired } };
+          }
+          if (!verifyRecoveryKey(keys.current, this.config.secrets.recoveryKeyHash)) {
+            return miss({ currentKey: TEXT.restore.wrongCurrentKey });
+          }
+        }
+        if (pending.needsBackup && keys.backup.trim() === '') {
+          return { ok: false, errors: { recoveryKey: TEXT.restore.backupKeyRequired } };
+        }
+        const outcome = await this.runRestore(
+          pending.archive,
+          pending.needsBackup ? keys.backup : undefined,
+        );
         if (outcome === 'busy') return { ok: false, message: TEXT.restore.generic };
-        this.deps.ui.loadUrl(this.appUrl);
-        if (outcome === null) {
+        if (outcome.ok) {
           this.pendingRestore = null;
           this.vault.revoke(PURPOSE.key);
           this.deps.ui.closeAuxWindow();
-          await this.deps.ui.message('info', TEXT.restore.done, TEXT.restore.doneBody);
+          await this.finishRestore();
           return { ok: true };
         }
-        this.log(
-          `restore with a recovery key failed: ${outcome instanceof RestoreError ? outcome.code : describeError(outcome).detail}`,
-        );
-        return { ok: false, message: this.restoreMessage(outcome) };
+        if (outcome.needsKey)
+          return { ok: false, errors: { recoveryKey: TEXT.restore.backupKeyRequired } };
+        if (outcome.error instanceof RestoreError && outcome.error.code === 'wrong_recovery_key') {
+          return miss({ recoveryKey: TEXT.restore.wrongKey });
+        }
+        return { ok: false, message: this.restoreMessage(outcome.error) };
       },
     };
   }

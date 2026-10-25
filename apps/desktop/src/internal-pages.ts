@@ -7,6 +7,7 @@ import {
   renderAckPage,
   renderCheckPage,
   renderKeyPage,
+  type RestoreKeyNeeds,
   renderResetPage,
   renderSetupPage,
 } from './pages.js';
@@ -48,8 +49,10 @@ export interface PageActions {
     clearSecondFactor: boolean;
     recoveryKey: string;
   }): Promise<ResetOutcome>;
-  /** The recovery key typed for the backup that is being restored. */
-  submitRecoveryKey(key: string): Promise<KeyOutcome>;
+  /** Which keys the restore that is waiting asks for. */
+  restoreKeyNeeds(): RestoreKeyNeeds;
+  /** The keys typed for the restore that is waiting: this install's, and the backup's when it comes from another one. */
+  submitRecoveryKey(keys: { current: string; backup: string }): Promise<ConfirmOutcome>;
   /** The recovery key while the owner has not confirmed it; `null` once it was (it is not kept after that). */
   recoveryKeyToShow(): string | null;
   /** The owner typed the last four characters of the key: the key is confirmed and no longer kept. */
@@ -109,7 +112,10 @@ const PAGES: Record<string, { purpose: string; render: (actions: PageActions) =>
   {
     '/__setup': { purpose: PURPOSE.setup, render: renderSetupPage },
     '/__reset': { purpose: PURPOSE.reset, render: renderResetPage },
-    '/__key': { purpose: PURPOSE.key, render: renderKeyPage },
+    '/__key': {
+      purpose: PURPOSE.key,
+      render: (actions) => renderKeyPage(actions.restoreKeyNeeds()),
+    },
     '/__ack': {
       purpose: PURPOSE.ack,
       render: (actions) => {
@@ -252,24 +258,22 @@ export function createInternalPages(vault: TokenVault, actions: PageActions) {
     }
 
     const key = typeof input['recoveryKey'] === 'string' ? input['recoveryKey'] : '';
-    if (key.trim() === '') {
-      sendJson(response, 422, {
-        ok: false,
-        errors: { recoveryKey: 'Ingrese la clave de recuperación.' },
-      });
-      return;
-    }
     if (purpose === PURPOSE.check) {
+      if (key.trim() === '') {
+        sendJson(response, 422, {
+          ok: false,
+          errors: { recoveryKey: 'Ingrese la clave de recuperación.' },
+        });
+        return;
+      }
       const outcome = await actions.checkRecoveryKey(key);
       sendJson(response, outcome.ok ? 200 : 422, outcome);
       return;
     }
-    const outcome = await actions.submitRecoveryKey(key);
-    sendJson(
-      response,
-      outcome.ok ? 200 : 422,
-      outcome.ok ? outcome : { ok: false, errors: { recoveryKey: outcome.message } },
-    );
+    // Which of the two keys is missing is for the restore to say: it knows which ones it asked for.
+    const current = typeof input['currentKey'] === 'string' ? input['currentKey'] : '';
+    const outcome = await actions.submitRecoveryKey({ current, backup: key });
+    sendJson(response, outcome.ok ? 200 : 422, outcome);
   }
 
   /** Answers the request and returns true when the path is one of the shell's own; false lets it go on. */

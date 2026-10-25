@@ -208,21 +208,53 @@ ${FORM_ERROR}
   );
 }
 
-export function renderKeyPage(): string {
+/** What a restore asks for: the key of THIS install (always, on an install that is in use) and, for a backup of another install, that one's key. */
+export interface RestoreKeyNeeds {
+  current: boolean;
+  backup: boolean;
+}
+
+export function renderKeyPage(needs: RestoreKeyNeeds): string {
+  const lead = needs.current
+    ? needs.backup
+      ? 'Esta copia de seguridad se hizo en otra instalación de Consulvia, y restaurarla reemplaza todos los datos de esta. Hacen falta las dos claves de recuperación: la de esta instalación, para confirmar que usted es quien la administra, y la de la instalación de donde viene la copia.'
+      : 'Restaurar una copia reemplaza todos los datos de esta instalación. Para confirmar que usted es quien la administra, ingrese la clave de recuperación de esta instalación.'
+    : 'Esta copia de seguridad se hizo en otra instalación de Consulvia. Para abrirla, ingrese la clave de recuperación que se mostró al configurar aquella instalación.';
+  const current = needs.current
+    ? field({
+        name: 'currentKey',
+        label: 'Clave de recuperación de esta instalación',
+        autocomplete: 'off',
+        hint: 'Son 30 letras y números, en grupos de cinco.',
+        maxlength: 64,
+      })
+    : '';
+  const backup = needs.backup
+    ? field({
+        name: 'recoveryKey',
+        label: needs.current
+          ? 'Clave de recuperación de la instalación de donde viene la copia'
+          : 'Clave de recuperación',
+        autocomplete: 'off',
+        hint: 'Son 30 letras y números, en grupos de cinco.',
+        maxlength: 64,
+      })
+    : '';
   return layout(
     'Consulvia: clave de recuperación',
     `<div id="step-form">
 <h1>Clave de recuperación</h1>
-<p class="lead">Esta copia de seguridad se hizo en otra instalación de Consulvia. Para abrirla, ingrese la clave de recuperación que se mostró al configurar aquella instalación.</p>
+<p class="lead">${lead}</p>
 <form id="form" data-endpoint="/__key" novalidate>
-${field({ name: 'recoveryKey', label: 'Clave de recuperación', autocomplete: 'off', hint: 'Son 30 letras y números, en grupos de cinco.', maxlength: 64 })}
+${current}
+${backup}
 ${FORM_ERROR}
 <button type="submit" id="submit">Continuar con la restauración</button>
-<p class="busy" id="busy" hidden>Comprobando la clave…</p>
+<p class="busy" id="busy" hidden>Comprobando las claves…</p>
 </form>
 </div>
 <div id="done" hidden>
-<h1>Clave correcta</h1>
+<h1>Claves correctas</h1>
 <p class="lead">Consulvia está restaurando la copia. Puede cerrar esta ventana.</p>
 <div class="actions"><button type="button" data-action="close">Cerrar</button></div>
 </div>`,

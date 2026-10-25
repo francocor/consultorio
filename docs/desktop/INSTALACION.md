@@ -79,8 +79,11 @@ El menú del icono tiene:
 ## Restaurar una copia
 
 1. Icono de Consulvia, **Restaurar copia…**, y elija el archivo `.cvb`.
-2. Consulvia pide confirmación, hace **una copia de seguridad de los datos actuales** (`consulvia-previa-restauracion-…`) y recién entonces reemplaza todo. Durante unos minutos Consulvia queda sin servicio.
-3. Cuando termina, Consulvia se abre con los datos de la copia.
+2. Consulvia le muestra de qué fecha y de qué tipo es la copia y si es **de esta instalación o de otra**, y pide confirmación. Después pide la **clave de recuperación de esta instalación**: restaurar reemplaza todos los datos, y sin esa clave cualquiera que tuviera abierta la sesión de Windows podría restaurar una copia hecha a su medida y quedarse con el consultorio. Con 5 claves erróneas la ventana se cierra. Si la copia es de otra instalación hacen falta **las dos claves**.
+3. Consulvia hace **una copia de seguridad de los datos actuales** (`consulvia-previa-restauracion-…`) y recién entonces reemplaza todo. Durante unos minutos Consulvia queda sin servicio.
+4. Cuando termina, Consulvia se abre con los datos de la copia.
+
+Una instalación nueva que todavía no se configuró no tiene nada que proteger: ahí no se pide la clave de esta instalación (solo la de la copia, si es de otra).
 
 Antes de tocar nada, Consulvia comprueba que el archivo no esté dañado ni alterado y que haya lugar en el disco (se necesita aproximadamente el triple de lo que ocupan los datos). Si algo falla en el medio, los datos actuales se conservan. **Si la computadora se apaga o Consulvia se cierra a la mitad de una restauración**, al abrirlo de nuevo Consulvia la termina o la deshace sola, según hasta dónde llegó, y no queda una instalación a medias. Si la restauración termina bien pero Consulvia no logra volver a iniciar algún servicio, avisa que los datos de la copia ya están en uso (no se deshace nada): cierre Consulvia con **Salir** y ábralo de nuevo.
 

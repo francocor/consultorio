@@ -42,6 +42,7 @@ let port: number;
 let vault: TokenVault;
 let provisioned = false;
 let keyShown = true;
+let keyNeeds = { current: false, backup: true };
 let setupCalls: unknown[];
 let setupGate: Promise<void> | null = null;
 
@@ -70,11 +71,12 @@ const actions: PageActions = {
     Promise.resolve(
       typed === 'ABCDE-FGHJK-LMNPQ' ? { ok: true } : { ok: false, errors: { recoveryKey: 'No.' } },
     ),
-  submitRecoveryKey: (key) =>
+  restoreKeyNeeds: () => keyNeeds,
+  submitRecoveryKey: (keys) =>
     Promise.resolve(
-      key === 'ABCDE'
+      keys.backup === 'ABCDE' && (!keyNeeds.current || keys.current === 'CURRNT')
         ? { ok: true }
-        : { ok: false, message: 'La clave de recuperación no es correcta.' },
+        : { ok: false, errors: { recoveryKey: 'La clave de recuperación no es correcta.' } },
     ),
 };
 
@@ -733,5 +735,44 @@ describe('the pages of the shell', () => {
     });
     expect(empty.status).toBe(422);
     expect(right.status).toBe(200);
+  });
+
+  it("asks only for the keys the restore needs: this install's, the backup's, or both", async () => {
+    const ask = async () => (await call(`/__key?t=${vault.issue(PURPOSE.key)}`)).body.toString();
+
+    keyNeeds = { current: true, backup: false };
+    const sameInstall = await ask();
+    keyNeeds = { current: true, backup: true };
+    const both = await ask();
+    keyNeeds = { current: false, backup: true };
+    const freshInstall = await ask();
+
+    expect(sameInstall).toContain('name="currentKey"');
+    expect(sameInstall).not.toContain('name="recoveryKey"');
+    expect(both).toContain('name="currentKey"');
+    expect(both).toContain('name="recoveryKey"');
+    expect(freshInstall).not.toContain('name="currentKey"');
+    expect(freshInstall).toContain('name="recoveryKey"');
+  });
+
+  it('passes both keys to the restore', async () => {
+    keyNeeds = { current: true, backup: true };
+    const token = vault.issue(PURPOSE.key);
+    const headers = { ...json, 'x-consulvia-token': token };
+
+    const right = await call('/__key', {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ currentKey: 'CURRNT', recoveryKey: 'ABCDE' }),
+    });
+    const noCurrent = await call('/__key', {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ recoveryKey: 'ABCDE' }),
+    });
+    keyNeeds = { current: false, backup: true };
+
+    expect(right.status).toBe(200);
+    expect(noCurrent.status).toBe(422);
   });
 });

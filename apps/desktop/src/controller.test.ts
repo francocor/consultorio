@@ -26,6 +26,7 @@ import {
 } from './api-commands.js';
 import { discard } from './backup-archive.js';
 import { readLedger } from './backup-ledger.js';
+import { newTestInstall, testBackupDeps } from './backup-testing.js';
 import { ConfigStore, type Cipher } from './config-store.js';
 import { Controller, type ControllerDeps, type ShellUi } from './controller.js';
 import type { DataPaths } from './paths.js';
@@ -73,6 +74,8 @@ interface Harness {
   uiCalls: [string, ...unknown[]][];
   /** The detail line of every message dialog, in order. */
   details: string[];
+  /** The detail of every confirmation dialog, in order. */
+  confirmDetails: string[];
   controller: Controller;
   commandCalls: { command: string; env: NodeJS.ProcessEnv; input?: unknown }[];
   quitRequests: number;
@@ -184,6 +187,7 @@ function build(
   const events: string[] = [];
   const uiCalls: [string, ...unknown[]][] = [];
   const details: string[] = [];
+  const confirmDetails: string[] = [];
   const loadedUrls: string[] = [];
   const commandCalls: Harness['commandCalls'] = [];
   const clusterScripts: string[] = [];
@@ -208,6 +212,7 @@ function build(
     closeAuxWindow: () => uiCalls.push(['closeAuxWindow']),
     confirm: (o) => {
       uiCalls.push(['confirm', o.title]);
+      confirmDetails.push(o.detail);
       return Promise.resolve(confirmAnswer);
     },
     message: (kind, title, message, detail) => {
@@ -389,6 +394,7 @@ function build(
     events,
     uiCalls,
     details,
+    confirmDetails,
     controller,
     commandCalls,
     quitRequests: 0,
@@ -418,6 +424,31 @@ function parseBody(text: string): Record<string, unknown> {
   } catch {
     return { text };
   }
+}
+
+/** The text of a page of the local server of the harness. */
+function getText(url: string): Promise<string> {
+  const target = new URL(url);
+  return new Promise((resolve, reject) => {
+    httpRequest(
+      {
+        host: '127.0.0.1',
+        port: Number(target.port),
+        path: target.pathname + target.search,
+        method: 'GET',
+        headers: { host: target.host },
+      },
+      (response) => {
+        const chunks: Buffer[] = [];
+        response.on('data', (chunk: Buffer) => chunks.push(chunk));
+        response.on('end', () => {
+          resolve(Buffer.concat(chunks).toString('utf8'));
+        });
+      },
+    )
+      .on('error', reject)
+      .end();
+  });
 }
 
 /** A raw request to the local server of the harness. */
@@ -1479,12 +1510,18 @@ describe('the backups', () => {
 });
 
 describe('restoring a backup', () => {
+  const WRONG_KEY = 'AAAAA-BBBBB-CCCCC-DDDDD-EEEEE-FFFFF';
+
+  /** The recovery key the install was set up with (the tests keep it before it is confirmed away). */
+  let installKey = '';
+
   async function ready(testMode: boolean): Promise<string> {
     rmSync(harness.folder, { recursive: true, force: true });
     harness = build(mkdtempSync(join(tmpdir(), 'consulvia-controller-')), { testMode });
     await harness.controller.start();
     const url = setupUrl() ?? '';
-    await post(new URL('/__setup', url).href, tokenOf(url), form);
+    const answer = await post(new URL('/__setup', url).href, tokenOf(url), form);
+    installKey = String(answer.body['recoveryKey']);
     await waitFor(() => {
       expect(harness.config().settings.lastDailyBackup).toBe('2026-10-24');
     });
@@ -1494,14 +1531,29 @@ describe('restoring a backup', () => {
     return path ?? '';
   }
 
-  it('asks first, makes a safety backup, stops the services, restores, starts them again and reloads the window', async () => {
+  /** The page that asks for the keys, opened by the last restore the way the tray does. */
+  const keysPage = () => {
+    const opened = harness.uiCalls.filter((call) => call[0] === 'openAuxWindow').at(-1);
+    return String(opened?.[1]);
+  };
+  const postKeys = (keys: Record<string, string>) => {
+    const url = keysPage();
+    return post(new URL('/__key', url).href, tokenOf(url), keys);
+  };
+
+  it('asks first, then for the key of this install, then makes a safety backup, stops the services, restores, starts them again and reloads the window', async () => {
     const backup = await ready(false);
     harness.events.length = 0;
     harness.uiCalls.length = 0;
 
-    const restored = await harness.controller.restoreFlow(backup);
+    const started = await harness.controller.restoreFlow(backup);
+    // Nothing happens until the key is typed.
+    expect(started).toBe(false);
+    expect(harness.restores).toHaveLength(0);
+    expect(harness.events).toEqual([]);
+    const answer = await postKeys({ currentKey: installKey.toLowerCase() });
 
-    expect(restored).toBe(true);
+    expect(answer.status).toBe(200);
     expect(harness.uiCalls[0]).toEqual(['confirm', 'Restaurar copia de seguridad']);
     expect(readdirSync(harness.paths.backups)).toContain(
       'consulvia-previa-restauracion-2026-10-24_1300.cvb',
@@ -1532,13 +1584,92 @@ describe('restoring a backup', () => {
     expect(harness.controller.phase).toBe('ready');
   });
 
-  it('skips the question only in test mode, where a script drives the install', async () => {
+  it('shows what the backup is, and says when it comes from another installation', async () => {
+    const backup = await ready(false);
+    harness.uiCalls.length = 0;
+    await harness.controller.restoreFlow(backup);
+
+    expect(harness.uiCalls.some((call) => call[0] === 'confirm')).toBe(true);
+    expect(harness.confirmDetails.at(-1)).toContain('de esta instalación');
+    expect(harness.confirmDetails.at(-1)).toContain('manual');
+  });
+
+  it('refuses to restore without the key of this install, or with a wrong one, and touches nothing', async () => {
+    const backup = await ready(false);
+    harness.events.length = 0;
+    await harness.controller.restoreFlow(backup);
+
+    const none = await postKeys({});
+    const wrong = await postKeys({ currentKey: WRONG_KEY });
+
+    expect(none.status).toBe(422);
+    expect(none.body).toMatchObject({ errors: { currentKey: expect.any(String) as string } });
+    expect(wrong.status).toBe(422);
+    expect(harness.restores).toHaveLength(0);
+    expect(harness.events).toEqual([]);
+    expect(readdirSync(harness.paths.backups).some((name) => name.includes('previa'))).toBe(false);
+  });
+
+  it('closes the page after five wrong keys, even if the sixth is right', async () => {
+    const backup = await ready(false);
+    await harness.controller.restoreFlow(backup);
+
+    for (let attempt = 0; attempt < 5; attempt += 1) await postKeys({ currentKey: WRONG_KEY });
+    const sixth = await postKeys({ currentKey: installKey });
+
+    expect(sixth.status).toBe(404);
+    expect(harness.restores).toHaveLength(0);
+    expect(harness.uiCalls).toContainEqual(['closeAuxWindow']);
+  });
+
+  it('needs both keys for a backup of another installation, and refuses it when either is wrong', async () => {
+    const mine = await ready(false);
+    const myKey = installKey;
+    // A backup made by another install: its own keys, so another key id in the header.
+    const theirs = join(harness.folder, 'theirs.cvb');
+    const { createBackup: make } = await import('./backup.js');
+    const other = newTestInstall();
+    mkdirSync(harness.paths.backups, { recursive: true });
+    const made = await make(
+      testBackupDeps(other, harness.paths, {
+        now: () => new Date(2026, 9, 20, 9, 0, 0),
+        migrationCount: 2,
+      }),
+      'manual',
+    );
+    writeFileSync(theirs, readFileSync(made.path));
+    expect(mine).not.toBe('');
+
+    await harness.controller.restoreFlow(theirs);
+    expect(harness.confirmDetails.at(-1)).toContain('DE OTRA INSTALACIÓN');
+
+    const onlyMine = await postKeys({ currentKey: myKey });
+    const onlyTheirs = await postKeys({ recoveryKey: other.recoveryKey });
+    const wrongTheirs = await postKeys({ currentKey: myKey, recoveryKey: WRONG_KEY });
+
+    expect(onlyMine.status).toBe(422);
+    expect(onlyMine.body).toMatchObject({ errors: { recoveryKey: expect.any(String) as string } });
+    expect(onlyTheirs.status).toBe(422);
+    expect(wrongTheirs.status).toBe(422);
+    expect(harness.restores).toHaveLength(0);
+    const right = await postKeys({ currentKey: myKey, recoveryKey: other.recoveryKey });
+    expect(right.body).toEqual({ ok: true });
+    expect(right.status).toBe(200);
+    expect(harness.restores).toHaveLength(1);
+  });
+
+  it('skips the question only in test mode, where a script drives the install, but still asks for the key', async () => {
     const backup = await ready(true);
     harness.uiCalls.length = 0;
 
     await harness.controller.restoreFlow(backup);
 
     expect(harness.uiCalls.some((call) => call[0] === 'confirm')).toBe(false);
+    expect(harness.restores).toHaveLength(0);
+    expect(readFileSync(join(harness.paths.logs, 'shell.log'), 'utf8')).toContain(
+      'restore keys url: ',
+    );
+    await postKeys({ currentKey: installKey });
     expect(harness.restores).toHaveLength(1);
   });
 
@@ -1567,6 +1698,29 @@ describe('restoring a backup', () => {
     expect(harness.restores).toHaveLength(0);
     expect(harness.events).toEqual([]);
     expect(readdirSync(harness.paths.backups).some((name) => name.includes('previa'))).toBe(false);
+    expect(harness.uiCalls.some((call) => call[0] === 'openAuxWindow')).toBe(false);
+  });
+
+  it('asks for no current key on a new install that is waiting for its setup', async () => {
+    const donor = await ready(false);
+    const copy = join(harness.folder, 'donor.cvb');
+    writeFileSync(copy, readFileSync(donor));
+    const key = installKey;
+    // A new install on the same disk: nothing in it to protect.
+    const fresh = build(mkdtempSync(join(tmpdir(), 'consulvia-controller-')));
+    await fresh.controller.start();
+    harness = fresh;
+    mkdirSync(fresh.paths.backups, { recursive: true });
+
+    await fresh.controller.restoreFlow(copy);
+    // It is another install's backup: its own key, and no key of this one.
+    const page = keysPage();
+    const html = await getText(page);
+    expect(html).toContain('name="recoveryKey"');
+    expect(html).not.toContain('name="currentKey"');
+    const answer = await postKeys({ recoveryKey: key });
+
+    expect(answer.status).toBe(200);
   });
 });
 

@@ -62,8 +62,19 @@ export const TEXT = {
     pickFilter: 'Copias de Consulvia',
     confirmTitle: 'Restaurar copia de seguridad',
     confirmMessage: 'Se reemplazarán TODOS los datos actuales por los de la copia.',
-    confirmDetail: (when: string) =>
-      `Copia del ${when}. Antes de reemplazar nada, Consulvia hace una copia de seguridad de los datos actuales. Durante la restauración Consulvia queda sin servicio unos minutos.`,
+    confirmDetail: (when: string, kind: string, foreign: boolean, id: string) =>
+      `Copia ${kind} del ${when}${foreign ? ', DE OTRA INSTALACIÓN' : ', de esta instalación'} (identificador ${id}). Antes de reemplazar nada, Consulvia hace una copia de seguridad de los datos actuales y le pide la clave de recuperación. Durante la restauración Consulvia queda sin servicio unos minutos.`,
+    kinds: {
+      daily: 'automática',
+      manual: 'manual',
+      safety: 'previa a una restauración',
+      upgrade: 'previa a una actualización',
+    },
+    currentKeyRequired: 'Ingrese la clave de recuperación de esta instalación.',
+    wrongCurrentKey: 'No es la clave de recuperación de esta instalación.',
+    backupKeyRequired: 'Ingrese la clave de la instalación de donde viene la copia.',
+    tooManyAttempts:
+      'Se superó el número de intentos. Cierre esta ventana y vuelva a empezar desde el icono de Consulvia.',
     confirmButton: 'Restaurar',
     cancelButton: 'Cancelar',
     done: 'Copia restaurada',
