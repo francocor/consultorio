@@ -35,13 +35,15 @@ corepack pnpm --filter @consultorio/desktop dist
 
 Useful variants:
 
-| Command                                                      | What it does                                                                                  |
-| ------------------------------------------------------------ | --------------------------------------------------------------------------------------------- |
-| `pnpm --filter @consultorio/desktop stage`                   | Builds the API and the web app and fills `apps/desktop/stage/`                                |
-| `pnpm --filter @consultorio/desktop dist --skip-build`       | As `dist`, reusing the existing `apps/api/dist` and `apps/web/dist`                           |
-| `pnpm --filter @consultorio/desktop dist --reuse-stage`      | Repacks from the current `stage/` (about a minute shorter than a full stage)                  |
-| `pnpm --filter @consultorio/desktop start`                   | Runs the shell with the workspace Electron against `stage/` (data in `%APPDATA%\Consulvia`)   |
-| `pnpm --filter @consultorio/desktop verify:installer [file]` | Installs the installer silently in a temporary folder and exercises it end to end (see below) |
+| Command                                                                               | What it does                                                                                                               |
+| ------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
+| `pnpm --filter @consultorio/desktop stage`                                            | Builds the API and the web app and fills `apps/desktop/stage/`                                                             |
+| `pnpm --filter @consultorio/desktop dist --skip-build`                                | As `dist`, reusing the existing `apps/api/dist` and `apps/web/dist`                                                        |
+| `pnpm --filter @consultorio/desktop dist --reuse-stage`                               | Repacks from the current `stage/` (about a minute shorter than a full stage)                                               |
+| `pnpm --filter @consultorio/desktop dist --reuse-stage --dir-only`                    | Packs only `release/win-unpacked` (the program as installed, no installer): minutes faster, and enough to test the program |
+| `pnpm --filter @consultorio/desktop verify:installer --program=<releasewin-unpacked>` | The same end-to-end checks against an unpacked program (no install, no uninstall)                                          |
+| `pnpm --filter @consultorio/desktop start`                                            | Runs the shell with the workspace Electron against `stage/` (data in `%APPDATA%\Consulvia`)                                |
+| `pnpm --filter @consultorio/desktop verify:installer [file]`                          | Installs the installer silently in a temporary folder and exercises it end to end (see below)                              |
 
 ## The pinned binaries
 
@@ -98,3 +100,9 @@ Modules (`apps/desktop/src`), each unit-tested with Electron injected or absent:
 ## CI
 
 `.github/workflows/ci.yml` sets `ELECTRON_SKIP_BINARY_DOWNLOAD=1` for the whole workflow so installing the workspace does not download Electron. The package's unit tests run in `pnpm test`, its types in `pnpm typecheck`, its lint in the sharded `pnpm lint` and its bundle in `pnpm build`. Building the installer is manual (it needs Windows and ~15 minutes). The image build (`infra/Dockerfile`) copies `apps/desktop/package.json` so the lockfile still matches the workspace.
+
+## Things verified on the real program
+
+- **`upgrade-insecure-requests` does not break `http://localhost`.** The Content Security Policy of the web build is sent unchanged (it still carries that directive). In the real window the page, its scripts, the service worker and the API calls all load, and the DevTools protocol reports no policy violation (`verify:installer` fails if one appears). Chromium treats loopback as trustworthy and does not upgrade it, so nothing is stripped in the shell.
+- **A restore does not use `pg_restore --clean` on the live database.** That fails on the partitioned `audit_event_*` tables (`cannot drop inherited constraint`). The backup is restored into an empty database next to the real one (`consultorio_restore`, in one transaction), the documents folder is swapped, and only then the databases are renamed. A restore that fails leaves the live data untouched, and the safety backup made before it is the last resort.
+- **First run on a slow or busy PC takes minutes**, not seconds: `initdb` about 30 s and the first `migrate` (about 80 migrations) 1 to 2 minutes with an antivirus and other programs competing. The shell shows "Preparando la base de datos…" meanwhile, and the commands have generous timeouts (`migrate` 10 min, `provision` 10 min, `reset-password` 5 min).

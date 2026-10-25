@@ -43,7 +43,7 @@ import { TokenVault } from './tokens.js';
 /** What the controller needs from the windows, dialogs and the tray. Electron implements it; tests fake it. */
 export interface ShellUi {
   /** Shows a waiting page, or a message, in the main window. */
-  showSplash(message: string): void;
+  showSplash(message: string, busy?: boolean): void;
   loadUrl(url: string): void;
   showMainWindow(): void;
   openAuxWindow(url: string, title: string): void;
@@ -111,6 +111,9 @@ export class ShellError extends Error {
 }
 
 const HOUR_MS = 60 * 60 * 1000;
+
+/** Where a backup is restored before it replaces the live database. */
+const SCRATCH_DATABASE = 'consultorio_restore';
 
 function describeError(error: unknown): { message: string; detail: string } {
   if (error instanceof ShellError) return { message: error.userMessage, detail: error.message };
@@ -238,7 +241,7 @@ export class Controller {
     const { message, detail } = describeError(error);
     this.log(`startup failed: ${detail}`);
     this.setPhase('error');
-    this.deps.ui.showSplash(message);
+    this.deps.ui.showSplash(message, false);
     const choice = await this.deps.ui.choose({
       kind: 'error',
       title: TEXT.errors.title,
@@ -688,7 +691,12 @@ export class Controller {
       pgRestore: this.deps.resources.pgRestore,
       databasePort: () => this.requireDatabasePort(),
       superuser: { user: SUPERUSER, password: this.config.secrets.pgSuperuserPassword },
-      database: DATABASE_NAME,
+      scratch: {
+        name: SCRATCH_DATABASE,
+        create: () => this.cluster.createScratchDatabase(SCRATCH_DATABASE),
+        swapIn: () => this.cluster.swapInDatabase(SCRATCH_DATABASE),
+        drop: () => this.cluster.dropDatabase(SCRATCH_DATABASE),
+      },
       migrationCount: migrationCountOf(this.deps.resources),
       currentKek: () => this.config.secrets.kmsLocalKekBase64,
       stopServices: () => this.stopServices(),

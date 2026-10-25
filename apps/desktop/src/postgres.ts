@@ -223,6 +223,55 @@ export class PostgresCluster {
     });
   }
 
+  /**
+   * An empty database next to the real one, set up like `01-roles.sql` sets up the real one (owner and who
+   * may connect), for a restore to fill. A leftover of an earlier attempt with the same name is dropped.
+   */
+  async createScratchDatabase(name: string): Promise<void> {
+    assertDatabaseName(name);
+    await this.asSuperuser('postgres', async (client) => {
+      await client.query(`DROP DATABASE IF EXISTS ${name} WITH (FORCE)`);
+      await client.query(
+        `CREATE DATABASE ${name} TEMPLATE template0 ENCODING 'UTF8' OWNER app_owner`,
+      );
+      await client.query(
+        `GRANT CONNECT ON DATABASE ${name} TO app_rw, app_operator, audit_sealer, app_releaser`,
+      );
+    });
+  }
+
+  /**
+   * Makes `scratch` the database of the product and keeps the old one aside until the swap is done. Nothing
+   * may be connected to either: the API and the worker are stopped. If the second rename fails the first
+   * is undone, so the product database always exists.
+   */
+  async swapInDatabase(scratch: string): Promise<void> {
+    assertDatabaseName(scratch);
+    const aside = `${DATABASE_NAME}_before_restore`;
+    await this.asSuperuser('postgres', async (client) => {
+      await client.query(`DROP DATABASE IF EXISTS ${aside} WITH (FORCE)`);
+      await client.query(
+        `SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname IN ('${DATABASE_NAME}', '${scratch}') AND pid <> pg_backend_pid()`,
+      );
+      await client.query(`ALTER DATABASE ${DATABASE_NAME} RENAME TO ${aside}`);
+      try {
+        await client.query(`ALTER DATABASE ${scratch} RENAME TO ${DATABASE_NAME}`);
+      } catch (error) {
+        await client.query(`ALTER DATABASE ${aside} RENAME TO ${DATABASE_NAME}`);
+        throw error;
+      }
+      await client.query(`DROP DATABASE ${aside} WITH (FORCE)`);
+    });
+  }
+
+  /** Drops a database, forcing out whoever is connected. */
+  async dropDatabase(name: string): Promise<void> {
+    assertDatabaseName(name);
+    await this.asSuperuser('postgres', async (client) => {
+      await client.query(`DROP DATABASE IF EXISTS ${name} WITH (FORCE)`);
+    });
+  }
+
   /** Runs a script (several statements) in the database of the product, as the superuser. */
   async runScript(script: string): Promise<void> {
     await this.asSuperuser(DATABASE_NAME, async (client) => {
@@ -235,4 +284,10 @@ export class PostgresCluster {
     if (this.port === null) throw new PostgresError('the database server is not running');
     return `postgres://${encodeURIComponent(role)}:${encodeURIComponent(password)}@127.0.0.1:${String(this.port)}/${DATABASE_NAME}`;
   }
+}
+
+/** Database names are built by the shell, never typed, but they go into SQL as identifiers all the same. */
+function assertDatabaseName(name: string): void {
+  if (!/^[a-z][a-z0-9_]{0,40}$/.test(name))
+    throw new PostgresError(`unsafe database name: ${name}`);
 }

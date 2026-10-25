@@ -28,6 +28,8 @@ let answers: Partial<RunResult>[];
 let onRun: (call: Call) => void;
 let queries: { sql: string; values: unknown[] | undefined; target: ConnectionTarget }[];
 let databaseExists: boolean;
+/** A statement containing this text fails (once), as a rename can. */
+let failQueryContaining: string | null;
 
 const runner: Runner = (file, args, options) => {
   const call: Call = { file, args, options };
@@ -51,6 +53,14 @@ function cluster(overrides: { isPostgresProcess?: (pid: number) => Promise<boole
       connect: () => Promise.resolve(),
       query: (sql, values) => {
         queries.push({ sql, values, target });
+        if (
+          failQueryContaining !== null &&
+          sql.includes(failQueryContaining) &&
+          sql.includes('consultorio_restore RENAME')
+        ) {
+          failQueryContaining = null;
+          return Promise.reject(new Error('rename failed'));
+        }
         return Promise.resolve({
           rows: sql.includes('pg_database') && databaseExists ? [{ '?column?': 1 }] : [],
         });
@@ -71,6 +81,7 @@ beforeEach(() => {
   onRun = () => undefined;
   queries = [];
   databaseExists = false;
+  failQueryContaining = null;
 });
 
 afterEach(() => {
@@ -218,6 +229,47 @@ describe('the database', () => {
     await pg.runScript('SELECT 1;');
 
     expect(queries.at(-1)).toMatchObject({ sql: 'SELECT 1;', target: { database: 'consultorio' } });
+  });
+
+  it('restores into a scratch database set up like the real one, then swaps it in', async () => {
+    const pg = cluster();
+    await pg.start();
+
+    await pg.createScratchDatabase('consultorio_restore');
+    await pg.swapInDatabase('consultorio_restore');
+
+    const sql = queries.map((query) => query.sql);
+    expect(sql[0]).toBe('DROP DATABASE IF EXISTS consultorio_restore WITH (FORCE)');
+    expect(sql[1]).toBe(
+      "CREATE DATABASE consultorio_restore TEMPLATE template0 ENCODING 'UTF8' OWNER app_owner",
+    );
+    expect(sql[2]).toContain('GRANT CONNECT ON DATABASE consultorio_restore TO app_rw');
+    expect(sql).toContain('ALTER DATABASE consultorio RENAME TO consultorio_before_restore');
+    expect(sql).toContain('ALTER DATABASE consultorio_restore RENAME TO consultorio');
+    expect(sql.at(-1)).toBe('DROP DATABASE consultorio_before_restore WITH (FORCE)');
+    // Always as the superuser, from the maintenance database: nobody can be connected to the ones renamed.
+    expect(queries.every((query) => query.target.database === 'postgres')).toBe(true);
+  });
+
+  it('puts the old database back when the swap fails half way', async () => {
+    const pg = cluster();
+    await pg.start();
+    failQueryContaining = 'RENAME TO consultorio';
+
+    await expect(pg.swapInDatabase('consultorio_restore')).rejects.toThrow('rename failed');
+
+    const renames = queries.map((query) => query.sql).filter((sql) => sql.includes('RENAME'));
+    expect(renames.at(-1)).toBe('ALTER DATABASE consultorio_before_restore RENAME TO consultorio');
+  });
+
+  it('refuses a database name that is not a plain identifier', async () => {
+    const pg = cluster();
+    await pg.start();
+
+    await expect(pg.createScratchDatabase('x; DROP DATABASE consultorio')).rejects.toBeInstanceOf(
+      PostgresError,
+    );
+    await expect(pg.dropDatabase('Consultorio')).rejects.toBeInstanceOf(PostgresError);
   });
 
   it('refuses to connect before the server is running', async () => {

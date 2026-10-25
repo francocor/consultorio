@@ -129,7 +129,7 @@ export function createApiCommands(options: ApiCommandsOptions) {
     },
 
     async provision(env: NodeJS.ProcessEnv, input: ProvisionInput): Promise<ProvisionResult> {
-      const stdout = await run('provision', env, { ...input }, 2 * 60_000);
+      const stdout = await run('provision', env, { ...input }, 10 * 60_000);
       const body = lastJson(stdout);
       const result = body?.['result'];
       const tenantId = body?.['tenantId'];
@@ -148,7 +148,7 @@ export function createApiCommands(options: ApiCommandsOptions) {
       env: NodeJS.ProcessEnv,
       input: ResetPasswordInput,
     ): Promise<ResetPasswordResult> {
-      const stdout = await run('reset-password', env, { ...input }, 2 * 60_000);
+      const stdout = await run('reset-password', env, { ...input }, 5 * 60_000);
       const body = lastJson(stdout);
       const email = body?.['email'];
       if (body?.['result'] !== 'reset' || typeof email !== 'string') {

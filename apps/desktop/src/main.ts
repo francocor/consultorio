@@ -150,9 +150,9 @@ async function run(): Promise<void> {
   }
 
   const ui: ShellUi = {
-    showSplash(message) {
+    showSplash(message, busy = true) {
       mainWindow ??= createMainWindow();
-      void mainWindow.loadURL(splashUrl(message, true));
+      void mainWindow.loadURL(splashUrl(message, busy));
     },
     loadUrl(url) {
       mainWindow ??= createMainWindow();

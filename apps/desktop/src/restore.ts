@@ -75,7 +75,17 @@ export interface RestoreDeps {
   pgRestore: string;
   databasePort: () => number;
   superuser: { user: string; password: string };
-  database: string;
+  /**
+   * The backup is restored into a database of its own, and that database replaces the real one only when the
+   * restore has finished: a restore into the live database (`pg_restore --clean`) cannot drop the partitions
+   * of a partitioned table, and one that stops half way leaves a broken database.
+   */
+  scratch: {
+    name: string;
+    create: () => Promise<void>;
+    swapIn: () => Promise<void>;
+    drop: () => Promise<void>;
+  };
   migrationCount: number;
   /** The key of the clinical data of THIS install. */
   currentKek: () => string;
@@ -136,21 +146,22 @@ export async function restoreBackup(
   await mkdir(unpacked, { recursive: true });
   const moved = { files: false };
   let servicesStopped = false;
+  let scratchCreated = false;
   try {
     await extractZip(archive, unpacked, (name) => name === 'db.dump' || name.startsWith('files/'));
 
     await deps.stopServices();
     servicesStopped = true;
 
+    await deps.scratch.create();
+    scratchCreated = true;
     const restored = await deps.runner(
       deps.pgRestore,
       [
         '--host=127.0.0.1',
         `--port=${String(deps.databasePort())}`,
         `--username=${deps.superuser.user}`,
-        `--dbname=${deps.database}`,
-        '--clean',
-        '--if-exists',
+        `--dbname=${deps.scratch.name}`,
         '--single-transaction',
         '--exit-on-error',
         '--no-password',
@@ -178,15 +189,21 @@ export async function restoreBackup(
     await mkdir(join(unpacked, 'files'), { recursive: true });
     await rename(join(unpacked, 'files'), deps.paths.files);
 
+    // The database goes last: until here nothing of the live data was touched, and the documents can be put back.
+    await deps.scratch.swapIn();
+    scratchCreated = false;
+
     if (adopted) await deps.adoptSecrets(adopted);
     deps.log?.('backup restored');
   } catch (error) {
     if (moved.files) {
       await rm(deps.paths.files, { recursive: true, force: true }).catch(() => undefined);
       await rename(aside, deps.paths.files).catch(() => undefined);
+      moved.files = false;
     }
     throw error;
   } finally {
+    if (scratchCreated) await deps.scratch.drop().catch(() => undefined);
     await rm(unpacked, { recursive: true, force: true }).catch(() => undefined);
     if (servicesStopped) await deps.startServices();
   }

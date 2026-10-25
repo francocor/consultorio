@@ -27,6 +27,7 @@ let restoreCall: { args: string[]; options: RunOptions | undefined } | null;
 let restoreResult: Partial<RunResult>;
 let adopted: RecoveryPayload | null;
 let failAdopt: boolean;
+let failSwap: boolean;
 
 const mine = generateSecrets();
 const theirs = generateSecrets();
@@ -70,7 +71,22 @@ function restoreDeps(secrets: typeof mine = mine, migrationCount = 77): RestoreD
     pgRestore: 'C:\\tools\\pg_restore.exe',
     databasePort: () => 54321,
     superuser: { user: 'postgres', password: 'super-secret-password-0123456789' },
-    database: 'consultorio',
+    scratch: {
+      name: 'consultorio_restore',
+      create: () => {
+        events.push('create scratch');
+        return Promise.resolve();
+      },
+      swapIn: () => {
+        events.push('swap');
+        if (failSwap) return Promise.reject(new Error('could not rename the database'));
+        return Promise.resolve();
+      },
+      drop: () => {
+        events.push('drop scratch');
+        return Promise.resolve();
+      },
+    },
     migrationCount,
     currentKek: () => secrets.kmsLocalKekBase64,
     stopServices: () => {
@@ -123,6 +139,7 @@ beforeEach(() => {
   restoreResult = {};
   adopted = null;
   failAdopt = false;
+  failSwap = false;
 });
 
 afterEach(() => {
@@ -167,20 +184,19 @@ describe('restoring a backup of this installation', () => {
 
     await restoreBackup(restoreDeps(), path);
 
-    expect(events).toEqual(['stop', 'pg_restore', 'start']);
+    expect(events).toEqual(['stop', 'create scratch', 'pg_restore', 'swap', 'start']);
     expect(restoreCall?.args).toEqual(
       expect.arrayContaining([
         '--host=127.0.0.1',
         '--port=54321',
         '--username=postgres',
-        '--dbname=consultorio',
-        '--clean',
-        '--if-exists',
+        '--dbname=consultorio_restore',
         '--single-transaction',
         '--exit-on-error',
         '--no-password',
       ]),
     );
+    expect(restoreCall?.args).not.toContain('--clean');
     expect(restoreCall?.args.at(-1)).toMatch(/db\.dump$/);
     expect(restoreCall?.options?.env?.['PGPASSWORD']).toBe('super-secret-password-0123456789');
     expect(readDoc('t/a/docs/1.obj')).toBe('from the backup');
@@ -209,20 +225,29 @@ describe('restoring a backup of this installation', () => {
     expect(failure).toMatchObject({ code: 'restore_failed' });
     expect((failure as RestoreError).detail).toContain('could not execute query');
     expect(readDoc('t/a/docs/1.obj')).toBe('current data');
-    expect(events).toEqual(['stop', 'pg_restore', 'start']);
+    // The live database was never touched: the half-filled scratch one is dropped and nothing is swapped in.
+    expect(events).toEqual(['stop', 'create scratch', 'pg_restore', 'drop scratch', 'start']);
   });
 
-  it('puts the old documents back when something fails after they were moved', async () => {
+  it('puts the old documents back when the database cannot be swapped in', async () => {
     const path = await makeBackup(theirs, { 't/a/docs/1.obj': 'from the backup' });
     writeFileSync(join(paths.files, 't', 'a', 'docs', '1.obj'), 'current data');
-    failAdopt = true;
+    failSwap = true;
 
     await expect(
       restoreBackup(restoreDeps(), path, { recoveryKey: theirs.recoveryKey }),
-    ).rejects.toThrow('could not write config.json');
+    ).rejects.toThrow('could not rename the database');
 
     expect(readDoc('t/a/docs/1.obj')).toBe('current data');
-    expect(events.at(-1)).toBe('start');
+    expect(adopted).toBeNull();
+    expect(events).toEqual([
+      'stop',
+      'create scratch',
+      'pg_restore',
+      'swap',
+      'drop scratch',
+      'start',
+    ]);
   });
 
   it('refuses a backup made by a newer version, before it touches anything', async () => {
@@ -239,7 +264,7 @@ describe('restoring a backup of this installation', () => {
 
     await restoreBackup(restoreDeps(mine, 77), path);
 
-    expect(events).toEqual(['stop', 'pg_restore', 'start']);
+    expect(events).toEqual(['stop', 'create scratch', 'pg_restore', 'swap', 'start']);
   });
 });
 
@@ -270,7 +295,7 @@ describe('restoring a backup of another installation', () => {
 
     await restoreBackup(restoreDeps(), path, { recoveryKey: theirs.recoveryKey.toLowerCase() });
 
-    expect(events).toEqual(['stop', 'pg_restore', 'adopt', 'start']);
+    expect(events).toEqual(['stop', 'create scratch', 'pg_restore', 'swap', 'adopt', 'start']);
     expect(adopted).toEqual(payloadOf(theirs));
     expect(readDoc('t/a/docs/1.obj')).toBe('theirs');
   });

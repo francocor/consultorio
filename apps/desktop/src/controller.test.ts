@@ -207,6 +207,18 @@ function build(folder: string, options: { testMode?: boolean } = {}): Harness {
       clusterScripts.push(script);
       return Promise.resolve();
     },
+    createScratchDatabase: () => {
+      events.push('scratch create');
+      return Promise.resolve();
+    },
+    swapInDatabase: () => {
+      events.push('scratch swap');
+      return Promise.resolve();
+    },
+    dropDatabase: () => {
+      events.push('scratch drop');
+      return Promise.resolve();
+    },
     stop: () => {
       events.push('pg stop');
       port = null;
