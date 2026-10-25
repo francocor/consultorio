@@ -1,0 +1,118 @@
+/**
+ * Every word the shell shows outside the web app and its own pages: the tray, the dialogs, the notices.
+ * Neutral, professional Spanish in the "usted" form, like the product. The product is "Consulvia".
+ */
+export const TEXT = {
+  appName: 'Consulvia',
+
+  splash: {
+    starting: 'Iniciando Consulvia…',
+    database: 'Preparando la base de datos…',
+    restoring: 'Restaurando la copia de seguridad…',
+  },
+
+  tray: {
+    tooltip: 'Consulvia',
+    open: 'Abrir Consulvia',
+    openInBrowser: 'Abrir en el navegador',
+    outbox: 'Correos salientes',
+    backup: 'Hacer copia de seguridad',
+    restore: 'Restaurar copia…',
+    resetPassword: 'Restablecer contraseña de la propietaria…',
+    recoveryKey: 'Clave de recuperación…',
+    logs: 'Ver registros',
+    autoStart: 'Iniciar con Windows',
+    about: 'Acerca de',
+    quit: 'Salir',
+  },
+
+  hint: {
+    title: 'Consulvia sigue funcionando',
+    body: 'Cerrar la ventana no cierra Consulvia: sigue activo junto al reloj de Windows para que las agendas y los recordatorios continúen. Para cerrarlo por completo, use el icono y elija Salir.',
+  },
+
+  backup: {
+    done: 'Copia de seguridad lista',
+    doneBody: (path: string) => `La copia se guardó en:\n${path}`,
+    failed: 'No se pudo hacer la copia de seguridad',
+    failedBody:
+      'La copia no se completó. Sus datos no se modificaron. Si el problema continúa, abra los registros y envíe el archivo a quien le brinda soporte.',
+    dailyFailed:
+      'No se pudo hacer la copia de seguridad diaria. Abra Consulvia e intente hacerla manualmente.',
+    notReady: 'Consulvia todavía se está iniciando. Espere unos segundos e intente de nuevo.',
+  },
+
+  restore: {
+    pickTitle: 'Elija la copia de seguridad que desea restaurar',
+    pickFilter: 'Copias de Consulvia',
+    confirmTitle: 'Restaurar copia de seguridad',
+    confirmMessage: 'Se reemplazarán TODOS los datos actuales por los de la copia.',
+    confirmDetail: (when: string) =>
+      `Copia del ${when}. Antes de reemplazar nada, Consulvia hace una copia de seguridad de los datos actuales. Durante la restauración Consulvia queda sin servicio unos minutos.`,
+    confirmButton: 'Restaurar',
+    cancelButton: 'Cancelar',
+    done: 'Copia restaurada',
+    doneBody: 'Los datos de la copia ya están en uso.',
+    failed: 'No se pudo restaurar la copia',
+    invalid: 'El archivo elegido no es una copia de seguridad de Consulvia, o está dañado.',
+    newerVersion:
+      'Esta copia se hizo con una versión más nueva de Consulvia. Instale la versión más reciente e intente de nuevo.',
+    wrongKey: 'La clave de recuperación no es correcta.',
+    generic:
+      'La restauración no se completó. Los datos actuales se conservan. Si el problema continúa, abra los registros y envíe el archivo a quien le brinda soporte.',
+  },
+
+  reset: {
+    windowTitle: 'Consulvia: restablecer contraseña',
+    noOwner: 'No se encontró la cuenta de la propietaria.',
+    generic: 'No se pudo restablecer la contraseña. Intente de nuevo.',
+    notReady: 'Consulvia todavía se está iniciando. Espere unos segundos e intente de nuevo.',
+  },
+
+  recoveryKey: {
+    windowTitle: 'Consulvia: clave de recuperación',
+    title: 'Clave de recuperación',
+    message: 'Guarde esta clave en un lugar seguro, por ejemplo impresa.',
+    detail:
+      'Sirve para abrir una copia de seguridad en otra computadora. Sin ella, las copias solo se pueden restaurar en esta.',
+    copy: 'Copiar',
+    close: 'Cerrar',
+  },
+
+  about: {
+    title: 'Acerca de Consulvia',
+    detail: (version: string, dataDir: string, backupsDir: string) =>
+      `Versión ${version}\n\nLos datos están en:\n${dataDir}\n\nLas copias de seguridad están en:\n${backupsDir}`,
+    ok: 'Aceptar',
+  },
+
+  errors: {
+    title: 'Consulvia no pudo iniciar',
+    retry: 'Reintentar',
+    logs: 'Ver registros',
+    quit: 'Salir',
+    cannotDecrypt:
+      'No se pueden leer los datos de esta instalación con la cuenta de Windows actual. Los datos se protegen con la cuenta de Windows que instaló Consulvia: ingrese con esa cuenta, o restaure una copia de seguridad.',
+    cipherUnavailable:
+      'Windows no pudo proteger los datos de Consulvia en este momento. Cierre la sesión de Windows, vuelva a ingresar e intente de nuevo.',
+    configUnreadable:
+      'El archivo de configuración de Consulvia está dañado. Si tiene una copia de seguridad, puede restaurarla instalando Consulvia de nuevo.',
+    missingFiles: 'La instalación está incompleta. Vuelva a instalar Consulvia.',
+    database:
+      'No se pudo iniciar la base de datos. Si la computadora se apagó de golpe, espere un minuto e intente de nuevo.',
+    portBusy: 'No se pudo abrir el puerto local de Consulvia.',
+    service:
+      'Un componente de Consulvia no pudo iniciar o se detuvo varias veces seguidas. Abra los registros para ver el detalle.',
+    generic:
+      'Ocurrió un error inesperado al iniciar Consulvia. Abra los registros para ver el detalle.',
+    migration:
+      'No se pudieron aplicar las actualizaciones de la base de datos. Sus datos no se modificaron. Abra los registros para ver el detalle.',
+  },
+
+  setup: {
+    failed: 'No se pudo crear el consultorio. Intente de nuevo.',
+    emailInUse: 'Ese correo electrónico ya está en uso.',
+    alreadyDone: 'Consulvia ya estaba configurado en esta computadora.',
+    busy: 'Ya se está preparando el consultorio. Espere unos segundos.',
+  },
+} as const;
