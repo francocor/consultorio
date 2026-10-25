@@ -90,6 +90,8 @@ let folders: string[] = [];
 let controllers: Controller[] = [];
 let migrateFails = false;
 let confirmAnswer = true;
+/** The Windows account can no longer read what it encrypted (another user, a reinstalled Windows). */
+let cipherBroken = false;
 let provisionFails: ApiCommandError | null = null;
 let resetFails: ApiCommandError | null = null;
 let chooseAnswers: number[];
@@ -100,7 +102,10 @@ let clock = new Date(2026, 9, 24, 10, 0, 0);
 const cipher: Cipher = {
   isAvailable: () => true,
   encrypt: (plain) => Buffer.from(Buffer.from(plain).reverse().toString('base64')),
-  decrypt: (data) => Buffer.from(Buffer.from(data.toString(), 'base64').reverse()).toString('utf8'),
+  decrypt: (data) => {
+    if (cipherBroken) throw new Error('the key of this Windows account is gone');
+    return Buffer.from(Buffer.from(data.toString(), 'base64').reverse()).toString('utf8');
+  },
 };
 
 function build(folder: string, options: { testMode?: boolean } = {}): Harness {
@@ -180,7 +185,10 @@ function build(folder: string, options: { testMode?: boolean } = {}): Harness {
       return Promise.resolve(chooseAnswers.shift() ?? o.buttons.length - 1);
     },
     notify: (title, body) => uiCalls.push(['notify', title, body]),
-    pickFile: () => Promise.resolve(null),
+    pickFile: () => {
+      uiCalls.push(['pickFile']);
+      return Promise.resolve(null);
+    },
     openPath: (path) => {
       uiCalls.push(['openPath', path]);
       return Promise.resolve();
@@ -195,6 +203,7 @@ function build(folder: string, options: { testMode?: boolean } = {}): Harness {
     get runningPort() {
       return port;
     },
+    isInitialized: () => existsSync(join(paths.pgdata, 'PG_VERSION')),
     initCluster: () => {
       events.push('initdb');
       mkdirSync(paths.pgdata, { recursive: true });
@@ -398,6 +407,7 @@ beforeEach(() => {
   controllers = [];
   migrateFails = false;
   confirmAnswer = true;
+  cipherBroken = false;
   provisionFails = null;
   resetFails = null;
   chooseAnswers = [];
@@ -409,6 +419,135 @@ beforeEach(() => {
 afterEach(async () => {
   await Promise.all(controllers.map((controller) => controller.quit()));
   for (const folder of folders) rmSync(folder, { recursive: true, force: true });
+});
+
+describe('an install whose configuration cannot be opened', () => {
+  async function provisionedFolder(): Promise<string> {
+    await harness.controller.start();
+    const url = setupUrl() ?? '';
+    await post(new URL('/__setup', url).href, tokenOf(url), form);
+    await harness.controller.quit();
+    return harness.folder;
+  }
+
+  const buttonsOf = (target: Harness) =>
+    target.uiCalls.find(
+      (call) => call[0] === 'choose' && call[1] === 'Consulvia no pudo iniciar',
+    )?.[2] as string[] | undefined;
+
+  it('offers to start over when another Windows account cannot read the secrets, and does not for an ordinary failure', async () => {
+    const folder = await provisionedFolder();
+    cipherBroken = true;
+    chooseAnswers = [3];
+
+    const next = build(folder);
+    await next.controller.start();
+
+    expect(buttonsOf(next)).toContain('Empezar de nuevo y restaurar una copia');
+
+    migrateFails = true;
+    cipherBroken = false;
+    const ordinary = build(mkdtempSync(join(tmpdir(), 'consulvia-controller-')));
+    await ordinary.controller.start();
+    expect(buttonsOf(ordinary)).not.toContain('Empezar de nuevo y restaurar una copia');
+  });
+
+  it('moves the configuration, the database and the documents aside without deleting any, then offers a restore', async () => {
+    const folder = await provisionedFolder();
+    const before = build(folder).paths;
+    mkdirSync(before.files, { recursive: true });
+    writeFileSync(join(before.files, 'a.pdf'), 'document');
+    cipherBroken = true;
+    // The dialog is answered after the account "works" again: the new install writes and reads its own file.
+    whileDialogOpen = () => {
+      cipherBroken = false;
+    };
+    chooseAnswers = [2];
+
+    const next = build(folder);
+    await next.controller.start();
+
+    const names = readdirSync(next.paths.root);
+    const aside = (prefix: string) => names.filter((name) => name.startsWith(prefix + '.aside-'));
+    expect(aside('config.json')).toHaveLength(1);
+    expect(aside('pgdata')).toHaveLength(1);
+    expect(aside('files')).toHaveLength(1);
+    expect(
+      readFileSync(join(next.paths.root, aside('pgdata')[0] ?? '', 'PG_VERSION'), 'utf8'),
+    ).toBe('17');
+    expect(readFileSync(join(next.paths.root, aside('files')[0] ?? '', 'a.pdf'), 'utf8')).toBe(
+      'document',
+    );
+    // A new install is up, and the restore is offered at once.
+    expect(next.config().provisioned).toBe(false);
+    expect(next.uiCalls).toContainEqual(['pickFile']);
+  });
+
+  it('changes nothing when the person says no', async () => {
+    const folder = await provisionedFolder();
+    cipherBroken = true;
+    chooseAnswers = [2, 3];
+    confirmAnswer = false;
+
+    const next = build(folder);
+    await next.controller.start();
+
+    const names = readdirSync(next.paths.root);
+    expect(names.some((name) => name.includes('.aside-'))).toBe(false);
+    expect(names).toContain('pgdata');
+    expect(names).toContain('config.json');
+  });
+
+  it('restores config.json.bak when only config.json went missing, and keeps the database', async () => {
+    const folder = await provisionedFolder();
+    const paths = build(folder).paths;
+    // Every write keeps the previous good copy beside the file.
+    const slugBefore = new ConfigStore(paths.configFile, cipher).read().slug;
+    writeFileSync(paths.configFile + '.bak', readFileSync(paths.configFile));
+    rmSync(paths.configFile);
+
+    const next = build(folder);
+    await next.controller.start();
+
+    expect(readdirSync(next.paths.root).some((name) => name.includes('orphaned'))).toBe(false);
+    expect(next.config().slug).toBe(slugBefore);
+    expect(next.config().provisioned).toBe(true);
+    expect(
+      next.uiCalls.some(
+        (call) => call[0] === 'message' && call[2] === 'Se apartaron datos sin configuración',
+      ),
+    ).toBe(false);
+  });
+
+  it('says where the data went when config.json is gone for good', async () => {
+    const folder = await provisionedFolder();
+    const paths = build(folder).paths;
+    rmSync(paths.configFile);
+    rmSync(paths.configFile + '.bak', { force: true });
+
+    const next = build(folder);
+    await next.controller.start();
+
+    const notice = next.uiCalls.find(
+      (call) => call[0] === 'message' && call[2] === 'Se apartaron datos sin configuración',
+    );
+    expect(notice).toBeDefined();
+    const orphan = readdirSync(next.paths.root).find((name) => name.startsWith('pgdata.orphaned-'));
+    expect(orphan).toBeDefined();
+    expect(String(notice?.[3])).toContain(orphan ?? 'missing');
+  });
+
+  it('treats a database folder that is gone like a dead end', async () => {
+    const folder = await provisionedFolder();
+    const paths = build(folder).paths;
+    rmSync(paths.pgdata, { recursive: true, force: true });
+    chooseAnswers = [3];
+
+    const next = build(folder);
+    await next.controller.start();
+
+    expect(buttonsOf(next)).toContain('Empezar de nuevo y restaurar una copia');
+  });
 });
 
 describe('the port of the local server', () => {

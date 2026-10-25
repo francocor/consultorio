@@ -129,10 +129,20 @@ export class ShellError extends Error {
   constructor(
     readonly userMessage: string,
     detail: string,
+    /** The data of this install cannot be opened, so the only way on is a new install and a restore. */
+    readonly deadEnd = false,
   ) {
     super(detail);
     this.name = 'ShellError';
   }
+}
+
+/** Failures that retrying cannot fix: the secrets or the database of this install are gone for this account. */
+function isDeadEnd(error: unknown): boolean {
+  if (error instanceof ConfigError) {
+    return error.code === 'cannot_decrypt' || error.code === 'unreadable';
+  }
+  return error instanceof ShellError && error.deadEnd;
 }
 
 const HOUR_MS = 60 * 60 * 1000;
@@ -199,6 +209,10 @@ export class Controller {
   private lastDailyFailure: string | null = null;
   private commonPasswordSet: ReadonlySet<string> | null = null;
   private pendingRestore: { archive: string } | null = null;
+  /** A new install after "start over": the restore is offered as soon as it is up. */
+  private offerRestoreAfterBoot = false;
+  /** Where data without a configuration was set aside at this start, to tell the person. */
+  private orphanedTo: string[] = [];
   /** The port the local server had before this start, when it had to move: links already sent name it. */
   private movedFromPort: number | null = null;
   /** Wrong recovery keys typed on the reset page that is open. */
@@ -276,11 +290,15 @@ export class Controller {
     this.log(`startup failed: ${detail}`);
     this.setPhase('error');
     this.deps.ui.showSplash(message, false);
+    const deadEnd = isDeadEnd(error);
+    const buttons = deadEnd
+      ? [TEXT.errors.retry, TEXT.errors.logs, TEXT.errors.startOver, TEXT.errors.quit]
+      : [TEXT.errors.retry, TEXT.errors.logs, TEXT.errors.quit];
     const choice = await this.deps.ui.choose({
       kind: 'error',
       title: TEXT.errors.title,
       message,
-      buttons: [TEXT.errors.retry, TEXT.errors.logs, TEXT.errors.quit],
+      buttons,
     });
     if (this.isQuitting()) return;
     if (choice === 1) {
@@ -289,9 +307,57 @@ export class Controller {
     } else if (choice === 0) {
       await this.stopEverything();
       await this.start();
+    } else if (deadEnd && choice === 2) {
+      if (!(await this.startOver())) await this.fail(error);
     } else {
       this.deps.requestQuit();
     }
+  }
+
+  /**
+   * The way out of an install whose secrets or database cannot be opened: the configuration, the database and
+   * the documents are moved aside (never deleted), a new empty install starts, and a restore is offered.
+   * `electron-profile` is not touched: the key that protects the secrets lives in it. Returns false when the
+   * person says no or nothing could be moved, and then nothing has changed.
+   */
+  private async startOver(): Promise<boolean> {
+    const stamp = String(this.deps.now().getTime());
+    const confirmed = await this.deps.ui.confirm({
+      title: TEXT.startOver.confirmTitle,
+      message: TEXT.startOver.confirmMessage,
+      detail: TEXT.startOver.confirmDetail(stamp),
+      confirm: TEXT.startOver.confirmButton,
+      cancel: TEXT.startOver.cancelButton,
+    });
+    if (!confirmed || this.isQuitting()) return false;
+    await this.stopEverything();
+    const { configFile, pgdata, files } = this.deps.paths;
+    const moved: [string, string][] = [];
+    try {
+      for (const path of [configFile, `${configFile}.bak`, pgdata, files]) {
+        try {
+          await rename(path, `${path}.aside-${stamp}`);
+          moved.push([path, `${path}.aside-${stamp}`]);
+        } catch (error) {
+          if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+        }
+      }
+    } catch (error) {
+      this.log(
+        `could not set the data aside: ${error instanceof Error ? error.message : String(error)}`,
+      );
+      // Put back what was already moved: either everything moves or nothing does.
+      for (const [from, to] of moved.reverse()) await rename(to, from).catch(() => undefined);
+      await this.deps.ui.message('error', TEXT.startOver.confirmTitle, TEXT.startOver.failed);
+      return false;
+    }
+    this.log(`data set aside to start over: ${moved.map(([, to]) => to).join(', ')}`);
+    this.loaded = null;
+    this.clusterOrNull = null;
+    this.server = null;
+    this.offerRestoreAfterBoot = true;
+    await this.start();
+    return true;
   }
 
   private async boot(): Promise<void> {
@@ -321,24 +387,34 @@ export class Controller {
 
     if (!this.config.provisioned) {
       this.beginSetup();
-      this.announcePortMove();
+      this.announceNotices();
+      if (this.offerRestoreAfterBoot) {
+        this.offerRestoreAfterBoot = false;
+        void this.restoreFlow();
+      }
       return;
     }
     await this.startServices();
     this.finishStart();
-    this.announcePortMove();
+    this.announceNotices();
   }
 
   /** Tells the person once that the address of the program changed, because links in older emails stop working. */
-  private announcePortMove(): void {
+  private announceNotices(): void {
     const from = this.movedFromPort;
     this.movedFromPort = null;
-    if (from === null) return;
-    void this.deps.ui.message(
-      'info',
-      TEXT.port.movedTitle,
-      TEXT.port.moved(from, this.config.port),
-    );
+    if (from !== null) {
+      void this.deps.ui.message(
+        'info',
+        TEXT.port.movedTitle,
+        TEXT.port.moved(from, this.config.port),
+      );
+    }
+    const orphaned = this.orphanedTo;
+    this.orphanedTo = [];
+    if (orphaned.length > 0) {
+      void this.deps.ui.message('info', TEXT.orphaned.title, TEXT.orphaned.body(orphaned));
+    }
   }
 
   private async loadOrCreateConfig(): Promise<void> {
@@ -357,29 +433,59 @@ export class Controller {
         this.log('config.json was damaged; restored from config.json.bak');
       }
     } else {
-      // A data folder without its configuration cannot be opened: the keys died with the file. It is
-      // set aside, never deleted, in case the configuration comes back.
-      await this.setAsideOrphanedData();
-      const port = await chooseServerPort(null);
-      this.config = newInstallConfig(port, generateSecrets());
-      this.config.slug = INSTALL_SLUG;
-      store.write(this.config);
-      this.log('new install configured');
+      const recovered = this.readPreviousConfig();
+      if (recovered !== null) {
+        // The file went missing but the previous good copy is there: the keys are not lost.
+        this.config = recovered;
+        store.write(this.config);
+        this.log('config.json was missing; restored from config.json.bak');
+      } else {
+        await this.createFreshConfig();
+      }
     }
     this.commonPasswordSet = null;
   }
 
-  private async setAsideOrphanedData(): Promise<void> {
+  /** The configuration kept as `config.json.bak`, or null when there is none or it is not readable at all. */
+  private readPreviousConfig(): InstallConfig | null {
+    const previous = this.deps.store.previous();
+    if (!previous.exists()) return null;
+    try {
+      return previous.read();
+    } catch (error) {
+      // Another Windows account (or no cipher) is a dead end the person has to hear about, not a missing file.
+      if (error instanceof ConfigError && error.code === 'unreadable') return null;
+      throw error;
+    }
+  }
+
+  /**
+   * A data folder without its configuration cannot be opened: the keys died with the file. It is set aside,
+   * never deleted, in case the configuration comes back, and the person is told where it went.
+   */
+  private async createFreshConfig(): Promise<void> {
+    this.orphanedTo = await this.setAsideOrphanedData();
+    const port = await chooseServerPort(null);
+    this.config = newInstallConfig(port, generateSecrets());
+    this.config.slug = INSTALL_SLUG;
+    this.deps.store.write(this.config);
+    this.log('new install configured');
+  }
+
+  private async setAsideOrphanedData(): Promise<string[]> {
     const { pgdata, files } = this.deps.paths;
     const stamp = String(this.deps.now().getTime());
+    const moved: string[] = [];
     for (const folder of [pgdata, files]) {
       try {
         await rename(folder, `${folder}.orphaned-${stamp}`);
+        moved.push(`${folder}.orphaned-${stamp}`);
         this.log(`set aside data without a configuration: ${folder}`);
       } catch (error) {
         if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
       }
     }
+    return moved;
   }
 
   private async startLocalServer(): Promise<void> {
@@ -445,6 +551,13 @@ export class Controller {
       });
       this.log('database roles created');
       return;
+    }
+    if (!this.cluster.isInitialized()) {
+      throw new ShellError(
+        TEXT.errors.dataMissing,
+        `pgdata is missing: ${this.deps.paths.pgdata}`,
+        true,
+      );
     }
     await this.cluster.start();
   }
@@ -824,6 +937,8 @@ export class Controller {
           config.secrets.recoveryKey = null;
           config.recoveryAcknowledged = true;
           config.slug = adopted.payload.slug;
+          // A backup is made only of an install that has its organization.
+          config.provisioned = true;
         });
       },
       now: this.deps.now,
@@ -856,7 +971,8 @@ export class Controller {
    * the installer pass the file themselves (`--restore=<file>`) and skip the confirmation.
    */
   async restoreFlow(file?: string): Promise<boolean> {
-    if (this.currentPhase !== 'ready') {
+    // On a new install that is still waiting for its setup the restore takes the place of the setup.
+    if (this.currentPhase !== 'ready' && this.currentPhase !== 'setup') {
       await this.deps.ui.message('info', TEXT.restore.failed, TEXT.backup.notReady);
       return false;
     }
@@ -888,8 +1004,11 @@ export class Controller {
     const outcome = await this.exclusive(async () => {
       this.deps.ui.showSplash(TEXT.splash.restoring);
       try {
-        const safety = await createBackup(this.backupDeps(), 'safety');
-        this.log(`safety backup before restoring: ${safety.path}`);
+        // A new install that is still waiting for its setup has nothing to lose.
+        if (this.currentPhase === 'ready') {
+          const safety = await createBackup(this.backupDeps(), 'safety');
+          this.log(`safety backup before restoring: ${safety.path}`);
+        }
         await restoreBackup(this.restoreDeps(), archive);
         return { ok: true as const };
       } catch (error) {
@@ -906,6 +1025,7 @@ export class Controller {
     this.deps.ui.loadUrl(this.appUrl);
     if (outcome.ok) {
       this.log('restore finished');
+      this.endSetupAfterRestore();
       await this.deps.ui.message('info', TEXT.restore.done, TEXT.restore.doneBody);
       return true;
     }
@@ -917,6 +1037,13 @@ export class Controller {
     }
     await this.deps.ui.message('error', TEXT.restore.failed, this.restoreMessage(outcome.error));
     return false;
+  }
+
+  /** A restore on an install that was waiting for its setup: the organization came with the backup. */
+  private endSetupAfterRestore(): void {
+    if (this.currentPhase !== 'setup') return;
+    this.vault.revoke(PURPOSE.setup);
+    this.finishStart({ keepWindow: true });
   }
 
   // ---- the owner's password ---------------------------------------------------------------------

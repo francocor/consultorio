@@ -84,17 +84,18 @@ Si la copia es de una versión de Consulvia más nueva que la instalada, Consulv
 
 ## Dónde están los datos
 
-| Qué                               | Dónde                                  |
-| --------------------------------- | -------------------------------------- |
-| Base de datos                     | `%LOCALAPPDATA%\Consulvia\pgdata`      |
-| Documentos de los pacientes       | `%LOCALAPPDATA%\Consulvia\files`       |
-| Claves y configuración (cifradas) | `%LOCALAPPDATA%\Consulvia\config.json` |
-| Correos salientes                 | `%LOCALAPPDATA%\Consulvia\outbox`      |
-| Registros                         | `%LOCALAPPDATA%\Consulvia\logs`        |
-| Copias de seguridad               | `Documentos\Consulvia\Copias`          |
-| Programa                          | `%LOCALAPPDATA%\Programs\Consulvia`    |
+| Qué                               | Dónde                                       |
+| --------------------------------- | ------------------------------------------- |
+| Base de datos                     | `%LOCALAPPDATA%\Consulvia\pgdata`           |
+| Documentos de los pacientes       | `%LOCALAPPDATA%\Consulvia\files`            |
+| Claves y configuración (cifradas) | `%LOCALAPPDATA%\Consulvia\config.json`      |
+| Correos salientes                 | `%LOCALAPPDATA%\Consulvia\outbox`           |
+| Perfil de la ventana              | `%LOCALAPPDATA%\Consulvia\electron-profile` |
+| Registros                         | `%LOCALAPPDATA%\Consulvia\logs`             |
+| Copias de seguridad               | `Documentos\Consulvia\Copias`               |
+| Programa                          | `%LOCALAPPDATA%\Programs\Consulvia`         |
 
-`%LOCALAPPDATA%` es normalmente `C:\Users\<usuario>\AppData\Local`, una carpeta que no se sincroniza con otras computadoras. **No mueva, renombre ni borre estas carpetas con Consulvia abierto.** Las claves de `config.json` están protegidas con la cuenta de Windows. Si se crea otro usuario de Windows en la computadora, instale y use Consulvia siempre con el mismo.
+`%LOCALAPPDATA%` es normalmente `C:\Users\<usuario>\AppData\Local`, una carpeta que no se sincroniza con otras computadoras. **No mueva, renombre ni borre estas carpetas con Consulvia abierto.** **Nunca borre `electron-profile`:** contiene la llave de Windows que protege las claves de `config.json`; sin ella, los datos de esta instalación no se pueden abrir y solo queda restaurar una copia de seguridad. Las claves de `config.json` están protegidas con la cuenta de Windows. Si se crea otro usuario de Windows en la computadora, instale y use Consulvia siempre con el mismo.
 
 ## Qué protege Consulvia y qué le corresponde a usted
 
@@ -119,5 +120,7 @@ Configuración de Windows, Aplicaciones, **Consulvia**, Desinstalar. Se elimina 
 - _"Consulvia no pudo iniciar"_: pulse **Reintentar**. Si se repite, elija **Ver registros** y envíe la carpeta `logs` a quien le brinda soporte.
 - **Los registros pueden contener datos de pacientes.** Consulvia quita de ellos las direcciones de correo y las contraseñas y pide a la base de datos que no escriba el texto de las consultas, pero un error del programa puede nombrar a una persona. Envíe la carpeta `logs` solo a quien usted ya confía sus datos, nunca la publique. Los registros se limitan solos: cada archivo llega a 5 MB y se guardan los últimos tres.
 - _"No se pueden leer los datos de esta instalación con la cuenta de Windows actual"_: está ingresando con otro usuario de Windows. Cierre la sesión e ingrese con el usuario que instaló Consulvia.
+- _"El archivo de configuración está dañado"_, _"Falta la carpeta de la base de datos"_ o el mensaje anterior sin salida: elija **Empezar de nuevo y restaurar una copia**. Consulvia **aparta** (no borra) la configuración, la base de datos y los documentos actuales en carpetas con el sufijo `.aside-<número>`, empieza una instalación vacía y le pide el archivo de la copia (`.cvb`) y, si es de otra instalación, la clave de recuperación. Los datos apartados se conservan hasta que usted los borre.
+- _"Se apartaron datos sin configuración"_: Consulvia encontró la base de datos sin su `config.json` (ni su copia `config.json.bak`), y sin él no se pueden leer. Los datos no se borraron: están en las carpetas `.orphaned-<número>` que el aviso indica. Restaure una copia de seguridad desde el icono de Consulvia.
 - El antivirus puede demorar el primer inicio o el programa de base de datos. Si bloquea Consulvia, agregue la carpeta del programa y `%LOCALAPPDATA%\Consulvia` a las excepciones.
 - Si la computadora se apagó de golpe y Consulvia tarda en abrir, espere un minuto: la base de datos se recupera sola.

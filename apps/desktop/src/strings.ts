@@ -80,6 +80,24 @@ export const TEXT = {
       'Se superó el número de intentos. Cierre esta ventana y vuelva a empezar desde el icono de Consulvia.',
   },
 
+  startOver: {
+    confirmTitle: 'Empezar de nuevo',
+    confirmMessage:
+      'Consulvia va a apartar los datos actuales y empezar con una instalación vacía, para que usted restaure una copia de seguridad.',
+    confirmDetail: (stamp: string) =>
+      `Nada se borra: la configuración, la base de datos y los documentos actuales se mueven a carpetas con el sufijo "aside-${stamp}" dentro de la carpeta de datos de Consulvia. Va a necesitar el archivo de la copia y la clave de recuperación de aquella instalación.`,
+    confirmButton: 'Apartar y empezar de nuevo',
+    cancelButton: 'Cancelar',
+    failed:
+      'No se pudieron apartar los datos actuales (puede que otro programa los esté usando). No se cambió nada.',
+  },
+
+  orphaned: {
+    title: 'Se apartaron datos sin configuración',
+    body: (folders: string[]) =>
+      `Consulvia encontró datos de una instalación anterior sin su archivo de configuración, que es lo único que permite leerlos, y empezó una instalación nueva. Los datos anteriores no se borraron: están en\n${folders.join('\n')}\nSi tiene una copia de seguridad, puede restaurarla desde el icono de Consulvia.`,
+  },
+
   port: {
     movedTitle: 'La dirección local de Consulvia cambió',
     moved: (from: number, to: number) =>
@@ -109,12 +127,15 @@ export const TEXT = {
     retry: 'Reintentar',
     logs: 'Ver registros',
     quit: 'Salir',
+    startOver: 'Empezar de nuevo y restaurar una copia',
     cannotDecrypt:
-      'No se pueden leer los datos de esta instalación con la cuenta de Windows actual. Los datos se protegen con la cuenta de Windows que instaló Consulvia: ingrese con esa cuenta, o restaure una copia de seguridad.',
+      'No se pueden leer los datos de esta instalación con la cuenta de Windows actual. Los datos se protegen con la cuenta de Windows que instaló Consulvia: ingrese con esa cuenta. Si ya no es posible, puede empezar de nuevo y restaurar una copia de seguridad (sus datos actuales no se borran).',
     cipherUnavailable:
       'Windows no pudo proteger los datos de Consulvia en este momento. Cierre la sesión de Windows, vuelva a ingresar e intente de nuevo.',
     configUnreadable:
-      'El archivo de configuración de Consulvia está dañado. Si tiene una copia de seguridad, puede restaurarla instalando Consulvia de nuevo.',
+      'El archivo de configuración de Consulvia está dañado y no hay una copia anterior que se pueda leer. Puede empezar de nuevo y restaurar una copia de seguridad (sus datos actuales no se borran). Volver a instalar Consulvia no lo arregla.',
+    dataMissing:
+      'Falta la carpeta de la base de datos de esta instalación. Si se movió o se borró, puede empezar de nuevo y restaurar una copia de seguridad.',
     missingFiles: 'La instalación está incompleta. Vuelva a instalar Consulvia.',
     database:
       'No se pudo iniciar la base de datos. Si la computadora se apagó de golpe, espere un minuto e intente de nuevo.',
