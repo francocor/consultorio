@@ -14,6 +14,7 @@ import { createFeatureRegistry, type FeatureKey } from '../platform/features.js'
 import { registerAuthGuard, type AuthGuardOptions } from '../platform/http/auth-guard.js';
 import { registerBackgroundTasks } from '../platform/http/background.js';
 import { registerOriginCheck } from '../platform/http/csrf-origin.js';
+import { registerDesktopGuard, type DesktopGuardOptions } from '../platform/http/desktop-guard.js';
 import { healthRoutes, type HealthDeps } from '../platform/http/health.js';
 import {
   generateRequestId,
@@ -46,6 +47,8 @@ export interface BuildServerOptions {
   lookupTenant: LookupTenant;
   /** Routes of the multi-tenant-only capabilities, registered only when the mode enables them. */
   featureRoutes?: Partial<Record<FeatureKey, FeatureRoutes>>;
+  /** Desktop profile: refuses every request that does not carry the secret of the run. */
+  desktopGuard?: DesktopGuardOptions;
   /** True behind a load balancer: the client address then comes from X-Forwarded-For. */
   /** Which hops of X-Forwarded-For are believed. Never `true`: see `TrustProxySetting`. */
   trustProxy?: TrustProxySetting;
@@ -74,6 +77,8 @@ export function buildServer(options: BuildServerOptions): FastifyInstance {
   });
 
   registerRequestId(app);
+  // First of all: a request that did not come through the shell's server costs nothing else.
+  if (options.desktopGuard) registerDesktopGuard(app, options.desktopGuard);
   registerSecurityHeaders(app, { secure: options.auth?.cookieSecure ?? false });
   registerBackgroundTasks(app);
   registerRequestContext(app);

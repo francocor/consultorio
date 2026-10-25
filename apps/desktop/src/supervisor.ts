@@ -24,6 +24,11 @@ export type Readiness =
 
 export interface SupervisorOptions {
   name: string;
+  /**
+   * Runs before every launch, the first and each restart (to pick a free port, say). Without it the child is
+   * spawned at once, in the same turn as `start()`.
+   */
+  prepare?: () => Promise<void>;
   spawn: () => ChildLike;
   readiness: Readiness;
   /** Every line the child writes, with the stream it came from. */
@@ -91,6 +96,25 @@ export class Supervisor {
 
   private launch(): void {
     this.setState(this.failures === 0 ? 'starting' : 'restarting');
+    const prepare = this.options.prepare;
+    if (prepare === undefined) {
+      this.spawnChild();
+      return;
+    }
+    prepare().then(
+      () => {
+        // Stopped while it was preparing: there is nothing to launch.
+        if (!this.stopping) this.spawnChild();
+      },
+      (error: unknown) => {
+        if (this.stopping) return;
+        this.recentErrors.push(error instanceof Error ? error.message : String(error));
+        this.onExit(null, null);
+      },
+    );
+  }
+
+  private spawnChild(): void {
     let child: ChildLike;
     try {
       child = this.options.spawn();

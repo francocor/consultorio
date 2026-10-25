@@ -95,10 +95,30 @@ function withoutArchiveWriter(config: Config): Config {
   return { ...config, providers };
 }
 
+/**
+ * The desktop profile serves only what comes through the local server of the shell, which proves it with the
+ * secret of the run, and only under the address of the app. Without the secret the API does not start: a
+ * loopback port with no check is open to every program of the PC.
+ */
+function desktopGuardFrom(config: Config): { secret: string; hosts: string[] } | undefined {
+  if (config.profile !== 'desktop') return undefined;
+  if (config.desktopProxySecret === undefined || config.publicUrl === undefined) {
+    throw new ConfigError(
+      'Invalid environment configuration. DESKTOP_PROXY_SECRET: is required for the API in the desktop profile',
+    );
+  }
+  const { port } = new URL(config.publicUrl);
+  return {
+    secret: config.desktopProxySecret,
+    hosts: [`localhost:${port}`, `127.0.0.1:${port}`],
+  };
+}
+
 async function runApi(rawConfig: Config): Promise<void> {
   assertNoReleaserKey(rawConfig);
   assertNoReleaserLogin(rawConfig);
   const config = withoutArchiveWriter(rawConfig);
+  const desktopGuard = desktopGuardFrom(config);
   const probe = createDbProbe(config.databaseUrl);
   const database = createRuntimeDb(config.databaseUrl, { max: config.dbPoolMax });
   const kms = createKeyManagement(config.kms);
@@ -136,6 +156,7 @@ async function runApi(rawConfig: Config): Promise<void> {
     health: { checkDatabase: () => probe.check() },
     deployment: deploymentFromConfig(config),
     trustProxy: config.trustProxy,
+    ...(desktopGuard ? { desktopGuard } : {}),
     ...(config.publicUrl === undefined ? {} : { publicUrl: config.publicUrl }),
     ...(config.publicPort === undefined ? {} : { publicPort: config.publicPort }),
     cookieSecure: config.cookieSecure,

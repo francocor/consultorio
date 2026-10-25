@@ -63,6 +63,20 @@ describe('the environment of the API and the worker', () => {
     expect(worker['PORT']).toBeUndefined();
   });
 
+  it('gives the secret of the run to the API, and to nothing else', () => {
+    const secret = 'run-secret-0123456789-abcdefghijklmnopqrstuvwxyz';
+
+    expect(longRunningEnvironment('api', context({ proxySecret: secret }))).toMatchObject({
+      DESKTOP_PROXY_SECRET: secret,
+    });
+    expect(
+      longRunningEnvironment('worker', context({ proxySecret: secret }))['DESKTOP_PROXY_SECRET'],
+    ).toBeUndefined();
+    expect(
+      commandEnvironment(context({ proxySecret: secret }))['DESKTOP_PROXY_SECRET'],
+    ).toBeUndefined();
+  });
+
   it('never sets the variables the desktop profile refuses', () => {
     const env = longRunningEnvironment('worker', context());
 

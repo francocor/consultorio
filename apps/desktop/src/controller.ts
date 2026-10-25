@@ -1,3 +1,4 @@
+import { randomBytes } from 'node:crypto';
 import { mkdir, readFile, rename, rm } from 'node:fs/promises';
 import type { Readable } from 'node:stream';
 
@@ -98,8 +99,11 @@ export interface ControllerDeps {
   version: string;
   /** Starts `api` or `worker` of the bundle as a child process with an IPC channel. */
   spawnLongRunning: (role: LongRunningRole, env: NodeJS.ProcessEnv) => ChildLike;
-  /** True when `GET /health` of the API on this port answers 200. */
-  probeHealth: (port: number) => Promise<boolean>;
+  /**
+   * True when what listens on this port is the API of this run: it answers `GET /health` with 200 and with
+   * the proof that it holds `secret`. A bare 200 would also come from any program that took the port.
+   */
+  probeHealth: (port: number, secret: string) => Promise<boolean>;
   createCluster: (secrets: InstallConfig['secrets']) => PostgresCluster;
   logs: { shell: RotatingLog; api: RotatingLog; worker: RotatingLog };
   /** The tests of the installer drive the app from outside; some conveniences exist only then. */
@@ -107,6 +111,14 @@ export interface ControllerDeps {
   now: () => Date;
   /** Leaves the program (the dialogs ask for it). The caller ends with `quit()`. */
   requestQuit: () => void;
+}
+
+/** What the API of one run of the services needs to know, and what the local server learns from it. */
+interface ServiceRun {
+  /** The port the API listens on now. It changes if the API has to be launched again. */
+  apiPort: number;
+  /** The secret the API demands of every request; random for each run. */
+  secret: string;
 }
 
 /** A failure whose message for the user is already known. */
@@ -166,6 +178,8 @@ export class Controller {
   private clusterOrNull: PostgresCluster | null = null;
   private server: LocalServer | null = null;
   private apiPort: number | null = null;
+  /** The secret of this run, known to the local server and the API only; null while the API is down. */
+  private proxySecret: string | null = null;
   private api: Supervisor | null = null;
   private worker: Supervisor | null = null;
   private readonly vault = new TokenVault();
@@ -369,6 +383,7 @@ export class Controller {
       webRoot: resources.webRoot,
       contentSecurityPolicy: policy,
       apiPort: () => this.apiPort,
+      proxySecret: () => this.proxySecret,
       pages: createInternalPages(this.vault, this.pageActions()),
       log: (message) => {
         this.log(message);
@@ -509,17 +524,33 @@ export class Controller {
     };
   }
 
-  private makeSupervisor(role: LongRunningRole, context: RuntimeContext): Supervisor {
-    const env = longRunningEnvironment(role, context);
+  private makeSupervisor(role: LongRunningRole, run: ServiceRun): Supervisor {
+    const context = this.runtimeContext(0);
     const log = role === 'api' ? this.deps.logs.api : this.deps.logs.worker;
     return new Supervisor({
       name: role,
-      spawn: () => this.deps.spawnLongRunning(role, env),
+      // The port is chosen at every launch: one that was taken between the choice and the bind is not tried again.
+      ...(role === 'api'
+        ? {
+            prepare: async () => {
+              run.apiPort = await findFreePort();
+            },
+          }
+        : {}),
+      spawn: () =>
+        this.deps.spawnLongRunning(
+          role,
+          longRunningEnvironment(role, {
+            ...context,
+            apiPort: run.apiPort,
+            proxySecret: run.secret,
+          }),
+        ),
       readiness:
         role === 'api'
           ? {
               kind: 'poll',
-              probe: () => this.deps.probeHealth(context.apiPort),
+              probe: () => this.deps.probeHealth(run.apiPort, run.secret),
               intervalMs: 250,
               timeoutMs: 90_000,
             }
@@ -528,6 +559,7 @@ export class Controller {
         log.write(`${stream === 'stderr' ? '[stderr] ' : ''}${line}\n`);
       },
       onState: (state, detail) => {
+        if (role === 'api') this.followApi(state, run);
         this.onProcessState(role, state, detail);
       },
       log: (message) => {
@@ -553,21 +585,34 @@ export class Controller {
       });
   }
 
+  /** The local server forwards to the API only while it is running, and under its port of the moment. */
+  private followApi(state: ProcessState, run: ServiceRun): void {
+    if (state === 'running') {
+      this.apiPort = run.apiPort;
+      this.proxySecret = run.secret;
+    } else {
+      this.apiPort = null;
+      this.proxySecret = null;
+    }
+  }
+
   private async startServices(): Promise<void> {
-    const apiPort = await findFreePort();
-    const context = this.runtimeContext(apiPort);
+    // New for every start of the services: nothing a previous run learned is worth anything now.
+    const run: ServiceRun = { apiPort: 0, secret: randomBytes(32).toString('hex') };
     this.reportedFailure = false;
-    const api = this.makeSupervisor('api', context);
-    const worker = this.makeSupervisor('worker', context);
+    const api = this.makeSupervisor('api', run);
+    const worker = this.makeSupervisor('worker', run);
     this.api = api;
     this.worker = worker;
     await Promise.all([api.start(), worker.start()]);
-    this.apiPort = apiPort;
-    this.log(`api on port ${String(apiPort)}, worker running`);
+    this.apiPort = run.apiPort;
+    this.proxySecret = run.secret;
+    this.log(`api on port ${String(run.apiPort)}, worker running`);
   }
 
   private async stopServices(): Promise<void> {
     this.apiPort = null;
+    this.proxySecret = null;
     const { api, worker } = this;
     this.api = null;
     this.worker = null;

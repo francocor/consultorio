@@ -173,6 +173,27 @@ describe('the desktop profile', () => {
     expect(loadConfig({ ...desktop, TRUST_PROXY: 'false' }).trustProxy).toBe(false);
   });
 
+  it('reads the secret of the run that the local server of the shell proves itself with', () => {
+    const secret = 'a-per-run-secret-0123456789-abcdefghijklmnop';
+
+    expect(loadConfig({ ...desktop, DESKTOP_PROXY_SECRET: secret }).desktopProxySecret).toBe(
+      secret,
+    );
+    expect(loadConfig(desktop).desktopProxySecret).toBeUndefined();
+    // The worker and the commands run without it; only the API refuses to start (see main.ts).
+    expect(() => loadConfig({ ...desktop, DESKTOP_PROXY_SECRET: 'too-short' })).toThrow(
+      /DESKTOP_PROXY_SECRET/,
+    );
+  });
+
+  it('refuses the secret outside the desktop profile, where nothing would check it', () => {
+    const secret = 'a-per-run-secret-0123456789-abcdefghijklmnop';
+
+    expect(() => loadConfig({ ...hostedSingle, DESKTOP_PROXY_SECRET: secret })).toThrow(
+      /DESKTOP_PROXY_SECRET/,
+    );
+  });
+
   it('still needs the address pepper', () => {
     expect(() => loadConfig(omit(desktop, 'ADDRESS_HASH_PEPPER'))).toThrow(/ADDRESS_HASH_PEPPER/);
   });

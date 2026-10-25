@@ -18,6 +18,9 @@ import { routeOf } from './proxy.js';
 import { resolveInside } from './static-files.js';
 import { TokenVault } from './tokens.js';
 
+/** The secret of the run that the API checks on every request. */
+const PROXY_SECRET = 'run-secret-0123456789-abcdefghijklmnopqrstuvwxyz';
+
 const CSP =
   "default-src 'self'; script-src 'self' 'sha256-abc'; upgrade-insecure-requests; frame-ancestors 'none'";
 
@@ -118,6 +121,7 @@ beforeAll(async () => {
     webRoot: web,
     contentSecurityPolicy: CSP,
     apiPort: () => (apiAvailable ? apiPort : null),
+    proxySecret: () => (apiAvailable ? PROXY_SECRET : null),
     pages: createInternalPages(vault, actions),
   });
   await server.listen();
@@ -304,6 +308,21 @@ describe('the proxy to the API', () => {
     expect(seen[0]?.headers.host).toBe(`localhost:${String(port)}`);
     expect(seen[0]?.headers.origin).toBe(origin);
     expect(seen[0]?.headers.cookie).toBe('sid=abc');
+  });
+
+  it('adds the secret of the run to what it forwards, and replaces one the browser sent', async () => {
+    seen.length = 0;
+
+    await call('/api/echo', {
+      method: 'POST',
+      headers: { 'x-consulvia-proxy': 'forged-by-the-page', 'content-type': 'application/json' },
+      body: '{}',
+    });
+    await call('/manifest.webmanifest');
+
+    expect(seen).toHaveLength(2);
+    expect(seen[0]?.headers['x-consulvia-proxy']).toBe(PROXY_SECRET);
+    expect(seen[1]?.headers['x-consulvia-proxy']).toBe(PROXY_SECRET);
   });
 
   it('answers /api/health from the API', async () => {

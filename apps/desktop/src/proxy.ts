@@ -43,9 +43,14 @@ export function routeOf(pathAndQuery: string): Route {
   return null;
 }
 
+/** The header that tells the API a request came through this server (see `desktop-guard.ts` in the API). */
+export const PROXY_HEADER = 'x-consulvia-proxy';
+
 export interface ProxyOptions {
   /** The port the API listens on now; `null` while it is not running. */
   apiPort: () => number | null;
+  /** The secret of this run that the API demands; `null` while the API is not running. */
+  proxySecret: () => string | null;
   /** Shown when the API is not reachable. */
   unavailable: (response: ServerResponse) => void;
   log?: (message: string) => void;
@@ -60,15 +65,18 @@ export function forwardToApi(
   route: NonNullable<Route>,
 ): void {
   const port = options.apiPort();
-  if (port === null) {
+  const secret = options.proxySecret();
+  if (port === null || secret === null) {
     options.unavailable(response);
     return;
   }
   const headers: Record<string, string | string[]> = {};
   for (const [name, value] of Object.entries(request.headers)) {
-    if (value === undefined || HOP_BY_HOP.has(name)) continue;
+    // A page cannot pass for this server: whatever it sent under our header is dropped.
+    if (value === undefined || HOP_BY_HOP.has(name) || name === PROXY_HEADER) continue;
     headers[name] = value;
   }
+  headers[PROXY_HEADER] = secret;
   const upstream = httpRequest(
     {
       host: '127.0.0.1',

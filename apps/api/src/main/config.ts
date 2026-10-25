@@ -184,6 +184,11 @@ const envSchema = z
     /** How long a locked account stays locked. */
     AUTH_LOCKOUT_MINUTES: z.coerce.number().int().min(1).max(1440).default(15),
     LOG_LEVEL: z.enum(LOG_LEVELS).default('info'),
+    /**
+     * Desktop profile, API process: a random value per run of the shell. The API serves only the requests
+     * that carry it (`x-consulvia-proxy`), because any program of the PC can connect to a loopback port.
+     */
+    DESKTOP_PROXY_SECRET: z.string().min(32).max(256).optional(),
     /** Every interface by default; the loopback in the desktop profile, which accepts nothing else. */
     HOST: z.string().min(1).optional(),
     PORT: z.coerce.number().int().min(1).max(65535).default(3000),
@@ -202,6 +207,14 @@ const envSchema = z
     } else {
       require('SINGLE_TENANT_SLUG', 'is required when DEPLOYMENT_MODE is single');
       require('PUBLIC_URL', 'is required when DEPLOYMENT_MODE is single');
+    }
+
+    if (!desktop && env.DESKTOP_PROXY_SECRET !== undefined) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['DESKTOP_PROXY_SECRET'],
+        message: 'is only used when DEPLOYMENT_PROFILE is desktop',
+      });
     }
 
     if (desktop) {
@@ -499,6 +512,8 @@ export interface Config {
   readonly logLevel: (typeof LOG_LEVELS)[number];
   readonly host: string;
   readonly port: number;
+  /** Desktop profile: the secret of this run of the shell. The API process refuses to start without it. */
+  readonly desktopProxySecret?: string;
 }
 
 /** Raised when the environment is invalid. The message names variables, never their values. */
@@ -657,5 +672,8 @@ export function loadConfig(
     logLevel: value.LOG_LEVEL,
     host: value.HOST ?? (value.DEPLOYMENT_PROFILE === 'desktop' ? '127.0.0.1' : '0.0.0.0'),
     port: value.PORT,
+    ...(value.DESKTOP_PROXY_SECRET === undefined
+      ? {}
+      : { desktopProxySecret: value.DESKTOP_PROXY_SECRET }),
   };
 }

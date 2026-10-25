@@ -70,6 +70,7 @@ import {
 import { createFileResourceRegistry } from '../platform/files/file-resources.js';
 import { fileRoutes } from '../platform/files/file-routes.js';
 import { uploadReceiverRoutes } from '../platform/files/upload-routes.js';
+import type { DesktopGuardOptions } from '../platform/http/desktop-guard.js';
 import type { HealthDeps } from '../platform/http/health.js';
 import { createPublicOrigins } from '../platform/http/public-origin.js';
 import { createMemoryRateLimitStore, type RateLimit } from '../platform/http/rate-limit.js';
@@ -95,6 +96,8 @@ export interface ApplicationOptions {
   logLevel?: string;
   logStream?: Writable;
   trustProxy: TrustProxySetting;
+  /** Desktop profile: only requests that come through the shell's local server are served. */
+  desktopGuard?: DesktopGuardOptions;
   cookieSecure: boolean;
   /**
    * Single mode only (required there): the origin the deployment is served from, such as
@@ -470,6 +473,7 @@ export function createApplication(options: ApplicationOptions): FastifyInstance 
     health: options.health,
     deployment: options.deployment,
     trustProxy: options.trustProxy,
+    ...(options.desktopGuard ? { desktopGuard: options.desktopGuard } : {}),
     rateLimit: {
       store: rateLimitStore,
       perClient: limits.perClient,

@@ -1,5 +1,4 @@
 import { spawn } from 'node:child_process';
-import { get } from 'node:http';
 import { join } from 'node:path';
 
 import {
@@ -21,6 +20,7 @@ import { createApiCommands } from './api-commands.js';
 import { parseArgs, type LaunchRequest } from './cli-args.js';
 import { ConfigStore, type Cipher } from './config-store.js';
 import { Controller, type ShellUi } from './controller.js';
+import { probeApiHealth } from './health-probe.js';
 import { decideNavigation, decideWindowOpen } from './navigation-policy.js';
 import { resolveDataPaths } from './paths.js';
 import { findFreePort } from './ports.js';
@@ -300,23 +300,7 @@ async function run(): Promise<void> {
         stdio: ['pipe', 'pipe', 'pipe', 'ipc'],
         windowsHide: true,
       }),
-    probeHealth: (port) =>
-      new Promise((resolve) => {
-        const request = get(
-          { host: '127.0.0.1', port, path: '/health', timeout: 2_000 },
-          (response) => {
-            response.resume();
-            resolve(response.statusCode === 200);
-          },
-        );
-        request.on('timeout', () => {
-          request.destroy();
-          resolve(false);
-        });
-        request.on('error', () => {
-          resolve(false);
-        });
-      }),
+    probeHealth: (port, secret) => probeApiHealth(port, secret),
     createCluster: (secrets) =>
       new PostgresCluster({
         binDir: resources.pgBinDir,

@@ -28,6 +28,8 @@ export interface LocalServerOptions {
   contentSecurityPolicy: string;
   /** The port of the API now, or `null` while it is not up. */
   apiPort: () => number | null;
+  /** The secret of this run that the API demands of every request; `null` while the API is not up. */
+  proxySecret: () => string | null;
   pages: InternalPages;
   log?: (message: string) => void;
 }
@@ -71,6 +73,7 @@ export function createLocalServer(options: LocalServerOptions) {
       forwardToApi(
         {
           apiPort: options.apiPort,
+          proxySecret: options.proxySecret,
           unavailable,
           ...(options.log ? { log: options.log } : {}),
         },

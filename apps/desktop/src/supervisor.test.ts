@@ -161,6 +161,43 @@ describe('a process that dies', () => {
     expect(states.at(-1)).toEqual(['failed', expect.stringContaining('boom 3') as string]);
   });
 
+  it('prepares before every launch, so a restart can choose what the failed start could not', async () => {
+    const prepared: number[] = [];
+    const api = supervisor({
+      backoffMs: [1_000],
+      prepare: () => {
+        prepared.push(children.length);
+        return Promise.resolve();
+      },
+    });
+    healthy = false;
+    const ready = api.start();
+    ready.catch(() => undefined);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(prepared).toEqual([0]);
+    expect(children).toHaveLength(1);
+
+    children[0]?.exit(1);
+    await vi.advanceTimersByTimeAsync(1_000);
+
+    expect(prepared).toEqual([0, 1]);
+    expect(children).toHaveLength(2);
+  });
+
+  it('counts a failed preparation as a failure of the start, and launches nothing', async () => {
+    const api = supervisor({
+      backoffMs: [],
+      prepare: () => Promise.reject(new Error('no free port')),
+    });
+    const ready = api.start();
+    ready.catch(() => undefined);
+
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(children).toHaveLength(0);
+    await expect(ready).rejects.toThrow(/no free port/);
+  });
+
   it('forgets its failures once it has been healthy for a while', async () => {
     const api = supervisor({ backoffMs: [1_000, 2_000], stableAfterMs: 60_000 });
     const ready = api.start();

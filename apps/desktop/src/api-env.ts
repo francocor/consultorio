@@ -54,6 +54,8 @@ export interface RuntimeContext {
   serverPort: number;
   /** The slug to use (the setup screen may set it before it is stored). */
   slug?: string;
+  /** Random per run: the API serves only requests that carry it (see `desktop-guard.ts` in the API). */
+  proxySecret?: string;
 }
 
 export function publicUrl(serverPort: number): string {
@@ -105,6 +107,7 @@ export function longRunningEnvironment(
   env['LOG_LEVEL'] = 'info';
   if (role === 'api') {
     env['PORT'] = String(context.apiPort);
+    if (context.proxySecret !== undefined) env['DESKTOP_PROXY_SECRET'] = context.proxySecret;
   } else {
     env['AUDIT_SEALER_DATABASE_URL'] = databaseUrl(
       'audit_sealer',

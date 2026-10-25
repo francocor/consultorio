@@ -80,6 +80,7 @@ interface Harness {
   restores: string[][];
   restoreEnvs: NodeJS.ProcessEnv[];
   dumpCalls: { args: string[]; env: NodeJS.ProcessEnv }[];
+  probes: { port: number; secret: string }[];
 }
 
 let harness: Harness;
@@ -152,6 +153,7 @@ function build(folder: string, options: { testMode?: boolean } = {}): Harness {
   const restores: string[][] = [];
   const restoreEnvs: NodeJS.ProcessEnv[] = [];
   const dumpCalls: { args: string[]; env: NodeJS.ProcessEnv }[] = [];
+  const probes: Harness['probes'] = [];
   let dumps = 0;
 
   const ui: ShellUi = {
@@ -289,7 +291,10 @@ function build(folder: string, options: { testMode?: boolean } = {}): Harness {
       if (role === 'worker') queueMicrotask(() => child.stdout.write('{"msg":"worker started"}\n'));
       return child;
     },
-    probeHealth: () => Promise.resolve(true),
+    probeHealth: (port, secret) => {
+      probes.push({ port, secret });
+      return Promise.resolve(true);
+    },
     createCluster: () => cluster,
     logs: {
       shell: createRotatingLog(join(paths.logs, 'shell.log')),
@@ -323,6 +328,7 @@ function build(folder: string, options: { testMode?: boolean } = {}): Harness {
     restores,
     restoreEnvs,
     dumpCalls,
+    probes,
   };
   return result;
 }
@@ -467,6 +473,41 @@ describe('the first run', () => {
     expect(harness.spawned.map((child) => child.role).sort()).toEqual(['api', 'worker']);
     expect(harness.controller.phase).toBe('ready');
     expect(harness.config().provisioned).toBe(true);
+  });
+
+  it('gives the API, and only the API, a secret of this run, and checks the proof with the same one', async () => {
+    await harness.controller.start();
+    const url = setupUrl() ?? '';
+    await post(new URL('/__setup', url).href, tokenOf(url), form);
+
+    const api = harness.spawned.find((child) => child.role === 'api');
+    const worker = harness.spawned.find((child) => child.role === 'worker');
+    const secret = api?.env['DESKTOP_PROXY_SECRET'] ?? '';
+    expect(secret).toMatch(/^[0-9a-f]{64}$/);
+    expect(worker?.env['DESKTOP_PROXY_SECRET']).toBeUndefined();
+    expect(harness.probes.length).toBeGreaterThan(0);
+    for (const probe of harness.probes) {
+      expect(probe).toEqual({ port: Number(api?.env['PORT']), secret });
+    }
+    // Nothing that is written down or shown carries it.
+    expect(readFileSync(join(harness.paths.logs, 'shell.log'), 'utf8')).not.toContain(secret);
+  });
+
+  it('uses a new secret and a port of its own every time the services start', async () => {
+    await harness.controller.start();
+    const url = setupUrl() ?? '';
+    await post(new URL('/__setup', url).href, tokenOf(url), form);
+    const other = build(mkdtempSync(join(tmpdir(), 'consulvia-controller-')));
+    await other.controller.start();
+    const otherUrl = other.loadedUrls.find((candidate) => candidate.includes('/__setup')) ?? '';
+    await post(new URL('/__setup', otherUrl).href, tokenOf(otherUrl), form);
+
+    const first = harness.spawned.find((child) => child.role === 'api')?.env[
+      'DESKTOP_PROXY_SECRET'
+    ];
+    const second = other.spawned.find((child) => child.role === 'api')?.env['DESKTOP_PROXY_SECRET'];
+
+    expect(first).not.toBe(second);
   });
 
   it('turns the setup screen into a 404 once the organization exists', async () => {
