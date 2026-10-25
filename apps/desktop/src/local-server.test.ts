@@ -556,12 +556,21 @@ describe('the pages of the shell', () => {
     const headers = { ...json, 'x-consulvia-token': token };
 
     const page = await call(`/__reset?t=${token}`);
+    const withoutKey = await call('/__reset', {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        password: 'otra frase larga para entrar',
+        passwordConfirmation: 'otra frase larga para entrar',
+      }),
+    });
     const cleared = await call('/__reset', {
       method: 'POST',
       headers,
       body: JSON.stringify({
         password: 'otra frase larga para entrar',
         passwordConfirmation: 'otra frase larga para entrar',
+        recoveryKey: 'ABCDE-FGHJK',
         clearSecondFactor: true,
       }),
     });
@@ -571,10 +580,16 @@ describe('the pages of the shell', () => {
       body: JSON.stringify({
         password: 'otra frase larga para entrar',
         passwordConfirmation: 'otra',
+        recoveryKey: 'ABCDE-FGHJK',
       }),
     });
 
     expect(page.body.toString()).toContain('Quitar también la verificación en dos pasos');
+    expect(page.body.toString()).toContain('name="recoveryKey"');
+    expect(withoutKey.status).toBe(422);
+    expect(JSON.parse(withoutKey.body.toString())).toMatchObject({
+      errors: { recoveryKey: expect.any(String) as string },
+    });
     expect(JSON.parse(cleared.body.toString())).toMatchObject({
       ok: true,
       email: 'ana@clinica.example',

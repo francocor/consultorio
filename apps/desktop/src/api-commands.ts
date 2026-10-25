@@ -61,6 +61,8 @@ export interface ResetPasswordInput {
 export interface ResetPasswordResult {
   email: string;
   secondFactorCleared: boolean;
+  /** True when the notice to the owner was written to the outbox. */
+  ownerNotified: boolean;
 }
 
 export interface ApiCommandsOptions {
@@ -154,7 +156,11 @@ export function createApiCommands(options: ApiCommandsOptions) {
       if (body?.['result'] !== 'reset' || typeof email !== 'string') {
         throw new ApiCommandError('reset-password', EXIT.ok, null, 'unexpected output');
       }
-      return { email, secondFactorCleared: body['secondFactorCleared'] === true };
+      return {
+        email,
+        secondFactorCleared: body['secondFactorCleared'] === true,
+        ownerNotified: body['ownerNotified'] === true,
+      };
     },
   };
 }

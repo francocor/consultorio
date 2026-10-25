@@ -114,8 +114,9 @@ export function renderResetPage(): string {
     'Consulvia: restablecer contraseña',
     `<div id="step-form">
 <h1>Restablecer la contraseña de la propietaria</h1>
-<p class="lead">Elija una contraseña nueva para la cuenta de la propietaria del consultorio. Se cierran las sesiones abiertas de esa cuenta.</p>
+<p class="lead">Elija una contraseña nueva para la cuenta de la propietaria del consultorio. Se cierran las sesiones abiertas de esa cuenta y se le avisa por correo.</p>
 <form id="form" data-endpoint="/__reset" novalidate>
+${field({ name: 'recoveryKey', label: 'Clave de recuperación', autocomplete: 'off', hint: 'Es la clave de 30 letras y números que se mostró al configurar Consulvia. Sin ella no se puede restablecer la contraseña.', maxlength: 64 })}
 ${field({ name: 'password', label: 'Contraseña nueva', type: 'password', autocomplete: 'new-password', hint: 'Al menos 12 caracteres. Una frase larga es una buena opción.', maxlength: 256 })}
 ${field({ name: 'passwordConfirmation', label: 'Repita la contraseña nueva', type: 'password', autocomplete: 'new-password', maxlength: 256 })}
 <div class="field check">

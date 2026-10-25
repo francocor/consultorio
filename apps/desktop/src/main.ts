@@ -371,7 +371,7 @@ async function run(): Promise<void> {
         await controller.restoreFlow(request.file);
         return;
       case 'reset-password':
-        controller.openResetPassword();
+        void controller.openResetPassword();
         return;
       case 'show':
         controller.openApp();
@@ -426,7 +426,7 @@ async function run(): Promise<void> {
           label: TEXT.tray.resetPassword,
           enabled: ready,
           click: () => {
-            controller.openResetPassword();
+            void controller.openResetPassword();
           },
         },
         { label: TEXT.tray.recoveryKey, click: () => void controller.showRecoveryKey() },

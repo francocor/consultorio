@@ -4,6 +4,7 @@ import { createTenantKeys } from '../../platform/crypto/tenant-keys.js';
 import { createRuntimeDb, type DbHandle } from '../../platform/db/pool.js';
 import { createWithTenant } from '../../platform/db/tenant-context.js';
 import { ConfigError, loadConfig, type Config } from '../config.js';
+import { createConfiguredEmail } from '../email.js';
 import { createKeyManagement } from '../key-management.js';
 import { loadPasswordValidator } from '../password-validator.js';
 
@@ -61,6 +62,8 @@ export async function openInstall(
         keys: createTenantKeys({ kms: createKeyManagement(config.kms) }),
         validator: await loadPasswordValidator({ breachCheck: false }),
         clock: () => new Date(),
+        // Only the outbox of the desktop profile: a notice never goes to a mail server from a command.
+        email: config.outbox ? createConfiguredEmail(undefined, config.outbox).sender : undefined,
       },
     };
   } catch (error) {

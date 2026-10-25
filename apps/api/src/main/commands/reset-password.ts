@@ -14,7 +14,9 @@ import { EXIT, finish, type CommandIo } from './io.js';
  * input with `--stdin`. `clearSecondFactor` (`RESET_CLEAR_SECOND_FACTOR`) also removes the owner's second
  * factor and recovery codes, for an owner who lost the phone.
  *
- * Output: `{"result":"reset","email":"...","secondFactorCleared":false}` and exit 0. The sessions of the
+ * Output: `{"result":"reset","email":"...","secondFactorCleared":false,"ownerNotified":true}` and exit 0.
+ * The trail files the reset under the system (not the owner) with the reason `local_reset`, and the owner
+ * gets a notice in the outbox folder (`ownerNotified` says whether it could be written). The sessions of the
  * owner end, a lock is lifted, the second factor stays unless it was asked to go. Anything else is a
  * JSON line on the standard error and one of the codes of `EXIT`.
  */
@@ -45,6 +47,7 @@ export async function runResetPassword(io: CommandIo): Promise<number> {
       result: 'reset',
       email: result.email,
       secondFactorCleared: result.secondFactorCleared,
+      ownerNotified: result.ownerNotified,
     });
   } catch (error) {
     return reportFailure(io, error);

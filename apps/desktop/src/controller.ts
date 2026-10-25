@@ -11,6 +11,7 @@ import {
   type LongRunningRole,
   type RuntimeContext,
 } from './api-env.js';
+import { verifyRecoveryKey } from './backup-crypto.js';
 import {
   BackupError,
   createBackup,
@@ -28,6 +29,7 @@ import {
   createInternalPages,
   PURPOSE,
   type PageActions,
+  type ResetOutcome,
   type SetupOutcome,
 } from './internal-pages.js';
 import { createLocalServer, loadContentSecurityPolicy, type LocalServer } from './local-server.js';
@@ -120,6 +122,9 @@ export class ShellError extends Error {
 
 const HOUR_MS = 60 * 60 * 1000;
 
+/** Wrong recovery keys the reset page accepts before its address stops working. */
+const MAX_RESET_ATTEMPTS = 5;
+
 /** Where a backup is restored before it replaces the live database. */
 const SCRATCH_DATABASE = 'consultorio_restore';
 
@@ -177,6 +182,8 @@ export class Controller {
   private lastDailyFailure: string | null = null;
   private commonPasswordSet: ReadonlySet<string> | null = null;
   private pendingRestore: { archive: string } | null = null;
+  /** Wrong recovery keys typed on the reset page that is open. */
+  private resetAttempts = 0;
   private readonly listeners = new Set<() => void>();
 
   constructor(private readonly deps: ControllerDeps) {}
@@ -844,11 +851,24 @@ export class Controller {
 
   // ---- the owner's password ---------------------------------------------------------------------
 
-  openResetPassword(): void {
+  async openResetPassword(): Promise<void> {
     if (this.currentPhase !== 'ready') {
-      void this.deps.ui.message('info', TEXT.tray.resetPassword, TEXT.reset.notReady);
+      await this.deps.ui.message('info', TEXT.tray.resetPassword, TEXT.reset.notReady);
       return;
     }
+    // The tray is open to whoever sits at the Windows session: ask before a page that can take over the
+    // owner's account is offered at all (the page then asks for the recovery key).
+    if (!this.deps.testMode) {
+      const confirmed = await this.deps.ui.confirm({
+        title: TEXT.reset.confirmTitle,
+        message: TEXT.reset.confirmMessage,
+        detail: TEXT.reset.confirmDetail,
+        confirm: TEXT.reset.confirmButton,
+        cancel: TEXT.reset.cancelButton,
+      });
+      if (!confirmed) return;
+    }
+    this.resetAttempts = 0;
     const token = this.vault.issue(PURPOSE.reset, 15 * 60_000);
     const url = `${this.appUrl}/__reset?t=${token}`;
     this.deps.ui.openAuxWindow(url, TEXT.reset.windowTitle);
@@ -868,13 +888,26 @@ export class Controller {
       isProvisioned: () => this.loaded?.provisioned ?? false,
       commonPasswords: () => this.commonPasswords(),
       setup: (values) => this.runSetup(values),
-      resetPassword: async (input) => {
+      resetPassword: async (input): Promise<ResetOutcome> => {
         // A backup reads the database and does not mind; a restore is replacing it.
         if (this.restoring) return { ok: false, message: TEXT.reset.generic };
+        if (!verifyRecoveryKey(input.recoveryKey, this.config.secrets.recoveryKeyHash)) {
+          this.resetAttempts += 1;
+          this.log(`reset refused: wrong recovery key (attempt ${String(this.resetAttempts)})`);
+          if (this.resetAttempts >= MAX_RESET_ATTEMPTS) {
+            this.vault.revoke(PURPOSE.reset);
+            this.deps.ui.closeAuxWindow();
+            return { ok: false, message: TEXT.reset.tooManyAttempts };
+          }
+          return { ok: false, errors: { recoveryKey: TEXT.reset.wrongKey } };
+        }
         const outcome = await (async () => {
           try {
             const context = this.runtimeContext(this.apiPort ?? 0);
-            return await this.deps.commands.resetPassword(commandEnvironment(context), input);
+            return await this.deps.commands.resetPassword(commandEnvironment(context), {
+              newPassword: input.newPassword,
+              clearSecondFactor: input.clearSecondFactor,
+            });
           } catch (error) {
             return error instanceof Error ? error : new Error(String(error));
           }
@@ -893,7 +926,11 @@ export class Controller {
           this.log(`reset-password failed: ${outcome.message}`);
           return { ok: false, message: TEXT.reset.generic };
         }
-        this.log('the password of the owner was reset');
+        this.log(
+          `the password of the owner was reset (owner notified: ${String(outcome.ownerNotified)})`,
+        );
+        // One reset per page: the address is good for nothing once it has done its job.
+        this.vault.revoke(PURPOSE.reset);
         return { ok: true, email: outcome.email, secondFactorCleared: outcome.secondFactorCleared };
       },
       submitRecoveryKey: async (key) => {

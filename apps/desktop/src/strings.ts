@@ -69,6 +69,15 @@ export const TEXT = {
     noOwner: 'No se encontró la cuenta de la propietaria.',
     generic: 'No se pudo restablecer la contraseña. Intente de nuevo.',
     notReady: 'Consulvia todavía se está iniciando. Espere unos segundos e intente de nuevo.',
+    confirmTitle: 'Restablecer contraseña',
+    confirmMessage: 'Va a restablecer la contraseña de la propietaria del consultorio.',
+    confirmDetail:
+      'Se cerrarán todas sus sesiones y se le avisará por correo. Para continuar hace falta la clave de recuperación que se mostró al configurar Consulvia.',
+    confirmButton: 'Continuar',
+    cancelButton: 'Cancelar',
+    wrongKey: 'La clave de recuperación no es correcta.',
+    tooManyAttempts:
+      'Se superó el número de intentos. Cierre esta ventana y vuelva a empezar desde el icono de Consulvia.',
   },
 
   recoveryKey: {

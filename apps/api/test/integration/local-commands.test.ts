@@ -1,4 +1,7 @@
 import { randomBytes } from 'node:crypto';
+import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 import { sql } from 'drizzle-orm';
 import type { FastifyInstance } from 'fastify';
@@ -21,12 +24,16 @@ let counter = 0;
 const PASSWORD = 'una frase larga y privada del consultorio';
 const ORIGIN = 'http://127.0.0.1:41234';
 
+/** Where the notices of the commands go unless a test looks at them. */
+const sharedOutbox = mkdtempSync(join(tmpdir(), 'consulvia-outbox-shared-'));
+
 beforeAll(() => {
   runtime = createRuntimeDb(inject('runtimeUrl'));
 });
 
 afterAll(async () => {
   await runtime.close();
+  rmSync(sharedOutbox, { recursive: true, force: true });
 });
 
 /** The environment the shell gives every process of an install: only the slug differs per test. */
@@ -44,7 +51,7 @@ function installEnv(slug: string): NodeJS.ProcessEnv {
     ADDRESS_HASH_PEPPER: 'placeholder-pepper-0123456789-abcdefghij',
     STORAGE_DIR: process.platform === 'win32' ? 'C:\\Consulvia\\files' : '/var/consulvia/files',
     STORAGE_UPLOAD_SECRET: 'placeholder-upload-secret-0123456789-abcdef',
-    OUTBOX_DIR: process.platform === 'win32' ? 'C:\\Consulvia\\outbox' : '/var/consulvia/outbox',
+    OUTBOX_DIR: sharedOutbox,
   };
 }
 
@@ -291,6 +298,7 @@ describe('reset-password', () => {
       result: 'reset',
       email,
       secondFactorCleared: false,
+      ownerNotified: true,
     });
     expect(fromStdin.code).toBe(EXIT.ok);
     expect(fromEnv.stdout + fromEnv.stderr + fromStdin.stdout + fromStdin.stderr).not.toContain(
@@ -329,6 +337,95 @@ describe('reset-password', () => {
     const app = await desktopApp(slug);
     expect(await signIn(app, `ana.${slug}@clinica.example`, NEW_PASSWORD)).toBe(200);
     await app.close();
+  });
+
+  it('files the reset under the system, not under the owner, with the reason and without a password', async () => {
+    const slug = freshSlug();
+    const created = await run('provision', { env: provisionEnv(slug) });
+    const tenantId = String(lastJson(created.stdout)['tenantId']);
+
+    await run('reset-password', {
+      env: {
+        ...installEnv(slug),
+        RESET_NEW_PASSWORD: NEW_PASSWORD,
+        RESET_CLEAR_SECOND_FACTOR: 'true',
+      },
+    });
+
+    const rows = await runtime.db.transaction(async (tx) => {
+      await tx.execute(sql`select set_config('app.tenant_id', ${tenantId}, true)`);
+      return tx.execute<{
+        action: string;
+        actor_user_id: string | null;
+        reason: string | null;
+        user_agent: string | null;
+        resource_id: string | null;
+      }>(
+        sql`select action, actor_user_id, reason, user_agent, resource_id from audit_event
+            where action in ('auth.password.reset_completed', 'auth.2fa.disabled') order by action`,
+      );
+    });
+    expect(rows.rows).toHaveLength(2);
+    for (const row of rows.rows) {
+      expect(row.actor_user_id).toBeNull();
+      expect(row.reason).toBe('local_reset');
+      expect(row.user_agent).toBe('desktop-shell');
+      expect(row.resource_id).not.toBeNull();
+    }
+  });
+
+  it('tells the owner by email that the password was reset here, and never says the password', async () => {
+    const slug = freshSlug();
+    await run('provision', { env: provisionEnv(slug) });
+    const outbox = mkdtempSync(join(tmpdir(), 'consulvia-outbox-'));
+    try {
+      const result = await run('reset-password', {
+        env: { ...installEnv(slug), OUTBOX_DIR: outbox, RESET_NEW_PASSWORD: NEW_PASSWORD },
+      });
+
+      expect(result.code).toBe(EXIT.ok);
+      expect(lastJson(result.stdout)).toMatchObject({ result: 'reset', ownerNotified: true });
+      const messages = readdirSync(outbox).filter((name) => name.endsWith('.json'));
+      expect(messages).toHaveLength(1);
+      const entry = JSON.parse(readFileSync(join(outbox, messages[0] ?? ''), 'utf8')) as {
+        to: string;
+        subject: string;
+      };
+      expect(entry.to).toBe(`ana.${slug}@clinica.example`);
+      const eml = readFileSync(
+        join(outbox, (messages[0] ?? '').replace(/\.json$/, '.eml')),
+        'utf8',
+      );
+      expect(eml).not.toContain(NEW_PASSWORD);
+    } finally {
+      rmSync(outbox, { recursive: true, force: true });
+    }
+  });
+
+  it('still resets the password when the notice cannot be written', async () => {
+    const slug = freshSlug();
+    await run('provision', { env: provisionEnv(slug) });
+    const blocker = mkdtempSync(join(tmpdir(), 'consulvia-outbox-'));
+    // A file where the folder should be: the notice cannot be written.
+    const notAFolder = join(blocker, 'file');
+    writeFileSync(notAFolder, 'x');
+    try {
+      const result = await run('reset-password', {
+        env: {
+          ...installEnv(slug),
+          OUTBOX_DIR: join(notAFolder, 'outbox'),
+          RESET_NEW_PASSWORD: NEW_PASSWORD,
+        },
+      });
+
+      expect(result.code).toBe(EXIT.ok);
+      expect(lastJson(result.stdout)).toMatchObject({ result: 'reset', ownerNotified: false });
+      const app = await desktopApp(slug);
+      expect(await signIn(app, `ana.${slug}@clinica.example`, NEW_PASSWORD)).toBe(200);
+      await app.close();
+    } finally {
+      rmSync(blocker, { recursive: true, force: true });
+    }
   });
 
   it('exits 2 for a password that breaks the rules, and 4 when there is no such organization', async () => {

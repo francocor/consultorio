@@ -7,6 +7,7 @@ import type { TenantKeys } from '../../../platform/crypto/tenant-keys.js';
 import type { Db } from '../../../platform/db/pool.js';
 import type { WithTenant } from '../../../platform/db/tenant-context.js';
 import { uuidv7 } from '../../../platform/db/uuid.js';
+import type { EmailSender } from '../../../platform/mail/email-sender.js';
 import { membership, userAccount } from '../../schema/identity.js';
 import { location, tenant } from '../../schema/tenant.js';
 
@@ -30,6 +31,8 @@ export interface LocalProvisionDeps {
   keys: TenantKeys;
   validator: PasswordValidator;
   clock: () => Date;
+  /** Where a notice to the owner goes (the outbox folder of the desktop profile). Without it, none is sent. */
+  email?: EmailSender | undefined;
 }
 
 export type LocalProvisionResult =

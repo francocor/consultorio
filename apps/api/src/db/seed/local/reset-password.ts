@@ -25,6 +25,34 @@ export interface ResetOwnerPasswordResult {
   email: string;
   /** True when the second factor was removed. */
   secondFactorCleared: boolean;
+  /** True when the notice to the owner was written. A failure to write it never undoes the reset. */
+  ownerNotified: boolean;
+}
+
+/**
+ * The reset is done by whoever sits at the PC, not by the owner: the trail files it under the system and
+ * says where it came from, so it cannot be mistaken for the owner changing their own password.
+ */
+const RESET_ACTOR: AuditActor = {
+  userId: null,
+  actingRole: null,
+  ip: null,
+  userAgent: 'desktop-shell',
+  requestId: null,
+};
+
+function noticeText(clearedSecondFactor: boolean, at: Date): string {
+  return [
+    'Hola,',
+    '',
+    `La contraseña de su cuenta de Consulvia se restableció desde la computadora del consultorio el ${at.toISOString()}.`,
+    clearedSecondFactor
+      ? 'También se quitó la verificación en dos pasos: vuelva a activarla desde su perfil.'
+      : 'La verificación en dos pasos no cambió.',
+    'Se cerraron todas las sesiones abiertas de su cuenta.',
+    '',
+    'Si usted no pidió este cambio, avise a quien administra la computadora: quien puede hacerlo tiene acceso al programa.',
+  ].join('\n');
 }
 
 /**
@@ -65,13 +93,7 @@ export async function resetOwnerPassword(
   const sessions = createSessionService({ clock });
   const lockout = createLockout({ clock });
   const twoFactor = createTwoFactor({ keys: deps.keys, withTenant: deps.withTenant, clock });
-  const actor: AuditActor = {
-    userId: owner.userId,
-    actingRole: null,
-    ip: null,
-    userAgent: 'reset-owner-password',
-    requestId: null,
-  };
+  const actor = RESET_ACTOR;
   // The account policy only lets a transaction change the account it acts as.
   await deps.withTenant({ tenantId: input.tenantId, userId: owner.userId }, async (tx) => {
     await tx
@@ -100,5 +122,19 @@ export async function resetOwnerPassword(
       });
     }
   });
-  return { email: owner.email, secondFactorCleared: input.clearSecondFactor === true };
+  const cleared = input.clearSecondFactor === true;
+  let ownerNotified = false;
+  if (deps.email) {
+    try {
+      await deps.email.send({
+        to: owner.email,
+        subject: 'Consulvia: se restableció la contraseña de su cuenta',
+        text: noticeText(cleared, clock()),
+      });
+      ownerNotified = true;
+    } catch {
+      // The reset is already done and filed: a notice that cannot be written must not undo it.
+    }
+  }
+  return { email: owner.email, secondFactorCleared: cleared, ownerNotified };
 }

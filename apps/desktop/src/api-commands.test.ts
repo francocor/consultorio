@@ -70,7 +70,10 @@ describe('the commands of the API bundle', () => {
 
   it('asks reset-password to clear the second factor only when told to', async () => {
     const { runner, calls } = fakeRunner([
-      { stdout: '{"result":"reset","email":"ana@clinica.example","secondFactorCleared":true}\n' },
+      {
+        stdout:
+          '{"result":"reset","email":"ana@clinica.example","secondFactorCleared":true,"ownerNotified":true}\n',
+      },
     ]);
 
     const result = await createApiCommands(options(runner)).resetPassword(
@@ -78,7 +81,11 @@ describe('the commands of the API bundle', () => {
       { newPassword: 'otra frase larga para entrar', clearSecondFactor: true },
     );
 
-    expect(result).toEqual({ email: 'ana@clinica.example', secondFactorCleared: true });
+    expect(result).toEqual({
+      email: 'ana@clinica.example',
+      secondFactorCleared: true,
+      ownerNotified: true,
+    });
     expect(JSON.parse(calls[0]?.options?.input ?? '')).toEqual({
       newPassword: 'otra frase larga para entrar',
       clearSecondFactor: true,

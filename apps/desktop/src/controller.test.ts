@@ -252,6 +252,7 @@ function build(folder: string, options: { testMode?: boolean } = {}): Harness {
       return Promise.resolve({
         email: 'ana@clinica.example',
         secondFactorCleared: input.clearSecondFactor,
+        ownerNotified: true,
       });
     },
   };
@@ -777,36 +778,122 @@ describe("resetting the owner's password", () => {
     await post(new URL('/__setup', url).href, tokenOf(url), form);
   }
 
-  it('opens the reset page with its own token and runs the command with the choice about the second factor', async () => {
+  const NEW_PASSWORD = 'otra frase larga para entrar';
+
+  /** Opens the reset page the way the tray does and returns its address. */
+  async function openReset(): Promise<string> {
+    await harness.controller.openResetPassword();
+    return String(harness.uiCalls.find((call) => call[0] === 'openAuxWindow')?.[1]);
+  }
+
+  const resetBody = (recoveryKey: string | undefined, extra: Record<string, unknown> = {}) => ({
+    password: NEW_PASSWORD,
+    passwordConfirmation: NEW_PASSWORD,
+    ...(recoveryKey === undefined ? {} : { recoveryKey }),
+    ...extra,
+  });
+
+  const resetCalls = () =>
+    harness.commandCalls.filter((entry) => entry.command === 'reset-password');
+
+  it('asks before opening the page, and opens it with its own token and the key on file', async () => {
     await ready();
 
-    harness.controller.openResetPassword();
+    const url = await openReset();
 
-    const opened = harness.uiCalls.find((call) => call[0] === 'openAuxWindow');
-    const url = String(opened?.[1]);
+    expect(harness.uiCalls).toContainEqual(['confirm', expect.any(String)]);
     expect(url).toContain('/__reset?t=');
-    const answer = await post(new URL('/__reset', url).href, tokenOf(url), {
-      password: 'otra frase larga para entrar',
-      passwordConfirmation: 'otra frase larga para entrar',
-      clearSecondFactor: true,
-    });
+    expect(harness.uiCalls.findIndex((call) => call[0] === 'confirm')).toBeLessThan(
+      harness.uiCalls.findIndex((call) => call[0] === 'openAuxWindow'),
+    );
+  });
+
+  it('opens nothing and issues no token when the person at the PC says no', async () => {
+    await ready();
+    confirmAnswer = false;
+
+    await harness.controller.openResetPassword();
+
+    expect(harness.uiCalls.some((call) => call[0] === 'openAuxWindow')).toBe(false);
+  });
+
+  it('runs the command with the choice about the second factor, once the recovery key is right', async () => {
+    await ready();
+    const url = await openReset();
+    const key = harness.config().secrets.recoveryKey ?? '';
+
+    const answer = await post(
+      new URL('/__reset', url).href,
+      tokenOf(url),
+      resetBody(key.toLowerCase().replaceAll('-', ' '), { clearSecondFactor: true }),
+    );
+
     expect(answer.body).toMatchObject({
       ok: true,
       email: 'ana@clinica.example',
       secondFactorCleared: true,
     });
-    const call = harness.commandCalls.find((entry) => entry.command === 'reset-password');
-    expect(call?.input).toEqual({
-      newPassword: 'otra frase larga para entrar',
-      clearSecondFactor: true,
-    });
+    const [call] = resetCalls();
+    // The recovery key proves who is asking; it never travels to the command.
+    expect(call?.input).toEqual({ newPassword: NEW_PASSWORD, clearSecondFactor: true });
     expect(JSON.stringify(call?.env)).not.toContain('otra frase larga');
+    expect(JSON.stringify(call)).not.toContain(key);
   });
 
-  it('tells the owner why a password is rejected, in the words of the product', async () => {
+  it('refuses to reset without the recovery key, or with a wrong one, and runs nothing', async () => {
     await ready();
-    harness.controller.openResetPassword();
-    const url = String(harness.uiCalls.find((call) => call[0] === 'openAuxWindow')?.[1]);
+    const url = await openReset();
+
+    const missing = await post(new URL('/__reset', url).href, tokenOf(url), resetBody(undefined));
+    const wrong = await post(
+      new URL('/__reset', url).href,
+      tokenOf(url),
+      resetBody('AAAAA-BBBBB-CCCCC-DDDDD-EEEEE-FFFFF'),
+    );
+
+    expect(missing.status).toBe(422);
+    expect(missing.body).toMatchObject({ errors: { recoveryKey: expect.any(String) as string } });
+    expect(wrong.status).toBe(422);
+    expect(wrong.body).toMatchObject({ errors: { recoveryKey: expect.any(String) as string } });
+    expect(resetCalls()).toHaveLength(0);
+  });
+
+  it('closes the page and revokes its token after five wrong keys, even if the sixth is right', async () => {
+    await ready();
+    const url = await openReset();
+    const key = harness.config().secrets.recoveryKey ?? '';
+
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+      await post(
+        new URL('/__reset', url).href,
+        tokenOf(url),
+        resetBody('AAAAA-BBBBB-CCCCC-DDDDD-EEEEE-FFFFF'),
+      );
+    }
+    const sixth = await post(new URL('/__reset', url).href, tokenOf(url), resetBody(key));
+
+    expect(sixth.status).toBe(404);
+    expect(resetCalls()).toHaveLength(0);
+    expect(harness.uiCalls).toContainEqual(['closeAuxWindow']);
+  });
+
+  it('revokes the token once the password is reset, so the page cannot be used twice', async () => {
+    await ready();
+    const url = await openReset();
+    const key = harness.config().secrets.recoveryKey ?? '';
+
+    const first = await post(new URL('/__reset', url).href, tokenOf(url), resetBody(key));
+    const second = await post(new URL('/__reset', url).href, tokenOf(url), resetBody(key));
+
+    expect(first.status).toBe(200);
+    expect(second.status).toBe(404);
+    expect(resetCalls()).toHaveLength(1);
+  });
+
+  it('keeps the page open when the password is rejected, so the person can choose another', async () => {
+    await ready();
+    const url = await openReset();
+    const key = harness.config().secrets.recoveryKey ?? '';
     resetFails = new ApiCommandError(
       'reset-password',
       EXIT.invalidInput,
@@ -814,10 +901,29 @@ describe("resetting the owner's password", () => {
       '',
     );
 
-    const answer = await post(new URL('/__reset', url).href, tokenOf(url), {
-      password: 'una frase larga distinta a todas',
-      passwordConfirmation: 'una frase larga distinta a todas',
-    });
+    const rejected = await post(new URL('/__reset', url).href, tokenOf(url), resetBody(key));
+    resetFails = null;
+    const retry = await post(new URL('/__reset', url).href, tokenOf(url), resetBody(key));
+
+    expect(rejected.status).toBe(422);
+    expect(retry.status).toBe(200);
+  });
+
+  it('tells the owner why a password is rejected, in the words of the product', async () => {
+    await ready();
+    const url = await openReset();
+    resetFails = new ApiCommandError(
+      'reset-password',
+      EXIT.invalidInput,
+      { error: 'password_rejected', issues: ['contains_email'] },
+      '',
+    );
+
+    const answer = await post(
+      new URL('/__reset', url).href,
+      tokenOf(url),
+      resetBody(harness.config().secrets.recoveryKey ?? ''),
+    );
 
     expect(answer.status).toBe(422);
     expect(answer.body).toMatchObject({
@@ -828,7 +934,7 @@ describe("resetting the owner's password", () => {
   it('does not open before the program is ready', async () => {
     await harness.controller.start();
 
-    harness.controller.openResetPassword();
+    await harness.controller.openResetPassword();
 
     expect(harness.uiCalls.some((call) => call[0] === 'openAuxWindow')).toBe(false);
     expect(harness.uiCalls.some((call) => call[0] === 'message')).toBe(true);

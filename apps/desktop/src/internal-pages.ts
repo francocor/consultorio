@@ -28,8 +28,15 @@ export interface PageActions {
   commonPasswords(): ReadonlySet<string>;
   /** Creates the organization and starts the API and the worker. Resolves when the app is ready to open. */
   setup(values: SetupValues): Promise<SetupOutcome>;
-  /** Gives the owner a new password (and, when asked, removes the second factor). */
-  resetPassword(input: { newPassword: string; clearSecondFactor: boolean }): Promise<ResetOutcome>;
+  /**
+   * Gives the owner a new password (and, when asked, removes the second factor). The recovery key typed on
+   * the page proves that whoever asks holds the key and not only the Windows session; the shell checks it.
+   */
+  resetPassword(input: {
+    newPassword: string;
+    clearSecondFactor: boolean;
+    recoveryKey: string;
+  }): Promise<ResetOutcome>;
   /** The recovery key typed for the backup that is being restored. */
   submitRecoveryKey(key: string): Promise<KeyOutcome>;
 }
@@ -162,6 +169,14 @@ export function createInternalPages(vault: TokenVault, actions: PageActions) {
       unknown
     >;
     if (purpose === PURPOSE.reset) {
+      const typedKey = typeof input['recoveryKey'] === 'string' ? input['recoveryKey'] : '';
+      if (typedKey.trim() === '') {
+        sendJson(response, 422, {
+          ok: false,
+          errors: { recoveryKey: 'Ingrese la clave de recuperación.' },
+        });
+        return;
+      }
       const checked = validateNewPassword(
         input['password'],
         input['passwordConfirmation'],
@@ -175,6 +190,7 @@ export function createInternalPages(vault: TokenVault, actions: PageActions) {
       const outcome = await actions.resetPassword({
         newPassword: checked.value,
         clearSecondFactor: input['clearSecondFactor'] === true,
+        recoveryKey: typedKey,
       });
       const answer = outcome.ok
         ? {
