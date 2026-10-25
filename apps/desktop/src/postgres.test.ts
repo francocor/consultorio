@@ -42,7 +42,19 @@ const runner: Runner = (file, args, options) => {
   return Promise.resolve({ code: 0, stdout: '', stderr: '', timedOut: false, ...answers.shift() });
 };
 
-function cluster(overrides: { isPostgresProcess?: (pid: number) => Promise<boolean> } = {}) {
+/** What PostgreSQL writes to postmaster.pid: the process, the folder, the time, the port, ... and the state. */
+const pidFileText = (pid: number, port: number, status: string) =>
+  [pid, 'C:/data', 1700000000, port, '', '127.0.0.1', 123456, status, ''].join('\n');
+
+let connectFails: number;
+
+function cluster(
+  overrides: {
+    isPostgresProcess?: (pid: number) => Promise<boolean>;
+    sleep?: () => Promise<void>;
+    startupWaitMs?: number;
+  } = {},
+) {
   return new PostgresCluster({
     binDir: 'C:\\pg\\bin',
     pgdata,
@@ -50,7 +62,13 @@ function cluster(overrides: { isPostgresProcess?: (pid: number) => Promise<boole
     superuserPassword: 'super-secret-password-0123456789',
     runner,
     connect: (target): SqlClient => ({
-      connect: () => Promise.resolve(),
+      connect: () => {
+        if (connectFails > 0) {
+          connectFails -= 1;
+          return Promise.reject(new Error('the database system is not accepting connections'));
+        }
+        return Promise.resolve();
+      },
       query: (sql, values) => {
         queries.push({ sql, values, target });
         if (
@@ -70,6 +88,9 @@ function cluster(overrides: { isPostgresProcess?: (pid: number) => Promise<boole
     freePort: () => Promise.resolve(54321),
     isPostgresProcess: overrides.isPostgresProcess ?? (() => Promise.resolve(false)),
     scratchDir: join(folder, 'tmp'),
+    sleep: overrides.sleep ?? (() => Promise.resolve()),
+    pollMs: 500,
+    startupWaitMs: overrides.startupWaitMs ?? 2000,
   });
 }
 
@@ -82,6 +103,7 @@ beforeEach(() => {
   queries = [];
   databaseExists = false;
   failQueryContaining = null;
+  connectFails = 0;
 });
 
 afterEach(() => {
@@ -121,6 +143,28 @@ describe('creating the cluster', () => {
     expect(failure).toBeInstanceOf(PostgresError);
     expect((failure as PostgresError).detail).toContain('could not create directory');
     expect(existsSync(join(folder, 'tmp', `initdb-${String(process.pid)}.pw`))).toBe(false);
+  });
+});
+
+describe('asking the server whether it is alive', () => {
+  it('says yes when it answers a query', async () => {
+    const pg = cluster();
+    await pg.start();
+
+    expect(await pg.ping()).toBe(true);
+    expect(queries.at(-1)?.sql).toBe('SELECT 1');
+  });
+
+  it('says no, instead of failing, when it does not answer', async () => {
+    const pg = cluster();
+    await pg.start();
+    connectFails = 1;
+
+    expect(await pg.ping()).toBe(false);
+  });
+
+  it('says no when the server was never started', async () => {
+    expect(await cluster().ping()).toBe(false);
   });
 });
 
@@ -234,6 +278,76 @@ describe('a postmaster.pid left behind', () => {
     await cluster({ isPostgresProcess: (pid) => Promise.resolve(pid === 999) }).start();
 
     expect(calls.map((call) => call.args[0])).toEqual(['start']);
+  });
+
+  it('adopts a server that is up and answering instead of stopping it: the same run, a new window', async () => {
+    mkdirSync(pgdata, { recursive: true });
+    writeFileSync(join(pgdata, 'postmaster.pid'), pidFileText(4242, 54555, 'ready'));
+    const pg = cluster({ isPostgresProcess: (pid) => Promise.resolve(pid === 4242) });
+
+    const port = await pg.start();
+
+    expect(port).toBe(54555);
+    expect(pg.runningPort).toBe(54555);
+    expect(calls).toHaveLength(0);
+  });
+
+  it('waits for a server that is still starting, which is what a retry after a slow start meets', async () => {
+    mkdirSync(pgdata, { recursive: true });
+    const pidFile = join(pgdata, 'postmaster.pid');
+    writeFileSync(pidFile, pidFileText(4242, 54555, 'starting'));
+    let sleeps = 0;
+    const pg = cluster({
+      isPostgresProcess: (pid) => Promise.resolve(pid === 4242),
+      sleep: () => {
+        sleeps += 1;
+        if (sleeps === 2) writeFileSync(pidFile, pidFileText(4242, 54555, 'ready'));
+        return Promise.resolve();
+      },
+    });
+
+    const port = await pg.start();
+
+    expect(port).toBe(54555);
+    expect(sleeps).toBe(2);
+    expect(calls).toHaveLength(0);
+  });
+
+  it('waits for a server that is stopping to go, and then starts a new one', async () => {
+    mkdirSync(pgdata, { recursive: true });
+    const pidFile = join(pgdata, 'postmaster.pid');
+    writeFileSync(pidFile, pidFileText(4242, 54555, 'stopping'));
+    const pg = cluster({
+      isPostgresProcess: (pid) => Promise.resolve(pid === 4242),
+      sleep: () => {
+        rmSync(pidFile, { force: true });
+        return Promise.resolve();
+      },
+    });
+
+    const port = await pg.start();
+
+    expect(port).toBe(54321);
+    expect(calls.map((call) => call.args[0])).toEqual(['start']);
+  });
+
+  it('stops a server that never gets ready, cleanly, and starts a new one', async () => {
+    mkdirSync(pgdata, { recursive: true });
+    writeFileSync(join(pgdata, 'postmaster.pid'), pidFileText(4242, 54555, 'starting'));
+
+    await cluster({ isPostgresProcess: (pid) => Promise.resolve(pid === 4242) }).start();
+
+    expect(calls.map((call) => call.args[0])).toEqual(['stop', 'start']);
+  });
+
+  it('stops a server that says it is ready but does not answer', async () => {
+    mkdirSync(pgdata, { recursive: true });
+    writeFileSync(join(pgdata, 'postmaster.pid'), pidFileText(4242, 54555, 'ready'));
+    connectFails = 100;
+
+    await cluster({ isPostgresProcess: (pid) => Promise.resolve(pid === 4242) }).start();
+
+    expect(calls.map((call) => call.args[0])).toEqual(['stop', 'start']);
   });
 
   it('stops a server that is still running, cleanly, before starting a new one', async () => {

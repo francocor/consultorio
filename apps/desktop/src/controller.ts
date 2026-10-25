@@ -113,6 +113,8 @@ export interface ControllerDeps {
   logs: { shell: RotatingLog; api: RotatingLog; worker: RotatingLog };
   /** The tests of the installer drive the app from outside; some conveniences exist only then. */
   testMode: boolean;
+  /** The waits before the API and the worker are started again after they die. Defaults to 1 s, then 2 s. */
+  supervisorBackoffMs?: number[];
   /** The environment of the shell, to know which folders Windows syncs. Defaults to nothing. */
   env?: NodeJS.ProcessEnv;
   /** How long the stored port of the local server is waited for. Tests do not wait. */
@@ -152,6 +154,9 @@ function isDeadEnd(error: unknown): boolean {
 }
 
 const MINUTE_MS = 60 * 1000;
+
+/** How often the database server is asked whether it is alive. */
+const DATABASE_CHECK_MS = 30 * 1000;
 const HOUR_MS = 60 * MINUTE_MS;
 
 /** Wrong recovery keys the reset page accepts before its address stops working. */
@@ -216,6 +221,9 @@ export class Controller {
   private setupRunning = false;
   private reportedFailure = false;
   private dailyTimer: NodeJS.Timeout | undefined;
+  private databaseTimer: NodeJS.Timeout | undefined;
+  /** Pings in a row that the database did not answer. */
+  private databaseMisses = 0;
   private lastDailyFailure: string | null = null;
   private commonPasswordSet: ReadonlySet<string> | null = null;
   private pendingRestore: { archive: string } | null = null;
@@ -710,6 +718,7 @@ export class Controller {
     const log = role === 'api' ? this.deps.logs.api : this.deps.logs.worker;
     return new Supervisor({
       name: role,
+      ...(this.deps.supervisorBackoffMs ? { backoffMs: this.deps.supervisorBackoffMs } : {}),
       // The port is chosen at every launch: one that was taken between the choice and the bind is not tried again.
       ...(role === 'api'
         ? {
@@ -750,20 +759,91 @@ export class Controller {
   }
 
   private onProcessState(role: LongRunningRole, state: ProcessState, detail?: string): void {
-    if (state !== 'failed' || this.reportedFailure || this.currentPhase === 'quitting') return;
-    this.reportedFailure = true;
+    if (state !== 'failed' || this.reportedFailure) return;
     this.log(`${role} failed: ${detail ?? ''}`);
-    void this.deps.ui
-      .choose({
-        kind: 'error',
-        title: TEXT.errors.title,
-        message: TEXT.errors.service,
-        buttons: [TEXT.errors.logs, TEXT.errors.quit],
-      })
-      .then(async (choice) => {
-        if (choice === 0) await this.deps.ui.openPath(this.deps.paths.logs);
-        else this.deps.requestQuit();
-      });
+    // While the program is starting, or an operation of the tray is running, whoever started the process
+    // reports its failure: a second dialog from here would be the same news twice.
+    if (this.currentPhase !== 'ready' || this.busy) return;
+    this.reportedFailure = true;
+    void this.runtimeFailureDialog();
+  }
+
+  /** A process died for good while the program was working: say so, and let the person try again. */
+  private async runtimeFailureDialog(): Promise<void> {
+    const choice = await this.deps.ui.choose({
+      kind: 'error',
+      title: TEXT.errors.title,
+      message: TEXT.errors.service,
+      buttons: [TEXT.errors.retry, TEXT.errors.logs, TEXT.errors.quit],
+    });
+    if (this.isQuitting()) return;
+    if (choice === 0) {
+      await this.retryServices();
+    } else if (choice === 1) {
+      await this.deps.ui.openPath(this.deps.paths.logs);
+      await this.runtimeFailureDialog();
+    } else {
+      this.deps.requestQuit();
+    }
+  }
+
+  /** Stops and starts the API and the worker again. Nothing else is touched. */
+  private async retryServices(): Promise<void> {
+    const outcome = await this.exclusive(
+      async () => {
+        try {
+          await this.stopServices();
+          await this.startServices();
+          return null;
+        } catch (error) {
+          return error;
+        }
+      },
+      'backup',
+      true,
+    );
+    if (outcome !== 'busy' && outcome !== null) {
+      this.reportedFailure = true;
+      void this.fail(outcome);
+    }
+  }
+
+  /**
+   * Called every half minute: asks the database server whether it is alive. Two misses in a row (one can be a slow
+   * moment) and it is started again, with the API and the worker, which hold connections to the old one.
+   */
+  async checkDatabase(): Promise<void> {
+    if (this.currentPhase !== 'ready' || this.busy || !this.clusterOrNull) return;
+    if (await this.cluster.ping()) {
+      this.databaseMisses = 0;
+      return;
+    }
+    this.databaseMisses += 1;
+    this.log(`the database did not answer (${String(this.databaseMisses)} in a row)`);
+    if (this.databaseMisses < 2) return;
+    this.databaseMisses = 0;
+    const outcome = await this.exclusive(
+      async () => {
+        try {
+          this.log('the database server is not answering: starting it again');
+          await this.stopServices();
+          await this.cluster.stop().catch((error: unknown) => {
+            this.log(`stopping the database server failed: ${String(error)}`);
+          });
+          await this.cluster.start();
+          await this.startServices();
+          return null;
+        } catch (error) {
+          return error;
+        }
+      },
+      'backup',
+      true,
+    );
+    if (outcome !== 'busy' && outcome !== null) {
+      this.reportedFailure = true;
+      void this.fail(outcome);
+    }
   }
 
   /** The local server forwards to the API only while it is running, and under its port of the moment. */
@@ -825,6 +905,12 @@ export class Controller {
       this.maybeRemindCopy();
     }, MINUTE_MS);
     this.dailyTimer.unref();
+    clearInterval(this.databaseTimer);
+    this.databaseMisses = 0;
+    this.databaseTimer = setInterval(() => {
+      void this.checkDatabase();
+    }, DATABASE_CHECK_MS);
+    this.databaseTimer.unref();
   }
 
   /** True when the install has its organization but the owner has not confirmed the recovery key. */
@@ -908,6 +994,8 @@ export class Controller {
   private async exclusive<T>(
     work: () => Promise<T>,
     kind: 'backup' | 'restore' = 'backup',
+    /** The work reports its own failures, so a process that died meanwhile is not announced again. */
+    reportsItself = false,
   ): Promise<T | 'busy'> {
     if (this.busy) return 'busy';
     this.busy = true;
@@ -922,7 +1010,16 @@ export class Controller {
     } finally {
       this.busy = false;
       this.restoring = false;
+      if (kind === 'backup' && !reportsItself) this.reportFailureThatWaited();
     }
+  }
+
+  /** A process that failed for good while a backup was running is announced once the backup is over. */
+  private reportFailureThatWaited(): void {
+    if (this.reportedFailure || this.currentPhase !== 'ready') return;
+    if (this.api?.currentState !== 'failed' && this.worker?.currentState !== 'failed') return;
+    this.reportedFailure = true;
+    void this.runtimeFailureDialog();
   }
 
   /** The tray's "Hacer copia de seguridad". Returns the path of the backup, or `null` when it failed or could not start. */
@@ -1476,6 +1573,7 @@ export class Controller {
     this.quitPromise ??= (async () => {
       this.setPhase('quitting');
       clearInterval(this.dailyTimer);
+      clearInterval(this.databaseTimer);
       // A start that is still running finishes (or fails) first, so nothing is left half started.
       await this.bootRun.catch(() => undefined);
       await this.inFlight;

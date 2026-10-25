@@ -128,6 +128,7 @@ Configuración de Windows, Aplicaciones, **Consulvia**, Desinstalar. Se elimina 
 
 ## Si algo no funciona
 
+- Si la base de datos deja de responder mientras Consulvia está abierto (por ejemplo, un antivirus la cerró), Consulvia lo nota en menos de un minuto y la vuelve a iniciar sola, junto con el resto de sus servicios. Si un servicio se detiene varias veces seguidas, aparece el mismo aviso con el botón **Reintentar**, que lo vuelve a iniciar sin cerrar Consulvia. Si pulsó **Reintentar** después de un inicio muy lento, Consulvia espera a la base de datos que todavía está arrancando en lugar de detenerla.
 - _"Consulvia no pudo iniciar"_: pulse **Reintentar**. Si se repite, elija **Ver registros** y envíe la carpeta `logs` a quien le brinda soporte.
 - **Los registros pueden contener datos de pacientes.** Consulvia quita de ellos las direcciones de correo y las contraseñas y pide a la base de datos que no escriba el texto de las consultas, pero un error del programa puede nombrar a una persona. Envíe la carpeta `logs` solo a quien usted ya confía sus datos, nunca la publique. Los registros se limitan solos: cada archivo llega a 5 MB y se guardan los últimos tres.
 - _"No se pueden leer los datos de esta instalación con la cuenta de Windows actual"_: está ingresando con otro usuario de Windows. Cierre la sesión e ingrese con el usuario que instaló Consulvia.

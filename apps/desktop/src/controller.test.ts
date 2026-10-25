@@ -80,6 +80,8 @@ interface Harness {
   loadedUrls: string[];
   clusterScripts: string[];
   spawned: { role: string; env: NodeJS.ProcessEnv }[];
+  /** The fake processes started, in order, to make one die. */
+  children: { role: string; child: FakeChild }[];
   dumps: number;
   restores: string[][];
   lists: string[][];
@@ -100,6 +102,10 @@ let confirmAnswer = true;
 let cipherBroken = false;
 /** The exit code of `pg_restore --list`, the check of a backup after it is written. */
 let listCode = 0;
+/** The database server answers its pings. */
+let databaseAlive = true;
+/** A process of the install that dies as soon as it is started, by role. */
+let dieOnSpawn: Partial<Record<'api' | 'worker', boolean>> = {};
 let provisionFails: ApiCommandError | null = null;
 let resetFails: ApiCommandError | null = null;
 let chooseAnswers: number[];
@@ -168,6 +174,7 @@ function build(
   const commandCalls: Harness['commandCalls'] = [];
   const clusterScripts: string[] = [];
   const spawned: Harness['spawned'] = [];
+  const children: Harness['children'] = [];
   const restores: string[][] = [];
   const lists: string[][] = [];
   const restoreEnvs: NodeJS.ProcessEnv[] = [];
@@ -219,6 +226,7 @@ function build(
       return port;
     },
     isInitialized: () => existsSync(join(paths.pgdata, 'PG_VERSION')),
+    ping: () => Promise.resolve(databaseAlive),
     listDatabases: () => Promise.resolve([...databaseNames]),
     renameDatabase: (from: string, to: string) => {
       events.push(`rename ${from} ${to}`);
@@ -326,7 +334,15 @@ function build(
       spawned.push({ role, env });
       events.push(`spawn ${role}`);
       const child = new FakeChild(5000 + spawned.length, () => events.push(`shutdown ${role}`));
-      if (role === 'worker') queueMicrotask(() => child.stdout.write('{"msg":"worker started"}\n'));
+      children.push({ role, child });
+      if (dieOnSpawn[role] === true) {
+        queueMicrotask(() => {
+          child.stderr.write('boom\n');
+          child.emit('exit', 1, null);
+        });
+      } else if (role === 'worker') {
+        queueMicrotask(() => child.stdout.write('{"msg":"worker started"}\n'));
+      }
       return child;
     },
     probeHealth: (port, secret) => {
@@ -341,6 +357,7 @@ function build(
     },
     testMode: options.testMode ?? false,
     portRetry: { sleep: () => Promise.resolve() },
+    supervisorBackoffMs: [0, 0],
     env: options.env ?? {},
     now: () => clock,
     requestQuit: () => {
@@ -363,6 +380,7 @@ function build(
     loadedUrls,
     clusterScripts,
     spawned,
+    children,
     get dumps() {
       return dumps;
     },
@@ -443,6 +461,8 @@ beforeEach(() => {
   confirmAnswer = true;
   cipherBroken = false;
   listCode = 0;
+  databaseAlive = true;
+  dieOnSpawn = {};
   provisionFails = null;
   resetFails = null;
   chooseAnswers = [];
@@ -807,6 +827,103 @@ describe('the reminder to copy the backups off this PC', () => {
     const third = build(harness.folder);
     await third.controller.start();
     expect(reminders(third)).toHaveLength(0);
+  });
+});
+
+describe('when something of the install stops', () => {
+  async function ready(): Promise<void> {
+    await harness.controller.start();
+    const url = setupUrl() ?? '';
+    await post(new URL('/__setup', url).href, tokenOf(url), form);
+    // Let the backup of the first open of the day end: while it runs the program is busy.
+    await vi.waitFor(() => {
+      expect(harness.config().settings.lastDailyBackup).not.toBeNull();
+    });
+  }
+
+  const titleOf = 'Consulvia no pudo iniciar';
+  const dialogs = (target: Harness) =>
+    target.uiCalls.filter((call) => call[0] === 'choose' && call[1] === titleOf);
+
+  it('offers Retry when a process fails for good after the start, and the retry brings it back', async () => {
+    await ready();
+    const before = harness.spawned.filter((entry) => entry.role === 'api').length;
+    dieOnSpawn = { api: true };
+    chooseAnswers = [0];
+    // By the time the dialog is up, whatever was wrong is fixed.
+    whileDialogOpen = () => {
+      dieOnSpawn = {};
+    };
+
+    harness.children
+      .filter((entry) => entry.role === 'api')
+      .at(-1)
+      ?.child.emit('exit', 1, null);
+
+    await vi.waitFor(() => {
+      expect(dialogs(harness)).toHaveLength(1);
+      expect(harness.spawned.filter((entry) => entry.role === 'api').length).toBeGreaterThan(
+        before + 2,
+      );
+    });
+    expect(dialogs(harness)[0]?.[2]).toEqual(['Reintentar', 'Ver registros', 'Salir']);
+    expect(harness.controller.phase).toBe('ready');
+    expect(harness.quitRequests).toBe(0);
+    // And only one dialog, though the API failed three times and the worker was restarted with it.
+    expect(dialogs(harness)).toHaveLength(1);
+  });
+
+  it('shows one dialog, not two, when the services fail during the start', async () => {
+    dieOnSpawn = { api: true };
+
+    await harness.controller.start();
+    const url = setupUrl() ?? '';
+    await post(new URL('/__setup', url).href, tokenOf(url), form);
+    await vi.waitFor(() => {
+      expect(dialogs(harness).length).toBeGreaterThan(0);
+    });
+
+    expect(dialogs(harness)).toHaveLength(1);
+  });
+
+  it('restarts the database and the services when the database stops answering twice in a row', async () => {
+    await ready();
+    harness.events.length = 0;
+    databaseAlive = false;
+
+    await harness.controller.checkDatabase();
+    expect(harness.events).toEqual([]);
+    await harness.controller.checkDatabase();
+
+    expect(harness.events).toEqual(
+      expect.arrayContaining([
+        'shutdown api',
+        'shutdown worker',
+        'pg stop',
+        'pg start',
+        'spawn api',
+        'spawn worker',
+      ]),
+    );
+    expect(harness.events.indexOf('pg start')).toBeGreaterThan(harness.events.indexOf('pg stop'));
+    expect(harness.events.lastIndexOf('spawn api')).toBeGreaterThan(
+      harness.events.indexOf('pg start'),
+    );
+    expect(harness.controller.phase).toBe('ready');
+  });
+
+  it('does not restart anything for a single missed answer', async () => {
+    await ready();
+    harness.events.length = 0;
+
+    databaseAlive = false;
+    await harness.controller.checkDatabase();
+    databaseAlive = true;
+    await harness.controller.checkDatabase();
+    databaseAlive = false;
+    await harness.controller.checkDatabase();
+
+    expect(harness.events).toEqual([]);
   });
 });
 

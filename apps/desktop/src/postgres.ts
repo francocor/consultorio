@@ -40,6 +40,12 @@ export interface PostgresOptions {
   /** A folder for the password file of `initdb`, which exists for a moment. */
   scratchDir: string;
   log?: (message: string) => void;
+  /** Waits between two looks at a server that is starting. Tests do not wait. */
+  sleep?: (ms: number) => Promise<void>;
+  /** How often a server that is starting is looked at, in milliseconds. */
+  pollMs?: number;
+  /** How long a server that is still starting is waited for before it is stopped. */
+  startupWaitMs?: number;
 }
 
 export class PostgresError extends Error {
@@ -132,27 +138,95 @@ export class PostgresCluster {
   }
 
   /**
-   * Makes the data folder startable. A `postmaster.pid` left by a crash is either dead, and removed, or
-   * a server that is still alive (the shell was killed and the server was not): that one is stopped
-   * cleanly first, because it listens on a port nobody knows any more.
+   * Makes the data folder startable. A `postmaster.pid` left by a crash is either dead, and removed, or a
+   * server that is still alive (the shell was killed and the server was not, or a start took longer than the
+   * shell waited and the person pressed Retry). A server that is up and answering is kept and its port is
+   * returned; one that is still starting is waited for, one that is stopping is waited out, and one that never
+   * gets ready is stopped cleanly. Returns the port of a server that was kept, else `null`.
    */
-  async recoverStalePid(): Promise<void> {
+  async recoverStalePid(): Promise<number | null> {
     const pidFile = join(this.options.pgdata, 'postmaster.pid');
-    if (!existsSync(pidFile)) return;
+    if (!existsSync(pidFile)) return null;
     const pid = Number(readFileSync(pidFile, 'utf8').split(/\r?\n/)[0]);
-    if (Number.isInteger(pid) && pid > 0 && (await this.options.isPostgresProcess(pid))) {
+    if (!(Number.isInteger(pid) && pid > 0 && (await this.options.isPostgresProcess(pid)))) {
+      rmSync(pidFile, { force: true });
+      this.log('removed a stale postmaster.pid');
+      return null;
+    }
+    const sleep =
+      this.options.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
+    const pollMs = this.options.pollMs ?? 500;
+    const polls = Math.max(1, Math.ceil((this.options.startupWaitMs ?? 90_000) / pollMs));
+    for (let poll = 0; poll < polls; poll += 1) {
+      const info = this.readPidFile(pidFile);
+      // It went away while we looked: nothing is running any more.
+      if (info === null) return null;
+      if (info.status === 'ready' && info.port > 0) {
+        if (await this.answers(info.port)) {
+          this.log(`a server (pid ${String(pid)}) is up on port ${String(info.port)}; keeping it`);
+          this.port = info.port;
+          return info.port;
+        }
+      } else if (info.status !== 'starting' && info.status !== 'stopping') {
+        break;
+      }
+      await sleep(pollMs);
+    }
+    if (existsSync(pidFile)) {
       this.log(`a previous server (pid ${String(pid)}) is still running; stopping it`);
       await this.stop();
-      return;
     }
-    rmSync(pidFile, { force: true });
-    this.log('removed a stale postmaster.pid');
+    return null;
+  }
+
+  private readPidFile(pidFile: string): { port: number; status: string } | null {
+    try {
+      const lines = readFileSync(pidFile, 'utf8').split(/\r?\n/);
+      return { port: Number(lines[3]), status: (lines[7] ?? '').trim() };
+    } catch {
+      return null;
+    }
+  }
+
+  /** True when a server on this port accepts the login of the superuser. */
+  private async answers(port: number): Promise<boolean> {
+    const client = this.options.connect({
+      host: '127.0.0.1',
+      port,
+      user: SUPERUSER,
+      password: this.options.superuserPassword,
+      database: 'postgres',
+    });
+    try {
+      await client.connect();
+      return true;
+    } catch {
+      return false;
+    } finally {
+      await client.end().catch(() => undefined);
+    }
+  }
+
+  /** True when the server answers a query now; never throws. */
+  async ping(): Promise<boolean> {
+    if (this.port === null) return false;
+    const timeout = new Promise<boolean>((resolve) => {
+      setTimeout(() => {
+        resolve(false);
+      }, 5_000).unref();
+    });
+    const query = this.asSuperuser('postgres', async (client) => {
+      await client.query('SELECT 1');
+      return true;
+    }).catch(() => false);
+    return Promise.race([query, timeout]);
   }
 
   /** Starts the server on a free loopback port and returns the port. */
   async start(): Promise<number> {
     const { pgdata, logFile, runner } = this.options;
-    await this.recoverStalePid();
+    const kept = await this.recoverStalePid();
+    if (kept !== null) return kept;
     mkdirSync(dirname(logFile), { recursive: true });
     // PostgreSQL appends to this file for as long as it runs: it is capped here, before it opens it.
     rotateBySize(logFile, { maxBytes: LOG_MAX_BYTES, keep: LOG_KEEP });
