@@ -17,9 +17,13 @@ import { findFreePort } from './ports.js';
 import { routeOf } from './proxy.js';
 import { resolveInside } from './static-files.js';
 import { TokenVault } from './tokens.js';
+import { BROWSER_COOKIE, WINDOW_HEADER } from './window-proof.js';
 
 /** The secret of the run that the API checks on every request. */
 const PROXY_SECRET = 'run-secret-0123456789-abcdefghijklmnopqrstuvwxyz';
+
+/** What a window of the shell sends, and what the browser keeps once the owner opened it there. */
+const CREDENTIALS = { window: 'window-proof-0123456789', browser: 'browser-proof-9876543210' };
 
 const CSP =
   "default-src 'self'; script-src 'self' 'sha256-abc'; upgrade-insecure-requests; frame-ancestors 'none'";
@@ -72,6 +76,7 @@ const actions: PageActions = {
       typed === 'ABCDE-FGHJK-LMNPQ' ? { ok: true } : { ok: false, errors: { recoveryKey: 'No.' } },
     ),
   restoreKeyNeeds: () => keyNeeds,
+  browserSession: () => CREDENTIALS.browser,
   submitRecoveryKey: (keys) =>
     Promise.resolve(
       keys.backup === 'ABCDE' && (!keyNeeds.current || keys.current === 'CURRNT')
@@ -137,6 +142,7 @@ beforeAll(async () => {
     apiPort: () => (apiAvailable ? apiPort : null),
     proxySecret: () => (apiAvailable ? PROXY_SECRET : null),
     pages: createInternalPages(vault, actions),
+    credentials: CREDENTIALS,
   });
   await server.listen();
 });
@@ -160,6 +166,8 @@ function call(
     method?: string;
     headers?: Record<string, string>;
     body?: Buffer | string | Readable;
+    /** Leaves out the proof that a window of the shell adds to every request. */
+    withoutProof?: boolean;
   } = {},
 ): Promise<Reply> {
   return new Promise((resolve, reject) => {
@@ -169,7 +177,11 @@ function call(
         port,
         path,
         method: options.method ?? 'GET',
-        headers: { host: `localhost:${String(port)}`, ...options.headers },
+        headers: {
+          host: `localhost:${String(port)}`,
+          ...(options.withoutProof ? {} : { [WINDOW_HEADER]: CREDENTIALS.window }),
+          ...options.headers,
+        },
       },
       (response) => {
         const chunks: Buffer[] = [];
@@ -774,5 +786,103 @@ describe('the pages of the shell', () => {
 
     expect(right.status).toBe(200);
     expect(noCurrent.status).toBe(422);
+  });
+});
+
+describe('who may use the API through the local server', () => {
+  it('refuses a request that does not carry the proof of a window, whatever it asks for', async () => {
+    seen.length = 0;
+
+    for (const path of ['/api/patients', '/api/health', '/api/files/uploads/abc']) {
+      const reply = await call(path, { withoutProof: true });
+      expect(reply.status, path).toBe(403);
+    }
+    const write = await call('/api/echo', {
+      method: 'POST',
+      withoutProof: true,
+      headers: { origin: `http://localhost:${String(port)}`, 'content-type': 'application/json' },
+      body: '{}',
+    });
+
+    expect(write.status).toBe(403);
+    // Nothing reached the API, so the secret of the run was never added to anything.
+    expect(seen).toEqual([]);
+  });
+
+  it('refuses a wrong proof and an empty one', async () => {
+    seen.length = 0;
+
+    expect((await call('/api/echo', { headers: { [WINDOW_HEADER]: 'nope' } })).status).toBe(403);
+    expect((await call('/api/echo', { headers: { [WINDOW_HEADER]: '' } })).status).toBe(403);
+    expect(seen).toEqual([]);
+  });
+
+  it('refuses the Host of 127.0.0.1 with another port even with the proof', async () => {
+    const reply = await call('/api/echo', { headers: { host: '127.0.0.1:1' } });
+    expect(reply.status).toBe(421);
+  });
+
+  it('lets the public routes through without it: they are public by design', async () => {
+    seen.length = 0;
+
+    const manifest = await call('/manifest.webmanifest', { withoutProof: true });
+
+    expect(manifest.status).toBe(200);
+    expect(seen).toHaveLength(1);
+  });
+
+  it('serves the web bundle without it: nothing in it is a secret', async () => {
+    expect((await call('/', { withoutProof: true })).status).toBe(200);
+  });
+
+  it('does not pass the proof or its own cookie on to the API', async () => {
+    seen.length = 0;
+
+    await call('/api/echo', {
+      headers: { cookie: `sid=abc; ${BROWSER_COOKIE}=${CREDENTIALS.browser}` },
+    });
+
+    expect(seen[0]?.headers[WINDOW_HEADER]).toBeUndefined();
+    expect(seen[0]?.headers.cookie).toBe('sid=abc');
+  });
+
+  describe('the browser of the PC', () => {
+    it('gets a cookie from an address that works once, and with it can use the API', async () => {
+      const token = vault.issue(PURPOSE.browser, 60_000);
+
+      const opened = await call(`/__browser?t=${token}`, { withoutProof: true });
+
+      expect(opened.status).toBe(302);
+      expect(opened.headers.location).toBe('/');
+      const cookie = String(opened.headers['set-cookie']);
+      expect(cookie).toContain(`${BROWSER_COOKIE}=${CREDENTIALS.browser}`);
+      expect(cookie).toContain('HttpOnly');
+      expect(cookie).toContain('SameSite=Strict');
+      const withCookie = await call('/api/echo', {
+        withoutProof: true,
+        headers: { cookie: `${BROWSER_COOKIE}=${CREDENTIALS.browser}` },
+      });
+      expect(withCookie.status).toBe(200);
+      // And the address is spent.
+      expect((await call(`/__browser?t=${token}`, { withoutProof: true })).status).toBe(404);
+    });
+
+    it('is told nothing by a wrong or missing token, and no cookie with it', async () => {
+      vault.issue(PURPOSE.browser, 60_000);
+
+      for (const path of ['/__browser', '/__browser?t=wrong']) {
+        const reply = await call(path, { withoutProof: true });
+        expect(reply.status, path).toBe(404);
+        expect(reply.headers['set-cookie'], path).toBeUndefined();
+      }
+    });
+
+    it('does not accept the cookie with another value', async () => {
+      const reply = await call('/api/echo', {
+        withoutProof: true,
+        headers: { cookie: `${BROWSER_COOKIE}=${CREDENTIALS.window}` },
+      });
+      expect(reply.status).toBe(403);
+    });
   });
 });

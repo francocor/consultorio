@@ -1214,6 +1214,7 @@ describe('the first run', () => {
     for (const secret of Object.values(secrets)) expect(log).not.toContain(secret);
     expect(log).not.toContain('setup url');
     expect(log).not.toContain(tokenOf(setupUrl()));
+    expect(log).not.toContain(harness.controller.windowProof);
   });
 
   it('provisions with the data of the form, starts the API and the worker, and answers the recovery key', async () => {
@@ -1323,6 +1324,7 @@ describe('the first run', () => {
 
     const log = readFileSync(join(harness.paths.logs, 'shell.log'), 'utf8');
     expect(log).toContain(`setup url: ${setupUrl() ?? 'none'}`);
+    expect(log).toContain(`window proof: ${harness.controller.windowProof}`);
   });
 });
 
@@ -1372,6 +1374,50 @@ describe('every other start', () => {
     expect(api?.env['AUDIT_SEALER_DATABASE_URL']).toBeUndefined();
     expect(worker?.env['AUDIT_SEALER_DATABASE_URL']).toContain('audit_sealer');
     expect(api?.env['DATABASE_URL']).toContain('app_rw');
+  });
+});
+
+describe('opening the program in the browser of the PC', () => {
+  const ready = async () => {
+    await harness.controller.start();
+    const url = setupUrl() ?? '';
+    await post(new URL('/__setup', url).href, tokenOf(url), form);
+  };
+
+  it('opens an address that works once and leaves the browser with a proof, not the plain address', async () => {
+    await ready();
+
+    harness.controller.openInBrowser();
+
+    const opened = harness.uiCalls.find((call) => call[0] === 'openExternal');
+    const address = String(opened?.[1]);
+    expect(address).toContain('/__browser?t=');
+    const first = await fetch(address, { redirect: 'manual' });
+    expect(first.status).toBe(302);
+    expect(first.headers.get('set-cookie')).toContain('HttpOnly');
+    const again = await fetch(address, { redirect: 'manual' });
+    expect(again.status).toBe(404);
+  });
+
+  it('is not offered before the program is ready', async () => {
+    await harness.controller.start();
+
+    harness.controller.openInBrowser();
+
+    expect(harness.uiCalls.some((call) => call[0] === 'openExternal')).toBe(false);
+  });
+
+  it('refuses the API to a program that has no proof, and serves it to the window', async () => {
+    await ready();
+    const base = harness.controller.appUrl;
+
+    const stranger = await fetch(`${base}/api/health`);
+    const window = await fetch(`${base}/api/health`, {
+      headers: { 'x-consulvia-window': harness.controller.windowProof },
+    });
+
+    expect(stranger.status).toBe(403);
+    expect(window.status).not.toBe(403);
   });
 });
 

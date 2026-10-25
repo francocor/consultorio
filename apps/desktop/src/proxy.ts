@@ -1,6 +1,8 @@
 import { Agent, request as httpRequest } from 'node:http';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 
+import { WINDOW_HEADER, withoutBrowserCookie } from './window-proof.js';
+
 /**
  * The reverse proxy of docs/dev-setup.md ("Reverse proxy contract"), for the local server.
  *
@@ -74,6 +76,13 @@ export function forwardToApi(
   for (const [name, value] of Object.entries(request.headers)) {
     // A page cannot pass for this server: whatever it sent under our header is dropped.
     if (value === undefined || HOP_BY_HOP.has(name) || name === PROXY_HEADER) continue;
+    // The proof of the window is for this server only: the API never sees it.
+    if (name === WINDOW_HEADER) continue;
+    if (name === 'cookie' && typeof value === 'string') {
+      const kept = withoutBrowserCookie(value);
+      if (kept !== '') headers[name] = kept;
+      continue;
+    }
     headers[name] = value;
   }
   headers[PROXY_HEADER] = secret;

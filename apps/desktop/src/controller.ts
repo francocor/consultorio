@@ -55,6 +55,7 @@ import type { PgTools } from './streams.js';
 import { TEXT } from './strings.js';
 import { Supervisor, type ChildLike, type ProcessState } from './supervisor.js';
 import { TokenVault } from './tokens.js';
+import type { Credentials } from './window-proof.js';
 
 /** What the controller needs from the windows, dialogs and the tray. Electron implements it; tests fake it. */
 export interface ShellUi {
@@ -212,6 +213,11 @@ export class Controller {
   private api: Supervisor | null = null;
   private worker: Supervisor | null = null;
   private readonly vault = new TokenVault();
+  /** What proves a request comes from a window of the shell (see `window-proof.ts`): new in every run. */
+  private readonly credentials: Credentials = {
+    window: randomBytes(32).toString('base64url'),
+    browser: randomBytes(32).toString('base64url'),
+  };
   private currentPhase: Phase = 'starting';
   private bootRun: Promise<void> = Promise.resolve();
   private quitPromise: Promise<void> | null = null;
@@ -268,6 +274,11 @@ export class Controller {
 
   get autoStart(): boolean {
     return this.loaded?.settings.autoStart ?? false;
+  }
+
+  /** The value that the windows of the shell send with every request to the local server. */
+  get windowProof(): string {
+    return this.credentials.window;
   }
 
   get appUrl(): string {
@@ -548,11 +559,14 @@ export class Controller {
       apiPort: () => this.apiPort,
       proxySecret: () => this.proxySecret,
       pages: createInternalPages(this.vault, this.pageActions()),
+      credentials: this.credentials,
       log: (message) => {
         this.log(message);
       },
     });
     await this.server.listen();
+    // The tests of the installer drive the program from outside, as the window would; they need the proof.
+    if (this.deps.testMode) this.log(`window proof: ${this.credentials.window}`);
     this.log(`local server on 127.0.0.1:${String(port)}`);
   }
 
@@ -1569,6 +1583,7 @@ export class Controller {
         this.vault.revoke(PURPOSE.check);
         return Promise.resolve({ ok: true });
       },
+      browserSession: () => this.credentials.browser,
       restoreKeyNeeds: () => ({
         current: this.pendingRestore?.needsCurrent ?? true,
         backup: this.pendingRestore?.needsBackup ?? false,
@@ -1627,7 +1642,10 @@ export class Controller {
   }
 
   openInBrowser(): void {
-    if (this.currentPhase === 'ready') this.deps.ui.openExternal(this.appUrl);
+    if (this.currentPhase !== 'ready') return;
+    // Not the plain address: the browser has no proof, and the address that gives it one works once.
+    const token = this.vault.issue(PURPOSE.browser, 60_000);
+    this.deps.ui.openExternal(`${this.appUrl}/__browser?t=${token}`);
   }
 
   async openOutbox(): Promise<void> {

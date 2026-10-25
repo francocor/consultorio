@@ -33,6 +33,7 @@ import { splashUrl } from './splash.js';
 import { spawnPgTools } from './streams.js';
 import { TEXT } from './strings.js';
 import type { ChildLike } from './supervisor.js';
+import { headersWithProof } from './window-proof.js';
 
 /**
  * The Electron entry: windows, tray, dialogs and the single-instance rules. Everything that decides
@@ -377,6 +378,19 @@ async function run(): Promise<void> {
     if (quitting) return;
     event.preventDefault();
     void gracefulQuit();
+  });
+
+  // Every request of a window to the local server carries the proof of this run, added here below the page: the
+  // server refuses the API to anything that does not have it, so another program of the PC cannot use the port.
+  session.defaultSession.webRequest.onBeforeSendHeaders((details, callback) => {
+    callback({
+      requestHeaders: headersWithProof(
+        details.requestHeaders,
+        details.url,
+        knownPort,
+        controller.windowProof,
+      ),
+    });
   });
 
   // A page is never granted a permission it did not need: the web app asks for none but the clipboard.

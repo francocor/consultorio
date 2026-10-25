@@ -14,6 +14,7 @@ import {
 import type { FieldErrors, SetupValues } from './setup-validation.js';
 import { validateNewPassword, validateSetup } from './setup-validation.js';
 import type { TokenVault } from './tokens.js';
+import { BROWSER_COOKIE } from './window-proof.js';
 
 export type SetupOutcome =
   | {
@@ -59,6 +60,8 @@ export interface PageActions {
   confirmRecoveryKey(lastFour: string): Promise<ConfirmOutcome>;
   /** Tells whether a recovery key typed from the paper copy is the one of this install. */
   checkRecoveryKey(typed: string): Promise<ConfirmOutcome>;
+  /** The value the browser of the PC keeps as its proof once the owner opened the program there. */
+  browserSession(): string;
 }
 
 export const PURPOSE = {
@@ -67,6 +70,7 @@ export const PURPOSE = {
   key: 'key',
   ack: 'ack',
   check: 'check',
+  browser: 'browser',
 } as const;
 
 const MAX_BODY_BYTES = 16 * 1024;
@@ -288,6 +292,25 @@ export function createInternalPages(vault: TokenVault, actions: PageActions) {
         ...SECURITY_HEADERS,
       });
       response.end(path.endsWith('.css') ? PAGE_CSS : PAGE_JS);
+      return true;
+    }
+    if (path === '/__browser') {
+      // The way into the program from the browser of the PC: an address that works once, for a minute, and
+      // leaves the browser with a cookie that no script of a page can read.
+      const valid =
+        (request.method === 'GET' || request.method === 'HEAD') &&
+        vault.verify(PURPOSE.browser, url.searchParams.get('t'));
+      if (!valid) {
+        sendNotFound(response);
+        return true;
+      }
+      vault.revoke(PURPOSE.browser);
+      response.writeHead(302, {
+        Location: '/',
+        'Set-Cookie': `${BROWSER_COOKIE}=${actions.browserSession()}; Path=/; HttpOnly; SameSite=Strict`,
+        ...SECURITY_HEADERS,
+      });
+      response.end();
       return true;
     }
     const page = PAGES[path];

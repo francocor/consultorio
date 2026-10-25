@@ -6,6 +6,7 @@ import { join } from 'node:path';
 import type { InternalPages } from './internal-pages.js';
 import { forwardToApi, routeOf } from './proxy.js';
 import { serveStatic } from './static-files.js';
+import { presentsProof, type Credentials } from './window-proof.js';
 
 /**
  * The Content Security Policy the web build wrote for the bundle (`dist/content-security-policy.txt`).
@@ -31,8 +32,16 @@ export interface LocalServerOptions {
   /** The secret of this run that the API demands of every request; `null` while the API is not up. */
   proxySecret: () => string | null;
   pages: InternalPages;
+  /** What proves a request comes from a window of the shell (see `window-proof.ts`). */
+  credentials: Credentials;
   log?: (message: string) => void;
 }
+
+const FORBIDDEN_BODY = JSON.stringify({
+  title:
+    'Solicitud no autorizada. Abra Consulvia desde su acceso directo o desde el icono de la bandeja.',
+  status: 403,
+});
 
 const UNAVAILABLE_BODY = JSON.stringify({
   title: 'Consulvia se está iniciando. Espere unos segundos y vuelva a intentar.',
@@ -70,6 +79,17 @@ export function createLocalServer(options: LocalServerOptions) {
     const target = request.url ?? '/';
     const route = routeOf(target);
     if (route) {
+      // The API is reached only by a window of the shell, or by the browser the owner opened through it. The
+      // public pages and the manifest go through without it: they are public by design.
+      if (route.kind === 'api' && !presentsProof(request.headers, options.credentials)) {
+        options.log?.('a request to the API without the proof of the window was refused');
+        response.writeHead(403, {
+          'Content-Type': 'application/json; charset=utf-8',
+          'Cache-Control': 'no-store',
+        });
+        response.end(FORBIDDEN_BODY);
+        return;
+      }
       forwardToApi(
         {
           apiPort: options.apiPort,
