@@ -42,6 +42,7 @@ import { chooseServerPort, findFreePort, type PortRetry } from './ports.js';
 import { DATABASE_NAME, type PostgresCluster, PostgresError, SUPERUSER } from './postgres.js';
 import { redact } from './redact.js';
 import { migrationCountOf, missingResources, type Resources } from './resources.js';
+import { reconcileInterruptedRestore } from './restore-journal.js';
 import { readBackupInfo, restoreBackup, RestoreError, type AdoptedSecrets } from './restore.js';
 import { parameterizeRolesScript } from './roles.js';
 import type { RotatingLog } from './rotating-log.js';
@@ -380,6 +381,7 @@ export class Controller {
 
     ui.showSplash(TEXT.splash.database);
     await this.prepareDatabase();
+    await this.reconcileRestore();
 
     await this.deps.commands.migrate(
       migrateEnvironment({ config: this.config, databasePort: this.requireDatabasePort() }),
@@ -531,6 +533,25 @@ export class Controller {
     const port = this.cluster.runningPort;
     if (port === null) throw new PostgresError('the database server is not running');
     return port;
+  }
+
+  /** A restore that was cut off (a power cut, a crash) is finished or undone before anything uses the database. */
+  private async reconcileRestore(): Promise<void> {
+    const outcome = await reconcileInterruptedRestore({
+      paths: this.deps.paths,
+      databases: {
+        names: () => this.cluster.listDatabases(),
+        rename: (from, to) => this.cluster.renameDatabase(from, to),
+        drop: (name) => this.cluster.dropDatabase(name),
+      },
+      reloadConfig: () => {
+        this.config = this.deps.store.read();
+      },
+      log: (message) => {
+        this.log(message);
+      },
+    });
+    if (outcome !== 'none') this.log(`restore reconciled at start: ${outcome}`);
   }
 
   private async prepareDatabase(): Promise<void> {
@@ -972,6 +993,12 @@ export class Controller {
         drop: () => this.cluster.dropDatabase(SCRATCH_DATABASE),
       },
       migrationCount: migrationCountOf(this.deps.resources),
+      dataBytes: async () =>
+        (await directoryBytes(this.deps.paths.pgdata)) +
+        (await directoryBytes(this.deps.paths.files)),
+      reloadSecrets: () => {
+        this.config = this.deps.store.read();
+      },
       stopServices: () => this.stopServices(),
       startServices: async () => {
         await this.deps.commands.migrate(
@@ -1003,6 +1030,7 @@ export class Controller {
   }
 
   private restoreMessage(error: unknown): string {
+    if (isDiskFull(error)) return TEXT.restore.diskFull;
     if (error instanceof RestoreError) {
       switch (error.code) {
         case 'invalid_backup':
@@ -1013,6 +1041,8 @@ export class Controller {
           return TEXT.restore.newerVersion;
         case 'wrong_recovery_key':
           return TEXT.restore.wrongKey;
+        case 'restore_incomplete':
+          return TEXT.restore.incomplete;
         default:
           return TEXT.restore.generic;
       }

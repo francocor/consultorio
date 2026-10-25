@@ -124,6 +124,31 @@ describe('creating the cluster', () => {
   });
 });
 
+describe('the databases of the server', () => {
+  it('lists their names', async () => {
+    const pg = cluster();
+    await pg.start();
+
+    const names = await pg.listDatabases();
+
+    expect(names).toEqual([]);
+    expect(queries.at(-1)?.sql).toContain('pg_database');
+  });
+
+  it('renames one after sending away whoever is connected, and refuses a name that is not safe', async () => {
+    const pg = cluster();
+    await pg.start();
+
+    await pg.renameDatabase('consultorio_before_restore', 'consultorio');
+
+    expect(queries.map((query) => query.sql).join('\n')).toContain(
+      'ALTER DATABASE consultorio_before_restore RENAME TO consultorio',
+    );
+    expect(queries.map((query) => query.sql).join('\n')).toContain('pg_terminate_backend');
+    await expect(pg.renameDatabase('a; drop database consultorio', 'b')).rejects.toThrow(/unsafe/);
+  });
+});
+
 describe('starting and stopping', () => {
   it('starts with pg_ctl on the free loopback port and waits for it', async () => {
     const port = await cluster().start();

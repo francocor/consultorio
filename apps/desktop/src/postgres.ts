@@ -277,6 +277,26 @@ export class PostgresCluster {
     });
   }
 
+  /** The names of the databases of the server. */
+  async listDatabases(): Promise<string[]> {
+    return this.asSuperuser('postgres', async (client) => {
+      const found = await client.query('SELECT datname FROM pg_database');
+      return found.rows.map((row) => String(row['datname']));
+    });
+  }
+
+  /** Renames a database, forcing out whoever is connected (a restore that was cut off is put right with it). */
+  async renameDatabase(from: string, to: string): Promise<void> {
+    assertDatabaseName(from);
+    assertDatabaseName(to);
+    await this.asSuperuser('postgres', async (client) => {
+      await client.query(
+        `SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = '${from}' AND pid <> pg_backend_pid()`,
+      );
+      await client.query(`ALTER DATABASE ${from} RENAME TO ${to}`);
+    });
+  }
+
   /** Drops a database, forcing out whoever is connected. */
   async dropDatabase(name: string): Promise<void> {
     assertDatabaseName(name);

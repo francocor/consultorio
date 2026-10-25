@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { createWriteStream } from 'node:fs';
-import { mkdir, rename, rm } from 'node:fs/promises';
+import { copyFile, mkdir, rename, rm, stat } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
@@ -20,9 +20,17 @@ import {
   type KeyWrap,
 } from './backup-crypto.js';
 import type { AdoptionPayload, Manifest } from './backup.js';
+import { DiskFullError, ensureRoom, isDiskFull } from './disk.js';
 import { safeDestination } from './files.js';
 import type { DataPaths } from './paths.js';
 import { formatRecoveryKey } from './recovery-key.js';
+import {
+  clearJournal,
+  restoreConfigCopy,
+  writeJournal,
+  type RestoreJournal,
+  type RestoreStep,
+} from './restore-journal.js';
 
 export type RestoreErrorCode =
   /** The file is not a Consulvia backup. */
@@ -34,7 +42,9 @@ export type RestoreErrorCode =
   /** The backup belongs to another installation: its recovery key is needed. */
   | 'recovery_key_required'
   | 'wrong_recovery_key'
-  | 'restore_failed';
+  | 'restore_failed'
+  /** The data is restored and in use, but the services could not be started again. Nothing was rolled back. */
+  | 'restore_incomplete';
 
 export class RestoreError extends Error {
   constructor(
@@ -89,8 +99,17 @@ export interface RestoreDeps {
   stopServices: () => Promise<void>;
   /** Applies the migrations and starts the API and the worker again, with the secrets of the install as they are now. */
   startServices: () => Promise<void>;
-  /** Makes the secrets of another install's backup the secrets of this one. Called after the data is in place. */
+  /**
+   * Makes the secrets of another install's backup the secrets of this one. Called BEFORE the databases trade
+   * places, with `config.json` copied aside first so it can be put back.
+   */
   adoptSecrets: (adopted: AdoptedSecrets) => Promise<void> | void;
+  /** Reads the secrets again after `config.json` was put back (a restore that was undone). */
+  reloadSecrets: () => Promise<void> | void;
+  /** The size of the data of the install (database and documents), to know the room a restore needs. */
+  dataBytes: () => Promise<number>;
+  /** Free bytes where the data lives. Defaults to the real disk. */
+  freeBytes?: (folder: string) => Promise<number>;
   now: () => Date;
   limits?: ArchiveLimits;
   log?: (message: string) => void;
@@ -180,13 +199,17 @@ function resolveKey(
 
 /**
  * Puts a backup in place of the data of this install. The caller has made a safety backup and asked the
- * owner to confirm. The order keeps the old data recoverable for as long as possible, and keeps anything
- * from the backup away from the live data until the whole file has proved itself:
+ * owner to confirm. The order keeps the old data recoverable for as long as possible, keeps anything from
+ * the backup away from the live data until the whole file has proved itself, and is written in a journal
+ * (`restore-journal.ts`) so a crash in the middle is finished or undone at the next start:
  *
  * 1. the key is found, and every chunk of the file is authenticated: nothing is extracted before that;
- * 2. the dump goes straight into a scratch database through `pg_restore` (as `app_owner`, in one
+ * 2. there is room on the disk for the work;
+ * 3. the dump goes straight into a scratch database through `pg_restore` (as `app_owner`, in one
  *    transaction) and the documents into a folder beside the live one;
- * 3. the documents folder is swapped, then the database.
+ * 4. the documents folder is swapped, then the keys of another install's backup are adopted, then the
+ *    databases trade places. That last step is the point of no return: from there nothing is rolled
+ *    back, whatever fails afterwards, because the restored database is the real one.
  */
 export async function restoreBackup(
   deps: RestoreDeps,
@@ -217,19 +240,47 @@ export async function restoreBackup(
     throw error;
   }
 
+  // The scratch database, the unpacked documents and the safety copy are all there at once: about three
+  // times the data, and the backup expands when it is unpacked.
+  const archiveBytes = (await stat(archive)).size;
+  await ensureRoom({
+    folder: deps.paths.root,
+    needed: 3 * Math.max(await deps.dataBytes(), 2 * archiveBytes),
+    ...(deps.freeBytes ? { freeBytes: deps.freeBytes } : {}),
+  });
+
   const stamp = String(deps.now().getTime());
   const unpacked = join(deps.paths.root, `tmp-restore-${stamp}`);
   const unpackedFiles = join(unpacked, 'files');
   const aside = `${deps.paths.files}.replaced-${stamp}`;
+  const configCopy = join(deps.paths.root, `config.json.pre-restore-${stamp}`);
   await mkdir(unpackedFiles, { recursive: true });
-  const moved = { files: false };
+  const hasConfigCopy = await copyFile(deps.paths.configFile, configCopy).then(
+    () => true,
+    () => false,
+  );
+  const journal: RestoreJournal = {
+    version: 1,
+    stamp,
+    step: 'prepared',
+    filesAside: aside,
+    unpacked,
+    configCopy: hasConfigCopy ? configCopy : null,
+  };
+  const advance = async (step: RestoreStep) => {
+    journal.step = step;
+    await writeJournal(deps.paths, journal);
+  };
+
+  const state = { movedFiles: false, adopted: false, swapped: false, scratch: false };
   let servicesStopped = false;
-  let scratchCreated = false;
   try {
+    await advance('prepared');
     await deps.stopServices();
     servicesStopped = true;
     await deps.scratch.create();
-    scratchCreated = true;
+    state.scratch = true;
+    await advance('restoring');
 
     // Pass 2: the work. The dump is piped into `pg_restore` as it is decrypted, and never written to disk.
     const found: {
@@ -296,17 +347,18 @@ export async function restoreBackup(
     // The documents: the old folder is moved aside, the unpacked one takes its place.
     try {
       await rename(deps.paths.files, aside);
-      moved.files = true;
+      state.movedFiles = true;
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
     }
     await rename(unpackedFiles, deps.paths.files);
+    await advance('files-swapped');
 
-    // The database goes last: until here nothing of the live data was touched, and the documents can be put back.
-    await deps.scratch.swapIn();
-    scratchCreated = false;
-
+    // The keys of another install's backup are adopted BEFORE the databases trade places, with a way back:
+    // the other order leaves a restored database that the keys on disk cannot read if this step fails.
     if (foreign && options.recoveryKey !== undefined) {
+      await advance('secrets-adopted');
+      state.adopted = true;
       await deps.adoptSecrets({
         payload: adopted,
         backupKeyBase64: key.toString('base64'),
@@ -314,19 +366,68 @@ export async function restoreBackup(
         recoveryKey: formatRecoveryKey(options.recoveryKey),
       });
     }
+
+    // The point of no return: after this the restored database is the real one.
+    await advance('swapping');
+    await deps.scratch.swapIn();
+    state.swapped = true;
+    state.scratch = false;
     deps.log?.('backup restored');
   } catch (error) {
-    if (moved.files) {
-      await rm(deps.paths.files, { recursive: true, force: true }).catch(() => undefined);
-      await rename(aside, deps.paths.files).catch(() => undefined);
-      moved.files = false;
-    }
-    throw error;
-  } finally {
-    if (scratchCreated) await deps.scratch.drop().catch(() => undefined);
-    await rm(unpacked, { recursive: true, force: true }).catch(() => undefined);
-    if (servicesStopped) await deps.startServices();
+    if (!state.swapped) await undo(deps, journal, state);
+    await removeQuietly(unpacked);
+    await restart(deps, servicesStopped);
+    throw isDiskFull(error) && !(error instanceof DiskFullError) ? new DiskFullError(0, 0) : error;
   }
-  if (moved.files) await rm(aside, { recursive: true, force: true }).catch(() => undefined);
+
+  // From here the restored data is the data of the install: what is left is housekeeping, and starting.
+  await removeQuietly(unpacked);
+  await removeQuietly(aside);
+  if (hasConfigCopy) await removeQuietly(configCopy);
+  await clearJournal(deps.paths).catch(() => undefined);
+  try {
+    await deps.startServices();
+  } catch (error) {
+    // The data is restored; only the start failed. Nothing is rolled back: the next start brings it up.
+    throw new RestoreError(
+      'restore_incomplete',
+      error instanceof Error ? error.message : String(error),
+    );
+  }
   return { header };
+}
+
+async function removeQuietly(path: string): Promise<void> {
+  await rm(path, { recursive: true, force: true }).catch(() => undefined);
+}
+
+/** Puts back everything a restore that did not get to swap the databases had changed. */
+async function undo(
+  deps: RestoreDeps,
+  journal: RestoreJournal,
+  state: { movedFiles: boolean; adopted: boolean; scratch: boolean },
+): Promise<void> {
+  if (state.adopted && journal.configCopy !== null) {
+    await restoreConfigCopy(deps.paths, journal.configCopy).catch(() => undefined);
+    await deps.reloadSecrets();
+  }
+  if (state.movedFiles) {
+    await removeQuietly(deps.paths.files);
+    await rename(journal.filesAside, deps.paths.files).catch(() => undefined);
+  }
+  if (state.scratch) await deps.scratch.drop().catch(() => undefined);
+  if (journal.configCopy !== null) await removeQuietly(journal.configCopy);
+  await clearJournal(deps.paths).catch(() => undefined);
+}
+
+/** Starts the services again after a restore that failed, and never hides the failure that came first. */
+async function restart(deps: RestoreDeps, stopped: boolean): Promise<void> {
+  if (!stopped) return;
+  try {
+    await deps.startServices();
+  } catch (error) {
+    deps.log?.(
+      `the services did not start after a failed restore: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
 }

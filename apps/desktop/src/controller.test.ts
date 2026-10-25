@@ -84,6 +84,8 @@ interface Harness {
   restoreEnvs: NodeJS.ProcessEnv[];
   dumpCalls: { args: string[]; env: NodeJS.ProcessEnv }[];
   probes: { port: number; secret: string }[];
+  /** Which databases the (fake) server has, to stage a restore that was cut off. */
+  setDatabases: (names: string[]) => void;
 }
 
 let harness: Harness;
@@ -165,6 +167,7 @@ function build(folder: string, options: { testMode?: boolean } = {}): Harness {
   const restoreEnvs: NodeJS.ProcessEnv[] = [];
   const dumpCalls: { args: string[]; env: NodeJS.ProcessEnv }[] = [];
   const probes: Harness['probes'] = [];
+  let databaseNames = ['postgres', 'consultorio'];
   let dumps = 0;
 
   const ui: ShellUi = {
@@ -209,6 +212,12 @@ function build(folder: string, options: { testMode?: boolean } = {}): Harness {
       return port;
     },
     isInitialized: () => existsSync(join(paths.pgdata, 'PG_VERSION')),
+    listDatabases: () => Promise.resolve([...databaseNames]),
+    renameDatabase: (from: string, to: string) => {
+      events.push(`rename ${from} ${to}`);
+      databaseNames = databaseNames.map((name) => (name === from ? to : name));
+      return Promise.resolve();
+    },
     initCluster: () => {
       events.push('initdb');
       mkdirSync(paths.pgdata, { recursive: true });
@@ -237,8 +246,9 @@ function build(folder: string, options: { testMode?: boolean } = {}): Harness {
       events.push('scratch swap');
       return Promise.resolve();
     },
-    dropDatabase: () => {
+    dropDatabase: (name: string) => {
       events.push('scratch drop');
+      databaseNames = databaseNames.filter((candidate) => candidate !== name);
       return Promise.resolve();
     },
     stop: () => {
@@ -352,6 +362,9 @@ function build(folder: string, options: { testMode?: boolean } = {}): Harness {
     restoreEnvs,
     dumpCalls,
     probes,
+    setDatabases: (names) => {
+      databaseNames = names;
+    },
   };
   return result;
 }
@@ -560,6 +573,43 @@ describe('an install whose configuration cannot be opened', () => {
     await next.controller.start();
 
     expect(buttonsOf(next)).toContain('Empezar de nuevo y restaurar una copia');
+  });
+});
+
+describe('a restore that was cut off', () => {
+  it('is undone at the next start: the old documents come back and the scratch database goes', async () => {
+    await harness.controller.start();
+    const url = setupUrl() ?? '';
+    await post(new URL('/__setup', url).href, tokenOf(url), form);
+    await harness.controller.quit();
+    const { paths } = harness;
+    // Where a restore stops after it swapped the documents: the backup's in place, the old ones aside.
+    mkdirSync(paths.files, { recursive: true });
+    writeFileSync(join(paths.files, 'from-the-backup.obj'), 'backup');
+    const aside = `${paths.files}.replaced-1`;
+    mkdirSync(aside, { recursive: true });
+    writeFileSync(join(aside, 'old.obj'), 'old');
+    writeFileSync(
+      join(paths.root, 'restore-journal.json'),
+      JSON.stringify({
+        version: 1,
+        stamp: '1',
+        step: 'files-swapped',
+        filesAside: aside,
+        unpacked: join(paths.root, 'tmp-restore-1'),
+        configCopy: null,
+      }),
+    );
+
+    const next = build(harness.folder);
+    next.setDatabases(['postgres', 'consultorio', 'consultorio_restore']);
+    await next.controller.start();
+
+    expect(readFileSync(join(paths.files, 'old.obj'), 'utf8')).toBe('old');
+    expect(existsSync(join(paths.files, 'from-the-backup.obj'))).toBe(false);
+    expect(next.events).toContain('scratch drop');
+    expect(existsSync(join(paths.root, 'restore-journal.json'))).toBe(false);
+    expect(next.controller.phase).toBe('ready');
   });
 });
 

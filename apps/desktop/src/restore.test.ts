@@ -30,7 +30,9 @@ import {
   type TestInstall,
 } from './backup-testing.js';
 import { createBackup, type Manifest } from './backup.js';
+import { DiskFullError } from './disk.js';
 import type { DataPaths } from './paths.js';
+import { journalFile, readJournal } from './restore-journal.js';
 import {
   readBackupInfo,
   restoreBackup,
@@ -46,6 +48,7 @@ let restored: Buffer[];
 let restoreResult: { code: number | null; stderr: string };
 let adopted: AdoptedSecrets | null;
 let failSwap: boolean;
+let failAdopt: boolean;
 let install: TestInstall;
 let other: TestInstall;
 
@@ -91,7 +94,14 @@ function restoreDeps(overrides: Partial<RestoreDeps> = {}): RestoreDeps {
     adoptSecrets: (value) => {
       adopted = value;
       events.push('adopt');
+      if (failAdopt) throw new Error('could not write config.json');
+      writeFileSync(paths.configFile, 'the configuration with the keys of the backup');
     },
+    reloadSecrets: () => {
+      events.push('reload secrets');
+    },
+    dataBytes: () => Promise.resolve(1000),
+    freeBytes: () => Promise.resolve(10 ** 13),
     now: () => new Date(2026, 9, 25, 8, 0, 0),
     ...overrides,
   };
@@ -127,6 +137,7 @@ beforeEach(() => {
   restoreResult = { code: 0, stderr: '' };
   adopted = null;
   failSwap = false;
+  failAdopt = false;
   install = newTestInstall();
   other = newTestInstall();
 });
@@ -245,6 +256,138 @@ describe('restoring a backup of this installation', () => {
     await restoreBackup(restoreDeps(), path);
 
     expect(events).toEqual(['stop', 'create scratch', 'pg_restore', 'swap', 'start']);
+  });
+});
+
+describe('a restore that fails half way, or is cut off', () => {
+  const OLD_CONFIG = 'the configuration of this install';
+
+  async function foreignBackup() {
+    const path = await makeBackup(other, { 't/a/docs/1.obj': 'theirs' });
+    mkdirSync(join(paths.files, 't', 'a', 'docs'), { recursive: true });
+    writeFileSync(join(paths.files, 't', 'a', 'docs', '1.obj'), 'ours');
+    writeFileSync(paths.configFile, OLD_CONFIG);
+    return path;
+  }
+
+  it('puts the old keys, the old documents and the services back when the databases cannot trade places', async () => {
+    const path = await foreignBackup();
+    failSwap = true;
+
+    await expect(
+      restoreBackup(restoreDeps(), path, { recoveryKey: other.recoveryKey }),
+    ).rejects.toThrow('could not rename the database');
+
+    expect(readFileSync(paths.configFile, 'utf8')).toBe(OLD_CONFIG);
+    expect(readDoc('t/a/docs/1.obj')).toBe('ours');
+    expect(events).toEqual([
+      'stop',
+      'create scratch',
+      'pg_restore',
+      'adopt',
+      'swap',
+      'reload secrets',
+      'drop scratch',
+      'start',
+    ]);
+    expect(existsSync(journalFile(paths))).toBe(false);
+    expect(
+      readdirSync(paths.root).filter((name) => /pre-restore|tmp-restore|replaced/.test(name)),
+    ).toEqual([]);
+  });
+
+  it('puts the old keys back when adopting the new ones fails half way, and never swaps the databases', async () => {
+    const path = await foreignBackup();
+    failAdopt = true;
+
+    await expect(
+      restoreBackup(restoreDeps(), path, { recoveryKey: other.recoveryKey }),
+    ).rejects.toThrow('could not write config.json');
+
+    expect(readFileSync(paths.configFile, 'utf8')).toBe(OLD_CONFIG);
+    expect(readDoc('t/a/docs/1.obj')).toBe('ours');
+    expect(events).not.toContain('swap');
+    expect(events).toContain('reload secrets');
+    expect(events).toContain('drop scratch');
+  });
+
+  it('never rolls anything back once the databases have traded places: it says the restore is incomplete', async () => {
+    const path = await foreignBackup();
+    let calls = 0;
+    const failure = await restoreBackup(
+      restoreDeps({
+        startServices: () => {
+          events.push('start');
+          calls += 1;
+          return Promise.reject(new Error('the api did not answer'));
+        },
+      }),
+      path,
+      { recoveryKey: other.recoveryKey },
+    ).catch((error: unknown) => error);
+
+    expect(failure).toMatchObject({ code: 'restore_incomplete' });
+    expect(calls).toBe(1);
+    // The documents and the keys of the backup stay: the database that is in place needs them.
+    expect(readDoc('t/a/docs/1.obj')).toBe('theirs');
+    expect(readFileSync(paths.configFile, 'utf8')).toBe(
+      'the configuration with the keys of the backup',
+    );
+    expect(events).not.toContain('reload secrets');
+    expect(events).not.toContain('drop scratch');
+    // And what was waiting to be undone is gone: there is nothing to undo any more.
+    expect(existsSync(journalFile(paths))).toBe(false);
+    expect(
+      readdirSync(paths.root).filter((name) => /pre-restore|tmp-restore|replaced/.test(name)),
+    ).toEqual([]);
+  });
+
+  it('writes down how far it got, before each step that cannot be repeated', async () => {
+    const path = await foreignBackup();
+    const seen: string[] = [];
+    const step = async () =>
+      ((await readJournal(paths)) as { step: string } | null)?.step ?? 'none';
+
+    await restoreBackup(
+      restoreDeps({
+        restoreDump: async (source) => {
+          seen.push(`pg_restore: ${await step()}`);
+          await drain(source);
+          return { code: 0, stderr: '' };
+        },
+        adoptSecrets: async () => {
+          seen.push(`adopt: ${await step()}`);
+        },
+        scratch: {
+          create: () => Promise.resolve(),
+          swapIn: async () => {
+            seen.push(`swap: ${await step()}`);
+          },
+          drop: () => Promise.resolve(),
+        },
+      }),
+      path,
+      { recoveryKey: other.recoveryKey },
+    );
+
+    expect(seen).toEqual(['pg_restore: restoring', 'adopt: secrets-adopted', 'swap: swapping']);
+    expect(await readJournal(paths)).toBeNull();
+  });
+
+  it('refuses before it touches anything when the disk has less than three times the data', async () => {
+    const path = await makeBackup(install, { 't/a/docs/1.obj': 'one' });
+
+    const failure = await restoreBackup(
+      restoreDeps({
+        dataBytes: () => Promise.resolve(10 * 1024 ** 3),
+        freeBytes: () => Promise.resolve(25 * 1024 ** 3),
+      }),
+      path,
+    ).catch((error: unknown) => error);
+
+    expect(failure).toBeInstanceOf(DiskFullError);
+    untouched();
+    expect(existsSync(journalFile(paths))).toBe(false);
   });
 });
 
@@ -464,7 +607,8 @@ describe('restoring a backup of another installation', () => {
       recoveryKey: other.recoveryKey.toLowerCase().replaceAll('-', ' '),
     });
 
-    expect(events).toEqual(['stop', 'create scratch', 'pg_restore', 'swap', 'adopt', 'start']);
+    // The keys are adopted before the databases trade places, with a way back.
+    expect(events).toEqual(['stop', 'create scratch', 'pg_restore', 'adopt', 'swap', 'start']);
     expect(adopted).toMatchObject({
       payload: other.secrets,
       backupKeyBase64: other.backupKey.toString('base64'),

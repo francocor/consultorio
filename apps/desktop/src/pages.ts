@@ -77,6 +77,7 @@ export function renderSetupPage(): string {
     `<div id="step-form">
 <h1>Bienvenido a Consulvia</h1>
 <p class="lead">Complete estos datos para preparar su consultorio. Se piden una sola vez y quedan guardados en esta computadora.</p>
+<p class="hint">¿Ya tiene una copia de seguridad de Consulvia? No complete este formulario: abra el icono de Consulvia junto al reloj de Windows y elija <strong>Restaurar copia…</strong></p>
 <form id="form" data-endpoint="/__setup" novalidate>
 ${field({ name: 'organizationName', label: 'Nombre del consultorio', autocomplete: 'organization', maxlength: 80 })}
 ${field({ name: 'ownerName', label: 'Su nombre y apellido', autocomplete: 'name', maxlength: 100 })}

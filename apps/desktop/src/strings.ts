@@ -64,6 +64,10 @@ export const TEXT = {
     newerVersion:
       'Esta copia se hizo con una versión más nueva de Consulvia. Instale la versión más reciente e intente de nuevo.',
     wrongKey: 'La clave de recuperación no es correcta.',
+    incomplete:
+      'Los datos de la copia ya están en uso, pero Consulvia no pudo volver a iniciar todos sus servicios. No se deshizo nada. Cierre Consulvia con Salir en el icono y ábralo de nuevo; si el problema continúa, abra los registros.',
+    diskFull:
+      'No hay espacio suficiente en el disco para restaurar la copia. Libere espacio (se necesita aproximadamente el triple de lo que ocupan los datos) y vuelva a intentar. No se cambió nada.',
     generic:
       'La restauración no se completó. Los datos actuales se conservan. Si el problema continúa, abra los registros y envíe el archivo a quien le brinda soporte.',
   },

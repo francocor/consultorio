@@ -408,7 +408,12 @@ async function run(): Promise<void> {
         { type: 'separator' },
         { label: TEXT.tray.outbox, click: () => void controller.openOutbox() },
         { label: TEXT.tray.backup, enabled: ready, click: () => void controller.backupNow() },
-        { label: TEXT.tray.restore, enabled: ready, click: () => void controller.restoreFlow() },
+        {
+          label: TEXT.tray.restore,
+          // On a new install the restore takes the place of the setup form.
+          enabled: ready || controller.phase === 'setup',
+          click: () => void controller.restoreFlow(),
+        },
         {
           label: TEXT.tray.resetPassword,
           enabled: ready,
