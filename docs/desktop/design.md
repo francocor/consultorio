@@ -155,13 +155,13 @@ These are refused at boot by the desktop profile, naming the variable: any `*_PR
 
 Each command writes ONE JSON line to the standard output when it worked and ONE to the standard error when it did not. The exception is `migrate`, whose output is plain progress lines. Passwords are never printed. Never put a password in the arguments: the only flag is `--stdin`.
 
-| Command                            | What it does                                                                                     | Success output (stdout)                                              |
-| ---------------------------------- | ------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------- |
-| `main.js migrate`                  | applies the pending migrations and loads the platform catalogs (payers, holidays)                | `migrations applied`, then `platform catalogs loaded`                |
-| `main.js provision [--stdin]`      | creates the organization, its key, its first location (`Consultorio`) and the owner. Idempotent  | `{"result":"created"\|"exists","tenantId":"<uuid>","slug":"<slug>"}` |
-| `main.js reset-password [--stdin]` | gives the owner a new password, ends the owner's sessions, lifts a lock, keeps the second factor | `{"result":"reset","email":"<owner email>"}`                         |
-| `main.js api`                      | the HTTP API on `HOST:PORT`. Stays up                                                            | nothing (JSON logs)                                                  |
-| `main.js worker`                   | the jobs and the audit sealing. Stays up                                                         | nothing (JSON logs)                                                  |
+| Command                            | What it does                                                                                                               | Success output (stdout)                                                  |
+| ---------------------------------- | -------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------ |
+| `main.js migrate`                  | applies the pending migrations and loads the platform catalogs (payers, holidays)                                          | `migrations applied`, then `platform catalogs loaded`                    |
+| `main.js provision [--stdin]`      | creates the organization, its key, its first location (`Consultorio`) and the owner. Idempotent                            | `{"result":"created"\|"exists","tenantId":"<uuid>","slug":"<slug>"}`     |
+| `main.js reset-password [--stdin]` | gives the owner a new password, ends the owner's sessions, lifts a lock, keeps the second factor unless asked to remove it | `{"result":"reset","email":"<owner email>","secondFactorCleared":false}` |
+| `main.js api`                      | the HTTP API on `HOST:PORT`. Stays up                                                                                      | nothing (JSON logs)                                                      |
+| `main.js worker`                   | the jobs and the audit sealing. Stays up                                                                                   | nothing (JSON logs)                                                      |
 
 `provision` reads its input from the environment or, with `--stdin`, from a JSON document. The document replaces the environment, and unknown keys are refused.
 
@@ -174,7 +174,7 @@ Each command writes ONE JSON line to the standard output when it worked and ONE 
 | `PROVISION_TIME_ZONE`         | `timeZone`         |          | an IANA name; default `America/Argentina/Buenos_Aires`             |
 | `PROVISION_SLUG`              | `slug`             |          | must equal `SINGLE_TENANT_SLUG` if given                           |
 
-`reset-password` reads `RESET_NEW_PASSWORD` (`newPassword`) and, only if the organization has more than one owner, `RESET_OWNER_EMAIL` (`ownerEmail`).
+`reset-password` reads `RESET_NEW_PASSWORD` (`newPassword`) and, only if the organization has more than one owner, `RESET_OWNER_EMAIL` (`ownerEmail`). `RESET_CLEAR_SECOND_FACTOR` (`clearSecondFactor`, `true` or `1`; default no) also removes the owner's TOTP secret and recovery codes, for an owner who lost the phone, and writes an `auth.2fa.disabled` audit entry. Whoever can run the command already controls the PC and its database, so it is not a gain of privilege; the tray asks the person at the PC whether to do it.
 
 A second `provision` with the same slug changes nothing (not even the password), exits 0 and answers `"result":"exists"`. The creation is one transaction. An organization that exists and is a demo one is never touched.
 

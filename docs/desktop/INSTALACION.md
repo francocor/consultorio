@@ -1,0 +1,116 @@
+# Consulvia para Windows: guía de instalación
+
+Esta guía es para el consultorio que usa Consulvia en una sola computadora. No hace falta conocimiento técnico.
+
+## Qué es
+
+Consulvia es el sistema de gestión del consultorio: agenda, pacientes, historia clínica, documentos, facturación y recordatorios. La versión para Windows funciona completa en **una computadora**, sin internet y sin contratar ningún servicio: los datos quedan en esa computadora y en las copias de seguridad que usted guarde.
+
+## Qué necesita
+
+| Requisito           | Detalle                                                                                                                                                           |
+| ------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Sistema operativo   | Windows 10 o Windows 11, de 64 bits                                                                                                                               |
+| Memoria             | 4 GB como mínimo, 8 GB recomendados                                                                                                                               |
+| Espacio en disco    | 1,5 GB libres para instalar el programa, más el espacio de sus datos y de las copias de seguridad (cada copia pesa lo mismo que los datos: planifique algunos GB) |
+| Permisos            | Un usuario común de Windows alcanza. **No** se piden permisos de administrador                                                                                    |
+| Internet            | No es necesario para usar Consulvia                                                                                                                               |
+| Instalador firmado? | Todavía no. Ver el aviso de Windows más abajo                                                                                                                     |
+
+## Instalar
+
+1. Haga doble clic en **`Consulvia-Setup-<versión>.exe`**.
+2. Si Windows muestra _"Windows protegió su PC"_, el instalador todavía no está firmado digitalmente. Elija **Más información** y después **Ejecutar de todas formas**. Haga esto solo con un instalador que le entregó quien le brinda el servicio.
+3. La instalación es de un solo paso, sin preguntas. Al terminar se crea un acceso directo **Consulvia** en el escritorio y en el menú Inicio, y Consulvia se abre sola.
+
+El programa se instala para el usuario de Windows que lo instala, en `%LOCALAPPDATA%\Programs\Consulvia`. Para actualizar, ejecute el instalador de la versión nueva: sus datos se conservan.
+
+## Primer inicio
+
+La primera vez, Consulvia prepara la base de datos. Tarda uno o dos minutos y muestra _"Iniciando Consulvia…"_. Después aparece la pantalla **Bienvenido a Consulvia**:
+
+1. Escriba el **nombre del consultorio**, su **nombre y apellido**, su **correo electrónico** (con él va a ingresar) y la **zona horaria**.
+2. Elija una **contraseña** de al menos 12 caracteres. Una frase larga es una buena opción. Consulvia rechaza las contraseñas muy comunes.
+3. Pulse **Crear mi consultorio** y espere unos segundos.
+4. Se muestra la **clave de recuperación**: 30 letras y números en grupos de cinco. **Imprímala o anótela y guárdela en un lugar seguro.** Sirve para abrir una copia de seguridad en otra computadora. Si la pierde, puede volver a verla desde el icono de Consulvia (_Clave de recuperación…_).
+5. Pulse **Abrir Consulvia** e ingrese con su correo y su contraseña.
+
+Esa cuenta es la de la **propietaria** del consultorio. Desde Configuración puede invitar a más personas (profesionales, recepción).
+
+## Uso diario
+
+- Consulvia queda activo junto al reloj de Windows (el icono de Consulvia, a veces dentro de la flecha ^). **Cerrar la ventana no cierra Consulvia**: sigue funcionando para que los recordatorios continúen. Para cerrarlo por completo, haga clic derecho en el icono y elija **Salir**.
+- _Abrir en el navegador_ abre el mismo Consulvia en Chrome, Edge u otro navegador de esta computadora.
+- _Iniciar con Windows_ hace que Consulvia arranque solo al encender la computadora. Está desactivado hasta que usted lo marque.
+- Apague la computadora después de **Salir**, o con el apagado normal de Windows. No la apague desenchufándola: aunque Consulvia se recupera, es mejor evitarlo.
+
+El menú del icono tiene:
+
+| Opción                                    | Qué hace                                                             |
+| ----------------------------------------- | -------------------------------------------------------------------- |
+| Abrir Consulvia                           | Muestra la ventana                                                   |
+| Abrir en el navegador                     | Abre Consulvia en su navegador                                       |
+| Correos salientes                         | Abre la carpeta con los correos que Consulvia generó (ver más abajo) |
+| Hacer copia de seguridad                  | Hace una copia ahora                                                 |
+| Restaurar copia…                          | Reemplaza los datos por los de una copia                             |
+| Restablecer contraseña de la propietaria… | Para cuando la propietaria olvidó su contraseña                      |
+| Clave de recuperación…                    | Muestra la clave de recuperación                                     |
+| Ver registros                             | Abre la carpeta con los registros (para enviar a soporte)            |
+| Iniciar con Windows                       | Marca o desmarca el inicio automático                                |
+| Acerca de                                 | Versión y ubicación de los datos                                     |
+| Salir                                     | Cierra Consulvia por completo                                        |
+
+## Copias de seguridad
+
+- Consulvia hace **una copia automática por día**, la primera vez que se abre cada día. Conserva las **últimas 14**.
+- Para hacer una copia en cualquier momento: icono de Consulvia, **Hacer copia de seguridad**.
+- Las copias están en **`Documentos\Consulvia\Copias`**, con el nombre `consulvia-AAAA-MM-DD_HHMM.zip`. Cada una incluye la base de datos, todos los documentos de los pacientes y las claves necesarias, selladas con la clave de recuperación.
+- **Una copia en la misma computadora no protege de un robo, un incendio o un disco roto.** Una vez por semana, copie la carpeta `Copias` a un pendrive, a un disco externo o a un servicio de almacenamiento de su confianza, y guárdelo fuera del consultorio. Las copias contienen datos de salud: trátelas con el mismo cuidado que la historia clínica en papel.
+
+## Restaurar una copia
+
+1. Icono de Consulvia, **Restaurar copia…**, y elija el archivo `.zip`.
+2. Consulvia pide confirmación, hace **una copia de seguridad de los datos actuales** (`consulvia-previa-restauracion-…`) y recién entonces reemplaza todo. Durante unos minutos Consulvia queda sin servicio.
+3. Cuando termina, Consulvia se abre con los datos de la copia.
+
+**En otra computadora** (por ejemplo, si la primera se rompió): instale Consulvia, complete la pantalla de bienvenida con cualquier dato y, ya adentro, use **Restaurar copia…** con el archivo de la copia. Como esa copia es de otra instalación, Consulvia pide la **clave de recuperación** que se mostró en la primera computadora. Sin esa clave la copia no se puede abrir: por eso conviene guardarla impresa.
+
+Si la copia es de una versión de Consulvia más nueva que la instalada, Consulvia lo avisa y no restaura: instale primero la versión más reciente.
+
+## Olvidé la contraseña
+
+- **De la propietaria:** en esta computadora, icono de Consulvia, **Restablecer contraseña de la propietaria…**. Escriba la contraseña nueva dos veces. Si perdió también el teléfono de la verificación en dos pasos, marque **Quitar también la verificación en dos pasos**; la propietaria podrá volver a activarla desde su cuenta. Se cierran las sesiones abiertas de esa cuenta.
+- **De otra persona:** en la pantalla de ingreso use _¿Olvidó su contraseña?_. Como esta instalación no tiene servidor de correo, el mensaje no sale por internet: queda guardado en **Correos salientes** (icono de Consulvia). Abra el archivo `.eml` más reciente con su programa de correo, o abra el `.json` que lo acompaña, y copie el enlace a la persona. Los correos con más de 7 días se borran solos.
+
+## Dónde están los datos
+
+| Qué                               | Dónde                               |
+| --------------------------------- | ----------------------------------- |
+| Base de datos                     | `%APPDATA%\Consulvia\pgdata`        |
+| Documentos de los pacientes       | `%APPDATA%\Consulvia\files`         |
+| Claves y configuración (cifradas) | `%APPDATA%\Consulvia\config.json`   |
+| Correos salientes                 | `%APPDATA%\Consulvia\outbox`        |
+| Registros                         | `%APPDATA%\Consulvia\logs`          |
+| Copias de seguridad               | `Documentos\Consulvia\Copias`       |
+| Programa                          | `%LOCALAPPDATA%\Programs\Consulvia` |
+
+`%APPDATA%` es normalmente `C:\Users\<usuario>\AppData\Roaming`. **No mueva, renombre ni borre estas carpetas con Consulvia abierto.** Las claves de `config.json` están protegidas con la cuenta de Windows: solo ese usuario de Windows puede abrir los datos. Si se crea otro usuario de Windows en la computadora, instale y use Consulvia siempre con el mismo.
+
+## Desinstalar
+
+Configuración de Windows, Aplicaciones, **Consulvia**, Desinstalar. Se elimina el programa y los accesos directos. **Los datos y las copias de seguridad se conservan** (`%APPDATA%\Consulvia` y `Documentos\Consulvia\Copias`), de modo que reinstalar Consulvia los recupera. Para eliminar los datos por completo hay que borrar esas dos carpetas a mano; no se puede deshacer.
+
+## Qué no incluye esta versión
+
+- **Recetas electrónicas:** la verificación de matrícula depende de la consola del operador de la plataforma, que no existe en la versión de una sola computadora. Las recetas están desactivadas.
+- **Facturación electrónica con AFIP:** las facturas se pueden preparar en Consulvia, pero la conexión real con AFIP todavía no está disponible.
+- **Turnos online, portal del paciente y lista de espera fuera de la computadora:** los enlaces solo funcionan desde esta misma computadora. Los pacientes no pueden reservar desde su casa.
+- **Videoconsulta, WhatsApp y cobros online:** desactivados. Los recordatorios y avisos por correo no salen por internet (ver _Correos salientes_).
+- **Varias computadoras:** esta versión es para una sola. No se sincroniza entre equipos.
+
+## Si algo no funciona
+
+- _"Consulvia no pudo iniciar"_: pulse **Reintentar**. Si se repite, elija **Ver registros** y envíe la carpeta `logs` a quien le brinda soporte.
+- _"No se pueden leer los datos de esta instalación con la cuenta de Windows actual"_: está ingresando con otro usuario de Windows. Cierre la sesión e ingrese con el usuario que instaló Consulvia.
+- El antivirus puede demorar el primer inicio o el programa de base de datos. Si bloquea Consulvia, agregue la carpeta del programa y `%APPDATA%\Consulvia` a las excepciones.
+- Si la computadora se apagó de golpe y Consulvia tarda en abrir, espere un minuto: la base de datos se recupera sola.
