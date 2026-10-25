@@ -33,6 +33,7 @@ import { startMetricsListener } from './metrics-listener.js';
 import { loadPasswordValidator } from './password-validator.js';
 import { collectPlatformMetrics } from './platform-metrics.js';
 import { createConfiguredScanner } from './scanner.js';
+import { waitForShutdown } from './shutdown.js';
 import { createConfiguredStorage } from './storage.js';
 import { MODULE_WIRINGS, combineWorkerContributions } from './wiring/index.js';
 import { onlineBookingMetrics } from './wiring/online-booking.js';
@@ -47,17 +48,6 @@ type Role = (typeof ROLES)[number];
 
 function isRole(value: string | undefined): value is Role {
   return ROLES.some((role) => role === value);
-}
-
-function waitForShutdownSignal(): Promise<void> {
-  return new Promise((resolve) => {
-    process.once('SIGINT', () => {
-      resolve();
-    });
-    process.once('SIGTERM', () => {
-      resolve();
-    });
-  });
 }
 
 /**
@@ -221,7 +211,7 @@ async function runApi(rawConfig: Config): Promise<void> {
     render: () => onlineBookingMetrics.render(),
     log: app.log,
   });
-  await waitForShutdownSignal();
+  await waitForShutdown();
 
   app.log.info('shutting down');
   await stopMetrics();
@@ -269,7 +259,7 @@ async function runReleaser(config: Config): Promise<void> {
     log,
   });
   log.info('releaser started');
-  await waitForShutdownSignal();
+  await waitForShutdown();
   await releaser.stop();
   email.close();
   storage.close();
@@ -351,7 +341,7 @@ async function runWorker(config: Config): Promise<void> {
     log,
   });
   log.info('worker started');
-  await waitForShutdownSignal();
+  await waitForShutdown();
   await stopMetrics();
   await worker.stop();
   await runtime.close();
