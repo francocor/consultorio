@@ -32,6 +32,9 @@ export function builderConfig(paths: BuilderPaths): Configuration {
     nodeGypRebuild: false,
     extraResources: [
       { from: `${paths.stageDir}/api`, to: 'api' },
+      // electron-builder never copies a `node_modules` that sits at the root of a folder it is given (it
+      // assumes the dependency list takes care of it), so the modules of the API are a folder of their own.
+      { from: `${paths.stageDir}/api/node_modules`, to: 'api/node_modules' },
       { from: `${paths.stageDir}/web`, to: 'web' },
       { from: `${paths.stageDir}/postgres`, to: 'postgres' },
       { from: `${paths.stageDir}/tools`, to: 'tools' },

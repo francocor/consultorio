@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { createReadStream, existsSync } from 'node:fs';
-import { copyFile, mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
+import { copyFile, mkdir, readdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { pipeline } from 'node:stream/promises';
 import { fileURLToPath } from 'node:url';
@@ -47,8 +47,40 @@ async function sha256Of(file: string): Promise<string> {
   return hash.digest('hex');
 }
 
+/** Files electron-builder drops from everything it copies, whatever the config says. They carry nothing. */
+const ALWAYS_DROPPED =
+  /^(?:\.gitkeep|\.gitignore|\.gitattributes|\.npmignore|\.DS_Store|thumbs\.db)$/i;
+
+/** Files under a folder, counted. */
+async function countFiles(folder: string): Promise<number> {
+  let total = 0;
+  for (const entry of await readdir(folder, { withFileTypes: true })) {
+    if (entry.isDirectory()) total += await countFiles(join(folder, entry.name));
+    else if (!ALWAYS_DROPPED.test(entry.name)) total += 1;
+  }
+  return total;
+}
+
+/**
+ * What electron-builder copied is what was staged, file for file. It filters what it copies by rules made
+ * for application files (it once left out the whole `node_modules` of the API), and a program that is
+ * missing a module only fails on the clinic's PC.
+ */
+async function assertPacked(staged: string, resources: string): Promise<void> {
+  for (const part of ['api', 'web', 'postgres', 'tools', 'sql', 'icons']) {
+    const expected = await countFiles(join(staged, part));
+    const packed = await countFiles(join(resources, part));
+    if (expected !== packed) {
+      throw new Error(
+        `The installer carries ${String(packed)} files of "${part}" and the build staged ${String(expected)}`,
+      );
+    }
+  }
+  console.log('[dist] every staged file is in the installer');
+}
+
 export async function dist(
-  options: { skipBuild?: boolean; reuseStage?: boolean } = {},
+  options: { skipBuild?: boolean; reuseStage?: boolean; dirOnly?: boolean } = {},
 ): Promise<string> {
   const manifest = JSON.parse(await readFile(join(desktopRoot, 'package.json'), 'utf8')) as {
     version: string;
@@ -71,9 +103,15 @@ export async function dist(
     // The packed application is the folder written above, with no dependency list of its own: pointing the
     // builder at the workspace package instead would pack the PostgreSQL binaries a second time as a "dependency".
     projectDir: appDir,
-    targets: Platform.WINDOWS.createTarget('nsis', Arch.x64),
+    targets: Platform.WINDOWS.createTarget(options.dirOnly === true ? 'dir' : 'nsis', Arch.x64),
     config: { ...builderConfig({ stageDir, buildDir, outputDir: releaseDir }), electronVersion },
   });
+
+  await assertPacked(stageDir, join(releaseDir, 'win-unpacked', 'resources'));
+  if (options.dirOnly === true) {
+    console.log(`[dist] unpacked program (no installer): ${join(releaseDir, 'win-unpacked')}`);
+    return join(releaseDir, 'win-unpacked');
+  }
 
   const installer = join(releaseDir, `Consulvia-Setup-${manifest.version}.exe`);
   const { size } = await stat(installer);
@@ -89,5 +127,6 @@ if (process.argv[1] !== undefined && fileURLToPath(import.meta.url) === process.
   await dist({
     skipBuild: process.argv.includes('--skip-build'),
     reuseStage: process.argv.includes('--reuse-stage'),
+    dirOnly: process.argv.includes('--dir-only'),
   });
 }

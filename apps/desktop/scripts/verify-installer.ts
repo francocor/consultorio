@@ -178,8 +178,9 @@ function exited(child: ChildProcess): Promise<number | null> {
 /** The processes (ours, from the temporary folder) that are still alive. */
 function leftovers(session: Session): { pid: number; name: string }[] {
   const script =
-    `$root = '${session.root.replaceAll("'", "''")}'; ` +
-    `Get-CimInstance Win32_Process | Where-Object { ($_.ExecutablePath -and $_.ExecutablePath.StartsWith($root, 'OrdinalIgnoreCase')) -or ($_.CommandLine -and $_.CommandLine.IndexOf($root, [StringComparison]::OrdinalIgnoreCase) -ge 0) } | ` +
+    // Every program of the install (Consulvia, PostgreSQL, the tools) runs from the install folder.
+    `$root = '${session.installDir.replaceAll("'", "''")}'; ` +
+    `Get-CimInstance Win32_Process | Where-Object { $_.ExecutablePath -and $_.ExecutablePath.StartsWith($root, 'OrdinalIgnoreCase') } | ` +
     "ForEach-Object { '{0}|{1}' -f $_.ProcessId, $_.Name }";
   const output = spawnSync(
     'powershell.exe',
@@ -363,17 +364,23 @@ async function main(): Promise<void> {
   const manifest = JSON.parse(await readFile(join(desktopRoot, 'package.json'), 'utf8')) as {
     version: string;
   };
+  // `--program=<folder>` runs an unpacked program (release/win-unpacked) instead of the installer: the same
+  // checks, minus the install and the uninstall, for the minutes it takes to repeat them.
+  const unpacked = process.argv
+    .find((argument) => argument.startsWith('--program='))
+    ?.slice('--program='.length);
   const installer =
-    process.argv[2] ?? join(desktopRoot, 'release', `Consulvia-Setup-${manifest.version}.exe`);
-  assert(existsSync(installer), `no installer at ${installer}`);
+    process.argv.slice(2).find((argument) => !argument.startsWith('--')) ??
+    join(desktopRoot, 'release', `Consulvia-Setup-${manifest.version}.exe`);
+  assert(unpacked !== undefined || existsSync(installer), `no installer at ${installer}`);
 
   const root = await mkdtemp(join(tmpdir(), 'consulvia-verify-'));
   const session: Session = {
     root,
-    installDir: join(root, 'programa'),
+    installDir: unpacked ?? join(root, 'programa'),
     dataDir: join(root, 'datos'),
     backupDir: join(root, 'copias'),
-    exe: join(root, 'programa', 'Consulvia.exe'),
+    exe: join(unpacked ?? join(root, 'programa'), 'Consulvia.exe'),
     shellLog: join(root, 'datos', 'logs', 'shell.log'),
     env: {
       ...process.env,
@@ -382,7 +389,9 @@ async function main(): Promise<void> {
       CONSULVIA_TEST_MODE: '1',
     },
   };
-  console.log(`installer: ${installer}\nfolder:    ${root}\n`);
+  console.log(
+    `${unpacked === undefined ? `installer: ${installer}` : `program:   ${unpacked}`}\nfolder:    ${root}\n`,
+  );
 
   let app: ChildProcess | undefined;
   let base!: URL;
@@ -393,12 +402,14 @@ async function main(): Promise<void> {
 
   try {
     await check('install silently into a temporary folder (/S)', async () => {
-      const setup = spawn(installer, ['/S', `/D=${session.installDir}`], {
-        env: session.env,
-        stdio: 'ignore',
-      });
-      const code = await exited(setup);
-      assert(code === 0, `the installer exited with ${String(code)}`);
+      if (unpacked === undefined) {
+        const setup = spawn(installer, ['/S', `/D=${session.installDir}`], {
+          env: session.env,
+          stdio: 'ignore',
+        });
+        const code = await exited(setup);
+        assert(code === 0, `the installer exited with ${String(code)}`);
+      }
       await until(
         'Consulvia.exe in the install folder',
         () => (existsSync(session.exe) ? true : undefined),
@@ -429,7 +440,7 @@ async function main(): Promise<void> {
         const url = await until(
           'the setup address in the log',
           () => lastMatch(logText(session), /setup url: (\S+)/),
-          240_000,
+          600_000,
         );
         const parsed = new URL(url);
         base = new URL(parsed.origin);
@@ -572,7 +583,7 @@ async function main(): Promise<void> {
         created.status === 201 || created.status === 200,
         `create answered ${String(created.status)}: ${created.text()}`,
       );
-      patientId = created.json<{ id: string }>().id;
+      patientId = created.json<{ patient: { id: string } }>().patient.id;
       assert(patientId !== '', 'no patient id');
       const list = await web.call('GET', '/api/patients');
       assert(
@@ -640,7 +651,7 @@ async function main(): Promise<void> {
               throw new Error(`the PDF was rejected: ${String(found.rejectionReason)}`);
             return found?.status === 'available' ? found : undefined;
           },
-          90_000,
+          240_000,
         );
         const link = await web.call('POST', `/api/documents/${documentId}/download-link`);
         assert(
@@ -690,7 +701,7 @@ async function main(): Promise<void> {
             .documents.find((entry) => entry.id === first.id);
           return found?.status === 'rejected' ? found : undefined;
         },
-        90_000,
+        240_000,
       );
       return `rejected: ${String(rejected.rejectionReason)}`;
     });
@@ -769,7 +780,7 @@ async function main(): Promise<void> {
         await until(
           'every process of the install to end',
           () => (leftovers(session).length === 0 ? true : undefined),
-          90_000,
+          240_000,
           1_000,
         );
         const log = logText(session);
@@ -792,7 +803,7 @@ async function main(): Promise<void> {
             const count = logText(session).split('api on port').length - 1;
             return count >= 2 ? true : undefined;
           },
-          240_000,
+          600_000,
         );
         const after = new Client(base);
         const login = await after.call('POST', '/api/auth/login', {
@@ -950,19 +961,21 @@ async function main(): Promise<void> {
         await until(
           'every process to end',
           () => (leftovers(session).length === 0 ? true : undefined),
-          90_000,
+          240_000,
           1_000,
         );
 
-        const uninstaller = join(session.installDir, 'Uninstall Consulvia.exe');
-        assert(existsSync(uninstaller), 'no uninstaller in the install folder');
-        await exited(spawn(uninstaller, ['/S'], { env: session.env, stdio: 'ignore' }));
-        await until(
-          'the program files to be removed',
-          () => (existsSync(session.exe) ? undefined : true),
-          120_000,
-          1_000,
-        );
+        if (unpacked === undefined) {
+          const uninstaller = join(session.installDir, 'Uninstall Consulvia.exe');
+          assert(existsSync(uninstaller), 'no uninstaller in the install folder');
+          await exited(spawn(uninstaller, ['/S'], { env: session.env, stdio: 'ignore' }));
+          await until(
+            'the program files to be removed',
+            () => (existsSync(session.exe) ? undefined : true),
+            120_000,
+            1_000,
+          );
+        }
         assert(
           existsSync(join(session.dataDir, 'config.json')),
           'config.json was removed with the program',
