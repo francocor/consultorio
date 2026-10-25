@@ -84,17 +84,17 @@ Si la copia es de una versión de Consulvia más nueva que la instalada, Consulv
 
 ## Dónde están los datos
 
-| Qué                               | Dónde                               |
-| --------------------------------- | ----------------------------------- |
-| Base de datos                     | `%APPDATA%\Consulvia\pgdata`        |
-| Documentos de los pacientes       | `%APPDATA%\Consulvia\files`         |
-| Claves y configuración (cifradas) | `%APPDATA%\Consulvia\config.json`   |
-| Correos salientes                 | `%APPDATA%\Consulvia\outbox`        |
-| Registros                         | `%APPDATA%\Consulvia\logs`          |
-| Copias de seguridad               | `Documentos\Consulvia\Copias`       |
-| Programa                          | `%LOCALAPPDATA%\Programs\Consulvia` |
+| Qué                               | Dónde                                  |
+| --------------------------------- | -------------------------------------- |
+| Base de datos                     | `%LOCALAPPDATA%\Consulvia\pgdata`      |
+| Documentos de los pacientes       | `%LOCALAPPDATA%\Consulvia\files`       |
+| Claves y configuración (cifradas) | `%LOCALAPPDATA%\Consulvia\config.json` |
+| Correos salientes                 | `%LOCALAPPDATA%\Consulvia\outbox`      |
+| Registros                         | `%LOCALAPPDATA%\Consulvia\logs`        |
+| Copias de seguridad               | `Documentos\Consulvia\Copias`          |
+| Programa                          | `%LOCALAPPDATA%\Programs\Consulvia`    |
 
-`%APPDATA%` es normalmente `C:\Users\<usuario>\AppData\Roaming`. **No mueva, renombre ni borre estas carpetas con Consulvia abierto.** Las claves de `config.json` están protegidas con la cuenta de Windows. Si se crea otro usuario de Windows en la computadora, instale y use Consulvia siempre con el mismo.
+`%LOCALAPPDATA%` es normalmente `C:\Users\<usuario>\AppData\Local`, una carpeta que no se sincroniza con otras computadoras. **No mueva, renombre ni borre estas carpetas con Consulvia abierto.** Las claves de `config.json` están protegidas con la cuenta de Windows. Si se crea otro usuario de Windows en la computadora, instale y use Consulvia siempre con el mismo.
 
 ## Qué protege Consulvia y qué le corresponde a usted
 
@@ -104,7 +104,7 @@ Si la copia es de una versión de Consulvia más nueva que la instalada, Consulv
 
 ## Desinstalar
 
-Configuración de Windows, Aplicaciones, **Consulvia**, Desinstalar. Se elimina el programa y los accesos directos. **Los datos y las copias de seguridad se conservan** (`%APPDATA%\Consulvia` y `Documentos\Consulvia\Copias`), de modo que reinstalar Consulvia los recupera. Para eliminar los datos por completo hay que borrar esas dos carpetas a mano; no se puede deshacer.
+Configuración de Windows, Aplicaciones, **Consulvia**, Desinstalar. Se elimina el programa y los accesos directos. **Los datos y las copias de seguridad se conservan** (`%LOCALAPPDATA%\Consulvia` y `Documentos\Consulvia\Copias`), de modo que reinstalar Consulvia los recupera. Para eliminar los datos por completo hay que borrar esas dos carpetas a mano; no se puede deshacer.
 
 ## Qué no incluye esta versión
 
@@ -118,5 +118,5 @@ Configuración de Windows, Aplicaciones, **Consulvia**, Desinstalar. Se elimina 
 
 - _"Consulvia no pudo iniciar"_: pulse **Reintentar**. Si se repite, elija **Ver registros** y envíe la carpeta `logs` a quien le brinda soporte.
 - _"No se pueden leer los datos de esta instalación con la cuenta de Windows actual"_: está ingresando con otro usuario de Windows. Cierre la sesión e ingrese con el usuario que instaló Consulvia.
-- El antivirus puede demorar el primer inicio o el programa de base de datos. Si bloquea Consulvia, agregue la carpeta del programa y `%APPDATA%\Consulvia` a las excepciones.
+- El antivirus puede demorar el primer inicio o el programa de base de datos. Si bloquea Consulvia, agregue la carpeta del programa y `%LOCALAPPDATA%\Consulvia` a las excepciones.
 - Si la computadora se apagó de golpe y Consulvia tarda en abrir, espere un minuto: la base de datos se recupera sola.

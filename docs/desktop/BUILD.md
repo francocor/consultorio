@@ -42,7 +42,7 @@ Useful variants:
 | `pnpm --filter @consultorio/desktop dist --reuse-stage`                               | Repacks from the current `stage/` (about a minute shorter than a full stage)                                               |
 | `pnpm --filter @consultorio/desktop dist --reuse-stage --dir-only`                    | Packs only `release/win-unpacked` (the program as installed, no installer): minutes faster, and enough to test the program |
 | `pnpm --filter @consultorio/desktop verify:installer --program=<releasewin-unpacked>` | The same end-to-end checks against an unpacked program (no install, no uninstall)                                          |
-| `pnpm --filter @consultorio/desktop start`                                            | Runs the shell with the workspace Electron against `stage/` (data in `%APPDATA%\Consulvia`)                                |
+| `pnpm --filter @consultorio/desktop start`                                            | Runs the shell with the workspace Electron against `stage/` (data in `%LOCALAPPDATA%\Consulvia`)                           |
 | `pnpm --filter @consultorio/desktop verify:installer [file]`                          | Installs the installer silently in a temporary folder and exercises it end to end (see below)                              |
 
 ## The pinned binaries
@@ -72,7 +72,7 @@ Modules (`apps/desktop/src`), each unit-tested with Electron injected or absent:
 
 | Name                                              | Effect                                                                                                                                                                       |
 | ------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `CONSULVIA_DATA_DIR`                              | Replaces `%APPDATA%\Consulvia`. Also moves the Chromium profile and the single-instance lock, so a test install runs beside a real one                                       |
+| `CONSULVIA_DATA_DIR`                              | Replaces `%LOCALAPPDATA%\Consulvia`. Also moves the Chromium profile and the single-instance lock, so a test install runs beside a real one                                  |
 | `CONSULVIA_BACKUP_DIR`                            | Replaces `Documents\Consulvia\Copias`                                                                                                                                        |
 | `CONSULVIA_TEST_MODE=1`                           | Writes the one-time setup and reset addresses to `logs/shell.log`, skips the confirmation of `--restore`, never touches the Windows login items. Never set it on a clinic PC |
 | `CONSULVIA_RESOURCES`                             | Where the staged files are, in a development run (`stage/` by default)                                                                                                       |
@@ -93,7 +93,7 @@ Modules (`apps/desktop/src`), each unit-tested with Electron injected or absent:
 4. `pnpm --filter @consultorio/desktop verify:installer`. Do not release if a step fails.
 5. Publish `Consulvia-Setup-<version>.exe` and its `.sha256` (for example as a GitHub Release asset of a tag `desktop-v<version>`) and give clinics the SHA-256.
 
-**Updates:** a clinic runs the new installer over the old one; the data in `%APPDATA%\Consulvia` is untouched and the shell applies new migrations (`migrate`) at the next start. There is no automatic updater yet.
+**Updates:** a clinic runs the new installer over the old one; the data in `%LOCALAPPDATA%\Consulvia` is untouched and the shell applies new migrations (`migrate`) at the next start. There is no automatic updater yet.
 
 **Signing:** the installer is **not signed**, so Windows SmartScreen warns ("Windows protegió su PC"). With a code-signing certificate, set `win.certificateFile` / `certificatePassword` (or `azureSignOptions`) in `apps/desktop/scripts/builder-config.ts` from environment variables; never commit a certificate. electron-builder already tries to sign every program it packs and skips it when none is configured.
 

@@ -2,7 +2,10 @@ import { isAbsolute, join } from 'node:path';
 
 /** Where an install keeps everything. All of it lives under `root`, except the backups. */
 export interface DataPaths {
-  /** `%APPDATA%\Consulvia`, or `CONSULVIA_DATA_DIR`. */
+  /**
+   * `%LOCALAPPDATA%\Consulvia`, or `CONSULVIA_DATA_DIR`. Local and not Roaming: a roaming profile copies the
+   * folder to other PCs and back, which corrupts a database that is open.
+   */
   root: string;
   pgdata: string;
   /** `STORAGE_DIR` of the API: the documents. */
@@ -20,8 +23,8 @@ export interface DataPaths {
 
 export interface PathSources {
   env: NodeJS.ProcessEnv;
-  /** `app.getPath('appData')` */
-  appData: string;
+  /** `%LOCALAPPDATA%` (`C:Users<user>AppDataLocal`) */
+  localAppData: string;
   /** `app.getPath('documents')` */
   documents: string;
 }
@@ -37,8 +40,8 @@ function override(env: NodeJS.ProcessEnv, name: string): string | undefined {
  * The folders of an install. `CONSULVIA_DATA_DIR` and `CONSULVIA_BACKUP_DIR` move them, which is how the
  * tests of the installer run beside a real install without touching it.
  */
-export function resolveDataPaths({ env, appData, documents }: PathSources): DataPaths {
-  const root = override(env, 'CONSULVIA_DATA_DIR') ?? join(appData, 'Consulvia');
+export function resolveDataPaths({ env, localAppData, documents }: PathSources): DataPaths {
+  const root = override(env, 'CONSULVIA_DATA_DIR') ?? join(localAppData, 'Consulvia');
   return {
     root,
     pgdata: join(root, 'pgdata'),

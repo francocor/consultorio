@@ -44,7 +44,8 @@ const startup = parseArgs(process.argv.slice(1));
 // The Chromium profile lives with the data, so a test install does not share a lock or cookies with a real one.
 const paths = resolveDataPaths({
   env: process.env,
-  appData: app.getPath('appData'),
+  // Electron has no path for the local folder: Windows names it in the environment.
+  localAppData: process.env['LOCALAPPDATA'] ?? join(app.getPath('home'), 'AppData', 'Local'),
   documents: app.getPath('documents'),
 });
 app.setName('Consulvia');

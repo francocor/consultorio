@@ -7,7 +7,7 @@ import { buildShell } from './build.js';
 
 /**
  * `pnpm --filter @consultorio/desktop start`: bundles the shell and runs it with the Electron of the
- * workspace against the staged files (`pnpm stage` first). The data goes to `%APPDATA%\Consulvia`, or to
+ * workspace against the staged files (`pnpm stage` first). The data goes to `%LOCALAPPDATA%\Consulvia`, or to
  * `CONSULVIA_DATA_DIR` if you set it; use that to keep a development run apart from a real install.
  */
 const desktopRoot = fileURLToPath(new URL('..', import.meta.url));

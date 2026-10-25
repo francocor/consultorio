@@ -12,7 +12,7 @@ export interface BuilderPaths {
 /**
  * The installer: NSIS, one click, for the current Windows user only (no administrator prompt), with the
  * shortcuts "Consulvia" on the desktop and in the Start menu. The program files go to
- * `%LOCALAPPDATA%\Programs\Consulvia`; the data of the clinic is in `%APPDATA%\Consulvia` and is never
+ * `%LOCALAPPDATA%\Programs\Consulvia`; the data of the clinic is in `%LOCALAPPDATA%\Consulvia` and is never
  * touched by an update or by the uninstaller.
  *
  * Everything the shell runs besides itself (the API and its modules, the web app, PostgreSQL, the backup

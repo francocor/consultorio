@@ -16,7 +16,7 @@ Consulvia Desktop lets one clinic run the product on one Windows PC. It installs
 ```
 Consulvia-Setup-<version>.exe   (NSIS, one click, per user, Electron + electron-builder)
   Electron main process
-    ├─ PostgreSQL 17 (bundled binaries, data in %APPDATA%\Consulvia\pgdata, loopback only, random port)
+    ├─ PostgreSQL 17 (bundled binaries, data in %LOCALAPPDATA%\Consulvia\pgdata, loopback only, random port)
     ├─ API child process   (ELECTRON_RUN_AS_NODE, apps/api/dist/main.js api)
     ├─ worker child process (ELECTRON_RUN_AS_NODE, apps/api/dist/main.js worker)
     ├─ local HTTP server on 127.0.0.1:<port>: serves apps/web/dist and proxies to the API
@@ -57,7 +57,7 @@ The profile requires `DEPLOYMENT_MODE=single`. Any other combination is refused 
    - the owner, with a password chosen in the setup screen;
    - a first location.
 5. **Bundled migrator.** `migrate-cli` is a second esbuild entry. The migration folder can be overridden by an env var, and it ships with `*.sql` and `meta/_journal.json`.
-6. **Mail without SMTP.** An outbox sender stores each message as a file under `%APPDATA%\Consulvia\outbox`, and the tray opens it. The tray can also reset the owner password, so a forgotten password has a way back.
+6. **Mail without SMTP.** An outbox sender stores each message as a file under `%LOCALAPPDATA%\Consulvia\outbox`, and the tray opens it. The tray can also reset the owner password, so a forgotten password has a way back.
 7. **Shutdown.** The API and the worker stop gracefully on an IPC `shutdown` message, since `child.kill()` on Windows is a hard kill.
 8. **Electron shell** (`apps/desktop`):
    - first-run setup: organization name and owner email and password;
@@ -76,12 +76,12 @@ The profile requires `DEPLOYMENT_MODE=single`. Any other combination is refused 
 
 ## Data
 
-| What                                   | Where                             |
-| -------------------------------------- | --------------------------------- |
-| Database                               | `%APPDATA%\Consulvia\pgdata`      |
-| Files                                  | `%APPDATA%\Consulvia\files`       |
-| Secrets (encrypted with `safeStorage`) | `%APPDATA%\Consulvia\config.json` |
-| Backups                                | `Documents\Consulvia\Copias`      |
+| What                                   | Where                                  |
+| -------------------------------------- | -------------------------------------- |
+| Database                               | `%LOCALAPPDATA%\Consulvia\pgdata`      |
+| Files                                  | `%LOCALAPPDATA%\Consulvia\files`       |
+| Secrets (encrypted with `safeStorage`) | `%LOCALAPPDATA%\Consulvia\config.json` |
+| Backups                                | `Documents\Consulvia\Copias`           |
 
 Uninstalling keeps the data.
 
@@ -135,8 +135,8 @@ The Electron shell builds ONLY from this section. Everything runs from the bundl
 | `DATABASE_URL`                                                          |   x   |    x     |               x               |           | `postgres://app_rw:<password>@127.0.0.1:<pgport>/<database>`                                                                        |
 | `KMS_PROVIDER`, `KMS_LOCAL_KEK_BASE64`                                  |   x   |    x     |               x               |           | `local`, and 32 random bytes in base64 (the KEK: lose it and the clinical data cannot be read)                                      |
 | `ADDRESS_HASH_PEPPER`                                                   |   x   |    x     |               x               |           | at least 32 random characters, fixed for the install                                                                                |
-| `STORAGE_DIR`, `STORAGE_UPLOAD_SECRET`                                  |   x   |    x     |               x               |           | an absolute folder (`%APPDATA%\Consulvia\files`), and at least 32 random characters                                                 |
-| `OUTBOX_DIR`                                                            |   x   |    x     |               x               |           | an absolute folder (`%APPDATA%\Consulvia\outbox`). Required while `SMTP_HOST` is not set                                            |
+| `STORAGE_DIR`, `STORAGE_UPLOAD_SECRET`                                  |   x   |    x     |               x               |           | an absolute folder (`%LOCALAPPDATA%\Consulvia\files`), and at least 32 random characters                                            |
+| `OUTBOX_DIR`                                                            |   x   |    x     |               x               |           | an absolute folder (`%LOCALAPPDATA%\Consulvia\outbox`). Required while `SMTP_HOST` is not set                                       |
 | `DESKTOP_PROXY_SECRET`                                                  |   x   |          |                               |           | at least 32 random characters, NEW FOR EVERY RUN of the services. Without it the API does not start (see "Behind the local server") |
 | `AUDIT_SEALER_DATABASE_URL`                                             |       |    x     |                               |           | `postgres://audit_sealer:<password>@127.0.0.1:<pgport>/<database>`. The API must NOT have it                                        |
 | `MIGRATION_DATABASE_URL`                                                |       |          |                               |     x     | `postgres://app_owner:<password>@127.0.0.1:<pgport>/<database>`                                                                     |
@@ -214,7 +214,7 @@ The reverse-proxy contract of `docs/dev-setup.md` applies: strip `/api`, preserv
 - A document upload is `POST /api/files/uploads/<token>`, a `multipart/form-data` body of up to about 20 MiB that the browser sends with the fields it received and then the file. It carries no session: the token, signed with `STORAGE_UPLOAD_SECRET`, is the authorization (one object, one content type, a size cap, 15 minutes). The proxy must stream it with no smaller limit and pass `Content-Type` and `Content-Length`.
 - The session cookie is `sid`, not `__Host-sid`: the loopback is plain http.
 
-### Files under `%APPDATA%\Consulvia`
+### Files under `%LOCALAPPDATA%\Consulvia`
 
 | Path                     | Owner       | Content                                                                                                                                                                                                                                                                                                                                                     |
 | ------------------------ | ----------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |

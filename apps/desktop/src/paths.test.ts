@@ -5,20 +5,20 @@ import { describe, expect, it } from 'vitest';
 import { resolveDataPaths } from './paths.js';
 
 const base = {
-  appData: 'C:\\Users\\Ana\\AppData\\Roaming',
+  localAppData: 'C:\\Users\\Ana\\AppData\\Local',
   documents: 'C:\\Users\\Ana\\Documents',
 };
 
 describe('the folders of an install', () => {
-  it('keeps the data in %APPDATA%\\Consulvia and the backups in Documents\\Consulvia\\Copias', () => {
+  it('keeps the data in %LOCALAPPDATA%\\Consulvia, which never roams, and the backups in Documents\\Consulvia\\Copias', () => {
     const paths = resolveDataPaths({ env: {}, ...base });
 
-    expect(paths.root).toBe(join(base.appData, 'Consulvia'));
-    expect(paths.pgdata).toBe(join(base.appData, 'Consulvia', 'pgdata'));
-    expect(paths.files).toBe(join(base.appData, 'Consulvia', 'files'));
-    expect(paths.outbox).toBe(join(base.appData, 'Consulvia', 'outbox'));
-    expect(paths.logs).toBe(join(base.appData, 'Consulvia', 'logs'));
-    expect(paths.configFile).toBe(join(base.appData, 'Consulvia', 'config.json'));
+    expect(paths.root).toBe(join(base.localAppData, 'Consulvia'));
+    expect(paths.pgdata).toBe(join(base.localAppData, 'Consulvia', 'pgdata'));
+    expect(paths.files).toBe(join(base.localAppData, 'Consulvia', 'files'));
+    expect(paths.outbox).toBe(join(base.localAppData, 'Consulvia', 'outbox'));
+    expect(paths.logs).toBe(join(base.localAppData, 'Consulvia', 'logs'));
+    expect(paths.configFile).toBe(join(base.localAppData, 'Consulvia', 'config.json'));
     expect(paths.backups).toBe(join(base.documents, 'Consulvia', 'Copias'));
   });
 
@@ -37,7 +37,7 @@ describe('the folders of an install', () => {
 
   it('ignores an empty override and refuses a relative one', () => {
     expect(resolveDataPaths({ env: { CONSULVIA_DATA_DIR: '' }, ...base }).root).toBe(
-      join(base.appData, 'Consulvia'),
+      join(base.localAppData, 'Consulvia'),
     );
     expect(() => resolveDataPaths({ env: { CONSULVIA_DATA_DIR: 'datos' }, ...base })).toThrow(
       /absolute/,

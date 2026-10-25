@@ -15,7 +15,7 @@ import { generateSecrets } from './secrets.js';
 
 const paths = resolveDataPaths({
   env: { CONSULVIA_DATA_DIR: 'C:\\Datos\\Consulvia' },
-  appData: 'C:\\Users\\Ana\\AppData\\Roaming',
+  localAppData: 'C:\\Users\\Ana\\AppData\\Local',
   documents: 'C:\\Users\\Ana\\Documents',
 });
 
