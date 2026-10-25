@@ -1,8 +1,12 @@
 import { fork, type ChildProcess } from 'node:child_process';
 import { EventEmitter } from 'node:events';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { describe, expect, it } from 'vitest';
+import { build } from 'esbuild';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import { waitForShutdown } from './shutdown.js';
 
@@ -118,11 +122,35 @@ describe('waiting for the signal to stop', () => {
 });
 
 describe('in a real child process', () => {
-  const fixture = fileURLToPath(new URL('../../test/support/shutdown-child.ts', import.meta.url));
+  const source = fileURLToPath(new URL('../../test/support/shutdown-child.ts', import.meta.url));
+  let folder = '';
+  /**
+   * The fixture, compiled once to a plain file. Started through the `tsx` loader, the child spent more than a
+   * minute getting up when the whole monorepo was being tested at once (it transpiles on every start, on a
+   * PC with every core busy); a compiled file starts as fast as Node does, whatever else is running.
+   */
+  let fixture = '';
+
+  beforeAll(async () => {
+    folder = await mkdtemp(join(tmpdir(), 'consulvia-shutdown-child-'));
+    fixture = join(folder, 'shutdown-child.mjs');
+    await build({
+      entryPoints: [source],
+      outfile: fixture,
+      bundle: true,
+      platform: 'node',
+      format: 'esm',
+      logLevel: 'silent',
+    });
+  }, 120_000);
+
+  afterAll(async () => {
+    await rm(folder, { recursive: true, force: true });
+  });
 
   /** The child announces `up` over the channel, waits to be told to stop, and prints `stopped`. */
   function start(stdio: ('pipe' | 'ignore' | 'ipc')[]) {
-    const child = fork(fixture, [], { execArgv: ['--import', 'tsx'], stdio: stdio as never });
+    const child = fork(fixture, [], { stdio: stdio as never });
     const output: string[] = [];
     child.stdout?.on('data', (chunk: Buffer) => output.push(chunk.toString()));
     const up = new Promise<void>((resolve, reject) => {
