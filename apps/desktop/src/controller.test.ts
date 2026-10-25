@@ -71,6 +71,8 @@ interface Harness {
   paths: DataPaths;
   events: string[];
   uiCalls: [string, ...unknown[]][];
+  /** The detail line of every message dialog, in order. */
+  details: string[];
   controller: Controller;
   commandCalls: { command: string; env: NodeJS.ProcessEnv; input?: unknown }[];
   quitRequests: number;
@@ -114,7 +116,10 @@ const cipher: Cipher = {
   },
 };
 
-function build(folder: string, options: { testMode?: boolean } = {}): Harness {
+function build(
+  folder: string,
+  options: { testMode?: boolean; env?: NodeJS.ProcessEnv } = {},
+): Harness {
   const root = join(folder, 'Consulvia');
   const paths: DataPaths = {
     root,
@@ -158,6 +163,7 @@ function build(folder: string, options: { testMode?: boolean } = {}): Harness {
 
   const events: string[] = [];
   const uiCalls: [string, ...unknown[]][] = [];
+  const details: string[] = [];
   const loadedUrls: string[] = [];
   const commandCalls: Harness['commandCalls'] = [];
   const clusterScripts: string[] = [];
@@ -183,8 +189,9 @@ function build(folder: string, options: { testMode?: boolean } = {}): Harness {
       uiCalls.push(['confirm', o.title]);
       return Promise.resolve(confirmAnswer);
     },
-    message: (kind, title, message) => {
+    message: (kind, title, message, detail) => {
       uiCalls.push(['message', kind, title, message]);
+      details.push(detail ?? '');
       return Promise.resolve();
     },
     choose: (o) => {
@@ -334,6 +341,7 @@ function build(folder: string, options: { testMode?: boolean } = {}): Harness {
     },
     testMode: options.testMode ?? false,
     portRetry: { sleep: () => Promise.resolve() },
+    env: options.env ?? {},
     now: () => clock,
     requestQuit: () => {
       result.quitRequests += 1;
@@ -347,6 +355,7 @@ function build(folder: string, options: { testMode?: boolean } = {}): Harness {
     paths,
     events,
     uiCalls,
+    details,
     controller,
     commandCalls,
     quitRequests: 0,
@@ -798,6 +807,121 @@ describe('the reminder to copy the backups off this PC', () => {
     const third = build(harness.folder);
     await third.controller.start();
     expect(reminders(third)).toHaveLength(0);
+  });
+});
+
+describe('how the backups are doing', () => {
+  async function ready(): Promise<void> {
+    await harness.controller.start();
+    const url = setupUrl() ?? '';
+    await post(new URL('/__setup', url).href, tokenOf(url), form);
+    await vi.waitFor(() => {
+      expect(harness.config().settings.lastDailyBackup).toBe('2026-10-24');
+    });
+  }
+
+  const MINUTE = 60 * 1000;
+
+  it('writes down when the last backup that passed its check was made, and says so in the tray and in "Acerca de"', async () => {
+    await harness.controller.start();
+    expect(harness.controller.lastBackupText).toBe('Última copia: todavía no hay ninguna');
+    const url = setupUrl() ?? '';
+    await post(new URL('/__setup', url).href, tokenOf(url), form);
+    await vi.waitFor(() => {
+      expect(harness.config().settings.lastGoodBackup).toBe(clock.toISOString());
+    });
+
+    expect(harness.controller.lastBackupText).toContain('Última copia: ');
+    await harness.controller.about();
+    const detail = harness.details.at(-1) ?? '';
+    expect(detail).toContain(harness.controller.lastBackupText);
+  });
+
+  it('keeps the time of the last good backup when a later one fails', async () => {
+    await ready();
+    const good = harness.config().settings.lastGoodBackup;
+    clock = new Date(2026, 9, 25, 9, 0, 0);
+    listCode = 1;
+
+    await harness.controller.maybeDailyBackup();
+
+    expect(harness.config().settings.lastGoodBackup).toBe(good);
+  });
+
+  it('tries a failed daily backup again after 5 minutes, then 10, then 20, and not before', async () => {
+    await ready();
+    clock = new Date(2026, 9, 25, 9, 0, 0);
+    listCode = 1;
+    const before = harness.dumps;
+
+    await harness.controller.maybeDailyBackup();
+    expect(harness.dumps).toBe(before + 1);
+
+    clock = new Date(clock.getTime() + 4 * MINUTE);
+    await harness.controller.maybeDailyBackup();
+    expect(harness.dumps).toBe(before + 1);
+
+    clock = new Date(clock.getTime() + 1 * MINUTE);
+    await harness.controller.maybeDailyBackup();
+    expect(harness.dumps).toBe(before + 2);
+
+    clock = new Date(clock.getTime() + 9 * MINUTE);
+    await harness.controller.maybeDailyBackup();
+    expect(harness.dumps).toBe(before + 2);
+
+    clock = new Date(clock.getTime() + 1 * MINUTE);
+    await harness.controller.maybeDailyBackup();
+    expect(harness.dumps).toBe(before + 3);
+  });
+
+  it('succeeds on the retry, writes the day down and does not try again', async () => {
+    await ready();
+    clock = new Date(2026, 9, 25, 9, 0, 0);
+    listCode = 1;
+    await harness.controller.maybeDailyBackup();
+    listCode = 0;
+    clock = new Date(clock.getTime() + 6 * MINUTE);
+
+    await harness.controller.maybeDailyBackup();
+
+    expect(harness.config().settings.lastDailyBackup).toBe('2026-10-25');
+    const dumps = harness.dumps;
+    clock = new Date(clock.getTime() + 60 * MINUTE);
+    await harness.controller.maybeDailyBackup();
+    expect(harness.dumps).toBe(dumps);
+  });
+
+  it('warns once, at a later start, that the backups sit in a folder synced to the internet, and says they are encrypted', async () => {
+    const folder = mkdtempSync(join(tmpdir(), 'consulvia-controller-'));
+    const env = { OneDrive: join(folder, 'Documents') };
+    const first = build(folder, { env });
+    await first.controller.start();
+    const url = first.loadedUrls.find((candidate) => candidate.includes('/__setup')) ?? '';
+    await post(new URL('/__setup', url).href, tokenOf(url), form);
+    await first.controller.quit();
+    const notices = (target: Harness) =>
+      target.uiCalls.filter(
+        (call) =>
+          call[0] === 'message' && call[2] === 'Las copias están en una carpeta sincronizada',
+      );
+    // Not while the person is looking at the recovery key.
+    expect(notices(first)).toHaveLength(0);
+
+    const second = build(folder, { env });
+    await second.controller.start();
+    expect(notices(second)).toHaveLength(1);
+    expect(String(notices(second)[0]?.[3])).toContain('cifradas');
+    await second.controller.quit();
+
+    const third = build(folder, { env });
+    await third.controller.start();
+    expect(notices(third)).toHaveLength(0);
+  });
+
+  it('says nothing about it when the backups are on an ordinary folder', async () => {
+    await ready();
+
+    expect(harness.config().settings.cloudNoticeShown).toBe(false);
   });
 });
 

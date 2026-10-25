@@ -20,6 +20,7 @@ import {
   pruneBackups,
   type AdoptionPayload,
 } from './backup.js';
+import { isCloudSynced } from './cloud-folders.js';
 import {
   ConfigError,
   newInstallConfig,
@@ -112,6 +113,8 @@ export interface ControllerDeps {
   logs: { shell: RotatingLog; api: RotatingLog; worker: RotatingLog };
   /** The tests of the installer drive the app from outside; some conveniences exist only then. */
   testMode: boolean;
+  /** The environment of the shell, to know which folders Windows syncs. Defaults to nothing. */
+  env?: NodeJS.ProcessEnv;
   /** How long the stored port of the local server is waited for. Tests do not wait. */
   portRetry?: PortRetry;
   now: () => Date;
@@ -148,7 +151,8 @@ function isDeadEnd(error: unknown): boolean {
   return error instanceof ShellError && error.deadEnd;
 }
 
-const HOUR_MS = 60 * 60 * 1000;
+const MINUTE_MS = 60 * 1000;
+const HOUR_MS = 60 * MINUTE_MS;
 
 /** Wrong recovery keys the reset page accepts before its address stops working. */
 const MAX_RESET_ATTEMPTS = 5;
@@ -219,6 +223,9 @@ export class Controller {
   private offerRestoreAfterBoot = false;
   /** Where data without a configuration was set aside at this start, to tell the person. */
   private orphanedTo: string[] = [];
+  /** Failed attempts at today's backup, and the time before which another one is not tried. */
+  private dailyFailures = 0;
+  private nextDailyAttempt = 0;
   /** The port the local server had before this start, when it had to move: links already sent name it. */
   private movedFromPort: number | null = null;
   /** Wrong recovery keys typed on the reset page that is open. */
@@ -808,12 +815,15 @@ export class Controller {
         this.deps.ui.notify(TEXT.recoveryKey.reminderTitle, TEXT.recoveryKey.reminder);
       }
       this.maybeRemindCopy();
+      this.maybeWarnAboutCloud();
     }
     clearInterval(this.dailyTimer);
+    // Every minute: a failed backup is tried again after 5 minutes, then 10, 20, 40 and every hour, and this
+    // is what notices that the time has come (or that a new day has begun).
     this.dailyTimer = setInterval(() => {
       void this.maybeDailyBackup();
       this.maybeRemindCopy();
-    }, HOUR_MS);
+    }, MINUTE_MS);
     this.dailyTimer.unref();
   }
 
@@ -924,6 +934,7 @@ export class Controller {
     const outcome = await this.exclusive(async () => {
       try {
         const result = await createBackup(this.backupDeps(), 'manual');
+        this.recordGoodBackup();
         await this.pruneQuietly();
         return { path: result.path };
       } catch (error) {
@@ -963,6 +974,36 @@ export class Controller {
     return TEXT.backup.diskFull;
   }
 
+  /** The time of the last backup that passed its check, for the tray and "Acerca de". */
+  private recordGoodBackup(): void {
+    try {
+      this.config = this.deps.store.update((config) => {
+        config.settings.lastGoodBackup = this.deps.now().toISOString();
+      });
+      this.changed();
+    } catch (error) {
+      this.log(`could not write the time of the backup down: ${String(error)}`);
+    }
+  }
+
+  /** "Última copia: 24/10/2026 10:00", or that there is none yet. */
+  get lastBackupText(): string {
+    const last = this.loaded?.settings.lastGoodBackup ?? null;
+    return last === null
+      ? TEXT.backup.none
+      : TEXT.backup.last(new Date(last).toLocaleString('es-AR'));
+  }
+
+  /** Once: the backups are in a folder a cloud service syncs. They are encrypted, so this is advice, not a refusal. */
+  private maybeWarnAboutCloud(): void {
+    if (this.config.settings.cloudNoticeShown) return;
+    if (!isCloudSynced(this.deps.paths.backups, this.deps.env ?? {})) return;
+    this.config = this.deps.store.update((config) => {
+      config.settings.cloudNoticeShown = true;
+    });
+    void this.deps.ui.message('info', TEXT.backup.cloudTitle, TEXT.backup.cloud);
+  }
+
   /** Pruning is housekeeping: its failure never turns a backup that exists into a failed one. */
   private async pruneQuietly(): Promise<string[]> {
     try {
@@ -977,17 +1018,24 @@ export class Controller {
     }
   }
 
-  /** The first time Consulvia is open on a day, and then every hour it stays open, until one backup of the day exists. */
+  /**
+   * The first time Consulvia is open on a day, and again after a failure (5 minutes later, then 10, 20, 40 and
+   * every hour), until one backup of the day exists.
+   */
   async maybeDailyBackup(): Promise<void> {
     if (this.currentPhase !== 'ready' || this.busy) return;
     const today = localDay(this.deps.now());
     if (this.config.settings.lastDailyBackup === today) return;
+    if (this.deps.now().getTime() < this.nextDailyAttempt) return;
     await this.exclusive(async () => {
       let created;
       try {
         created = await createBackup(this.backupDeps(), 'daily');
       } catch (error) {
         this.log(`daily backup failed: ${this.describeBackupFailure(error)}`);
+        this.dailyFailures += 1;
+        const wait = Math.min(5 * MINUTE_MS * 2 ** (this.dailyFailures - 1), HOUR_MS);
+        this.nextDailyAttempt = this.deps.now().getTime() + wait;
         if (this.lastDailyFailure !== today) {
           this.lastDailyFailure = today;
           this.deps.ui.notify(
@@ -999,10 +1047,14 @@ export class Controller {
       }
       // The backup exists and was verified. Nothing after this point can make it a failed one.
       this.log(`daily backup created: ${created.path}`);
+      this.dailyFailures = 0;
+      this.nextDailyAttempt = 0;
       try {
         this.config = this.deps.store.update((config) => {
           config.settings.lastDailyBackup = today;
+          config.settings.lastGoodBackup = this.deps.now().toISOString();
         });
+        this.changed();
       } catch (error) {
         this.log(`could not write the day of the backup down: ${String(error)}`);
       }
@@ -1392,7 +1444,12 @@ export class Controller {
       'info',
       TEXT.about.title,
       TEXT.appName,
-      TEXT.about.detail(this.deps.version, this.deps.paths.root, this.deps.paths.backups),
+      TEXT.about.detail(
+        this.deps.version,
+        this.deps.paths.root,
+        this.deps.paths.backups,
+        this.lastBackupText,
+      ),
     );
   }
 

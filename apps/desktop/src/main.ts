@@ -331,6 +331,7 @@ async function run(): Promise<void> {
       }),
     logs,
     testMode,
+    env: process.env,
     now: () => new Date(),
     requestQuit: () => {
       void gracefulQuit();
@@ -410,6 +411,7 @@ async function run(): Promise<void> {
         },
         { type: 'separator' },
         { label: TEXT.tray.outbox, click: () => void controller.openOutbox() },
+        { label: controller.lastBackupText, enabled: false },
         { label: TEXT.tray.backup, enabled: ready, click: () => void controller.backupNow() },
         {
           label: TEXT.tray.restore,

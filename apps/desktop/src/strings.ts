@@ -42,6 +42,11 @@ export const TEXT = {
     dailyFailed:
       'No se pudo hacer la copia de seguridad diaria. Abra Consulvia e intente hacerla manualmente.',
     notReady: 'Consulvia todavía se está iniciando. Espere unos segundos e intente de nuevo.',
+    last: (when: string) => 'Última copia: ' + when,
+    none: 'Última copia: todavía no hay ninguna',
+    cloudTitle: 'Las copias están en una carpeta sincronizada',
+    cloud:
+      'La carpeta de copias de seguridad está dentro de una carpeta que se sincroniza con internet (OneDrive u otra). Las copias están cifradas, así que el servicio no puede leerlas, y esto sirve además como copia fuera de la computadora. Dos cuidados: deje la carpeta Copias marcada como "Mantener siempre en este dispositivo", para poder restaurar sin internet, y no dé por hecho que una copia ya llegó a la nube hasta que el servicio lo indique.',
     copyReminderTitle: 'Copia de seguridad fuera de la computadora',
     copyReminder:
       'Recuerde copiar la carpeta Documentos\\Consulvia\\Copias a un pendrive o a un disco externo y guardarlo fuera del consultorio. Una copia que está solo en esta computadora se pierde con ella.',
@@ -133,8 +138,8 @@ export const TEXT = {
 
   about: {
     title: 'Acerca de Consulvia',
-    detail: (version: string, dataDir: string, backupsDir: string) =>
-      `Versión ${version}\n\nLos datos están en:\n${dataDir}\n\nLas copias de seguridad están en:\n${backupsDir}`,
+    detail: (version: string, dataDir: string, backupsDir: string, lastBackup: string) =>
+      `Versión ${version}\n\nLos datos están en:\n${dataDir}\n\nLas copias de seguridad están en:\n${backupsDir}\n\n${lastBackup}`,
     ok: 'Aceptar',
   },
 

@@ -33,6 +33,10 @@ export interface InstallSettings {
   lastDailyBackup: string | null;
   /** When the person was last reminded to copy the backups off this PC (ISO); starts at the setup. */
   lastCopyReminder: string | null;
+  /** When the last backup that passed its check was made (ISO). */
+  lastGoodBackup: string | null;
+  /** The notice that the backups sit in a folder synced to the internet was shown. */
+  cloudNoticeShown: boolean;
 }
 
 /** How far the first-run work got. A crash before `ready` is repaired by starting that part again. */
@@ -96,6 +100,8 @@ const PublicSchema = z.strictObject({
     trayHintShown: z.boolean(),
     lastDailyBackup: z.string().nullable(),
     lastCopyReminder: z.string().nullable(),
+    lastGoodBackup: z.string().nullable(),
+    cloudNoticeShown: z.boolean(),
   }),
 });
 
@@ -120,6 +126,8 @@ export function newInstallConfig(port: number, secrets: InstallSecrets): Install
       trayHintShown: false,
       lastDailyBackup: null,
       lastCopyReminder: null,
+      lastGoodBackup: null,
+      cloudNoticeShown: false,
     },
     secrets,
   };
