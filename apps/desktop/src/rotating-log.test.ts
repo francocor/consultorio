@@ -1,10 +1,10 @@
-import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { createRotatingLog } from './rotating-log.js';
+import { createRotatingLog, rotateBySize } from './rotating-log.js';
 
 let folder: string;
 
@@ -57,5 +57,53 @@ describe('the rotating log', () => {
     expect(() => {
       log.write('lost\n');
     }).not.toThrow();
+  });
+});
+
+describe('a log that is told what to leave out', () => {
+  it('writes what the transform returns', () => {
+    const file = join(folder, 'shell.log');
+    const log = createRotatingLog(file, { transform: (text) => text.replaceAll('secret', '***') });
+
+    log.write('a secret line\n');
+
+    expect(readFileSync(file, 'utf8')).toBe('a *** line\n');
+  });
+});
+
+describe('a rotation that cannot move the file', () => {
+  it('keeps logging and stays bounded when the place for the old file is taken by a folder', () => {
+    const file = join(folder, 'api.log');
+    // Nothing can be renamed over a non-empty folder: the old rotation threw here, on every write, for ever.
+    mkdirSync(join(file + '.1', 'inner'), { recursive: true });
+    const log = createRotatingLog(file, { maxBytes: 10, keep: 1 });
+
+    for (const line of ['aaaaaaaaaa\n', 'bbbbbbbbbb\n', 'cccccccccc\n']) log.write(line);
+
+    // The newest line is on the disk, and the file did not grow without limit.
+    expect(readFileSync(file, 'utf8')).toBe('cccccccccc\n');
+  });
+});
+
+describe('rotating a file by size before it is opened by another program', () => {
+  it('moves a file over the limit aside and leaves room for a new one (PostgreSQL appends to its own)', () => {
+    const file = join(folder, 'postgres.log');
+    writeFileSync(file, 'x'.repeat(20));
+
+    const moved = rotateBySize(file, { maxBytes: 10, keep: 2 });
+
+    expect(moved).toBe(true);
+    expect(existsSync(file)).toBe(false);
+    expect(readFileSync(`${file}.1`, 'utf8')).toBe('x'.repeat(20));
+  });
+
+  it('leaves a small file, or a missing one, alone', () => {
+    const file = join(folder, 'postgres.log');
+    expect(rotateBySize(file, { maxBytes: 10, keep: 2 })).toBe(false);
+
+    writeFileSync(file, 'small');
+
+    expect(rotateBySize(file, { maxBytes: 10, keep: 2 })).toBe(false);
+    expect(readFileSync(file, 'utf8')).toBe('small');
   });
 });

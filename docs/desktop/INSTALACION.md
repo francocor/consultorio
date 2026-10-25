@@ -117,6 +117,7 @@ Configuración de Windows, Aplicaciones, **Consulvia**, Desinstalar. Se elimina 
 ## Si algo no funciona
 
 - _"Consulvia no pudo iniciar"_: pulse **Reintentar**. Si se repite, elija **Ver registros** y envíe la carpeta `logs` a quien le brinda soporte.
+- **Los registros pueden contener datos de pacientes.** Consulvia quita de ellos las direcciones de correo y las contraseñas y pide a la base de datos que no escriba el texto de las consultas, pero un error del programa puede nombrar a una persona. Envíe la carpeta `logs` solo a quien usted ya confía sus datos, nunca la publique. Los registros se limitan solos: cada archivo llega a 5 MB y se guardan los últimos tres.
 - _"No se pueden leer los datos de esta instalación con la cuenta de Windows actual"_: está ingresando con otro usuario de Windows. Cierre la sesión e ingrese con el usuario que instaló Consulvia.
 - El antivirus puede demorar el primer inicio o el programa de base de datos. Si bloquea Consulvia, agregue la carpeta del programa y `%LOCALAPPDATA%\Consulvia` a las excepciones.
 - Si la computadora se apagó de golpe y Consulvia tarda en abrir, espere un minuto: la base de datos se recupera sola.

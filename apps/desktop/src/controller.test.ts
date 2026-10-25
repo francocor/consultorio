@@ -972,6 +972,28 @@ describe("resetting the owner's password", () => {
     });
   });
 
+  it('keeps the email addresses and passwords of a failing command out of shell.log', async () => {
+    await ready();
+    const url = await openReset();
+    resetFails = new ApiCommandError(
+      'reset-password',
+      1,
+      { error: 'failed' },
+      'insert failed for ana@clinica.example using postgres://app_rw:hunter2@127.0.0.1:5432/db',
+    );
+
+    await post(
+      new URL('/__reset', url).href,
+      tokenOf(url),
+      resetBody(harness.config().secrets.recoveryKey ?? ''),
+    );
+
+    const log = readFileSync(join(harness.paths.logs, 'shell.log'), 'utf8');
+    expect(log).toContain('reset-password failed');
+    expect(log).not.toContain('ana@clinica.example');
+    expect(log).not.toContain('hunter2');
+  });
+
   it('does not open before the program is ready', async () => {
     await harness.controller.start();
 

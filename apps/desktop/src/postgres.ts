@@ -1,6 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 
+import { rotateBySize } from './rotating-log.js';
 import type { Runner } from './runner.js';
 
 /** The database of the product, and the superuser `initdb` creates. */
@@ -51,6 +52,16 @@ export class PostgresError extends Error {
     this.name = 'PostgresError';
   }
 }
+
+/**
+ * What the server writes to its log. The default would put the text of a failed statement, and the row an
+ * error is about, in a file that is sent to support: patient data. Terse errors, no statements, no
+ * connection lines.
+ */
+const QUIET_LOGGING =
+  '-c log_error_verbosity=terse -c log_min_error_statement=panic -c log_connections=off -c log_disconnections=off';
+const LOG_MAX_BYTES = 5 * 1024 * 1024;
+const LOG_KEEP = 3;
 
 const tail = (text: string, lines = 12) => text.trim().split(/\r?\n/).slice(-lines).join('\n');
 
@@ -143,6 +154,8 @@ export class PostgresCluster {
     const { pgdata, logFile, runner } = this.options;
     await this.recoverStalePid();
     mkdirSync(dirname(logFile), { recursive: true });
+    // PostgreSQL appends to this file for as long as it runs: it is capped here, before it opens it.
+    rotateBySize(logFile, { maxBytes: LOG_MAX_BYTES, keep: LOG_KEEP });
     const port = await this.options.freePort();
     const result = await runner(
       this.bin('pg_ctl'),
@@ -156,7 +169,7 @@ export class PostgresCluster {
         '-t',
         '90',
         '-o',
-        `-p ${String(port)} -c listen_addresses=127.0.0.1 -c max_connections=${String(MAX_CONNECTIONS)}`,
+        `-p ${String(port)} -c listen_addresses=127.0.0.1 -c max_connections=${String(MAX_CONNECTIONS)} ${QUIET_LOGGING}`,
       ],
       { leavesChildren: true, timeoutMs: 120_000 },
     );

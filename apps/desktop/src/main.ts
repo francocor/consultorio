@@ -25,6 +25,7 @@ import { decideNavigation, decideWindowOpen } from './navigation-policy.js';
 import { resolveDataPaths } from './paths.js';
 import { findFreePort } from './ports.js';
 import { PostgresCluster } from './postgres.js';
+import { redact } from './redact.js';
 import { resolveResources } from './resources.js';
 import { createRotatingLog } from './rotating-log.js';
 import { spawnRunner } from './runner.js';
@@ -70,7 +71,8 @@ async function run(): Promise<void> {
     : (process.env['CONSULVIA_RESOURCES'] ?? join(app.getAppPath(), 'stage'));
   const resources = resolveResources(resourcesRoot);
 
-  const shellLog = createRotatingLog(join(paths.logs, 'shell.log'));
+  // The tails of the standard error of the other programs end up here: nothing that names a person.
+  const shellLog = createRotatingLog(join(paths.logs, 'shell.log'), { transform: redact });
   const logs = {
     shell: shellLog,
     api: createRotatingLog(join(paths.logs, 'api.log')),

@@ -39,6 +39,7 @@ import { loadCommonPasswordsSync, messagesForIssues } from './password-check.js'
 import type { DataPaths } from './paths.js';
 import { chooseServerPort, findFreePort } from './ports.js';
 import { DATABASE_NAME, type PostgresCluster, PostgresError, SUPERUSER } from './postgres.js';
+import { redact } from './redact.js';
 import { migrationCountOf, missingResources, type Resources } from './resources.js';
 import { readBackupInfo, restoreBackup, RestoreError, type AdoptedSecrets } from './restore.js';
 import { parameterizeRolesScript } from './roles.js';
@@ -254,7 +255,7 @@ export class Controller {
   }
 
   private log(message: string): void {
-    this.deps.logs.shell.write(`${this.deps.now().toISOString()} ${message}\n`);
+    this.deps.logs.shell.write(`${this.deps.now().toISOString()} ${redact(message)}\n`);
   }
 
   // ---- start ------------------------------------------------------------------------------------

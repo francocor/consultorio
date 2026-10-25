@@ -133,11 +133,31 @@ describe('starting and stopping', () => {
     expect(call?.file).toBe('C:\\pg\\bin\\pg_ctl.exe');
     expect(call?.args.slice(0, 3)).toEqual(['start', '-D', pgdata]);
     expect(call?.args).toContain('-w');
-    expect(call?.args.at(-1)).toBe(
+    expect(call?.args.at(-1)).toContain(
       `-p 54321 -c listen_addresses=127.0.0.1 -c max_connections=${String(MAX_CONNECTIONS)}`,
     );
     // pg_ctl leaves the server holding its pipes: the runner must not wait for them to close.
     expect(call?.options?.leavesChildren).toBe(true);
+  });
+
+  it('starts the server quiet: no statement text, no detail of a row, no connection lines', async () => {
+    await cluster().start();
+
+    const options = calls[0]?.args.at(-1) ?? '';
+    // A statement that failed would be written to the log with the data it carried.
+    expect(options).toContain('-c log_min_error_statement=panic');
+    expect(options).toContain('-c log_error_verbosity=terse');
+    expect(options).toContain('-c log_connections=off');
+  });
+
+  it('moves a log that has grown too big aside before the server opens it', async () => {
+    mkdirSync(join(folder, 'logs'), { recursive: true });
+    writeFileSync(join(folder, 'logs', 'postgres.log'), 'x'.repeat(6 * 1024 * 1024));
+
+    await cluster().start();
+
+    expect(existsSync(join(folder, 'logs', 'postgres.log'))).toBe(false);
+    expect(existsSync(join(folder, 'logs', 'postgres.log.1'))).toBe(true);
   });
 
   it('reports a server that did not start, with the tail of what pg_ctl said', async () => {
