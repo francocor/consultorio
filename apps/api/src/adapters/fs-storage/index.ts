@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { constants, createWriteStream } from 'node:fs';
+import { constants } from 'node:fs';
 import {
   copyFile,
   link,
@@ -9,7 +9,7 @@ import {
   rename,
   stat,
   unlink,
-  writeFile,
+  type FileHandle,
 } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import { Readable, Transform } from 'node:stream';
@@ -75,12 +75,19 @@ async function renameWithRetry(from: string, to: string): Promise<void> {
 }
 
 /**
- * Forces a file the process has just written to the disk. Without it a rename can reach the disk before the
- * bytes do, and a power cut leaves a name that points at an empty or half-written file.
+ * Creates a file, lets `produce` fill it through the handle that created it, forces it to the disk and closes it.
+ * Without the sync a rename can reach the disk before the bytes do, and a power cut leaves a name that points at
+ * an empty or half-written file. The sync is done on the handle that wrote: opening the file again would fail
+ * whenever an antivirus holds or removes a file it has just seen written (the EICAR test file, for one).
  */
-async function syncFile(path: string): Promise<void> {
-  const handle = await open(path, 'r+');
+async function writeDurably(
+  path: string,
+  produce: (handle: FileHandle) => Promise<void>,
+  flag = 'wx',
+): Promise<void> {
+  const handle = await open(path, flag);
   try {
+    await produce(handle);
     await handle.sync();
   } finally {
     await handle.close();
@@ -199,7 +206,7 @@ export function createFsObjectStorage(config: FsStorageConfig): FsObjectStorage 
   async function write(
     key: string,
     contentType: string,
-    writeBytes: (temporary: string) => Promise<void>,
+    writeBytes: (handle: FileHandle) => Promise<void>,
   ): Promise<void> {
     const data = dataPathOf(dir, key);
     const meta = metaPathOf(dir, key);
@@ -208,10 +215,10 @@ export function createFsObjectStorage(config: FsStorageConfig): FsObjectStorage 
     const temporaryData = `${data}.${id}.tmp`;
     const temporaryMeta = `${meta}.${id}.tmp`;
     try {
-      await writeBytes(temporaryData);
-      await syncFile(temporaryData);
-      await writeFile(temporaryMeta, JSON.stringify({ contentType }), { flag: 'wx' });
-      await syncFile(temporaryMeta);
+      await writeDurably(temporaryData, writeBytes);
+      await writeDurably(temporaryMeta, async (handle) => {
+        await handle.writeFile(JSON.stringify({ contentType }));
+      });
       await renameWithRetry(temporaryMeta, meta);
       await renameWithRetry(temporaryData, data);
     } catch (error) {
@@ -224,13 +231,16 @@ export function createFsObjectStorage(config: FsStorageConfig): FsObjectStorage 
   const storage: FsObjectStorage = {
     async put(tenantId: string, key: string, input: PutObjectInput): Promise<void> {
       assertTenantKey(tenantId, key);
-      await write(key, input.contentType, async (temporary) => {
+      await write(key, input.contentType, async (handle) => {
         if (Buffer.isBuffer(input.body)) {
-          await writeFile(temporary, input.body, { flag: 'wx' });
+          await handle.writeFile(input.body);
           return;
         }
         const written = counter();
-        await pipeline(input.body, written.stream, createWriteStream(temporary, { flags: 'wx' }));
+        // Written through the handle itself, which is synced and closed by `writeDurably` afterwards.
+        await pipeline(input.body, written.stream, async (source: AsyncIterable<Buffer>) => {
+          for await (const chunk of source) await handle.writeFile(chunk);
+        });
         // S3 refuses a body that is not as long as it said; so does this.
         if (input.contentLength !== undefined && written.bytes() !== input.contentLength) {
           throw new Error('the body is not as long as its content length');
@@ -317,8 +327,13 @@ export function createFsObjectStorage(config: FsStorageConfig): FsObjectStorage 
         }
         const contentType = await readContentType(fromKey);
         await mkdir(dirname(to), { recursive: true });
-        await writeFile(metaPathOf(dir, toKey), JSON.stringify({ contentType }));
-        await syncFile(metaPathOf(dir, toKey));
+        await writeDurably(
+          metaPathOf(dir, toKey),
+          async (handle) => {
+            await handle.writeFile(JSON.stringify({ contentType }));
+          },
+          'w',
+        );
         await renameWithRetry(claimed, to);
       } catch (error) {
         // Whatever failed, do not lose the object: put it back if its place is still free.

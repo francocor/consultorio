@@ -1,7 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import {
   closeSync,
-  copyFileSync,
   existsSync,
   fsyncSync,
   mkdirSync,
@@ -192,10 +191,7 @@ export class ConfigStore {
     mkdirSync(dirname(this.file), { recursive: true });
     const temporary = `${this.file}.tmp`;
     writeDurably(temporary, body);
-    if (existsSync(this.file)) {
-      copyFileSync(this.file, `${this.file}.bak`);
-      syncFile(`${this.file}.bak`);
-    }
+    if (existsSync(this.file)) writeDurably(`${this.file}.bak`, readFileSync(this.file, 'utf8'));
     renameWithRetry(temporary, this.file);
   }
 
@@ -205,16 +201,6 @@ export class ConfigStore {
     change(config);
     this.write(config);
     return config;
-  }
-}
-
-/** Forces a file that was just written to the disk, so a rename cannot reach it before the bytes do. */
-function syncFile(path: string): void {
-  const fd = openSync(path, 'r+');
-  try {
-    fsyncSync(fd);
-  } finally {
-    closeSync(fd);
   }
 }
 

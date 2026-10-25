@@ -23,6 +23,7 @@ vi.mock('node:fs/promises', async (importOriginal) => {
     open: async (...args: Parameters<typeof actual.open>) => {
       const handle = await actual.open(...args);
       const path = String(args[0]);
+      events.push(`open ${basename(path)}`);
       const sync = handle.sync.bind(handle);
       handle.sync = async () => {
         events.push(`sync ${basename(path)}`);
@@ -69,6 +70,19 @@ describe('the disk storage forces what it writes to the disk before it renames i
       expect(events.indexOf(`sync ${from}`), rename).toBeGreaterThanOrEqual(0);
       expect(events.indexOf(`sync ${from}`), rename).toBeLessThan(events.indexOf(rename));
     }
+  });
+
+  it('syncs through the handle that wrote the file and never opens it a second time (an antivirus can hold or remove a file it has just seen written)', async () => {
+    const storage = createFsObjectStorage({ dir, uploadSecret: 'u'.repeat(40) });
+
+    await storage.put(TENANT, tenantKey(TENANT, 'docs/c.pdf'), {
+      body: Readable.from([Buffer.from('he'), Buffer.from('llo')]),
+      contentType: 'application/pdf',
+    });
+
+    const opened = events.filter((event) => event.startsWith('open '));
+    expect(new Set(opened).size).toBe(opened.length);
+    expect(opened).toHaveLength(2);
   });
 
   it('does the same for a streamed body', async () => {

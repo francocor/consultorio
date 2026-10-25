@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { once } from 'node:events';
-import { createReadStream, createWriteStream } from 'node:fs';
+import { close, createReadStream, createWriteStream, fsync, openSync } from 'node:fs';
 import { open, rename, rm } from 'node:fs/promises';
 import { PassThrough, Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
@@ -68,13 +68,25 @@ export async function renameWithRetry(from: string, to: string, attempts = 8): P
   }
 }
 
-/** Makes what was written survive a power cut: the data is on the disk, not only in the cache. */
-async function syncFile(path: string): Promise<void> {
-  const handle = await open(path, 'r+');
+/**
+ * Makes what was written survive a power cut: the data is on the disk, not only in the cache. It is done on the
+ * descriptor that wrote the file (kept open by `autoClose: false`) and not by opening the file again, which an
+ * antivirus that is scanning a file that has just been written can refuse.
+ */
+async function syncAndClose(fd: number): Promise<void> {
   try {
-    await handle.sync();
+    await new Promise<void>((resolve, reject) => {
+      fsync(fd, (error) => {
+        if (error) reject(error);
+        else resolve();
+      });
+    });
   } finally {
-    await handle.close();
+    await new Promise<void>((resolve) => {
+      close(fd, () => {
+        resolve();
+      });
+    });
   }
 }
 
@@ -87,7 +99,9 @@ export function createArchiveWriter(
   const limits = options.limits ?? DEFAULT_LIMITS;
   const partial = `${target}.partial`;
   const source = new PassThrough();
-  const out = createWriteStream(partial);
+  // Opened here and handed to the stream, so the same descriptor can be synced when the stream is done.
+  const fd = openSync(partial, 'w');
+  const out = createWriteStream(partial, { fd, autoClose: false });
   const done = pipeline(
     source,
     createGzip(),
@@ -160,7 +174,7 @@ export function createArchiveWriter(
         await write(Buffer.from([0]));
         source.end();
         await done;
-        await syncFile(partial);
+        await syncAndClose(fd);
         await renameWithRetry(partial, target);
         return { bytes: out.bytesWritten };
       } catch (error) {
