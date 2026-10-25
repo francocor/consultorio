@@ -49,7 +49,7 @@ import { reconcileInterruptedRestore, type ReconcileDeps } from './restore-journ
 import { readBackupInfo, restoreBackup, RestoreError, type AdoptedSecrets } from './restore.js';
 import { parameterizeRolesScript } from './roles.js';
 import type { RotatingLog } from './rotating-log.js';
-import { generateSecrets } from './secrets.js';
+import { generateSecrets, newRecoveryKey } from './secrets.js';
 import { INSTALL_SLUG, type SetupValues } from './setup-validation.js';
 import type { PgTools } from './streams.js';
 import { TEXT } from './strings.js';
@@ -210,6 +210,11 @@ export class Controller {
   private apiPort: number | null = null;
   /** The secret of this run, known to the local server and the API only; null while the API is down. */
   private proxySecret: string | null = null;
+  /**
+   * The recovery key between the setup that made it and the owner's confirmation. Memory only: it is never written
+   * to this PC, and a restart forgets it (the owner then confirms by typing the key from their paper copy).
+   */
+  private pendingRecoveryKey: string | null = null;
   private api: Supervisor | null = null;
   private worker: Supervisor | null = null;
   private readonly vault = new TokenVault();
@@ -487,6 +492,21 @@ export class Controller {
       }
     }
     this.commonPasswordSet = null;
+    this.scrubStoredRecoveryKey();
+  }
+
+  /**
+   * An earlier build kept the recovery key in the configuration until it was confirmed. It is moved to memory (so
+   * the owner can still confirm it in this run) and taken off the disk.
+   */
+  private scrubStoredRecoveryKey(): void {
+    const stored = this.config.secrets.recoveryKey;
+    if (stored === null) return;
+    if (!this.config.recoveryAcknowledged) this.pendingRecoveryKey = stored;
+    this.config = this.deps.store.update((config) => {
+      config.secrets.recoveryKey = null;
+    });
+    this.log('a recovery key kept by an earlier version was removed from the configuration');
   }
 
   /** The configuration kept as `config.json.bak`, or null when there is none or it is not readable at all. */
@@ -676,6 +696,14 @@ export class Controller {
     }
     this.setupRunning = true;
     try {
+      // The key the owner is about to see is made now, and only its hash and the wrap of the backup key are kept.
+      // Nothing was backed up yet, so nothing is wrapped with another key.
+      const fresh = newRecoveryKey(this.config.secrets.backupKeyBase64);
+      this.config = this.deps.store.update((config) => {
+        config.secrets.backupKeyWrap = fresh.backupKeyWrap;
+        config.secrets.recoveryKeyHash = fresh.recoveryKeyHash;
+      });
+      this.pendingRecoveryKey = fresh.recoveryKey;
       const context: RuntimeContext = {
         config: this.config,
         paths: this.deps.paths,
@@ -712,7 +740,7 @@ export class Controller {
       this.keyPageAttempts = 0;
       return {
         ok: true,
-        recoveryKey: this.config.secrets.recoveryKey ?? '',
+        recoveryKey: fresh.recoveryKey,
         // The setup token is revoked above; this one lets the page confirm the key it just showed.
         ackToken: this.vault.issue(PURPOSE.ack, 24 * HOUR_MS),
       };
@@ -1552,10 +1580,8 @@ export class Controller {
         this.vault.revoke(PURPOSE.reset);
         return { ok: true, email: outcome.email, secondFactorCleared: outcome.secondFactorCleared };
       },
-      recoveryKeyToShow: () =>
-        this.config.recoveryAcknowledged ? null : this.config.secrets.recoveryKey,
       confirmRecoveryKey: (lastFour) => {
-        const stored = this.config.secrets.recoveryKey;
+        const stored = this.pendingRecoveryKey;
         if (this.config.recoveryAcknowledged || stored === null) {
           return Promise.resolve({ ok: false, message: TEXT.recoveryKey.gone });
         }
@@ -1564,11 +1590,7 @@ export class Controller {
             this.keyPageMiss(PURPOSE.ack, 'recoveryKeyLast4', TEXT.recoveryKey.wrongLast4),
           );
         }
-        this.config = this.deps.store.update((config) => {
-          config.recoveryAcknowledged = true;
-          // From here only the hash is kept: whoever sits at this PC cannot read the key.
-          config.secrets.recoveryKey = null;
-        });
+        this.acknowledgeRecoveryKey();
         this.vault.revoke(PURPOSE.ack);
         this.log('the recovery key was confirmed by the owner and is no longer kept');
         this.changed();
@@ -1580,6 +1602,8 @@ export class Controller {
             this.keyPageMiss(PURPOSE.check, 'recoveryKey', TEXT.recoveryKey.wrong),
           );
         }
+        // Typing the whole key right proves the owner has it, which is what the confirmation is for.
+        if (!this.config.recoveryAcknowledged) this.acknowledgeRecoveryKey();
         this.vault.revoke(PURPOSE.check);
         return Promise.resolve({ ok: true });
       },
@@ -1679,13 +1703,23 @@ export class Controller {
   openRecoveryKey(): void {
     if (this.currentPhase !== 'ready') return;
     this.keyPageAttempts = 0;
-    const pending = this.recoveryPending;
-    const token = this.vault.issue(pending ? PURPOSE.ack : PURPOSE.check, 15 * 60_000);
-    const page = pending ? '/__ack' : '/__check';
+    // The key is not shown here, ever: the owner types the one from their paper copy and the shell checks it.
+    const token = this.vault.issue(PURPOSE.check, 15 * 60_000);
     this.deps.ui.openAuxWindow(
-      `${this.appUrl}${page}?t=${token}`,
-      pending ? TEXT.recoveryKey.windowTitle : TEXT.recoveryKey.checkWindowTitle,
+      `${this.appUrl}/__check?t=${token}`,
+      TEXT.recoveryKey.checkWindowTitle,
     );
+  }
+
+  /** The owner has the key: from here nothing about it is kept, in memory or on disk, but its hash. */
+  private acknowledgeRecoveryKey(): void {
+    this.pendingRecoveryKey = null;
+    this.config = this.deps.store.update((config) => {
+      config.recoveryAcknowledged = true;
+      config.secrets.recoveryKey = null;
+    });
+    this.log('the recovery key was confirmed by the owner and is not kept');
+    this.changed();
   }
 
   async about(): Promise<void> {

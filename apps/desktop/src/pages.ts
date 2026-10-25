@@ -118,7 +118,7 @@ ${FORM_ERROR}
 <h1>Su consultorio está listo</h1>
 <p class="lead">Guarde esta clave de recuperación en un lugar seguro, por ejemplo impresa. Sirve para abrir una copia de seguridad en otra computadora y para restablecer la contraseña de la propietaria; sin ella no se puede hacer ninguna de las dos cosas.</p>
 <p class="key" id="recovery-key" data-fill="recoveryKey" aria-label="Clave de recuperación"></p>
-<p class="hint">Cuando confirme que la guardó, Consulvia deja de mostrarla en esta computadora: nadie que use la computadora podrá verla después.</p>
+<p class="hint">Es la única vez que se muestra: Consulvia no la guarda en esta computadora, así que nadie que use la computadora podrá verla después.</p>
 <div class="actions">
 <button type="button" class="secondary" data-action="print">Imprimir</button>
 <button type="button" class="secondary" data-action="copy" data-copy="recovery-key">Copiar</button>
@@ -128,8 +128,7 @@ ${confirmKeyForm('ack-box', 'data-token-from="ackToken" data-hide="ack-box" data
 <p class="lead"><strong>Listo.</strong> La clave quedó confirmada.</p>
 <div class="actions"><button type="button" data-action="go-home">Abrir Consulvia</button></div>
 </div>
-<div class="actions"><button type="button" class="secondary" data-action="go-home">Confirmar más tarde y abrir Consulvia</button></div>
-<p class="hint">Si todavía no la confirmó, Consulvia se lo recuerda desde el icono junto al reloj de Windows.</p>
+<p class="hint">Consulvia no vuelve a mostrar esta clave ni la puede recuperar: si cierra esta ventana sin guardarla, tendrá que usar una copia anotada en otro momento.</p>
 </div>`,
   );
 }
@@ -163,36 +162,13 @@ ${FORM_ERROR}
   );
 }
 
-/** The recovery key of an install that has not confirmed it yet, with the box that confirms it. */
-export function renderAckPage(key: string): string {
-  return layout(
-    'Consulvia: clave de recuperación',
-    `<div id="step-form">
-<h1>Confirmar la clave de recuperación</h1>
-<p class="lead">Guarde esta clave en un lugar seguro, por ejemplo impresa. Sirve para abrir una copia de seguridad en otra computadora y para restablecer la contraseña de la propietaria.</p>
-<p class="key" id="recovery-key" aria-label="Clave de recuperación">${key}</p>
-<div class="actions">
-<button type="button" class="secondary" data-action="print">Imprimir</button>
-<button type="button" class="secondary" data-action="copy" data-copy="recovery-key">Copiar</button>
-</div>
-<p class="hint">Cuando confirme que la guardó, Consulvia deja de mostrarla en esta computadora.</p>
-${confirmKeyForm('form', '', { submit: 'submit', busy: 'busy', error: 'form-error' })}
-</div>
-<div id="done" hidden>
-<h1>La clave quedó confirmada</h1>
-<p class="lead">Consulvia ya no la muestra. Si más adelante quiere comprobar que su copia es correcta, use <strong>Comprobar la clave de recuperación</strong> en el icono junto al reloj de Windows.</p>
-<div class="actions"><button type="button" data-action="close">Cerrar</button></div>
-</div>`,
-  );
-}
-
 /** Checks a key typed from the paper copy against the install, and shows nothing. */
 export function renderCheckPage(): string {
   return layout(
     'Consulvia: comprobar la clave de recuperación',
     `<div id="step-form">
 <h1>Comprobar la clave de recuperación</h1>
-<p class="lead">Escriba la clave tal como la tiene anotada. Consulvia le dice si es la correcta; no la muestra.</p>
+<p class="lead">Escriba la clave tal como la tiene anotada. Consulvia le dice si es la correcta; no la muestra. Si todavía no había confirmado que la guardó, al escribirla bien queda confirmada.</p>
 <form id="form" data-endpoint="/__check" novalidate>
 ${field({ name: 'recoveryKey', label: 'Clave de recuperación', hint: 'Son 30 letras y números, en grupos de cinco.', maxlength: 64 })}
 ${FORM_ERROR}

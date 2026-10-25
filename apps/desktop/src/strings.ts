@@ -141,7 +141,7 @@ export const TEXT = {
   recoveryKey: {
     windowTitle: 'Consulvia: clave de recuperación',
     checkWindowTitle: 'Consulvia: comprobar la clave de recuperación',
-    gone: 'La clave de recuperación ya se confirmó y Consulvia no la vuelve a mostrar, para que nadie que use esta computadora pueda verla. Si la tiene anotada, puede comprobarla desde el icono de Consulvia.',
+    gone: 'Consulvia muestra la clave de recuperación una sola vez, al configurar, y no la guarda, para que nadie que use esta computadora pueda verla. Si la tiene anotada, escríbala completa desde el icono de Consulvia, junto al reloj de Windows.',
     wrongLast4:
       'No coincide con el final de la clave. Revise la clave y vuelva a escribir los últimos 4 caracteres.',
     wrong: 'No es la clave de recuperación de esta instalación.',
@@ -149,7 +149,7 @@ export const TEXT = {
       'Se superó el número de intentos. Cierre esta ventana y vuelva a empezar desde el icono de Consulvia.',
     reminderTitle: 'Falta confirmar la clave de recuperación',
     reminder:
-      'Todavía no confirmó que guardó la clave de recuperación. Sin ella no se puede abrir una copia de seguridad en otra computadora. Abra el icono de Consulvia, junto al reloj de Windows, y elija "Confirmar que guardó la clave de recuperación".',
+      'Todavía no confirmó que guardó la clave de recuperación. Sin ella no se puede abrir una copia de seguridad en otra computadora. Abra el icono de Consulvia, junto al reloj de Windows, elija "Confirmar que guardó la clave de recuperación" y escríbala tal como la tiene anotada.',
   },
 
   about: {

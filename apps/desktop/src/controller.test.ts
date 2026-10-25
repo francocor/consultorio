@@ -25,6 +25,7 @@ import {
   type ResetPasswordInput,
 } from './api-commands.js';
 import { discard } from './backup-archive.js';
+import { unwrapBackupKey, verifyRecoveryKey } from './backup-crypto.js';
 import { readLedger } from './backup-ledger.js';
 import { newTestInstall, testBackupDeps } from './backup-testing.js';
 import { ConfigStore, type Cipher } from './config-store.js';
@@ -461,6 +462,9 @@ function getText(url: string): Promise<string> {
 }
 
 /** A raw request to the local server of the harness. */
+/** The recovery key that the last setup answer showed: it is stored nowhere, so this is the only copy. */
+let shownKey = '';
+
 function post(
   url: string,
   token: string,
@@ -484,10 +488,11 @@ function post(
         const chunks: Buffer[] = [];
         response.on('data', (chunk: Buffer) => chunks.push(chunk));
         response.on('end', () => {
-          resolve({
-            status: response.statusCode ?? 0,
-            body: parseBody(Buffer.concat(chunks).toString('utf8')),
-          });
+          const parsed = parseBody(Buffer.concat(chunks).toString('utf8'));
+          if (target.pathname === '/__setup' && typeof parsed['recoveryKey'] === 'string') {
+            shownKey = parsed['recoveryKey'];
+          }
+          resolve({ status: response.statusCode ?? 0, body: parsed });
         });
       },
     );
@@ -742,7 +747,7 @@ describe('the recovery key', () => {
     return { ack: String(answer.body['ackToken']) };
   }
 
-  const lastFour = () => (harness.config().secrets.recoveryKey ?? '').slice(-4);
+  const lastFour = () => shownKey.slice(-4);
   const confirm = (ack: string, value: string) =>
     post(`http://localhost:${String(harness.config().port)}/__ack`, ack, {
       recoveryKeyLast4: value,
@@ -755,9 +760,51 @@ describe('the recovery key', () => {
     expect(harness.controller.recoveryPending).toBe(true);
   });
 
+  it('shows the key once, in the answer to the setup, and writes it nowhere: not the configuration, not the log', async () => {
+    await setUp();
+
+    expect(shownKey).toMatch(/^([A-Z2-9]{5}-){5}[A-Z2-9]{5}$/);
+    expect(harness.config().secrets.recoveryKey).toBeNull();
+    const files = [harness.paths.configFile, join(harness.paths.logs, 'shell.log')];
+    for (const file of files) {
+      expect(readFileSync(file, 'utf8'), file).not.toContain(shownKey);
+    }
+    // The key the owner saw is the one the install checks and the backups are wrapped with.
+    const secrets = harness.config().secrets;
+    expect(verifyRecoveryKey(shownKey, secrets.recoveryKeyHash)).toBe(true);
+    expect(unwrapBackupKey(secrets.backupKeyWrap, shownKey).toString('base64')).toBe(
+      secrets.backupKeyBase64,
+    );
+  });
+
+  it('has no page that shows it again, with the token of the setup or any other', async () => {
+    const { ack } = await setUp();
+
+    const page = await fetch(`http://localhost:${String(harness.config().port)}/__ack?t=${ack}`);
+
+    expect(page.status).toBe(404);
+  });
+
+  it('takes a key that an earlier build kept in the configuration off the disk at the next start', async () => {
+    await setUp();
+    await harness.controller.quit();
+    const store = new ConfigStore(harness.paths.configFile, cipher);
+    store.update((config) => {
+      config.secrets.recoveryKey = shownKey;
+    });
+    expect(readFileSync(harness.paths.logs + '/shell.log', 'utf8')).not.toContain(shownKey);
+
+    const again = build(harness.folder);
+    await again.controller.start();
+
+    expect(again.config().secrets.recoveryKey).toBeNull();
+    expect(again.controller.recoveryPending).toBe(true);
+    await again.controller.quit();
+  });
+
   it('is confirmed by typing its last four characters, and is not kept on this PC after that', async () => {
     const { ack } = await setUp();
-    const key = harness.config().secrets.recoveryKey ?? '';
+    const key = shownKey;
 
     const wrong = await confirm(ack, 'ZZZZ');
     const right = await confirm(ack, lastFour().toLowerCase());
@@ -783,25 +830,48 @@ describe('the recovery key', () => {
     expect(harness.config().recoveryAcknowledged).toBe(false);
   });
 
-  it('opens the page that shows it and confirms it from the tray, until it is confirmed', async () => {
-    const { ack } = await setUp();
+  it('opens the check page from the tray, and typing the whole key right confirms it, until then and after', async () => {
+    await setUp();
+    await harness.controller.quit();
+    harness = build(harness.folder);
+    await harness.controller.start();
+    expect(harness.controller.recoveryPending).toBe(true);
     harness.uiCalls.length = 0;
 
     harness.controller.openRecoveryKey();
 
     const opened = harness.uiCalls.find((call) => call[0] === 'openAuxWindow');
-    expect(String(opened?.[1])).toContain('/__ack?t=');
-    await confirm(ack, 'ZZZZ'); // the older token is no longer good
     const url = String(opened?.[1]);
-    const done = await post(new URL('/__ack', url).href, tokenOf(url), {
-      recoveryKeyLast4: lastFour(),
+    // Never the key itself: not in the address, not on the page.
+    expect(url).toContain('/__check?t=');
+    const page = await fetch(url);
+    expect(await page.text()).not.toContain(shownKey);
+    const no = await post(new URL('/__check', url).href, tokenOf(url), {
+      recoveryKey: 'AAAAA-AAAAA-AAAAA-AAAAA-AAAAA-AAAAA',
     });
-    expect(done.status).toBe(200);
+    expect(no.status).toBe(422);
+    expect(harness.controller.recoveryPending).toBe(true);
+    const yes = await post(new URL('/__check', url).href, tokenOf(url), { recoveryKey: shownKey });
+    expect(yes.status).toBe(200);
+    expect(harness.controller.recoveryPending).toBe(false);
+    expect(harness.config().recoveryAcknowledged).toBe(true);
+  });
+
+  it('cannot confirm with the last four characters once the program was restarted: the key is not kept to compare', async () => {
+    const { ack } = await setUp();
+    await harness.controller.quit();
+    harness = build(harness.folder);
+    await harness.controller.start();
+
+    const late = await confirm(ack, lastFour());
+
+    expect(late.status).toBe(404);
+    expect(harness.controller.recoveryPending).toBe(true);
   });
 
   it('opens a check page instead once it is confirmed, and the check says yes only to the real key', async () => {
     const { ack } = await setUp();
-    const key = harness.config().secrets.recoveryKey ?? '';
+    const key = shownKey;
     await confirm(ack, lastFour());
     harness.uiCalls.length = 0;
 
@@ -1226,7 +1296,7 @@ describe('the first run', () => {
     expect(answer.status).toBe(200);
     expect(answer.body).toEqual({
       ok: true,
-      recoveryKey: harness.config().secrets.recoveryKey,
+      recoveryKey: shownKey,
       ackToken: expect.any(String) as string,
     });
     const provision = harness.commandCalls.find((call) => call.command === 'provision');
@@ -1828,7 +1898,7 @@ describe("resetting the owner's password", () => {
   it('runs the command with the choice about the second factor, once the recovery key is right', async () => {
     await ready();
     const url = await openReset();
-    const key = harness.config().secrets.recoveryKey ?? '';
+    const key = shownKey;
 
     const answer = await post(
       new URL('/__reset', url).href,
@@ -1869,7 +1939,7 @@ describe("resetting the owner's password", () => {
   it('closes the page and revokes its token after five wrong keys, even if the sixth is right', async () => {
     await ready();
     const url = await openReset();
-    const key = harness.config().secrets.recoveryKey ?? '';
+    const key = shownKey;
 
     for (let attempt = 0; attempt < 5; attempt += 1) {
       await post(
@@ -1888,7 +1958,7 @@ describe("resetting the owner's password", () => {
   it('revokes the token once the password is reset, so the page cannot be used twice', async () => {
     await ready();
     const url = await openReset();
-    const key = harness.config().secrets.recoveryKey ?? '';
+    const key = shownKey;
 
     const first = await post(new URL('/__reset', url).href, tokenOf(url), resetBody(key));
     const second = await post(new URL('/__reset', url).href, tokenOf(url), resetBody(key));
@@ -1901,7 +1971,7 @@ describe("resetting the owner's password", () => {
   it('keeps the page open when the password is rejected, so the person can choose another', async () => {
     await ready();
     const url = await openReset();
-    const key = harness.config().secrets.recoveryKey ?? '';
+    const key = shownKey;
     resetFails = new ApiCommandError(
       'reset-password',
       EXIT.invalidInput,
@@ -1927,11 +1997,7 @@ describe("resetting the owner's password", () => {
       '',
     );
 
-    const answer = await post(
-      new URL('/__reset', url).href,
-      tokenOf(url),
-      resetBody(harness.config().secrets.recoveryKey ?? ''),
-    );
+    const answer = await post(new URL('/__reset', url).href, tokenOf(url), resetBody(shownKey));
 
     expect(answer.status).toBe(422);
     expect(answer.body).toMatchObject({
@@ -1949,11 +2015,7 @@ describe("resetting the owner's password", () => {
       'insert failed for ana@clinica.example using postgres://app_rw:hunter2@127.0.0.1:5432/db',
     );
 
-    await post(
-      new URL('/__reset', url).href,
-      tokenOf(url),
-      resetBody(harness.config().secrets.recoveryKey ?? ''),
-    );
+    await post(new URL('/__reset', url).href, tokenOf(url), resetBody(shownKey));
 
     const log = readFileSync(join(harness.paths.logs, 'shell.log'), 'utf8');
     expect(log).toContain('reset-password failed');

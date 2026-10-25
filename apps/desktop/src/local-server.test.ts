@@ -45,7 +45,6 @@ let server: LocalServer;
 let port: number;
 let vault: TokenVault;
 let provisioned = false;
-let keyShown = true;
 let keyNeeds = { current: false, backup: true };
 let setupCalls: unknown[];
 let setupGate: Promise<void> | null = null;
@@ -64,7 +63,6 @@ const actions: PageActions = {
       email: 'ana@clinica.example',
       secondFactorCleared: input.clearSecondFactor,
     }),
-  recoveryKeyToShow: () => (keyShown ? 'ABCDE-FGHJK-LMNPQ' : null),
   confirmRecoveryKey: (lastFour) =>
     Promise.resolve(
       lastFour.toUpperCase() === 'NPQ'.padStart(4, 'M')
@@ -648,19 +646,13 @@ describe('the pages of the shell', () => {
     expect(mismatch.status).toBe(422);
   });
 
-  it('shows the recovery key with the box that confirms it, only while it is not confirmed', async () => {
+  it('has no page that shows the recovery key: the setup shows it once and nothing shows it again', async () => {
     const token = vault.issue(PURPOSE.ack);
-    keyShown = true;
 
     const page = await call(`/__ack?t=${token}`);
-    keyShown = false;
-    const confirmed = await call(`/__ack?t=${vault.issue(PURPOSE.ack)}`);
-    keyShown = true;
 
-    expect(page.status).toBe(200);
-    expect(page.body.toString()).toContain('ABCDE-FGHJK-LMNPQ');
-    expect(page.body.toString()).toContain('name="recoveryKeyLast4"');
-    expect(confirmed.status).toBe(404);
+    expect(page.status).toBe(404);
+    expect(page.body.toString()).not.toContain('ABCDE-FGHJK-LMNPQ');
   });
 
   it('confirms the key with its last four characters, and refuses fewer or a wrong tail', async () => {

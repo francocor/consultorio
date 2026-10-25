@@ -4,7 +4,6 @@ import {
   PAGE_CSP,
   PAGE_CSS,
   PAGE_JS,
-  renderAckPage,
   renderCheckPage,
   renderKeyPage,
   type RestoreKeyNeeds,
@@ -54,9 +53,10 @@ export interface PageActions {
   restoreKeyNeeds(): RestoreKeyNeeds;
   /** The keys typed for the restore that is waiting: this install's, and the backup's when it comes from another one. */
   submitRecoveryKey(keys: { current: string; backup: string }): Promise<ConfirmOutcome>;
-  /** The recovery key while the owner has not confirmed it; `null` once it was (it is not kept after that). */
-  recoveryKeyToShow(): string | null;
-  /** The owner typed the last four characters of the key: the key is confirmed and no longer kept. */
+  /**
+   * The owner typed the last four characters of the key that the setup page just showed: it is confirmed. Only
+   * possible in the run that made the key, because the key is not kept anywhere else.
+   */
   confirmRecoveryKey(lastFour: string): Promise<ConfirmOutcome>;
   /** Tells whether a recovery key typed from the paper copy is the one of this install. */
   checkRecoveryKey(typed: string): Promise<ConfirmOutcome>;
@@ -120,13 +120,8 @@ const PAGES: Record<string, { purpose: string; render: (actions: PageActions) =>
       purpose: PURPOSE.key,
       render: (actions) => renderKeyPage(actions.restoreKeyNeeds()),
     },
-    '/__ack': {
-      purpose: PURPOSE.ack,
-      render: (actions) => {
-        const key = actions.recoveryKeyToShow();
-        return key === null ? null : renderAckPage(key);
-      },
-    },
+    // Only an answer (POST) lives here: the key is shown once, by the setup page, and no page shows it again.
+    '/__ack': { purpose: PURPOSE.ack, render: () => null },
     '/__check': { purpose: PURPOSE.check, render: renderCheckPage },
   };
 

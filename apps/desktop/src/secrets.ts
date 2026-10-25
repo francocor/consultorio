@@ -28,8 +28,10 @@ export interface InstallSecrets {
   /** What the owner types is checked against this; the key itself is not kept past the first run. */
   recoveryKeyHash: string;
   /**
-   * The recovery key, shown to the owner once. It is removed from the configuration when the owner
-   * confirms having saved it (`null`); only its hash stays.
+   * Always `null` now: the recovery key is never written to this PC. It exists in memory from the moment the
+   * setup makes it until the owner confirms having saved it, and is shown once, in the answer to the setup. Only
+   * its hash stays. The field is kept so a configuration written by an earlier build still reads; that build's
+   * key, if it was never confirmed, is moved to memory at the next start and the field is emptied.
    */
   recoveryKey: string | null;
 }
@@ -39,6 +41,31 @@ export type RandomBytes = (size: number) => Buffer;
 /** URL- and SQL-safe text: letters, digits, `-` and `_`. */
 const token = (random: RandomBytes, bytes: number) => random(bytes).toString('base64url');
 
+/** What a new recovery key changes in the configuration: the wrap of the backup key and the hash that checks it. */
+export interface FreshRecoveryKey {
+  /** For the owner's eyes, once. Never stored. */
+  recoveryKey: string;
+  backupKeyWrap: KeyWrap;
+  recoveryKeyHash: string;
+}
+
+/** A new recovery key for the backup key `backupKeyBase64`. */
+export function newRecoveryKey(
+  backupKeyBase64: string,
+  random: RandomBytes = randomBytes,
+): FreshRecoveryKey {
+  const recoveryKey = generateRecoveryKey(random);
+  return {
+    recoveryKey,
+    backupKeyWrap: wrapBackupKey(Buffer.from(backupKeyBase64, 'base64'), recoveryKey),
+    recoveryKeyHash: hashRecoveryKey(recoveryKey),
+  };
+}
+
+/**
+ * The secrets of a new install. The recovery key that goes with them is not known to anybody: the setup makes
+ * the one the owner sees (`newRecoveryKey`), so nothing that is shown was ever written down by the program.
+ */
 export function generateSecrets(random: RandomBytes = randomBytes): InstallSecrets {
   const recoveryKey = generateRecoveryKey(random);
   const backupKey = random(32);
@@ -53,6 +80,6 @@ export function generateSecrets(random: RandomBytes = randomBytes): InstallSecre
     backupKeyBase64: backupKey.toString('base64'),
     backupKeyWrap: wrapBackupKey(backupKey, recoveryKey),
     recoveryKeyHash: hashRecoveryKey(recoveryKey),
-    recoveryKey,
+    recoveryKey: null,
   };
 }

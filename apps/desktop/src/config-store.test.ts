@@ -44,7 +44,7 @@ describe('config.json', () => {
     for (const secret of [
       config.secrets.kmsLocalKekBase64,
       config.secrets.appRwPassword,
-      config.secrets.recoveryKey,
+      config.secrets.backupKeyBase64,
       config.secrets.storageUploadSecret,
     ]) {
       expect(text).not.toContain(secret);

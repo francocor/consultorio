@@ -32,11 +32,11 @@ La primera vez, Consulvia prepara la base de datos. Tarda uno o dos minutos y mu
 1. Escriba el **nombre del consultorio**, su **nombre y apellido**, su **correo electrónico** (con él va a ingresar) y la **zona horaria**.
 2. Elija una **contraseña** de al menos 12 caracteres. Una frase larga es una buena opción. Consulvia rechaza las contraseñas muy comunes.
 3. Pulse **Crear mi consultorio** y espere unos segundos.
-4. Se muestra la **clave de recuperación**: 30 letras y números en grupos de cinco. **Imprímala o anótela y guárdela en un lugar seguro.** Sirve para abrir una copia de seguridad en otra computadora y para restablecer la contraseña de la propietaria.
-5. Para seguir, **escriba los últimos 4 caracteres de la clave** y pulse **La guardé**. Es la forma de confirmar que la leyó y la anotó. **Desde ese momento Consulvia ya no vuelve a mostrarla** en esta computadora (se conserva solo una huella que permite comprobarla): así nadie que use la computadora puede verla. Si la pierde, no se puede recuperar.
+4. Se muestra la **clave de recuperación**: 30 letras y números en grupos de cinco. **Imprímala o anótela y guárdela en un lugar seguro: es la única vez que Consulvia la muestra.** Sirve para abrir una copia de seguridad en otra computadora y para restablecer la contraseña de la propietaria.
+5. Para seguir, **escriba los últimos 4 caracteres de la clave** y pulse **La guardé**. Es la forma de confirmar que la leyó y la anotó. **Consulvia no guarda la clave en esta computadora en ningún momento** (se conserva solo una huella que permite comprobarla): así nadie que use la computadora puede verla, ni siquiera antes de confirmar. Si la pierde, no se puede recuperar ni cambiar desde el programa: una clave nueva permitiría a cualquiera que use la computadora restablecer la contraseña de la propietaria.
 6. Pulse **Abrir Consulvia** e ingrese con su correo y su contraseña.
 
-Si elige _Confirmar más tarde_, Consulvia lo recuerda cada vez que se abre y en el icono junto al reloj (_Confirmar que guardó la clave de recuperación…_) hasta que lo haga.
+Si cierra la ventana sin confirmar, Consulvia lo recuerda cada vez que se abre y en el icono junto al reloj (_Confirmar que guardó la clave de recuperación…_) hasta que lo haga. Ahí se confirma **escribiendo la clave completa**, tal como la tiene anotada; Consulvia comprueba que sea la correcta y no la muestra.
 
 Esa cuenta es la de la **propietaria** del consultorio. Desde Configuración puede invitar a más personas (profesionales, recepción).
 
@@ -49,20 +49,20 @@ Esa cuenta es la de la **propietaria** del consultorio. Desde Configuración pue
 
 El menú del icono tiene:
 
-| Opción                                    | Qué hace                                                              |
-| ----------------------------------------- | --------------------------------------------------------------------- |
-| Abrir Consulvia                           | Muestra la ventana                                                    |
-| Abrir en el navegador                     | Abre Consulvia en su navegador                                        |
-| Correos salientes                         | Abre la carpeta con los correos que Consulvia generó (ver más abajo)  |
-| Hacer copia de seguridad                  | Hace una copia ahora                                                  |
-| Restaurar copia…                          | Reemplaza los datos por los de una copia                              |
-| Restablecer contraseña de la propietaria… | Para cuando la propietaria olvidó su contraseña                       |
-| Confirmar que guardó la clave…            | Mientras no se confirmó: muestra la clave y pide confirmarla          |
-| Comprobar la clave de recuperación…       | Una vez confirmada: dice si la clave que usted escribe es la correcta |
-| Ver registros                             | Abre la carpeta con los registros (para enviar a soporte)             |
-| Iniciar con Windows                       | Marca o desmarca el inicio automático                                 |
-| Acerca de                                 | Versión y ubicación de los datos                                      |
-| Salir                                     | Cierra Consulvia por completo                                         |
+| Opción                                    | Qué hace                                                                                   |
+| ----------------------------------------- | ------------------------------------------------------------------------------------------ |
+| Abrir Consulvia                           | Muestra la ventana                                                                         |
+| Abrir en el navegador                     | Abre Consulvia en su navegador                                                             |
+| Correos salientes                         | Abre la carpeta con los correos que Consulvia generó (ver más abajo)                       |
+| Hacer copia de seguridad                  | Hace una copia ahora                                                                       |
+| Restaurar copia…                          | Reemplaza los datos por los de una copia                                                   |
+| Restablecer contraseña de la propietaria… | Para cuando la propietaria olvidó su contraseña                                            |
+| Confirmar que guardó la clave…            | Mientras no se confirmó: muestra la clave y pide confirmarla                               |
+| Comprobar la clave de recuperación…       | Dice si la clave que usted escribe es la correcta (y, si faltaba confirmarla, la confirma) |
+| Ver registros                             | Abre la carpeta con los registros (para enviar a soporte)                                  |
+| Iniciar con Windows                       | Marca o desmarca el inicio automático                                                      |
+| Acerca de                                 | Versión y ubicación de los datos                                                           |
+| Salir                                     | Cierra Consulvia por completo                                                              |
 
 ## Copias de seguridad
 

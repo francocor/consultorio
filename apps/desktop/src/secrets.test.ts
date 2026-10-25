@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import { unwrapBackupKey, verifyRecoveryKey } from './backup-crypto.js';
 import { formatRecoveryKey, generateRecoveryKey } from './recovery-key.js';
-import { generateSecrets, normalizeRecoveryKey } from './secrets.js';
+import { generateSecrets, newRecoveryKey, normalizeRecoveryKey } from './secrets.js';
 
 describe('the secrets of an install', () => {
   it('are random, different on every call and long enough for what the API demands', () => {
@@ -32,16 +32,26 @@ describe('the secrets of an install', () => {
     expect(secrets.storageUploadSecret).toMatch(/^[A-Za-z0-9_-]+$/);
   });
 
-  it('make a backup key that the recovery key unwraps, and keep only a hash to check the recovery key', () => {
+  it('never hold the recovery key: only the wrap of the backup key and a hash to check it', () => {
     const secrets = generateSecrets();
-    const recoveryKey = secrets.recoveryKey ?? '';
 
+    expect(secrets.recoveryKey).toBeNull();
     expect(Buffer.from(secrets.backupKeyBase64, 'base64')).toHaveLength(32);
-    expect(unwrapBackupKey(secrets.backupKeyWrap, recoveryKey).toString('base64')).toBe(
+    expect(JSON.stringify(secrets)).not.toMatch(/[A-HJ-NP-Z2-9]{5}-[A-HJ-NP-Z2-9]{5}-/);
+  });
+
+  it('make a recovery key for the backup key that unwraps it and is checked by its hash', () => {
+    const secrets = generateSecrets();
+
+    const fresh = newRecoveryKey(secrets.backupKeyBase64);
+
+    expect(unwrapBackupKey(fresh.backupKeyWrap, fresh.recoveryKey).toString('base64')).toBe(
       secrets.backupKeyBase64,
     );
-    expect(verifyRecoveryKey(recoveryKey, secrets.recoveryKeyHash)).toBe(true);
-    expect(secrets.recoveryKeyHash).not.toContain(normalizeRecoveryKey(recoveryKey));
+    expect(verifyRecoveryKey(fresh.recoveryKey, fresh.recoveryKeyHash)).toBe(true);
+    expect(fresh.recoveryKeyHash).not.toContain(normalizeRecoveryKey(fresh.recoveryKey));
+    // And it is a different key every time.
+    expect(newRecoveryKey(secrets.backupKeyBase64).recoveryKey).not.toBe(fresh.recoveryKey);
   });
 });
 
