@@ -54,6 +54,16 @@ Sensitive fields are encrypted with a per-tenant key that a key-encryption key (
 
 Logo upload stores the image in the S3-compatible bucket. Locally that is MinIO: `pnpm infra:up` creates the bucket named by `S3_BUCKET`, and `.env.example` already points `S3_ENDPOINT` and the keys at it. Without `S3_BUCKET` the API still starts, but `PUT /branding/logo` answers 503 and the public logo route answers 404. Uploads are re-encoded to a clean PNG (metadata stripped, 512 pixels at most), so what the browser later receives is never the file that was uploaded. In production leave `S3_ENDPOINT` and the keys empty: the task role supplies the credentials and the bucket encryption (SSE-KMS) protects the objects.
 
+### Consulvia Desktop (files on the disk, mail in a folder)
+
+`DEPLOYMENT_PROFILE=desktop` runs one clinic on one PC and is described in `docs/desktop/design.md`, which also holds the contract with the Electron shell (every variable, command, exit code and IPC message). Three variables matter outside the desktop too, for development without Docker services:
+
+- `STORAGE_DIR` and `STORAGE_UPLOAD_SECRET` keep files in a folder instead of a bucket. The browser uploads to `POST /api/files/uploads/<token>` on the API itself, with a signed policy in place of the presigned S3 form. A hosted production refuses `STORAGE_DIR`; it cannot be set together with `S3_BUCKET`.
+- `OUTBOX_DIR` writes each email as an `.eml` file with a `.json` entry beside it (the links are in the entry), instead of sending it. It cannot be set together with `SMTP_HOST`.
+- `MIGRATIONS_DIR` points the bundled migrator (`node dist/main.js migrate`) at another folder of migrations. `pnpm db:migrate` is the same command run from the source.
+
+The one-shot commands run from the source with `pnpm --filter @consultorio/api provision:local` and `owner:reset-password`. They read the password from the environment or, with `--stdin`, from a JSON document on the standard input, never from an argument.
+
 ### The operator console
 
 The platform operator (you, running the platform, not a clinic user) signs in on `platform.localhost`. An operator is not a tenant user: separate accounts, a separate `osid` cookie, a password plus a mandatory authenticator code (no grace period) and a separate audit trail. The console is off until `OPERATOR_DATABASE_URL` is set (`.env.example` has the local value, the `app_operator` login) and exists only in multi mode.
