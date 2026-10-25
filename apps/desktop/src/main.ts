@@ -21,6 +21,7 @@ import { createApiCommands } from './api-commands.js';
 import { parseArgs, type LaunchRequest } from './cli-args.js';
 import { ConfigStore, type Cipher } from './config-store.js';
 import { Controller, type ShellUi } from './controller.js';
+import { decideNavigation, decideWindowOpen } from './navigation-policy.js';
 import { resolveDataPaths } from './paths.js';
 import { findFreePort } from './ports.js';
 import { PostgresCluster } from './postgres.js';
@@ -99,23 +100,36 @@ async function run(): Promise<void> {
       },
     });
 
-  /** Keeps a window on the app: other addresses open in the browser, and no window opens by itself. */
-  function guard(window: BrowserWindow): void {
-    const origin = () => `http://localhost:${String(controllerPort())}`;
-    window.webContents.setWindowOpenHandler(({ url }) => {
-      if (url.startsWith(origin())) return { action: 'allow' };
-      if (/^https?:\/\//i.test(url)) void shell.openExternal(url);
+  let knownPort = 0;
+  const appOrigin = () => `http://localhost:${String(knownPort)}`;
+
+  /**
+   * Keeps every page of the program on the app: other web addresses open in the browser of the PC, nothing
+   * else leaves, and no page opens a window of its own. It is attached to EVERY web contents (windows, frames
+   * and anything a page creates), not to the windows the shell opens itself.
+   */
+  app.on('web-contents-created', (_event, contents) => {
+    const navigate = (event: { preventDefault: () => void }, url: string) => {
+      const decision = decideNavigation(url, appOrigin());
+      if (decision.action === 'allow') return;
+      event.preventDefault();
+      if (decision.action === 'external') void shell.openExternal(decision.url);
+    };
+    contents.setWindowOpenHandler(({ url }) => {
+      const decision = decideWindowOpen(url, appOrigin());
+      if (decision.openExternally !== undefined) void shell.openExternal(decision.openExternally);
       return { action: 'deny' };
     });
-    window.webContents.on('will-navigate', (event, url) => {
-      if (url.startsWith('data:') || url.startsWith(origin())) return;
-      event.preventDefault();
-      if (/^https?:\/\//i.test(url)) void shell.openExternal(url);
+    contents.on('will-navigate', (details) => {
+      navigate(details, details.url);
     });
-  }
-
-  let knownPort = 0;
-  const controllerPort = () => knownPort;
+    contents.on('will-redirect', (details) => {
+      navigate(details, details.url);
+    });
+    contents.on('will-frame-navigate', (details) => {
+      navigate(details, details.url);
+    });
+  });
 
   function createMainWindow(): BrowserWindow {
     const window = secureWindow({
@@ -126,7 +140,6 @@ async function run(): Promise<void> {
       show: false,
       title: TEXT.appName,
     });
-    guard(window);
     window.once('ready-to-show', () => {
       if (!startup.hidden || testMode) window.show();
     });
@@ -176,7 +189,6 @@ async function run(): Promise<void> {
         ...(parent ? { parent } : {}),
         show: true,
       });
-      guard(auxWindow);
       auxWindow.on('closed', () => {
         auxWindow = null;
       });
