@@ -1,12 +1,15 @@
 import { randomUUID } from 'node:crypto';
 import {
+  closeSync,
   copyFileSync,
   existsSync,
+  fsyncSync,
   mkdirSync,
+  openSync,
   readFileSync,
   renameSync,
   rmSync,
-  writeFileSync,
+  writeSync,
 } from 'node:fs';
 import { dirname } from 'node:path';
 
@@ -172,8 +175,11 @@ export class ConfigStore {
     const body = `${JSON.stringify({ version: 1, public: publicPart, secrets: encrypted }, null, 2)}\n`;
     mkdirSync(dirname(this.file), { recursive: true });
     const temporary = `${this.file}.tmp`;
-    writeFileSync(temporary, body, { mode: 0o600 });
-    if (existsSync(this.file)) copyFileSync(this.file, `${this.file}.bak`);
+    writeDurably(temporary, body);
+    if (existsSync(this.file)) {
+      copyFileSync(this.file, `${this.file}.bak`);
+      syncFile(`${this.file}.bak`);
+    }
     renameWithRetry(temporary, this.file);
   }
 
@@ -183,6 +189,27 @@ export class ConfigStore {
     change(config);
     this.write(config);
     return config;
+  }
+}
+
+/** Forces a file that was just written to the disk, so a rename cannot reach it before the bytes do. */
+function syncFile(path: string): void {
+  const fd = openSync(path, 'r+');
+  try {
+    fsyncSync(fd);
+  } finally {
+    closeSync(fd);
+  }
+}
+
+/** Writes a new file and forces it to the disk before returning. */
+function writeDurably(path: string, body: string): void {
+  const fd = openSync(path, 'w', 0o600);
+  try {
+    writeSync(fd, body);
+    fsyncSync(fd);
+  } finally {
+    closeSync(fd);
   }
 }
 

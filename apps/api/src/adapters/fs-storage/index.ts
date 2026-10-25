@@ -74,6 +74,19 @@ async function renameWithRetry(from: string, to: string): Promise<void> {
   }
 }
 
+/**
+ * Forces a file the process has just written to the disk. Without it a rename can reach the disk before the
+ * bytes do, and a power cut leaves a name that points at an empty or half-written file.
+ */
+async function syncFile(path: string): Promise<void> {
+  const handle = await open(path, 'r+');
+  try {
+    await handle.sync();
+  } finally {
+    await handle.close();
+  }
+}
+
 async function removeQuietly(path: string): Promise<void> {
   try {
     await unlink(path);
@@ -196,7 +209,9 @@ export function createFsObjectStorage(config: FsStorageConfig): FsObjectStorage 
     const temporaryMeta = `${meta}.${id}.tmp`;
     try {
       await writeBytes(temporaryData);
+      await syncFile(temporaryData);
       await writeFile(temporaryMeta, JSON.stringify({ contentType }), { flag: 'wx' });
+      await syncFile(temporaryMeta);
       await renameWithRetry(temporaryMeta, meta);
       await renameWithRetry(temporaryData, data);
     } catch (error) {
@@ -303,6 +318,7 @@ export function createFsObjectStorage(config: FsStorageConfig): FsObjectStorage 
         const contentType = await readContentType(fromKey);
         await mkdir(dirname(to), { recursive: true });
         await writeFile(metaPathOf(dir, toKey), JSON.stringify({ contentType }));
+        await syncFile(metaPathOf(dir, toKey));
         await renameWithRetry(claimed, to);
       } catch (error) {
         // Whatever failed, do not lose the object: put it back if its place is still free.
