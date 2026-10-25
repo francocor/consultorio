@@ -48,6 +48,8 @@ function journal(step: RestoreStep, configCopy: string | null = null): RestoreJo
     filesAside: aside(),
     unpacked: join(paths.root, 'tmp-restore-1'),
     configCopy,
+    hadFiles: true,
+    undoing: false,
   };
 }
 
@@ -195,6 +197,106 @@ describe('a restore that did not end', () => {
     expect(databases).toEqual([DATABASE]);
     expect(await readJournal(paths)).toBeNull();
     expect(reloads).toBe(0);
+  });
+
+  it('puts the database of the product back under its name when that is the only one left and no restore is pending', async () => {
+    databases = [ASIDE_DATABASE];
+
+    await reconcile();
+
+    expect(databases).toEqual([DATABASE]);
+    expect(calls).toEqual([`rename ${ASIDE_DATABASE} ${DATABASE}`]);
+  });
+
+  it('keeps undoing after a first try dropped the scratch database and stopped, instead of taking it for a finished restore', async () => {
+    filesHalfSwapped();
+    // The first run decided to undo, wrote it down, dropped the scratch database and died.
+    databases = [DATABASE];
+    await writeJournal(paths, { ...journal('swapping'), undoing: true });
+
+    expect(await reconcile()).toBe('rolled-back');
+
+    expect(readFileSync(join(paths.files, 'old.obj'), 'utf8')).toBe('old');
+    expect(existsSync(join(paths.files, 'from-the-backup.obj'))).toBe(false);
+  });
+
+  it('writes down that it is undoing before it undoes anything', async () => {
+    filesHalfSwapped();
+    databases = [DATABASE, SCRATCH_DATABASE];
+    await writeJournal(paths, journal('swapping'));
+    let seen: boolean | string | null = null;
+
+    await reconcileInterruptedRestore({
+      paths,
+      databases: {
+        names: () => Promise.resolve([...databases]),
+        rename: () => Promise.resolve(),
+        drop: async () => {
+          const written = await readJournal(paths);
+          seen = typeof written === 'object' && written !== null ? written.undoing : written;
+          databases = [DATABASE];
+        },
+      },
+      reloadConfig: () => undefined,
+    });
+
+    expect(seen).toBe(true);
+  });
+
+  it('removes what the backup brought when there were no documents before', async () => {
+    mkdirSync(paths.files, { recursive: true });
+    writeFileSync(join(paths.files, 'from-the-backup.obj'), 'backup');
+    databases = [DATABASE, SCRATCH_DATABASE];
+    await writeJournal(paths, { ...journal('files-swapped'), hadFiles: false });
+
+    await reconcile();
+
+    expect(existsSync(paths.files)).toBe(false);
+  });
+
+  it('leaves the documents alone when they are already back and the copy aside is gone (a clean up that ran twice)', async () => {
+    mkdirSync(paths.files, { recursive: true });
+    writeFileSync(join(paths.files, 'old.obj'), 'old');
+    databases = [DATABASE, SCRATCH_DATABASE];
+    await writeJournal(paths, journal('files-swapped'));
+
+    await reconcile();
+
+    expect(readFileSync(join(paths.files, 'old.obj'), 'utf8')).toBe('old');
+  });
+
+  it('is not stopped by a copy of config.json that is already gone', async () => {
+    filesHalfSwapped();
+    databases = [DATABASE, SCRATCH_DATABASE];
+    writeFileSync(paths.configFile, 'the configuration in place');
+    await writeJournal(
+      paths,
+      journal('secrets-adopted', join(paths.root, 'config.json.pre-restore-1')),
+    );
+
+    expect(await reconcile()).toBe('rolled-back');
+
+    expect(readFileSync(paths.configFile, 'utf8')).toBe('the configuration in place');
+    expect(await readJournal(paths)).toBeNull();
+  });
+
+  it('sweeps the copies of config.json and the old documents that no restore claims', async () => {
+    writeFileSync(join(paths.root, 'config.json.pre-restore-5'), 'x');
+    mkdirSync(`${paths.files}.replaced-5`, { recursive: true });
+
+    await reconcile();
+
+    expect(existsSync(join(paths.root, 'config.json.pre-restore-5'))).toBe(false);
+    expect(existsSync(`${paths.files}.replaced-5`)).toBe(false);
+  });
+
+  it('reads a journal written before the documents were recorded as one that had documents', async () => {
+    const { hadFiles, undoing, ...old } = journal('files-swapped');
+    expect(hadFiles).toBe(true);
+    expect(undoing).toBe(false);
+    writeFileSync(journalFile(paths), JSON.stringify(old));
+
+    expect(await readJournal(paths)).toMatchObject({ hadFiles: true, undoing: false });
   });
 
   it('touches nothing when the journal cannot be read', async () => {

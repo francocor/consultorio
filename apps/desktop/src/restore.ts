@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { createWriteStream } from 'node:fs';
-import { copyFile, mkdir, rename, rm, stat } from 'node:fs/promises';
+import { copyFile, mkdir, rename, stat } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
@@ -26,8 +26,9 @@ import type { DataPaths } from './paths.js';
 import { formatRecoveryKey } from './recovery-key.js';
 import {
   clearJournal,
-  restoreConfigCopy,
+  removeQuietly,
   writeJournal,
+  type Reconciled,
   type RestoreJournal,
   type RestoreStep,
 } from './restore-journal.js';
@@ -45,6 +46,8 @@ export type RestoreErrorCode =
   | 'restore_failed'
   /** The data is restored and in use, but the services could not be started again. Nothing was rolled back. */
   | 'restore_incomplete'
+  /** The restore failed and putting everything back failed too: the next start finishes undoing it. */
+  | 'undo_incomplete'
   /** The backup authenticated, but what it did to the database or the roles is not what a backup does. Nothing was kept. */
   | 'unsafe_backup';
 
@@ -52,8 +55,9 @@ export class RestoreError extends Error {
   constructor(
     readonly code: RestoreErrorCode,
     readonly detail = '',
+    options?: ErrorOptions,
   ) {
-    super(code);
+    super(code, options);
     this.name = 'RestoreError';
   }
 }
@@ -95,8 +99,14 @@ export interface RestoreDeps {
   scratch: {
     create: () => Promise<void>;
     swapIn: () => Promise<void>;
-    drop: () => Promise<void>;
   };
+  /**
+   * Finishes or undoes the restore that the journal describes, from what is on the disk and in the cluster (see
+   * `reconcileInterruptedRestore`): the same code that runs at every start after a crash, so a restore that
+   * fails in this process and one that was cut off end up in the same place. `completed` means the databases
+   * had in fact traded places.
+   */
+  reconcile: () => Promise<Reconciled>;
   /**
    * Facts about the cluster that a backup (a program for `pg_restore`, run as `app_owner`) must not change: who
    * is a member of `audit_sealer`, the parameters of the roles and of the database, the password of `app_owner`,
@@ -119,8 +129,6 @@ export interface RestoreDeps {
    * places, with `config.json` copied aside first so it can be put back.
    */
   adoptSecrets: (adopted: AdoptedSecrets) => Promise<void> | void;
-  /** Reads the secrets again after `config.json` was put back (a restore that was undone). */
-  reloadSecrets: () => Promise<void> | void;
   /** The size of the data of the install (database and documents), to know the room a restore needs. */
   dataBytes: () => Promise<number>;
   /** Free bytes where the data lives. Defaults to the real disk. */
@@ -128,7 +136,21 @@ export interface RestoreDeps {
   now: () => Date;
   limits?: ArchiveLimits;
   log?: (message: string) => void;
+  /** For the tests: called after each step of a restore, so one can stop there as a crash would. */
+  checkpoint?: (point: RestoreCheckpoint) => Promise<void> | void;
 }
+
+export type RestoreCheckpoint =
+  | 'prepared'
+  | 'restoring'
+  | 'files-swapping'
+  | 'files-aside'
+  | 'files-in-place'
+  | 'files-swapped'
+  | 'secrets-step'
+  | 'secrets-adopted'
+  | 'swapping'
+  | 'swapped';
 
 export interface RestoreOptions {
   /** Needed only when the backup belongs to another installation. */
@@ -269,6 +291,10 @@ export async function restoreBackup(
   const unpackedFiles = join(unpacked, 'files');
   const aside = `${deps.paths.files}.replaced-${stamp}`;
   const configCopy = join(deps.paths.root, `config.json.pre-restore-${stamp}`);
+  const hadFiles = await stat(deps.paths.files).then(
+    () => true,
+    () => false,
+  );
   await mkdir(unpackedFiles, { recursive: true });
   const hasConfigCopy = await copyFile(deps.paths.configFile, configCopy).then(
     () => true,
@@ -281,22 +307,29 @@ export async function restoreBackup(
     filesAside: aside,
     unpacked,
     configCopy: hasConfigCopy ? configCopy : null,
+    hadFiles,
+    undoing: false,
   };
   const advance = async (step: RestoreStep) => {
     journal.step = step;
     await writeJournal(deps.paths, journal);
   };
 
-  const state = { movedFiles: false, adopted: false, swapped: false, scratch: false };
+  const reached = async (point: RestoreCheckpoint) => {
+    await deps.checkpoint?.(point);
+  };
+  const state = { swapped: false };
   let servicesStopped = false;
+  let snapshot: unknown;
   try {
     await advance('prepared');
+    await reached('prepared');
     await deps.stopServices();
     servicesStopped = true;
     await deps.scratch.create();
-    state.scratch = true;
     await advance('restoring');
-    const snapshot = await deps.audit.snapshot();
+    await reached('restoring');
+    snapshot = await deps.audit.snapshot();
 
     // Pass 2: the work. The dump is piped into `pg_restore` as it is decrypted, and never written to disk.
     const found: {
@@ -368,49 +401,84 @@ export async function restoreBackup(
       throw new RestoreError('unsafe_backup', problems.join('; '));
     }
 
-    // The documents: the old folder is moved aside, the unpacked one takes its place.
+    // The documents: the old folder is moved aside, the unpacked one takes its place. The journal says so
+    // BEFORE the first rename, so that wherever a crash lands, the start after it finds the folder in place
+    // missing, empty or the backup's, and the old one aside, and knows what to do with each.
+    await advance('files-swapping');
+
+    await reached('files-swapping');
     try {
       await rename(deps.paths.files, aside);
-      state.movedFiles = true;
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
     }
+    await reached('files-aside');
     await rename(unpackedFiles, deps.paths.files);
+    await reached('files-in-place');
     await advance('files-swapped');
+    await reached('files-swapped');
 
     // The keys of another install's backup are adopted BEFORE the databases trade places, with a way back:
     // the other order leaves a restored database that the keys on disk cannot read if this step fails.
     if (foreign && options.recoveryKey !== undefined) {
       await advance('secrets-adopted');
-      state.adopted = true;
+      await reached('secrets-step');
       await deps.adoptSecrets({
         payload: adopted,
         backupKeyBase64: key.toString('base64'),
         backupKeyWrap: header.wrap,
         recoveryKey: formatRecoveryKey(options.recoveryKey),
       });
+      await reached('secrets-adopted');
     }
 
     // The point of no return: after this the restored database is the real one.
     await advance('swapping');
+    await reached('swapping');
     await deps.scratch.swapIn();
     state.swapped = true;
-    state.scratch = false;
-    // The roles are as they were before: said again, in case anything touched them since the check.
-    await deps.audit.revert(snapshot).catch(() => undefined);
-    deps.log?.('backup restored');
+    await reached('swapped');
   } catch (error) {
-    if (!state.swapped) await undo(deps, journal, state);
-    await removeQuietly(unpacked);
-    await restart(deps, servicesStopped);
-    throw isDiskFull(error) && !(error instanceof DiskFullError) ? new DiskFullError(0, 0) : error;
+    // Everything that is not the restored database is put back by the same code that runs at every start. If the
+    // databases did in fact trade places (an error after the rename), that code finishes the restore instead.
+    let finished = false;
+    let unreadable = false;
+    if (!state.swapped) {
+      try {
+        const outcome = await deps.reconcile();
+        finished = outcome === 'completed';
+        unreadable = outcome === 'unreadable';
+      } catch (undoError) {
+        const detail = undoError instanceof Error ? undoError.message : String(undoError);
+        deps.log?.(`the failed restore could not be undone completely: ${detail}`);
+        // The journal and the copies stay where they are: the next start finishes the job. Nothing is started
+        // on top of a half undone restore.
+        throw new RestoreError('undo_incomplete', detail, { cause: undoError });
+      }
+    }
+    if (unreadable) {
+      const detail = 'restore-journal.json cannot be read';
+      deps.log?.(detail);
+      throw new RestoreError('undo_incomplete', detail);
+    }
+    if (!finished) {
+      await restart(deps, servicesStopped);
+      throw isDiskFull(error) && !(error instanceof DiskFullError)
+        ? new DiskFullError(0, 0)
+        : error;
+    }
+    deps.log?.('the databases had traded places although the swap reported an error');
   }
 
-  // From here the restored data is the data of the install: what is left is housekeeping, and starting.
+  // From here the restored data is the data of the install: what is left is housekeeping, and starting. The
+  // journal goes first: a crash after it leaves garbage that the next start sweeps, not a start that fails.
+  await clearJournal(deps.paths).catch(() => undefined);
+  // The roles are as they were before: said again, in case anything touched them since the check.
+  await deps.audit.revert(snapshot).catch(() => undefined);
   await removeQuietly(unpacked);
   await removeQuietly(aside);
   if (hasConfigCopy) await removeQuietly(configCopy);
-  await clearJournal(deps.paths).catch(() => undefined);
+  deps.log?.('backup restored');
   try {
     await deps.startServices();
   } catch (error) {
@@ -421,29 +489,6 @@ export async function restoreBackup(
     );
   }
   return { header };
-}
-
-async function removeQuietly(path: string): Promise<void> {
-  await rm(path, { recursive: true, force: true }).catch(() => undefined);
-}
-
-/** Puts back everything a restore that did not get to swap the databases had changed. */
-async function undo(
-  deps: RestoreDeps,
-  journal: RestoreJournal,
-  state: { movedFiles: boolean; adopted: boolean; scratch: boolean },
-): Promise<void> {
-  if (state.adopted && journal.configCopy !== null) {
-    await restoreConfigCopy(deps.paths, journal.configCopy).catch(() => undefined);
-    await deps.reloadSecrets();
-  }
-  if (state.movedFiles) {
-    await removeQuietly(deps.paths.files);
-    await rename(journal.filesAside, deps.paths.files).catch(() => undefined);
-  }
-  if (state.scratch) await deps.scratch.drop().catch(() => undefined);
-  if (journal.configCopy !== null) await removeQuietly(journal.configCopy);
-  await clearJournal(deps.paths).catch(() => undefined);
 }
 
 /** Starts the services again after a restore that failed, and never hides the failure that came first. */

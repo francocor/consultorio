@@ -387,10 +387,15 @@ export class PostgresCluster {
       try {
         await client.query(`ALTER DATABASE ${scratch} RENAME TO ${DATABASE_NAME}`);
       } catch (error) {
-        await client.query(`ALTER DATABASE ${aside} RENAME TO ${DATABASE_NAME}`);
+        // If even this fails the start after it puts the name right (see `reconcileInterruptedRestore`).
+        await client
+          .query(`ALTER DATABASE ${aside} RENAME TO ${DATABASE_NAME}`)
+          .catch(() => undefined);
         throw error;
       }
-      await client.query(`DROP DATABASE ${aside} WITH (FORCE)`);
+      // The restored database is the real one now. The old one is garbage: failing to drop it must not make a
+      // restore that worked look like one that did not, and the next start drops it.
+      await client.query(`DROP DATABASE ${aside} WITH (FORCE)`).catch(() => undefined);
     });
   }
 

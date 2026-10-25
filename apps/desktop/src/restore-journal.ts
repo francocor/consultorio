@@ -1,4 +1,4 @@
-import { copyFile, mkdir, open, readdir, readFile, rename, rm } from 'node:fs/promises';
+import { copyFile, mkdir, open, readdir, readFile, rm, stat } from 'node:fs/promises';
 import { join } from 'node:path';
 
 import { renameWithRetry } from './backup-archive.js';
@@ -15,12 +15,22 @@ export const ASIDE_DATABASE = 'consultorio_before_restore';
  * the restore is over, so that a power cut or a crash in the middle is found at the next start and either
  * finished or undone, instead of leaving two half-installs behind.
  *
- * In order: `prepared` (nothing touched yet), `restoring` (the scratch database exists), `files-swapped`
- * (the documents are the backup's), `secrets-adopted` (the keys are the backup's) and `swapping` (the
- * databases are trading places: after it, the backup's database is the real one).
+ * In order: `prepared` (nothing touched yet), `restoring` (the scratch database exists), `files-swapping` (the
+ * documents are being moved: from here the folder in place may be the old one, none, or the backup's),
+ * `files-swapped` (the documents are the backup's), `secrets-adopted` (the keys are the backup's) and `swapping`
+ * (the databases are trading places: after it, the backup's database is the real one).
  */
 export type RestoreStep =
-  'prepared' | 'restoring' | 'files-swapped' | 'secrets-adopted' | 'swapping';
+  'prepared' | 'restoring' | 'files-swapping' | 'files-swapped' | 'secrets-adopted' | 'swapping';
+
+const STEPS: readonly RestoreStep[] = [
+  'prepared',
+  'restoring',
+  'files-swapping',
+  'files-swapped',
+  'secrets-adopted',
+  'swapping',
+];
 
 export interface RestoreJournal {
   version: 1;
@@ -32,6 +42,15 @@ export interface RestoreJournal {
   unpacked: string;
   /** A copy of `config.json` from before the keys of a backup were adopted, or null if there was none. */
   configCopy: string | null;
+  /** Whether the documents folder existed when the restore began: what to put back is decided from it. */
+  hadFiles: boolean;
+  /**
+   * Set (and forced to the disk) before anything is undone. Whether the databases traded places is read from the
+   * cluster, and undoing drops the scratch database, which is the very fact that tells the two cases apart: once
+   * the decision to undo is taken it is written down, and a start that finds it undoes again, whatever the cluster
+   * looks like by then.
+   */
+  undoing: boolean;
 }
 
 export const journalFile = (paths: DataPaths) => join(paths.root, 'restore-journal.json');
@@ -51,28 +70,34 @@ export async function writeJournal(paths: DataPaths, journal: RestoreJournal): P
   await renameWithRetry(temporary, target);
 }
 
+const UNREADABLE = Symbol('unreadable');
+const BUSY = new Set(['EBUSY', 'EPERM', 'EACCES']);
+
+/** Reads the journal file, trying again a few times when something (an antivirus) holds it for a moment. */
+async function readJournalText(paths: DataPaths): Promise<string | null | typeof UNREADABLE> {
+  for (let attempt = 1; ; attempt += 1) {
+    try {
+      return await readFile(journalFile(paths), 'utf8');
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code ?? '';
+      if (code === 'ENOENT') return null;
+      if (!BUSY.has(code) || attempt >= 6) return UNREADABLE;
+      await new Promise((resolve) => setTimeout(resolve, 100 * attempt));
+    }
+  }
+}
+
 /** The journal, `null` when there is none, `'unreadable'` when there is a file nobody can make sense of. */
 export async function readJournal(paths: DataPaths): Promise<RestoreJournal | null | 'unreadable'> {
-  let text: string;
-  try {
-    text = await readFile(journalFile(paths), 'utf8');
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null;
-    return 'unreadable';
-  }
+  const text = await readJournalText(paths);
+  if (text === null) return null;
+  if (text === UNREADABLE) return 'unreadable';
   try {
     const value = JSON.parse(text) as Partial<RestoreJournal>;
-    const steps: RestoreStep[] = [
-      'prepared',
-      'restoring',
-      'files-swapped',
-      'secrets-adopted',
-      'swapping',
-    ];
     if (
       value.version !== 1 ||
       typeof value.stamp !== 'string' ||
-      !steps.includes(value.step as RestoreStep) ||
+      !STEPS.includes(value.step as RestoreStep) ||
       typeof value.filesAside !== 'string' ||
       typeof value.unpacked !== 'string'
     ) {
@@ -85,6 +110,9 @@ export async function readJournal(paths: DataPaths): Promise<RestoreJournal | nu
       filesAside: value.filesAside,
       unpacked: value.unpacked,
       configCopy: typeof value.configCopy === 'string' ? value.configCopy : null,
+      // A journal written before this field existed: the safe reading is that there were documents.
+      hadFiles: value.hadFiles !== false,
+      undoing: value.undoing === true,
     };
   } catch {
     return 'unreadable';
@@ -95,11 +123,46 @@ export async function clearJournal(paths: DataPaths): Promise<void> {
   await rm(journalFile(paths), { force: true });
 }
 
+async function exists(path: string): Promise<boolean> {
+  try {
+    await stat(path);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 /** Puts the copy of `config.json` that was taken before the keys changed back in its place. */
 export async function restoreConfigCopy(paths: DataPaths, copy: string): Promise<void> {
+  // A copy that is gone was put back by an earlier run that stopped before it could say so.
+  if (!(await exists(copy))) return;
   const temporary = `${paths.configFile}.restoring`;
   await copyFile(copy, temporary);
   await renameWithRetry(temporary, paths.configFile);
+}
+
+export async function removeQuietly(path: string): Promise<void> {
+  await rm(path, { recursive: true, force: true }).catch(() => undefined);
+}
+
+/**
+ * Puts the documents of before the restore back, deciding from what is on the disk and not from the step alone
+ * (a crash between the two renames leaves the folder in place missing, empty or the backup's, and the old one
+ * aside). Safe to run again: what is already back is left alone.
+ *
+ * - The old documents are aside: whatever is in place goes, and they come back.
+ * - Nothing is aside, and there were documents before: they are already back, or were never moved.
+ * - Nothing is aside, and there were none before: what is in place came from the backup and goes.
+ */
+export async function rollBackFiles(paths: DataPaths, journal: RestoreJournal): Promise<void> {
+  // Nothing was moved until `files-swapping`.
+  if (journal.step === 'prepared' || journal.step === 'restoring') return;
+  if (await exists(journal.filesAside)) {
+    await rm(paths.files, { recursive: true, force: true });
+    await renameWithRetry(journal.filesAside, paths.files);
+    return;
+  }
+  if (!journal.hadFiles) await rm(paths.files, { recursive: true, force: true });
 }
 
 export interface ReconcileDeps {
@@ -112,22 +175,24 @@ export interface ReconcileDeps {
   /** Reads the secrets again after `config.json` was put back. */
   reloadConfig: () => void;
   log?: (message: string) => void;
+  /** Clear the work files of backups and restores too (at the start, when nothing else is running). Default true. */
+  sweep?: boolean;
 }
 
 export type Reconciled = 'none' | 'rolled-back' | 'completed' | 'unreadable';
 
-async function removeQuietly(path: string): Promise<void> {
-  await rm(path, { recursive: true, force: true }).catch(() => undefined);
-}
-
 /**
- * At every start, before anything else uses the database: finishes or undoes a restore that did not end
- * (see `RestoreStep`), then clears what an interrupted backup or restore left lying around.
+ * At every start, before anything else uses the database or the documents: finishes or undoes a restore that did
+ * not end (see `RestoreStep`), then clears what an interrupted backup or restore left lying around.
  *
  * - If the databases had already traded places (`swapping`, and the scratch database is gone), the restore is
  *   finished: the old documents and the work files are deleted.
  * - Otherwise it is undone: the old documents come back, the old keys come back, the scratch database is
  *   dropped, and a database name that was left half renamed is put right.
+ *
+ * It can itself be cut off at any point and run again: every step looks at what is there, and the journal is
+ * removed as soon as the data is right, before the copies are deleted, so what is left behind is only garbage
+ * that the sweep removes.
  */
 export async function reconcileInterruptedRestore(deps: ReconcileDeps): Promise<Reconciled> {
   const { paths, databases, log } = deps;
@@ -140,14 +205,21 @@ export async function reconcileInterruptedRestore(deps: ReconcileDeps): Promise<
   const names = await databases.names();
   if (journal !== null) {
     const swapped =
-      journal.step === 'swapping' && !names.includes(SCRATCH_DATABASE) && names.includes(DATABASE);
+      !journal.undoing &&
+      journal.step === 'swapping' &&
+      !names.includes(SCRATCH_DATABASE) &&
+      names.includes(DATABASE);
     if (swapped) {
-      await removeQuietly(journal.filesAside);
       if (names.includes(ASIDE_DATABASE)) await databases.drop(ASIDE_DATABASE);
       outcome = 'completed';
       log?.('an interrupted restore had reached the database: finished it');
     } else {
-      // The database was not replaced: the old documents and the old keys are the right ones.
+      // The database was not replaced: the old documents and the old keys are the right ones. This is written
+      // down first, because the steps below destroy what told this case from the other.
+      if (!journal.undoing) {
+        journal.undoing = true;
+        await writeJournal(paths, journal);
+      }
       if (!names.includes(DATABASE) && names.includes(ASIDE_DATABASE)) {
         await databases.rename(ASIDE_DATABASE, DATABASE);
       }
@@ -162,38 +234,37 @@ export async function reconcileInterruptedRestore(deps: ReconcileDeps): Promise<
       outcome = 'rolled-back';
       log?.(`an interrupted restore was undone (it had reached "${journal.step}")`);
     }
+    // The data is right. The journal goes first: a crash after this leaves garbage, not a boot that fails.
+    await clearJournal(paths);
+    if (outcome === 'completed') await removeQuietly(journal.filesAside);
     await removeQuietly(journal.unpacked);
     if (journal.configCopy !== null) await removeQuietly(journal.configCopy);
-    await clearJournal(paths);
   } else {
-    // No restore is pending: a database left from an earlier one is garbage.
-    for (const leftover of [SCRATCH_DATABASE, ASIDE_DATABASE]) {
-      if (names.includes(leftover)) await databases.drop(leftover);
+    // No restore is pending: a database left from an earlier one is garbage, unless it is the only one the
+    // product has (a rename that was cut off): that one goes back to its name.
+    if (!names.includes(DATABASE) && names.includes(ASIDE_DATABASE)) {
+      await databases.rename(ASIDE_DATABASE, DATABASE);
+      log?.('the database of the product was found under its safety name and put back');
+    } else if (names.includes(ASIDE_DATABASE)) {
+      await databases.drop(ASIDE_DATABASE);
     }
+    if (names.includes(SCRATCH_DATABASE)) await databases.drop(SCRATCH_DATABASE);
   }
-  await sweepWorkFiles(paths);
+  if (deps.sweep !== false) await sweepWorkFiles(paths);
   return outcome;
-}
-
-/** Puts the old documents back over the ones a restore had put in place. */
-async function rollBackFiles(paths: DataPaths, journal: RestoreJournal): Promise<void> {
-  // Nothing was moved aside until `files-swapped`: before it the folder in place is the real one.
-  if (journal.step === 'prepared' || journal.step === 'restoring') return;
-  let hasAside = true;
-  try {
-    await readdir(journal.filesAside);
-  } catch {
-    hasAside = false;
-  }
-  if (!hasAside) return;
-  await removeQuietly(paths.files);
-  await rename(journal.filesAside, paths.files);
 }
 
 /** Work files of a backup or a restore that did not finish; nothing is writing them at the start. */
 async function sweepWorkFiles(paths: DataPaths): Promise<void> {
   for (const name of await readdir(paths.root).catch(() => [])) {
-    if (/^tmp-(?:restore|backup)-/.test(name)) await removeQuietly(join(paths.root, name));
+    if (
+      /^tmp-(?:restore|backup)-/.test(name) ||
+      /^config\.json\.pre-restore-/.test(name) ||
+      /^files\.replaced-/.test(name) ||
+      name === 'config.json.restoring'
+    ) {
+      await removeQuietly(join(paths.root, name));
+    }
   }
   for (const name of await readdir(paths.backups).catch(() => [])) {
     if (name.endsWith(`${BACKUP_EXTENSION}.partial`))

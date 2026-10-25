@@ -38,10 +38,19 @@ import {
   type ClusterFacts,
   type ScratchFacts,
 } from './restore-audit.js';
-import { journalFile, readJournal } from './restore-journal.js';
+import {
+  ASIDE_DATABASE,
+  DATABASE,
+  SCRATCH_DATABASE,
+  journalFile,
+  readJournal,
+  reconcileInterruptedRestore,
+  type ReconcileDeps,
+} from './restore-journal.js';
 import {
   readBackupInfo,
   restoreBackup,
+  type RestoreCheckpoint,
   type RestoreError,
   type AdoptedSecrets,
   type RestoreDeps,
@@ -73,6 +82,18 @@ let leftBehind: { cluster: ClusterFacts; scratch: ScratchFacts };
 let reverted: string[][];
 let failSwap: boolean;
 let failAdopt: boolean;
+/** The databases of the cluster and what is in each: `consultorio` is the real one. */
+let db: Map<string, string>;
+/** After the process died nothing of it runs any more: no clean up, no restart. */
+let dead: boolean;
+/** Where the fake swap of the databases stops, as a crash would. */
+let swapStops: 'after-first-rename' | 'after-second-rename' | null;
+/** The swap stops because the whole process died, not because it reported an error. */
+let swapKills: boolean;
+const OLD_DB = 'the database of before';
+const NEW_DB = 'the database of the backup';
+const OLD_CONFIG = 'the configuration of this install';
+const NEW_CONFIG = 'the configuration with the keys of the backup';
 let install: TestInstall;
 let other: TestInstall;
 
@@ -80,6 +101,33 @@ async function drain(source: Readable): Promise<Buffer> {
   const parts: Buffer[] = [];
   for await (const part of source) parts.push(part as Buffer);
   return Buffer.concat(parts);
+}
+
+/** The cluster as the code that undoes a restore sees it. */
+function fakeDatabases(): ReconcileDeps['databases'] {
+  return {
+    names: () => Promise.resolve([...db.keys()]),
+    rename: (from, to) => {
+      db.set(to, db.get(from) ?? '');
+      db.delete(from);
+      return Promise.resolve();
+    },
+    drop: (name) => {
+      if (name === SCRATCH_DATABASE) events.push('drop scratch');
+      db.delete(name);
+      return Promise.resolve();
+    },
+  };
+}
+
+function reconcileDeps(): ReconcileDeps {
+  return {
+    paths,
+    databases: fakeDatabases(),
+    reloadConfig: () => {
+      events.push('reload secrets');
+    },
+  };
 }
 
 function restoreDeps(overrides: Partial<RestoreDeps> = {}): RestoreDeps {
@@ -94,24 +142,39 @@ function restoreDeps(overrides: Partial<RestoreDeps> = {}): RestoreDeps {
     scratch: {
       create: () => {
         events.push('create scratch');
+        db.set(SCRATCH_DATABASE, NEW_DB);
         return Promise.resolve();
       },
       swapIn: () => {
         events.push('swap');
         if (failSwap) return Promise.reject(new Error('could not rename the database'));
-        return Promise.resolve();
-      },
-      drop: () => {
-        events.push('drop scratch');
-        return Promise.resolve();
+        const databases = fakeDatabases();
+        return (async () => {
+          await databases.rename(DATABASE, ASIDE_DATABASE);
+          if (swapStops === 'after-first-rename') {
+            dead = swapKills;
+            throw new Error('the process died');
+          }
+          await databases.rename(SCRATCH_DATABASE, DATABASE);
+          if (swapStops === 'after-second-rename') {
+            dead = swapKills;
+            throw new Error('the process died');
+          }
+          await databases.drop(ASIDE_DATABASE);
+        })();
       },
     },
+    reconcile: () =>
+      dead
+        ? Promise.resolve('none')
+        : reconcileInterruptedRestore({ ...reconcileDeps(), sweep: false }),
     migrationCount: 77,
     stopServices: () => {
       events.push('stop');
       return Promise.resolve();
     },
     startServices: () => {
+      if (dead) return Promise.resolve();
       events.push('start');
       return Promise.resolve();
     },
@@ -119,10 +182,7 @@ function restoreDeps(overrides: Partial<RestoreDeps> = {}): RestoreDeps {
       adopted = value;
       events.push('adopt');
       if (failAdopt) throw new Error('could not write config.json');
-      writeFileSync(paths.configFile, 'the configuration with the keys of the backup');
-    },
-    reloadSecrets: () => {
-      events.push('reload secrets');
+      writeFileSync(paths.configFile, NEW_CONFIG);
     },
     audit: {
       snapshot: () => Promise.resolve(CLEAN),
@@ -171,6 +231,10 @@ beforeEach(() => {
   adopted = null;
   failSwap = false;
   failAdopt = false;
+  db = new Map([[DATABASE, OLD_DB]]);
+  dead = false;
+  swapStops = null;
+  swapKills = false;
   leftBehind = { cluster: CLEAN, scratch: { migrationsKind: 'r', databaseSettings: [] } };
   reverted = [];
   install = newTestInstall();
@@ -309,8 +373,6 @@ describe('restoring a backup of this installation', () => {
 });
 
 describe('a restore that fails half way, or is cut off', () => {
-  const OLD_CONFIG = 'the configuration of this install';
-
   async function foreignBackup() {
     const path = await makeBackup(other, { 't/a/docs/1.obj': 'theirs' });
     mkdirSync(join(paths.files, 't', 'a', 'docs'), { recursive: true });
@@ -335,8 +397,8 @@ describe('a restore that fails half way, or is cut off', () => {
       'pg_restore',
       'adopt',
       'swap',
-      'reload secrets',
       'drop scratch',
+      'reload secrets',
       'start',
     ]);
     expect(existsSync(journalFile(paths))).toBe(false);
@@ -412,7 +474,6 @@ describe('a restore that fails half way, or is cut off', () => {
           swapIn: async () => {
             seen.push(`swap: ${await step()}`);
           },
-          drop: () => Promise.resolve(),
         },
       }),
       path,
@@ -420,6 +481,7 @@ describe('a restore that fails half way, or is cut off', () => {
     );
 
     expect(seen).toEqual(['pg_restore: restoring', 'adopt: secrets-adopted', 'swap: swapping']);
+    expect(existsSync(journalFile(paths))).toBe(false);
     expect(await readJournal(paths)).toBeNull();
   });
 
@@ -778,5 +840,242 @@ describe('restoring a backup of another installation', () => {
     });
 
     expect(adopted).toBeNull();
+  });
+});
+
+/** Everything a restore leaves in the data folder besides the data itself. */
+const leftovers = () =>
+  readdirSync(paths.root).filter((name) => /pre-restore|tmp-restore|replaced/.test(name));
+
+describe('a process that dies at any point of a restore', () => {
+  const POINTS: (RestoreCheckpoint | 'swap-1' | 'swap-2')[] = [
+    'prepared',
+    'restoring',
+    'files-swapping',
+    'files-aside',
+    'files-in-place',
+    'files-swapped',
+    'secrets-step',
+    'secrets-adopted',
+    'swapping',
+    'swap-1',
+    'swap-2',
+    'swapped',
+  ];
+  /** The points after which the restored database is the real one. */
+  const DATABASE_SWAPPED = new Set(['swap-2', 'swapped']);
+
+  /** Sets up a current install with its data, makes a backup of `source`, and kills the restore at `point`. */
+  async function dieAt(point: RestoreCheckpoint | 'swap-1' | 'swap-2', foreign: boolean) {
+    const path = await makeBackup(foreign ? other : install, { 't/a/docs/1.obj': 'theirs' });
+    rmSync(paths.files, { recursive: true, force: true });
+    mkdirSync(join(paths.files, 't', 'a', 'docs'), { recursive: true });
+    writeFileSync(join(paths.files, 't', 'a', 'docs', '1.obj'), 'ours');
+    writeFileSync(paths.configFile, OLD_CONFIG);
+    swapKills = true;
+    if (point === 'swap-1') swapStops = 'after-first-rename';
+    if (point === 'swap-2') swapStops = 'after-second-rename';
+    const failure = await restoreBackup(
+      restoreDeps({
+        checkpoint: (reachedPoint) => {
+          if (reachedPoint === point) {
+            dead = true;
+            throw new Error('the process died');
+          }
+        },
+      }),
+      path,
+      foreign ? { recoveryKey: other.recoveryKey } : {},
+    ).catch((error: unknown) => error);
+    expect(failure).toBeInstanceOf(Error);
+    dead = true;
+    swapStops = null;
+    swapKills = false;
+  }
+
+  const coherent = (swapped: boolean, foreign: boolean) => {
+    expect([...db.entries()]).toEqual([[DATABASE, swapped ? NEW_DB : OLD_DB]]);
+    expect(readDoc('t/a/docs/1.obj')).toBe(swapped ? 'theirs' : 'ours');
+    expect(readFileSync(paths.configFile, 'utf8')).toBe(
+      swapped && foreign ? NEW_CONFIG : OLD_CONFIG,
+    );
+    expect(existsSync(journalFile(paths))).toBe(false);
+    expect(leftovers()).toEqual([]);
+  };
+
+  for (const foreign of [false, true]) {
+    for (const point of POINTS) {
+      if (!foreign && (point === 'secrets-step' || point === 'secrets-adopted')) continue;
+      it(`start up finds one coherent state after a death at "${point}" (${foreign ? 'a backup of another install' : 'a backup of this install'})`, async () => {
+        await dieAt(point, foreign);
+
+        await reconcileInterruptedRestore(reconcileDeps());
+
+        coherent(DATABASE_SWAPPED.has(point), foreign);
+        // And again: starting twice changes nothing.
+        await reconcileInterruptedRestore(reconcileDeps());
+        coherent(DATABASE_SWAPPED.has(point), foreign);
+      });
+    }
+  }
+
+  it('finds the same state when the clean up itself dies on any of its database steps and is run again', async () => {
+    for (const point of ['files-aside', 'secrets-adopted', 'swap-1', 'swap-2'] as const) {
+      for (let failing = 1; failing <= 3; failing += 1) {
+        rmSync(paths.root, { recursive: true, force: true });
+        mkdirSync(paths.root, { recursive: true });
+        db = new Map([[DATABASE, OLD_DB]]);
+        events = [];
+        dead = false;
+        await dieAt(point, true);
+
+        let calls = 0;
+        const flaky = fakeDatabases();
+        const dying =
+          <Arguments extends string[]>(operation: (...values: Arguments) => Promise<void>) =>
+          (...values: Arguments) => {
+            calls += 1;
+            if (calls === failing) return Promise.reject(new Error('the process died'));
+            return operation(...values);
+          };
+        await reconcileInterruptedRestore({
+          ...reconcileDeps(),
+          databases: { names: flaky.names, rename: dying(flaky.rename), drop: dying(flaky.drop) },
+        }).catch(() => 'died');
+
+        await reconcileInterruptedRestore(reconcileDeps());
+        coherent(DATABASE_SWAPPED.has(point), true);
+      }
+    }
+  });
+
+  it('is not confused by a copy that an earlier clean up already deleted', async () => {
+    await dieAt('secrets-adopted', true);
+    for (const name of readdirSync(paths.root)) {
+      if (/pre-restore|tmp-restore/.test(name)) rmSync(join(paths.root, name), { recursive: true });
+    }
+
+    await reconcileInterruptedRestore(reconcileDeps());
+
+    expect(readDoc('t/a/docs/1.obj')).toBe('ours');
+    expect(existsSync(journalFile(paths))).toBe(false);
+  });
+
+  it('puts the documents back when the install had none, by removing what the backup brought', async () => {
+    const path = await makeBackup(install, { 't/a/docs/1.obj': 'theirs' });
+    rmSync(paths.files, { recursive: true, force: true });
+
+    await restoreBackup(
+      restoreDeps({
+        checkpoint: (point) => {
+          if (point === 'files-in-place') {
+            dead = true;
+            throw new Error('the process died');
+          }
+        },
+      }),
+      path,
+    ).catch(() => undefined);
+    expect(existsSync(paths.files)).toBe(true);
+
+    await reconcileInterruptedRestore(reconcileDeps());
+
+    expect(existsSync(paths.files)).toBe(false);
+    expect(leftovers()).toEqual([]);
+  });
+});
+
+describe('a restore that fails inside the process, and what it leaves', () => {
+  it('finishes the restore when the databases traded places and the swap still reported an error', async () => {
+    const path = await makeBackup(install, { 't/a/docs/1.obj': 'theirs' });
+    writeFileSync(join(paths.files, 't', 'a', 'docs', '1.obj'), 'ours');
+    swapStops = 'after-second-rename';
+
+    await restoreBackup(restoreDeps(), path);
+
+    expect([...db.entries()]).toEqual([[DATABASE, NEW_DB]]);
+    expect(readDoc('t/a/docs/1.obj')).toBe('theirs');
+    expect(events.at(-1)).toBe('start');
+    expect(leftovers()).toEqual([]);
+  });
+
+  it('puts the name of the old database back when the swap stops between the two renames', async () => {
+    const path = await makeBackup(install, { 't/a/docs/1.obj': 'theirs' });
+    writeFileSync(join(paths.files, 't', 'a', 'docs', '1.obj'), 'ours');
+    swapStops = 'after-first-rename';
+
+    await expect(restoreBackup(restoreDeps(), path)).rejects.toThrow('the process died');
+
+    expect([...db.entries()]).toEqual([[DATABASE, OLD_DB]]);
+    expect(readDoc('t/a/docs/1.obj')).toBe('ours');
+    expect(events.at(-1)).toBe('start');
+  });
+
+  it('keeps the journal and the copies, starts nothing and says so when it cannot put everything back', async () => {
+    const path = await makeBackup(other, { 't/a/docs/1.obj': 'theirs' });
+    writeFileSync(join(paths.files, 't', 'a', 'docs', '1.obj'), 'ours');
+    writeFileSync(paths.configFile, OLD_CONFIG);
+    failSwap = true;
+
+    const failure = await restoreBackup(
+      restoreDeps({
+        reconcile: () =>
+          reconcileInterruptedRestore({
+            ...reconcileDeps(),
+            databases: {
+              ...fakeDatabases(),
+              drop: () => Promise.reject(new Error('the database is busy')),
+            },
+          }),
+      }),
+      path,
+      { recoveryKey: other.recoveryKey },
+    ).catch((error: unknown) => error);
+
+    expect(failure).toMatchObject({ code: 'undo_incomplete' });
+    expect(events).not.toContain('start');
+    // Everything the next start needs to finish the job is still there.
+    expect(existsSync(journalFile(paths))).toBe(true);
+    expect(leftovers().some((name) => name.startsWith('config.json.pre-restore-'))).toBe(true);
+
+    await reconcileInterruptedRestore(reconcileDeps());
+
+    expect([...db.entries()]).toEqual([[DATABASE, OLD_DB]]);
+    expect(readDoc('t/a/docs/1.obj')).toBe('ours');
+    expect(readFileSync(paths.configFile, 'utf8')).toBe(OLD_CONFIG);
+    expect(existsSync(journalFile(paths))).toBe(false);
+    expect(leftovers()).toEqual([]);
+  });
+
+  it('starts nothing when the secrets cannot be read again, and the next start undoes it all, although the scratch database is already gone', async () => {
+    const path = await makeBackup(other, { 't/a/docs/1.obj': 'theirs' });
+    writeFileSync(join(paths.files, 't', 'a', 'docs', '1.obj'), 'ours');
+    writeFileSync(paths.configFile, OLD_CONFIG);
+    failSwap = true;
+
+    const failure = await restoreBackup(
+      restoreDeps({
+        reconcile: () =>
+          reconcileInterruptedRestore({
+            ...reconcileDeps(),
+            reloadConfig: () => {
+              throw new Error('config.json is locked');
+            },
+          }),
+      }),
+      path,
+      { recoveryKey: other.recoveryKey },
+    ).catch((error: unknown) => error);
+
+    expect(failure).toMatchObject({ code: 'undo_incomplete' });
+    expect(db.has(SCRATCH_DATABASE)).toBe(false);
+
+    await reconcileInterruptedRestore(reconcileDeps());
+
+    expect([...db.entries()]).toEqual([[DATABASE, OLD_DB]]);
+    expect(readDoc('t/a/docs/1.obj')).toBe('ours');
+    expect(readFileSync(paths.configFile, 'utf8')).toBe(OLD_CONFIG);
+    expect(existsSync(journalFile(paths))).toBe(false);
+    expect(leftovers()).toEqual([]);
   });
 });

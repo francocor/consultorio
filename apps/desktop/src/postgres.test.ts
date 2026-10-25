@@ -512,6 +512,17 @@ describe('the database', () => {
     expect(renames.at(-1)).toBe('ALTER DATABASE consultorio_before_restore RENAME TO consultorio');
   });
 
+  it('does not fail a swap that worked because the old database could not be dropped', async () => {
+    const pg = cluster();
+    await pg.start();
+    failQueryContaining = 'DROP DATABASE consultorio_before_restore';
+
+    await expect(pg.swapInDatabase('consultorio_restore')).resolves.toBeUndefined();
+
+    const sql = queries.map((query) => query.sql);
+    expect(sql).toContain('ALTER DATABASE consultorio_restore RENAME TO consultorio');
+  });
+
   it('refuses a database name that is not a plain identifier', async () => {
     const pg = cluster();
     await pg.start();

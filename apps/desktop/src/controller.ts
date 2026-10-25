@@ -45,7 +45,7 @@ import { normalizeRecoveryKey } from './recovery-key.js';
 import { redact } from './redact.js';
 import { migrationCountOf, missingResources, type Resources } from './resources.js';
 import { auditProblems, revertStatements, type ClusterFacts } from './restore-audit.js';
-import { reconcileInterruptedRestore } from './restore-journal.js';
+import { reconcileInterruptedRestore, type ReconcileDeps } from './restore-journal.js';
 import { readBackupInfo, restoreBackup, RestoreError, type AdoptedSecrets } from './restore.js';
 import { parameterizeRolesScript } from './roles.js';
 import type { RotatingLog } from './rotating-log.js';
@@ -407,6 +407,9 @@ export class Controller {
     ui.showSplash(TEXT.splash.database);
     await this.prepareDatabase();
     await this.reconcileRestore();
+    // Only now: a folder created before the restore was reconciled would look like the restored one.
+    await mkdir(paths.files, { recursive: true });
+    await mkdir(paths.outbox, { recursive: true });
 
     await this.guardMigrations();
     await this.deps.commands.migrate(
@@ -518,7 +521,7 @@ export class Controller {
   }
 
   private async startLocalServer(): Promise<void> {
-    const { resources, paths } = this.deps;
+    const { resources } = this.deps;
     const port = await chooseServerPort(
       this.config.port,
       undefined,
@@ -550,8 +553,6 @@ export class Controller {
       },
     });
     await this.server.listen();
-    await mkdir(paths.files, { recursive: true });
-    await mkdir(paths.outbox, { recursive: true });
     this.log(`local server on 127.0.0.1:${String(port)}`);
   }
 
@@ -592,7 +593,12 @@ export class Controller {
 
   /** A restore that was cut off (a power cut, a crash) is finished or undone before anything uses the database. */
   private async reconcileRestore(): Promise<void> {
-    const outcome = await reconcileInterruptedRestore({
+    const outcome = await reconcileInterruptedRestore(this.reconcileDeps());
+    if (outcome !== 'none') this.log(`restore reconciled at start: ${outcome}`);
+  }
+
+  private reconcileDeps(): ReconcileDeps {
+    return {
       paths: this.deps.paths,
       databases: {
         names: () => this.cluster.listDatabases(),
@@ -605,8 +611,7 @@ export class Controller {
       log: (message) => {
         this.log(message);
       },
-    });
-    if (outcome !== 'none') this.log(`restore reconciled at start: ${outcome}`);
+    };
   }
 
   private async prepareDatabase(): Promise<void> {
@@ -1234,8 +1239,8 @@ export class Controller {
       scratch: {
         create: () => this.cluster.createScratchDatabase(SCRATCH_DATABASE),
         swapIn: () => this.cluster.swapInDatabase(SCRATCH_DATABASE),
-        drop: () => this.cluster.dropDatabase(SCRATCH_DATABASE),
       },
+      reconcile: () => reconcileInterruptedRestore({ ...this.reconcileDeps(), sweep: false }),
       audit: {
         snapshot: () => this.cluster.clusterFacts(DATABASE_NAME),
         check: async (snapshot: unknown) =>
@@ -1255,9 +1260,6 @@ export class Controller {
       dataBytes: async () =>
         (await directoryBytes(this.deps.paths.pgdata)) +
         (await directoryBytes(this.deps.paths.files)),
-      reloadSecrets: () => {
-        this.config = this.deps.store.read();
-      },
       stopServices: () => this.stopServices(),
       startServices: async () => {
         await this.deps.commands.migrate(
@@ -1302,6 +1304,8 @@ export class Controller {
           return TEXT.restore.wrongKey;
         case 'restore_incomplete':
           return TEXT.restore.incomplete;
+        case 'undo_incomplete':
+          return TEXT.restore.undoIncomplete;
         case 'unsafe_backup':
           return TEXT.restore.unsafe;
         default:
