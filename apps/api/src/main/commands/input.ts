@@ -49,6 +49,8 @@ const ResetInput = z.strictObject({
   newPassword: password,
   /** Which owner, when the organization has more than one. */
   ownerEmail: emailAddress.optional(),
+  /** Also remove the owner's second factor (the phone was lost). Off unless asked for. */
+  clearSecondFactor: z.boolean().default(false),
 });
 export type ResetInput = z.infer<typeof ResetInput>;
 
@@ -103,10 +105,20 @@ export function readProvisionInput(source: Source): InputRead<ProvisionInput> {
   }));
 }
 
+/** `RESET_CLEAR_SECOND_FACTOR`: `true` or `1` asks for it; anything that is not a yes or a no is refused. */
+function booleanFlag(value: string | undefined): boolean | string | undefined {
+  const text = given(value);
+  if (text === undefined) return undefined;
+  if (text === 'true' || text === '1') return true;
+  if (text === 'false' || text === '0') return false;
+  return text;
+}
+
 export function readResetInput(source: Source): InputRead<ResetInput> {
   const { env } = source;
   return read(ResetInput, source, () => ({
     newPassword: given(env['RESET_NEW_PASSWORD']),
     ownerEmail: given(env['RESET_OWNER_EMAIL']),
+    clearSecondFactor: booleanFlag(env['RESET_CLEAR_SECOND_FACTOR']),
   }));
 }

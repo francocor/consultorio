@@ -10,11 +10,13 @@ import { EXIT, finish, type CommandIo } from './io.js';
  * forgotten one on a PC with no mail server; the tray runs it.
  *
  * Input: `RESET_NEW_PASSWORD` and, if the organization has more than one owner, `RESET_OWNER_EMAIL` in
- * the environment, or `{"newPassword":"...","ownerEmail":"..."}` on the standard input with `--stdin`.
+ * the environment, or `{"newPassword":"...","ownerEmail":"...","clearSecondFactor":true}` on the standard
+ * input with `--stdin`. `clearSecondFactor` (`RESET_CLEAR_SECOND_FACTOR`) also removes the owner's second
+ * factor and recovery codes, for an owner who lost the phone.
  *
- * Output: `{"result":"reset","email":"..."}` and exit 0. The sessions of the owner end, a lock is
- * lifted, the second factor stays. Anything else is a JSON line on the standard error and one of
- * the codes of `EXIT`.
+ * Output: `{"result":"reset","email":"...","secondFactorCleared":false}` and exit 0. The sessions of the
+ * owner end, a lock is lifted, the second factor stays unless it was asked to go. Anything else is a
+ * JSON line on the standard error and one of the codes of `EXIT`.
  */
 export async function runResetPassword(io: CommandIo): Promise<number> {
   const stdin = io.args.includes('--stdin') ? await io.readStdin() : undefined;
@@ -37,8 +39,13 @@ export async function runResetPassword(io: CommandIo): Promise<number> {
       tenantId: found.id,
       newPassword: input.value.newPassword,
       ownerEmail: input.value.ownerEmail,
+      clearSecondFactor: input.value.clearSecondFactor,
     });
-    return finish(io, EXIT.ok, { result: 'reset', email: result.email });
+    return finish(io, EXIT.ok, {
+      result: 'reset',
+      email: result.email,
+      secondFactorCleared: result.secondFactorCleared,
+    });
   } catch (error) {
     return reportFailure(io, error);
   } finally {

@@ -2,6 +2,7 @@ import { eq } from 'drizzle-orm';
 
 import { createLockout } from '../../../modules/identity/application/lockout.js';
 import { createSessionService } from '../../../modules/identity/application/sessions.js';
+import { createTwoFactor } from '../../../modules/identity/application/two-factor.js';
 import { audit, type AuditActor } from '../../../platform/audit/writer.js';
 import { SYSTEM_USER_ID } from '../../../platform/db/tenant-context.js';
 import { membership, userAccount } from '../../schema/identity.js';
@@ -13,10 +14,17 @@ export interface ResetOwnerPasswordInput {
   newPassword: string;
   /** Which owner, when the organization has more than one. */
   ownerEmail?: string | undefined;
+  /**
+   * Also removes the owner's second factor and its recovery codes, for an owner who lost the phone.
+   * Whoever can run this already controls the PC and the database, so it is not a gain of privilege.
+   */
+  clearSecondFactor?: boolean | undefined;
 }
 
 export interface ResetOwnerPasswordResult {
   email: string;
+  /** True when the second factor was removed. */
+  secondFactorCleared: boolean;
 }
 
 /**
@@ -25,8 +33,9 @@ export interface ResetOwnerPasswordResult {
  * database, so it asks for nothing but the new password, which follows the rules of the product.
  *
  * It does what completing a reset by email does: the sessions of the account end everywhere, a lock
- * from failed attempts is lifted, and the audit trail says so. It leaves the second factor alone: a
- * password reset must not also remove the protection of the account.
+ * from failed attempts is lifted, and the audit trail says so. It leaves the second factor alone unless
+ * `clearSecondFactor` asks for it: a password reset must not remove the protection of the account by
+ * itself, so the person at the PC says so on purpose.
  */
 export async function resetOwnerPassword(
   deps: LocalProvisionDeps,
@@ -55,6 +64,7 @@ export async function resetOwnerPassword(
   const clock = deps.clock;
   const sessions = createSessionService({ clock });
   const lockout = createLockout({ clock });
+  const twoFactor = createTwoFactor({ keys: deps.keys, withTenant: deps.withTenant, clock });
   const actor: AuditActor = {
     userId: owner.userId,
     actingRole: null,
@@ -78,6 +88,17 @@ export async function resetOwnerPassword(
       resourceId: owner.userId,
       reason: 'local_reset',
     });
+    if (input.clearSecondFactor === true) {
+      await twoFactor.disable(tx, owner.userId);
+      await audit(tx, {
+        action: 'auth.2fa.disabled',
+        outcome: 'allow',
+        actor,
+        resourceType: 'user',
+        resourceId: owner.userId,
+        reason: 'local_reset',
+      });
+    }
   });
-  return { email: owner.email };
+  return { email: owner.email, secondFactorCleared: input.clearSecondFactor === true };
 }

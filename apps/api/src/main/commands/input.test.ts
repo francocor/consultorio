@@ -107,7 +107,7 @@ describe('the input of the reset-password command', () => {
     expect(readResetInput({ env: { RESET_NEW_PASSWORD: 'otra frase larga para entrar' } })).toEqual(
       {
         ok: true,
-        value: { newPassword: 'otra frase larga para entrar' },
+        value: { newPassword: 'otra frase larga para entrar', clearSecondFactor: false },
       },
     );
     expect(
@@ -119,8 +119,49 @@ describe('the input of the reset-password command', () => {
       }),
     ).toEqual({
       ok: true,
-      value: { newPassword: 'otra frase larga para entrar', ownerEmail: 'ana@clinica.example' },
+      value: {
+        newPassword: 'otra frase larga para entrar',
+        ownerEmail: 'ana@clinica.example',
+        clearSecondFactor: false,
+      },
     });
+  });
+
+  it('removes the second factor only when asked to, from the environment or from the document', () => {
+    const base = { RESET_NEW_PASSWORD: 'otra frase larga para entrar' };
+
+    for (const yes of ['true', '1']) {
+      expect(readResetInput({ env: { ...base, RESET_CLEAR_SECOND_FACTOR: yes } })).toMatchObject({
+        ok: true,
+        value: { clearSecondFactor: true },
+      });
+    }
+    for (const no of ['false', '0', '']) {
+      expect(readResetInput({ env: { ...base, RESET_CLEAR_SECOND_FACTOR: no } })).toMatchObject({
+        ok: true,
+        value: { clearSecondFactor: false },
+      });
+    }
+    expect(
+      readResetInput({
+        env: {},
+        stdin: JSON.stringify({
+          newPassword: 'otra frase larga para entrar',
+          clearSecondFactor: true,
+        }),
+      }),
+    ).toMatchObject({ ok: true, value: { clearSecondFactor: true } });
+  });
+
+  it('refuses a second-factor flag that is neither a yes nor a no', () => {
+    expect(
+      readResetInput({
+        env: {
+          RESET_NEW_PASSWORD: 'otra frase larga para entrar',
+          RESET_CLEAR_SECOND_FACTOR: 'maybe',
+        },
+      }),
+    ).toEqual({ ok: false, fields: ['clearSecondFactor'] });
   });
 
   it('reads a JSON document from the standard input', () => {

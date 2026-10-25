@@ -1,10 +1,12 @@
 import { randomBytes } from 'node:crypto';
 
+import { sql } from 'drizzle-orm';
 import type { FastifyInstance } from 'fastify';
 import { afterAll, beforeAll, describe, expect, inject, it } from 'vitest';
 
 import { runCommand, EXIT, type CommandIo } from '../../src/main/commands/index.js';
 import { createRuntimeDb, type DbHandle } from '../../src/platform/db/pool.js';
+import { createWithTenant, SYSTEM_USER_ID } from '../../src/platform/db/tenant-context.js';
 import { buildTestApplication } from '../support/app.js';
 import { createTestTenant } from '../support/tenants.js';
 
@@ -103,6 +105,41 @@ const signIn = async (app: FastifyInstance, email: string, password: string) =>
       payload: { email, password },
     })
   ).statusCode;
+
+/** Gives the owner a second factor the way enrollment leaves it: an encrypted secret and recovery codes. */
+async function enrollFakeSecondFactor(slug: string, tenantId: string) {
+  const withTenant = createWithTenant(runtime.db);
+  const found = await withTenant({ tenantId, userId: SYSTEM_USER_ID }, (tx) =>
+    tx.execute<{ id: string }>(
+      sql`select id from app.lookup_user_for_login(${`ana.${slug}@clinica.example`})`,
+    ),
+  );
+  const userId = found.rows[0]?.id ?? '';
+  await withTenant({ tenantId, userId }, async (tx) => {
+    await tx.execute(
+      sql`update user_account set totp_secret_enc = decode('0102', 'hex'), totp_confirmed_at = now() where id = ${userId}`,
+    );
+    await tx.execute(
+      sql`insert into recovery_code (user_id, code_hash) values (${userId}, 'a'), (${userId}, 'b')`,
+    );
+  });
+  return userId;
+}
+
+async function secondFactorOf(tenantId: string, userId: string) {
+  return createWithTenant(runtime.db)({ tenantId, userId }, async (tx) => {
+    const accounts = await tx.execute<{ enrolled: boolean }>(
+      sql`select (totp_secret_enc is not null or totp_confirmed_at is not null) as enrolled from user_account where id = ${userId}`,
+    );
+    const codes = await tx.execute<{ n: number }>(
+      sql`select count(*)::int as n from recovery_code where user_id = ${userId}`,
+    );
+    return {
+      enrolled: accounts.rows[0]?.enrolled ?? false,
+      recoveryCodes: codes.rows[0]?.n ?? 0,
+    };
+  });
+}
 
 describe('provision', () => {
   it('creates the organization from the environment, answers one JSON line, and the owner can sign in', async () => {
@@ -250,7 +287,11 @@ describe('reset-password', () => {
     });
 
     expect(fromEnv.code).toBe(EXIT.ok);
-    expect(lastJson(fromEnv.stdout)).toEqual({ result: 'reset', email });
+    expect(lastJson(fromEnv.stdout)).toEqual({
+      result: 'reset',
+      email,
+      secondFactorCleared: false,
+    });
     expect(fromStdin.code).toBe(EXIT.ok);
     expect(fromEnv.stdout + fromEnv.stderr + fromStdin.stdout + fromStdin.stderr).not.toContain(
       'frase larga para entrar',
@@ -259,6 +300,34 @@ describe('reset-password', () => {
     expect(await signIn(app, email, PASSWORD)).toBe(401);
     expect(await signIn(app, email, NEW_PASSWORD)).toBe(401);
     expect(await signIn(app, email, 'y una tercera frase larga para entrar')).toBe(200);
+    await app.close();
+  });
+
+  it('keeps the second factor of the owner unless it is asked to remove it', async () => {
+    const slug = freshSlug();
+    const created = await run('provision', { env: provisionEnv(slug) });
+    const tenantId = String(lastJson(created.stdout)['tenantId']);
+    const userId = await enrollFakeSecondFactor(slug, tenantId);
+
+    const kept = await run('reset-password', {
+      env: { ...installEnv(slug), RESET_NEW_PASSWORD: NEW_PASSWORD },
+    });
+    const afterKept = await secondFactorOf(tenantId, userId);
+    const cleared = await run('reset-password', {
+      env: {
+        ...installEnv(slug),
+        RESET_NEW_PASSWORD: NEW_PASSWORD,
+        RESET_CLEAR_SECOND_FACTOR: 'true',
+      },
+    });
+    const afterCleared = await secondFactorOf(tenantId, userId);
+
+    expect(lastJson(kept.stdout)).toMatchObject({ result: 'reset', secondFactorCleared: false });
+    expect(afterKept).toEqual({ enrolled: true, recoveryCodes: 2 });
+    expect(lastJson(cleared.stdout)).toMatchObject({ result: 'reset', secondFactorCleared: true });
+    expect(afterCleared).toEqual({ enrolled: false, recoveryCodes: 0 });
+    const app = await desktopApp(slug);
+    expect(await signIn(app, `ana.${slug}@clinica.example`, NEW_PASSWORD)).toBe(200);
     await app.close();
   });
 
