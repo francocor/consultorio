@@ -1,7 +1,6 @@
 import { createFakeArchiveStore } from '../../adapters/archive-fake/index.js';
 import type { FakeArchiveStore } from '../../adapters/archive-fake/index.js';
 import { createLocalArchiveStore } from '../../adapters/archive-local/index.js';
-import { createS3ObjectStorage } from '../../adapters/s3/index.js';
 import {
   createArchive,
   createArchiveKeyWriter,
@@ -26,6 +25,7 @@ import { fake } from '../adapter-resolver.js';
 import type { Config } from '../config.js';
 import { registerAllExportContributors } from '../export-contributors.js';
 import { createKeyManagement } from '../key-management.js';
+import { createConfiguredStorage } from '../storage.js';
 
 import { originsFromConfig } from './origins.js';
 import type { ModuleWiring } from './types.js';
@@ -140,7 +140,7 @@ export const tenancyWiring: ModuleWiring = {
     // The bucket of the packages is the one of the documents. It is opened when the first job needs it.
     let storage: ObjectStorage | undefined;
     const bucket = () => {
-      if (!storage && config.storage) storage = createS3ObjectStorage(config.storage);
+      if (!storage) storage = createConfiguredStorage(config);
       return storage;
     };
     // The contributors of the clinical parts decrypt with the key service, like the API's.

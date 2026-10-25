@@ -2,7 +2,6 @@ import pino from 'pino';
 
 import { createLocalArchiveStore } from '../adapters/archive-local/index.js';
 import { createFakeScanner } from '../adapters/fake-scanner/index.js';
-import { createS3ObjectStorage } from '../adapters/s3/index.js';
 import { consentTextFor, createDemoResetPort } from '../db/seed/demo/index.js';
 import { createPasswordHasher } from '../modules/identity/index.js';
 import { configureAddressHash, createVideoJoinRegistry } from '../modules/notifications/index.js';
@@ -32,6 +31,7 @@ import { startMetricsListener } from './metrics-listener.js';
 import { loadPasswordValidator } from './password-validator.js';
 import { collectPlatformMetrics } from './platform-metrics.js';
 import { createConfiguredScanner } from './scanner.js';
+import { createConfiguredStorage } from './storage.js';
 import { MODULE_WIRINGS, combineWorkerContributions } from './wiring/index.js';
 import { onlineBookingMetrics } from './wiring/online-booking.js';
 import { originsFromConfig } from './wiring/origins.js';
@@ -115,7 +115,7 @@ async function runApi(rawConfig: Config): Promise<void> {
     ? createOperatorDb(config.operatorDatabaseUrl)
     : undefined;
   const email = createConfiguredEmail(config.mail);
-  const storage = config.storage ? createS3ObjectStorage(config.storage) : undefined;
+  const storage = createConfiguredStorage(config);
   // Confirming an upload queues its scan in the same transaction, so with a bucket the API also
   // holds a queue client (it only enqueues; the worker is the one that runs the jobs). So does a
   // module that enqueues from a request (reminders, codes).
@@ -163,6 +163,8 @@ async function runApi(rawConfig: Config): Promise<void> {
     passwordValidator,
     lockout: config.lockout,
     ...(storage ? { storage } : {}),
+    // A storage without a server of its own (the disk) takes the browser's upload through the API.
+    ...(storage?.uploads ? { uploadReceiver: storage.uploads } : {}),
     ...(jobs ? { jobs: jobs.client } : {}),
     ...(operatorDatabase
       ? {
@@ -198,7 +200,7 @@ async function runApi(rawConfig: Config): Promise<void> {
     );
   }
   if (!storage) {
-    app.log.warn('S3_BUCKET is not set: logo upload is unavailable');
+    app.log.warn('S3_BUCKET and STORAGE_DIR are not set: logo upload is unavailable');
   }
   if (!operatorDatabase) {
     app.log.warn('OPERATOR_DATABASE_URL is not set: the operator console is disabled');
@@ -242,12 +244,13 @@ async function runReleaser(config: Config): Promise<void> {
       'Invalid environment configuration. RELEASER_DATABASE_URL: is required for the releaser (the app_releaser login; the API and the worker role is not enough)',
     );
   }
-  if (!config.storage) {
+  // The archive is hosted only: the storage is a bucket, never the disk of the desktop profile.
+  const storage = config.storage ? createConfiguredStorage(config) : undefined;
+  if (!storage) {
     throw new ConfigError(
       'Invalid environment configuration. S3_BUCKET: is required for the releaser (the package waits there for its link)',
     );
   }
-  const storage = createS3ObjectStorage(config.storage);
   const email = createConfiguredEmail(config.mail);
   const releaser = await createReleaser({
     databaseUrl: config.releaserDatabaseUrl,
@@ -280,11 +283,14 @@ async function runWorker(config: Config): Promise<void> {
     );
   }
   // Scanning documents needs the bucket, a scanner and a way to tell an uploader about a refusal.
-  const storage = config.storage ? createS3ObjectStorage(config.storage) : undefined;
+  const storage = createConfiguredStorage(config);
   const email = createConfiguredEmail(config.mail);
   const { scanner, kind } = createConfiguredScanner(config.scanner);
   if (storage && kind === 'fake') {
-    log.warn('CLAMAV_HOST is not set: documents are scanned by the fake scanner (EICAR only)');
+    log.warn(
+      { profile: config.profile },
+      'CLAMAV_HOST is not set: documents are scanned by the fake scanner (EICAR only)',
+    );
   }
   // The same adapter registry as the API: a module's jobs resolve their providers through it.
   const runtime = createRuntimeDb(config.databaseUrl, { max: config.dbPoolMax });

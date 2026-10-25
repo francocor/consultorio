@@ -69,6 +69,7 @@ import {
 } from '../platform/events/appointment-events.js';
 import { createFileResourceRegistry } from '../platform/files/file-resources.js';
 import { fileRoutes } from '../platform/files/file-routes.js';
+import { uploadReceiverRoutes } from '../platform/files/upload-routes.js';
 import type { HealthDeps } from '../platform/http/health.js';
 import { createPublicOrigins } from '../platform/http/public-origin.js';
 import { createMemoryRateLimitStore, type RateLimit } from '../platform/http/rate-limit.js';
@@ -78,6 +79,7 @@ import type { EmailSender } from '../platform/mail/email-sender.js';
 import { resetTokenHandlers } from '../platform/public/token-router.js';
 import { createSettingsSectionRegistry } from '../platform/settings-sections.js';
 import type { ObjectStorage } from '../platform/storage/object-storage.js';
+import type { UploadReceiver } from '../platform/storage/upload-receiver.js';
 
 import type { AdapterResolver } from './adapter-resolver.js';
 import { buildServer, type FeatureRoutes } from './server.js';
@@ -124,6 +126,11 @@ export interface ApplicationOptions {
    * that need it then answer "unavailable" instead of failing at startup.
    */
   storage?: ObjectStorage;
+  /**
+   * The half of the upload link that a storage without a server of its own needs (the disk of the
+   * desktop profile): it mounts `POST /files/uploads/*`. Absent with S3, which checks the policy itself.
+   */
+  uploadReceiver?: UploadReceiver;
   /**
    * Enqueues background jobs from a request (the scan of an uploaded document). Absent in a
    * deployment without them: the features that need a job then answer "unavailable".
@@ -498,6 +505,9 @@ export function createApplication(options: ApplicationOptions): FastifyInstance 
       ...(operatorConsole ? [operatorConsole.routes] : []),
       ...wired.flatMap((module) => (module.routes ? [module.routes] : [])),
       ...(options.modules ?? []),
+      ...(options.uploadReceiver
+        ? [uploadReceiverRoutes({ receiver: options.uploadReceiver })]
+        : []),
       // Last: the door declares the audit actions of every resource the modules registered.
       fileRoutes({
         registry: fileResources,

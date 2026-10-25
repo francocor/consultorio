@@ -1,3 +1,5 @@
+import { isAbsolute } from 'node:path';
+
 import { z } from 'zod';
 
 import { DEFAULT_RUNTIME_POOL_MAX } from '../platform/db/pool.js';
@@ -146,6 +148,18 @@ const envSchema = z
     S3_FORCE_PATH_STYLE: booleanFlag.optional(),
     S3_ACCESS_KEY_ID: z.string().min(1).optional(),
     S3_SECRET_ACCESS_KEY: z.string().min(1).optional(),
+    /**
+     * Object storage on the disk instead of a bucket (docs/desktop/design.md): the folder every file
+     * lives under. Absolute. In production only the desktop profile may use it, because it has no
+     * virus scanner of its own to insist on.
+     */
+    STORAGE_DIR: z
+      .string()
+      .min(1)
+      .refine(isAbsolute, { message: 'must be an absolute path' })
+      .optional(),
+    /** Signs the upload links of the disk storage (HMAC). Random per install; at least 32 characters. */
+    STORAGE_UPLOAD_SECRET: z.string().min(32).optional(),
     /** Transactional email over SMTP: Mailpit locally, the SES SMTP interface in production. */
     SMTP_HOST: z.string().regex(HOSTNAME).optional(),
     SMTP_PORT: z.coerce.number().int().min(1).max(65535).default(1025),
@@ -286,6 +300,32 @@ const envSchema = z
       });
     }
 
+    if (env.STORAGE_DIR !== undefined) {
+      require('STORAGE_UPLOAD_SECRET', 'is required when STORAGE_DIR is set (it signs the upload links)');
+      if (env.S3_BUCKET !== undefined) {
+        ctx.addIssue({
+          code: 'custom',
+          path: ['STORAGE_DIR'],
+          message: 'cannot be set together with S3_BUCKET: files live in one place',
+        });
+      }
+      if (env.NODE_ENV === 'production' && !desktop) {
+        ctx.addIssue({
+          code: 'custom',
+          path: ['STORAGE_DIR'],
+          message:
+            'is only for the desktop profile in production; a hosted deployment uses S3_BUCKET',
+        });
+      }
+    } else {
+      if (desktop) {
+        require('STORAGE_DIR', 'is required when DEPLOYMENT_PROFILE is desktop (files are kept on the disk)');
+      }
+      if (env.STORAGE_UPLOAD_SECRET !== undefined) {
+        require('STORAGE_DIR', 'is required when STORAGE_UPLOAD_SECRET is set');
+      }
+    }
+
     if (env.S3_BUCKET === undefined) {
       for (const name of [
         'S3_ENDPOINT',
@@ -366,6 +406,13 @@ export interface StorageConfig {
   readonly credentials?: { readonly accessKeyId: string; readonly secretAccessKey: string };
 }
 
+/** Files on the disk (STORAGE_DIR): the desktop profile. */
+export interface FileStorageConfig {
+  readonly dir: string;
+  /** Signs the upload links. */
+  readonly uploadSecret: string;
+}
+
 export interface MailConfig {
   readonly host: string;
   readonly port: number;
@@ -408,6 +455,8 @@ export interface Config {
   readonly kms: KmsConfig;
   /** Undefined when S3_BUCKET is not set: logo upload and documents are then unavailable. */
   readonly storage?: StorageConfig;
+  /** Set when STORAGE_DIR is: the files live on the disk, and `storage` is undefined. */
+  readonly fsStorage?: FileStorageConfig;
   /** Undefined when CLAMAV_HOST is not set: development then scans with the fake scanner. */
   readonly scanner?: ScannerConfig;
   /** Undefined when METRICS_PORT is not set: nothing then listens for a scraper. */
@@ -550,6 +599,9 @@ export function loadConfig(
                 }),
           },
         }),
+    ...(value.STORAGE_DIR === undefined || value.STORAGE_UPLOAD_SECRET === undefined
+      ? {}
+      : { fsStorage: { dir: value.STORAGE_DIR, uploadSecret: value.STORAGE_UPLOAD_SECRET } }),
     ...(scanner.config === undefined ? {} : { scanner: scanner.config }),
     ...(metrics.config === undefined ? {} : { metrics: metrics.config }),
     ...(value.SMTP_HOST === undefined

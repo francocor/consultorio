@@ -9,7 +9,6 @@ import {
   type LocalErxControls,
 } from '../../adapters/erx-local/index.js';
 import { searchGenericNames } from '../../adapters/erx-local/inn-sample.js';
-import { createS3ObjectStorage } from '../../adapters/s3/index.js';
 import {
   ERX_RECONCILE_JOB,
   asWebhookVerifier,
@@ -25,6 +24,7 @@ import type { ObjectStorage } from '../../platform/storage/object-storage.js';
 import { fake } from '../adapter-resolver.js';
 import type { Config } from '../config.js';
 import { createKeyManagement } from '../key-management.js';
+import { createConfiguredStorage } from '../storage.js';
 
 import type { ModuleWiring } from './types.js';
 
@@ -180,7 +180,7 @@ export function createPrescriptionsWiring(
       // The bucket of the prescription PDFs is the one of the documents. It is opened when the first job needs it.
       let storage: ObjectStorage | undefined;
       const bucket = () => {
-        if (!storage && config.storage) storage = createS3ObjectStorage(config.storage);
+        if (!storage) storage = createConfiguredStorage(config);
         return storage;
       };
       const keys = createTenantKeys({ kms: createKeyManagement(config.kms) });

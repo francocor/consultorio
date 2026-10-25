@@ -1,8 +1,8 @@
 import { BillingSettings, DEFAULT_BILLING_SETTINGS } from '@consultorio/contracts';
 
-import { createS3ObjectStorage } from '../../adapters/s3/index.js';
 import { createBilling, createBillingExportJob } from '../../modules/billing/index.js';
 import type { ObjectStorage } from '../../platform/storage/object-storage.js';
+import { createConfiguredStorage } from '../storage.js';
 
 import type { ModuleWiring } from './types.js';
 
@@ -34,7 +34,7 @@ export const billingWiring: ModuleWiring = {
     // The bucket of the exports is the one of the documents. It is opened when the first job needs it.
     let storage: ObjectStorage | undefined;
     const bucket = () => {
-      if (!storage && config.storage) storage = createS3ObjectStorage(config.storage);
+      if (!storage) storage = createConfiguredStorage(config);
       return storage;
     };
     return {

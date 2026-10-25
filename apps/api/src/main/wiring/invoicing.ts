@@ -11,7 +11,6 @@ import {
   createLocalInvoiceIssuer,
   type LocalAfipControls,
 } from '../../adapters/afip-local/index.js';
-import { createS3ObjectStorage } from '../../adapters/s3/index.js';
 import {
   CREDENTIAL_WATCH_JOB,
   createAfipIssueJob,
@@ -32,6 +31,7 @@ import type { ObjectStorage } from '../../platform/storage/object-storage.js';
 import { fake } from '../adapter-resolver.js';
 import type { Config } from '../config.js';
 import { createKeyManagement } from '../key-management.js';
+import { createConfiguredStorage } from '../storage.js';
 
 import type { ModuleWiring } from './types.js';
 
@@ -171,7 +171,7 @@ export const invoicingWiring: ModuleWiring = {
     // The bucket of the invoice PDFs is the one of the documents. It is opened when the first job needs it.
     let storage: ObjectStorage | undefined;
     const bucket = () => {
-      if (!storage && config.storage) storage = createS3ObjectStorage(config.storage);
+      if (!storage) storage = createConfiguredStorage(config);
       return storage;
     };
     // An invoice that needs a person goes to the worklist of reception (its queue belongs to

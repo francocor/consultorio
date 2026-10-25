@@ -8,8 +8,11 @@ const DATABASE_URL = 'postgres://app_rw:placeholder@127.0.0.1:54329/consulvia';
 const LOCAL_KEK = Buffer.alloc(32, 7).toString('base64');
 const PEPPER = 'placeholder-pepper-0123456789-abcdefghij';
 
-/** What the desktop shell hands the API: nothing else is needed to boot. */
-const desktop = {
+const FILES_DIR = process.platform === 'win32' ? 'C:\\Consulvia\\files' : '/var/consulvia/files';
+const UPLOAD_SECRET = 'placeholder-upload-secret-0123456789-abcdef';
+
+/** What the desktop shell hands the API, but for the folder of the files. */
+const desktopWithoutFiles = {
   NODE_ENV: 'production',
   DEPLOYMENT_PROFILE: 'desktop',
   DEPLOYMENT_MODE: 'single',
@@ -20,6 +23,13 @@ const desktop = {
   KMS_PROVIDER: 'local',
   KMS_LOCAL_KEK_BASE64: LOCAL_KEK,
   ADDRESS_HASH_PEPPER: PEPPER,
+};
+
+/** What the desktop shell hands the API: nothing else is needed to boot. */
+const desktop = {
+  ...desktopWithoutFiles,
+  STORAGE_DIR: FILES_DIR,
+  STORAGE_UPLOAD_SECRET: UPLOAD_SECRET,
 };
 
 /** A hosted single-organization production deployment: every row of the profile table is refused. */
@@ -224,5 +234,74 @@ describe('the desktop profile', () => {
     expect(message).toMatch(/HOST/);
     expect(message).toMatch(/PUBLIC_URL/);
     expect(message).not.toContain('secret-host');
+  });
+});
+
+describe('filesystem storage configuration', () => {
+  const root = FILES_DIR;
+  const secret = UPLOAD_SECRET;
+
+  it('is how the desktop profile keeps its files, and the profile cannot start without it', () => {
+    expect(() => loadConfig(desktopWithoutFiles)).toThrow(/STORAGE_DIR/);
+
+    const config = loadConfig(desktop);
+
+    expect(config.fsStorage).toEqual({ dir: root, uploadSecret: secret });
+    expect(config.storage).toBeUndefined();
+  });
+
+  it('needs the upload secret with the folder, and the folder with the secret', () => {
+    expect(() => loadConfig(omit(desktop, 'STORAGE_UPLOAD_SECRET'))).toThrow(
+      /STORAGE_UPLOAD_SECRET/,
+    );
+    expect(() => loadConfig(omit(desktop, 'STORAGE_DIR'))).toThrow(/STORAGE_DIR/);
+  });
+
+  it('wants a secret of at least 32 characters and an absolute folder', () => {
+    expect(() =>
+      loadConfig({ ...desktop, STORAGE_DIR: root, STORAGE_UPLOAD_SECRET: 'too-short' }),
+    ).toThrow(/STORAGE_UPLOAD_SECRET/);
+    expect(() =>
+      loadConfig({ ...desktop, STORAGE_DIR: 'files', STORAGE_UPLOAD_SECRET: secret }),
+    ).toThrow(/STORAGE_DIR/);
+    expect(() =>
+      loadConfig({ ...desktop, STORAGE_DIR: '../files', STORAGE_UPLOAD_SECRET: secret }),
+    ).toThrow(/STORAGE_DIR/);
+  });
+
+  it('is exclusive with a bucket', () => {
+    expect(() =>
+      loadConfig({
+        ...omit(hostedSingle, 'SMTP_HOST'),
+        NODE_ENV: 'development',
+        S3_BUCKET: 'files-bucket',
+        STORAGE_DIR: root,
+        STORAGE_UPLOAD_SECRET: secret,
+      }),
+    ).toThrow(/STORAGE_DIR.*S3_BUCKET|S3_BUCKET.*STORAGE_DIR/);
+  });
+
+  it('is not how a hosted production keeps files: there it would skip the ClamAV rule', () => {
+    expect(() =>
+      loadConfig({ ...hostedSingle, STORAGE_DIR: root, STORAGE_UPLOAD_SECRET: secret }),
+    ).toThrow(/STORAGE_DIR/);
+  });
+
+  it('is allowed outside production, for development', () => {
+    const config = loadConfig({
+      ...omit(hostedSingle, 'SMTP_HOST'),
+      NODE_ENV: 'development',
+      KMS_PROVIDER: 'local',
+      KMS_LOCAL_KEK_BASE64: LOCAL_KEK,
+      PUBLIC_URL: 'http://localhost:3000',
+      STORAGE_DIR: root,
+      STORAGE_UPLOAD_SECRET: secret,
+    });
+
+    expect(config.fsStorage).toEqual({ dir: root, uploadSecret: secret });
+  });
+
+  it('does not ask the desktop profile for ClamAV: the fake scanner is what runs', () => {
+    expect(loadConfig(desktop).scanner).toBeUndefined();
   });
 });
