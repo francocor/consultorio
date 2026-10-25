@@ -19,6 +19,10 @@ export const GLOBAL_IGNORES = [
   '.claude/**',
   // Deliberately wrong code that tests lint with `ignore: false`.
   '**/__fixtures__/**',
+  // What the desktop installer builds: the staged copy of the API and the web app, and the installer itself.
+  'apps/desktop/stage/**',
+  'apps/desktop/release/**',
+  'apps/desktop/build/**',
 ];
 
 /**

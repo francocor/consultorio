@@ -13,6 +13,7 @@ WORKDIR /repo
 # Manifests first so the dependency layer is cached until a manifest or the lockfile changes.
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml .npmrc ./
 COPY apps/api/package.json apps/api/
+COPY apps/desktop/package.json apps/desktop/
 COPY apps/web/package.json apps/web/
 COPY packages/config/package.json packages/config/
 COPY packages/contracts/package.json packages/contracts/

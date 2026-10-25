@@ -32,3 +32,8 @@ apps/web/e2e/.stack/
 
 # Local backups (apps/api/scripts/backup-local.ts)
 /backups/
+
+# Consulvia Desktop: the staged API/web/PostgreSQL copy, the generated icons and the installer
+/apps/desktop/stage/
+/apps/desktop/release/
+/apps/desktop/build/

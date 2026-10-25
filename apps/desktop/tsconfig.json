@@ -1,0 +1,4 @@
+{
+  "extends": "@consultorio/config/tsconfig.node.json",
+  "include": ["src", "scripts", "vitest.config.ts"]
+}

@@ -9,6 +9,11 @@ on:
 permissions:
   contents: read
 
+env:
+  # The workspace has an Electron app (apps/desktop). Its tests, typecheck and bundle need no Electron binary,
+  # so installing the workspace must not download the ~120 MB one.
+  ELECTRON_SKIP_BINARY_DOWNLOAD: '1'
+
 # A newer push to the same branch or PR makes the older run pointless.
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}

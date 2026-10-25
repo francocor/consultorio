@@ -1,0 +1,39 @@
+{
+  "name": "@consultorio/desktop",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Consulvia Desktop: the Electron shell and the Windows installer",
+  "author": "Consulvia",
+  "type": "module",
+  "main": "dist/main.cjs",
+  "scripts": {
+    "build": "tsx scripts/build.ts",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "start": "tsx scripts/start.ts",
+    "stage": "tsx scripts/stage.ts",
+    "dist": "tsx scripts/dist.ts"
+  },
+  "devDependencies": {
+    "@consultorio/config": "workspace:*",
+    "@consultorio/contracts": "workspace:*",
+    "@types/node": "^24",
+    "@types/pg": "^8.23.1",
+    "@types/yauzl": "^3.4.0",
+    "@types/yazl": "^3.3.1",
+    "electron": "44.9.3",
+    "electron-builder": "^26.18.0",
+    "esbuild": "^0.28.2",
+    "pg": "^8.23.1",
+    "sharp": "^0.35.5",
+    "tsx": "^4.23.15",
+    "typescript": "~6.0.3",
+    "vitest": "^5.0.4",
+    "yauzl": "^3.4.0",
+    "yazl": "^3.3.1",
+    "zod": "^4.6.7"
+  },
+  "optionalDependencies": {
+    "@embedded-postgres/windows-x64": "17.10.0-beta.17"
+  }
+}
