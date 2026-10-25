@@ -241,6 +241,20 @@ describe('a backup is opened again after it is written', () => {
     expect(await readLedger(paths.backups)).toEqual({});
   });
 
+  it('keeps a backup that passed its check even when the ledger cannot be written (an antivirus holds the file)', async () => {
+    // A folder where the ledger should be: renaming over it fails, however many times it is tried.
+    mkdirSync(join(paths.backups, 'registro-de-copias.json'), { recursive: true });
+    const messages: string[] = [];
+
+    const { path } = await createBackup(
+      testBackupDeps(install, paths, { log: (message) => messages.push(message) }),
+      'manual',
+    );
+
+    expect(existsSync(path)).toBe(true);
+    expect(messages.some((message) => message.includes('ledger'))).toBe(true);
+  });
+
   it('refuses a file that does not authenticate', async () => {
     const { path } = await createBackup(testBackupDeps(install, paths), 'manual');
     const bytes = readFileSync(path);

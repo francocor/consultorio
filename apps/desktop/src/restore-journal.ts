@@ -1,6 +1,7 @@
 import { copyFile, mkdir, open, readdir, readFile, rename, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 
+import { renameWithRetry } from './backup-archive.js';
 import { BACKUP_EXTENSION } from './backup.js';
 import type { DataPaths } from './paths.js';
 
@@ -47,7 +48,7 @@ export async function writeJournal(paths: DataPaths, journal: RestoreJournal): P
   } finally {
     await handle.close();
   }
-  await rename(temporary, target);
+  await renameWithRetry(temporary, target);
 }
 
 /** The journal, `null` when there is none, `'unreadable'` when there is a file nobody can make sense of. */
@@ -98,7 +99,7 @@ export async function clearJournal(paths: DataPaths): Promise<void> {
 export async function restoreConfigCopy(paths: DataPaths, copy: string): Promise<void> {
   const temporary = `${paths.configFile}.restoring`;
   await copyFile(copy, temporary);
-  await rename(temporary, paths.configFile);
+  await renameWithRetry(temporary, paths.configFile);
 }
 
 export interface ReconcileDeps {

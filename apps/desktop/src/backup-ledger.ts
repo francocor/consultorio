@@ -1,7 +1,9 @@
 import { createHash } from 'node:crypto';
 import { createReadStream } from 'node:fs';
-import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
+
+import { renameWithRetry } from './backup-archive.js';
 
 /**
  * The backups that were opened again after they were written, and found whole: a file in the backups folder
@@ -40,7 +42,7 @@ async function writeLedger(directory: string, files: Ledger): Promise<void> {
   const temporary = `${target}.tmp`;
   try {
     await writeFile(temporary, `${JSON.stringify({ version: 1, files }, null, 2)}\n`);
-    await rename(temporary, target);
+    await renameWithRetry(temporary, target);
   } catch (error) {
     await rm(temporary, { force: true });
     throw error;

@@ -250,12 +250,20 @@ export async function createBackup(
 
     try {
       const verified = await verifyBackupFile(deps, target);
-      await recordVerified(deps.paths.backups, name, {
-        sha256: verified.sha256,
-        bytes: verified.bytes,
-        verifiedAt: deps.now().toISOString(),
-      });
       deps.log?.(`backup written and verified: ${target} (${String(verified.bytes)} bytes)`);
+      // A ledger that cannot be written (a file an antivirus holds, a disk that is full) leaves a good backup that
+      // is simply not counted as verified: it is never pruned, which is the safe side, and it is not thrown away.
+      try {
+        await recordVerified(deps.paths.backups, name, {
+          sha256: verified.sha256,
+          bytes: verified.bytes,
+          verifiedAt: deps.now().toISOString(),
+        });
+      } catch (error) {
+        deps.log?.(
+          `the ledger of verified backups could not be written: ${error instanceof Error ? error.message : String(error)}`,
+        );
+      }
       return { path: target, bytes: verified.bytes };
     } catch (error) {
       // A file that did not pass is not a backup: it must not stay where it could be taken for one.
