@@ -257,7 +257,7 @@ export async function startStack(options: StackOptions): Promise<Stack> {
       host: mailpit.getHost(),
       port: mailpit.getMappedPort(1025),
       security: 'none',
-      from: 'Consultorio <no-responder@localhost>',
+      from: 'Consulvia <no-responder@localhost>',
     });
     closers.push(() => {
       email.close();

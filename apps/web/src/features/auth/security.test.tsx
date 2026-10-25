@@ -91,7 +91,7 @@ describe('second factor: enrolling', () => {
       'POST /api/auth/2fa/enroll/start': () =>
         jsonResponse({
           secret: 'JBSWY3DPEHPK3PXP',
-          otpauthUri: 'otpauth://totp/Consultorio:ana?secret=JBSWY3DPEHPK3PXP&issuer=Consultorio',
+          otpauthUri: 'otpauth://totp/Consulvia:ana?secret=JBSWY3DPEHPK3PXP&issuer=Consulvia',
         }),
       'POST /api/auth/2fa/enroll/confirm': (_url, init) => {
         confirmed = jsonBody(init);

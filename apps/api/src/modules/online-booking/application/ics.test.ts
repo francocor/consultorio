@@ -21,11 +21,11 @@ describe('renderIcs', () => {
       [
         'BEGIN:VCALENDAR',
         'VERSION:2.0',
-        'PRODID:-//Consultorio//Turnos//ES',
+        'PRODID:-//Consulvia//Turnos//ES',
         'CALSCALE:GREGORIAN',
         'METHOD:PUBLISH',
         'BEGIN:VEVENT',
-        'UID:0190a000-0000-7000-8000-000000000001@consultorio',
+        'UID:0190a000-0000-7000-8000-000000000001@consulvia',
         'DTSTAMP:20310505T120000Z',
         'DTSTART:20310512T130000Z',
         'DTEND:20310512T133000Z',

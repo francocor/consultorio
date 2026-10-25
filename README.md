@@ -1,6 +1,10 @@
-# Consultorio
+# Consulvia
 
-Practice management for health professionals and small medical centers, built first for Argentina. It rests on a secure, multi-tenant foundation.
+Consulvia is practice management software for health professionals and small medical centers, built first for Argentina. It rests on a secure, multi-tenant foundation.
+
+## Product and organizations
+
+Consulvia is the product. An organization is a practice or medical center that uses it: each one has its own name, logo and colors, and the product shows those instead of its own wherever a patient or a staff member signs in. The demo organizations ("Centro Médico Aillu", "Clínica Norte") are examples of that, not product names.
 
 ## What it is
 

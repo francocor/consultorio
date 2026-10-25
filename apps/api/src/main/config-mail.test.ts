@@ -30,7 +30,7 @@ describe('mail configuration', () => {
       host: 'localhost',
       port: 1025,
       security: 'none',
-      from: 'Consultorio <no-responder@localhost>',
+      from: 'Consulvia <no-responder@localhost>',
     });
   });
 

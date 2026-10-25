@@ -8,7 +8,7 @@ describe('configured email', () => {
       host: 'localhost',
       port: 1025,
       security: 'none',
-      from: 'Consultorio <no-responder@localhost>',
+      from: 'Consulvia <no-responder@localhost>',
     });
 
     expect(email.kind).toBe('smtp');

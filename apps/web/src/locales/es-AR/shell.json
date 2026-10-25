@@ -22,7 +22,7 @@
   "user.firstSteps": "Primeros pasos",
   "user.appearance": "Apariencia",
   "org.logoAlt": "Logotipo de {{name}}",
-  "org.fallbackName": "Gestión de consultorios",
+  "org.fallbackName": "Consulvia",
   "role.owner": "Propietario",
   "role.admin": "Administración",
   "role.professional": "Profesional de la salud",
@@ -53,5 +53,5 @@
   "banner.enrollment.action": "Activar ahora",
   "banner.readOnly.action": "Ir a la suscripción",
   "nav.bottom": "Navegación inferior",
-  "platform.title": "Gestión de consultorios"
+  "platform.title": "Consulvia"
 }

@@ -129,7 +129,7 @@ export function twoFactorRoutes(deps: TwoFactorRoutesDeps) {
               tenantId: current.tenantId,
               userId: current.userId,
               account: account?.email ?? '',
-              issuer: `Consultorio ${organization?.slug ?? ''}`.trim(),
+              issuer: `Consulvia ${organization?.slug ?? ''}`.trim(),
             });
           },
         );

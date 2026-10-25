@@ -12,7 +12,7 @@ export interface SmtpConfig {
   security: 'none' | 'starttls' | 'tls';
   user?: string;
   password?: string;
-  /** Sender address, optionally with a display name: `Consultorio <no-responder@example>`. */
+  /** Sender address, optionally with a display name: `Consulvia <no-responder@example>`. */
   from: string;
   connectionTimeoutMs?: number;
 }

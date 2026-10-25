@@ -54,7 +54,7 @@ export function createOperatorAdmin(deps: {
         id,
         totpSecretBase32: totp.base32,
         otpauthUri: buildOtpauthUri({
-          issuer: 'Consultorio Platform',
+          issuer: 'Consulvia Platform',
           account: input.email.trim().toLowerCase(),
           secretBase32: totp.base32,
         }),

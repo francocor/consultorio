@@ -129,7 +129,7 @@ const envSchema = z
     SMTP_SECURITY: z.enum(['none', 'starttls', 'tls']).default('none'),
     SMTP_USER: z.string().min(1).optional(),
     SMTP_PASSWORD: z.string().min(1).optional(),
-    MAIL_FROM: z.string().regex(MAIL_FROM_PATTERN).default('Consultorio <no-responder@localhost>'),
+    MAIL_FROM: z.string().regex(MAIL_FROM_PATTERN).default('Consulvia <no-responder@localhost>'),
     /** Also check new passwords against a k-anonymity breach range API. Off by default. */
     AUTH_BREACH_CHECK: booleanFlag.default(false),
     /** Consecutive failed sign-ins (wrong password or second-factor code) that lock an account. */

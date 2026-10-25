@@ -54,11 +54,11 @@ export function renderIcs(input: IcsInput): string {
   const lines = [
     'BEGIN:VCALENDAR',
     'VERSION:2.0',
-    'PRODID:-//Consultorio//Turnos//ES',
+    'PRODID:-//Consulvia//Turnos//ES',
     'CALSCALE:GREGORIAN',
     'METHOD:PUBLISH',
     'BEGIN:VEVENT',
-    `UID:${input.uid}@consultorio`,
+    `UID:${input.uid}@consulvia`,
     `DTSTAMP:${utc(input.now)}`,
     `DTSTART:${utc(input.startsAt)}`,
     `DTEND:${utc(input.endsAt)}`,

@@ -1,6 +1,5 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="Consultorio">
-  <rect width="512" height="512" fill="#0f766e"/>
-  <circle cx="256" cy="256" r="176" fill="none" stroke="#ffffff" stroke-opacity="0.28" stroke-width="12"/>
-  <rect x="204" y="132" width="104" height="248" rx="34" fill="#ffffff"/>
-  <rect x="132" y="204" width="248" height="104" rx="34" fill="#ffffff"/>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="Consulvia">
+  <rect width="512" height="512" rx="112" fill="#0f766e"/>
+  <path d="M341 158A128 128 0 1 0 341 354" fill="none" stroke="#ffffff" stroke-width="56" stroke-linecap="round"/>
+  <path d="M375 222V290M341 256H409" fill="none" stroke="#ffffff" stroke-width="30" stroke-linecap="round"/>
 </svg>

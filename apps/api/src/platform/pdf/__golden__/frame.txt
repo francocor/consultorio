@@ -1,8 +1,8 @@
 {
   "pages": 1,
   "info": {
-    "Producer": "Consultorio",
-    "Creator": "Consultorio",
+    "Producer": "Consulvia",
+    "Creator": "Consulvia",
     "CreationDate": "D:20261017153000Z",
     "Title": "Resumen de cobros",
     "Author": "Centro Médico Aillu",
