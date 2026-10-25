@@ -28,6 +28,7 @@ import { resolveResources } from './resources.js';
 import { createRotatingLog } from './rotating-log.js';
 import { spawnRunner } from './runner.js';
 import { splashUrl } from './splash.js';
+import { spawnPgTools } from './streams.js';
 import { TEXT } from './strings.js';
 import type { ChildLike } from './supervisor.js';
 
@@ -236,7 +237,7 @@ async function run(): Promise<void> {
         title,
         defaultPath,
         properties: ['openFile'],
-        filters: [{ name: filterName, extensions: ['zip'] }],
+        filters: [{ name: filterName, extensions: ['cvb'] }],
       };
       const result = mainWindow?.isVisible()
         ? await dialog.showOpenDialog(mainWindow, options)
@@ -271,7 +272,7 @@ async function run(): Promise<void> {
     paths,
     resources,
     store: new ConfigStore(paths.configFile, cipher),
-    runner,
+    pgTools: spawnPgTools,
     commands: createApiCommands({
       runner,
       nodeExe: process.execPath,

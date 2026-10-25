@@ -41,6 +41,8 @@ export interface InstallConfig {
   slug: string | null;
   databaseState: DatabaseState;
   provisioned: boolean;
+  /** The owner confirmed having saved the recovery key; until then the key is kept to be shown again. */
+  recoveryAcknowledged: boolean;
   settings: InstallSettings;
   secrets: InstallSecrets;
 }
@@ -65,7 +67,15 @@ const SecretsSchema = z.strictObject({
   kmsLocalKekBase64: z.string().min(40),
   addressHashPepper: z.string().min(32),
   storageUploadSecret: z.string().min(32),
-  recoveryKey: z.string().min(20),
+  backupKeyBase64: z.string().min(40),
+  backupKeyWrap: z.strictObject({
+    salt: z.string().min(1),
+    iv: z.string().min(1),
+    tag: z.string().min(1),
+    data: z.string().min(1),
+  }),
+  recoveryKeyHash: z.string().min(20),
+  recoveryKey: z.string().min(20).nullable(),
 });
 
 const PublicSchema = z.strictObject({
@@ -74,6 +84,8 @@ const PublicSchema = z.strictObject({
   slug: z.string().nullable(),
   databaseState: z.enum(['new', 'ready']),
   provisioned: z.boolean(),
+  /** The owner confirmed having saved the recovery key. */
+  recoveryAcknowledged: z.boolean(),
   settings: z.strictObject({
     autoStart: z.boolean(),
     trayHintShown: z.boolean(),
@@ -96,6 +108,7 @@ export function newInstallConfig(port: number, secrets: InstallSecrets): Install
     slug: null,
     databaseState: 'new',
     provisioned: false,
+    recoveryAcknowledged: false,
     settings: { autoStart: false, trayHintShown: false, lastDailyBackup: null },
     secrets,
   };

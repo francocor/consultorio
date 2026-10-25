@@ -4,10 +4,10 @@ import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { request as httpRequest } from 'node:http';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { listZipNames } from '../src/zip.js';
+import { readArchiveHeader } from '../src/backup-archive.js';
 
 /* eslint-disable @typescript-eslint/no-unnecessary-type-parameters -- `json<T>()` is a typed view of a JSON answer, checked by the assertions that follow. */
 
@@ -723,11 +723,11 @@ async function main(): Promise<void> {
       const second = launch(session, ['--backup']);
       await exited(second);
       backupPath = await until(
-        'the backup zip',
+        'the backup file',
         () => {
           const names = existsSync(session.backupDir)
             ? readdirSync(session.backupDir).filter(
-                (name) => name.endsWith('.zip') && !before.has(name),
+                (name) => name.endsWith('.cvb') && !before.has(name),
               )
             : [];
           return names[0] ? join(session.backupDir, names[0]) : undefined;
@@ -739,14 +739,17 @@ async function main(): Promise<void> {
         () => (logText(session).includes('backup created:') ? true : undefined),
         30_000,
       );
-      const names = await listZipNames(backupPath);
-      for (const required of ['meta.json', 'recovery.json', 'db.dump'])
-        assert(names.includes(required), `${required} is not in the backup`);
+      // The backup is encrypted and authenticated: no marker of what is inside shows in the file.
+      const { header } = await readArchiveHeader(backupPath);
       assert(
-        names.some((name) => name.startsWith('files/') && name.endsWith('.obj')),
-        'the uploaded PDF is not in the backup',
+        header.format === 2 && header.kind === 'manual',
+        `unexpected header ${JSON.stringify(header)}`,
       );
-      return `${backupPath.split('\\').pop() ?? ''}: ${String(names.length)} entries`;
+      const bytes = readFileSync(backupPath);
+      for (const marker of ['PGDMP', '%PDF-1.4', 'Clínica Prueba', 'dni-frente', 'COPY ']) {
+        assert(!bytes.includes(Buffer.from(marker)), `the backup shows "${marker}" in the clear`);
+      }
+      return `${basename(backupPath)}: ${String(bytes.length)} bytes, encrypted, kind ${header.kind}`;
     });
 
     await check(
@@ -985,7 +988,7 @@ async function main(): Promise<void> {
           'pgdata was removed with the program',
         );
         assert(
-          readdirSync(session.backupDir).some((name) => name.endsWith('.zip')),
+          readdirSync(session.backupDir).some((name) => name.endsWith('.cvb')),
           'the backups were removed with the program',
         );
         return 'program removed; config.json, pgdata and the backups kept';

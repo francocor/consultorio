@@ -1,15 +1,23 @@
 import { mkdir, readFile, rename, rm } from 'node:fs/promises';
+import type { Readable } from 'node:stream';
 
 import { ApiCommandError, EXIT, type ApiCommands } from './api-commands.js';
 import {
   commandEnvironment,
   longRunningEnvironment,
   migrateEnvironment,
+  osEnvironment,
   publicUrl,
   type LongRunningRole,
   type RuntimeContext,
 } from './api-env.js';
-import { BackupError, createBackup, localDay, pruneBackups } from './backup.js';
+import {
+  BackupError,
+  createBackup,
+  localDay,
+  pruneBackups,
+  type AdoptionPayload,
+} from './backup.js';
 import {
   ConfigError,
   newInstallConfig,
@@ -28,14 +36,13 @@ import { loadCommonPasswordsSync, messagesForIssues } from './password-check.js'
 import type { DataPaths } from './paths.js';
 import { chooseServerPort, findFreePort } from './ports.js';
 import { DATABASE_NAME, type PostgresCluster, PostgresError, SUPERUSER } from './postgres.js';
-import type { RecoveryPayload } from './recovery.js';
 import { migrationCountOf, missingResources, type Resources } from './resources.js';
-import { readBackupInfo, restoreBackup, RestoreError } from './restore.js';
+import { readBackupInfo, restoreBackup, RestoreError, type AdoptedSecrets } from './restore.js';
 import { parameterizeRolesScript } from './roles.js';
 import type { RotatingLog } from './rotating-log.js';
-import type { Runner } from './runner.js';
 import { generateSecrets } from './secrets.js';
 import { INSTALL_SLUG, type SetupValues } from './setup-validation.js';
+import type { PgTools } from './streams.js';
 import { TEXT } from './strings.js';
 import { Supervisor, type ChildLike, type ProcessState } from './supervisor.js';
 import { TokenVault } from './tokens.js';
@@ -82,7 +89,8 @@ export interface ControllerDeps {
   paths: DataPaths;
   resources: Resources;
   store: ConfigStore;
-  runner: Runner;
+  /** The PostgreSQL client tools, with their output and input as streams. */
+  pgTools: PgTools;
   commands: ApiCommands;
   ui: ShellUi;
   version: string;
@@ -443,7 +451,7 @@ export class Controller {
       }
       this.vault.revoke(PURPOSE.setup);
       this.finishStart({ keepWindow: true });
-      return { ok: true, recoveryKey: this.config.secrets.recoveryKey };
+      return { ok: true, recoveryKey: this.config.secrets.recoveryKey ?? '' };
     } catch (error) {
       this.log(`setup failed: ${describeError(error).detail}`);
       return { ok: false, message: describeError(error).message };
@@ -577,28 +585,36 @@ export class Controller {
 
   // ---- backups ----------------------------------------------------------------------------------
 
-  private recoveryPayload(): { payload: RecoveryPayload; recoveryKey: string } {
+  private adoptionPayload(): AdoptionPayload {
     const { secrets, slug } = this.config;
     return {
-      payload: {
-        slug: slug ?? INSTALL_SLUG,
-        kmsLocalKekBase64: secrets.kmsLocalKekBase64,
-        addressHashPepper: secrets.addressHashPepper,
-        storageUploadSecret: secrets.storageUploadSecret,
-      },
-      recoveryKey: secrets.recoveryKey,
+      slug: slug ?? INSTALL_SLUG,
+      kmsLocalKekBase64: secrets.kmsLocalKekBase64,
+      addressHashPepper: secrets.addressHashPepper,
+      storageUploadSecret: secrets.storageUploadSecret,
+      recoveryKeyHash: secrets.recoveryKeyHash,
     };
   }
 
   private backupDeps() {
     return {
       paths: this.deps.paths,
-      runner: this.deps.runner,
-      pgDump: this.deps.resources.pgDump,
-      databasePort: () => this.requireDatabasePort(),
-      superuser: { user: SUPERUSER, password: this.config.secrets.pgSuperuserPassword },
-      database: DATABASE_NAME,
-      recovery: () => this.recoveryPayload(),
+      startDump: () =>
+        this.deps.pgTools.dump(
+          this.deps.resources.pgDump,
+          [
+            '--format=custom',
+            '--host=127.0.0.1',
+            `--port=${String(this.requireDatabasePort())}`,
+            `--username=${SUPERUSER}`,
+            `--dbname=${DATABASE_NAME}`,
+            '--no-password',
+          ],
+          { ...osEnvironment(), PGPASSWORD: this.config.secrets.pgSuperuserPassword },
+        ),
+      backupKey: () => Buffer.from(this.config.secrets.backupKeyBase64, 'base64'),
+      keyWrap: () => this.config.secrets.backupKeyWrap,
+      secrets: () => this.adoptionPayload(),
       appVersion: this.deps.version,
       migrationCount: migrationCountOf(this.deps.resources),
       now: this.deps.now,
@@ -687,18 +703,31 @@ export class Controller {
   private restoreDeps() {
     return {
       paths: this.deps.paths,
-      runner: this.deps.runner,
-      pgRestore: this.deps.resources.pgRestore,
-      databasePort: () => this.requireDatabasePort(),
-      superuser: { user: SUPERUSER, password: this.config.secrets.pgSuperuserPassword },
+      backupKey: () => Buffer.from(this.config.secrets.backupKeyBase64, 'base64'),
+      // As `app_owner`, not as the superuser: what a backup contains never runs with more power than the
+      // application's own owner has.
+      restoreDump: (source: Readable) =>
+        this.deps.pgTools.restore(
+          this.deps.resources.pgRestore,
+          [
+            '--host=127.0.0.1',
+            `--port=${String(this.requireDatabasePort())}`,
+            '--username=app_owner',
+            `--dbname=${SCRATCH_DATABASE}`,
+            '--no-owner',
+            '--single-transaction',
+            '--exit-on-error',
+            '--no-password',
+          ],
+          { ...osEnvironment(), PGPASSWORD: this.config.secrets.appOwnerPassword },
+          source,
+        ),
       scratch: {
-        name: SCRATCH_DATABASE,
         create: () => this.cluster.createScratchDatabase(SCRATCH_DATABASE),
         swapIn: () => this.cluster.swapInDatabase(SCRATCH_DATABASE),
         drop: () => this.cluster.dropDatabase(SCRATCH_DATABASE),
       },
       migrationCount: migrationCountOf(this.deps.resources),
-      currentKek: () => this.config.secrets.kmsLocalKekBase64,
       stopServices: () => this.stopServices(),
       startServices: async () => {
         await this.deps.commands.migrate(
@@ -706,12 +735,18 @@ export class Controller {
         );
         await this.startServices();
       },
-      adoptSecrets: (payload: RecoveryPayload) => {
+      adoptSecrets: (adopted: AdoptedSecrets) => {
         this.config = this.deps.store.update((config) => {
-          config.secrets.kmsLocalKekBase64 = payload.kmsLocalKekBase64;
-          config.secrets.addressHashPepper = payload.addressHashPepper;
-          config.secrets.storageUploadSecret = payload.storageUploadSecret;
-          config.slug = payload.slug;
+          config.secrets.kmsLocalKekBase64 = adopted.payload.kmsLocalKekBase64;
+          config.secrets.addressHashPepper = adopted.payload.addressHashPepper;
+          config.secrets.storageUploadSecret = adopted.payload.storageUploadSecret;
+          config.secrets.recoveryKeyHash = adopted.payload.recoveryKeyHash;
+          config.secrets.backupKeyBase64 = adopted.backupKeyBase64;
+          config.secrets.backupKeyWrap = adopted.backupKeyWrap;
+          // The key that was typed is the key of this install now, and the owner just proved having it.
+          config.secrets.recoveryKey = null;
+          config.recoveryAcknowledged = true;
+          config.slug = adopted.payload.slug;
         });
       },
       now: this.deps.now,
@@ -726,6 +761,8 @@ export class Controller {
       switch (error.code) {
         case 'invalid_backup':
           return TEXT.restore.invalid;
+        case 'tampered_backup':
+          return TEXT.restore.tampered;
         case 'newer_version':
           return TEXT.restore.newerVersion;
         case 'wrong_recovery_key':
@@ -765,7 +802,7 @@ export class Controller {
       const confirmed = await this.deps.ui.confirm({
         title: TEXT.restore.confirmTitle,
         message: TEXT.restore.confirmMessage,
-        detail: TEXT.restore.confirmDetail(new Date(info.meta.createdAt).toLocaleString('es-AR')),
+        detail: TEXT.restore.confirmDetail(new Date(info.header.createdAt).toLocaleString('es-AR')),
         confirm: TEXT.restore.confirmButton,
         cancel: TEXT.restore.cancelButton,
       });
@@ -923,15 +960,19 @@ export class Controller {
   }
 
   async showRecoveryKey(): Promise<void> {
-    if (!this.loaded) return;
+    const key = this.loaded?.secrets.recoveryKey;
+    if (!key) {
+      await this.deps.ui.message('info', TEXT.recoveryKey.title, TEXT.recoveryKey.gone);
+      return;
+    }
     const choice = await this.deps.ui.choose({
       kind: 'info',
       title: TEXT.recoveryKey.title,
-      message: `${TEXT.recoveryKey.message}\n\n${this.loaded.secrets.recoveryKey}`,
+      message: `${TEXT.recoveryKey.message}\n\n${key}`,
       detail: TEXT.recoveryKey.detail,
       buttons: [TEXT.recoveryKey.copy, TEXT.recoveryKey.close],
     });
-    if (choice === 0) this.deps.ui.copyToClipboard(this.loaded.secrets.recoveryKey);
+    if (choice === 0) this.deps.ui.copyToClipboard(key);
   }
 
   async about(): Promise<void> {

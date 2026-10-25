@@ -54,7 +54,9 @@ export const TEXT = {
     done: 'Copia restaurada',
     doneBody: 'Los datos de la copia ya están en uso.',
     failed: 'No se pudo restaurar la copia',
-    invalid: 'El archivo elegido no es una copia de seguridad de Consulvia, o está dañado.',
+    invalid: 'El archivo elegido no es una copia de seguridad de Consulvia.',
+    tampered:
+      'La copia de seguridad está dañada, se modificó o se hizo con otra clave. No se leyó nada de ella y los datos actuales no se modificaron.',
     newerVersion:
       'Esta copia se hizo con una versión más nueva de Consulvia. Instale la versión más reciente e intente de nuevo.',
     wrongKey: 'La clave de recuperación no es correcta.',
@@ -75,6 +77,7 @@ export const TEXT = {
     message: 'Guarde esta clave en un lugar seguro, por ejemplo impresa.',
     detail:
       'Sirve para abrir una copia de seguridad en otra computadora. Sin ella, las copias solo se pueden restaurar en esta.',
+    gone: 'La clave de recuperación ya se confirmó y no se vuelve a mostrar, para que nadie que use esta computadora pueda verla. Si la perdió, consulte a quien le brinda soporte antes de hacer cambios en esta instalación.',
     copy: 'Copiar',
     close: 'Cerrar',
   },

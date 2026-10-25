@@ -64,16 +64,16 @@ El menú del icono tiene:
 
 - Consulvia hace **una copia automática por día**, la primera vez que se abre cada día. Conserva las **últimas 14**.
 - Para hacer una copia en cualquier momento: icono de Consulvia, **Hacer copia de seguridad**.
-- Las copias están en **`Documentos\Consulvia\Copias`**, con el nombre `consulvia-AAAA-MM-DD_HHMM.zip`. Cada una incluye la base de datos, todos los documentos de los pacientes y las claves necesarias, selladas con la clave de recuperación.
+- Las copias están en **`Documentos\Consulvia\Copias`**, con el nombre `consulvia-diaria-AAAA-MM-DD_HHMM.cvb` (o `consulvia-manual-…`). Cada una es **un solo archivo cifrado y autenticado**: incluye la base de datos y todos los documentos de los pacientes, y no se puede leer ni modificar sin la clave de esta instalación. Consulvia se niega a restaurar un archivo que se modificó, se cortó o no corresponde a esta instalación, y no lee nada de él.
 - **Una copia en la misma computadora no protege de un robo, un incendio o un disco roto.** Una vez por semana, copie la carpeta `Copias` a un pendrive, a un disco externo o a un servicio de almacenamiento de su confianza, y guárdelo fuera del consultorio. Las copias contienen datos de salud: trátelas con el mismo cuidado que la historia clínica en papel.
 
 ## Restaurar una copia
 
-1. Icono de Consulvia, **Restaurar copia…**, y elija el archivo `.zip`.
+1. Icono de Consulvia, **Restaurar copia…**, y elija el archivo `.cvb`.
 2. Consulvia pide confirmación, hace **una copia de seguridad de los datos actuales** (`consulvia-previa-restauracion-…`) y recién entonces reemplaza todo. Durante unos minutos Consulvia queda sin servicio.
 3. Cuando termina, Consulvia se abre con los datos de la copia.
 
-**En otra computadora** (por ejemplo, si la primera se rompió): instale Consulvia, complete la pantalla de bienvenida con cualquier dato y, ya adentro, use **Restaurar copia…** con el archivo de la copia. Como esa copia es de otra instalación, Consulvia pide la **clave de recuperación** que se mostró en la primera computadora. Sin esa clave la copia no se puede abrir: por eso conviene guardarla impresa.
+**En otra computadora** (por ejemplo, si la primera se rompió): instale Consulvia, complete la pantalla de bienvenida con cualquier dato y, ya adentro, use **Restaurar copia…** con el archivo de la copia. Como esa copia es de otra instalación, Consulvia pide la **clave de recuperación** que se mostró en la primera computadora. Sin esa clave la copia no se puede abrir en otra computadora: por eso conviene guardarla impresa. En la misma computadora no hace falta escribirla.
 
 Si la copia es de una versión de Consulvia más nueva que la instalada, Consulvia lo avisa y no restaura: instale primero la versión más reciente.
 

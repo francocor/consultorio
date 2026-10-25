@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
+import { unwrapBackupKey, verifyRecoveryKey } from './backup-crypto.js';
+import { formatRecoveryKey, generateRecoveryKey } from './recovery-key.js';
 import { generateSecrets, normalizeRecoveryKey } from './secrets.js';
 
 describe('the secrets of an install', () => {
@@ -12,7 +14,7 @@ describe('the secrets of an install', () => {
     expect(first.storageUploadSecret.length).toBeGreaterThanOrEqual(32);
     expect(first.kmsLocalKekBase64).not.toBe(second.kmsLocalKekBase64);
     expect(first.appRwPassword).not.toBe(second.appRwPassword);
-    expect(new Set(Object.values(first)).size).toBe(Object.values(first).length);
+    expect(first.backupKeyBase64).not.toBe(second.backupKeyBase64);
   });
 
   it('use only characters that are safe in an SQL literal and in a connection URL', () => {
@@ -30,17 +32,29 @@ describe('the secrets of an install', () => {
     expect(secrets.storageUploadSecret).toMatch(/^[A-Za-z0-9_-]+$/);
   });
 
-  it('give a recovery key of six groups of five unambiguous characters', () => {
-    const { recoveryKey } = generateSecrets();
+  it('make a backup key that the recovery key unwraps, and keep only a hash to check the recovery key', () => {
+    const secrets = generateSecrets();
+    const recoveryKey = secrets.recoveryKey ?? '';
 
-    expect(recoveryKey).toMatch(/^([A-HJ-NP-Z2-9]{5}-){5}[A-HJ-NP-Z2-9]{5}$/);
+    expect(Buffer.from(secrets.backupKeyBase64, 'base64')).toHaveLength(32);
+    expect(unwrapBackupKey(secrets.backupKeyWrap, recoveryKey).toString('base64')).toBe(
+      secrets.backupKeyBase64,
+    );
+    expect(verifyRecoveryKey(recoveryKey, secrets.recoveryKeyHash)).toBe(true);
+    expect(secrets.recoveryKeyHash).not.toContain(normalizeRecoveryKey(recoveryKey));
+  });
+});
+
+describe('the recovery key', () => {
+  it('has six groups of five unambiguous characters', () => {
+    expect(generateRecoveryKey()).toMatch(/^([A-HJ-NP-Z2-9]{5}-){5}[A-HJ-NP-Z2-9]{5}$/);
   });
 
-  it('draw every letter of the recovery key evenly from the random bytes', () => {
+  it('draws every letter evenly from the random bytes', () => {
     // Bytes of 224 or more are skipped, so a plain modulo does not favour the first letters.
     const counts = new Map<string, number>();
     for (let round = 0; round < 400; round += 1) {
-      for (const character of generateSecrets().recoveryKey.replaceAll('-', '')) {
+      for (const character of generateRecoveryKey().replaceAll('-', '')) {
         counts.set(character, (counts.get(character) ?? 0) + 1);
       }
     }
@@ -53,7 +67,10 @@ describe('the secrets of an install', () => {
     }
   });
 
-  it('normalizes a typed recovery key: no dashes or spaces, upper case', () => {
+  it('is normalized as typed (no dashes or spaces, upper case) and shown in groups of five', () => {
     expect(normalizeRecoveryKey(' abcde-fghjk ')).toBe('ABCDEFGHJK');
+    expect(formatRecoveryKey('abcdefghjkmnpqrstuvwxyz234567')).toBe(
+      'ABCDE-FGHJK-MNPQR-STUVW-XYZ23-4567',
+    );
   });
 });

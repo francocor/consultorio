@@ -1,46 +1,56 @@
-import { createHash } from 'node:crypto';
+import { randomBytes } from 'node:crypto';
 import { mkdir, readdir, rm } from 'node:fs/promises';
 import { join } from 'node:path';
+import type { Readable } from 'node:stream';
 
-import { osEnvironment } from './api-env.js';
+import { createArchiveWriter } from './backup-archive.js';
+import {
+  FORMAT,
+  keyIdOf,
+  type BackupHeader,
+  type BackupKind,
+  type KeyWrap,
+} from './backup-crypto.js';
+import { isBackupFile, listFiles, sizeOf } from './files.js';
 import type { DataPaths } from './paths.js';
-import { sealRecovery, type RecoveryPayload } from './recovery.js';
-import type { Runner } from './runner.js';
-import { isBackupFile, listFiles, sizeOf, writeZip, type ZipSource } from './zip.js';
 
-export const BACKUP_FORMAT = 1;
+export type { BackupKind };
 
-/** What `meta.json` says about a backup. */
-export interface BackupMeta {
-  format: number;
-  createdAt: string;
-  appVersion: string;
-  /** How many migrations the database had: a newer backup cannot be restored by an older app. */
-  migrationCount: number;
-  database: string;
-  /** A short fingerprint of the key of the clinical data, to know whether a backup belongs to this install. */
-  kekFingerprint: string;
+/** The extension of a backup: a Consulvia backup, encrypted and authenticated (`backup-crypto.ts`). */
+export const BACKUP_EXTENSION = '.cvb';
+
+/** What goes in `secrets.json` of a backup: what another install needs to read the clinical data. */
+export interface AdoptionPayload {
+  slug: string;
+  kmsLocalKekBase64: string;
+  addressHashPepper: string;
+  storageUploadSecret: string;
+  /** To check, later, the recovery key that is typed. */
+  recoveryKeyHash: string;
 }
 
-export function fingerprintOf(kmsLocalKekBase64: string): string {
-  return createHash('sha256')
-    .update(`consulvia-kek-fingerprint:${kmsLocalKekBase64}`)
-    .digest('hex')
-    .slice(0, 16);
+/** The last entry of a backup: what must be true of everything before it. */
+export interface Manifest {
+  dumpBytes: number;
+  dumpSha256: string;
+  fileCount: number;
+  fileBytes: number;
 }
 
-export type BackupKind = 'manual' | 'daily' | 'safety';
+/** A running `pg_dump` whose standard output is the dump. */
+export interface DumpProcess {
+  stdout: Readable;
+  /** Resolves when it has ended, with its exit code and the tail of its error output. */
+  finished: Promise<{ code: number | null; stderr: string }>;
+}
 
 export interface BackupDeps {
   paths: DataPaths;
-  runner: Runner;
-  /** `pg_dump.exe` */
-  pgDump: string;
-  /** The port the database listens on now. */
-  databasePort: () => number;
-  superuser: { user: string; password: string };
-  database: string;
-  recovery: () => { payload: RecoveryPayload; recoveryKey: string };
+  /** Starts `pg_dump --format=custom` of the database to its standard output. */
+  startDump: () => DumpProcess;
+  backupKey: () => Buffer;
+  keyWrap: () => KeyWrap;
+  secrets: () => AdoptionPayload;
   appVersion: string;
   migrationCount: number;
   now: () => Date;
@@ -59,9 +69,15 @@ export function localDay(date: Date): string {
   return stamp(date).slice(0, 10);
 }
 
+const KIND_NAMES: Record<BackupKind, string> = {
+  daily: 'diaria',
+  manual: 'manual',
+  safety: 'previa-restauracion',
+  upgrade: 'previa-actualizacion',
+};
+
 export function backupFileName(kind: BackupKind, date: Date): string {
-  const base = kind === 'safety' ? 'consulvia-previa-restauracion' : 'consulvia';
-  return `${base}-${stamp(date)}.zip`;
+  return `consulvia-${KIND_NAMES[kind]}-${stamp(date)}${BACKUP_EXTENSION}`;
 }
 
 export class BackupError extends Error {
@@ -75,9 +91,9 @@ export class BackupError extends Error {
 }
 
 /**
- * A backup is one zip with the database dump (`pg_dump -Fc`), the whole `files` folder, a `meta.json` and the
- * secrets the data cannot be read without, sealed with the recovery key. It is written to a temporary name
- * and renamed, so a half-written backup never looks like a good one.
+ * A backup is one file: the dump of the database (`pg_dump -Fc`, streamed, never written plain to disk),
+ * the whole `files` folder, the secrets another install needs to read it, and a manifest, all encrypted and
+ * authenticated with the key of the install. It is written to a temporary name and renamed when complete.
  */
 export async function createBackup(
   deps: BackupDeps,
@@ -85,76 +101,69 @@ export async function createBackup(
 ): Promise<{ path: string; bytes: number }> {
   const started = deps.now();
   const target = join(deps.paths.backups, backupFileName(kind, started));
-  const scratch = join(
-    deps.paths.root,
-    `tmp-backup-${String(process.pid)}-${String(started.getTime())}`,
-  );
-  await mkdir(scratch, { recursive: true });
-  try {
-    const dump = join(scratch, 'db.dump');
-    const result = await deps.runner(
-      deps.pgDump,
-      [
-        '--format=custom',
-        '--host=127.0.0.1',
-        `--port=${String(deps.databasePort())}`,
-        `--username=${deps.superuser.user}`,
-        `--dbname=${deps.database}`,
-        `--file=${dump}`,
-        '--no-password',
-      ],
-      {
-        env: { ...osEnvironment(), PGPASSWORD: deps.superuser.password },
-        timeoutMs: 30 * 60_000,
-      },
-    );
-    if (result.code !== 0) {
-      throw new BackupError(
-        'The database dump failed',
-        result.stderr.trim().split(/\r?\n/).slice(-6).join('\n'),
-      );
-    }
+  await mkdir(deps.paths.backups, { recursive: true });
+  const key = deps.backupKey();
 
-    const { payload, recoveryKey } = deps.recovery();
-    const meta: BackupMeta = {
-      format: BACKUP_FORMAT,
+  // The API moves a document between folders when its scan ends. If one moves between the listing and the
+  // read, the archive is made again: a document must never be left out of a backup silently.
+  for (let attempt = 1; ; attempt += 1) {
+    const header: BackupHeader = {
+      format: FORMAT,
       createdAt: started.toISOString(),
       appVersion: deps.appVersion,
       migrationCount: deps.migrationCount,
-      database: deps.database,
-      kekFingerprint: fingerprintOf(payload.kmsLocalKekBase64),
+      kind,
+      keyId: keyIdOf(key),
+      fileSalt: randomBytes(32).toString('base64'),
+      wrap: deps.keyWrap(),
     };
-    // The API moves a document between folders when its scan ends. If one moves between the listing and the
-    // read, the listing is made again: a document must never be left out of a backup silently.
-    let documents: { file: string; name: string }[] = [];
-    for (let attempt = 1; ; attempt += 1) {
-      documents = await listFiles(deps.paths.files, 'files/', isBackupFile);
-      const sources: ZipSource[] = [
-        { name: 'meta.json', content: `${JSON.stringify(meta, null, 2)}\n` },
-        { name: 'recovery.json', content: sealRecovery(payload, recoveryKey) },
-        { name: 'db.dump', file: dump, compress: false },
-        ...documents.map((document) => ({ name: document.name, file: document.file })),
-      ];
-      try {
-        await writeZip(target, sources);
-        break;
-      } catch (error) {
-        if ((error as NodeJS.ErrnoException).code !== 'ENOENT' || attempt >= 3) throw error;
-        deps.log?.('a document moved while the backup was being written; trying again');
+    const writer = createArchiveWriter(target, key, header);
+    try {
+      const dump = deps.startDump();
+      dump.finished.catch(() => undefined);
+      const streamed = await writer.addStream('db.dump', dump.stdout);
+      const ended = await dump.finished;
+      if (ended.code !== 0 || streamed.bytes === 0) {
+        throw new BackupError(
+          'The database dump failed',
+          ended.stderr.trim().split(/\r?\n/).slice(-6).join('\n'),
+        );
       }
+      await writer.addBuffer('secrets.json', JSON.stringify(deps.secrets()));
+      const documents = await listFiles(deps.paths.files, 'files/', isBackupFile);
+      let fileBytes = 0;
+      for (const document of documents) {
+        fileBytes += await sizeOf(document.file);
+        await writer.addFile(document.name, document.file);
+      }
+      const manifest: Manifest = {
+        dumpBytes: streamed.bytes,
+        dumpSha256: streamed.sha256,
+        fileCount: documents.length,
+        fileBytes,
+      };
+      await writer.addBuffer('manifest.json', JSON.stringify(manifest));
+      const { bytes } = await writer.finish();
+      deps.log?.(
+        `backup written: ${target} (${String(bytes)} bytes, ${String(documents.length)} documents)`,
+      );
+      return { path: target, bytes };
+    } catch (error) {
+      await writer.abort();
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT' || attempt >= 3) throw error;
+      deps.log?.('a document moved while the backup was being written; trying again');
     }
-    const bytes = await sizeOf(target);
-    deps.log?.(
-      `backup written: ${target} (${String(bytes)} bytes, ${String(documents.length)} documents)`,
-    );
-    return { path: target, bytes };
-  } finally {
-    await rm(scratch, { recursive: true, force: true });
   }
 }
 
 /** The names a rotation looks at: the daily and manual backups, not the safety copies before a restore. */
-const ROTATING = /^consulvia-\d{4}-\d{2}-\d{2}_\d{4}\.zip$/;
+const ROTATING = new RegExp(
+  `^consulvia-(?:diaria|manual)-\\d{4}-\\d{2}-\\d{2}_\\d{4}\\${BACKUP_EXTENSION}$`,
+);
+
+function stampOf(name: string): string {
+  return /(\d{4}-\d{2}-\d{2}_\d{4})/.exec(name)?.[1] ?? name;
+}
 
 /** Keeps the newest `keep` rotating backups and deletes the rest. Returns the names it deleted. */
 export async function pruneBackups(directory: string, keep = 14): Promise<string[]> {
@@ -164,7 +173,9 @@ export async function pruneBackups(directory: string, keep = 14): Promise<string
   } catch {
     return [];
   }
-  const rotating = names.filter((name) => ROTATING.test(name)).sort();
+  const rotating = names
+    .filter((name) => ROTATING.test(name))
+    .sort((left, right) => stampOf(left).localeCompare(stampOf(right)));
   const doomed = rotating.slice(0, Math.max(0, rotating.length - keep));
   for (const name of doomed) await rm(join(directory, name), { force: true });
   return doomed;

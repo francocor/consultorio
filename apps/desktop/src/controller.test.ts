@@ -23,13 +23,14 @@ import {
   type ProvisionInput,
   type ResetPasswordInput,
 } from './api-commands.js';
+import { discard } from './backup-archive.js';
 import { ConfigStore, type Cipher } from './config-store.js';
 import { Controller, type ControllerDeps, type ShellUi } from './controller.js';
 import type { DataPaths } from './paths.js';
 import type { PostgresCluster } from './postgres.js';
 import { resolveResources } from './resources.js';
 import { createRotatingLog } from './rotating-log.js';
-import type { Runner } from './runner.js';
+import type { PgTools } from './streams.js';
 import type { ChildLike } from './supervisor.js';
 
 const realRolesScript = readFileSync(
@@ -77,6 +78,8 @@ interface Harness {
   spawned: { role: string; env: NodeJS.ProcessEnv }[];
   dumps: number;
   restores: string[][];
+  restoreEnvs: NodeJS.ProcessEnv[];
+  dumpCalls: { args: string[]; env: NodeJS.ProcessEnv }[];
 }
 
 let harness: Harness;
@@ -147,6 +150,8 @@ function build(folder: string, options: { testMode?: boolean } = {}): Harness {
   const clusterScripts: string[] = [];
   const spawned: Harness['spawned'] = [];
   const restores: string[][] = [];
+  const restoreEnvs: NodeJS.ProcessEnv[] = [];
+  const dumpCalls: { args: string[]; env: NodeJS.ProcessEnv }[] = [];
   let dumps = 0;
 
   const ui: ShellUi = {
@@ -251,15 +256,20 @@ function build(folder: string, options: { testMode?: boolean } = {}): Harness {
     },
   };
 
-  const runner: Runner = (file, args) => {
-    if (file.includes('pg_dump')) {
+  const pgTools: PgTools = {
+    dump: (_file, args, env) => {
       dumps += 1;
-      const target = args.find((argument) => argument.startsWith('--file='))?.slice(7);
-      if (target) writeFileSync(target, 'PGDMP-fake');
-    } else {
+      dumpCalls.push({ args, env });
+      const stdout = new PassThrough();
+      stdout.end('PGDMP-fake');
+      return { stdout, finished: Promise.resolve({ code: 0, stderr: '' }) };
+    },
+    restore: async (_file, args, env, source) => {
       restores.push(args);
-    }
-    return Promise.resolve({ code: 0, stdout: '', stderr: '', timedOut: false });
+      restoreEnvs.push(env);
+      await discard(source);
+      return { code: 0, stderr: '' };
+    },
   };
 
   const store = new ConfigStore(paths.configFile, cipher);
@@ -267,7 +277,7 @@ function build(folder: string, options: { testMode?: boolean } = {}): Harness {
     paths,
     resources,
     store,
-    runner,
+    pgTools,
     commands,
     ui,
     version: '0.1.0',
@@ -310,6 +320,8 @@ function build(folder: string, options: { testMode?: boolean } = {}): Harness {
       return dumps;
     },
     restores,
+    restoreEnvs,
+    dumpCalls,
   };
   return result;
 }
@@ -631,7 +643,7 @@ describe('the backups', () => {
   it('makes the daily backup at the first open of the day, once, and writes the day down', async () => {
     await ready();
 
-    expect(readdirSync(harness.paths.backups)).toEqual(['consulvia-2026-10-24_1000.zip']);
+    expect(readdirSync(harness.paths.backups)).toEqual(['consulvia-diaria-2026-10-24_1000.cvb']);
     expect(harness.config().settings.lastDailyBackup).toBe('2026-10-24');
     expect(harness.dumps).toBe(1);
 
@@ -650,12 +662,12 @@ describe('the backups', () => {
 
     const path = await harness.controller.backupNow();
 
-    expect(path).toBe(join(harness.paths.backups, 'consulvia-2026-10-24_1130.zip'));
+    expect(path).toBe(join(harness.paths.backups, 'consulvia-manual-2026-10-24_1130.cvb'));
     expect(existsSync(path ?? '')).toBe(true);
     const done = harness.uiCalls.find(
       (call) => call[0] === 'message' && call[2] === 'Copia de seguridad lista',
     );
-    expect(done?.[3]).toContain('consulvia-2026-10-24_1130.zip');
+    expect(done?.[3]).toContain('consulvia-manual-2026-10-24_1130.cvb');
   });
 
   it('does not make a backup while the program is still starting', async () => {
@@ -692,11 +704,23 @@ describe('restoring a backup', () => {
     expect(restored).toBe(true);
     expect(harness.uiCalls[0]).toEqual(['confirm', 'Restaurar copia de seguridad']);
     expect(readdirSync(harness.paths.backups)).toContain(
-      'consulvia-previa-restauracion-2026-10-24_1300.zip',
+      'consulvia-previa-restauracion-2026-10-24_1300.cvb',
     );
     expect(harness.events.filter((event) => event.startsWith('shutdown')).length).toBe(2);
     expect(harness.restores).toHaveLength(1);
     expect(harness.restores[0]).toContain('--single-transaction');
+    // The backup is restored as the owner of the application, never as the superuser, and never over the live database.
+    expect(harness.restores[0]).toEqual(
+      expect.arrayContaining([
+        '--username=app_owner',
+        '--no-owner',
+        '--dbname=consultorio_restore',
+      ]),
+    );
+    expect(harness.restoreEnvs[0]?.['PGPASSWORD']).toBe(harness.config().secrets.appOwnerPassword);
+    expect(harness.restoreEnvs[0]?.['PGPASSWORD']).not.toBe(
+      harness.config().secrets.pgSuperuserPassword,
+    );
     expect(harness.events.indexOf('migrate')).toBeGreaterThan(
       harness.events.indexOf('shutdown api'),
     );
