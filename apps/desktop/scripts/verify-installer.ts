@@ -1,13 +1,21 @@
 import { spawn, spawnSync, type ChildProcess } from 'node:child_process';
-import { createHmac } from 'node:crypto';
-import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
+import { createHmac, randomBytes } from 'node:crypto';
+import {
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  readdirSync,
+  renameSync,
+  writeFileSync,
+} from 'node:fs';
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { request as httpRequest } from 'node:http';
 import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { readArchiveHeader } from '../src/backup-archive.js';
+import { createArchiveWriter, readArchiveHeader } from '../src/backup-archive.js';
+import { newBackupKey, wrapBackupKey } from '../src/backup-crypto.js';
 
 /* eslint-disable @typescript-eslint/no-unnecessary-type-parameters -- `json<T>()` is a typed view of a JSON answer, checked by the assertions that follow. */
 
@@ -21,6 +29,9 @@ import { readArchiveHeader } from '../src/backup-archive.js';
  * password and uninstalls. The data goes to a temporary folder (`CONSULVIA_DATA_DIR`), so a real install
  * on the same PC is not touched. The installer adds and removes a desktop shortcut and a Start-menu entry
  * of the current Windows user, like any install does.
+ *
+ * `--upgrade-to=<path\to\Consulvia-Setup-x.y.z.exe>` adds the upgrade scenario: that (newer) installer is run
+ * over the program while it is running, and the data must survive. `--keep` leaves the temporary folder.
  */
 const desktopRoot = fileURLToPath(new URL('..', import.meta.url));
 
@@ -399,6 +410,13 @@ async function main(): Promise<void> {
   let patientId = '';
   let documentId = '';
   let backupPath = '';
+  let recoveryKey = '';
+  let ackToken = '';
+  /** The password of the owner now: the reset changes it. */
+  let currentPassword = OWNER.password;
+  const upgradeTo = process.argv
+    .find((argument) => argument.startsWith('--upgrade-to='))
+    ?.slice('--upgrade-to='.length);
 
   try {
     await check('install silently into a temporary folder (/S)', async () => {
@@ -502,14 +520,48 @@ async function main(): Promise<void> {
           answer.status === 200,
           `setup answered ${String(answer.status)}: ${answer.text().slice(0, 200)}`,
         );
-        const body = answer.json<{ ok: boolean; recoveryKey: string }>();
+        const body = answer.json<{ ok: boolean; recoveryKey: string; ackToken: string }>();
         assert(
           body.ok && /^([A-Z2-9]{5}-){5}[A-Z2-9]{5}$/.test(body.recoveryKey),
           'no recovery key in the answer',
         );
+        assert(body.ackToken.length >= 20, 'no token to confirm the key');
+        recoveryKey = body.recoveryKey;
+        ackToken = body.ackToken;
         const gone = await web.call('GET', `/__setup?t=${token}`);
         assert(gone.status === 404, 'the setup page must be 404 once the organization exists');
         return 'recovery key shown; /__setup is now 404';
+      },
+    );
+
+    await check(
+      'the recovery key is confirmed with its last four characters (and the token works once)',
+      async () => {
+        const wrong = await web.call('POST', '/__ack', {
+          token: ackToken,
+          json: { recoveryKeyLast4: 'ZZZZ' },
+        });
+        assert(wrong.status === 422, `a wrong tail answered ${String(wrong.status)}`);
+        const short = await web.call('POST', '/__ack', {
+          token: ackToken,
+          json: { recoveryKeyLast4: 'AB' },
+        });
+        assert(short.status === 422, `a short tail answered ${String(short.status)}`);
+        const right = await web.call('POST', '/__ack', {
+          token: ackToken,
+          json: { recoveryKeyLast4: recoveryKey.slice(-4).toLowerCase() },
+        });
+        assert(right.status === 200, `the right tail answered ${String(right.status)}`);
+        const again = await web.call('POST', '/__ack', {
+          token: ackToken,
+          json: { recoveryKeyLast4: recoveryKey.slice(-4) },
+        });
+        assert(again.status === 404, 'the confirmation token must work once');
+        assert(
+          !logText(session).includes(recoveryKey),
+          'the recovery key is in the log of the program',
+        );
+        return 'confirmed; the key is not kept on this PC any more';
       },
     );
 
@@ -749,7 +801,16 @@ async function main(): Promise<void> {
       for (const marker of ['PGDMP', '%PDF-1.4', 'Clínica Prueba', 'dni-frente', 'COPY ']) {
         assert(!bytes.includes(Buffer.from(marker)), `the backup shows "${marker}" in the clear`);
       }
-      return `${basename(backupPath)}: ${String(bytes.length)} bytes, encrypted, kind ${header.kind}`;
+      // It was opened again after it was written, and the ledger beside the backups says so.
+      const ledger = JSON.parse(
+        readFileSync(join(session.backupDir, 'registro-de-copias.json'), 'utf8'),
+      ) as { files: Record<string, { sha256: string; bytes: number }> };
+      const entry = ledger.files[basename(backupPath)];
+      assert(
+        entry !== undefined && entry.bytes === bytes.length,
+        'the backup is not in the ledger of verified backups',
+      );
+      return `${basename(backupPath)}: ${String(bytes.length)} bytes, encrypted, kind ${header.kind}, verified`;
     });
 
     await check(
@@ -810,7 +871,7 @@ async function main(): Promise<void> {
         );
         const after = new Client(base);
         const login = await after.call('POST', '/api/auth/login', {
-          json: { email: OWNER.ownerEmail, password: OWNER.password },
+          json: { email: OWNER.ownerEmail, password: currentPassword },
         });
         assert(login.status === 200, `login after the restart answered ${String(login.status)}`);
         const list = await after.call('GET', '/api/patients');
@@ -828,10 +889,71 @@ async function main(): Promise<void> {
           base,
           after,
           OWNER.ownerEmail,
-          OWNER.password,
+          currentPassword,
           screenshotPath,
         );
         return `2 patients and the PDF survived; screenshot saved (${probe})`;
+      },
+    );
+
+    await check(
+      'a backup that was changed, or planted by someone else, is refused and nothing changes',
+      async () => {
+        const refusals = () => logText(session).split('restore failed:').length - 1;
+        const bytes = Buffer.from(readFileSync(backupPath));
+        const middle = Math.floor(bytes.length / 2);
+        bytes[middle] = (bytes[middle] ?? 0) ^ 0xff;
+        const tampered = join(session.root, 'alterada.cvb');
+        writeFileSync(tampered, bytes);
+        let seen = refusals();
+        await exited(launch(session, [`--restore=${tampered}`]));
+        await until(
+          'the refusal of the changed backup',
+          () => (refusals() > seen ? true : undefined),
+          300_000,
+        );
+        assert(
+          /restore failed: tampered_backup/.test(logText(session)),
+          'the changed backup was not refused as tampered',
+        );
+
+        // Someone who knows the format and copies the key id of this install, but not its key.
+        const { header } = await readArchiveHeader(backupPath);
+        const attackerKey = newBackupKey();
+        const planted = join(session.root, 'plantada.cvb');
+        const writer = createArchiveWriter(planted, attackerKey, {
+          ...header,
+          fileSalt: randomBytes(32).toString('base64'),
+          wrap: wrapBackupKey(attackerKey, 'AAAAA-BBBBB-CCCCC-DDDDD-EEEEE-FFFFF'),
+        });
+        await writer.addBuffer('db.dump', "COPY (SELECT 1) TO PROGRAM 'calc.exe';");
+        await writer.addBuffer('secrets.json', '{}');
+        await writer.addBuffer('manifest.json', '{}');
+        await writer.finish();
+        seen = refusals();
+        await exited(launch(session, [`--restore=${planted}`]));
+        await until(
+          'the refusal of the planted backup',
+          () => (refusals() > seen ? true : undefined),
+          300_000,
+        );
+        assert(
+          (logText(session).match(/restore failed: tampered_backup/g) ?? []).length >= 2,
+          'the planted backup was not refused as tampered',
+        );
+
+        // Nothing was touched: the same two patients and the same document.
+        const check = new Client(base);
+        const login = await check.call('POST', '/api/auth/login', {
+          json: { email: OWNER.ownerEmail, password: currentPassword },
+        });
+        assert(login.status === 200, `login after the refusals answered ${String(login.status)}`);
+        const list = await check.call('GET', '/api/patients');
+        assert(
+          list.json<{ patients: unknown[] }>().patients.length === 2,
+          'a refused backup changed the patients',
+        );
+        return 'both refused as tampered; 2 patients and the data untouched';
       },
     );
 
@@ -856,7 +978,7 @@ async function main(): Promise<void> {
           120_000,
         );
         const login = await after.call('POST', '/api/auth/login', {
-          json: { email: OWNER.ownerEmail, password: OWNER.password },
+          json: { email: OWNER.ownerEmail, password: currentPassword },
         });
         assert(login.status === 200, `login after the restore answered ${String(login.status)}`);
         const list = await after.call('GET', '/api/patients');
@@ -870,6 +992,65 @@ async function main(): Promise<void> {
         assert(download.body.equals(PDF), 'the PDF is not readable after the restore');
         web = after;
         return 'safety backup made; 1 patient; the PDF downloads';
+      },
+    );
+
+    await check(
+      'a restore that was cut off in the middle is undone when Consulvia starts again',
+      async () => {
+        await exited(launch(session, ['--quit']));
+        if (app) await Promise.race([exited(app), sleep(60_000)]);
+        await until(
+          'every process of the install to end',
+          () => (leftovers(session).length === 0 ? true : undefined),
+          240_000,
+          1_000,
+        );
+        // The state a crash leaves after the documents were swapped: the backup's in place, the real ones aside.
+        const files = join(session.dataDir, 'files');
+        const aside = `${files}.replaced-1`;
+        renameSync(files, aside);
+        mkdirSync(join(files, 'cut-off'), { recursive: true });
+        writeFileSync(join(files, 'cut-off', 'half.obj'), 'half of a restore');
+        const unpackedFolder = join(session.dataDir, 'tmp-restore-1');
+        mkdirSync(join(unpackedFolder, 'files'), { recursive: true });
+        const journal = join(session.dataDir, 'restore-journal.json');
+        writeFileSync(
+          journal,
+          JSON.stringify({
+            version: 1,
+            stamp: '1',
+            step: 'files-swapped',
+            filesAside: aside,
+            unpacked: unpackedFolder,
+            configCopy: null,
+          }),
+        );
+        const starts = logText(session).split('api on port').length - 1;
+        app = launch(session);
+        await until(
+          'the API after the start',
+          () => (logText(session).split('api on port').length - 1 > starts ? true : undefined),
+          600_000,
+        );
+        assert(!existsSync(journal), 'the journal of the cut-off restore is still there');
+        assert(!existsSync(aside), 'the documents are still aside');
+        assert(!existsSync(join(files, 'cut-off')), 'the half restored documents are still there');
+        assert(!existsSync(unpackedFolder), 'the work folder of the restore is still there');
+        assert(
+          logText(session).includes('an interrupted restore was undone'),
+          'the log does not say the restore was undone',
+        );
+        const after = new Client(base);
+        const login = await after.call('POST', '/api/auth/login', {
+          json: { email: OWNER.ownerEmail, password: currentPassword },
+        });
+        assert(login.status === 200, `login after the recovery answered ${String(login.status)}`);
+        const link = await after.call('POST', `/api/documents/${documentId}/download-link`);
+        const download = await after.call('GET', `/api${link.json<{ url: string }>().url}`);
+        assert(download.body.equals(PDF), 'the document is not readable after the recovery');
+        web = after;
+        return 'journal gone, documents back, the PDF downloads';
       },
     );
 
@@ -919,18 +1100,50 @@ async function main(): Promise<void> {
             page.text().includes('Quitar también la verificación en dos pasos'),
           'the reset page is not served',
         );
+        assert(
+          page.text().includes('name="recoveryKey"'),
+          'the reset page does not ask for the recovery key',
+        );
         const weak = await new Client(base).call('POST', '/__reset', {
           token,
-          json: { password: 'corta', passwordConfirmation: 'corta' },
+          json: { password: 'corta', passwordConfirmation: 'corta', recoveryKey },
         });
         assert(weak.status === 422, 'a weak password must be refused on the page');
         const newPassword = 'otra frase larga y nueva para entrar';
+        // Whoever only has the Windows session cannot take the account over: no key, or a wrong one, is refused.
+        const noKey = await new Client(base).call('POST', '/__reset', {
+          token,
+          json: {
+            password: newPassword,
+            passwordConfirmation: newPassword,
+            clearSecondFactor: true,
+          },
+        });
+        assert(noKey.status === 422, `a reset without the key answered ${String(noKey.status)}`);
+        const wrongKey = await new Client(base).call('POST', '/__reset', {
+          token,
+          json: {
+            password: newPassword,
+            passwordConfirmation: newPassword,
+            clearSecondFactor: true,
+            recoveryKey: 'AAAAA-BBBBB-CCCCC-DDDDD-EEEEE-FFFFF',
+          },
+        });
+        assert(
+          wrongKey.status === 422,
+          `a reset with a wrong key answered ${String(wrongKey.status)}`,
+        );
+        const stillOld = await new Client(base).call('POST', '/api/auth/login', {
+          json: { email: OWNER.ownerEmail, password: currentPassword },
+        });
+        assert(stillOld.status !== 401, 'a refused reset changed the password');
         const reset = await new Client(base).call('POST', '/__reset', {
           token,
           json: {
             password: newPassword,
             passwordConfirmation: newPassword,
             clearSecondFactor: true,
+            recoveryKey: recoveryKey.toLowerCase(),
           },
         });
         assert(reset.status === 200, `reset answered ${String(reset.status)}: ${reset.text()}`);
@@ -939,8 +1152,13 @@ async function main(): Promise<void> {
           'the second factor was not cleared',
         );
 
+        const second = await new Client(base).call('POST', '/__reset', {
+          token,
+          json: { password: newPassword, passwordConfirmation: newPassword, recoveryKey },
+        });
+        assert(second.status === 404, 'the reset address must stop working once it was used');
         const old = await new Client(base).call('POST', '/api/auth/login', {
-          json: { email: OWNER.ownerEmail, password: OWNER.password },
+          json: { email: OWNER.ownerEmail, password: currentPassword },
         });
         assert(old.status === 401, `the old password must stop working, got ${String(old.status)}`);
         const fresh = await new Client(base).call('POST', '/api/auth/login', {
@@ -952,9 +1170,108 @@ async function main(): Promise<void> {
         );
         const sessionEnded = await web.call('GET', '/api/auth/me');
         assert(sessionEnded.status === 401, 'the sessions of the owner must end with a reset');
-        return 'new password works, no code asked, old password and old session refused';
+        // The owner is told, in the outbox, that the password was reset from this PC.
+        const outbox = join(session.dataDir, 'outbox');
+        const notices = readdirSync(outbox)
+          .filter((name) => name.endsWith('.json'))
+          .map(
+            (name) =>
+              JSON.parse(readFileSync(join(outbox, name), 'utf8')) as {
+                to: string;
+                subject: string;
+              },
+          )
+          .filter((entry) => entry.subject.includes('se restableció la contraseña'));
+        assert(
+          notices.some((entry) => entry.to === OWNER.ownerEmail),
+          'no notice for the owner in the outbox',
+        );
+        currentPassword = newPassword;
+        return 'new password works, no code asked, old password and old session refused; the owner has a notice';
       },
     );
+
+    if (upgradeTo !== undefined && unpacked === undefined) {
+      await check(
+        'install the next version over the running one: it quits by itself and the data survives',
+        async () => {
+          assert(existsSync(upgradeTo), `no installer at ${upgradeTo}`);
+          const nextVersion = /Consulvia-Setup-(\d+\.\d+\.\d+)\.exe$/.exec(upgradeTo)?.[1];
+          assert(nextVersion !== undefined, 'the name of the new installer carries no version');
+          assert(nextVersion !== manifest.version, 'the new installer has the same version');
+          assert(leftovers(session).length > 0, 'the program is not running before the upgrade');
+          const logBefore = logText(session).length;
+          const setup = spawn(upgradeTo, ['/S', `/D=${session.installDir}`], {
+            env: session.env,
+            stdio: 'ignore',
+          });
+          const code = await Promise.race([
+            exited(setup),
+            sleep(480_000).then(() => 'timeout' as const),
+          ]);
+          assert(code === 0, `the installer of the new version ended with ${String(code)}`);
+          // The running program went through its own way out, not through taskkill.
+          const added = logText(session).slice(logBefore);
+          assert(
+            added.includes('database server stopped') && /\sstopped\n/.test(added),
+            'the running program was not stopped through its own way out',
+          );
+          const productVersion = spawnSync(
+            'powershell.exe',
+            [
+              '-NoProfile',
+              '-NonInteractive',
+              '-Command',
+              `(Get-Item '${session.exe.replaceAll("'", "''")}').VersionInfo.ProductVersion`,
+            ],
+            { encoding: 'utf8' },
+          ).stdout.trim();
+          assert(
+            productVersion.startsWith(nextVersion),
+            `Consulvia.exe is version ${productVersion}, not ${nextVersion}`,
+          );
+          // The one-click installer starts the new program when it finishes; if it did not, start it.
+          await sleep(6_000);
+          if (!logText(session).slice(logBefore).includes(`starting Consulvia ${nextVersion}`)) {
+            app = launch(session);
+          }
+          await until(
+            'the new version to start',
+            () =>
+              logText(session).slice(logBefore).includes(`starting Consulvia ${nextVersion}`)
+                ? true
+                : undefined,
+            300_000,
+          );
+          const after = new Client(base);
+          await until(
+            'the API of the new version',
+            async () => {
+              try {
+                return (await after.call('GET', '/api/health')).status === 200 ? true : undefined;
+              } catch {
+                return undefined;
+              }
+            },
+            600_000,
+          );
+          const login = await after.call('POST', '/api/auth/login', {
+            json: { email: OWNER.ownerEmail, password: currentPassword },
+          });
+          assert(login.status === 200, `login after the upgrade answered ${String(login.status)}`);
+          const list = await after.call('GET', '/api/patients');
+          assert(
+            list.json<{ patients: unknown[] }>().patients.length === 1,
+            'the patients did not survive the upgrade',
+          );
+          const link = await after.call('POST', `/api/documents/${documentId}/download-link`);
+          const download = await after.call('GET', `/api${link.json<{ url: string }>().url}`);
+          assert(download.body.equals(PDF), 'the document did not survive the upgrade');
+          web = after;
+          return `${manifest.version} -> ${nextVersion} over the running program; 1 patient and the PDF survived`;
+        },
+      );
+    }
 
     await check(
       'quit again, then uninstall silently: the data folder and the backups stay',
