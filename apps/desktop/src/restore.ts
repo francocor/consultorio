@@ -7,7 +7,6 @@ import { pipeline } from 'node:stream/promises';
 
 import {
   DEFAULT_LIMITS,
-  discard,
   readArchive,
   readArchiveHeader,
   type ArchiveLimits,
@@ -20,7 +19,7 @@ import {
   type KeyWrap,
 } from './backup-crypto.js';
 import type { AdoptionPayload, Manifest } from './backup.js';
-import { DiskFullError, ensureRoom, isDiskFull } from './disk.js';
+import { DiskFullError, ensureRoom, freeBytes, isDiskFull } from './disk.js';
 import { safeDestination } from './files.js';
 import type { DataPaths } from './paths.js';
 import { summarizePgError } from './pg-errors.js';
@@ -259,13 +258,26 @@ export async function restoreBackup(
   const { key, foreign } = resolveKey(deps, header, options);
   const limits = deps.limits ?? DEFAULT_LIMITS;
 
-  // Pass 1: the whole file must authenticate before anything is extracted or restored.
+  // Pass 1: the whole file must authenticate before anything is extracted or restored. It also measures what the
+  // file expands to (the size of the file says little: documents and a dump compress, and a file made to be
+  // opened expands far more), and stops reading as soon as that passes the free space on the disk, so a bomb
+  // is cut at the size of the disk and not at the limit of the format.
+  const free = await (deps.freeBytes ?? freeBytes)(deps.paths.root);
+  const room = { folder: deps.paths.root, freeBytes: () => Promise.resolve(free) };
+  const expanded = { dump: 0, files: 0, other: 0 };
+  /** The dump is compressed (a custom format dump): the database it makes is several times larger. */
+  const roomNeeded = () => Math.ceil(1.25 * (4 * expanded.dump + expanded.files + expanded.other));
   try {
     await readArchive(
       archive,
       key,
       async (entry) => {
-        await discard(entry.data);
+        const kind =
+          entry.name === 'db.dump' ? 'dump' : entry.name.startsWith('files/') ? 'files' : 'other';
+        for await (const part of entry.data) {
+          expanded[kind] += part.length;
+          await ensureRoom({ ...room, needed: roomNeeded() });
+        }
       },
       { limits },
     );
@@ -278,14 +290,9 @@ export async function restoreBackup(
     throw error;
   }
 
-  // The scratch database, the unpacked documents and the safety copy are all there at once: about three
-  // times the data, and the backup expands when it is unpacked.
-  const archiveBytes = (await stat(archive)).size;
-  await ensureRoom({
-    folder: deps.paths.root,
-    needed: 3 * Math.max(await deps.dataBytes(), 2 * archiveBytes),
-    ...(deps.freeBytes ? { freeBytes: deps.freeBytes } : {}),
-  });
+  // The scratch database and the unpacked documents are there at once, beside the data in use: what the file
+  // expands to, and at least as much as the data in use now, which a restored install resembles.
+  await ensureRoom({ ...room, needed: Math.max(roomNeeded(), await deps.dataBytes()) });
 
   const stamp = String(deps.now().getTime());
   const unpacked = join(deps.paths.root, `tmp-restore-${stamp}`);

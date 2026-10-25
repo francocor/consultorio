@@ -6,6 +6,7 @@ import {
   readFileSync,
   readdirSync,
   rmSync,
+  statSync,
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -507,20 +508,65 @@ describe('a restore that fails half way, or is cut off', () => {
     expect(await readJournal(paths)).toBeNull();
   });
 
-  it('refuses before it touches anything when the disk has less than three times the data', async () => {
-    const path = await makeBackup(install, { 't/a/docs/1.obj': 'one' });
+  it('refuses before it touches anything when the disk cannot hold what the backup expands to', async () => {
+    // What counts is what the file holds once unpacked, which pass 1 measures: not the size of the file.
+    const path = await makeBackup(install, { 't/a/docs/1.obj': 'x'.repeat(200_000) });
 
     const failure = await restoreBackup(
-      restoreDeps({
-        dataBytes: () => Promise.resolve(10 * 1024 ** 3),
-        freeBytes: () => Promise.resolve(25 * 1024 ** 3),
-      }),
+      restoreDeps({ freeBytes: () => Promise.resolve(64 * 1024 * 1024 + 100_000) }),
       path,
     ).catch((error: unknown) => error);
 
     expect(failure).toBeInstanceOf(DiskFullError);
     untouched();
     expect(existsSync(journalFile(paths))).toBe(false);
+  });
+
+  it('counts the documents at their unpacked size even when they compress to almost nothing', async () => {
+    // 3 MiB of zeros is a few kilobytes in the file and 3 MiB on the disk.
+    const path = await makeBackup(install, { 't/a/docs/1.obj': '0'.repeat(3 * 1024 * 1024) });
+    const { size } = statSync(path);
+    expect(size).toBeLessThan(100_000);
+
+    const failure = await restoreBackup(
+      restoreDeps({ freeBytes: () => Promise.resolve(64 * 1024 * 1024 + 2 * 1024 * 1024) }),
+      path,
+    ).catch((error: unknown) => error);
+
+    expect(failure).toBeInstanceOf(DiskFullError);
+    untouched();
+  });
+
+  it('stops reading as soon as the unpacked size passes the free space, instead of reading a bomb to the end', async () => {
+    const path = await makeBackup(install, { 't/a/docs/1.obj': '0'.repeat(8 * 1024 * 1024) });
+    let reads = 0;
+
+    const failure = await restoreBackup(
+      restoreDeps({
+        freeBytes: () => {
+          reads += 1;
+          return Promise.resolve(64 * 1024 * 1024 + 1024);
+        },
+      }),
+      path,
+    ).catch((error: unknown) => error);
+
+    expect(failure).toBeInstanceOf(DiskFullError);
+    expect((failure as DiskFullError).needed).toBeGreaterThan((failure as DiskFullError).free);
+    // The free space is read once, before pass 1 begins.
+    expect(reads).toBe(1);
+    untouched();
+  });
+
+  it('restores when there is room for what the backup expands to', async () => {
+    const path = await makeBackup(install, { 't/a/docs/1.obj': '0'.repeat(1024 * 1024) });
+
+    await restoreBackup(
+      restoreDeps({ freeBytes: () => Promise.resolve(64 * 1024 * 1024 + 50 * 1024 * 1024) }),
+      path,
+    );
+
+    expect(events).toContain('swap');
   });
 });
 
