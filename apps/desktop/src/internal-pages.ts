@@ -1,0 +1,243 @@
+import type { IncomingMessage, ServerResponse } from 'node:http';
+
+import {
+  PAGE_CSP,
+  PAGE_CSS,
+  PAGE_JS,
+  renderKeyPage,
+  renderResetPage,
+  renderSetupPage,
+} from './pages.js';
+import type { FieldErrors, SetupValues } from './setup-validation.js';
+import { validateNewPassword, validateSetup } from './setup-validation.js';
+import type { TokenVault } from './tokens.js';
+
+export type SetupOutcome =
+  { ok: true; recoveryKey: string } | { ok: false; errors?: FieldErrors; message?: string };
+
+export type ResetOutcome =
+  | { ok: true; email: string; secondFactorCleared: boolean }
+  | { ok: false; errors?: Record<string, string>; message?: string };
+
+export type KeyOutcome = { ok: true } | { ok: false; message: string };
+
+/** What the pages do. The shell implements these; this module only speaks HTTP. */
+export interface PageActions {
+  /** True once the organization exists: the setup page is then a 404 for good. */
+  isProvisioned(): boolean;
+  commonPasswords(): ReadonlySet<string>;
+  /** Creates the organization and starts the API and the worker. Resolves when the app is ready to open. */
+  setup(values: SetupValues): Promise<SetupOutcome>;
+  /** Gives the owner a new password (and, when asked, removes the second factor). */
+  resetPassword(input: { newPassword: string; clearSecondFactor: boolean }): Promise<ResetOutcome>;
+  /** The recovery key typed for the backup that is being restored. */
+  submitRecoveryKey(key: string): Promise<KeyOutcome>;
+}
+
+export const PURPOSE = { setup: 'setup', reset: 'reset', key: 'key' } as const;
+
+const MAX_BODY_BYTES = 16 * 1024;
+
+const SECURITY_HEADERS = {
+  'Content-Security-Policy': PAGE_CSP,
+  'Cache-Control': 'no-store',
+  'X-Content-Type-Options': 'nosniff',
+  'Referrer-Policy': 'no-referrer',
+};
+
+function sendJson(response: ServerResponse, status: number, body: unknown): void {
+  response.writeHead(status, {
+    'Content-Type': 'application/json; charset=utf-8',
+    ...SECURITY_HEADERS,
+  });
+  response.end(JSON.stringify(body));
+}
+
+function sendNotFound(response: ServerResponse): void {
+  response.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8', ...SECURITY_HEADERS });
+  response.end('No encontrado');
+}
+
+function sendHtml(response: ServerResponse, html: string): void {
+  response.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', ...SECURITY_HEADERS });
+  response.end(html);
+}
+
+async function readJson(request: IncomingMessage): Promise<unknown> {
+  const chunks: Buffer[] = [];
+  let size = 0;
+  for await (const chunk of request) {
+    const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(String(chunk));
+    size += buffer.length;
+    if (size > MAX_BODY_BYTES) throw new Error('too large');
+    chunks.push(buffer);
+  }
+  return JSON.parse(Buffer.concat(chunks).toString('utf8')) as unknown;
+}
+
+const PAGES: Record<string, { purpose: string; render: () => string }> = {
+  '/__setup': { purpose: PURPOSE.setup, render: renderSetupPage },
+  '/__reset': { purpose: PURPOSE.reset, render: renderResetPage },
+  '/__key': { purpose: PURPOSE.key, render: renderKeyPage },
+};
+
+/**
+ * The pages of the shell. A page is shown only with its token, and the setup page only while the
+ * organization does not exist. An action is accepted only as a JSON POST with the token in a header, from
+ * the origin of the page itself: a form on another site cannot send that header without the browser
+ * asking this server first, and this server never answers that question.
+ */
+export function createInternalPages(vault: TokenVault, actions: PageActions) {
+  /** Purposes with an action running: a second click (or a second program) must not start it again. */
+  const running = new Set<string>();
+
+  function allowed(purpose: string): boolean {
+    return purpose !== PURPOSE.setup || !actions.isProvisioned();
+  }
+
+  function sameOrigin(request: IncomingMessage): boolean {
+    const origin = request.headers.origin;
+    return origin === undefined || origin === `http://${request.headers.host ?? ''}`;
+  }
+
+  async function handleAction(
+    purpose: string,
+    request: IncomingMessage,
+    response: ServerResponse,
+  ): Promise<void> {
+    const token = request.headers['x-consulvia-token'];
+    if (
+      !allowed(purpose) ||
+      !sameOrigin(request) ||
+      !vault.verify(purpose, typeof token === 'string' ? token : undefined)
+    ) {
+      sendNotFound(response);
+      return;
+    }
+    if (!(request.headers['content-type'] ?? '').startsWith('application/json')) {
+      sendJson(response, 415, { ok: false, message: 'Solicitud no válida.' });
+      return;
+    }
+    if (running.has(purpose)) {
+      sendJson(response, 409, {
+        ok: false,
+        message: 'Hay una operación en curso. Espere unos segundos.',
+      });
+      return;
+    }
+    running.add(purpose);
+    try {
+      await runAction(purpose, request, response);
+    } finally {
+      running.delete(purpose);
+    }
+  }
+
+  async function runAction(
+    purpose: string,
+    request: IncomingMessage,
+    response: ServerResponse,
+  ): Promise<void> {
+    let body: unknown;
+    try {
+      body = await readJson(request);
+    } catch {
+      sendJson(response, 400, { ok: false, message: 'Solicitud no válida.' });
+      return;
+    }
+
+    if (purpose === PURPOSE.setup) {
+      const checked = validateSetup(body, actions.commonPasswords());
+      if (!checked.ok) {
+        sendJson(response, 422, { ok: false, errors: checked.errors });
+        return;
+      }
+      const outcome = await actions.setup(checked.value);
+      sendJson(response, outcome.ok ? 200 : 422, outcome);
+      return;
+    }
+
+    const input = (typeof body === 'object' && body !== null ? body : {}) as Record<
+      string,
+      unknown
+    >;
+    if (purpose === PURPOSE.reset) {
+      const checked = validateNewPassword(
+        input['password'],
+        input['passwordConfirmation'],
+        '',
+        actions.commonPasswords(),
+      );
+      if (!checked.ok) {
+        sendJson(response, 422, { ok: false, errors: checked.errors });
+        return;
+      }
+      const outcome = await actions.resetPassword({
+        newPassword: checked.value,
+        clearSecondFactor: input['clearSecondFactor'] === true,
+      });
+      const answer = outcome.ok
+        ? {
+            ...outcome,
+            secondFactorNote: outcome.secondFactorCleared
+              ? 'También se quitó la verificación en dos pasos: la propietaria puede volver a activarla desde su cuenta.'
+              : '',
+          }
+        : outcome;
+      sendJson(response, outcome.ok ? 200 : 422, answer);
+      return;
+    }
+
+    const key = typeof input['recoveryKey'] === 'string' ? input['recoveryKey'] : '';
+    if (key.trim() === '') {
+      sendJson(response, 422, {
+        ok: false,
+        errors: { recoveryKey: 'Ingrese la clave de recuperación.' },
+      });
+      return;
+    }
+    const outcome = await actions.submitRecoveryKey(key);
+    sendJson(
+      response,
+      outcome.ok ? 200 : 422,
+      outcome.ok ? outcome : { ok: false, errors: { recoveryKey: outcome.message } },
+    );
+  }
+
+  /** Answers the request and returns true when the path is one of the shell's own; false lets it go on. */
+  async function handle(request: IncomingMessage, response: ServerResponse): Promise<boolean> {
+    const url = new URL(request.url ?? '/', 'http://localhost');
+    const path = url.pathname;
+    if (path === '/__assets/page.css' || path === '/__assets/page.js') {
+      response.writeHead(200, {
+        'Content-Type': path.endsWith('.css')
+          ? 'text/css; charset=utf-8'
+          : 'text/javascript; charset=utf-8',
+        ...SECURITY_HEADERS,
+      });
+      response.end(path.endsWith('.css') ? PAGE_CSS : PAGE_JS);
+      return true;
+    }
+    const page = PAGES[path];
+    if (!page) return false;
+    if (request.method === 'POST') {
+      await handleAction(page.purpose, request, response);
+      return true;
+    }
+    if (request.method !== 'GET' && request.method !== 'HEAD') {
+      response.writeHead(405, { Allow: 'GET, HEAD, POST', ...SECURITY_HEADERS });
+      response.end();
+      return true;
+    }
+    if (!allowed(page.purpose) || !vault.verify(page.purpose, url.searchParams.get('t'))) {
+      sendNotFound(response);
+      return true;
+    }
+    sendHtml(response, page.render());
+    return true;
+  }
+
+  return { handle };
+}
+
+export type InternalPages = ReturnType<typeof createInternalPages>;
