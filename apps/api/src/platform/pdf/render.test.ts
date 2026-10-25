@@ -2,7 +2,7 @@ import { readFileSync, writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
 import sharp from 'sharp';
-import { describe, expect, it } from 'vitest';
+import { beforeAll, describe, expect, it } from 'vitest';
 
 import { allText, readPdf } from '../../../test/support/pdf.js';
 
@@ -50,6 +50,12 @@ const base: RenderPdfInput = {
 };
 
 describe('renderPdf (the shared frame of every PDF the worker renders)', () => {
+  // The first PDF loads the fonts and the image library, which takes seconds when the PC is busy (the whole
+  // monorepo is being tested at once): that cost is paid here, once, and not inside the first test.
+  beforeAll(async () => {
+    await renderPdf(base);
+  }, 120_000);
+
   it('renders a PDF with the title, author and creation date it was given', async () => {
     const bytes = await renderPdf(base);
     const reading = readPdf(bytes);

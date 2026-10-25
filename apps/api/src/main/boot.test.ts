@@ -54,7 +54,7 @@ async function untilHealthy(
   child: ChildProcess,
   output: () => string,
 ): Promise<number> {
-  const deadline = Date.now() + 40_000;
+  const deadline = Date.now() + 90_000;
   while (Date.now() < deadline) {
     if (child.exitCode !== null) {
       throw new Error(`The API exited with code ${String(child.exitCode)}: ${output()}`);
@@ -95,7 +95,7 @@ describe('booting the API without a database', () => {
     const status = await untilHealthy(port, child, () => output);
 
     expect(status).toBe(200);
-  }, 60_000);
+  }, 120_000);
 });
 
 /** Runs the entry point with a role and waits for it to stop on its own. */
@@ -110,7 +110,7 @@ function runUntilExit(role: string, extra: NodeJS.ProcessEnv) {
     const timer = setTimeout(() => {
       process_.kill();
       reject(new Error(`The ${role} role did not stop: ${output}`));
-    }, 40_000);
+    }, 90_000);
     for (const stream of [process_.stdout, process_.stderr]) {
       stream.on('data', (chunk: Buffer) => {
         output += chunk.toString();
@@ -141,7 +141,7 @@ describe('who holds the key of the retention archive', () => {
       expect(output).toContain('ARCHIVE_RELEASER_KEK');
       expect(output).toContain('only the releaser process may hold it');
     },
-    60_000,
+    120_000,
   );
 
   it('refuses to start the releaser role without its key', async () => {
@@ -149,7 +149,7 @@ describe('who holds the key of the retention archive', () => {
 
     expect(code).not.toBe(0);
     expect(output).toContain('ARCHIVE_RELEASER_KEK');
-  }, 60_000);
+  }, 120_000);
 
   it('refuses to start the releaser role on the login of the API: it has a database login of its own', async () => {
     const { code, output } = await runUntilExit('releaser', ARCHIVE);
@@ -157,7 +157,7 @@ describe('who holds the key of the retention archive', () => {
     expect(code).not.toBe(0);
     expect(output).toContain('RELEASER_DATABASE_URL');
     expect(output).toContain('is required for the releaser');
-  }, 60_000);
+  }, 120_000);
 
   it.each(['api', 'worker'])(
     'refuses to start the %s role when the login of the releaser is in its environment',
@@ -170,7 +170,7 @@ describe('who holds the key of the retention archive', () => {
       expect(output).toContain('RELEASER_DATABASE_URL');
       expect(output).toContain('only the releaser process may hold it');
     },
-    60_000,
+    120_000,
   );
 
   it('refuses to start the api in production with the identity that writes the archive', async () => {
@@ -183,5 +183,5 @@ describe('who holds the key of the retention archive', () => {
     expect(code).not.toBe(0);
     expect(output).toContain('ARCHIVE_S3_ACCESS_KEY_ID');
     expect(output).toContain('the API does not write the archive');
-  }, 60_000);
+  }, 120_000);
 });

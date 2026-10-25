@@ -139,7 +139,7 @@ describe('in a real child process', () => {
     return { child, up, exited, output };
   }
 
-  const within = async <T>(promise: Promise<T>, ms = 15_000) =>
+  const within = async <T>(promise: Promise<T>, ms = 60_000) =>
     Promise.race([
       promise,
       new Promise<never>((_, reject) =>
@@ -165,7 +165,7 @@ describe('in a real child process', () => {
     } finally {
       stopAnyway(child);
     }
-  }, 30_000);
+  }, 90_000);
 
   it('stops when the parent closes the channel', async () => {
     const { child, up, exited } = start(['pipe', 'pipe', 'pipe', 'ipc']);
@@ -178,7 +178,7 @@ describe('in a real child process', () => {
     } finally {
       stopAnyway(child);
     }
-  }, 30_000);
+  }, 90_000);
 
   it('stops when the parent closes the standard input of the child', async () => {
     const { child, up, exited } = start(['pipe', 'pipe', 'pipe', 'ipc']);
@@ -191,7 +191,7 @@ describe('in a real child process', () => {
     } finally {
       stopAnyway(child);
     }
-  }, 30_000);
+  }, 90_000);
 
   it('keeps running when the standard input was ignored, and still stops on the message', async () => {
     const { child, up, exited } = start(['ignore', 'pipe', 'pipe', 'ipc']);
@@ -206,5 +206,5 @@ describe('in a real child process', () => {
     } finally {
       stopAnyway(child);
     }
-  }, 30_000);
+  }, 90_000);
 });

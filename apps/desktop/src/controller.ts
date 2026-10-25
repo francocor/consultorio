@@ -1044,6 +1044,11 @@ export class Controller {
     }
   }
 
+  /** Resolves when no backup or restore is running. */
+  async whenIdle(): Promise<void> {
+    await this.inFlight;
+  }
+
   /** A process that failed for good while a backup was running is announced once the backup is over. */
   private reportFailureThatWaited(): void {
     if (this.reportedFailure || this.currentPhase !== 'ready') return;

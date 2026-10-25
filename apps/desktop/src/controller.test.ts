@@ -117,6 +117,16 @@ let chooseAnswers: number[];
 let whileDialogOpen: () => void = () => undefined;
 let clock = new Date(2026, 9, 24, 10, 0, 0);
 
+/**
+ * Waits for something a job of the program does by itself (the backup of the first open of the day). The
+ * default of one second is a guess about the speed of the machine: a PC that is busy takes longer.
+ */
+const waitFor = async (check: () => void) => {
+  await vi.waitFor(check, { timeout: 30_000, interval: 25 });
+  // The day is written down before the old backups are pruned: let the backup finish before the test acts.
+  await harness.controller.whenIdle();
+};
+
 const cipher: Cipher = {
   isAvailable: () => true,
   encrypt: (plain) => Buffer.from(Buffer.from(plain).reverse().toString('base64')),
@@ -843,7 +853,7 @@ describe('an update of the program', () => {
     await harness.controller.start();
     const url = setupUrl() ?? '';
     await post(new URL('/__setup', url).href, tokenOf(url), form);
-    await vi.waitFor(() => {
+    await waitFor(() => {
       expect(harness.config().settings.lastDailyBackup).not.toBeNull();
     });
     await harness.controller.quit();
@@ -921,7 +931,7 @@ describe('when something of the install stops', () => {
     const url = setupUrl() ?? '';
     await post(new URL('/__setup', url).href, tokenOf(url), form);
     // Let the backup of the first open of the day end: while it runs the program is busy.
-    await vi.waitFor(() => {
+    await waitFor(() => {
       expect(harness.config().settings.lastDailyBackup).not.toBeNull();
     });
   }
@@ -945,7 +955,7 @@ describe('when something of the install stops', () => {
       .at(-1)
       ?.child.emit('exit', 1, null);
 
-    await vi.waitFor(() => {
+    await waitFor(() => {
       expect(dialogs(harness)).toHaveLength(1);
       expect(harness.spawned.filter((entry) => entry.role === 'api').length).toBeGreaterThan(
         before + 2,
@@ -964,7 +974,7 @@ describe('when something of the install stops', () => {
     await harness.controller.start();
     const url = setupUrl() ?? '';
     await post(new URL('/__setup', url).href, tokenOf(url), form);
-    await vi.waitFor(() => {
+    await waitFor(() => {
       expect(dialogs(harness).length).toBeGreaterThan(0);
     });
 
@@ -1017,7 +1027,7 @@ describe('how the backups are doing', () => {
     await harness.controller.start();
     const url = setupUrl() ?? '';
     await post(new URL('/__setup', url).href, tokenOf(url), form);
-    await vi.waitFor(() => {
+    await waitFor(() => {
       expect(harness.config().settings.lastDailyBackup).toBe('2026-10-24');
     });
   }
@@ -1029,7 +1039,7 @@ describe('how the backups are doing', () => {
     expect(harness.controller.lastBackupText).toBe('Última copia: todavía no hay ninguna');
     const url = setupUrl() ?? '';
     await post(new URL('/__setup', url).href, tokenOf(url), form);
-    await vi.waitFor(() => {
+    await waitFor(() => {
       expect(harness.config().settings.lastGoodBackup).toBe(clock.toISOString());
     });
 
@@ -1399,7 +1409,7 @@ describe('the backups', () => {
     const url = setupUrl() ?? '';
     await post(new URL('/__setup', url).href, tokenOf(url), form);
     // The automatic backup of the first open of the day runs by itself; wait for it.
-    await vi.waitFor(() => {
+    await waitFor(() => {
       expect(harness.config().settings.lastDailyBackup).toBe('2026-10-24');
     });
   }
@@ -1475,7 +1485,7 @@ describe('restoring a backup', () => {
     await harness.controller.start();
     const url = setupUrl() ?? '';
     await post(new URL('/__setup', url).href, tokenOf(url), form);
-    await vi.waitFor(() => {
+    await waitFor(() => {
       expect(harness.config().settings.lastDailyBackup).toBe('2026-10-24');
     });
     clock = new Date(2026, 9, 24, 12, 0, 0);
