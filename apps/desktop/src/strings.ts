@@ -40,6 +40,10 @@ export const TEXT = {
     dailyFailed:
       'No se pudo hacer la copia de seguridad diaria. Abra Consulvia e intente hacerla manualmente.',
     notReady: 'Consulvia todavía se está iniciando. Espere unos segundos e intente de nuevo.',
+    diskFull:
+      'El disco está lleno. Libere espacio en la unidad donde se guardan las copias y vuelva a intentar. Una copia necesita aproximadamente el doble de lo que ocupan los datos.',
+    diskNeeds: (neededGb: string, freeGb: string) =>
+      `Se necesitan unos ${neededGb} GB libres y hay ${freeGb} GB.`,
   },
 
   restore: {

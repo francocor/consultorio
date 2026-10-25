@@ -1,6 +1,7 @@
 import { join } from 'node:path';
-import { PassThrough } from 'node:stream';
+import { PassThrough, type Readable } from 'node:stream';
 
+import { discard } from './backup-archive.js';
 import {
   keyIdOf,
   newBackupKey,
@@ -62,6 +63,14 @@ export function fakeDump(content: string | Buffer, code = 0, stderr = ''): () =>
   };
 }
 
+/** A `pg_restore --list` that reads the whole dump and says `code`. */
+export function fakeList(code = 0, stderr = ''): BackupDeps['listDump'] {
+  return async (source: Readable) => {
+    await discard(source);
+    return { code, stderr };
+  };
+}
+
 export function testBackupDeps(
   install: TestInstall,
   paths: DataPaths,
@@ -76,6 +85,9 @@ export function testBackupDeps(
     appVersion: '0.1.0',
     migrationCount: 77,
     now: () => new Date(2026, 9, 24, 15, 30, 45),
+    listDump: fakeList(),
+    dataBytes: () => Promise.resolve(1000),
+    freeBytes: () => Promise.resolve(10 ** 13),
     ...overrides,
   };
 }

@@ -25,6 +25,7 @@ import {
   type ResetPasswordInput,
 } from './api-commands.js';
 import { discard } from './backup-archive.js';
+import { readLedger } from './backup-ledger.js';
 import { ConfigStore, type Cipher } from './config-store.js';
 import { Controller, type ControllerDeps, type ShellUi } from './controller.js';
 import type { DataPaths } from './paths.js';
@@ -79,6 +80,7 @@ interface Harness {
   spawned: { role: string; env: NodeJS.ProcessEnv }[];
   dumps: number;
   restores: string[][];
+  lists: string[][];
   restoreEnvs: NodeJS.ProcessEnv[];
   dumpCalls: { args: string[]; env: NodeJS.ProcessEnv }[];
   probes: { port: number; secret: string }[];
@@ -92,6 +94,8 @@ let migrateFails = false;
 let confirmAnswer = true;
 /** The Windows account can no longer read what it encrypted (another user, a reinstalled Windows). */
 let cipherBroken = false;
+/** The exit code of `pg_restore --list`, the check of a backup after it is written. */
+let listCode = 0;
 let provisionFails: ApiCommandError | null = null;
 let resetFails: ApiCommandError | null = null;
 let chooseAnswers: number[];
@@ -157,6 +161,7 @@ function build(folder: string, options: { testMode?: boolean } = {}): Harness {
   const clusterScripts: string[] = [];
   const spawned: Harness['spawned'] = [];
   const restores: string[][] = [];
+  const lists: string[][] = [];
   const restoreEnvs: NodeJS.ProcessEnv[] = [];
   const dumpCalls: { args: string[]; env: NodeJS.ProcessEnv }[] = [];
   const probes: Harness['probes'] = [];
@@ -278,6 +283,12 @@ function build(folder: string, options: { testMode?: boolean } = {}): Harness {
       return { stdout, finished: Promise.resolve({ code: 0, stderr: '' }) };
     },
     restore: async (_file, args, env, source) => {
+      if (args.includes('--list')) {
+        // The check of a backup after it is written: not a restore.
+        lists.push(args);
+        await discard(source);
+        return { code: listCode, stderr: listCode === 0 ? '' : 'pg_restore: error: cannot read' };
+      }
       restores.push(args);
       restoreEnvs.push(env);
       await discard(source);
@@ -337,6 +348,7 @@ function build(folder: string, options: { testMode?: boolean } = {}): Harness {
       return dumps;
     },
     restores,
+    lists,
     restoreEnvs,
     dumpCalls,
     probes,
@@ -408,6 +420,7 @@ beforeEach(() => {
   migrateFails = false;
   confirmAnswer = true;
   cipherBroken = false;
+  listCode = 0;
   provisionFails = null;
   resetFails = null;
   chooseAnswers = [];
@@ -860,7 +873,14 @@ describe('the backups', () => {
   it('makes the daily backup at the first open of the day, once, and writes the day down', async () => {
     await ready();
 
-    expect(readdirSync(harness.paths.backups)).toEqual(['consulvia-diaria-2026-10-24_1000.cvb']);
+    const backups = () =>
+      readdirSync(harness.paths.backups).filter((name) => name.endsWith('.cvb'));
+    expect(backups()).toEqual(['consulvia-diaria-2026-10-24_1000.cvb']);
+    // The file was opened again after it was written: pg_restore listed its dump, and it is in the ledger.
+    expect(harness.lists).toHaveLength(1);
+    expect(Object.keys(await readLedger(harness.paths.backups))).toEqual([
+      'consulvia-diaria-2026-10-24_1000.cvb',
+    ]);
     expect(harness.config().settings.lastDailyBackup).toBe('2026-10-24');
     expect(harness.dumps).toBe(1);
 
@@ -870,7 +890,26 @@ describe('the backups', () => {
     clock = new Date(2026, 9, 25, 9, 0, 0);
     await harness.controller.maybeDailyBackup();
     expect(harness.dumps).toBe(2);
-    expect(readdirSync(harness.paths.backups)).toHaveLength(2);
+    expect(backups()).toHaveLength(2);
+  });
+
+  it('does not call a backup a backup when pg_restore cannot read its dump: no file, no ledger entry, an error', async () => {
+    await ready();
+    clock = new Date(2026, 9, 24, 11, 30, 0);
+    listCode = 1;
+
+    const path = await harness.controller.backupNow();
+
+    expect(path).toBeNull();
+    expect(readdirSync(harness.paths.backups).filter((name) => name.includes('manual'))).toEqual(
+      [],
+    );
+    expect(harness.uiCalls).toContainEqual([
+      'message',
+      'error',
+      'No se pudo hacer la copia de seguridad',
+      expect.any(String),
+    ]);
   });
 
   it('makes a manual backup and says where it is', async () => {

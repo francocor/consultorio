@@ -62,7 +62,9 @@ El menú del icono tiene:
 
 ## Copias de seguridad
 
-- Consulvia hace **una copia automática por día**, la primera vez que se abre cada día. Conserva las **últimas 14**.
+- Consulvia hace **una copia automática por día**, la primera vez que se abre cada día. Conserva las **últimas 14 copias automáticas** y las **últimas 14 manuales** (se cuentan por separado), y nunca menos de 7 de cada tipo. Las copias de seguridad previas a una restauración se limitan a las últimas 3.
+- **Cada copia se comprueba apenas se escribe:** Consulvia la vuelve a abrir, verifica que no esté dañada y que el programa que la restaura pueda leerla. Una copia que no pasa esa comprobación se descarta y Consulvia avisa; nunca se borra una copia buena para hacer lugar a una que no se comprobó. En la carpeta de copias queda el archivo `registro-de-copias.json`, con la lista de las que se comprobaron: no lo borre ni lo edite.
+- **Si el disco está lleno**, Consulvia lo avisa antes de empezar (una copia necesita aproximadamente el doble de lo que ocupan los datos libre en la unidad de `Documentos`). Libere espacio y vuelva a intentar.
 - Para hacer una copia en cualquier momento: icono de Consulvia, **Hacer copia de seguridad**.
 - Las copias están en **`Documentos\Consulvia\Copias`**, con el nombre `consulvia-diaria-AAAA-MM-DD_HHMM.cvb` (o `consulvia-manual-…`). Cada una es **un solo archivo cifrado y autenticado**: incluye la base de datos y todos los documentos de los pacientes, y no se puede leer ni modificar sin la clave de esta instalación. Consulvia se niega a restaurar un archivo que se modificó, se cortó o no corresponde a esta instalación, y no lee nada de él.
 - **Una copia en la misma computadora no protege de un robo, un incendio o un disco roto.** Una vez por semana, copie la carpeta `Copias` a un pendrive, a un disco externo o a un servicio de almacenamiento de su confianza, y guárdelo fuera del consultorio. Las copias contienen datos de salud: trátelas con el mismo cuidado que la historia clínica en papel.
@@ -80,7 +82,7 @@ Si la copia es de una versión de Consulvia más nueva que la instalada, Consulv
 ## Olvidé la contraseña
 
 - **De la propietaria:** en esta computadora, icono de Consulvia, **Restablecer contraseña de la propietaria…**. Escriba la contraseña nueva dos veces. Si perdió también el teléfono de la verificación en dos pasos, marque **Quitar también la verificación en dos pasos**; la propietaria podrá volver a activarla desde su cuenta. Se cierran las sesiones abiertas de esa cuenta.
-- **De otra persona:** en la pantalla de ingreso use _¿Olvidó su contraseña?_. Como esta instalación no tiene servidor de correo, el mensaje no sale por internet: queda guardado en **Correos salientes** (icono de Consulvia). Abra el archivo `.eml` más reciente con su programa de correo, o abra el `.json` que lo acompaña, y copie el enlace a la persona. Los correos con más de 7 días se borran solos.
+- **De otra persona:** en la pantalla de ingreso use _¿Olvidó su contraseña?_. Como esta instalación no tiene servidor de correo, el mensaje no sale por internet: queda guardado en **Correos salientes** (icono de Consulvia). Abra el archivo `.eml` más reciente con su programa de correo, o abra el `.json` que lo acompaña, y copie el enlace a la persona. Los correos con más de 60 días se borran solos.
 
 ## Dónde están los datos
 

@@ -1,9 +1,10 @@
-import { randomBytes } from 'node:crypto';
-import { mkdir, readdir, rm } from 'node:fs/promises';
+import { createHash, randomBytes } from 'node:crypto';
+import { once } from 'node:events';
+import { mkdir, readdir, rm, stat } from 'node:fs/promises';
 import { join } from 'node:path';
-import type { Readable } from 'node:stream';
+import { PassThrough, type Readable } from 'node:stream';
 
-import { createArchiveWriter } from './backup-archive.js';
+import { createArchiveWriter, discard, readArchive } from './backup-archive.js';
 import {
   FORMAT,
   keyIdOf,
@@ -11,6 +12,8 @@ import {
   type BackupKind,
   type KeyWrap,
 } from './backup-crypto.js';
+import { forgetBackups, readLedger, recordVerified, sha256OfFile } from './backup-ledger.js';
+import { DiskFullError, ensureRoom, isDiskFull } from './disk.js';
 import { isBackupFile, listFiles, sizeOf } from './files.js';
 import type { DataPaths } from './paths.js';
 
@@ -48,9 +51,15 @@ export interface BackupDeps {
   paths: DataPaths;
   /** Starts `pg_dump --format=custom` of the database to its standard output. */
   startDump: () => DumpProcess;
+  /** `pg_restore --list` fed with a dump: proves the program that will restore it can read it. */
+  listDump: (source: Readable) => Promise<{ code: number | null; stderr: string }>;
   backupKey: () => Buffer;
   keyWrap: () => KeyWrap;
   secrets: () => AdoptionPayload;
+  /** The size of the data of the install (database and documents), to know the room a backup needs. */
+  dataBytes: () => Promise<number>;
+  /** Free bytes where the backups are written. Defaults to the real disk. */
+  freeBytes?: (folder: string) => Promise<number>;
   appVersion: string;
   migrationCount: number;
   now: () => Date;
@@ -90,18 +99,108 @@ export class BackupError extends Error {
   }
 }
 
+const tailOf = (text: string, lines = 6) => text.trim().split(/\r?\n/).slice(-lines).join('\n');
+
+/** Copies `data` into a stream for a program that may stop reading it early, and reads the rest itself. */
+function feed(data: AsyncIterable<Buffer>, sink: PassThrough): Promise<void> {
+  return (async () => {
+    try {
+      for await (const part of data) {
+        if (sink.destroyed) continue;
+        if (!sink.write(part)) await Promise.race([once(sink, 'drain'), once(sink, 'close')]);
+      }
+    } finally {
+      if (!sink.destroyed) sink.end();
+    }
+  })();
+}
+
+/**
+ * Opens a backup again and proves it is whole: every chunk authenticates, the dump matches the manifest, and
+ * `pg_restore --list` can read the dump. Writing a file is not the same as having a backup.
+ */
+export async function verifyBackupFile(
+  deps: Pick<BackupDeps, 'backupKey' | 'listDump'>,
+  path: string,
+): Promise<{ sha256: string; bytes: number }> {
+  const key = deps.backupKey();
+  const found: { dumpSha256: string | null; dumpBytes: number; manifest: Manifest | null } = {
+    dumpSha256: null,
+    dumpBytes: 0,
+    manifest: null,
+  };
+  try {
+    // Reads the whole file once to authenticate it, then once more for the handler.
+    await readArchive(path, key, async (entry) => {
+      if (entry.name === 'db.dump') {
+        const hash = createHash('sha256');
+        for await (const part of entry.data) {
+          hash.update(part);
+          found.dumpBytes += part.length;
+        }
+        found.dumpSha256 = hash.digest('hex');
+      } else if (entry.name === 'manifest.json') {
+        const parts: Buffer[] = [];
+        for await (const part of entry.data) parts.push(part);
+        found.manifest = JSON.parse(Buffer.concat(parts).toString('utf8')) as Manifest;
+      } else {
+        await discard(entry.data);
+      }
+    });
+    await readArchive(
+      path,
+      key,
+      async (entry) => {
+        if (entry.name !== 'db.dump') return;
+        const sink = new PassThrough();
+        const feeding = feed(entry.data, sink);
+        const listed = await deps.listDump(sink);
+        await feeding;
+        if (listed.code !== 0) {
+          throw new BackupError('pg_restore cannot read the dump', tailOf(listed.stderr));
+        }
+      },
+      { verifiedFirst: true },
+    );
+  } catch (error) {
+    if (error instanceof BackupError) throw error;
+    throw new BackupError(
+      'The backup does not authenticate',
+      error instanceof Error ? error.message : String(error),
+    );
+  }
+  const { manifest } = found;
+  if (
+    manifest === null ||
+    found.dumpSha256 === null ||
+    manifest.dumpSha256 !== found.dumpSha256 ||
+    manifest.dumpBytes !== found.dumpBytes
+  ) {
+    throw new BackupError('The manifest does not match the dump');
+  }
+  return { sha256: await sha256OfFile(path), bytes: (await stat(path)).size };
+}
+
 /**
  * A backup is one file: the dump of the database (`pg_dump -Fc`, streamed, never written plain to disk),
  * the whole `files` folder, the secrets another install needs to read it, and a manifest, all encrypted and
- * authenticated with the key of the install. It is written to a temporary name and renamed when complete.
+ * authenticated with the key of the install. It is written to a temporary name, renamed when complete, and
+ * then opened again and verified: only a backup that passed is entered in the ledger and counts as a copy.
  */
 export async function createBackup(
   deps: BackupDeps,
   kind: BackupKind,
 ): Promise<{ path: string; bytes: number }> {
   const started = deps.now();
-  const target = join(deps.paths.backups, backupFileName(kind, started));
+  const name = backupFileName(kind, started);
+  const target = join(deps.paths.backups, name);
   await mkdir(deps.paths.backups, { recursive: true });
+  // The copy is about as big as the data, and the work in progress needs as much again.
+  await ensureRoom({
+    folder: deps.paths.backups,
+    needed: 2 * (await deps.dataBytes()),
+    ...(deps.freeBytes ? { freeBytes: deps.freeBytes } : {}),
+  });
   const key = deps.backupKey();
 
   // The API moves a document between folders when its scan ends. If one moves between the listing and the
@@ -124,10 +223,7 @@ export async function createBackup(
       const streamed = await writer.addStream('db.dump', dump.stdout);
       const ended = await dump.finished;
       if (ended.code !== 0 || streamed.bytes === 0) {
-        throw new BackupError(
-          'The database dump failed',
-          ended.stderr.trim().split(/\r?\n/).slice(-6).join('\n'),
-        );
+        throw new BackupError('The database dump failed', tailOf(ended.stderr));
       }
       await writer.addBuffer('secrets.json', JSON.stringify(deps.secrets()));
       const documents = await listFiles(deps.paths.files, 'files/', isBackupFile);
@@ -143,40 +239,83 @@ export async function createBackup(
         fileBytes,
       };
       await writer.addBuffer('manifest.json', JSON.stringify(manifest));
-      const { bytes } = await writer.finish();
-      deps.log?.(
-        `backup written: ${target} (${String(bytes)} bytes, ${String(documents.length)} documents)`,
-      );
-      return { path: target, bytes };
+      await writer.finish();
     } catch (error) {
       await writer.abort();
+      if (isDiskFull(error)) throw new DiskFullError(0, 0);
       if ((error as NodeJS.ErrnoException).code !== 'ENOENT' || attempt >= 3) throw error;
       deps.log?.('a document moved while the backup was being written; trying again');
+      continue;
+    }
+
+    try {
+      const verified = await verifyBackupFile(deps, target);
+      await recordVerified(deps.paths.backups, name, {
+        sha256: verified.sha256,
+        bytes: verified.bytes,
+        verifiedAt: deps.now().toISOString(),
+      });
+      deps.log?.(`backup written and verified: ${target} (${String(verified.bytes)} bytes)`);
+      return { path: target, bytes: verified.bytes };
+    } catch (error) {
+      // A file that did not pass is not a backup: it must not stay where it could be taken for one.
+      await rm(target, { force: true });
+      throw error;
     }
   }
 }
 
-/** The names a rotation looks at: the daily and manual backups, not the safety copies before a restore. */
-const ROTATING = new RegExp(
-  `^consulvia-(?:diaria|manual)-\\d{4}-\\d{2}-\\d{2}_\\d{4}\\${BACKUP_EXTENSION}$`,
-);
+/** How many of each kind are kept. Safety copies are only a way back from one operation. */
+const DEFAULT_KEEP: Record<BackupKind, number> = { daily: 14, manual: 14, safety: 3, upgrade: 3 };
+
+/** Never fewer than this many verified daily or manual backups, whatever is asked. */
+const MIN_VERIFIED = 7;
+
+export interface PruneOptions {
+  keep?: Partial<Record<BackupKind, number>>;
+  minVerified?: number;
+}
 
 function stampOf(name: string): string {
   return /(\d{4}-\d{2}-\d{2}_\d{4})/.exec(name)?.[1] ?? name;
 }
 
-/** Keeps the newest `keep` rotating backups and deletes the rest. Returns the names it deleted. */
-export async function pruneBackups(directory: string, keep = 14): Promise<string[]> {
+/**
+ * Deletes the oldest backups of each kind beyond how many are kept, counting and deleting only the ones
+ * that were verified (they are in the ledger and the file still has the size it had). The daily and the
+ * manual backups are counted apart. A file nobody verified is neither counted nor touched.
+ */
+export async function pruneBackups(
+  directory: string,
+  options: PruneOptions = {},
+): Promise<string[]> {
   let names: string[];
   try {
     names = await readdir(directory);
   } catch {
     return [];
   }
-  const rotating = names
-    .filter((name) => ROTATING.test(name))
-    .sort((left, right) => stampOf(left).localeCompare(stampOf(right)));
-  const doomed = rotating.slice(0, Math.max(0, rotating.length - keep));
-  for (const name of doomed) await rm(join(directory, name), { force: true });
-  return doomed;
+  const ledger = await readLedger(directory);
+  const deleted: string[] = [];
+  for (const kind of Object.keys(KIND_NAMES) as BackupKind[]) {
+    const pattern = new RegExp(
+      `^consulvia-${KIND_NAMES[kind]}-\\d{4}-\\d{2}-\\d{2}_\\d{4}\\${BACKUP_EXTENSION}$`,
+    );
+    const verified: string[] = [];
+    for (const name of names
+      .filter((candidate) => pattern.test(candidate))
+      .sort((left, right) => stampOf(left).localeCompare(stampOf(right)))) {
+      const entry = ledger[name];
+      if (entry && entry.bytes === (await sizeOf(join(directory, name)))) verified.push(name);
+    }
+    const floor = kind === 'daily' || kind === 'manual' ? (options.minVerified ?? MIN_VERIFIED) : 0;
+    const retain = Math.max(options.keep?.[kind] ?? DEFAULT_KEEP[kind], floor);
+    for (const name of verified.slice(0, Math.max(0, verified.length - retain))) {
+      await rm(join(directory, name), { force: true });
+      deleted.push(name);
+    }
+  }
+  const gone = Object.keys(ledger).filter((name) => !names.includes(name));
+  await forgetBackups(directory, [...deleted, ...gone]).catch(() => undefined);
+  return deleted;
 }

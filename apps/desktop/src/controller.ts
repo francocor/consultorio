@@ -26,6 +26,7 @@ import {
   type ConfigStore,
   type InstallConfig,
 } from './config-store.js';
+import { DiskFullError, directoryBytes, isDiskFull } from './disk.js';
 import {
   createInternalPages,
   PURPOSE,
@@ -802,6 +803,17 @@ export class Controller {
           ],
           { ...osEnvironment(), PGPASSWORD: this.config.secrets.pgSuperuserPassword },
         ),
+      // `pg_restore --list` over the dump, to prove the program that will restore it can read it.
+      listDump: (source: Readable) =>
+        this.deps.pgTools.restore(
+          this.deps.resources.pgRestore,
+          ['--list'],
+          osEnvironment(),
+          source,
+        ),
+      dataBytes: async () =>
+        (await directoryBytes(this.deps.paths.pgdata)) +
+        (await directoryBytes(this.deps.paths.files)),
       backupKey: () => Buffer.from(this.config.secrets.backupKeyBase64, 'base64'),
       keyWrap: () => this.config.secrets.backupKeyWrap,
       secrets: () => this.adoptionPayload(),
@@ -844,23 +856,57 @@ export class Controller {
     const outcome = await this.exclusive(async () => {
       try {
         const result = await createBackup(this.backupDeps(), 'manual');
-        await pruneBackups(this.deps.paths.backups);
-        return result.path;
+        await this.pruneQuietly();
+        return { path: result.path };
       } catch (error) {
-        this.log(
-          `backup failed: ${error instanceof BackupError ? `${error.message}: ${error.detail}` : String(error)}`,
-        );
-        return null;
+        this.log(`backup failed: ${this.describeBackupFailure(error)}`);
+        return { error };
       }
     });
     if (outcome === 'busy') return null;
-    if (outcome === null) {
-      await this.deps.ui.message('error', TEXT.backup.failed, TEXT.backup.failedBody);
+    if ('error' in outcome) {
+      await this.deps.ui.message(
+        'error',
+        TEXT.backup.failed,
+        this.backupFailureMessage(outcome.error),
+      );
       return null;
     }
-    this.log(`backup created: ${outcome}`);
-    await this.deps.ui.message('info', TEXT.backup.done, TEXT.backup.doneBody(outcome));
-    return outcome;
+    this.log(`backup created: ${outcome.path}`);
+    await this.deps.ui.message('info', TEXT.backup.done, TEXT.backup.doneBody(outcome.path));
+    return outcome.path;
+  }
+
+  private describeBackupFailure(error: unknown): string {
+    if (error instanceof BackupError) return `${error.message}: ${error.detail}`;
+    if (error instanceof DiskFullError) {
+      return `the disk is full (needed ${String(error.needed)}, free ${String(error.free)})`;
+    }
+    return error instanceof Error ? error.message : String(error);
+  }
+
+  /** What the person is told when a backup could not be made: a full disk gets its own words. */
+  private backupFailureMessage(error: unknown): string {
+    if (!isDiskFull(error)) return TEXT.backup.failedBody;
+    if (error instanceof DiskFullError && error.needed > 0) {
+      const gb = (bytes: number) => (bytes / 1024 ** 3).toFixed(1);
+      return `${TEXT.backup.diskFull}\n\n${TEXT.backup.diskNeeds(gb(error.needed), gb(error.free))}`;
+    }
+    return TEXT.backup.diskFull;
+  }
+
+  /** Pruning is housekeeping: its failure never turns a backup that exists into a failed one. */
+  private async pruneQuietly(): Promise<string[]> {
+    try {
+      const pruned = await pruneBackups(this.deps.paths.backups);
+      if (pruned.length > 0) this.log(`${String(pruned.length)} old backups deleted`);
+      return pruned;
+    } catch (error) {
+      this.log(
+        `pruning old backups failed: ${error instanceof Error ? error.message : String(error)}`,
+      );
+      return [];
+    }
   }
 
   /** The first time Consulvia is open on a day, and then every hour it stays open, until one backup of the day exists. */
@@ -869,22 +915,30 @@ export class Controller {
     const today = localDay(this.deps.now());
     if (this.config.settings.lastDailyBackup === today) return;
     await this.exclusive(async () => {
+      let created;
       try {
-        const result = await createBackup(this.backupDeps(), 'daily');
-        const pruned = await pruneBackups(this.deps.paths.backups);
+        created = await createBackup(this.backupDeps(), 'daily');
+      } catch (error) {
+        this.log(`daily backup failed: ${this.describeBackupFailure(error)}`);
+        if (this.lastDailyFailure !== today) {
+          this.lastDailyFailure = today;
+          this.deps.ui.notify(
+            TEXT.backup.failed,
+            isDiskFull(error) ? this.backupFailureMessage(error) : TEXT.backup.dailyFailed,
+          );
+        }
+        return;
+      }
+      // The backup exists and was verified. Nothing after this point can make it a failed one.
+      this.log(`daily backup created: ${created.path}`);
+      try {
         this.config = this.deps.store.update((config) => {
           config.settings.lastDailyBackup = today;
         });
-        this.log(
-          `daily backup created: ${result.path}${pruned.length > 0 ? `; ${String(pruned.length)} old ones deleted` : ''}`,
-        );
       } catch (error) {
-        this.log(`daily backup failed: ${error instanceof Error ? error.message : String(error)}`);
-        if (this.lastDailyFailure !== today) {
-          this.lastDailyFailure = today;
-          this.deps.ui.notify(TEXT.backup.failed, TEXT.backup.dailyFailed);
-        }
+        this.log(`could not write the day of the backup down: ${String(error)}`);
       }
+      await this.pruneQuietly();
     });
   }
 
