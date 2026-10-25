@@ -23,8 +23,24 @@ const KEK_BYTES = 32;
  * jobs (JD-S4 R4-B-T5; the families other than invoicing joined in JD-S5 R4-2).
  */
 export const MIN_DB_POOL_MAX = CONNECTION_HOLDING_JOBS.length * JOB_LOCAL_CONCURRENCY * 2 + 2;
+/** The addresses a process that serves one PC only may listen on. */
+const LOOPBACK_HOSTS: ReadonlySet<string> = new Set(['127.0.0.1', 'localhost', '::1']);
 /** `name@host` or `Display Name <name@host>`. */
 const MAIL_FROM_PATTERN = /^(?:[^<>\r\n]+ <[^\s<>@]+@[^\s<>@]+>|[^\s<>@]+@[^\s<>@]+)$/;
+
+/** True for `http(s)://localhost:<port>` and `http(s)://127.0.0.1:<port>`: the port is required. */
+function isLoopbackOrigin(value: string): boolean {
+  try {
+    const url = new URL(value);
+    return (
+      (url.hostname === 'localhost' || url.hostname === '127.0.0.1') &&
+      url.port !== '' &&
+      /^https?:\/\/(?:localhost|127\.0\.0\.1):\d+/.test(value)
+    );
+  } catch {
+    return false;
+  }
+}
 
 /** The origin of an http(s) URL without credentials, or null. */
 function originOf(value: string): string | null {
@@ -86,6 +102,13 @@ const envSchema = z
      */
     AUDIT_SEALER_DATABASE_URL: z.url({ protocol: /^postgres(ql)?$/ }).optional(),
     DEPLOYMENT_MODE: z.enum(['multi', 'single']).default('multi'),
+    /**
+     * `hosted` (default): the product run by the operator for many clinics, with every production
+     * refusal. `desktop`: one clinic on one Windows PC, behind a loopback server
+     * (docs/desktop/design.md). It relaxes the rows of that table and nothing else, and needs single
+     * mode and production.
+     */
+    DEPLOYMENT_PROFILE: z.enum(['hosted', 'desktop']).default('hosted'),
     /** multi mode: tenants live at `{slug}.BASE_DOMAIN`. Host name only: no scheme, port or path. */
     BASE_DOMAIN: z.string().regex(HOSTNAME).optional(),
     /** multi mode: the host that serves the platform operator console. */
@@ -137,7 +160,8 @@ const envSchema = z
     /** How long a locked account stays locked. */
     AUTH_LOCKOUT_MINUTES: z.coerce.number().int().min(1).max(1440).default(15),
     LOG_LEVEL: z.enum(LOG_LEVELS).default('info'),
-    HOST: z.string().min(1).default('0.0.0.0'),
+    /** Every interface by default; the loopback in the desktop profile, which accepts nothing else. */
+    HOST: z.string().min(1).optional(),
     PORT: z.coerce.number().int().min(1).max(65535).default(3000),
   })
   .superRefine((env, ctx) => {
@@ -146,6 +170,7 @@ const envSchema = z
         ctx.addIssue({ code: 'custom', path: [name], message: reason });
       }
     };
+    const desktop = env.DEPLOYMENT_PROFILE === 'desktop';
 
     if (env.DEPLOYMENT_MODE === 'multi') {
       require('BASE_DOMAIN', 'is required when DEPLOYMENT_MODE is multi');
@@ -153,6 +178,52 @@ const envSchema = z
     } else {
       require('SINGLE_TENANT_SLUG', 'is required when DEPLOYMENT_MODE is single');
       require('PUBLIC_URL', 'is required when DEPLOYMENT_MODE is single');
+    }
+
+    if (desktop) {
+      if (env.DEPLOYMENT_MODE !== 'single') {
+        ctx.addIssue({
+          code: 'custom',
+          path: ['DEPLOYMENT_MODE'],
+          message: 'must be single when DEPLOYMENT_PROFILE is desktop',
+        });
+      }
+      if (env.NODE_ENV !== 'production') {
+        ctx.addIssue({
+          code: 'custom',
+          path: ['NODE_ENV'],
+          message: 'must be production when DEPLOYMENT_PROFILE is desktop',
+        });
+      }
+      if (env.HOST !== undefined && !LOOPBACK_HOSTS.has(env.HOST)) {
+        ctx.addIssue({
+          code: 'custom',
+          path: ['HOST'],
+          message: 'must be 127.0.0.1, localhost or ::1 in the desktop profile',
+        });
+      }
+      if (env.COOKIE_SECURE === true) {
+        ctx.addIssue({
+          code: 'custom',
+          path: ['COOKIE_SECURE'],
+          message: 'must be false in the desktop profile (the loopback address is plain http)',
+        });
+      }
+      const proxy = env.TRUST_PROXY === undefined ? undefined : parseTrustProxy(env.TRUST_PROXY);
+      if (proxy?.ok === true && proxy.value !== false) {
+        ctx.addIssue({
+          code: 'custom',
+          path: ['TRUST_PROXY'],
+          message: 'must be false in the desktop profile (no proxy sits in front of the API)',
+        });
+      }
+      if (env.S3_BUCKET !== undefined) {
+        ctx.addIssue({
+          code: 'custom',
+          path: ['S3_BUCKET'],
+          message: 'is not used in the desktop profile (files are kept on the disk)',
+        });
+      }
     }
 
     if (env.PUBLIC_URL !== undefined) {
@@ -163,6 +234,15 @@ const envSchema = z
           path: ['PUBLIC_URL'],
           message: 'must be an http(s) origin without credentials, such as https://agenda.example',
         });
+      } else if (desktop) {
+        if (!isLoopbackOrigin(env.PUBLIC_URL)) {
+          ctx.addIssue({
+            code: 'custom',
+            path: ['PUBLIC_URL'],
+            message:
+              'must be http(s)://localhost:<port> or http(s)://127.0.0.1:<port> in the desktop profile',
+          });
+        }
       } else if (env.NODE_ENV === 'production' && !origin.startsWith('https://')) {
         ctx.addIssue({
           code: 'custom',
@@ -242,7 +322,8 @@ const envSchema = z
           message: 'static storage keys are not allowed in production; the task role is used',
         });
       }
-      require('SMTP_HOST', 'is required in production (transactional email)');
+      // The desktop profile has no mail server by default: its mail goes to a local outbox.
+      if (!desktop) require('SMTP_HOST', 'is required in production (transactional email)');
       if (env.SMTP_HOST !== undefined && env.SMTP_SECURITY === 'none') {
         ctx.addIssue({
           code: 'custom',
@@ -250,14 +331,15 @@ const envSchema = z
           message: 'the mail connection must use starttls or tls in production',
         });
       }
-      if (keyServiceRequired && env.KMS_PROVIDER === 'local') {
+      // The desktop profile keeps a random key-encryption key of its own per install.
+      if (keyServiceRequired && env.KMS_PROVIDER === 'local' && !desktop) {
         ctx.addIssue({
           code: 'custom',
           path: ['KMS_PROVIDER'],
           message: 'the local key-encryption key is not allowed in production',
         });
       }
-      if (env.COOKIE_SECURE === false) {
+      if (env.COOKIE_SECURE === false && !desktop) {
         ctx.addIssue({
           code: 'custom',
           path: ['COOKIE_SECURE'],
@@ -295,6 +377,8 @@ export interface MailConfig {
 
 export interface Config {
   readonly nodeEnv: 'development' | 'test' | 'production';
+  /** `desktop` is one clinic on one PC (see `DEPLOYMENT_PROFILE`); `hosted` is everything else. */
+  readonly profile: 'hosted' | 'desktop';
   readonly databaseUrl: string;
   /** The most connections of the runtime pool (`DB_POOL_MAX`). */
   readonly dbPoolMax: number;
@@ -356,7 +440,9 @@ function kmsFrom(value: z.output<typeof envSchema>): KmsConfig {
 }
 
 function trustProxyFrom(value: z.output<typeof envSchema>): TrustProxySetting {
-  if (value.TRUST_PROXY === undefined) return value.NODE_ENV === 'production' ? 1 : false;
+  if (value.TRUST_PROXY === undefined) {
+    return value.NODE_ENV === 'production' && value.DEPLOYMENT_PROFILE === 'hosted' ? 1 : false;
+  }
   const parsed = parseTrustProxy(value.TRUST_PROXY);
   // superRefine guarantees the value is valid.
   return parsed.ok ? parsed.value : false;
@@ -413,13 +499,17 @@ export function loadConfig(
     throw new ConfigError(`Invalid environment configuration. ${problems.join('; ')}`);
   }
   // The provider variables have their own small schema too; production refuses a simulator.
-  const providers = readProviderConfig(withoutEmptyValues(env), { nodeEnv: value.NODE_ENV });
+  const providers = readProviderConfig(withoutEmptyValues(env), {
+    nodeEnv: value.NODE_ENV,
+    profile: value.DEPLOYMENT_PROFILE,
+  });
   if (providers.config === undefined) {
     const problems = providers.problems.map((problem) => `${problem.path}: ${problem.message}`);
     throw new ConfigError(`Invalid environment configuration. ${problems.join('; ')}`);
   }
   return {
     nodeEnv: value.NODE_ENV,
+    profile: value.DEPLOYMENT_PROFILE,
     databaseUrl: value.DATABASE_URL,
     dbPoolMax: value.DB_POOL_MAX,
     ...(value.AUDIT_SEALER_DATABASE_URL === undefined
@@ -435,7 +525,9 @@ export function loadConfig(
     ...(value.SINGLE_TENANT_SLUG === undefined
       ? {}
       : { singleTenantSlug: value.SINGLE_TENANT_SLUG }),
-    cookieSecure: value.COOKIE_SECURE ?? value.NODE_ENV === 'production',
+    cookieSecure:
+      value.COOKIE_SECURE ??
+      (value.NODE_ENV === 'production' && value.DEPLOYMENT_PROFILE === 'hosted'),
     trustProxy: trustProxyFrom(value),
     ...(value.PUBLIC_URL === undefined ? {} : { publicUrl: originOf(value.PUBLIC_URL) ?? '' }),
     ...(value.PUBLIC_PORT === undefined ? {} : { publicPort: value.PUBLIC_PORT }),
@@ -479,7 +571,7 @@ export function loadConfig(
       lockMs: value.AUTH_LOCKOUT_MINUTES * 60_000,
     },
     logLevel: value.LOG_LEVEL,
-    host: value.HOST,
+    host: value.HOST ?? (value.DEPLOYMENT_PROFILE === 'desktop' ? '127.0.0.1' : '0.0.0.0'),
     port: value.PORT,
   };
 }

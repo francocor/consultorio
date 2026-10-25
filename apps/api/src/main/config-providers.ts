@@ -200,6 +200,60 @@ export interface ProviderConfig extends ProviderSelection {
 export type ProviderEnvProblem = { path: string; message: string };
 
 /**
+ * The desktop profile (docs/desktop/design.md): one PC, no internet to count on. Every provider is off
+ * and the bot challenge is the local one, a puzzle that needs no account. Nothing is a simulator that
+ * would pretend to send, because nothing is sent.
+ */
+const DESKTOP_PROVIDERS: ProviderSelection = {
+  whatsapp: 'off',
+  video: 'off',
+  botChallenge: 'local',
+  afip: 'off',
+  erx: 'off',
+  payments: 'off',
+};
+
+/**
+ * In the desktop profile a provider variable may only repeat what the profile already is. A simulator
+ * is refused rather than quietly turned off, so a mistake in the shell shows at boot and not as a
+ * message that was never sent.
+ */
+function checkDesktopProviders(value: z.infer<typeof providerEnv>): ProviderEnvProblem[] {
+  const problems: ProviderEnvProblem[] = [];
+  const mustBeOff = {
+    WHATSAPP_PROVIDER: value.WHATSAPP_PROVIDER,
+    VIDEO_PROVIDER: value.VIDEO_PROVIDER,
+    AFIP_PROVIDER: value.AFIP_PROVIDER,
+    ERX_PROVIDER: value.ERX_PROVIDER,
+    PAYMENTS_PROVIDER: value.PAYMENTS_PROVIDER,
+  };
+  for (const [path, selected] of Object.entries(mustBeOff)) {
+    if (selected !== undefined && selected !== 'off') {
+      problems.push({ path, message: 'must be off (or unset) in the desktop profile' });
+    }
+  }
+  if (value.BOT_CHALLENGE !== undefined && value.BOT_CHALLENGE !== 'local') {
+    problems.push({
+      path: 'BOT_CHALLENGE',
+      message: 'must be local (or unset) in the desktop profile',
+    });
+  }
+  if (value.LOCAL_PROVIDERS_CONSOLE) {
+    problems.push({
+      path: 'LOCAL_PROVIDERS_CONSOLE',
+      message: 'is not available in the desktop profile',
+    });
+  }
+  if (value.ARCHIVE_S3_BUCKET !== undefined) {
+    problems.push({
+      path: 'ARCHIVE_S3_BUCKET',
+      message: 'is not used in the desktop profile (there is no retention archive)',
+    });
+  }
+  return problems;
+}
+
+/**
  * Reads the provider settings. Outside production a provider that is not named runs on its local
  * simulator; production defaults to "no simulator" (WhatsApp and video off, the real bot
  * challenge), so an existing production configuration keeps starting. The problems carry variable
@@ -207,7 +261,7 @@ export type ProviderEnvProblem = { path: string; message: string };
  */
 export function readProviderConfig(
   env: NodeJS.ProcessEnv,
-  context: { nodeEnv: NodeEnvironment },
+  context: { nodeEnv: NodeEnvironment; profile?: 'hosted' | 'desktop' },
 ): { config?: ProviderConfig; problems: ProviderEnvProblem[] } {
   const parsed = providerEnv.safeParse(env);
   if (!parsed.success) {
@@ -220,21 +274,26 @@ export function readProviderConfig(
   }
   const value = parsed.data;
   const production = context.nodeEnv === 'production';
-  const selection: ProviderSelection = {
-    whatsapp: value.WHATSAPP_PROVIDER ?? (production ? 'off' : 'local'),
-    video: value.VIDEO_PROVIDER ?? (production ? 'off' : 'local'),
-    botChallenge: value.BOT_CHALLENGE ?? (production ? 'turnstile' : 'local'),
-    afip: value.AFIP_PROVIDER ?? (production ? 'off' : 'local'),
-    erx: value.ERX_PROVIDER ?? (production ? 'off' : 'local'),
-    payments: value.PAYMENTS_PROVIDER ?? (production ? 'off' : 'local'),
-  };
+  const desktop = context.profile === 'desktop';
+  const selection: ProviderSelection = desktop
+    ? DESKTOP_PROVIDERS
+    : {
+        whatsapp: value.WHATSAPP_PROVIDER ?? (production ? 'off' : 'local'),
+        video: value.VIDEO_PROVIDER ?? (production ? 'off' : 'local'),
+        botChallenge: value.BOT_CHALLENGE ?? (production ? 'turnstile' : 'local'),
+        afip: value.AFIP_PROVIDER ?? (production ? 'off' : 'local'),
+        erx: value.ERX_PROVIDER ?? (production ? 'off' : 'local'),
+        payments: value.PAYMENTS_PROVIDER ?? (production ? 'off' : 'local'),
+      };
 
-  const problems: ProviderEnvProblem[] = checkLocalProviders({
-    nodeEnv: context.nodeEnv,
-    selection,
-    allowLocalProviders: value.ALLOW_LOCAL_PROVIDERS,
-    localProvidersConsole: value.LOCAL_PROVIDERS_CONSOLE,
-  });
+  const problems: ProviderEnvProblem[] = desktop
+    ? checkDesktopProviders(value)
+    : checkLocalProviders({
+        nodeEnv: context.nodeEnv,
+        selection,
+        allowLocalProviders: value.ALLOW_LOCAL_PROVIDERS,
+        localProvidersConsole: value.LOCAL_PROVIDERS_CONSOLE,
+      });
   if (selection.whatsapp === 'meta' && value.WHATSAPP_APP_SECRET === undefined) {
     problems.push({
       path: 'WHATSAPP_APP_SECRET',
