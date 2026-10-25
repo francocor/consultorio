@@ -9,6 +9,7 @@ export const TEXT = {
     starting: 'Iniciando Consulvia…',
     database: 'Preparando la base de datos…',
     restoring: 'Restaurando la copia de seguridad…',
+    upgradeBackup: 'Haciendo una copia de seguridad antes de actualizar…',
   },
 
   tray: {
@@ -165,6 +166,10 @@ export const TEXT = {
       'Un componente de Consulvia no pudo iniciar o se detuvo varias veces seguidas. Abra los registros para ver el detalle.',
     generic:
       'Ocurrió un error inesperado al iniciar Consulvia. Abra los registros para ver el detalle.',
+    downgrade:
+      'Los datos de esta instalación fueron creados por una versión de Consulvia más nueva que la que está instalada. Instale la versión más reciente de Consulvia. No se cambió nada.',
+    upgradeBackup:
+      'Antes de actualizar la base de datos, Consulvia hace una copia de seguridad, y esa copia no se pudo hacer. No se actualiza sin ella: sus datos no se modificaron. Libere espacio en el disco o abra los registros para ver el detalle.',
     migration:
       'No se pudieron aplicar las actualizaciones de la base de datos. Sus datos no se modificaron. Abra los registros para ver el detalle.',
   },

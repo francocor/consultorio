@@ -80,12 +80,20 @@ async function assertPacked(staged: string, resources: string): Promise<void> {
 }
 
 export async function dist(
-  options: { skipBuild?: boolean; reuseStage?: boolean; dirOnly?: boolean } = {},
+  options: {
+    skipBuild?: boolean;
+    reuseStage?: boolean;
+    dirOnly?: boolean;
+    /** Builds as this version instead of the one in package.json (the upgrade test builds 0.1.1 from 0.1.0). */
+    version?: string;
+  } = {},
 ): Promise<string> {
   const manifest = JSON.parse(await readFile(join(desktopRoot, 'package.json'), 'utf8')) as {
     version: string;
     devDependencies: Record<string, string>;
   };
+  const version = options.version ?? manifest.version;
+  if (!/^\d+\.\d+\.\d+$/.test(version)) throw new Error(`The version "${version}" is not x.y.z`);
   const electronVersion = manifest.devDependencies['electron'];
   if (electronVersion === undefined || !/^\d+\.\d+\.\d+$/.test(electronVersion)) {
     throw new Error('apps/desktop/package.json must pin electron to an exact version');
@@ -96,7 +104,7 @@ export async function dist(
   } else {
     await stage({ skipBuild: options.skipBuild === true });
   }
-  const appDir = await appDirectory(manifest.version);
+  const appDir = await appDirectory(version);
 
   await rm(releaseDir, { recursive: true, force: true });
   await build({
@@ -104,7 +112,15 @@ export async function dist(
     // builder at the workspace package instead would pack the PostgreSQL binaries a second time as a "dependency".
     projectDir: appDir,
     targets: Platform.WINDOWS.createTarget(options.dirOnly === true ? 'dir' : 'nsis', Arch.x64),
-    config: { ...builderConfig({ stageDir, buildDir, outputDir: releaseDir }), electronVersion },
+    config: {
+      ...builderConfig({
+        stageDir,
+        buildDir,
+        outputDir: releaseDir,
+        nsisInclude: join(desktopRoot, 'installer', 'installer.nsh'),
+      }),
+      electronVersion,
+    },
   });
 
   await assertPacked(stageDir, join(releaseDir, 'win-unpacked', 'resources'));
@@ -113,7 +129,7 @@ export async function dist(
     return join(releaseDir, 'win-unpacked');
   }
 
-  const installer = join(releaseDir, `Consulvia-Setup-${manifest.version}.exe`);
+  const installer = join(releaseDir, `Consulvia-Setup-${version}.exe`);
   const { size } = await stat(installer);
   const digest = await sha256Of(installer);
   await writeFile(`${installer}.sha256`, `${digest} *${installer.split(/[\\/]/).pop() ?? ''}\n`);
@@ -123,10 +139,15 @@ export async function dist(
   return installer;
 }
 
+const versionArgument = process.argv
+  .find((argument) => argument.startsWith('--version='))
+  ?.slice('--version='.length);
+
 if (process.argv[1] !== undefined && fileURLToPath(import.meta.url) === process.argv[1]) {
   await dist({
     skipBuild: process.argv.includes('--skip-build'),
     reuseStage: process.argv.includes('--reuse-stage'),
     dirOnly: process.argv.includes('--dir-only'),
+    ...(versionArgument === undefined ? {} : { version: versionArgument }),
   });
 }

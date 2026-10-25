@@ -404,6 +404,7 @@ export class Controller {
     await this.prepareDatabase();
     await this.reconcileRestore();
 
+    await this.guardMigrations();
     await this.deps.commands.migrate(
       migrateEnvironment({ config: this.config, databasePort: this.requireDatabasePort() }),
     );
@@ -554,6 +555,35 @@ export class Controller {
     const port = this.cluster.runningPort;
     if (port === null) throw new PostgresError('the database server is not running');
     return port;
+  }
+
+  /**
+   * Before the migrations run: a database from a NEWER version is not opened by this one (a downgrade would
+   * read it wrongly), and a database from an older one gets a verified backup first, because a migration
+   * that fails half way is not undone.
+   */
+  private async guardMigrations(): Promise<void> {
+    const applied = await this.cluster.appliedMigrationCount();
+    if (applied === null) return;
+    const bundled = migrationCountOf(this.deps.resources);
+    if (applied > bundled) {
+      throw new ShellError(
+        TEXT.errors.downgrade,
+        `the database has ${String(applied)} migrations and this version knows ${String(bundled)}`,
+      );
+    }
+    if (applied === bundled || !this.config.provisioned) return;
+    this.deps.ui.showSplash(TEXT.splash.upgradeBackup);
+    try {
+      const backup = await createBackup(this.backupDeps(), 'upgrade');
+      this.log(`backup before the update of the database: ${backup.path}`);
+      await this.pruneQuietly();
+    } catch (error) {
+      throw new ShellError(
+        TEXT.errors.upgradeBackup,
+        `the backup before the update failed: ${this.describeBackupFailure(error)}`,
+      );
+    }
   }
 
   /** A restore that was cut off (a power cut, a crash) is finished or undone before anything uses the database. */

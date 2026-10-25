@@ -47,6 +47,8 @@ const pidFileText = (pid: number, port: number, status: string) =>
   [pid, 'C:/data', 1700000000, port, '', '127.0.0.1', 123456, status, ''].join('\n');
 
 let connectFails: number;
+let answerRows: Record<string, unknown>[] | null;
+let missingTable: boolean;
 
 function cluster(
   overrides: {
@@ -79,6 +81,14 @@ function cluster(
           failQueryContaining = null;
           return Promise.reject(new Error('rename failed'));
         }
+        if (missingTable && sql.includes('__drizzle_migrations')) {
+          return Promise.reject(
+            Object.assign(new Error('relation does not exist'), { code: '42P01' }),
+          );
+        }
+        if (answerRows !== null && sql.includes('__drizzle_migrations')) {
+          return Promise.resolve({ rows: answerRows });
+        }
         return Promise.resolve({
           rows: sql.includes('pg_database') && databaseExists ? [{ '?column?': 1 }] : [],
         });
@@ -104,6 +114,8 @@ beforeEach(() => {
   databaseExists = false;
   failQueryContaining = null;
   connectFails = 0;
+  answerRows = null;
+  missingTable = false;
 });
 
 afterEach(() => {
@@ -143,6 +155,29 @@ describe('creating the cluster', () => {
     expect(failure).toBeInstanceOf(PostgresError);
     expect((failure as PostgresError).detail).toContain('could not create directory');
     expect(existsSync(join(folder, 'tmp', `initdb-${String(process.pid)}.pw`))).toBe(false);
+  });
+});
+
+describe('the migrations a database has had applied', () => {
+  it('counts the rows of the table the migrator keeps, in the database of the product', async () => {
+    const pg = cluster();
+    await pg.start();
+    answerRows = [{ n: 77 }];
+
+    expect(await pg.appliedMigrationCount()).toBe(77);
+
+    expect(queries.at(-1)).toMatchObject({
+      sql: expect.stringContaining('drizzle.__drizzle_migrations') as string,
+      target: { database: 'consultorio' },
+    });
+  });
+
+  it('says null for a database that has none yet: a first run, not an old version', async () => {
+    const pg = cluster();
+    await pg.start();
+    missingTable = true;
+
+    expect(await pg.appliedMigrationCount()).toBeNull();
   });
 });
 

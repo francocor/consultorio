@@ -93,7 +93,7 @@ Modules (`apps/desktop/src`), each unit-tested with Electron injected or absent:
 4. `pnpm --filter @consultorio/desktop verify:installer`. Do not release if a step fails.
 5. Publish `Consulvia-Setup-<version>.exe` and its `.sha256` (for example as a GitHub Release asset of a tag `desktop-v<version>`) and give clinics the SHA-256.
 
-**Updates:** a clinic runs the new installer over the old one; the data in `%LOCALAPPDATA%\Consulvia` is untouched and the shell applies new migrations (`migrate`) at the next start. There is no automatic updater yet.
+**Updates:** a clinic runs the new installer over the old one; the data in `%LOCALAPPDATA%\Consulvia` is untouched. `installer/installer.nsh` replaces the stock "is the app running" step of electron-builder: it runs `Consulvia.exe --quit` (the same as "Salir") and waits up to 90 s for the program, its children and the database to exit, and only then ends what is left by force. At the next start the shell makes a verified backup (`previa-actualizacion`) when the bundled migration count is higher than the applied one, refuses to start when it is lower (a downgrade), and then applies the migrations (`migrate`). There is no automatic updater yet. `dist --version=x.y.z` builds an installer of another version (the upgrade test builds 0.1.1 over 0.1.0).
 
 **Signing:** the installer is **not signed**, so Windows SmartScreen warns ("Windows protegió su PC"). With a code-signing certificate, set `win.certificateFile` / `certificatePassword` (or `azureSignOptions`) in `apps/desktop/scripts/builder-config.ts` from environment variables; never commit a certificate. electron-builder already tries to sign every program it packs and skips it when none is configured.
 

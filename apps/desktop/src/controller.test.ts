@@ -104,6 +104,10 @@ let cipherBroken = false;
 let listCode = 0;
 /** The database server answers its pings. */
 let databaseAlive = true;
+/** How many migrations the database has had applied; `null` is a new one. */
+let appliedMigrations: number | null = null;
+/** What the backups folder held each time `migrate` was called. */
+let backupsAtMigrate: string[][] = [];
 /** A process of the install that dies as soon as it is started, by role. */
 let dieOnSpawn: Partial<Record<'api' | 'worker', boolean>> = {};
 let provisionFails: ApiCommandError | null = null;
@@ -227,6 +231,7 @@ function build(
     },
     isInitialized: () => existsSync(join(paths.pgdata, 'PG_VERSION')),
     ping: () => Promise.resolve(databaseAlive),
+    appliedMigrationCount: () => Promise.resolve(appliedMigrations),
     listDatabases: () => Promise.resolve([...databaseNames]),
     renameDatabase: (from: string, to: string) => {
       events.push(`rename ${from} ${to}`);
@@ -277,6 +282,7 @@ function build(
     migrate: (env) => {
       commandCalls.push({ command: 'migrate', env });
       events.push('migrate');
+      backupsAtMigrate.push(existsSync(paths.backups) ? readdirSync(paths.backups) : []);
       if (migrateFails) {
         return Promise.reject(new ApiCommandError('migrate', 1, { error: 'failed' }, 'boom'));
       }
@@ -462,6 +468,8 @@ beforeEach(() => {
   cipherBroken = false;
   listCode = 0;
   databaseAlive = true;
+  appliedMigrations = null;
+  backupsAtMigrate = [];
   dieOnSpawn = {};
   provisionFails = null;
   resetFails = null;
@@ -827,6 +835,83 @@ describe('the reminder to copy the backups off this PC', () => {
     const third = build(harness.folder);
     await third.controller.start();
     expect(reminders(third)).toHaveLength(0);
+  });
+});
+
+describe('an update of the program', () => {
+  async function provisionedFolder(): Promise<string> {
+    await harness.controller.start();
+    const url = setupUrl() ?? '';
+    await post(new URL('/__setup', url).href, tokenOf(url), form);
+    await vi.waitFor(() => {
+      expect(harness.config().settings.lastDailyBackup).not.toBeNull();
+    });
+    await harness.controller.quit();
+    backupsAtMigrate = [];
+    return harness.folder;
+  }
+
+  const dialog = (target: Harness) =>
+    target.uiCalls.find((call) => call[0] === 'choose' && call[1] === 'Consulvia no pudo iniciar');
+
+  it('makes a verified backup before it migrates a database that is behind', async () => {
+    const folder = await provisionedFolder();
+    appliedMigrations = 1; // the bundle knows 2
+
+    const next = build(folder);
+    await next.controller.start();
+
+    expect(backupsAtMigrate).toHaveLength(1);
+    expect(backupsAtMigrate[0]?.some((name) => name.includes('previa-actualizacion'))).toBe(true);
+    expect(
+      Object.keys(await readLedger(next.paths.backups)).some((name) =>
+        name.includes('previa-actualizacion'),
+      ),
+    ).toBe(true);
+    expect(next.controller.phase).toBe('ready');
+  });
+
+  it('does not make one when the database is up to date, or new', async () => {
+    const folder = await provisionedFolder();
+    appliedMigrations = 2;
+    const current = build(folder);
+    await current.controller.start();
+    await current.controller.quit();
+
+    expect(backupsAtMigrate[0]?.some((name) => name.includes('previa-actualizacion'))).toBe(false);
+  });
+
+  it('does not migrate at all when that backup cannot be made', async () => {
+    const folder = await provisionedFolder();
+    appliedMigrations = 1;
+    listCode = 1;
+
+    const next = build(folder);
+    await next.controller.start();
+
+    expect(backupsAtMigrate).toEqual([]);
+    expect(next.events).not.toContain('migrate');
+    expect(dialog(next)).toBeDefined();
+    expect(
+      next.uiCalls.some(
+        (call) => call[0] === 'splash' && String(call[1]).includes('copia de seguridad previa'),
+      ),
+    ).toBe(false);
+  });
+
+  it('refuses a database made by a newer version, before it touches it, with no way to start over', async () => {
+    const folder = await provisionedFolder();
+    appliedMigrations = 3; // the bundle knows 2
+
+    const next = build(folder);
+    await next.controller.start();
+
+    expect(backupsAtMigrate).toEqual([]);
+    expect(next.events).not.toContain('migrate');
+    expect(dialog(next)?.[2]).toEqual(['Reintentar', 'Ver registros', 'Salir']);
+    expect(
+      next.uiCalls.some((call) => call[0] === 'splash' && String(call[1]).includes('más nueva')),
+    ).toBe(true);
   });
 });
 

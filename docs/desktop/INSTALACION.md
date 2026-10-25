@@ -23,7 +23,7 @@ Consulvia es el sistema de gestión del consultorio: agenda, pacientes, historia
 2. Si Windows muestra _"Windows protegió su PC"_, el instalador todavía no está firmado digitalmente. Elija **Más información** y después **Ejecutar de todas formas**. Haga esto solo con un instalador que le entregó quien le brinda el servicio.
 3. La instalación es de un solo paso, sin preguntas. Al terminar se crea un acceso directo **Consulvia** en el escritorio y en el menú Inicio, y Consulvia se abre sola.
 
-El programa se instala para el usuario de Windows que lo instala, en `%LOCALAPPDATA%\Programs\Consulvia`. Para actualizar, ejecute el instalador de la versión nueva: sus datos se conservan.
+El programa se instala para el usuario de Windows que lo instala, en `%LOCALAPPDATA%\Programs\Consulvia`. Para actualizar, ejecute el instalador de la versión nueva: sus datos se conservan. Si Consulvia está abierto, el instalador le pide que se cierre por sí mismo (como **Salir**) y espera a que termine antes de reemplazar archivos; no lo cierre desde el Administrador de tareas. Cuando la versión nueva trae cambios en la base de datos, Consulvia hace antes una **copia de seguridad previa a la actualización** (`consulvia-previa-actualizacion-…`) y no actualiza si esa copia no se pudo hacer. Una versión **anterior** a la que creó los datos se niega a abrirlos: instale la versión más reciente.
 
 ## Primer inicio
 

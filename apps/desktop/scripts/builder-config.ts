@@ -7,6 +7,8 @@ export interface BuilderPaths {
   buildDir: string;
   /** Where the installer is written. */
   outputDir: string;
+  /** `installer/installer.nsh`: the steps the stock NSIS script lets a project replace. */
+  nsisInclude: string;
 }
 
 /**
@@ -60,6 +62,8 @@ export function builderConfig(paths: BuilderPaths): Configuration {
       // The data of the clinic outlives the program.
       deleteAppDataOnUninstall: false,
       installerLanguages: ['es_ES'],
+      // Asks a running Consulvia to quit by itself before its files are replaced (see the file).
+      include: paths.nsisInclude,
       artifactName: 'Consulvia-Setup-${version}.${ext}',
     },
     publish: null,

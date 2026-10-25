@@ -207,6 +207,26 @@ export class PostgresCluster {
     }
   }
 
+  /**
+   * How many migrations the database of the product has had applied (the rows of the table the migrator keeps),
+   * or `null` when it has none: a database that is new.
+   */
+  async appliedMigrationCount(): Promise<number | null> {
+    try {
+      return await this.asSuperuser(DATABASE_NAME, async (client) => {
+        const found = await client.query(
+          'SELECT count(*)::int AS n FROM drizzle.__drizzle_migrations',
+        );
+        return Number(found.rows[0]?.['n'] ?? 0);
+      });
+    } catch (error) {
+      // The table or its schema is not there: nothing was ever migrated.
+      const code = (error as { code?: unknown } | null)?.code;
+      if (code === '42P01' || code === '3F000') return null;
+      throw error;
+    }
+  }
+
   /** True when the server answers a query now; never throws. */
   async ping(): Promise<boolean> {
     if (this.port === null) return false;
