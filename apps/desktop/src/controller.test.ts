@@ -9,6 +9,7 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { request as httpRequest } from 'node:http';
+import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { PassThrough } from 'node:stream';
@@ -302,6 +303,7 @@ function build(folder: string, options: { testMode?: boolean } = {}): Harness {
       worker: createRotatingLog(join(paths.logs, 'worker.log')),
     },
     testMode: options.testMode ?? false,
+    portRetry: { sleep: () => Promise.resolve() },
     now: () => clock,
     requestQuit: () => {
       result.quitRequests += 1;
@@ -407,6 +409,40 @@ beforeEach(() => {
 afterEach(async () => {
   await Promise.all(controllers.map((controller) => controller.quit()));
   for (const folder of folders) rmSync(folder, { recursive: true, force: true });
+});
+
+describe('the port of the local server', () => {
+  it('tells the person, once, that links in older emails stopped working when the port had to move', async () => {
+    await harness.controller.start();
+    const stored = harness.config().port;
+    await harness.controller.quit();
+    const taken = createServer();
+    await new Promise<void>((resolve) => taken.listen(stored, '127.0.0.1', resolve));
+    try {
+      const next = build(harness.folder);
+
+      await next.controller.start();
+
+      expect(next.config().port).not.toBe(stored);
+      const notices = next.uiCalls.filter(
+        (call) => call[0] === 'message' && call[2] === 'La dirección local de Consulvia cambió',
+      );
+      expect(notices).toHaveLength(1);
+      expect(String(notices[0]?.[3])).toContain(String(stored));
+    } finally {
+      await new Promise((resolve) => taken.close(resolve));
+    }
+  });
+
+  it('says nothing when the port stays where it was', async () => {
+    await harness.controller.start();
+    await harness.controller.quit();
+    const next = build(harness.folder);
+
+    await next.controller.start();
+
+    expect(next.uiCalls.some((call) => call[0] === 'message')).toBe(false);
+  });
 });
 
 describe('the first run', () => {

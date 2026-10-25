@@ -40,14 +40,54 @@ describe('ports', () => {
       expect(await chooseServerPort(51234, () => Promise.resolve(true), never)).toBe(51234);
     });
 
-    it('moves to a free port only when the stored one is taken by something else', async () => {
+    const noWait = { sleep: () => Promise.resolve() };
+
+    it('moves to a free port only when the stored one stays taken by something else', async () => {
       const port = await chooseServerPort(
         51234,
         () => Promise.resolve(false),
         () => Promise.resolve(52000),
+        noWait,
       );
 
       expect(port).toBe(52000);
+    });
+
+    it('tries the stored port again before it moves: a port in TIME_WAIT or held for a moment frees itself', async () => {
+      const answers = [false, false, true];
+      let waits = 0;
+
+      const port = await chooseServerPort(
+        51234,
+        () => Promise.resolve(answers.shift() ?? false),
+        never,
+        {
+          attempts: 5,
+          sleep: () => {
+            waits += 1;
+            return Promise.resolve();
+          },
+        },
+      );
+
+      expect(port).toBe(51234);
+      expect(waits).toBe(2);
+    });
+
+    it('gives up after the attempts it was allowed, and no more', async () => {
+      let asked = 0;
+
+      await chooseServerPort(
+        51234,
+        () => {
+          asked += 1;
+          return Promise.resolve(false);
+        },
+        () => Promise.resolve(52000),
+        { attempts: 4, sleep: () => Promise.resolve() },
+      );
+
+      expect(asked).toBe(4);
     });
   });
 });

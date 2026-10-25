@@ -25,12 +25,12 @@ afterEach(() => {
 });
 
 describe('the outbox', () => {
-  it('deletes the messages older than a week, both files of each, and keeps the rest', async () => {
+  it('deletes the messages older than two months, both files of each, and keeps the rest', async () => {
     const day = 24 * 60 * 60 * 1000;
-    entry('20260101T000000000Z-aaaaaaaa.eml', 30 * day);
-    entry('20260101T000000000Z-aaaaaaaa.json', 30 * day);
-    entry('20261018T110000000Z-bbbbbbbb.eml', 6 * day);
-    entry('20261018T110000000Z-bbbbbbbb.json', 6 * day);
+    entry('20260101T000000000Z-aaaaaaaa.eml', 70 * day);
+    entry('20260101T000000000Z-aaaaaaaa.json', 70 * day);
+    entry('20261018T110000000Z-bbbbbbbb.eml', 30 * day);
+    entry('20261018T110000000Z-bbbbbbbb.json', 30 * day);
     entry('20261024T110000000Z-cccccccc.eml', 1000);
 
     const deleted = await pruneOutbox(folder, () => now);
@@ -40,7 +40,7 @@ describe('the outbox', () => {
     expect(existsSync(join(folder, '20260101T000000000Z-aaaaaaaa.json'))).toBe(false);
     expect(existsSync(join(folder, '20261018T110000000Z-bbbbbbbb.eml'))).toBe(true);
     expect(existsSync(join(folder, '20261024T110000000Z-cccccccc.eml'))).toBe(true);
-    expect(OUTBOX_MAX_AGE_MS).toBe(7 * day);
+    expect(OUTBOX_MAX_AGE_MS).toBe(60 * day);
   });
 
   it('ignores what is not mail, and folders', async () => {

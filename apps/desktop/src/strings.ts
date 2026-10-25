@@ -80,6 +80,12 @@ export const TEXT = {
       'Se superó el número de intentos. Cierre esta ventana y vuelva a empezar desde el icono de Consulvia.',
   },
 
+  port: {
+    movedTitle: 'La dirección local de Consulvia cambió',
+    moved: (from: number, to: number) =>
+      `El puerto ${String(from)} lo estaba usando otro programa, y Consulvia ahora usa el ${String(to)}. Los enlaces de los correos enviados antes (restablecer contraseña, invitaciones) dejaron de funcionar: vuelva a pedirlos.`,
+  },
+
   recoveryKey: {
     windowTitle: 'Consulvia: clave de recuperación',
     title: 'Clave de recuperación',

@@ -37,7 +37,7 @@ import { createLocalServer, loadContentSecurityPolicy, type LocalServer } from '
 import { pruneOutbox } from './outbox.js';
 import { loadCommonPasswordsSync, messagesForIssues } from './password-check.js';
 import type { DataPaths } from './paths.js';
-import { chooseServerPort, findFreePort } from './ports.js';
+import { chooseServerPort, findFreePort, type PortRetry } from './ports.js';
 import { DATABASE_NAME, type PostgresCluster, PostgresError, SUPERUSER } from './postgres.js';
 import { redact } from './redact.js';
 import { migrationCountOf, missingResources, type Resources } from './resources.js';
@@ -109,6 +109,8 @@ export interface ControllerDeps {
   logs: { shell: RotatingLog; api: RotatingLog; worker: RotatingLog };
   /** The tests of the installer drive the app from outside; some conveniences exist only then. */
   testMode: boolean;
+  /** How long the stored port of the local server is waited for. Tests do not wait. */
+  portRetry?: PortRetry;
   now: () => Date;
   /** Leaves the program (the dialogs ask for it). The caller ends with `quit()`. */
   requestQuit: () => void;
@@ -197,6 +199,8 @@ export class Controller {
   private lastDailyFailure: string | null = null;
   private commonPasswordSet: ReadonlySet<string> | null = null;
   private pendingRestore: { archive: string } | null = null;
+  /** The port the local server had before this start, when it had to move: links already sent name it. */
+  private movedFromPort: number | null = null;
   /** Wrong recovery keys typed on the reset page that is open. */
   private resetAttempts = 0;
   private readonly listeners = new Set<() => void>();
@@ -317,10 +321,24 @@ export class Controller {
 
     if (!this.config.provisioned) {
       this.beginSetup();
+      this.announcePortMove();
       return;
     }
     await this.startServices();
     this.finishStart();
+    this.announcePortMove();
+  }
+
+  /** Tells the person once that the address of the program changed, because links in older emails stop working. */
+  private announcePortMove(): void {
+    const from = this.movedFromPort;
+    this.movedFromPort = null;
+    if (from === null) return;
+    void this.deps.ui.message(
+      'info',
+      TEXT.port.movedTitle,
+      TEXT.port.moved(from, this.config.port),
+    );
   }
 
   private async loadOrCreateConfig(): Promise<void> {
@@ -366,8 +384,14 @@ export class Controller {
 
   private async startLocalServer(): Promise<void> {
     const { resources, paths } = this.deps;
-    const port = await chooseServerPort(this.config.port);
+    const port = await chooseServerPort(
+      this.config.port,
+      undefined,
+      undefined,
+      this.deps.portRetry,
+    );
     if (port !== this.config.port) {
+      this.movedFromPort = this.config.port;
       this.log(
         `port ${String(this.config.port)} is in use; the local server moves to ${String(port)}`,
       );
