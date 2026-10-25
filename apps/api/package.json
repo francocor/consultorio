@@ -15,6 +15,8 @@
     "db:new": "tsx scripts/new-migration.ts",
     "db:restamp": "tsx scripts/restamp-migrations.ts",
     "db:check": "tsx scripts/check-migration-drift.ts",
+    "provision:local": "tsx scripts/provision-local.ts",
+    "owner:reset-password": "tsx scripts/reset-owner-password.ts",
     "operator:create": "tsx --env-file-if-exists=../../.env scripts/create-operator.ts",
     "operator:code": "tsx scripts/totp-code.ts",
     "build": "tsx scripts/build.ts",

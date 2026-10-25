@@ -21,6 +21,8 @@ import { createTokenPurgeJob } from '../platform/tokens/purge-job.js';
 import { createAdapterResolver, createTenantRoutedEmail } from './adapter-resolver.js';
 import { buildAdapterRegistry } from './adapters.js';
 import { createApplication } from './application.js';
+import { COMMAND_NAMES, isCommandName, runCommand } from './commands/index.js';
+import { processIo } from './commands/process-io.js';
 import { ConfigError, loadConfig, type Config } from './config.js';
 import { deploymentFromConfig } from './deployment.js';
 import { documentWorker } from './document-jobs.js';
@@ -355,8 +357,15 @@ async function runWorker(config: Config): Promise<void> {
 
 async function main(): Promise<void> {
   const role = process.argv[2];
+  // The one-shot commands (provision, reset-password, migrate) are not processes of the application.
+  // The exit code is the answer, and the process ends by itself once the streams have drained, so
+  // nothing written is cut short.
+  if (isCommandName(role)) {
+    process.exitCode = await runCommand(role, processIo(process.argv.slice(3)));
+    return;
+  }
   if (!isRole(role)) {
-    process.stderr.write(`Usage: main.js <${ROLES.join('|')}>\n`);
+    process.stderr.write(`Usage: main.js <${[...ROLES, ...COMMAND_NAMES].join('|')}>\n`);
     process.exit(2);
   }
 
