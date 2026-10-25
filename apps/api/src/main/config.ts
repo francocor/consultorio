@@ -160,6 +160,16 @@ const envSchema = z
       .optional(),
     /** Signs the upload links of the disk storage (HMAC). Random per install; at least 32 characters. */
     STORAGE_UPLOAD_SECRET: z.string().min(32).optional(),
+    /**
+     * Mail without a mail server: each message is written to this folder as an `.eml` file with a JSON
+     * entry beside it, and counts as sent. The desktop profile needs it when it has no SMTP_HOST;
+     * with SMTP_HOST it is refused.
+     */
+    OUTBOX_DIR: z
+      .string()
+      .min(1)
+      .refine(isAbsolute, { message: 'must be an absolute path' })
+      .optional(),
     /** Transactional email over SMTP: Mailpit locally, the SES SMTP interface in production. */
     SMTP_HOST: z.string().regex(HOSTNAME).optional(),
     SMTP_PORT: z.coerce.number().int().min(1).max(65535).default(1025),
@@ -292,6 +302,17 @@ const envSchema = z
       }
     }
 
+    if (env.OUTBOX_DIR !== undefined && env.SMTP_HOST !== undefined) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['OUTBOX_DIR'],
+        message: 'cannot be set together with SMTP_HOST: mail goes to one place',
+      });
+    }
+    if (desktop && env.SMTP_HOST === undefined) {
+      require('OUTBOX_DIR', 'is required in the desktop profile when SMTP_HOST is not set (where else would the mail go)');
+    }
+
     if ((env.SMTP_USER === undefined) !== (env.SMTP_PASSWORD === undefined)) {
       ctx.addIssue({
         code: 'custom',
@@ -422,6 +443,12 @@ export interface MailConfig {
   readonly from: string;
 }
 
+/** Mail written to a folder (`OUTBOX_DIR`): the desktop profile without a mail server. */
+export interface OutboxConfig {
+  readonly dir: string;
+  readonly from: string;
+}
+
 export interface Config {
   readonly nodeEnv: 'development' | 'test' | 'production';
   /** `desktop` is one clinic on one PC (see `DEPLOYMENT_PROFILE`); `hosted` is everything else. */
@@ -463,6 +490,8 @@ export interface Config {
   readonly metrics?: MetricsConfig;
   /** Undefined when SMTP_HOST is not set (allowed outside production). */
   readonly mail?: MailConfig;
+  /** Set when OUTBOX_DIR is: mail is written to a folder instead of being sent. */
+  readonly outbox?: OutboxConfig;
   /** Which provider serves WhatsApp, video and the bot challenge (see config-providers.ts). */
   readonly providers: ProviderConfig;
   readonly passwordBreachCheck: boolean;
@@ -616,6 +645,9 @@ export function loadConfig(
             from: value.MAIL_FROM,
           },
         }),
+    ...(value.OUTBOX_DIR === undefined
+      ? {}
+      : { outbox: { dir: value.OUTBOX_DIR, from: value.MAIL_FROM } }),
     providers: providers.config,
     passwordBreachCheck: value.AUTH_BREACH_CHECK,
     lockout: {

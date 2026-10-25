@@ -42,6 +42,7 @@ function installEnv(slug: string): NodeJS.ProcessEnv {
     ADDRESS_HASH_PEPPER: 'placeholder-pepper-0123456789-abcdefghij',
     STORAGE_DIR: process.platform === 'win32' ? 'C:\\Consulvia\\files' : '/var/consulvia/files',
     STORAGE_UPLOAD_SECRET: 'placeholder-upload-secret-0123456789-abcdef',
+    OUTBOX_DIR: process.platform === 'win32' ? 'C:\\Consulvia\\outbox' : '/var/consulvia/outbox',
   };
 }
 

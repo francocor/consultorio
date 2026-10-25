@@ -10,6 +10,7 @@ const PEPPER = 'placeholder-pepper-0123456789-abcdefghij';
 
 const FILES_DIR = process.platform === 'win32' ? 'C:\\Consulvia\\files' : '/var/consulvia/files';
 const UPLOAD_SECRET = 'placeholder-upload-secret-0123456789-abcdef';
+const OUTBOX = process.platform === 'win32' ? 'C:\\Consulvia\\outbox' : '/var/consulvia/outbox';
 
 /** What the desktop shell hands the API, but for the folder of the files. */
 const desktopWithoutFiles = {
@@ -30,7 +31,10 @@ const desktop = {
   ...desktopWithoutFiles,
   STORAGE_DIR: FILES_DIR,
   STORAGE_UPLOAD_SECRET: UPLOAD_SECRET,
+  OUTBOX_DIR: OUTBOX,
 };
+
+const withoutOutbox = omit(desktop, 'OUTBOX_DIR');
 
 /** A hosted single-organization production deployment: every row of the profile table is refused. */
 const hostedSingle = {
@@ -180,8 +184,8 @@ describe('the desktop profile', () => {
   it('keeps the transport security of a mail server when one is configured', () => {
     const smtp = { SMTP_HOST: 'smtp.clinica.example', SMTP_SECURITY: 'starttls' };
 
-    expect(loadConfig({ ...desktop, ...smtp }).mail).toMatchObject({ host: smtp.SMTP_HOST });
-    expect(() => loadConfig({ ...desktop, SMTP_HOST: 'smtp.clinica.example' })).toThrow(
+    expect(loadConfig({ ...withoutOutbox, ...smtp }).mail).toMatchObject({ host: smtp.SMTP_HOST });
+    expect(() => loadConfig({ ...withoutOutbox, SMTP_HOST: 'smtp.clinica.example' })).toThrow(
       /SMTP_SECURITY/,
     );
   });
@@ -303,5 +307,40 @@ describe('filesystem storage configuration', () => {
 
   it('does not ask the desktop profile for ClamAV: the fake scanner is what runs', () => {
     expect(loadConfig(desktop).scanner).toBeUndefined();
+  });
+});
+
+describe('outbox configuration', () => {
+  const outbox = OUTBOX;
+  const smtp = { SMTP_HOST: 'smtp.clinica.example', SMTP_SECURITY: 'starttls' };
+
+  it('is where the desktop profile writes its mail when it has no mail server', () => {
+    expect(() => loadConfig(withoutOutbox)).toThrow(/OUTBOX_DIR/);
+
+    const config = loadConfig(desktop);
+
+    expect(config.outbox).toEqual({ dir: outbox, from: 'Consulvia <no-responder@localhost>' });
+    expect(config.mail).toBeUndefined();
+  });
+
+  it('takes the sender from MAIL_FROM', () => {
+    const config = loadConfig({ ...desktop, MAIL_FROM: 'Clinica Norte <hola@clinica.example>' });
+
+    expect(config.outbox?.from).toBe('Clinica Norte <hola@clinica.example>');
+  });
+
+  it('is not needed when the desktop profile has a mail server, and cannot be set beside one', () => {
+    expect(loadConfig({ ...withoutOutbox, ...smtp }).outbox).toBeUndefined();
+    expect(() => loadConfig({ ...desktop, ...smtp })).toThrow(/OUTBOX_DIR/);
+  });
+
+  it('wants an absolute folder', () => {
+    expect(() => loadConfig({ ...desktop, OUTBOX_DIR: 'outbox' })).toThrow(/OUTBOX_DIR/);
+  });
+
+  it('does not replace the mail server of a hosted production', () => {
+    expect(() => loadConfig({ ...omit(hostedSingle, 'SMTP_HOST'), OUTBOX_DIR: outbox })).toThrow(
+      /SMTP_HOST/,
+    );
   });
 });

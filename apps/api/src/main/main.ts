@@ -116,7 +116,7 @@ async function runApi(rawConfig: Config): Promise<void> {
   const operatorDatabase = config.operatorDatabaseUrl
     ? createOperatorDb(config.operatorDatabaseUrl)
     : undefined;
-  const email = createConfiguredEmail(config.mail);
+  const email = createConfiguredEmail(config.mail, config.outbox);
   const storage = createConfiguredStorage(config);
   // Confirming an upload queues its scan in the same transaction, so with a bucket the API also
   // holds a queue client (it only enqueues; the worker is the one that runs the jobs). So does a
@@ -210,6 +210,11 @@ async function runApi(rawConfig: Config): Promise<void> {
   if (email.kind === 'fake') {
     app.log.warn('SMTP_HOST is not set: emails (password reset, invitations) are not delivered');
   }
+  if (email.kind === 'outbox') {
+    app.log.info(
+      'SMTP_HOST is not set: emails (password reset, invitations) are written to OUTBOX_DIR',
+    );
+  }
   await app.listen({ host: config.host, port: config.port });
   // The numbers this process keeps (the public booking counters), on a port of its own when asked.
   const stopMetrics = await startMetricsListener(config.metrics, {
@@ -253,7 +258,7 @@ async function runReleaser(config: Config): Promise<void> {
       'Invalid environment configuration. S3_BUCKET: is required for the releaser (the package waits there for its link)',
     );
   }
-  const email = createConfiguredEmail(config.mail);
+  const email = createConfiguredEmail(config.mail, config.outbox);
   const releaser = await createReleaser({
     databaseUrl: config.releaserDatabaseUrl,
     kek: archive.releaserKek,
@@ -286,7 +291,7 @@ async function runWorker(config: Config): Promise<void> {
   }
   // Scanning documents needs the bucket, a scanner and a way to tell an uploader about a refusal.
   const storage = createConfiguredStorage(config);
-  const email = createConfiguredEmail(config.mail);
+  const email = createConfiguredEmail(config.mail, config.outbox);
   const { scanner, kind } = createConfiguredScanner(config.scanner);
   if (storage && kind === 'fake') {
     log.warn(
