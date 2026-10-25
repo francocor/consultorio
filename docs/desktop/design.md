@@ -150,7 +150,7 @@ The Electron shell builds ONLY from this section. Everything runs from the bundl
 | `DB_POOL_MAX`                                                           |   o   |    o     |                               |           | 46 to 100, default 48. See pool sizing                                                                                              |
 | `COOKIE_SECURE`, `TRUST_PROXY`                                          |   o   |    o     |                               |           | leave unset. Only `false` is accepted                                                                                               |
 
-These are refused at boot by the desktop profile, naming the variable: any `*_PROVIDER` other than `off`, `BOT_CHALLENGE` other than `local`, `LOCAL_PROVIDERS_CONSOLE`, `ARCHIVE_*`, `S3_*`, a `HOST` outside the loopback, `COOKIE_SECURE=true`, a `TRUST_PROXY` other than `false`, and a `PUBLIC_URL` that is not a loopback address with a port.
+These are refused at boot by the desktop profile, naming the variable: any `*_PROVIDER` other than `off`, `BOT_CHALLENGE` other than `local`, `LOCAL_PROVIDERS_CONSOLE`, `ARCHIVE_*`, `S3_*`, a `HOST` outside the loopback, `COOKIE_SECURE=true`, a `TRUST_PROXY` other than `false`, and a `PUBLIC_URL` that is not a loopback address with a port. `provision` and `reset-password` exist only in this profile: with `DEPLOYMENT_PROFILE` unset or `hosted` they exit 3 naming the variable, before they open the database.
 
 ### Commands
 

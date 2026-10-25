@@ -35,6 +35,17 @@ export function readInstallConfig(
     }
     throw error;
   }
+  // These commands create an organization and give its owner a password. A hosted deployment has its own
+  // ways to do both, with an email to the person; only the desktop shell runs them.
+  if (config.profile !== 'desktop') {
+    return {
+      ok: false,
+      code: finish(io, EXIT.config, {
+        error: 'invalid_config',
+        message: 'DEPLOYMENT_PROFILE: this command exists only in the desktop profile',
+      }),
+    };
+  }
   if (config.deploymentMode !== 'single' || config.singleTenantSlug === undefined) {
     return {
       ok: false,
