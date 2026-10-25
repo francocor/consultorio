@@ -16,6 +16,7 @@ import { forgetBackups, readLedger, recordVerified, sha256OfFile } from './backu
 import { DiskFullError, ensureRoom, isDiskFull } from './disk.js';
 import { isBackupFile, listFiles, sizeOf } from './files.js';
 import type { DataPaths } from './paths.js';
+import { summarizePgError } from './pg-errors.js';
 
 export type { BackupKind };
 
@@ -99,7 +100,8 @@ export class BackupError extends Error {
   }
 }
 
-const tailOf = (text: string, lines = 6) => text.trim().split(/\r?\n/).slice(-lines).join('\n');
+// The error of a dump tool can quote rows of the database: only what failed is kept (see `pg-errors.ts`).
+const tailOf = summarizePgError;
 
 /** Copies `data` into a stream for a program that may stop reading it early, and reads the rest itself. */
 function feed(data: AsyncIterable<Buffer>, sink: PassThrough): Promise<void> {

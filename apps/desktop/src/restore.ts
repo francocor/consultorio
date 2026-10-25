@@ -23,6 +23,7 @@ import type { AdoptionPayload, Manifest } from './backup.js';
 import { DiskFullError, ensureRoom, isDiskFull } from './disk.js';
 import { safeDestination } from './files.js';
 import type { DataPaths } from './paths.js';
+import { summarizePgError } from './pg-errors.js';
 import { formatRecoveryKey } from './recovery-key.js';
 import {
   clearJournal,
@@ -357,10 +358,8 @@ export async function restoreBackup(
           );
           const ended = await deps.restoreDump(counted);
           if (ended.code !== 0) {
-            throw new RestoreError(
-              'restore_failed',
-              ended.stderr.trim().split(/\r?\n/).slice(-8).join('\n'),
-            );
+            // Not the tail of the error: it carries the rows pg_restore failed on, and this goes to the log.
+            throw new RestoreError('restore_failed', summarizePgError(ended.stderr));
           }
           found.dump = { bytes, sha256: hash.digest('hex') };
         } else if (entry.name === 'secrets.json') {

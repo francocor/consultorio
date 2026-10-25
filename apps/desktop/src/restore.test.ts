@@ -327,6 +327,28 @@ describe('restoring a backup of this installation', () => {
     expect(events).toEqual(['stop', 'create scratch', 'pg_restore', 'drop scratch', 'start']);
   });
 
+  it('keeps the rows pg_restore failed on out of the error, which ends in the log', async () => {
+    const path = await makeBackup(install, { 't/a/docs/1.obj': 'one' });
+    restoreResult = {
+      code: 1,
+      stderr: [
+        'pg_restore: error: COPY failed for table "patient": ERROR:  invalid input syntax for type date: "12/03/1985"',
+        'CONTEXT:  COPY patient, line 3, column birth_date: "12/03/1985"',
+        "Command was: INSERT INTO patient VALUES ('Ana Gomez', '30123456');",
+      ].join('\n'),
+    };
+
+    const failure = (await restoreBackup(restoreDeps(), path).catch(
+      (error: unknown) => error,
+    )) as RestoreError;
+
+    expect(failure.code).toBe('restore_failed');
+    expect(failure.detail).toContain('COPY failed for table');
+    for (const leak of ['12/03/1985', 'Ana Gomez', '30123456', 'CONTEXT']) {
+      expect(failure.detail, leak).not.toContain(leak);
+    }
+  });
+
   it('puts the old documents back when the database cannot be swapped in', async () => {
     const path = await makeBackup(install, { 't/a/docs/1.obj': 'from the backup' });
     writeFileSync(join(paths.files, 't', 'a', 'docs', '1.obj'), 'current data');
