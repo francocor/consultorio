@@ -13,6 +13,7 @@ describe('what a launch of the program asks for', () => {
   it('can ask to quit, to back up, or to restore a file', () => {
     expect(parseArgs(['--quit']).request).toEqual({ kind: 'quit' });
     expect(parseArgs(['--backup']).request).toEqual({ kind: 'backup' });
+    expect(parseArgs(['--reset-password']).request).toEqual({ kind: 'reset-password' });
     expect(parseArgs(['--restore=' + file]).request).toEqual({ kind: 'restore', file });
   });
 

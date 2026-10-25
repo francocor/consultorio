@@ -158,6 +158,8 @@ export class Controller {
   private quitPromise: Promise<void> | null = null;
   private busy = false;
   private restoring = false;
+  /** The backup or restore that is running, so quitting waits for it instead of stopping the database under it. */
+  private inFlight: Promise<void> = Promise.resolve();
   private setupRunning = false;
   private reportedFailure = false;
   private dailyTimer: NodeJS.Timeout | undefined;
@@ -611,8 +613,13 @@ export class Controller {
     if (this.busy) return 'busy';
     this.busy = true;
     this.restoring = kind === 'restore';
+    const running = work();
+    this.inFlight = running.then(
+      () => undefined,
+      () => undefined,
+    );
     try {
-      return await work();
+      return await running;
     } finally {
       this.busy = false;
       this.restoring = false;
@@ -798,7 +805,10 @@ export class Controller {
       return;
     }
     const token = this.vault.issue(PURPOSE.reset, 15 * 60_000);
-    this.deps.ui.openAuxWindow(`${this.appUrl}/__reset?t=${token}`, TEXT.reset.windowTitle);
+    const url = `${this.appUrl}/__reset?t=${token}`;
+    this.deps.ui.openAuxWindow(url, TEXT.reset.windowTitle);
+    // Like the setup address: written down only for the tests of the installer, which fill the page from outside.
+    if (this.deps.testMode) this.log(`reset url: ${url}`);
   }
 
   // ---- what the pages do ------------------------------------------------------------------------
@@ -950,6 +960,7 @@ export class Controller {
       clearInterval(this.dailyTimer);
       // A start that is still running finishes (or fails) first, so nothing is left half started.
       await this.bootRun.catch(() => undefined);
+      await this.inFlight;
       try {
         await this.stopEverything();
       } catch (error) {

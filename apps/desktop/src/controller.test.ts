@@ -80,6 +80,9 @@ interface Harness {
 }
 
 let harness: Harness;
+/** Everything a test built, so nothing is left running or on disk. */
+let folders: string[] = [];
+let controllers: Controller[] = [];
 let migrateFails = false;
 let confirmAnswer = true;
 let provisionFails: ApiCommandError | null = null;
@@ -277,6 +280,8 @@ function build(folder: string, options: { testMode?: boolean } = {}): Harness {
     },
   };
   const controller = new Controller(deps);
+  folders.push(folder);
+  controllers.push(controller);
   const result: Harness = {
     folder,
     paths,
@@ -356,6 +361,8 @@ const form = {
 
 beforeEach(() => {
   const folder = mkdtempSync(join(tmpdir(), 'consulvia-controller-'));
+  folders = [];
+  controllers = [];
   migrateFails = false;
   confirmAnswer = true;
   provisionFails = null;
@@ -367,8 +374,8 @@ beforeEach(() => {
 });
 
 afterEach(async () => {
-  await harness.controller.quit();
-  rmSync(harness.folder, { recursive: true, force: true });
+  await Promise.all(controllers.map((controller) => controller.quit()));
+  for (const folder of folders) rmSync(folder, { recursive: true, force: true });
 });
 
 describe('the first run', () => {

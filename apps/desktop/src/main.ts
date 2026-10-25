@@ -357,6 +357,9 @@ async function run(): Promise<void> {
       case 'restore':
         await controller.restoreFlow(request.file);
         return;
+      case 'reset-password':
+        controller.openResetPassword();
+        return;
       case 'show':
         controller.openApp();
     }
