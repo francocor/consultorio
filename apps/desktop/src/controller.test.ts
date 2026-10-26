@@ -111,6 +111,10 @@ let listCode = 0;
 let databaseAlive = true;
 /** How many migrations the database has had applied; `null` is a new one. */
 let appliedMigrations: number | null = null;
+/** What the fake cluster was told about the right of app_owner to hand out audit_sealer, and what it was at each migration. */
+let ownerAdminCalls: boolean[] = [];
+let ownerAdminNow = false;
+let ownerAdminAtMigrate: boolean[] = [];
 /** What the backups folder held each time `migrate` was called. */
 let backupsAtMigrate: string[][] = [];
 /** A process of the install that dies as soon as it is started, by role. */
@@ -284,8 +288,25 @@ function build(
       clusterScripts.push(script);
       return Promise.resolve();
     },
-    createScratchDatabase: () => {
+    createRestoreScratch: () => {
       events.push('scratch create');
+      return Promise.resolve({
+        database: 'consultorio_restore',
+        user: 'consulvia_restore_test',
+        password: 'a-password',
+        live: [],
+        baseline: [],
+      });
+    },
+    inspectRestoreScratch: () => Promise.resolve([]),
+    sealRestoreScratch: () => {
+      events.push('scratch seal');
+      return Promise.resolve([]);
+    },
+    dropRestoreRoles: () => Promise.resolve(),
+    setOwnerAuditAdmin: (allowed: boolean) => {
+      ownerAdminCalls.push(allowed);
+      ownerAdminNow = allowed;
       return Promise.resolve();
     },
     swapInDatabase: () => {
@@ -308,6 +329,7 @@ function build(
   const commands: ApiCommands = {
     migrate: (env) => {
       commandCalls.push({ command: 'migrate', env });
+      ownerAdminAtMigrate.push(ownerAdminNow);
       events.push('migrate');
       backupsAtMigrate.push(existsSync(paths.backups) ? readdirSync(paths.backups) : []);
       if (migrateFails) {
@@ -527,6 +549,9 @@ beforeEach(() => {
   listCode = 0;
   databaseAlive = true;
   appliedMigrations = null;
+  ownerAdminCalls = [];
+  ownerAdminNow = false;
+  ownerAdminAtMigrate = [];
   backupsAtMigrate = [];
   dieOnSpawn = {};
   provisionFails = null;
@@ -982,6 +1007,43 @@ describe('the reminder to copy the backups off this PC', () => {
     const third = build(harness.folder);
     await third.controller.start();
     expect(reminders(third)).toHaveLength(0);
+  });
+});
+
+describe('who may hand out audit_sealer', () => {
+  it('is app_owner only while a migration that is pending runs, and not before or after', async () => {
+    await harness.controller.start();
+    const url = setupUrl() ?? '';
+    await post(new URL('/__setup', url).href, tokenOf(url), form);
+    await harness.controller.quit();
+    ownerAdminCalls = [];
+    ownerAdminAtMigrate = [];
+    appliedMigrations = 1; // the bundle knows 2
+
+    const next = build(harness.folder);
+    await next.controller.start();
+
+    expect(ownerAdminAtMigrate).toEqual([true]);
+    expect(ownerAdminCalls).toEqual([true, false]);
+    await next.controller.quit();
+  });
+
+  it('is taken away at every start, also when there is nothing to migrate', async () => {
+    appliedMigrations = 2;
+    await harness.controller.start();
+
+    expect(ownerAdminAtMigrate).toEqual([false]);
+    expect(ownerAdminCalls).toEqual([false]);
+  });
+
+  it('is taken away when the migration fails', async () => {
+    appliedMigrations = 1;
+    migrateFails = true;
+    chooseAnswers = [2];
+
+    await harness.controller.start();
+
+    expect(ownerAdminCalls).toEqual([true, false]);
   });
 });
 
@@ -1880,17 +1942,23 @@ describe('restoring a backup', () => {
     expect(harness.events.filter((event) => event.startsWith('shutdown')).length).toBe(2);
     expect(harness.restores).toHaveLength(1);
     expect(harness.restores[0]).toContain('--single-transaction');
-    // The backup is restored as the owner of the application, never as the superuser, and never over the live database.
+    // The dump runs as the throwaway role of this restore: not the superuser, not app_owner, never over the live
+    // database, and with no owners or privileges of its own (the grants come from the live database).
     expect(harness.restores[0]).toEqual(
       expect.arrayContaining([
-        '--username=app_owner',
+        '--username=consulvia_restore_test',
         '--no-owner',
+        '--no-privileges',
         '--dbname=consultorio_restore',
       ]),
     );
-    expect(harness.restoreEnvs[0]?.['PGPASSWORD']).toBe(harness.config().secrets.appOwnerPassword);
+    expect(harness.restores[0]).not.toContain('--username=app_owner');
+    expect(harness.restoreEnvs[0]?.['PGPASSWORD']).toBe('a-password');
     expect(harness.restoreEnvs[0]?.['PGPASSWORD']).not.toBe(
       harness.config().secrets.pgSuperuserPassword,
+    );
+    expect(harness.restoreEnvs[0]?.['PGPASSWORD']).not.toBe(
+      harness.config().secrets.appOwnerPassword,
     );
     expect(harness.events.indexOf('migrate')).toBeGreaterThan(
       harness.events.indexOf('shutdown api'),

@@ -81,23 +81,43 @@ export interface AdoptedSecrets {
   recoveryKey: string;
 }
 
+/** The throwaway role a restore runs `pg_restore` as. The shell keeps what else it needs inside the same object. */
+export interface ScratchHandle {
+  user: string;
+  password: string;
+}
+
 export interface RestoreDeps {
   paths: DataPaths;
   /** The backup key of THIS install. */
   backupKey: () => Buffer;
   /**
-   * Feeds a dump to `pg_restore`, which runs as `app_owner` (no superuser) into the scratch database with
-   * `--no-owner`, in one transaction. Resolves when it has ended.
+   * Feeds a dump to `pg_restore`, which runs as the throwaway role of this restore (`scratch.create`), into the
+   * scratch database, with `--no-owner --no-privileges`, in one transaction. Resolves when it has ended.
    */
-  restoreDump: (source: Readable) => Promise<{ code: number | null; stderr: string }>;
+  restoreDump: (
+    source: Readable,
+    scratch: ScratchHandle,
+  ) => Promise<{ code: number | null; stderr: string }>;
   /**
-   * The backup is restored into a database of its own, and that database replaces the real one only when
-   * the restore has finished. Creating, renaming and dropping databases is the only thing done as the
-   * superuser, and none of it runs inside the database a backup wrote: what the backup did to the roles and the
-   * database is checked (`audit`) before the swap.
+   * The backup is restored into a database of its own, and that database replaces the real one only when the
+   * restore has finished.
+   *
+   * What a dump does is done by a role made for this restore alone, which owns the scratch database and nothing
+   * else: it has no membership, no admin option and no power over any other role, so the cluster-wide effects a
+   * hostile dump could have had (granting `audit_sealer`, changing the password of `app_owner`, setting parameters)
+   * are refused by PostgreSQL itself, and what it can do to itself goes when the role is dropped.
+   *
+   * - `create` makes the role and the database, and reads the references the others compare with;
+   * - `inspect` says what the dump did besides loading rows (a privilege, a parameter): any difference from the
+   *   state the database started in was written by SQL hidden in the dump;
+   * - `seal` hands the database to `app_owner`, gives it the grants of the live database, drops the role, and
+   *   says what is still wrong. Neither runs code of the dump.
    */
   scratch: {
-    create: () => Promise<void>;
+    create: () => Promise<ScratchHandle>;
+    inspect: (scratch: ScratchHandle) => Promise<string[]>;
+    seal: (scratch: ScratchHandle) => Promise<string[]>;
     swapIn: () => Promise<void>;
   };
   /**
@@ -334,7 +354,7 @@ export async function restoreBackup(
     await reached('prepared');
     await deps.stopServices();
     servicesStopped = true;
-    await deps.scratch.create();
+    const scratch = await deps.scratch.create();
     await advance('restoring');
     await reached('restoring');
     snapshot = await deps.audit.snapshot();
@@ -363,7 +383,7 @@ export async function restoreBackup(
               }
             })(),
           );
-          const ended = await deps.restoreDump(counted);
+          const ended = await deps.restoreDump(counted, scratch);
           if (ended.code !== 0) {
             // Not the tail of the error: it carries the rows pg_restore failed on, and this goes to the log.
             throw new RestoreError('restore_failed', summarizePgError(ended.stderr));
@@ -399,8 +419,12 @@ export async function restoreBackup(
       throw new RestoreError('invalid_backup', 'the manifest does not match the content');
     }
 
-    // What the dump did besides filling tables: nothing of it may stay if it touched the roles or the database.
-    const problems = await deps.audit.check(snapshot);
+    // What the dump did besides loading rows, then the database is handed over to `app_owner` with the grants of the live
+    // one. Both look at the catalogs only. The checks of the cluster after them are a second barrier: the role the
+    // dump ran as could not have touched the roles of the application, and they say so.
+    let problems = await deps.scratch.inspect(scratch);
+    if (problems.length === 0) problems = await deps.scratch.seal(scratch);
+    if (problems.length === 0) problems = await deps.audit.check(snapshot);
     if (problems.length > 0) {
       deps.log?.(`a backup was refused: ${problems.join('; ')}`);
       await deps.audit.revert(snapshot).catch(() => undefined);

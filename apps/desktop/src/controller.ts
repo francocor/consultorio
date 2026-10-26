@@ -44,13 +44,25 @@ import { pruneOutbox } from './outbox.js';
 import { loadCommonPasswordsSync, messagesForIssues } from './password-check.js';
 import type { DataPaths } from './paths.js';
 import { chooseServerPort, findFreePort, type PortRetry } from './ports.js';
-import { DATABASE_NAME, type PostgresCluster, PostgresError, SUPERUSER } from './postgres.js';
+import {
+  DATABASE_NAME,
+  type PostgresCluster,
+  PostgresError,
+  type RestoreScratch,
+  SUPERUSER,
+} from './postgres.js';
 import { normalizeRecoveryKey } from './recovery-key.js';
 import { redact } from './redact.js';
 import { migrationCountOf, missingResources, type Resources } from './resources.js';
 import { auditProblems, revertStatements, type ClusterFacts } from './restore-audit.js';
 import { reconcileInterruptedRestore, type ReconcileDeps } from './restore-journal.js';
-import { readBackupInfo, restoreBackup, RestoreError, type AdoptedSecrets } from './restore.js';
+import {
+  readBackupInfo,
+  restoreBackup,
+  RestoreError,
+  type AdoptedSecrets,
+  type ScratchHandle,
+} from './restore.js';
 import { parameterizeRolesScript } from './roles.js';
 import type { RotatingLog } from './rotating-log.js';
 import { generateSecrets, newRecoveryKey } from './secrets.js';
@@ -464,9 +476,7 @@ export class Controller {
     await mkdir(paths.outbox, { recursive: true });
 
     await this.guardMigrations();
-    await this.deps.commands.migrate(
-      migrateEnvironment({ config: this.config, databasePort: this.requireDatabasePort() }),
-    );
+    await this.migrateDatabase();
     this.log('migrations applied');
 
     if (!this.config.provisioned) {
@@ -708,6 +718,30 @@ export class Controller {
     });
   }
 
+  /**
+   * Runs the migrations. `app_owner` holds the right to hand out `audit_sealer` only for the time a migration that is
+   * pending needs it (migration 0020 takes the membership the bootstrap gave `app_rw` away): the rest of the time
+   * it is not there for a statement of a restored dump, or of anything else that runs as `app_owner`, to use.
+   */
+  private async migrateDatabase(): Promise<void> {
+    const applied = await this.cluster.appliedMigrationCount();
+    const pending = applied === null || applied < migrationCountOf(this.deps.resources);
+    if (pending) await this.cluster.setOwnerAuditAdmin(true);
+    try {
+      await this.deps.commands.migrate(
+        migrateEnvironment({ config: this.config, databasePort: this.requireDatabasePort() }),
+      );
+    } finally {
+      try {
+        await this.cluster.setOwnerAuditAdmin(false);
+      } catch (error) {
+        this.log(
+          `could not take the right to hand out audit_sealer away from app_owner: ${error instanceof Error ? error.message : String(error)}`,
+        );
+      }
+    }
+  }
+
   /** A restore that was cut off (a power cut, a crash) is finished or undone before anything uses the database. */
   private async reconcileRestore(): Promise<void> {
     const outcome = await reconcileInterruptedRestore(this.reconcileDeps());
@@ -721,6 +755,7 @@ export class Controller {
         names: () => this.cluster.listDatabases(),
         rename: (from, to) => this.cluster.renameDatabase(from, to),
         drop: (name) => this.cluster.dropDatabase(name),
+        dropRestoreRoles: () => this.cluster.dropRestoreRoles(),
       },
       reloadConfig: () => {
         this.config = this.deps.store.read();
@@ -1363,29 +1398,34 @@ export class Controller {
     return {
       paths: this.deps.paths,
       backupKey: () => Buffer.from(this.config.secrets.backupKeyBase64, 'base64'),
-      // As `app_owner`, not as the superuser: what a backup contains never runs with more power than the
-      // application's own owner has. The ACLs of the dump are KEPT (no `--no-acl`): they are the privileges
-      // that `app_rw`, `app_operator`, `audit_sealer` and `app_releaser` have on the tables, set by the migrations
-      // that are already applied and never set again, so without them the program would not run. What a dump could
-      // do with them is what `restore-audit.ts` looks at before the swap (roles, parameters, the audit trail).
-      restoreDump: (source: Readable) =>
+      // As a throwaway role made for this restore, never as `app_owner` or the superuser: what a backup contains
+      // runs with the power of a role that owns its scratch database and nothing else (see `createRestoreScratch`).
+      // `--no-privileges` because the grants of the objects are not taken from the dump but from the live database
+      // (`trustedGrants`): a GRANT is the one statement of a dump that is meant to reach other roles.
+      restoreDump: (source: Readable, scratch: ScratchHandle) =>
         this.deps.pgTools.restore(
           this.deps.resources.pgRestore,
           [
             '--host=127.0.0.1',
             `--port=${String(this.requireDatabasePort())}`,
-            '--username=app_owner',
+            `--username=${scratch.user}`,
             `--dbname=${SCRATCH_DATABASE}`,
             '--no-owner',
+            '--no-privileges',
             '--single-transaction',
             '--exit-on-error',
             '--no-password',
           ],
-          { ...osEnvironment(), PGPASSWORD: this.config.secrets.appOwnerPassword },
+          { ...osEnvironment(), PGPASSWORD: scratch.password },
           source,
         ),
       scratch: {
-        create: () => this.cluster.createScratchDatabase(SCRATCH_DATABASE),
+        create: () => this.cluster.createRestoreScratch(SCRATCH_DATABASE),
+        // The handle is the `RestoreScratch` that `create` returned: the restore only needs its role and password.
+        inspect: (scratch: ScratchHandle) =>
+          this.cluster.inspectRestoreScratch(scratch as RestoreScratch),
+        seal: (scratch: ScratchHandle) =>
+          this.cluster.sealRestoreScratch(scratch as RestoreScratch),
         swapIn: () => this.cluster.swapInDatabase(SCRATCH_DATABASE),
       },
       reconcile: () => reconcileInterruptedRestore({ ...this.reconcileDeps(), sweep: false }),
@@ -1410,9 +1450,7 @@ export class Controller {
         (await directoryBytes(this.deps.paths.files)),
       stopServices: () => this.stopServices(),
       startServices: async () => {
-        await this.deps.commands.migrate(
-          migrateEnvironment({ config: this.config, databasePort: this.requireDatabasePort() }),
-        );
+        await this.migrateDatabase();
         await this.startServices();
       },
       adoptSecrets: (adopted: AdoptedSecrets) => {

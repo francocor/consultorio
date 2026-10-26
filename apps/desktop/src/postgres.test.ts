@@ -49,6 +49,11 @@ const pidFileText = (pid: number, port: number, status: string) =>
 let connectFails: number;
 let answerRows: Record<string, unknown>[] | null;
 let missingTable: boolean;
+/** Statements for which the fake answers "that object does not exist" (or another code). */
+let onMissing: (sql: string) => boolean;
+let otherCode: string;
+/** The throwaway roles the fake cluster reports. */
+let onRoles: string[];
 
 function cluster(
   overrides: {
@@ -87,6 +92,16 @@ function cluster(
             Object.assign(new Error('relation does not exist'), { code: '42P01' }),
           );
         }
+        if (onMissing(sql) && sql.startsWith('GRANT')) {
+          return Promise.reject(
+            Object.assign(new Error(otherCode === '42P01' ? 'does not exist' : 'refused'), {
+              code: otherCode,
+            }),
+          );
+        }
+        if (sql.includes('pg_roles') && sql.includes('starts_with')) {
+          return Promise.resolve({ rows: onRoles.map((rolname) => ({ rolname })) });
+        }
         if (answerRows !== null && sql.includes('__drizzle_migrations')) {
           return Promise.resolve({ rows: answerRows });
         }
@@ -117,6 +132,9 @@ beforeEach(() => {
   connectFails = 0;
   answerRows = null;
   missingTable = false;
+  onMissing = () => false;
+  otherCode = '42P01';
+  onRoles = [];
 });
 
 afterEach(() => {
@@ -481,24 +499,244 @@ describe('the database', () => {
     expect(queries.at(-1)).toMatchObject({ sql: 'SELECT 1;', target: { database: 'consultorio' } });
   });
 
-  it('restores into a scratch database set up like the real one, then swaps it in', async () => {
+  it('makes a throwaway role that can do nothing outside its own database, and a database that belongs to it', async () => {
     const pg = cluster();
     await pg.start();
 
-    await pg.createScratchDatabase('consultorio_restore');
-    await pg.swapInDatabase('consultorio_restore');
+    const scratch = await pg.createRestoreScratch('consultorio_restore');
 
     const sql = queries.map((query) => query.sql);
     expect(sql[0]).toBe('DROP DATABASE IF EXISTS consultorio_restore WITH (FORCE)');
-    expect(sql[1]).toBe(
-      "CREATE DATABASE consultorio_restore TEMPLATE template0 ENCODING 'UTF8' OWNER app_owner",
+    const role = sql.find((statement) => statement.startsWith('CREATE ROLE')) ?? '';
+    expect(role).toContain(scratch.user);
+    for (const clause of [
+      'LOGIN',
+      'NOSUPERUSER',
+      'NOCREATEDB',
+      'NOCREATEROLE',
+      'NOREPLICATION',
+      'NOBYPASSRLS',
+    ]) {
+      expect(role).toContain(clause);
+    }
+    // No membership and no admin option, ever: it is a role of its own.
+    expect(sql.some((statement) => /GRANT .* TO consulvia_restore_/.test(statement))).toBe(false);
+    expect(sql).toContain(
+      `CREATE DATABASE consultorio_restore TEMPLATE template0 ENCODING 'UTF8' OWNER ${scratch.user}`,
     );
-    expect(sql[2]).toContain('GRANT CONNECT ON DATABASE consultorio_restore TO app_rw');
+    expect(scratch.user).toMatch(/^consulvia_restore_[0-9a-f]{12}$/);
+    expect(scratch.password.length).toBeGreaterThanOrEqual(24);
+    expect(role).toContain(scratch.password);
+    // Nothing of the old role of an earlier restore is left to the new one.
+    expect(sql.findIndex((statement) => statement.includes('pg_roles'))).toBeLessThan(
+      sql.findIndex((statement) => statement.startsWith('CREATE ROLE')),
+    );
+  });
+
+  it('is a different role, with a different password, for every restore', async () => {
+    const pg = cluster();
+    await pg.start();
+
+    const first = await pg.createRestoreScratch('consultorio_restore');
+    const second = await pg.createRestoreScratch('consultorio_restore');
+
+    expect(second.user).not.toBe(first.user);
+    expect(second.password).not.toBe(first.password);
+  });
+
+  it('reads the privileges of a database with a search path of pg_catalog and nothing else', async () => {
+    const pg = cluster();
+    await pg.start();
+
+    await pg.aclFacts('consultorio');
+
+    const reads = queries.filter((query) => query.sql.includes('aclexplode'));
+    expect(reads.length).toBeGreaterThan(5);
+    for (const read of reads) {
+      expect(read.target.options).toBe('-c search_path=pg_catalog,pg_temp');
+      expect(read.target.user).toBe('postgres');
+      // Every function and catalog is named with its schema, so none can be taken from another one.
+      expect(read.sql).not.toMatch(/(?<![\w.])(aclexplode|has_table_privilege)\(/);
+    }
+  });
+
+  it('opens the connections that read a database a backup wrote with the same search path', async () => {
+    const pg = cluster();
+    await pg.start();
+
+    await pg.scratchFacts('consultorio_restore');
+    await pg.clusterFacts('consultorio_restore');
+
+    const inScratch = queries.filter((query) => query.target.database === 'consultorio_restore');
+    expect(inScratch.length).toBeGreaterThan(0);
+    for (const query of inScratch) {
+      expect(query.target.options).toBe('-c search_path=pg_catalog,pg_temp');
+    }
+  });
+
+  it('hands the database over as the superuser with DDL only: reassign, grants, drop owned, drop role, in this order', async () => {
+    const pg = cluster();
+    await pg.start();
+    const scratch = await pg.createRestoreScratch('consultorio_restore');
+    queries.length = 0;
+
+    await pg.sealRestoreScratch(scratch);
+
+    const sql = queries.map((query) => query.sql);
+    const at = (needle: string) => sql.findIndex((statement) => statement.includes(needle));
+    expect(at('ALTER DATABASE consultorio_restore OWNER TO app_owner')).toBeGreaterThanOrEqual(0);
+    expect(at('ALTER DATABASE consultorio_restore RESET ALL')).toBeGreaterThanOrEqual(0);
+    expect(at('ALTER ROLE ALL IN DATABASE consultorio_restore RESET ALL')).toBeGreaterThanOrEqual(
+      0,
+    );
+    const reassign = at(`REASSIGN OWNED BY ${scratch.user} TO app_owner`);
+    const dropOwned = at(`DROP OWNED BY ${scratch.user}`);
+    const dropRole = at(`DROP ROLE ${scratch.user}`);
+    expect(reassign).toBeGreaterThan(at('RESET ALL'));
+    expect(dropOwned).toBeGreaterThan(reassign);
+    expect(dropRole).toBeGreaterThan(dropOwned);
+    // The statements run in the right place: the database for the objects, postgres for the database and the role.
+    const where = (needle: string) => queries[at(needle)]?.target.database;
+    expect(where('REASSIGN OWNED')).toBe('consultorio_restore');
+    expect(where('DROP OWNED')).toBe('consultorio_restore');
+    expect(where('DROP ROLE')).toBe('postgres');
+    // Nothing the shell runs while it seals is built from the dump: no statement carries a name read from it.
+    expect(sql.every((statement) => !statement.includes('dump'))).toBe(true);
+  });
+
+  it('applies the grants of the live database, and skips the ones about an object the backup does not have', async () => {
+    const pg = cluster();
+    await pg.start();
+    const scratch = await pg.createRestoreScratch('consultorio_restore');
+    scratch.live = [
+      {
+        kind: 'relation',
+        schema: 'public',
+        name: 'patient',
+        args: '',
+        column: '',
+        objtype: 'r',
+        owner: 'app_owner',
+        grantee: 'app_rw',
+        privilege: 'SELECT',
+        grantable: false,
+      },
+      {
+        kind: 'relation',
+        schema: 'public',
+        name: 'newer_table',
+        args: '',
+        column: '',
+        objtype: 'r',
+        owner: 'app_owner',
+        grantee: 'app_rw',
+        privilege: 'SELECT',
+        grantable: false,
+      },
+    ];
+    queries.length = 0;
+    missingTable = false;
+    const original = failQueryContaining;
+    failQueryContaining = null;
+    onMissing = (sql) => sql.includes('newer_table');
+
+    await expect(pg.sealRestoreScratch(scratch)).resolves.toBeDefined();
+
+    const sql = queries.map((query) => query.sql);
+    expect(sql).toContain('GRANT SELECT ON TABLE "public"."patient" TO "app_rw"');
+    expect(sql).toContain('GRANT SELECT ON TABLE "public"."newer_table" TO "app_rw"');
+    // The error of the second did not stop the third: the role is dropped all the same.
+    expect(sql.some((statement) => statement.startsWith('DROP ROLE'))).toBe(true);
+    failQueryContaining = original;
+  });
+
+  it('does not skip any other error while it grants', async () => {
+    const pg = cluster();
+    await pg.start();
+    const scratch = await pg.createRestoreScratch('consultorio_restore');
+    scratch.live = [
+      {
+        kind: 'relation',
+        schema: 'public',
+        name: 'patient',
+        args: '',
+        column: '',
+        objtype: 'r',
+        owner: 'app_owner',
+        grantee: 'app_rw',
+        privilege: 'SELECT',
+        grantable: false,
+      },
+    ];
+    onMissing = (sql) => sql.includes('patient');
+    otherCode = '42501';
+
+    await expect(pg.sealRestoreScratch(scratch)).rejects.toThrow('refused');
+  });
+
+  it('refuses a role name that is not the shape of a throwaway one, before it builds a statement with it', async () => {
+    const pg = cluster();
+    await pg.start();
+    const scratch = await pg.createRestoreScratch('consultorio_restore');
+
+    await expect(pg.sealRestoreScratch({ ...scratch, user: 'app_owner' })).rejects.toBeInstanceOf(
+      PostgresError,
+    );
+    await expect(
+      pg.sealRestoreScratch({ ...scratch, user: 'consulvia_restore_x; DROP ROLE app_owner' }),
+    ).rejects.toBeInstanceOf(PostgresError);
+  });
+
+  it('drops every throwaway role, after ending its sessions', async () => {
+    const pg = cluster();
+    await pg.start();
+    onRoles = ['consulvia_restore_0123456789ab'];
+
+    await pg.dropRestoreRoles();
+
+    const sql = queries.map((query) => query.sql);
+    expect(sql.some((statement) => statement.includes('pg_terminate_backend'))).toBe(true);
+    expect(sql).toContain('DROP ROLE IF EXISTS consulvia_restore_0123456789ab');
+  });
+
+  it('never drops a role that only looks like a throwaway one', async () => {
+    const pg = cluster();
+    await pg.start();
+    onRoles = ['consulvia_restore_x"; DROP ROLE app_owner; --'];
+
+    await expect(pg.dropRestoreRoles()).rejects.toBeInstanceOf(PostgresError);
+
+    expect(queries.map((query) => query.sql).some((sql) => sql.startsWith('DROP ROLE'))).toBe(
+      false,
+    );
+  });
+
+  it('swaps the restored database in, keeping the old one aside until it is done', async () => {
+    const pg = cluster();
+    await pg.start();
+
+    await pg.swapInDatabase('consultorio_restore');
+
+    const sql = queries.map((query) => query.sql);
     expect(sql).toContain('ALTER DATABASE consultorio RENAME TO consultorio_before_restore');
     expect(sql).toContain('ALTER DATABASE consultorio_restore RENAME TO consultorio');
     expect(sql.at(-1)).toBe('DROP DATABASE consultorio_before_restore WITH (FORCE)');
     // Always as the superuser, from the maintenance database: nobody can be connected to the ones renamed.
     expect(queries.every((query) => query.target.database === 'postgres')).toBe(true);
+  });
+
+  it('gives and takes away the right of app_owner to hand out audit_sealer', async () => {
+    const pg = cluster();
+    await pg.start();
+
+    await pg.setOwnerAuditAdmin(true);
+    await pg.setOwnerAuditAdmin(false);
+
+    const sql = queries.map((query) => query.sql);
+    expect(sql).toContain(
+      'GRANT audit_sealer TO app_owner WITH ADMIN OPTION, INHERIT FALSE, SET FALSE',
+    );
+    expect(sql).toContain('REVOKE ADMIN OPTION FOR audit_sealer FROM app_owner CASCADE');
   });
 
   it('puts the old database back when the swap fails half way', async () => {
@@ -527,7 +765,7 @@ describe('the database', () => {
     const pg = cluster();
     await pg.start();
 
-    await expect(pg.createScratchDatabase('x; DROP DATABASE consultorio')).rejects.toBeInstanceOf(
+    await expect(pg.createRestoreScratch('x; DROP DATABASE consultorio')).rejects.toBeInstanceOf(
       PostgresError,
     );
     await expect(pg.dropDatabase('Consultorio')).rejects.toBeInstanceOf(PostgresError);

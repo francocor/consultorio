@@ -171,6 +171,8 @@ export interface ReconcileDeps {
     names: () => Promise<string[]>;
     rename: (from: string, to: string) => Promise<void>;
     drop: (name: string) => Promise<void>;
+    /** Drops the throwaway role of every restore (its database is gone by now): a restore cut off leaves one behind. */
+    dropRestoreRoles: () => Promise<void>;
   };
   /** Reads the secrets again after `config.json` was put back. */
   reloadConfig: () => void;
@@ -249,6 +251,14 @@ export async function reconcileInterruptedRestore(deps: ReconcileDeps): Promise<
       await databases.drop(ASIDE_DATABASE);
     }
     if (names.includes(SCRATCH_DATABASE)) await databases.drop(SCRATCH_DATABASE);
+  }
+  // The role a restore ran its dump as: it owns nothing once its database is gone, and it is never needed again.
+  try {
+    await databases.dropRestoreRoles();
+  } catch (error) {
+    log?.(
+      `a throwaway role of a restore could not be dropped: ${error instanceof Error ? error.message : String(error)}`,
+    );
   }
   if (deps.sweep !== false) await sweepWorkFiles(paths);
   return outcome;

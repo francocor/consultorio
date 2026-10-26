@@ -29,7 +29,10 @@ const clean: ClusterFacts = {
   memberships: [OWNER_ADMIN, RELEASER],
   roleSettings: [],
   ownerPasswordHash: 'SCRAM-SHA-256$4096:aaa$bbb:ccc',
-  auditPrivileges: ['app_rw:INSERT:audit_event', 'app_rw:SELECT:audit_event'],
+  auditPrivileges: [
+    { role: 'app_rw', privilege: 'INSERT', table: 'audit_event' },
+    { role: 'app_rw', privilege: 'SELECT', table: 'audit_event' },
+  ],
 };
 const cleanScratch: ScratchFacts = { migrationsKind: 'r', databaseSettings: [] };
 
@@ -43,7 +46,10 @@ describe('what a restored database may change', () => {
     expect(
       auditProblems(
         clean,
-        { ...clean, auditPrivileges: ['app_rw:INSERT:audit_event'] },
+        {
+          ...clean,
+          auditPrivileges: [{ role: 'app_rw', privilege: 'INSERT', table: 'audit_event' }],
+        },
         cleanScratch,
       ),
     ).toEqual([]);
@@ -107,7 +113,10 @@ describe('what a restored database may change', () => {
         ...clean,
         roleSettings: ['app_owner=search_path=evil'],
         ownerPasswordHash: 'SCRAM-SHA-256$4096:zzz$yyy:xxx',
-        auditPrivileges: [...clean.auditPrivileges, 'app_rw:UPDATE:audit_event'],
+        auditPrivileges: [
+          ...clean.auditPrivileges,
+          { role: 'app_rw', privilege: 'UPDATE', table: 'audit_event' },
+        ],
       },
       cleanScratch,
     );
@@ -115,7 +124,7 @@ describe('what a restored database may change', () => {
     expect(problems).toEqual([
       expect.stringContaining('app_owner=search_path=evil'),
       'the password of app_owner was changed',
-      'more privileges on the audit trail: app_rw:UPDATE:audit_event',
+      'more privileges on the audit trail: {"role":"app_rw","privilege":"UPDATE","table":"audit_event"}',
     ]);
   });
 });

@@ -77,11 +77,17 @@ const CLEAN: ClusterFacts = {
   ],
   roleSettings: [],
   ownerPasswordHash: 'SCRAM-SHA-256$4096:aaa$bbb:ccc',
-  auditPrivileges: ['app_rw:INSERT:audit_event'],
+  auditPrivileges: [{ role: 'app_rw', privilege: 'INSERT', table: 'audit_event' }],
 };
 let leftBehind: { cluster: ClusterFacts; scratch: ScratchFacts };
 let reverted: string[][];
 let failSwap: boolean;
+/** The throwaway roles the fake cluster was asked to drop, and who `pg_restore` ran as. */
+let roleDrops: number;
+let restoredAs: string[];
+/** What the fake `inspect` and `seal` report. */
+let inspectProblems: string[];
+let sealProblems: string[];
 let failAdopt: boolean;
 /** The databases of the cluster and what is in each: `consultorio` is the real one. */
 let db: Map<string, string>;
@@ -118,6 +124,10 @@ function fakeDatabases(): ReconcileDeps['databases'] {
       db.delete(name);
       return Promise.resolve();
     },
+    dropRestoreRoles: () => {
+      roleDrops += 1;
+      return Promise.resolve();
+    },
   };
 }
 
@@ -135,7 +145,8 @@ function restoreDeps(overrides: Partial<RestoreDeps> = {}): RestoreDeps {
   return {
     paths,
     backupKey: () => install.backupKey,
-    restoreDump: async (source) => {
+    restoreDump: async (source, scratch) => {
+      restoredAs.push(scratch.user);
       events.push('pg_restore');
       restored.push(await drain(source));
       return restoreResult;
@@ -144,7 +155,12 @@ function restoreDeps(overrides: Partial<RestoreDeps> = {}): RestoreDeps {
       create: () => {
         events.push('create scratch');
         db.set(SCRATCH_DATABASE, NEW_DB);
-        return Promise.resolve();
+        return Promise.resolve({ user: 'consulvia_restore_test', password: 'a-password' });
+      },
+      inspect: () => Promise.resolve(inspectProblems),
+      seal: () => {
+        events.push('seal');
+        return Promise.resolve(sealProblems);
       },
       swapIn: () => {
         events.push('swap');
@@ -232,6 +248,10 @@ beforeEach(() => {
   adopted = null;
   failSwap = false;
   failAdopt = false;
+  roleDrops = 0;
+  restoredAs = [];
+  inspectProblems = [];
+  sealProblems = [];
   db = new Map([[DATABASE, OLD_DB]]);
   dead = false;
   swapStops = null;
@@ -295,6 +315,7 @@ describe('restoring a backup of this installation', () => {
       'stop',
       'create scratch',
       'pg_restore',
+      'seal',
       'swap',
       'revert roles',
       'start',
@@ -364,6 +385,7 @@ describe('restoring a backup of this installation', () => {
       'stop',
       'create scratch',
       'pg_restore',
+      'seal',
       'swap',
       'drop scratch',
       'start',
@@ -388,6 +410,7 @@ describe('restoring a backup of this installation', () => {
       'stop',
       'create scratch',
       'pg_restore',
+      'seal',
       'swap',
       'revert roles',
       'start',
@@ -418,6 +441,7 @@ describe('a restore that fails half way, or is cut off', () => {
       'stop',
       'create scratch',
       'pg_restore',
+      'seal',
       'adopt',
       'swap',
       'drop scratch',
@@ -493,7 +517,9 @@ describe('a restore that fails half way, or is cut off', () => {
           seen.push(`adopt: ${await step()}`);
         },
         scratch: {
-          create: () => Promise.resolve(),
+          create: () => Promise.resolve({ user: 'u', password: 'p' }),
+          inspect: () => Promise.resolve([]),
+          seal: () => Promise.resolve([]),
           swapIn: async () => {
             seen.push(`swap: ${await step()}`);
           },
@@ -570,6 +596,53 @@ describe('a restore that fails half way, or is cut off', () => {
   });
 });
 
+describe('the role a dump runs as', () => {
+  it('runs pg_restore as the throwaway role of that restore, never as app_owner or the superuser', async () => {
+    const path = await makeBackup(install, { 't/a/docs/1.obj': 'one' });
+
+    await restoreBackup(restoreDeps(), path);
+
+    expect(restoredAs).toEqual(['consulvia_restore_test']);
+  });
+
+  it('refuses a database whose privileges or parameters the dump changed, and seals nothing of it', async () => {
+    const path = await makeBackup(install, { 't/a/docs/1.obj': 'from the backup' });
+    writeFileSync(join(paths.files, 't', 'a', 'docs', '1.obj'), 'current data');
+    inspectProblems = ['a privilege appeared: {"grantee":"app_operator"}'];
+
+    const failure = await restoreBackup(restoreDeps(), path).catch((error: unknown) => error);
+
+    expect(failure).toMatchObject({ code: 'unsafe_backup' });
+    expect((failure as RestoreError).detail).toContain('app_operator');
+    expect(events).not.toContain('seal');
+    expect(events).not.toContain('swap');
+    expect(readDoc('t/a/docs/1.obj')).toBe('current data');
+    // And the role it ran as is dropped, with the database.
+    expect(roleDrops).toBeGreaterThan(0);
+    expect(db.has(SCRATCH_DATABASE)).toBe(false);
+  });
+
+  it('refuses a database that is still wrong after it was handed over', async () => {
+    const path = await makeBackup(install, { 't/a/docs/1.obj': 'from the backup' });
+    sealProblems = ['an object of the backup is owned by someone else'];
+
+    const failure = await restoreBackup(restoreDeps(), path).catch((error: unknown) => error);
+
+    expect(failure).toMatchObject({ code: 'unsafe_backup' });
+    expect(events).not.toContain('swap');
+    expect(roleDrops).toBeGreaterThan(0);
+  });
+
+  it('drops the role when the restore fails after pg_restore went well (the manifest does not match)', async () => {
+    const path = await makeBackup(install, { 't/a/docs/1.obj': 'one' });
+    restoreResult = { code: 1, stderr: 'pg_restore: error: boom' };
+
+    await restoreBackup(restoreDeps(), path).catch(() => undefined);
+
+    expect(roleDrops).toBeGreaterThan(0);
+  });
+});
+
 describe('a backup that authenticates but does things a backup has no business doing', () => {
   const refused = async (change: () => void) => {
     const path = await makeBackup(install, { 't/a/docs/1.obj': 'from the backup' });
@@ -638,12 +711,15 @@ describe('a backup that authenticates but does things a backup has no business d
         ...leftBehind,
         cluster: {
           ...CLEAN,
-          auditPrivileges: [...CLEAN.auditPrivileges, 'app_rw:UPDATE:audit_event'],
+          auditPrivileges: [
+            ...CLEAN.auditPrivileges,
+            { role: 'app_rw', privilege: 'UPDATE', table: 'audit_event' },
+          ],
         },
       };
     });
 
-    expect(failure.detail).toContain('app_rw:UPDATE:audit_event');
+    expect(failure.detail).toContain('"privilege":"UPDATE","table":"audit_event"');
   });
 
   it('lets a clean backup through, and re-applies the known state after the swap', async () => {
@@ -655,6 +731,7 @@ describe('a backup that authenticates but does things a backup has no business d
       'stop',
       'create scratch',
       'pg_restore',
+      'seal',
       'swap',
       'revert roles',
       'start',
@@ -883,6 +960,7 @@ describe('restoring a backup of another installation', () => {
       'stop',
       'create scratch',
       'pg_restore',
+      'seal',
       'adopt',
       'swap',
       'revert roles',
@@ -962,6 +1040,8 @@ describe('a process that dies at any point of a restore', () => {
   }
 
   const coherent = (swapped: boolean, foreign: boolean) => {
+    // The role the dump ran as is dropped by the start after it, wherever the restore was cut off.
+    expect(roleDrops).toBeGreaterThan(0);
     expect([...db.entries()]).toEqual([[DATABASE, swapped ? NEW_DB : OLD_DB]]);
     expect(readDoc('t/a/docs/1.obj')).toBe(swapped ? 'theirs' : 'ours');
     expect(readFileSync(paths.configFile, 'utf8')).toBe(
@@ -1008,7 +1088,12 @@ describe('a process that dies at any point of a restore', () => {
           };
         await reconcileInterruptedRestore({
           ...reconcileDeps(),
-          databases: { names: flaky.names, rename: dying(flaky.rename), drop: dying(flaky.drop) },
+          databases: {
+            names: flaky.names,
+            rename: dying(flaky.rename),
+            drop: dying(flaky.drop),
+            dropRestoreRoles: flaky.dropRestoreRoles,
+          },
         }).catch(() => 'died');
 
         await reconcileInterruptedRestore(reconcileDeps());

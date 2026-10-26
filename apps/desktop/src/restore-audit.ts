@@ -9,6 +9,16 @@
  * the live cluster looked like before it started, and refuses (and puts back) anything that differs.
  */
 
+/** One privilege of one application role on one table of the audit trail. */
+export interface AuditPrivilege {
+  role: string;
+  privilege: string;
+  table: string;
+}
+
+const privilegeKey = (privilege: AuditPrivilege) =>
+  JSON.stringify([privilege.role, privilege.privilege, privilege.table]);
+
 /** One row of `pg_auth_members`, with the names of the roles. */
 export interface Membership {
   role: string;
@@ -27,8 +37,8 @@ export interface ClusterFacts {
   roleSettings: string[];
   /** The stored password verifier of `app_owner`: a restored dump can change its own. */
   ownerPasswordHash: string;
-  /** `role:privilege:table` for what the application roles may do to the audit trail. */
-  auditPrivileges: string[];
+  /** What the application roles may do to the audit trail, one tuple of catalog columns each. */
+  auditPrivileges: AuditPrivilege[];
 }
 
 /** What is true of the scratch database itself. */
@@ -69,7 +79,7 @@ export function auditProblems(
     );
   }
   if (scratch.databaseSettings.length > 0) {
-    problems.push(`the database sets parameters: ${scratch.databaseSettings.join(', ')}`);
+    problems.push(`the database sets parameters: ${JSON.stringify(scratch.databaseSettings)}`);
   }
   const wasBefore = new Set(before.memberships.map(key));
   const isNow = new Set(after.memberships.map(key));
@@ -85,15 +95,16 @@ export function auditProblems(
   }
   const settingsBefore = new Set(before.roleSettings);
   for (const setting of after.roleSettings) {
-    if (!settingsBefore.has(setting)) problems.push(`a role sets a parameter: ${setting}`);
+    if (!settingsBefore.has(setting))
+      problems.push(`a role sets a parameter: ${JSON.stringify(setting)}`);
   }
   if (after.ownerPasswordHash !== before.ownerPasswordHash) {
     problems.push('the password of app_owner was changed');
   }
-  const privilegesBefore = new Set(before.auditPrivileges);
+  const privilegesBefore = new Set(before.auditPrivileges.map(privilegeKey));
   for (const privilege of after.auditPrivileges) {
-    if (!privilegesBefore.has(privilege)) {
-      problems.push(`more privileges on the audit trail: ${privilege}`);
+    if (!privilegesBefore.has(privilegeKey(privilege))) {
+      problems.push(`more privileges on the audit trail: ${JSON.stringify(privilege)}`);
     }
   }
   return problems;

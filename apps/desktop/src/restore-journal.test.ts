@@ -24,6 +24,9 @@ let paths: DataPaths;
 let databases: string[];
 let calls: string[];
 let reloads: number;
+let roleDrops: number;
+let roleDropFails: boolean;
+let logged: string[];
 
 beforeEach(() => {
   folder = mkdtempSync(join(tmpdir(), 'consulvia-journal-'));
@@ -32,6 +35,9 @@ beforeEach(() => {
   databases = [DATABASE];
   calls = [];
   reloads = 0;
+  roleDrops = 0;
+  roleDropFails = false;
+  logged = [];
 });
 
 afterEach(() => {
@@ -68,9 +74,18 @@ function reconcile() {
         databases = databases.filter((candidate) => candidate !== name);
         return Promise.resolve();
       },
+      dropRestoreRoles: () => {
+        roleDrops += 1;
+        return roleDropFails
+          ? Promise.reject(new Error('still owns something'))
+          : Promise.resolve();
+      },
     },
     reloadConfig: () => {
       reloads += 1;
+    },
+    log: (message) => {
+      logged.push(message);
     },
   });
 }
@@ -119,6 +134,26 @@ describe('a restore that did not end', () => {
       false,
     );
     expect(existsSync(join(paths.backups, 'consulvia-manual-2026-10-24_1000.cvb'))).toBe(true);
+  });
+
+  it('drops the throwaway role of a restore at every start, whether a restore was pending or not', async () => {
+    await reconcile();
+    expect(roleDrops).toBe(1);
+
+    filesHalfSwapped();
+    databases = [DATABASE, SCRATCH_DATABASE];
+    await writeJournal(paths, journal('restoring'));
+    await reconcile();
+
+    expect(roleDrops).toBe(2);
+  });
+
+  it('goes on, and says so, when a throwaway role cannot be dropped: it owns nothing and has no way in', async () => {
+    roleDropFails = true;
+
+    expect(await reconcile()).toBe('none');
+
+    expect(logged.some((line) => line.includes('throwaway role'))).toBe(true);
   });
 
   it('drops the databases a restore left behind when no restore is pending', async () => {
@@ -236,6 +271,7 @@ describe('a restore that did not end', () => {
           seen = typeof written === 'object' && written !== null ? written.undoing : written;
           databases = [DATABASE];
         },
+        dropRestoreRoles: () => Promise.resolve(),
       },
       reloadConfig: () => undefined,
     });
