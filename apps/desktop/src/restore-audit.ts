@@ -41,12 +41,33 @@ export interface ClusterFacts {
   auditPrivileges: AuditPrivilege[];
 }
 
+/** What the server says about a database itself. */
+export interface DatabaseFlags {
+  template: boolean;
+  allowConnections: boolean;
+  connectionLimit: number;
+}
+
+/** The flags of a database that was just created. */
+export const NEW_DATABASE_FLAGS: DatabaseFlags = {
+  template: false,
+  allowConnections: true,
+  connectionLimit: -1,
+};
+
 /** What is true of the scratch database itself. */
 export interface ScratchFacts {
   /** `pg_class.relkind` of `drizzle.__drizzle_migrations`: `r` is a plain table; null when there is none. */
   migrationsKind: string | null;
   /** `pg_db_role_setting` of this database (`ALTER DATABASE ... SET`): `name=value`. */
   databaseSettings: string[];
+  /**
+   * Triggers, rules and policies on the tables of the schema `drizzle`, as `kind name on table`: the migrator
+   * reads and writes those tables as `app_owner`, and a hook there is code of the backup that runs with its power.
+   */
+  drizzleHooks: string[];
+  /** `IS_TEMPLATE`, `ALLOW_CONNECTIONS` and `CONNECTION LIMIT` of the database. */
+  flags: DatabaseFlags;
 }
 
 const key = (membership: Membership) =>
@@ -80,6 +101,14 @@ export function auditProblems(
   }
   if (scratch.databaseSettings.length > 0) {
     problems.push(`the database sets parameters: ${JSON.stringify(scratch.databaseSettings)}`);
+  }
+  if (scratch.drizzleHooks.length > 0) {
+    problems.push(`the tables of the migrator have hooks: ${JSON.stringify(scratch.drizzleHooks)}`);
+  }
+  if (JSON.stringify(scratch.flags) !== JSON.stringify(NEW_DATABASE_FLAGS)) {
+    problems.push(
+      `the flags of the database are not those of a new one: ${JSON.stringify(scratch.flags)}`,
+    );
   }
   const wasBefore = new Set(before.memberships.map(key));
   const isNow = new Set(after.memberships.map(key));

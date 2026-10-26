@@ -120,6 +120,12 @@ export interface RestoreDeps {
     create: () => Promise<ScratchHandle>;
     inspect: (scratch: ScratchHandle) => Promise<string[]>;
     seal: (scratch: ScratchHandle) => Promise<string[]>;
+    /**
+     * Applies the migrations the backup is missing to the scratch database, as `app_owner`. They run BEFORE the
+     * swap and before `audit.check`, so whatever a hook of the dump does when they touch it is seen by the same
+     * checks as the rest of the dump, and undone with it, instead of running after the swap with nobody looking.
+     */
+    migrate: (scratch: ScratchHandle) => Promise<void>;
     swapIn: () => Promise<void>;
   };
   /**
@@ -144,7 +150,7 @@ export interface RestoreDeps {
   migrationCount: number;
   /** Stops the API and the worker. The database stays up. */
   stopServices: () => Promise<void>;
-  /** Applies the migrations and starts the API and the worker again, with the secrets of the install as they are now. */
+  /** Starts the API and the worker again, with the secrets of the install as they are now (the database was migrated before the swap). */
   startServices: () => Promise<void>;
   /**
    * Makes the secrets of another install's backup the secrets of this one. Called BEFORE the databases trade
@@ -435,7 +441,20 @@ export async function restoreBackup(
     // dump ran as could not have touched the roles of the application, and they say so.
     let problems = await deps.scratch.inspect(scratch);
     if (problems.length === 0) problems = await deps.scratch.seal(scratch);
-    if (problems.length === 0) problems = await deps.audit.check(snapshot);
+    if (problems.length === 0) {
+      try {
+        await deps.scratch.migrate(scratch);
+      } catch (error) {
+        // Whatever the migrations ran may have touched the roles before they failed.
+        await deps.audit.revert(snapshot).catch(() => undefined);
+        throw new RestoreError(
+          'restore_failed',
+          `the migrations failed on the backup: ${error instanceof Error ? error.message : String(error)}`,
+          { cause: error },
+        );
+      }
+      problems = await deps.audit.check(snapshot);
+    }
     if (problems.length > 0) {
       deps.log?.(`a backup was refused: ${problems.join('; ')}`);
       await deps.audit.revert(snapshot).catch(() => undefined);

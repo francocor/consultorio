@@ -79,9 +79,18 @@ const CLEAN: ClusterFacts = {
   ownerPasswordHash: 'SCRAM-SHA-256$4096:aaa$bbb:ccc',
   auditPrivileges: [{ role: 'app_rw', privilege: 'INSERT', table: 'audit_event' }],
 };
+const CLEAN_SCRATCH: ScratchFacts = {
+  migrationsKind: 'r',
+  databaseSettings: [],
+  drizzleHooks: [],
+  flags: { template: false, allowConnections: true, connectionLimit: -1 },
+};
 let leftBehind: { cluster: ClusterFacts; scratch: ScratchFacts };
 let reverted: string[][];
 let failSwap: boolean;
+/** What the fake `migrate` of the scratch database does: nothing, fail, or leave something behind that the check must find. */
+let migrateFails: boolean;
+let migrateLeaves: ScratchFacts | null;
 /** The throwaway roles the fake cluster was asked to drop, and who `pg_restore` ran as. */
 let roleDrops: number;
 let restoredAs: string[];
@@ -161,6 +170,13 @@ function restoreDeps(overrides: Partial<RestoreDeps> = {}): RestoreDeps {
       seal: () => {
         events.push('seal');
         return Promise.resolve(sealProblems);
+      },
+      migrate: () => {
+        events.push('migrate');
+        if (migrateLeaves !== null) leftBehind = { ...leftBehind, scratch: migrateLeaves };
+        return migrateFails
+          ? Promise.reject(new Error('the migration 0042 failed'))
+          : Promise.resolve();
       },
       swapIn: () => {
         events.push('swap');
@@ -247,6 +263,8 @@ beforeEach(() => {
   restoreResult = { code: 0, stderr: '' };
   adopted = null;
   failSwap = false;
+  migrateFails = false;
+  migrateLeaves = null;
   failAdopt = false;
   roleDrops = 0;
   restoredAs = [];
@@ -256,7 +274,7 @@ beforeEach(() => {
   dead = false;
   swapStops = null;
   swapKills = false;
-  leftBehind = { cluster: CLEAN, scratch: { migrationsKind: 'r', databaseSettings: [] } };
+  leftBehind = { cluster: CLEAN, scratch: CLEAN_SCRATCH };
   reverted = [];
   install = newTestInstall();
   other = newTestInstall();
@@ -316,6 +334,7 @@ describe('restoring a backup of this installation', () => {
       'create scratch',
       'pg_restore',
       'seal',
+      'migrate',
       'swap',
       'revert roles',
       'start',
@@ -386,6 +405,7 @@ describe('restoring a backup of this installation', () => {
       'create scratch',
       'pg_restore',
       'seal',
+      'migrate',
       'swap',
       'drop scratch',
       'start',
@@ -411,6 +431,7 @@ describe('restoring a backup of this installation', () => {
       'create scratch',
       'pg_restore',
       'seal',
+      'migrate',
       'swap',
       'revert roles',
       'start',
@@ -442,6 +463,7 @@ describe('a restore that fails half way, or is cut off', () => {
       'create scratch',
       'pg_restore',
       'seal',
+      'migrate',
       'adopt',
       'swap',
       'drop scratch',
@@ -520,6 +542,7 @@ describe('a restore that fails half way, or is cut off', () => {
           create: () => Promise.resolve({ user: 'u', password: 'p' }),
           inspect: () => Promise.resolve([]),
           seal: () => Promise.resolve([]),
+          migrate: () => Promise.resolve(),
           swapIn: async () => {
             seen.push(`swap: ${await step()}`);
           },
@@ -622,6 +645,38 @@ describe('the role a dump runs as', () => {
     expect(db.has(SCRATCH_DATABASE)).toBe(false);
   });
 
+  it('migrates the scratch database after it was handed over and before it is checked, so that the check sees what the migrations did', async () => {
+    const path = await makeBackup(install, { 't/a/docs/1.obj': 'from the backup' });
+    writeFileSync(join(paths.files, 't', 'a', 'docs', '1.obj'), 'current data');
+    // A migration that fires a hook of the dump: what it leaves in the database is found by the check.
+    migrateLeaves = { ...CLEAN_SCRATCH, databaseSettings: ['search_path=evil'] };
+
+    const failure = await restoreBackup(restoreDeps(), path).catch((error: unknown) => error);
+
+    expect(failure).toMatchObject({ code: 'unsafe_backup' });
+    expect((failure as RestoreError).detail).toContain('search_path=evil');
+    expect(events.indexOf('migrate')).toBeGreaterThan(events.indexOf('seal'));
+    expect(events).not.toContain('swap');
+    expect(readDoc('t/a/docs/1.obj')).toBe('current data');
+    expect(roleDrops).toBeGreaterThan(0);
+  });
+
+  it('does not swap a database whose migrations failed, and starts the services again on the old one', async () => {
+    const path = await makeBackup(install, { 't/a/docs/1.obj': 'from the backup' });
+    writeFileSync(join(paths.files, 't', 'a', 'docs', '1.obj'), 'current data');
+    migrateFails = true;
+
+    const failure = await restoreBackup(restoreDeps(), path).catch((error: unknown) => error);
+
+    expect(failure).toMatchObject({ code: 'restore_failed' });
+    expect((failure as RestoreError).detail).toContain('migration 0042');
+    expect(events).not.toContain('swap');
+    expect(events).toContain('drop scratch');
+    expect(events.at(-1)).toBe('start');
+    expect(readDoc('t/a/docs/1.obj')).toBe('current data');
+    expect(existsSync(journalFile(paths))).toBe(false);
+  });
+
   it('refuses a database that is still wrong after it was handed over', async () => {
     const path = await makeBackup(install, { 't/a/docs/1.obj': 'from the backup' });
     sealProblems = ['an object of the backup is owned by someone else'];
@@ -663,7 +718,7 @@ describe('a backup that authenticates but does things a backup has no business d
 
   it('refuses a dump that made the table of the migrations a view, which the superuser used to read at boot', async () => {
     const failure = await refused(() => {
-      leftBehind = { ...leftBehind, scratch: { migrationsKind: 'v', databaseSettings: [] } };
+      leftBehind = { ...leftBehind, scratch: { ...CLEAN_SCRATCH, migrationsKind: 'v' } };
     });
 
     expect(failure.detail).toContain('is not a table');
@@ -673,7 +728,7 @@ describe('a backup that authenticates but does things a backup has no business d
     const failure = await refused(() => {
       leftBehind = {
         ...leftBehind,
-        scratch: { migrationsKind: 'r', databaseSettings: ['search_path=evil'] },
+        scratch: { ...CLEAN_SCRATCH, databaseSettings: ['search_path=evil'] },
       };
     });
 
@@ -732,6 +787,7 @@ describe('a backup that authenticates but does things a backup has no business d
       'create scratch',
       'pg_restore',
       'seal',
+      'migrate',
       'swap',
       'revert roles',
       'start',
@@ -963,6 +1019,7 @@ describe('restoring a backup of another installation', () => {
       'create scratch',
       'pg_restore',
       'seal',
+      'migrate',
       'adopt',
       'swap',
       'revert roles',

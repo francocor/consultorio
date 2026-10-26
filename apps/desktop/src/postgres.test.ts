@@ -49,6 +49,8 @@ const pidFileText = (pid: number, port: number, status: string) =>
 let connectFails: number;
 let answerRows: Record<string, unknown>[] | null;
 let missingTable: boolean;
+/** What the query for the hooks on the tables of the migrator answers. */
+let hookRows: Record<string, unknown>[];
 /** Statements for which the fake answers "that object does not exist" (or another code). */
 let onMissing: (sql: string) => boolean;
 let otherCode: string;
@@ -102,6 +104,9 @@ function cluster(
         if (sql.includes('pg_roles') && sql.includes('starts_with')) {
           return Promise.resolve({ rows: onRoles.map((rolname) => ({ rolname })) });
         }
+        if (hookRows.length > 0 && sql.includes('pg_trigger')) {
+          return Promise.resolve({ rows: hookRows });
+        }
         if (answerRows !== null && sql.includes('__drizzle_migrations')) {
           return Promise.resolve({ rows: answerRows });
         }
@@ -132,6 +137,7 @@ beforeEach(() => {
   connectFails = 0;
   answerRows = null;
   missingTable = false;
+  hookRows = [];
   onMissing = () => false;
   otherCode = '42P01';
   onRoles = [];
@@ -196,6 +202,19 @@ describe('the migrations a database has had applied', () => {
     });
   });
 
+  it('counts them in the database it is asked about, as app_owner: the scratch database is migrated before it is swapped in', async () => {
+    const pg = cluster();
+    await pg.start();
+    answerRows = [{ n: 12 }];
+
+    expect(await pg.appliedMigrationCount('consultorio_restore')).toBe(12);
+
+    expect(queries.at(-1)?.target).toMatchObject({
+      database: 'consultorio_restore',
+      user: 'app_owner',
+    });
+  });
+
   it('says null for a database that has none yet: a first run, not an old version', async () => {
     const pg = cluster();
     await pg.start();
@@ -217,6 +236,38 @@ describe('reading what a backup may have written', () => {
     for (const query of inScratch) expect(query.target.user).toBe('app_owner');
     const inCatalogs = queries.filter((query) => query.target.database === 'postgres');
     expect(inCatalogs.length).toBeGreaterThan(0);
+  });
+
+  it('reads the triggers, rules and policies on the tables of the migrator, and the flags of the database', async () => {
+    const pg = cluster();
+    await pg.start();
+    hookRows = [
+      { kind: 'trigger', name: 'boom', table_name: '__drizzle_migrations' },
+      { kind: 'policy', name: 'p', table_name: '__drizzle_migrations' },
+    ];
+
+    const facts = await pg.scratchFacts('consultorio_restore');
+
+    expect(facts.drizzleHooks).toEqual([
+      'trigger boom on __drizzle_migrations',
+      'policy p on __drizzle_migrations',
+    ]);
+    expect(facts.flags).toEqual({ template: false, allowConnections: true, connectionLimit: -1 });
+    const hooks = queries.find((query) => query.sql.includes('pg_trigger'));
+    expect(hooks?.target).toMatchObject({ database: 'consultorio_restore', user: 'app_owner' });
+    expect(hooks?.sql).toContain('pg_policy');
+    expect(hooks?.sql).toContain('pg_rewrite');
+  });
+
+  it('refuses a restored database that has a hook on the tables of the migrator before anything migrates it', async () => {
+    const pg = cluster();
+    await pg.start();
+    const scratch = await pg.createRestoreScratch('consultorio_restore');
+    hookRows = [{ kind: 'trigger', name: 'boom', table_name: '__drizzle_migrations' }];
+
+    const problems = await pg.inspectRestoreScratch(scratch);
+
+    expect(problems.join('\n')).toContain('trigger boom on __drizzle_migrations');
   });
 
   it('never runs a query of the superuser inside a database a backup may have written', async () => {

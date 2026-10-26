@@ -9,7 +9,7 @@ import {
   trustedGrants,
   type AclEntry,
 } from './restore-acl.js';
-import type { ClusterFacts, ScratchFacts } from './restore-audit.js';
+import type { ClusterFacts, DatabaseFlags, ScratchFacts } from './restore-audit.js';
 import { rotateBySize } from './rotating-log.js';
 import type { Runner } from './runner.js';
 
@@ -228,11 +228,12 @@ export class PostgresCluster {
    * How many migrations the database of the product has had applied (the rows of the table the migrator keeps),
    * or `null` when it has none: a database that is new.
    */
-  async appliedMigrationCount(): Promise<number | null> {
+  async appliedMigrationCount(database: string = DATABASE_NAME): Promise<number | null> {
+    assertDatabaseName(database);
     try {
       // As `app_owner`, who ran the migrations: a restored database can make this table a view whose function
       // runs as whoever reads it, and the superuser must never be the one.
-      return await this.asOwner(DATABASE_NAME, async (client) => {
+      return await this.asOwner(database, async (client) => {
         const found = await client.query(
           'SELECT count(*)::int AS n FROM drizzle.__drizzle_migrations',
         );
@@ -427,6 +428,14 @@ export class PostgresCluster {
     const settings = await this.databaseSettings(scratch.database);
     if (settings.length > 0)
       problems.push(`the database sets parameters: ${JSON.stringify(settings)}`);
+    // The migrations run on this database before it is swapped in, as `app_owner`: a hook on the tables they
+    // read and write would be code of the backup running with the power of the application.
+    if (problems.length === 0) {
+      const hooks = await this.drizzleHooks(scratch.database);
+      if (hooks.length > 0) {
+        problems.push(`the tables of the migrator have hooks: ${JSON.stringify(hooks)}`);
+      }
+    }
     return problems;
   }
 
@@ -663,7 +672,22 @@ export class PostgresCluster {
       const kind = found.rows[0]?.['kind'];
       return typeof kind === 'string' ? kind : null;
     });
-    return { migrationsKind, databaseSettings };
+    const drizzleHooks = await this.drizzleHooks(name);
+    const flags = await this.databaseFlags(name);
+    return { migrationsKind, databaseSettings, drizzleHooks, flags };
+  }
+
+  /**
+   * Triggers, rules and policies on the tables of the schema `drizzle`, as `kind name on table`. Read as
+   * `app_owner` from the catalogs: nothing of the backup runs.
+   */
+  private async drizzleHooks(name: string): Promise<string[]> {
+    return this.asOwner(name, async (client) => {
+      const found = await client.query(DRIZZLE_HOOKS_SQL);
+      return found.rows.map(
+        (row) => `${String(row['kind'])} ${String(row['name'])} on ${String(row['table_name'])}`,
+      );
+    });
   }
 
   /** Runs statements built by `revertStatements`, as the superuser, in the `postgres` database. */
@@ -744,16 +768,31 @@ const AUDIT_PRIVILEGES_SQL = `
 `;
 
 /** The session of every connection to a database a backup may have written: `pg_catalog` and nothing else. */
+/** Triggers, rules and policies on the tables of the schema `drizzle`: catalogs only, qualified, nothing is called. */
+const DRIZZLE_HOOKS_SQL = `
+  SELECT 'trigger' AS kind, t.tgname AS name, c.relname AS table_name
+    FROM pg_catalog.pg_trigger t
+    JOIN pg_catalog.pg_class c ON c.oid = t.tgrelid
+    JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+   WHERE n.nspname = 'drizzle' AND NOT t.tgisinternal
+  UNION ALL
+  SELECT 'rule', r.rulename, c.relname
+    FROM pg_catalog.pg_rewrite r
+    JOIN pg_catalog.pg_class c ON c.oid = r.ev_class
+    JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+   WHERE n.nspname = 'drizzle' AND r.rulename <> '_RETURN'
+  UNION ALL
+  SELECT 'policy', p.polname, c.relname
+    FROM pg_catalog.pg_policy p
+    JOIN pg_catalog.pg_class c ON c.oid = p.polrelid
+    JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+   WHERE n.nspname = 'drizzle'
+  ORDER BY 1, 2, 3
+`;
+
 const SAFE_SEARCH_PATH = '-c search_path=pg_catalog,pg_temp';
 
 const RESTORE_ROLE_PREFIX = 'consulvia_restore_';
-
-/** What the server says about a database itself. */
-export interface DatabaseFlags {
-  template: boolean;
-  allowConnections: boolean;
-  connectionLimit: number;
-}
 
 /** What a restore is made with: the throwaway role, and the privileges the databases started with. */
 export interface RestoreScratch {

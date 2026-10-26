@@ -34,7 +34,12 @@ const clean: ClusterFacts = {
     { role: 'app_rw', privilege: 'SELECT', table: 'audit_event' },
   ],
 };
-const cleanScratch: ScratchFacts = { migrationsKind: 'r', databaseSettings: [] };
+const cleanScratch: ScratchFacts = {
+  migrationsKind: 'r',
+  databaseSettings: [],
+  drizzleHooks: [],
+  flags: { template: false, allowConnections: true, connectionLimit: -1 },
+};
 
 describe('what a restored database may change', () => {
   it('finds nothing wrong with a database that changed nothing', () => {
@@ -59,6 +64,27 @@ describe('what a restored database may change', () => {
     for (const kind of ['v', 'm', 'f', 'p', 'S']) {
       expect(auditProblems(clean, clean, { ...cleanScratch, migrationsKind: kind })).toEqual([
         expect.stringContaining('is not a table'),
+      ]);
+    }
+  });
+
+  it('refuses a trigger, a rule or a policy on the tables of the migrator: the migrations would run it', () => {
+    const problems = auditProblems(clean, clean, {
+      ...cleanScratch,
+      drizzleHooks: ['trigger boom on __drizzle_migrations'],
+    });
+
+    expect(problems).toEqual([expect.stringContaining('trigger boom')]);
+  });
+
+  it('refuses a database that is a template, does not accept connections or limits them', () => {
+    for (const flags of [
+      { template: true, allowConnections: true, connectionLimit: -1 },
+      { template: false, allowConnections: false, connectionLimit: -1 },
+      { template: false, allowConnections: true, connectionLimit: 0 },
+    ]) {
+      expect(auditProblems(clean, clean, { ...cleanScratch, flags })).toEqual([
+        expect.stringContaining('flags of the database'),
       ]);
     }
   });

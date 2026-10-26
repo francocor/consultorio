@@ -123,6 +123,8 @@ let ownerChecks: OwnerCheckOptions[] = [];
 /** What the fake cluster was told about the right of app_owner to hand out audit_sealer, and what it was at each migration. */
 let ownerAdminCalls: boolean[] = [];
 let ownerAdminNow = false;
+/** Taking the right to hand out audit_sealer away fails. */
+let ownerAdminFails = false;
 let ownerAdminAtMigrate: boolean[] = [];
 /** What the backups folder held each time `migrate` was called. */
 let backupsAtMigrate: string[][] = [];
@@ -267,7 +269,13 @@ function build(
         ownerPasswordHash: 'hash',
         auditPrivileges: [],
       }),
-    scratchFacts: () => Promise.resolve({ migrationsKind: 'r', databaseSettings: [] }),
+    scratchFacts: () =>
+      Promise.resolve({
+        migrationsKind: 'r',
+        databaseSettings: [],
+        drizzleHooks: [],
+        flags: { template: false, allowConnections: true, connectionLimit: -1 },
+      }),
     executeStatements: () => Promise.resolve(),
     ping: () => Promise.resolve(databaseAlive),
     appliedMigrationCount: () => Promise.resolve(appliedMigrations),
@@ -317,6 +325,7 @@ function build(
     dropRestoreRoles: () => Promise.resolve(),
     setOwnerAuditAdmin: (allowed: boolean) => {
       ownerAdminCalls.push(allowed);
+      if (!allowed && ownerAdminFails) return Promise.reject(new Error('the server went away'));
       ownerAdminNow = allowed;
       return Promise.resolve();
     },
@@ -578,6 +587,7 @@ beforeEach(() => {
   stopFails = false;
   confirmAnswer = true;
   cipherBroken = false;
+  ownerAdminFails = false;
   listCode = 0;
   dumpGate = null;
   restoreCode = 0;
@@ -1278,6 +1288,17 @@ describe('who may hand out audit_sealer', () => {
 
     expect(ownerAdminAtMigrate).toEqual([false]);
     expect(ownerAdminCalls).toEqual([false]);
+  });
+
+  it('is not left in place: when it cannot be taken away the start fails instead of going on', async () => {
+    appliedMigrations = 1;
+    ownerAdminFails = true;
+    chooseAnswers = [2];
+
+    await harness.controller.start();
+
+    expect(harness.controller.phase).toBe('error');
+    expect(harness.events.filter((event) => event.startsWith('spawn'))).toHaveLength(0);
   });
 
   it('is taken away when the migration fails', async () => {
@@ -2358,6 +2379,22 @@ describe('restoring a backup', () => {
     expect(harness.controller.phase).toBe('ready');
   });
 
+  it('migrates the scratch database before it is swapped in, and only that one: nothing runs as app_owner on the restored data after the swap', async () => {
+    const backup = await ready(false);
+    harness.events.length = 0;
+    harness.commandCalls.length = 0;
+    await harness.controller.restoreFlow(backup);
+
+    await postKeys({ currentKey: installKey.toLowerCase() });
+
+    const migrations = harness.commandCalls.filter((call) => call.command === 'migrate');
+    expect(migrations).toHaveLength(1);
+    expect(migrations[0]?.env['MIGRATION_DATABASE_URL']).toContain('/consultorio_restore');
+    const { events } = harness;
+    expect(events.indexOf('scratch seal')).toBeLessThan(events.indexOf('migrate'));
+    expect(events.indexOf('migrate')).toBeLessThan(events.indexOf('scratch swap'));
+  });
+
   it('shows what the backup is, and says when it comes from another installation', async () => {
     const backup = await ready(false);
     harness.uiCalls.length = 0;
@@ -2550,7 +2587,7 @@ describe('restoring a backup', () => {
     await harness.controller.restoreFlow(backup);
     restoreCode = 1;
     // The restore fails, the data is put back, and then the services cannot start again.
-    migrateFails = true;
+    dieOnSpawn = { api: true };
 
     const answer = await postKeys({ currentKey: installKey });
 

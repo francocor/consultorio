@@ -791,23 +791,31 @@ export class Controller {
    * pending needs it (migration 0020 takes the membership the bootstrap gave `app_rw` away): the rest of the time
    * it is not there for a statement of a restored dump, or of anything else that runs as `app_owner`, to use.
    */
-  private async migrateDatabase(): Promise<void> {
-    const applied = await this.cluster.appliedMigrationCount();
+  private async migrateDatabase(database: string = DATABASE_NAME): Promise<void> {
+    const applied = await this.cluster.appliedMigrationCount(database);
     const pending = applied === null || applied < migrationCountOf(this.deps.resources);
     if (pending) await this.cluster.setOwnerAuditAdmin(true);
+    let failed: { error: unknown } | null = null;
     try {
       await this.deps.commands.migrate(
-        migrateEnvironment({ config: this.config, databasePort: this.requireDatabasePort() }),
+        migrateEnvironment(
+          { config: this.config, databasePort: this.requireDatabasePort() },
+          undefined,
+          database,
+        ),
       );
-    } finally {
-      try {
-        await this.cluster.setOwnerAuditAdmin(false);
-      } catch (error) {
-        this.log(
-          `could not take the right to hand out audit_sealer away from app_owner: ${error instanceof Error ? error.message : String(error)}`,
-        );
-      }
+    } catch (error) {
+      failed = { error };
     }
+    // Fails closed: a right that could not be taken back is not left in place for the rest of the run.
+    try {
+      await this.cluster.setOwnerAuditAdmin(false);
+    } catch (error) {
+      const detail = `could not take the right to hand out audit_sealer away from app_owner: ${error instanceof Error ? error.message : String(error)}`;
+      this.log(detail);
+      if (failed === null) throw new ShellError(TEXT.errors.generic, detail);
+    }
+    if (failed !== null) throw failed.error;
   }
 
   /** A restore that was cut off (a power cut, a crash) is finished or undone before anything uses the database. */
@@ -1553,6 +1561,7 @@ export class Controller {
           this.cluster.inspectRestoreScratch(scratch as RestoreScratch),
         seal: (scratch: ScratchHandle) =>
           this.cluster.sealRestoreScratch(scratch as RestoreScratch),
+        migrate: () => this.migrateDatabase(SCRATCH_DATABASE),
         swapIn: () => this.cluster.swapInDatabase(SCRATCH_DATABASE),
       },
       reconcile: () => reconcileInterruptedRestore({ ...this.reconcileDeps(), sweep: false }),
@@ -1576,10 +1585,8 @@ export class Controller {
         (await directoryBytes(this.deps.paths.pgdata)) +
         (await directoryBytes(this.deps.paths.files)),
       stopServices: () => this.stopServices(),
-      startServices: async () => {
-        await this.migrateDatabase();
-        await this.startServices();
-      },
+      // No migration here: the restored database was migrated, and checked, before the swap (`scratch.migrate`).
+      startServices: () => this.startServices(),
       adoptSecrets: (adopted: AdoptedSecrets) => {
         this.config = this.deps.store.update((config) => {
           config.secrets.kmsLocalKekBase64 = adopted.payload.kmsLocalKekBase64;

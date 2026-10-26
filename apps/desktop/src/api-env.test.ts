@@ -132,6 +132,21 @@ describe('the environment of the one-shot commands', () => {
     expect(env['AUDIT_SEALER_DATABASE_URL']).toBeUndefined();
   });
 
+  it('points migrate at another database when it is asked to: the scratch database of a restore', () => {
+    const { config } = context();
+
+    const env = migrateEnvironment(
+      { config, databasePort: 54321 },
+      undefined,
+      'consultorio_restore',
+    );
+
+    expect(env['MIGRATION_DATABASE_URL']).toBe(
+      `postgres://app_owner:${config.secrets.appOwnerPassword}@127.0.0.1:54321/consultorio_restore`,
+    );
+    expect(env['MIGRATIONS_DIR']).toBeUndefined();
+  });
+
   it('gives migrate the owner login and nothing about the installation', () => {
     const { config } = context();
 

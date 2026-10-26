@@ -7,6 +7,7 @@ import { craftDump, type CraftedEntry } from './crafted-dump.js';
 import { STAGE_TOOLS, stageAvailable, startTestCluster, type TestCluster } from './pg-testing.js';
 import { DATABASE_NAME, type RestoreScratch } from './postgres.js';
 import { aclKey } from './restore-acl.js';
+import { auditProblems, revertStatements } from './restore-audit.js';
 import { spawnRunner } from './runner.js';
 
 /**
@@ -401,6 +402,69 @@ describeReal('a restore into a database owned by a throwaway role', () => {
     expect(second.user).not.toBe(third.user);
     await cluster.cluster.dropDatabase(SCRATCH);
     await cluster.cluster.dropRestoreRoles();
+  }, 120_000);
+
+  it('finds a trigger, a rule or a policy on the tables of the migrator before anything migrates the database', async () => {
+    const hooks = [
+      'CREATE TRIGGER hook BEFORE INSERT ON drizzle.__drizzle_migrations FOR EACH ROW EXECUTE FUNCTION public.hook()',
+      'CREATE RULE hook AS ON INSERT TO drizzle.__drizzle_migrations DO ALSO NOTIFY hooked',
+      'CREATE POLICY hook ON drizzle.__drizzle_migrations USING (true)',
+    ];
+    for (const hook of hooks) {
+      const scratch = await cluster.cluster.createRestoreScratch(SCRATCH);
+      const failures = await asRestorer(scratch, [
+        'CREATE SCHEMA drizzle',
+        'CREATE TABLE drizzle.__drizzle_migrations (id serial PRIMARY KEY, hash text NOT NULL, created_at bigint)',
+        'CREATE FUNCTION public.hook() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RETURN NEW; END $$',
+        hook,
+      ]);
+      expect(failures).toEqual([]);
+
+      const problems = await cluster.cluster.inspectRestoreScratch(scratch);
+      const facts = await cluster.cluster.scratchFacts(SCRATCH);
+
+      expect(problems.join(' | '), hook).toContain('hooks');
+      expect(facts.drizzleHooks, hook).toHaveLength(1);
+      await cluster.cluster.dropDatabase(SCRATCH);
+      await cluster.cluster.dropRestoreRoles();
+    }
+  }, 120_000);
+
+  it('sees what a hook of the dump does when the migrations touch the database, and puts the roles back', async () => {
+    const before = await cluster.cluster.clusterFacts(DATABASE_NAME);
+    const scratch = await cluster.cluster.createRestoreScratch(SCRATCH);
+    const restored = await pgRestore(scratch, dump);
+    expect(restored.code, restored.stderr).toBe(0);
+    const failures = await asRestorer(scratch, [
+      `CREATE FUNCTION public.hook() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN EXECUTE 'ALTER ROLE app_owner SET search_path = evil'; EXECUTE 'ALTER DATABASE ${SCRATCH} SET work_mem = 65536'; RETURN NEW; END $$`,
+      'CREATE TRIGGER hook BEFORE INSERT ON public.audit_event FOR EACH ROW EXECUTE FUNCTION public.hook()',
+    ]);
+    expect(failures).toEqual([]);
+    // Nothing of that is on the tables of the migrator, so the inspection has no objection...
+    expect(await cluster.cluster.inspectRestoreScratch(scratch)).toEqual([]);
+    expect(await cluster.cluster.sealRestoreScratch(scratch)).toEqual([]);
+
+    // ...and a migration that writes to the table runs it, as app_owner, with the rights of app_owner.
+    const owner = await cluster.connect('app_owner', cluster.secrets.appOwnerPassword, SCRATCH);
+    try {
+      await owner.query("INSERT INTO public.audit_event (body) VALUES ('nobody')");
+    } finally {
+      await owner.end();
+    }
+    const after = await cluster.cluster.clusterFacts(SCRATCH);
+    const problems = auditProblems(before, after, await cluster.cluster.scratchFacts(SCRATCH));
+
+    expect(problems.join(' | ')).toContain('a role sets a parameter');
+    expect(problems.join(' | ')).toContain('the database sets parameters');
+    await cluster.cluster.executeStatements(
+      revertStatements(
+        before,
+        await cluster.cluster.clusterFacts(null),
+        cluster.secrets.appOwnerPassword,
+      ),
+    );
+    expect(await roles()).toBe(JSON.stringify(before));
+    await cluster.cluster.dropDatabase(SCRATCH);
   }, 120_000);
 
   it('only lets app_owner hand out audit_sealer while a migration needs it', async () => {

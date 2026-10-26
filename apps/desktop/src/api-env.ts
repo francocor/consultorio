@@ -66,8 +66,13 @@ export function publicUrl(serverPort: number): string {
   return `http://127.0.0.1:${String(serverPort)}`;
 }
 
-function databaseUrl(role: string, password: string, port: number): string {
-  return `postgres://${encodeURIComponent(role)}:${encodeURIComponent(password)}@127.0.0.1:${String(port)}/${DATABASE_NAME}`;
+function databaseUrl(
+  role: string,
+  password: string,
+  port: number,
+  database: string = DATABASE_NAME,
+): string {
+  return `postgres://${encodeURIComponent(role)}:${encodeURIComponent(password)}@127.0.0.1:${String(port)}/${database}`;
 }
 
 export class MissingSlugError extends Error {
@@ -131,6 +136,8 @@ export function commandEnvironment(context: RuntimeContext): NodeJS.ProcessEnv {
 export function migrateEnvironment(
   context: Pick<RuntimeContext, 'config' | 'databasePort'>,
   migrationsDir?: string,
+  /** Another database than the one of the product: the scratch database of a restore is migrated before it is swapped in. */
+  database: string = DATABASE_NAME,
 ): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = {
     ...osEnvironment(),
@@ -138,6 +145,7 @@ export function migrateEnvironment(
       'app_owner',
       context.config.secrets.appOwnerPassword,
       context.databasePort,
+      database,
     ),
   };
   if (migrationsDir !== undefined) env['MIGRATIONS_DIR'] = migrationsDir;
