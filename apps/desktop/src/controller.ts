@@ -1080,6 +1080,9 @@ export class Controller {
   }
 
   private finishStart(options: { keepWindow?: boolean } = {}): void {
+    // A page that asks for the keys of a restore, opened while the install was still waiting for its setup, asked
+    // for no key of this install because there was nothing to protect. There is now: it is closed.
+    if (this.pendingRestore !== null) this.clearPendingRestore();
     this.setPhase('ready');
     if (options.keepWindow !== true) this.deps.ui.loadUrl(this.appUrl);
     void pruneOutbox(this.deps.paths.outbox, () => this.deps.now().getTime())
@@ -1580,10 +1583,39 @@ export class Controller {
   }
 
   /** Makes the safety backup (on an install in use) and restores. */
+  /** Forgets the restore that waits for its keys: its address stops working and its window closes. */
+  private clearPendingRestore(): void {
+    this.pendingRestore = null;
+    this.vault.revoke(PURPOSE.key);
+    this.deps.ui.closeAuxWindow();
+  }
+
+  /**
+   * Whether a restore needs the recovery key of THIS install: always, except on an install that is still waiting for
+   * its setup. Decided when the keys arrive, never when the page was opened.
+   */
+  private currentKeyRequired(): boolean {
+    return !(this.currentPhase === 'setup' && !this.config.provisioned);
+  }
+
   private async runRestore(
     archive: string,
-    recoveryKey?: string,
+    keys: { current?: string; backup?: string } = {},
   ): Promise<'busy' | { ok: true } | { ok: false; needsKey: boolean; error?: unknown }> {
+    // The key of the install is checked here as well as by the page: whatever way a restore is reached, it does not
+    // start on an install that is in use without it.
+    if (
+      this.currentKeyRequired() &&
+      !verifyRecoveryKey(keys.current ?? '', this.config.secrets.recoveryKeyHash)
+    ) {
+      this.log('a restore was asked for without the recovery key of this install: refused');
+      return {
+        ok: false,
+        needsKey: false,
+        error: new RestoreError('restore_failed', 'the recovery key of this install was not given'),
+      };
+    }
+    const recoveryKey = keys.backup;
     const outcome = await this.exclusive(async () => {
       this.deps.ui.showSplash(TEXT.splash.restoring);
       try {
@@ -1753,7 +1785,7 @@ export class Controller {
       },
       browserSession: () => this.credentials.browser,
       restoreKeyNeeds: () => ({
-        current: this.pendingRestore?.needsCurrent ?? true,
+        current: (this.pendingRestore?.needsCurrent ?? true) || this.currentKeyRequired(),
         backup: this.pendingRestore?.needsBackup ?? false,
       }),
       submitRecoveryKey: async (keys) => {
@@ -1770,7 +1802,8 @@ export class Controller {
           }
           return { ok: false as const, errors };
         };
-        if (pending.needsCurrent) {
+        const needsCurrent = pending.needsCurrent || this.currentKeyRequired();
+        if (needsCurrent) {
           if (keys.current.trim() === '') {
             return { ok: false, errors: { currentKey: TEXT.restore.currentKeyRequired } };
           }
@@ -1781,10 +1814,10 @@ export class Controller {
         if (pending.needsBackup && keys.backup.trim() === '') {
           return { ok: false, errors: { recoveryKey: TEXT.restore.backupKeyRequired } };
         }
-        const outcome = await this.runRestore(
-          pending.archive,
-          pending.needsBackup ? keys.backup : undefined,
-        );
+        const outcome = await this.runRestore(pending.archive, {
+          ...(needsCurrent ? { current: keys.current } : {}),
+          ...(pending.needsBackup ? { backup: keys.backup } : {}),
+        });
         if (outcome === 'busy') return { ok: false, message: TEXT.restore.generic };
         if (outcome.ok) {
           this.pendingRestore = null;

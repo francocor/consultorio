@@ -2088,6 +2088,51 @@ describe('restoring a backup', () => {
     expect(harness.uiCalls.some((call) => call[0] === 'openAuxWindow')).toBe(false);
   });
 
+  it('cannot restore with a keys page that was opened during the setup, once the install has an organization', async () => {
+    const donor = await ready(false);
+    const copy = join(harness.folder, 'donor.cvb');
+    writeFileSync(copy, readFileSync(donor));
+    const theirKey = installKey;
+    // A new install waiting for its setup, and a backup of another install offered to it: the page asks for the
+    // key of the backup and for no key of this install, because there is nothing here to protect yet.
+    const fresh = build(mkdtempSync(join(tmpdir(), 'consulvia-controller-')));
+    await fresh.controller.start();
+    harness = fresh;
+    mkdirSync(fresh.paths.backups, { recursive: true });
+    await fresh.controller.restoreFlow(copy);
+    const page = keysPage();
+    expect(await getText(page)).not.toContain('name="currentKey"');
+    // The owner then sets the install up, and it has data to protect.
+    const setup = setupUrl() ?? '';
+    await post(new URL('/__setup', setup).href, tokenOf(setup), form);
+    expect(fresh.controller.phase).toBe('ready');
+    const restores = fresh.restores.length;
+
+    // Whoever holds the old page can no longer use it: it is closed, and the key of the install is needed anyway.
+    const answer = await postKeys({ recoveryKey: theirKey });
+
+    expect(answer.status).toBe(404);
+    expect(fresh.restores).toHaveLength(restores);
+    expect(fresh.uiCalls).toContainEqual(['closeAuxWindow']);
+  });
+
+  it('asks for the key of this install at the moment the keys arrive, not at the moment the page was opened', async () => {
+    const backup = await ready(false);
+    await harness.controller.restoreFlow(backup);
+    const url = keysPage();
+    // The page was opened as if on a new install...
+    (
+      harness.controller as unknown as { pendingRestore: { needsCurrent: boolean } }
+    ).pendingRestore.needsCurrent = false;
+
+    const answer = await post(new URL('/__key', url).href, tokenOf(url), {});
+
+    // ...but the install is in use, so a restore without its key is refused all the same.
+    expect(answer.status).toBe(422);
+    expect(answer.body).toMatchObject({ errors: { currentKey: expect.any(String) as string } });
+    expect(harness.restores).toHaveLength(0);
+  });
+
   it('asks for no current key on a new install that is waiting for its setup', async () => {
     const donor = await ready(false);
     const copy = join(harness.folder, 'donor.cvb');
