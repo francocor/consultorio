@@ -93,6 +93,11 @@ export function auditProblems(
   after: ClusterFacts,
   scratch: ScratchFacts,
 ): string[] {
+  return [...scratchProblems(scratch), ...clusterProblems(before, after)];
+}
+
+/** What is wrong with the scratch database itself. */
+function scratchProblems(scratch: ScratchFacts): string[] {
   const problems: string[] = [];
   if (scratch.migrationsKind !== null && scratch.migrationsKind !== 'r') {
     problems.push(
@@ -110,6 +115,16 @@ export function auditProblems(
       `the flags of the database are not those of a new one: ${JSON.stringify(scratch.flags)}`,
     );
   }
+  return problems;
+}
+
+/**
+ * What differs in the roles of the cluster from how `before` had them. Read from the superuser side alone: a hook that
+ * changes the password of `app_owner` or sets a timeout on it makes every connection through `app_owner` fail, so
+ * this is compared BEFORE anything reads through it, and the difference is reported instead of thrown.
+ */
+export function clusterProblems(before: ClusterFacts, after: ClusterFacts): string[] {
+  const problems: string[] = [];
   const wasBefore = new Set(before.memberships.map(key));
   const isNow = new Set(after.memberships.map(key));
   for (const membership of after.memberships) {

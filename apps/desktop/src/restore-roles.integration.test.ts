@@ -7,7 +7,7 @@ import { craftDump, type CraftedEntry } from './crafted-dump.js';
 import { STAGE_TOOLS, stageAvailable, startTestCluster, type TestCluster } from './pg-testing.js';
 import { DATABASE_NAME, type RestoreScratch } from './postgres.js';
 import { aclKey } from './restore-acl.js';
-import { auditProblems, revertStatements } from './restore-audit.js';
+import { auditProblems, clusterProblems, revertStatements } from './restore-audit.js';
 import { spawnRunner } from './runner.js';
 
 /**
@@ -466,6 +466,56 @@ describeReal('a restore into a database owned by a throwaway role', () => {
     expect(await roles()).toBe(JSON.stringify(before));
     await cluster.cluster.dropDatabase(SCRATCH);
   }, 120_000);
+
+  it('puts the roles back, and the install still starts, when a hook changes the password or the timeout of app_owner during the seed', async () => {
+    const hostiles = [
+      "ALTER ROLE app_owner PASSWORD 'something-else'",
+      "ALTER ROLE app_owner SET statement_timeout = '1ms'",
+    ];
+    for (const hostile of hostiles) {
+      const before = await cluster.cluster.clusterFacts(DATABASE_NAME);
+      const scratch = await cluster.cluster.createRestoreScratch(SCRATCH);
+      const restored = await pgRestore(scratch, dump);
+      expect(restored.code, restored.stderr).toBe(0);
+      const failures = await asRestorer(scratch, [
+        `CREATE FUNCTION public.hook() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN EXECUTE '${hostile.replaceAll("'", "''")}'; RETURN NEW; END $$`,
+        'CREATE TRIGGER hook BEFORE INSERT ON public.audit_event FOR EACH ROW EXECUTE FUNCTION public.hook()',
+      ]);
+      expect(failures).toEqual([]);
+      expect(await cluster.cluster.sealRestoreScratch(scratch)).toEqual([]);
+
+      // What the seed of the catalogs does after the migrations: a write by app_owner into a table of the backup.
+      const owner = await cluster.connect('app_owner', cluster.secrets.appOwnerPassword, SCRATCH);
+      try {
+        await owner.query("INSERT INTO public.audit_event (body) VALUES ('seed')");
+      } finally {
+        await owner.end().catch(() => undefined);
+      }
+
+      // The check reads what only the superuser needs first: it is a finding, not an exception.
+      const early = await cluster.cluster.clusterFacts(null);
+      expect(clusterProblems(before, early), hostile).not.toEqual([]);
+      // With a new password what reads through app_owner is what stops working: that is why the order matters.
+      if (hostile.includes('PASSWORD')) {
+        await expect(cluster.cluster.clusterFacts(SCRATCH), hostile).rejects.toThrow();
+      }
+
+      await cluster.cluster.executeStatements(
+        revertStatements(before, early, cluster.secrets.appOwnerPassword),
+      );
+      await cluster.cluster.dropDatabase(SCRATCH);
+      await cluster.cluster.dropRestoreRoles();
+
+      // The verifier of a password has a new salt each time it is set: the roles are the same when it is left out.
+      const now = await cluster.cluster.clusterFacts(DATABASE_NAME);
+      expect({ ...now, ownerPasswordHash: '' }, hostile).toEqual({
+        ...before,
+        ownerPasswordHash: '',
+      });
+      // The install starts: app_owner connects and reads with the password the shell holds.
+      await expect(cluster.cluster.appliedMigrationCount()).resolves.not.toBeUndefined();
+    }
+  }, 180_000);
 
   it('only lets app_owner hand out audit_sealer while a migration needs it', async () => {
     const admin = async () =>

@@ -368,6 +368,14 @@ export async function restoreBackup(
   const state = { swapped: false };
   let servicesStopped = false;
   let snapshot: unknown;
+  /** Puts the roles back as the snapshot had them; a failure of that is said in the log, never swallowed. */
+  const revertLogged = async () => {
+    await deps.audit.revert(snapshot).catch((error: unknown) => {
+      deps.log?.(
+        `the roles could not be put back: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    });
+  };
   try {
     await advance('prepared');
     await reached('prepared');
@@ -448,18 +456,25 @@ export async function restoreBackup(
         await deps.scratch.migrate(scratch);
       } catch (error) {
         // Whatever the migrations ran may have touched the roles before they failed.
-        await deps.audit.revert(snapshot).catch(() => undefined);
+        await revertLogged();
         throw new RestoreError(
           'restore_failed',
           `the migrations failed on the backup: ${error instanceof Error ? error.message : String(error)}`,
           { cause: error },
         );
       }
-      problems = await deps.audit.check(snapshot);
+      try {
+        problems = await deps.audit.check(snapshot);
+      } catch (error) {
+        // A check that cannot even connect is the sign of a hook that touched app_owner: the roles are put back before
+        // the failure goes on to undo the rest.
+        await revertLogged();
+        throw error;
+      }
     }
     if (problems.length > 0) {
       deps.log?.(`a backup was refused: ${problems.join('; ')}`);
-      await deps.audit.revert(snapshot).catch(() => undefined);
+      await revertLogged();
       throw new RestoreError('unsafe_backup', problems.join('; '));
     }
 

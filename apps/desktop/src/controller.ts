@@ -59,7 +59,12 @@ import {
 import { normalizeRecoveryKey } from './recovery-key.js';
 import { redact } from './redact.js';
 import { migrationCountOf, missingResources, type Resources } from './resources.js';
-import { auditProblems, revertStatements, type ClusterFacts } from './restore-audit.js';
+import {
+  auditProblems,
+  clusterProblems,
+  revertStatements,
+  type ClusterFacts,
+} from './restore-audit.js';
 import {
   journalFile,
   readJournal,
@@ -1613,12 +1618,18 @@ export class Controller {
       reconcile: () => reconcileInterruptedRestore({ ...this.reconcileDeps(), sweep: false }),
       audit: {
         snapshot: () => this.cluster.clusterFacts(DATABASE_NAME),
-        check: async (snapshot: unknown) =>
-          auditProblems(
-            snapshot as ClusterFacts,
+        check: async (snapshot: unknown) => {
+          const before = snapshot as ClusterFacts;
+          // The roles first, from the superuser side alone: a hook that changed the password of app_owner or gave it a
+          // timeout makes every read through it fail, and that must be a finding and not an exception.
+          const roleProblems = clusterProblems(before, await this.cluster.clusterFacts(null));
+          if (roleProblems.length > 0) return roleProblems;
+          return auditProblems(
+            before,
             await this.cluster.clusterFacts(SCRATCH_DATABASE),
             await this.cluster.scratchFacts(SCRATCH_DATABASE),
-          ),
+          );
+        },
         revert: async (snapshot: unknown) => {
           const now = await this.cluster.clusterFacts(null);
           await this.cluster.executeStatements(

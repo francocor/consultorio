@@ -679,6 +679,34 @@ describe('the role a dump runs as', () => {
     expect(roleDrops).toBeGreaterThan(0);
   });
 
+  it('puts the roles back when the check itself fails after the migrations: a connection that no longer works is a finding, not an excuse', async () => {
+    const path = await makeBackup(install, { 't/a/docs/1.obj': 'from the backup' });
+    writeFileSync(join(paths.files, 't', 'a', 'docs', '1.obj'), 'current data');
+    const reverts = reverted.length;
+
+    const failure = await restoreBackup(
+      restoreDeps({
+        audit: {
+          snapshot: () => Promise.resolve(CLEAN),
+          check: () =>
+            Promise.reject(new Error('password authentication failed for user "app_owner"')),
+          revert: () => {
+            events.push('revert roles');
+            reverted.push([]);
+            return Promise.resolve();
+          },
+        },
+      }),
+      path,
+    ).catch((error: unknown) => error);
+
+    expect((failure as Error).message).toContain('password authentication');
+    expect(reverted.length).toBeGreaterThan(reverts);
+    expect(events).not.toContain('swap');
+    expect(events).toContain('drop scratch');
+    expect(readDoc('t/a/docs/1.obj')).toBe('current data');
+  });
+
   it('does not swap a database whose migrations failed, and starts the services again on the old one', async () => {
     const path = await makeBackup(install, { 't/a/docs/1.obj': 'from the backup' });
     writeFileSync(join(paths.files, 't', 'a', 'docs', '1.obj'), 'current data');

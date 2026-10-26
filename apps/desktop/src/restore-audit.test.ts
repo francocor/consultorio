@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   auditProblems,
+  clusterProblems,
   revertStatements,
   type ClusterFacts,
   type Membership,
@@ -40,6 +41,22 @@ const cleanScratch: ScratchFacts = {
   drizzleHooks: [],
   flags: { template: false, allowConnections: true, connectionLimit: -1 },
 };
+
+describe('what the roles of the cluster may have lost, read from the cluster alone', () => {
+  it('finds a changed password, a parameter and a membership without needing the database of the backup', () => {
+    const hostile: ClusterFacts = {
+      ...clean,
+      ownerPasswordHash: 'SCRAM-SHA-256$4096:zzz$bbb:ccc',
+      roleSettings: ['app_owner=statement_timeout=1ms'],
+    };
+
+    expect(clusterProblems(clean, clean)).toEqual([]);
+    expect(clusterProblems(clean, hostile)).toEqual([
+      expect.stringContaining('statement_timeout=1ms'),
+      'the password of app_owner was changed',
+    ]);
+  });
+});
 
 describe('what a restored database may change', () => {
   it('finds nothing wrong with a database that changed nothing', () => {
