@@ -1,6 +1,6 @@
 import { randomBytes } from 'node:crypto';
 import { existsSync } from 'node:fs';
-import { mkdir, readdir, readFile, rename, rm, stat } from 'node:fs/promises';
+import { mkdir, readdir, readFile, rename, rm } from 'node:fs/promises';
 import { join, sep } from 'node:path';
 import type { Readable } from 'node:stream';
 
@@ -14,6 +14,7 @@ import {
   type LongRunningRole,
   type RuntimeContext,
 } from './api-env.js';
+import { readArchiveHeader } from './backup-archive.js';
 import { verifyRecoveryKey, keyIdOf } from './backup-crypto.js';
 import { readLedger } from './backup-ledger.js';
 import {
@@ -734,19 +735,22 @@ export class Controller {
       this.log('updating the database without a safety copy, as the person chose');
       return;
     }
-    // A verified copy of the last day is a safety copy too: the update does not need a second one, and a full
-    // disk or a dump that fails must not keep a program from being updated for good.
-    const recent = await this.recentVerifiedBackup();
-    if (recent !== null) {
-      this.log(`using a verified backup of the last day as the copy before the update: ${recent}`);
-      return;
-    }
     this.deps.ui.showSplash(TEXT.splash.upgradeBackup);
     try {
       const backup = await createBackup(this.backupDeps(), 'upgrade');
       this.log(`backup before the update of the database: ${backup.path}`);
       await this.pruneQuietly();
     } catch (error) {
+      // The copy made now is the one that is wanted. When it cannot be made (a full disk, a dump that fails), a
+      // verified copy of the last day by when it was MADE stands in for it, so that one failure does not keep the
+      // program from being updated for good.
+      const recent = await this.recentVerifiedBackup();
+      if (recent !== null) {
+        this.log(
+          `the backup before the update failed (${this.describeBackupFailure(error)}); using a verified backup of the last day instead: ${recent}`,
+        );
+        return;
+      }
       throw new ShellError(
         TEXT.errors.upgradeBackup,
         `the backup before the update failed: ${this.describeBackupFailure(error)}`,
@@ -756,21 +760,18 @@ export class Controller {
     }
   }
 
-  /** The name of a backup that was verified in the last 24 hours and is still there, or null. */
+  /** The name of a backup that was MADE in the last 24 hours, was verified, and is still there, or null. */
   private async recentVerifiedBackup(): Promise<string | null> {
     const { backups } = this.deps.paths;
     const since = this.deps.now().getTime() - DAY_MS;
     const ledger = await readLedger(backups);
-    for (const [name, entry] of Object.entries(ledger)) {
-      const verifiedAt = Date.parse(entry.verifiedAt);
-      if (Number.isNaN(verifiedAt) || verifiedAt < since) continue;
-      if (
-        await stat(join(backups, name)).then(
-          () => true,
-          () => false,
-        )
-      )
-        return name;
+    for (const name of Object.keys(ledger)) {
+      // When it was made is in its header, not in the ledger (which says when it was last verified).
+      const madeAt = await readArchiveHeader(join(backups, name)).then(
+        (found) => Date.parse(found.header.createdAt),
+        () => Number.NaN,
+      );
+      if (!Number.isNaN(madeAt) && madeAt >= since) return name;
     }
     return null;
   }

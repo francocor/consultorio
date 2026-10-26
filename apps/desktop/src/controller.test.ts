@@ -1300,21 +1300,14 @@ describe('an update of the program', () => {
   const dialog = (target: Harness) =>
     target.uiCalls.find((call) => call[0] === 'choose' && call[1] === 'Consulvia no pudo iniciar');
 
-  /** The copies in the ledger were verified some time ago: the hours say how long. */
-  function ageBackups(directory: string, hours: number): void {
-    const file = join(directory, 'registro-de-copias.json');
-    const ledger = JSON.parse(readFileSync(file, 'utf8')) as {
-      files: Record<string, { verifiedAt: string }>;
-    };
-    for (const entry of Object.values(ledger.files)) {
-      entry.verifiedAt = new Date(clock.getTime() - hours * 3_600_000).toISOString();
-    }
-    writeFileSync(file, JSON.stringify(ledger));
+  /** The program is started again that many hours later: the copies made before are that much older. */
+  function later(hours: number): void {
+    clock = new Date(clock.getTime() + hours * 3_600_000);
   }
 
-  it('makes a verified backup before it migrates a database that is behind', async () => {
+  it('always makes a new verified backup before it migrates a database that is behind, even if a recent one exists', async () => {
     const folder = await provisionedFolder();
-    ageBackups(harness.paths.backups, 30);
+    later(2);
     appliedMigrations = 1; // the bundle knows 2
 
     const next = build(folder);
@@ -1340,43 +1333,48 @@ describe('an update of the program', () => {
     expect(backupsAtMigrate[0]?.some((name) => name.includes('previa-actualizacion'))).toBe(false);
   });
 
-  it('takes a verified backup of the last day as that copy, and makes no new one', async () => {
+  it('falls back to a verified backup of the last day, by when it was made, only when the new copy cannot be made', async () => {
     const folder = await provisionedFolder();
-    ageBackups(harness.paths.backups, 5);
+    later(5);
     appliedMigrations = 1;
+    listCode = 1;
 
     const next = build(folder);
     await next.controller.start();
 
+    // The new copy failed its check; the one of five hours ago stands in for it, and the program updates.
     expect(backupsAtMigrate[0]?.some((name) => name.includes('previa-actualizacion'))).toBe(false);
     expect(next.events).toContain('migrate');
     expect(next.controller.phase).toBe('ready');
   });
 
-  it('does not take a copy that is a day old or more, or one whose file is gone', async () => {
+  it('does not fall back to a copy made a day ago or more, however recently it was verified, or to one whose file is gone', async () => {
     const folder = await provisionedFolder();
-    ageBackups(harness.paths.backups, 25);
+    later(25);
     appliedMigrations = 1;
+    listCode = 1;
 
     const old = build(folder);
+    chooseAnswers = [3];
     await old.controller.start();
-    expect(backupsAtMigrate[0]?.some((name) => name.includes('previa-actualizacion'))).toBe(true);
+    expect(old.events).not.toContain('migrate');
+    expect(dialog(old)).toBeDefined();
     await old.controller.quit();
 
     for (const name of readdirSync(harness.paths.backups)) {
       if (name.endsWith('.cvb')) rmSync(join(harness.paths.backups, name));
     }
-    ageBackups(harness.paths.backups, 1);
-    backupsAtMigrate = [];
-    appliedMigrations = 1;
+    clock = new Date(clock.getTime() - 24 * 3_600_000);
     const gone = build(folder);
+    chooseAnswers = [3];
     await gone.controller.start();
-    expect(backupsAtMigrate[0]?.some((name) => name.includes('previa-actualizacion'))).toBe(true);
+    expect(gone.events).not.toContain('migrate');
+    expect(dialog(gone)).toBeDefined();
   });
 
   it('offers to go on without that copy only after a retry failed too, with a warning, and goes on if the person insists', async () => {
     const folder = await provisionedFolder();
-    ageBackups(harness.paths.backups, 48);
+    later(48);
     appliedMigrations = 1;
     listCode = 1;
 
@@ -1405,7 +1403,7 @@ describe('an update of the program', () => {
 
   it('does not go on without the copy when the person does not confirm the warning', async () => {
     const folder = await provisionedFolder();
-    ageBackups(harness.paths.backups, 48);
+    later(48);
     appliedMigrations = 1;
     listCode = 1;
 
@@ -1420,7 +1418,7 @@ describe('an update of the program', () => {
 
   it('does not migrate at all when that backup cannot be made', async () => {
     const folder = await provisionedFolder();
-    ageBackups(harness.paths.backups, 48);
+    later(48);
     appliedMigrations = 1;
     listCode = 1;
 
