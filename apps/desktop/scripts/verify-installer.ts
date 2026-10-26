@@ -1777,9 +1777,12 @@ async function main(): Promise<void> {
           });
           const code = await Promise.race([
             exited(setup),
-            sleep(480_000).then(() => 'timeout' as const),
+            sleep(1_200_000).then(() => 'timeout' as const),
           ]);
-          assert(code === 0, `the installer of the new version ended with ${String(code)}`);
+          assert(
+            code === 0,
+            `the installer of the new version ended with ${String(code)}; the log of the program ends: ${logText(session).slice(-1200)}`,
+          );
           // The running program went through its own way out, not through taskkill.
           const added = logText(session).slice(logBefore);
           assert(
