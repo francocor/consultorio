@@ -506,7 +506,11 @@ describe('the database', () => {
     const scratch = await pg.createRestoreScratch('consultorio_restore');
 
     const sql = queries.map((query) => query.sql);
-    expect(sql[0]).toBe('DROP DATABASE IF EXISTS consultorio_restore WITH (FORCE)');
+    expect(sql).toContain('DROP DATABASE IF EXISTS consultorio_restore WITH (FORCE)');
+    // A leftover that a dump made a template is made an ordinary database first, or it could not be dropped.
+    expect(sql.findIndex((s) => s.includes('IS_TEMPLATE false'))).toBeLessThan(
+      sql.indexOf('DROP DATABASE IF EXISTS consultorio_restore WITH (FORCE)'),
+    );
     const role = sql.find((statement) => statement.startsWith('CREATE ROLE')) ?? '';
     expect(role).toContain(scratch.user);
     for (const clause of [
@@ -602,6 +606,30 @@ describe('the database', () => {
     expect(where('DROP ROLE')).toBe('postgres');
     // Nothing the shell runs while it seals is built from the dump: no statement carries a name read from it.
     expect(sql.every((statement) => !statement.includes('dump'))).toBe(true);
+  });
+
+  it('sets the flags of the database as a new one has them when it hands it over', async () => {
+    const pg = cluster();
+    await pg.start();
+    const scratch = await pg.createRestoreScratch('consultorio_restore');
+    queries.length = 0;
+
+    await pg.sealRestoreScratch(scratch);
+
+    expect(queries.map((query) => query.sql)).toContain(
+      'ALTER DATABASE consultorio_restore WITH IS_TEMPLATE false ALLOW_CONNECTIONS true CONNECTION LIMIT -1',
+    );
+  });
+
+  it('reads the flags of the database both when it is made and when it is inspected', async () => {
+    const pg = cluster();
+    await pg.start();
+    const scratch = await pg.createRestoreScratch('consultorio_restore');
+    queries.length = 0;
+
+    await pg.inspectRestoreScratch(scratch);
+
+    expect(queries.some((query) => query.sql.includes('datconnlimit'))).toBe(true);
   });
 
   it('applies the grants of the live database, and skips the ones about an object the backup does not have', async () => {

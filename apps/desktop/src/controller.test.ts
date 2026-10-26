@@ -306,6 +306,7 @@ function build(
         password: 'a-password',
         live: [],
         baseline: [],
+        flags: { template: false, allowConnections: true, connectionLimit: -1 },
       });
     },
     inspectRestoreScratch: () => Promise.resolve([]),

@@ -288,6 +288,48 @@ describeReal('a restore into a database owned by a throwaway role', () => {
     await cluster.cluster.dropRestoreRoles();
   }, 120_000);
 
+  it('finds out when the dump changes what the server says about the database itself: connection limit and template', async () => {
+    for (const statement of [
+      `ALTER DATABASE ${SCRATCH} WITH CONNECTION LIMIT 0`,
+      `ALTER DATABASE ${SCRATCH} WITH IS_TEMPLATE true`,
+    ]) {
+      const scratch = await cluster.cluster.createRestoreScratch(SCRATCH);
+      // The role of the dump owns the database, so PostgreSQL lets it.
+      const failures = await asRestorer(scratch, [statement]);
+      expect(failures).toEqual([]);
+
+      const problems = await cluster.cluster.inspectRestoreScratch(scratch);
+
+      expect(problems.join('\n'), statement).toMatch(/connection|template|connections|limit/i);
+      await cluster.cluster.dropDatabase(SCRATCH);
+      await cluster.cluster.dropRestoreRoles();
+    }
+  }, 120_000);
+
+  it('puts the flags of the database as a new one has them when it hands it over, whatever the dump set', async () => {
+    const scratch = await cluster.cluster.createRestoreScratch(SCRATCH);
+    const restored = await pgRestore(scratch, dump);
+    expect(restored.code, restored.stderr).toBe(0);
+    // Set by the owner, after the inspection: the hand over does not take them on trust.
+    await cluster.asSuperuser(
+      'postgres',
+      `ALTER DATABASE ${SCRATCH} WITH CONNECTION LIMIT 1 IS_TEMPLATE true`,
+    );
+
+    await cluster.cluster.sealRestoreScratch(scratch);
+
+    const flags = await cluster.cluster.asSuperuser('postgres', async (client) => {
+      const found = await client.query(
+        `SELECT datistemplate AS t, datallowconn AS c, datconnlimit AS l FROM pg_catalog.pg_database WHERE datname = $1`,
+        [SCRATCH],
+      );
+      const row = found.rows[0] as { t: boolean; c: boolean; l: number } | undefined;
+      return row ? { t: row.t, c: row.c, l: row.l } : undefined;
+    });
+    expect(flags).toEqual({ t: false, c: true, l: -1 });
+    await cluster.cluster.dropDatabase(SCRATCH);
+  }, 120_000);
+
   it('hands over a database whose hostile grants are gone, and gives the live ones back', async () => {
     const scratch = await cluster.cluster.createRestoreScratch(SCRATCH);
     const restored = await pgRestore(scratch, dump);

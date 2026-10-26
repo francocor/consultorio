@@ -392,7 +392,7 @@ export class PostgresCluster {
     const user = `${RESTORE_ROLE_PREFIX}${randomBytes(6).toString('hex')}`;
     const password = randomBytes(24).toString('base64url');
     await this.asSuperuser('postgres', async (client) => {
-      await client.query(`DROP DATABASE IF EXISTS ${name} WITH (FORCE)`);
+      await dropDatabaseWith(client, name);
       await dropRestoreRolesWith(client);
       await client.query(
         `CREATE ROLE ${user} LOGIN PASSWORD '${password}' NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS INHERIT CONNECTION LIMIT 8`,
@@ -403,7 +403,8 @@ export class PostgresCluster {
     });
     const live = await this.aclFacts(DATABASE_NAME);
     const baseline = await this.aclFacts(name);
-    return { database: name, user, password, live, baseline };
+    const flags = await this.databaseFlags(name);
+    return { database: name, user, password, live, baseline, flags };
   }
 
   /**
@@ -412,12 +413,37 @@ export class PostgresCluster {
    * difference from the state the database started in was written by SQL hidden in the dump. Empty is clean.
    */
   async inspectRestoreScratch(scratch: RestoreScratch): Promise<string[]> {
+    // What the server says about the database itself comes first: the owner of a database can make it a template
+    // (it then cannot be dropped or renamed as one), forbid connecting to it, or limit connections to none, and a
+    // database that does not accept connections cannot be read for the rest.
+    const flags = await this.databaseFlags(scratch.database);
+    if (JSON.stringify(flags) !== JSON.stringify(scratch.flags)) {
+      return [
+        `the flags of the database changed: ${JSON.stringify(scratch.flags)} -> ${JSON.stringify(flags)}`,
+      ];
+    }
     const after = await this.aclFacts(scratch.database);
     const problems = aclChanges(scratch.baseline, after);
     const settings = await this.databaseSettings(scratch.database);
     if (settings.length > 0)
       problems.push(`the database sets parameters: ${JSON.stringify(settings)}`);
     return problems;
+  }
+
+  /** `IS_TEMPLATE`, `ALLOW_CONNECTIONS` and `CONNECTION LIMIT` of a database, as the catalog has them. */
+  private async databaseFlags(name: string): Promise<DatabaseFlags> {
+    return this.asSuperuser('postgres', async (client) => {
+      const found = await client.query(
+        `SELECT datistemplate, datallowconn, datconnlimit FROM pg_catalog.pg_database WHERE datname = $1`,
+        [name],
+      );
+      const row = found.rows[0];
+      return {
+        template: row?.['datistemplate'] === true,
+        allowConnections: row?.['datallowconn'] !== false,
+        connectionLimit: Number(row?.['datconnlimit'] ?? -1),
+      };
+    });
   }
 
   /**
@@ -435,6 +461,11 @@ export class PostgresCluster {
     await this.asSuperuser('postgres', async (client) => {
       await client.query(`ALTER DATABASE ${scratch.database} OWNER TO ${OWNER}`);
       await client.query(`ALTER DATABASE ${scratch.database} RESET ALL`);
+      // A new database has these: whatever the dump set (a limit of 0 or 1 would brick the install, a template
+      // cannot be dropped) is not taken on trust.
+      await client.query(
+        `ALTER DATABASE ${scratch.database} WITH IS_TEMPLATE false ALLOW_CONNECTIONS true CONNECTION LIMIT -1`,
+      );
       await client.query(`ALTER ROLE ALL IN DATABASE ${scratch.database} RESET ALL`);
       for (const statement of grants.database) await client.query(statement);
     });
@@ -666,9 +697,7 @@ export class PostgresCluster {
   /** Drops a database, forcing out whoever is connected. */
   async dropDatabase(name: string): Promise<void> {
     assertDatabaseName(name);
-    await this.asSuperuser('postgres', async (client) => {
-      await client.query(`DROP DATABASE IF EXISTS ${name} WITH (FORCE)`);
-    });
+    await this.asSuperuser('postgres', (client) => dropDatabaseWith(client, name));
   }
 
   /** Runs a script (several statements) in the database of the product, as the superuser. */
@@ -719,6 +748,13 @@ const SAFE_SEARCH_PATH = '-c search_path=pg_catalog,pg_temp';
 
 const RESTORE_ROLE_PREFIX = 'consulvia_restore_';
 
+/** What the server says about a database itself. */
+export interface DatabaseFlags {
+  template: boolean;
+  allowConnections: boolean;
+  connectionLimit: number;
+}
+
 /** What a restore is made with: the throwaway role, and the privileges the databases started with. */
 export interface RestoreScratch {
   database: string;
@@ -728,11 +764,25 @@ export interface RestoreScratch {
   live: AclEntry[];
   /** What the new, empty database grants before the restore touches it. */
   baseline: AclEntry[];
+  /** The flags of the new, empty database. */
+  flags: DatabaseFlags;
 }
 
 function assertRestoreRole(name: string): void {
   if (!/^consulvia_restore_[0-9a-f]{12}$/.test(name))
     throw new PostgresError(`unsafe role name: ${name}`);
+}
+
+/**
+ * Drops a database if it exists, forcing out whoever is connected. A database a dump made a template cannot be
+ * dropped, so that flag goes first: one left behind by a restore that was cut off must not stop the next one.
+ * The name is checked by the callers.
+ */
+async function dropDatabaseWith(client: SqlClient, name: string): Promise<void> {
+  await client.query(
+    `DO $$ BEGIN IF EXISTS (SELECT 1 FROM pg_catalog.pg_database WHERE datname = '${name}') THEN EXECUTE 'ALTER DATABASE ${name} WITH IS_TEMPLATE false'; END IF; END $$`,
+  );
+  await client.query(`DROP DATABASE IF EXISTS ${name} WITH (FORCE)`);
 }
 
 async function dropRestoreRolesWith(client: SqlClient): Promise<void> {
