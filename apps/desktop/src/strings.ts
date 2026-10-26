@@ -126,6 +126,16 @@ export const TEXT = {
       'No se pudieron apartar los datos actuales (puede que otro programa los esté usando). No se cambió nada.',
   },
 
+  upgradeWithoutCopy: {
+    confirmTitle: 'Actualizar sin copia de seguridad',
+    confirmMessage:
+      'Consulvia va a actualizar la base de datos sin hacer antes una copia de seguridad.',
+    confirmDetail:
+      'Si la actualización falla a mitad de camino, no hay forma de volver atrás con esta copia. Se recomienda liberar espacio y reintentar. Si decide seguir, haga una copia manual apenas pueda. Para volver a la versión anterior hace falta reinstalarla y restaurar una copia de seguridad.',
+    confirmButton: 'Continuar sin copia',
+    cancelButton: 'Volver',
+  },
+
   orphaned: {
     title: 'Se apartaron datos sin configuración',
     body: (folders: string[]) =>
@@ -165,6 +175,7 @@ export const TEXT = {
     logs: 'Ver registros',
     quit: 'Salir',
     startOver: 'Empezar de nuevo y restaurar una copia',
+    continueWithoutCopy: 'Continuar sin esta copia',
     cannotDecrypt:
       'No se pueden leer los datos de esta instalación con la cuenta de Windows actual. Los datos se protegen con la cuenta de Windows que instaló Consulvia: ingrese con esa cuenta. Si ya no es posible, puede empezar de nuevo y restaurar una copia de seguridad (sus datos actuales no se borran).',
     cipherUnavailable:

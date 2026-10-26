@@ -1,5 +1,6 @@
 import { randomBytes } from 'node:crypto';
-import { mkdir, readFile, rename, rm } from 'node:fs/promises';
+import { mkdir, readFile, rename, rm, stat } from 'node:fs/promises';
+import { join } from 'node:path';
 import type { Readable } from 'node:stream';
 
 import { ApiCommandError, EXIT, type ApiCommands } from './api-commands.js';
@@ -13,6 +14,7 @@ import {
   type RuntimeContext,
 } from './api-env.js';
 import { verifyRecoveryKey, keyIdOf } from './backup-crypto.js';
+import { readLedger } from './backup-ledger.js';
 import {
   BackupError,
   createBackup,
@@ -141,6 +143,8 @@ export class ShellError extends Error {
     detail: string,
     /** The data of this install cannot be opened, so the only way on is a new install and a restore. */
     readonly deadEnd = false,
+    /** The person may choose to go on without the safety copy that could not be made. */
+    readonly canSkipBackup = false,
   ) {
     super(detail);
     this.name = 'ShellError';
@@ -160,6 +164,7 @@ const MINUTE_MS = 60 * 1000;
 /** How often the database server is asked whether it is alive. */
 const DATABASE_CHECK_MS = 30 * 1000;
 const HOUR_MS = 60 * MINUTE_MS;
+const DAY_MS = 24 * HOUR_MS;
 
 /** Wrong recovery keys the reset page accepts before its address stops working. */
 const MAX_RESET_ATTEMPTS = 5;
@@ -212,6 +217,8 @@ export class Controller {
   private apiPort: number | null = null;
   /** The secret of this run, known to the local server and the API only; null while the API is down. */
   private proxySecret: string | null = null;
+  /** The person chose to update the database without the safety copy; good for the next start only. */
+  private skipUpgradeBackup = false;
   /** Starts that failed one after the other: a start that works resets it. */
   private failures = 0;
   /**
@@ -345,9 +352,15 @@ export class Controller {
     // Whatever the cause, a start that failed three times in a row offers the way out too: waiting for the
     // fourth try is no help to a person whose database or documents will not open.
     const deadEnd = isDeadEnd(error) || this.failures >= REPEATED_FAILURES;
-    const buttons = deadEnd
-      ? [TEXT.errors.retry, TEXT.errors.logs, TEXT.errors.startOver, TEXT.errors.quit]
-      : [TEXT.errors.retry, TEXT.errors.logs, TEXT.errors.quit];
+    // After a retry that failed for the same reason, the safety copy before an update may be given up.
+    const canSkip = error instanceof ShellError && error.canSkipBackup && this.failures >= 2;
+    const buttons = [
+      TEXT.errors.retry,
+      TEXT.errors.logs,
+      ...(deadEnd ? [TEXT.errors.startOver] : []),
+      ...(canSkip ? [TEXT.errors.continueWithoutCopy] : []),
+      TEXT.errors.quit,
+    ];
     const choice = await this.deps.ui.choose({
       kind: 'error',
       title: TEXT.errors.title,
@@ -355,14 +368,23 @@ export class Controller {
       buttons,
     });
     if (this.isQuitting()) return;
+    const picked = buttons[choice];
     if (choice === 1) {
       await this.deps.ui.openPath(this.deps.paths.logs);
       await this.fail(error);
     } else if (choice === 0) {
       await this.stopQuietly();
       await this.start();
-    } else if (deadEnd && choice === 2) {
+    } else if (picked === TEXT.errors.startOver) {
       if (!(await this.startOver())) await this.fail(error);
+    } else if (picked === TEXT.errors.continueWithoutCopy) {
+      if (!(await this.confirmUpgradeWithoutCopy())) {
+        await this.fail(error);
+        return;
+      }
+      this.skipUpgradeBackup = true;
+      await this.stopQuietly();
+      await this.start();
     } else {
       this.deps.requestQuit();
     }
@@ -624,6 +646,18 @@ export class Controller {
       );
     }
     if (applied === bundled || !this.config.provisioned) return;
+    if (this.skipUpgradeBackup) {
+      this.skipUpgradeBackup = false;
+      this.log('updating the database without a safety copy, as the person chose');
+      return;
+    }
+    // A verified copy of the last day is a safety copy too: the update does not need a second one, and a full
+    // disk or a dump that fails must not keep a program from being updated for good.
+    const recent = await this.recentVerifiedBackup();
+    if (recent !== null) {
+      this.log(`using a verified backup of the last day as the copy before the update: ${recent}`);
+      return;
+    }
     this.deps.ui.showSplash(TEXT.splash.upgradeBackup);
     try {
       const backup = await createBackup(this.backupDeps(), 'upgrade');
@@ -633,8 +667,39 @@ export class Controller {
       throw new ShellError(
         TEXT.errors.upgradeBackup,
         `the backup before the update failed: ${this.describeBackupFailure(error)}`,
+        false,
+        true,
       );
     }
+  }
+
+  /** The name of a backup that was verified in the last 24 hours and is still there, or null. */
+  private async recentVerifiedBackup(): Promise<string | null> {
+    const { backups } = this.deps.paths;
+    const since = this.deps.now().getTime() - DAY_MS;
+    const ledger = await readLedger(backups);
+    for (const [name, entry] of Object.entries(ledger)) {
+      const verifiedAt = Date.parse(entry.verifiedAt);
+      if (Number.isNaN(verifiedAt) || verifiedAt < since) continue;
+      if (
+        await stat(join(backups, name)).then(
+          () => true,
+          () => false,
+        )
+      )
+        return name;
+    }
+    return null;
+  }
+
+  private async confirmUpgradeWithoutCopy(): Promise<boolean> {
+    return this.deps.ui.confirm({
+      title: TEXT.upgradeWithoutCopy.confirmTitle,
+      message: TEXT.upgradeWithoutCopy.confirmMessage,
+      detail: TEXT.upgradeWithoutCopy.confirmDetail,
+      confirm: TEXT.upgradeWithoutCopy.confirmButton,
+      cancel: TEXT.upgradeWithoutCopy.cancelButton,
+    });
   }
 
   /** A restore that was cut off (a power cut, a crash) is finished or undone before anything uses the database. */

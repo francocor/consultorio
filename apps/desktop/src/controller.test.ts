@@ -977,8 +977,21 @@ describe('an update of the program', () => {
   const dialog = (target: Harness) =>
     target.uiCalls.find((call) => call[0] === 'choose' && call[1] === 'Consulvia no pudo iniciar');
 
+  /** The copies in the ledger were verified some time ago: the hours say how long. */
+  function ageBackups(directory: string, hours: number): void {
+    const file = join(directory, 'registro-de-copias.json');
+    const ledger = JSON.parse(readFileSync(file, 'utf8')) as {
+      files: Record<string, { verifiedAt: string }>;
+    };
+    for (const entry of Object.values(ledger.files)) {
+      entry.verifiedAt = new Date(clock.getTime() - hours * 3_600_000).toISOString();
+    }
+    writeFileSync(file, JSON.stringify(ledger));
+  }
+
   it('makes a verified backup before it migrates a database that is behind', async () => {
     const folder = await provisionedFolder();
+    ageBackups(harness.paths.backups, 30);
     appliedMigrations = 1; // the bundle knows 2
 
     const next = build(folder);
@@ -1004,8 +1017,87 @@ describe('an update of the program', () => {
     expect(backupsAtMigrate[0]?.some((name) => name.includes('previa-actualizacion'))).toBe(false);
   });
 
+  it('takes a verified backup of the last day as that copy, and makes no new one', async () => {
+    const folder = await provisionedFolder();
+    ageBackups(harness.paths.backups, 5);
+    appliedMigrations = 1;
+
+    const next = build(folder);
+    await next.controller.start();
+
+    expect(backupsAtMigrate[0]?.some((name) => name.includes('previa-actualizacion'))).toBe(false);
+    expect(next.events).toContain('migrate');
+    expect(next.controller.phase).toBe('ready');
+  });
+
+  it('does not take a copy that is a day old or more, or one whose file is gone', async () => {
+    const folder = await provisionedFolder();
+    ageBackups(harness.paths.backups, 25);
+    appliedMigrations = 1;
+
+    const old = build(folder);
+    await old.controller.start();
+    expect(backupsAtMigrate[0]?.some((name) => name.includes('previa-actualizacion'))).toBe(true);
+    await old.controller.quit();
+
+    for (const name of readdirSync(harness.paths.backups)) {
+      if (name.endsWith('.cvb')) rmSync(join(harness.paths.backups, name));
+    }
+    ageBackups(harness.paths.backups, 1);
+    backupsAtMigrate = [];
+    appliedMigrations = 1;
+    const gone = build(folder);
+    await gone.controller.start();
+    expect(backupsAtMigrate[0]?.some((name) => name.includes('previa-actualizacion'))).toBe(true);
+  });
+
+  it('offers to go on without that copy only after a retry failed too, with a warning, and goes on if the person insists', async () => {
+    const folder = await provisionedFolder();
+    ageBackups(harness.paths.backups, 48);
+    appliedMigrations = 1;
+    listCode = 1;
+
+    const next = build(folder);
+    chooseAnswers = [0, 2];
+    confirmAnswer = true;
+    await next.controller.start();
+
+    const dialogs = next.uiCalls.filter((call) => call[0] === 'choose').map((call) => call[2]);
+    expect(dialogs[0]).toEqual(['Reintentar', 'Ver registros', 'Salir']);
+    expect(dialogs[1]).toEqual([
+      'Reintentar',
+      'Ver registros',
+      'Continuar sin esta copia',
+      'Salir',
+    ]);
+    // It warned, and went on to migrate because the person said so.
+    expect(
+      next.uiCalls.some(
+        (call) => call[0] === 'confirm' && call[1] === 'Actualizar sin copia de seguridad',
+      ),
+    ).toBe(true);
+    expect(next.events).toContain('migrate');
+    expect(next.controller.phase).toBe('ready');
+  });
+
+  it('does not go on without the copy when the person does not confirm the warning', async () => {
+    const folder = await provisionedFolder();
+    ageBackups(harness.paths.backups, 48);
+    appliedMigrations = 1;
+    listCode = 1;
+
+    const next = build(folder);
+    chooseAnswers = [0, 2, 3];
+    confirmAnswer = false;
+    await next.controller.start();
+
+    expect(next.events).not.toContain('migrate');
+    expect(next.controller.phase).toBe('error');
+  });
+
   it('does not migrate at all when that backup cannot be made', async () => {
     const folder = await provisionedFolder();
+    ageBackups(harness.paths.backups, 48);
     appliedMigrations = 1;
     listCode = 1;
 
