@@ -1358,6 +1358,11 @@ export class Controller {
       await this.deps.ui.message('info', TEXT.backup.failed, TEXT.backup.notReady);
       return null;
     }
+    // Busy first: a restore that is running has its record, and that is not a restore that went wrong.
+    if (this.busy) {
+      await this.deps.ui.message('info', TEXT.busy.title, TEXT.busy.body);
+      return null;
+    }
     if (this.restoreJournalPending()) {
       await this.deps.ui.message('error', TEXT.backup.failed, TEXT.restore.journalPending);
       return null;
@@ -1683,12 +1688,13 @@ export class Controller {
    * address of the keys page from the log, like the other pages.
    */
   async restoreFlow(file?: string): Promise<boolean> {
-    if (this.restoreJournalPending()) {
-      await this.deps.ui.message('error', TEXT.restore.failed, TEXT.restore.journalPending);
-      return false;
-    }
+    // Busy first: a restore that is running has its record, and that is not a restore that went wrong.
     if (this.busy) {
       await this.deps.ui.message('info', TEXT.busy.title, TEXT.busy.body);
+      return false;
+    }
+    if (this.restoreJournalPending()) {
+      await this.deps.ui.message('error', TEXT.restore.failed, TEXT.restore.journalPending);
       return false;
     }
     // On a new install that is still waiting for its setup the restore takes the place of the setup.

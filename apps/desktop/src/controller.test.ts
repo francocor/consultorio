@@ -2177,6 +2177,42 @@ describe('when another operation is running', () => {
     await running;
   });
 
+  it('says it is busy, not that a restore is broken, when the record of a restore that is running is there', async () => {
+    await ready();
+    let release: () => void = () => undefined;
+    dumpGate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const running = harness.controller.backupNow();
+    await vi.waitFor(() => {
+      expect(harness.dumps).toBeGreaterThan(1);
+    });
+    // A restore writes its record at the start and keeps it until it ends: it is there while the program is busy.
+    writeFileSync(
+      join(harness.paths.root, 'restore-journal.json'),
+      JSON.stringify({
+        version: 1,
+        stamp: '1',
+        step: 'restoring',
+        filesAside: 'x',
+        unpacked: 'y',
+        configCopy: null,
+      }),
+    );
+    harness.uiCalls.length = 0;
+
+    const second = await harness.controller.backupNow();
+    const restored = await harness.controller.restoreFlow(join(harness.folder, 'any.cvb'));
+
+    expect(second).toBeNull();
+    expect(restored).toBe(false);
+    const messages = harness.uiCalls.filter((call) => call[0] === 'message');
+    expect(messages).toHaveLength(2);
+    for (const message of messages) expect(String(message[3])).toContain('otra operación en curso');
+    release();
+    await running;
+  });
+
   it('lets the backups it is checking give way: it stops at the next file when a person asks for something', async () => {
     await ready();
     // Two backups that the ledger does not know.
