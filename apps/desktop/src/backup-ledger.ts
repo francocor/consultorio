@@ -106,36 +106,73 @@ export async function forgetBackups(directory: string, names: readonly string[])
  */
 export const REJECTED_NAME = 'registro-de-copias-rechazadas.json';
 
-export async function readRejected(directory: string): Promise<Record<string, number>> {
+/** How long a file stays rejected. After that it is looked at again: whatever was wrong with it may be gone. */
+export const REJECTED_FOR_MS = 7 * 24 * 3_600_000;
+
+interface RejectedEntry {
+  bytes: number;
+  /** When it was rejected, in milliseconds. */
+  at: number;
+}
+
+/** The entries of the list, with the ones of an earlier version (a size alone) as already expired. */
+async function readRejectedEntries(directory: string): Promise<Record<string, RejectedEntry>> {
   try {
     const parsed = JSON.parse(await readFile(join(directory, REJECTED_NAME), 'utf8')) as {
       files?: unknown;
     };
     const files = parsed.files;
     if (typeof files !== 'object' || files === null || Array.isArray(files)) return {};
-    return Object.fromEntries(
-      Object.entries(files).filter(
-        (entry): entry is [string, number] => typeof entry[1] === 'number',
-      ),
-    );
+    const entries: Record<string, RejectedEntry> = {};
+    for (const [name, value] of Object.entries(files)) {
+      if (typeof value === 'number') {
+        entries[name] = { bytes: value, at: 0 };
+      } else if (
+        typeof value === 'object' &&
+        value !== null &&
+        typeof (value as RejectedEntry).bytes === 'number' &&
+        typeof (value as RejectedEntry).at === 'number'
+      ) {
+        entries[name] = { bytes: (value as RejectedEntry).bytes, at: (value as RejectedEntry).at };
+      }
+    }
+    return entries;
   } catch {
     return {};
   }
+}
+
+/** The files that are rejected now, with the size they had: the ones rejected less than a week ago. */
+export async function readRejected(
+  directory: string,
+  now: Date = new Date(),
+): Promise<Record<string, number>> {
+  const entries = await readRejectedEntries(directory);
+  return Object.fromEntries(
+    Object.entries(entries)
+      .filter(([, entry]) => now.getTime() - entry.at < REJECTED_FOR_MS)
+      .map(([name, entry]) => [name, entry.bytes]),
+  );
 }
 
 export async function rememberRejected(
   directory: string,
   name: string,
   bytes: number,
+  now: Date = new Date(),
 ): Promise<void> {
   await inTurn(async () => {
-    const files = await readRejected(directory);
-    files[name] = bytes;
+    const files = Object.fromEntries(
+      Object.entries(await readRejectedEntries(directory)).filter(
+        ([, entry]) => now.getTime() - entry.at < REJECTED_FOR_MS,
+      ),
+    );
+    files[name] = { bytes, at: now.getTime() };
     await mkdir(directory, { recursive: true });
     const target = join(directory, REJECTED_NAME);
     const temporary = `${target}.tmp`;
     try {
-      await writeJsonDurably(temporary, { version: 1, files });
+      await writeJsonDurably(temporary, { version: 2, files });
       await renameWithRetry(temporary, target);
     } catch (error) {
       await rm(temporary, { force: true });

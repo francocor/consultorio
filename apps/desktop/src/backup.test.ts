@@ -6,6 +6,7 @@ import {
   readFileSync,
   readdirSync,
   rmSync,
+  statSync,
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -16,7 +17,13 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { readArchive, readArchiveHeader } from './backup-archive.js';
 import { unwrapBackupKey } from './backup-crypto.js';
-import { LEDGER_NAME, readLedger, recordVerified, sha256OfFile } from './backup-ledger.js';
+import {
+  LEDGER_NAME,
+  readLedger,
+  recordVerified,
+  REJECTED_NAME,
+  sha256OfFile,
+} from './backup-ledger.js';
 import {
   fakeDump,
   fakeList,
@@ -383,6 +390,49 @@ describe('backups that are in the folder but not in the ledger', () => {
     // A different file under the same name (it was copied over, or finished copying) is looked at again.
     writeFileSync(damaged, Buffer.concat([bytes, Buffer.from('more')]));
     expect(await unledgeredBackups(paths.backups)).toEqual([names[1]]);
+  });
+
+  it('do not remember a file they could not read (busy, no permission): only one that is not whole', async () => {
+    const names = await makeSome(1);
+    rmSync(join(paths.backups, LEDGER_NAME));
+    const busy = Object.assign(new Error('resource busy or locked'), { code: 'EBUSY' });
+
+    const result = await adoptUnledgeredBackups(
+      testBackupDeps(install, paths, { listDump: () => Promise.reject(busy) }),
+    );
+
+    expect(result.rejected).toEqual(names);
+    // Nothing was written down about it: the next start looks at it again, and adopts it once it can be read.
+    expect(await unledgeredBackups(paths.backups)).toEqual(names);
+    const again = await adoptUnledgeredBackups(deps());
+    expect(again.adopted).toEqual(names);
+  });
+
+  it('forget a rejected file after a week, so a file that was rejected for a reason that is gone is looked at again', async () => {
+    const names = await makeSome(2);
+    rmSync(join(paths.backups, LEDGER_NAME));
+    const damaged = join(paths.backups, names[1] ?? '');
+    const bytes = readFileSync(damaged);
+    bytes[bytes.length - 40] = (bytes[bytes.length - 40] ?? 0) ^ 0x80;
+    writeFileSync(damaged, bytes);
+    const rejectedAt = new Date(2026, 9, 24, 15, 30, 45);
+    await adoptUnledgeredBackups(testBackupDeps(install, paths, { now: () => rejectedAt }));
+    const later = (days: number) => new Date(rejectedAt.getTime() + days * 24 * 3_600_000);
+
+    expect(await unledgeredBackups(paths.backups, later(6))).toEqual([]);
+    expect(await unledgeredBackups(paths.backups, later(8))).toEqual([names[1]]);
+  });
+
+  it('read the list of rejected files that an earlier version wrote, and look at those files again once', async () => {
+    const names = await makeSome(1);
+    rmSync(join(paths.backups, LEDGER_NAME));
+    const size = statSync(join(paths.backups, names[0] ?? '')).size;
+    writeFileSync(
+      join(paths.backups, REJECTED_NAME),
+      JSON.stringify({ version: 1, files: { [names[0] ?? '']: size } }),
+    );
+
+    expect(await unledgeredBackups(paths.backups)).toEqual(names);
   });
 
   it('remember a backup of another install the same way: it is not theirs to vouch for, and need not be opened at every start', async () => {

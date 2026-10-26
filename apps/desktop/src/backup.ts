@@ -6,6 +6,7 @@ import { PassThrough, type Readable } from 'node:stream';
 
 import { createArchiveWriter, discard, readArchive, readArchiveHeader } from './backup-archive.js';
 import {
+  BackupCryptoError,
   FORMAT,
   keyIdOf,
   type BackupHeader,
@@ -101,6 +102,8 @@ export class BackupError extends Error {
   constructor(
     message: string,
     readonly detail = '',
+    /** The file itself is at fault (it does not authenticate, its manifest is wrong), not a read that failed. */
+    readonly permanent = false,
   ) {
     super(message);
     this.name = 'BackupError';
@@ -176,6 +179,8 @@ export async function verifyBackupFile(
     throw new BackupError(
       'The backup does not authenticate',
       error instanceof Error ? error.message : String(error),
+      // A file that is not whole (or not a backup at all), not a read that failed on a busy file or a full disk.
+      error instanceof BackupCryptoError || error instanceof SyntaxError,
     );
   }
   const { manifest } = found;
@@ -185,7 +190,7 @@ export async function verifyBackupFile(
     manifest.dumpSha256 !== found.dumpSha256 ||
     manifest.dumpBytes !== found.dumpBytes
   ) {
-    throw new BackupError('The manifest does not match the dump');
+    throw new BackupError('The manifest does not match the dump', '', true);
   }
   return { sha256: await sha256OfFile(path), bytes: (await stat(path)).size };
 }
@@ -283,7 +288,10 @@ export async function createBackup(
 }
 
 /** The backups in `directory` that the ledger does not vouch for (no entry, or an entry for a file of another size), newest first. */
-export async function unledgeredBackups(directory: string): Promise<string[]> {
+export async function unledgeredBackups(
+  directory: string,
+  now: Date = new Date(),
+): Promise<string[]> {
   let names: string[];
   try {
     names = await readdir(directory);
@@ -294,7 +302,7 @@ export async function unledgeredBackups(directory: string): Promise<string[]> {
     `^consulvia-(?:${Object.values(KIND_NAMES).join('|')})-\\d{4}-\\d{2}-\\d{2}_\\d{4}\\${BACKUP_EXTENSION}$`,
   );
   const ledger = await readLedger(directory);
-  const rejected = await readRejected(directory);
+  const rejected = await readRejected(directory, now);
   const pending: string[] = [];
   for (const name of names.filter((candidate) => pattern.test(candidate))) {
     const size = await sizeOf(join(directory, name));
@@ -325,7 +333,7 @@ export async function adoptUnledgeredBackups(
 ): Promise<AdoptionResult> {
   const result: AdoptionResult = { adopted: [], rejected: [], skipped: [] };
   const directory = deps.paths.backups;
-  const pending = await unledgeredBackups(directory);
+  const pending = await unledgeredBackups(directory, deps.now());
   const ownKeyId = keyIdOf(deps.backupKey());
   for (const name of pending.slice(0, options.max ?? 5)) {
     const path = join(directory, name);
@@ -333,7 +341,9 @@ export async function adoptUnledgeredBackups(
       const { header } = await readArchiveHeader(path);
       if (header.keyId !== ownKeyId) {
         result.skipped.push(name);
-        await rememberRejected(directory, name, await sizeOf(path)).catch(() => undefined);
+        await rememberRejected(directory, name, await sizeOf(path), deps.now()).catch(
+          () => undefined,
+        );
         continue;
       }
       const verified = await verifyBackupFile(deps, path);
@@ -346,9 +356,18 @@ export async function adoptUnledgeredBackups(
       deps.log?.(`a backup that was not in the ledger passed its check and was entered: ${name}`);
     } catch (error) {
       result.rejected.push(name);
-      await rememberRejected(directory, name, await sizeOf(path).catch(() => -1)).catch(
-        () => undefined,
-      );
+      // Only a file that is itself at fault is remembered: one that could not be read (busy, no permission, a
+      // full disk) is looked at again at the next start, and adopted once it can be.
+      const permanent =
+        error instanceof BackupCryptoError || (error instanceof BackupError && error.permanent);
+      if (permanent) {
+        await rememberRejected(
+          directory,
+          name,
+          await sizeOf(path).catch(() => -1),
+          deps.now(),
+        ).catch(() => undefined);
+      }
       deps.log?.(
         `a backup that is not in the ledger did not pass its check and was left alone: ${name}: ${error instanceof Error ? error.message : String(error)}`,
       );
