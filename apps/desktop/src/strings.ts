@@ -197,6 +197,7 @@ export const TEXT = {
     logs: 'Ver registros',
     quit: 'Salir',
     startOver: 'Empezar de nuevo y restaurar una copia',
+    moreOptions: 'Más opciones…',
     continueWithoutCopy: 'Continuar sin esta copia',
     cannotDecrypt:
       'No se pueden leer los datos de esta instalación con la cuenta de Windows actual. Los datos se protegen con la cuenta de Windows que instaló Consulvia: ingrese con esa cuenta. Si ya no es posible, puede empezar de nuevo y restaurar una copia de seguridad (sus datos actuales no se borran).',

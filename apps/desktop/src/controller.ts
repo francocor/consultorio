@@ -1,7 +1,7 @@
 import { randomBytes } from 'node:crypto';
 import { existsSync } from 'node:fs';
-import { mkdir, readFile, rename, rm, stat } from 'node:fs/promises';
-import { join } from 'node:path';
+import { mkdir, readdir, readFile, rename, rm, stat } from 'node:fs/promises';
+import { join, sep } from 'node:path';
 import type { Readable } from 'node:stream';
 
 import { ApiCommandError, EXIT, type ApiCommands } from './api-commands.js';
@@ -59,7 +59,13 @@ import { normalizeRecoveryKey } from './recovery-key.js';
 import { redact } from './redact.js';
 import { migrationCountOf, missingResources, type Resources } from './resources.js';
 import { auditProblems, revertStatements, type ClusterFacts } from './restore-audit.js';
-import { journalFile, reconcileInterruptedRestore, type ReconcileDeps } from './restore-journal.js';
+import {
+  journalFile,
+  readJournal,
+  reconcileInterruptedRestore,
+  RESTORE_WORK_FILES,
+  type ReconcileDeps,
+} from './restore-journal.js';
 import {
   readBackupInfo,
   restoreBackup,
@@ -230,6 +236,13 @@ function describeError(error: unknown): { message: string; detail: string } {
  */
 const REPEATED_FAILURES = 3;
 
+/** What makes two failures the same one: what the person is told, or the kind and the words of the error. */
+function failureSignature(error: unknown): string {
+  if (error instanceof ShellError) return `shell:${error.userMessage}`;
+  if (error instanceof Error) return `${error.name}:${error.message.slice(0, 120)}`;
+  return String(error);
+}
+
 export class Controller {
   private loaded: InstallConfig | null = null;
   private clusterOrNull: PostgresCluster | null = null;
@@ -241,6 +254,9 @@ export class Controller {
   private skipUpgradeBackup = false;
   /** Starts that failed one after the other: a start that works resets it. */
   private failures = 0;
+  /** How many of them failed in the same way as the last one. */
+  private sameFailures = 0;
+  private lastFailure: string | null = null;
   /**
    * The recovery key between the setup that made it and the owner's confirmation. Memory only: it is never written
    * to this PC, and a restart forgets it (the owner then confirms by typing the key from their paper copy).
@@ -361,28 +377,38 @@ export class Controller {
   start(): Promise<void> {
     this.bootRun = this.boot().then(() => {
       this.failures = 0;
+      this.sameFailures = 0;
+      this.lastFailure = null;
     });
     return this.bootRun.catch((error: unknown) => {
       this.failures += 1;
+      // The same failure, one start after another: what a retry will not fix.
+      const signature = failureSignature(error);
+      this.sameFailures = signature === this.lastFailure ? this.sameFailures + 1 : 1;
+      this.lastFailure = signature;
       return this.fail(error);
     });
   }
 
-  private async fail(error: unknown): Promise<void> {
+  private async fail(error: unknown, moreOptions = false): Promise<void> {
     if (this.isQuitting()) return;
     const { message, detail } = describeError(error);
     this.log(`startup failed: ${detail}`);
     this.setPhase('error');
     this.deps.ui.showSplash(message, false);
-    // Whatever the cause, a start that failed three times in a row offers the way out too: waiting for the
-    // fourth try is no help to a person whose database or documents will not open.
-    const deadEnd = isDeadEnd(error) || this.failures >= REPEATED_FAILURES;
+    // The way out (start over and restore a copy) is offered by itself when the data cannot be opened, or when
+    // the same failure came three starts in a row. After three failures of different kinds it waits behind "more
+    // options": something that changes between the tries is not known to be the data.
+    const offerStartOver =
+      isDeadEnd(error) || this.sameFailures >= REPEATED_FAILURES || moreOptions;
+    const offerMore = !offerStartOver && this.failures >= REPEATED_FAILURES;
     // After a retry that failed for the same reason, the safety copy before an update may be given up.
     const canSkip = error instanceof ShellError && error.canSkipBackup && this.failures >= 2;
     const buttons = [
       TEXT.errors.retry,
       TEXT.errors.logs,
-      ...(deadEnd ? [TEXT.errors.startOver] : []),
+      ...(offerMore ? [TEXT.errors.moreOptions] : []),
+      ...(offerStartOver ? [TEXT.errors.startOver] : []),
       ...(canSkip ? [TEXT.errors.continueWithoutCopy] : []),
       TEXT.errors.quit,
     ];
@@ -396,15 +422,17 @@ export class Controller {
     const picked = buttons[choice];
     if (choice === 1) {
       await this.deps.ui.openPath(this.deps.paths.logs);
-      await this.fail(error);
+      await this.fail(error, moreOptions);
+    } else if (picked === TEXT.errors.moreOptions) {
+      await this.fail(error, true);
     } else if (choice === 0) {
       await this.stopQuietly();
       await this.start();
     } else if (picked === TEXT.errors.startOver) {
-      if (!(await this.startOver())) await this.fail(error);
+      if (!(await this.startOver())) await this.fail(error, moreOptions);
     } else if (picked === TEXT.errors.continueWithoutCopy) {
       if (!(await this.confirmUpgradeWithoutCopy())) {
-        await this.fail(error);
+        await this.fail(error, moreOptions);
         return;
       }
       this.skipUpgradeBackup = true;
@@ -435,7 +463,13 @@ export class Controller {
     const { configFile, pgdata, files } = this.deps.paths;
     const moved: [string, string][] = [];
     try {
-      for (const path of [configFile, `${configFile}.bak`, pgdata, files]) {
+      for (const path of [
+        configFile,
+        `${configFile}.bak`,
+        pgdata,
+        files,
+        ...(await this.restoreLeftovers()),
+      ]) {
         try {
           await rename(path, `${path}.aside-${stamp}`);
           moved.push([path, `${path}.aside-${stamp}`]);
@@ -458,8 +492,30 @@ export class Controller {
     this.server = null;
     this.offerRestoreAfterBoot = true;
     this.failures = 0;
+    this.sameFailures = 0;
     await this.start();
     return true;
+  }
+
+  /**
+   * What an interrupted restore leaves in the data folder: its record and everything the record names, and the work
+   * files that carry its name. They go aside with the rest: left in place, the new install would act on a record that
+   * is not about it, or sweep the old documents that wait there.
+   */
+  private async restoreLeftovers(): Promise<string[]> {
+    const { root } = this.deps.paths;
+    const found = new Set<string>([journalFile(this.deps.paths)]);
+    const journal = await readJournal(this.deps.paths);
+    if (journal !== null && journal !== 'unreadable') {
+      for (const path of [journal.filesAside, journal.unpacked, journal.configCopy]) {
+        // Only what is inside the data folder: a record is not trusted to point anywhere else.
+        if (path !== null && path.startsWith(`${root}${sep}`)) found.add(path);
+      }
+    }
+    for (const name of await readdir(root).catch(() => [])) {
+      if (RESTORE_WORK_FILES.test(name)) found.add(join(root, name));
+    }
+    return [...found];
   }
 
   private async boot(): Promise<void> {

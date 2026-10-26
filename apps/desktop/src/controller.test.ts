@@ -659,6 +659,60 @@ describe('an install whose configuration cannot be opened', () => {
     expect(next.uiCalls).toContainEqual(['pickFile']);
   });
 
+  it('sets the record of an interrupted restore aside too, and everything it names, so the new install does not act on it or sweep it', async () => {
+    const folder = await provisionedFolder();
+    const before = build(folder).paths;
+    // An interrupted restore: the real documents aside, the work folder, the copy of the configuration, the record.
+    const aside = `${before.files}.replaced-7`;
+    mkdirSync(aside, { recursive: true });
+    writeFileSync(join(aside, 'precious.pdf'), 'the documents of before');
+    const unpacked = join(before.root, 'tmp-restore-7');
+    mkdirSync(join(unpacked, 'files'), { recursive: true });
+    const copy = join(before.root, 'config.json.pre-restore-7');
+    writeFileSync(copy, 'a copy of the configuration');
+    writeFileSync(
+      join(before.root, 'restore-journal.json'),
+      JSON.stringify({
+        version: 1,
+        stamp: '7',
+        step: 'files-swapped',
+        filesAside: aside,
+        unpacked,
+        configCopy: copy,
+        hadFiles: true,
+        undoing: false,
+      }),
+    );
+    cipherBroken = true;
+    whileDialogOpen = () => {
+      cipherBroken = false;
+    };
+    chooseAnswers = [2];
+
+    const next = build(folder);
+    await next.controller.start();
+
+    const names = readdirSync(next.paths.root);
+    const aside_ = (prefix: string) => names.filter((name) => name.startsWith(prefix + '.aside-'));
+    // Moved, not deleted, and under a name that no sweep recognizes.
+    expect(names).not.toContain('restore-journal.json');
+    expect(aside_('restore-journal.json')).toHaveLength(1);
+    expect(aside_('files.replaced-7')).toHaveLength(1);
+    expect(aside_('tmp-restore-7')).toHaveLength(1);
+    expect(aside_('config.json.pre-restore-7')).toHaveLength(1);
+    expect(
+      readFileSync(
+        join(next.paths.root, aside_('files.replaced-7')[0] ?? '', 'precious.pdf'),
+        'utf8',
+      ),
+    ).toBe('the documents of before');
+    // And the new install did not run a restore it knows nothing about.
+    expect(readFileSync(join(next.paths.logs, 'shell.log'), 'utf8')).not.toContain(
+      'an interrupted restore',
+    );
+    expect(next.config().provisioned).toBe(false);
+  });
+
   it('changes nothing when the person says no', async () => {
     const folder = await provisionedFolder();
     cipherBroken = true;
@@ -1982,7 +2036,7 @@ describe('when something fails at the start', () => {
     expect(log).toContain('could not stop');
   });
 
-  it('still asks, after three failures in a row, whether to start over and restore a copy, whatever the cause', async () => {
+  it('offers to start over and restore a copy by itself after the same failure three times in a row', async () => {
     migrateFails = true;
     chooseAnswers = [0, 0, 3];
 
@@ -1993,6 +2047,37 @@ describe('when something fails at the start', () => {
     expect(dialogs[0]).toEqual(['Reintentar', 'Ver registros', 'Salir']);
     expect(dialogs[1]).toEqual(['Reintentar', 'Ver registros', 'Salir']);
     expect(dialogs[2]).toEqual([
+      'Reintentar',
+      'Ver registros',
+      'Empezar de nuevo y restaurar una copia',
+      'Salir',
+    ]);
+  });
+
+  it('keeps start over behind "Más opciones" when the three failures were not the same one', async () => {
+    // A, B, A: the cause changes between the tries, so it is not known to be the data that will not open.
+    migrateFails = true;
+    chooseAnswers = [0, 0, 2, 3];
+    let opened = 0;
+    whileDialogOpen = () => {
+      opened += 1;
+      if (opened === 1) {
+        migrateFails = false;
+        appliedMigrations = 3; // a database from a newer version
+      }
+      if (opened === 2) {
+        appliedMigrations = null;
+        migrateFails = true;
+      }
+    };
+
+    await harness.controller.start();
+
+    const dialogs = harness.uiCalls.filter((call) => call[0] === 'choose').map((call) => call[2]);
+    expect(dialogs).toHaveLength(4);
+    expect(dialogs[2]).toEqual(['Reintentar', 'Ver registros', 'Más opciones…', 'Salir']);
+    // The person asks for more, and only then is the way out offered.
+    expect(dialogs[3]).toEqual([
       'Reintentar',
       'Ver registros',
       'Empezar de nuevo y restaurar una copia',

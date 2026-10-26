@@ -316,6 +316,20 @@ describe('a restore that did not end', () => {
     expect(await readJournal(paths)).toBeNull();
   });
 
+  it('leaves alone what "start over" set aside, whatever it was called before', async () => {
+    const kept = [
+      'files.replaced-5.aside-9',
+      'config.json.pre-restore-5.aside-9',
+      'tmp-restore-5.aside-9',
+      'tmp-backup-5.aside-9',
+    ];
+    for (const name of kept) mkdirSync(join(paths.root, name), { recursive: true });
+
+    await reconcile();
+
+    for (const name of kept) expect(existsSync(join(paths.root, name)), name).toBe(true);
+  });
+
   it('sweeps the copies of config.json and the old documents that no restore claims', async () => {
     writeFileSync(join(paths.root, 'config.json.pre-restore-5'), 'x');
     mkdirSync(`${paths.files}.replaced-5`, { recursive: true });

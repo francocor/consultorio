@@ -267,15 +267,17 @@ export async function reconcileInterruptedRestore(deps: ReconcileDeps): Promise<
   return outcome;
 }
 
+/**
+ * The names of the work files of a backup or a restore: followed by the time they were made, and nothing else, so
+ * that what "start over" set aside (`.aside-<stamp>` after the name) is never taken for one.
+ */
+export const RESTORE_WORK_FILES =
+  /^(?:tmp-(?:restore|backup)-\d+|config\.json\.pre-restore-\d+|files\.replaced-\d+)$/;
+
 /** Work files of a backup or a restore that did not finish; nothing is writing them at the start. */
 async function sweepWorkFiles(paths: DataPaths): Promise<void> {
   for (const name of await readdir(paths.root).catch(() => [])) {
-    if (
-      /^tmp-(?:restore|backup)-/.test(name) ||
-      /^config\.json\.pre-restore-/.test(name) ||
-      /^files\.replaced-/.test(name) ||
-      name === 'config.json.restoring'
-    ) {
+    if (RESTORE_WORK_FILES.test(name) || name === 'config.json.restoring') {
       await removeQuietly(join(paths.root, name));
     }
   }
