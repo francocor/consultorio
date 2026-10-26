@@ -1483,12 +1483,48 @@ export class Controller {
     }
   }
 
+  /** Whether the daily backup has already said in the log that it is waiting for a restore record. */
+  private journalSkipLogged = false;
+
+  /**
+   * A restore that ended (the databases had traded places) but could not remove its record leaves the program
+   * running with a record nobody will clear until the next start. When the record says the restore had reached the
+   * swap, no scratch database exists and nothing is running, the very code of the start finishes it.
+   */
+  private async clearEndedRestoreRecord(): Promise<void> {
+    const outcome = await this.exclusive(async () => {
+      try {
+        const journal = await readJournal(this.deps.paths);
+        if (journal === null || journal === 'unreadable') return 'none';
+        if (journal.step !== 'swapping' || journal.undoing) return 'none';
+        if ((await this.cluster.listDatabases()).includes(SCRATCH_DATABASE)) return 'none';
+        return await reconcileInterruptedRestore({ ...this.reconcileDeps(), sweep: false });
+      } catch (error) {
+        this.log(
+          `the record of an ended restore could not be cleared: ${error instanceof Error ? error.message : String(error)}`,
+        );
+        return 'none';
+      }
+    });
+    if (outcome !== 'none' && outcome !== 'busy') this.log(`restore record cleared: ${outcome}`);
+  }
+
   /**
    * The first time Consulvia is open on a day, and again after a failure (5 minutes later, then 10, 20, 40 and
    * every hour), until one backup of the day exists.
    */
   async maybeDailyBackup(): Promise<void> {
-    if (this.currentPhase !== 'ready' || this.busy || this.restoreJournalPending()) return;
+    if (this.currentPhase !== 'ready' || this.busy) return;
+    if (this.restoreJournalPending()) {
+      // Skipping the day's backup for good because a record could not be removed would go unnoticed for weeks.
+      if (!this.journalSkipLogged) {
+        this.journalSkipLogged = true;
+        this.log('daily backup skipped: a restore record is still there');
+      }
+      await this.clearEndedRestoreRecord();
+      if (this.restoreJournalPending()) return;
+    }
+    this.journalSkipLogged = false;
     const today = localDay(this.deps.now());
     if (this.config.settings.lastDailyBackup === today) return;
     if (this.deps.now().getTime() < this.nextDailyAttempt) return;

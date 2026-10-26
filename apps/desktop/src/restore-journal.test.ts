@@ -1,4 +1,5 @@
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -107,6 +108,37 @@ describe('the journal of a restore', () => {
 
     await clearJournal(paths);
     expect(await readJournal(paths)).toBeNull();
+  });
+
+  it('tries again when the file is busy (an antivirus scanning it) and gives up with the error after the last try', async () => {
+    await writeJournal(paths, journal('restoring', null));
+    let calls = 0;
+    const busy = Object.assign(new Error('resource busy'), { code: 'EBUSY' });
+
+    await clearJournal(paths, {
+      remove: async (path) => {
+        calls += 1;
+        if (calls < 3) throw busy;
+        await rm(path, { force: true });
+      },
+      delayMs: 0,
+    });
+
+    expect(calls).toBe(3);
+    expect(await readJournal(paths)).toBeNull();
+
+    calls = 0;
+    await expect(
+      clearJournal(paths, {
+        remove: () => {
+          calls += 1;
+          return Promise.reject(busy);
+        },
+        attempts: 4,
+        delayMs: 0,
+      }),
+    ).rejects.toBe(busy);
+    expect(calls).toBe(4);
   });
 
   it('says so when the file is there but nobody can read it', async () => {

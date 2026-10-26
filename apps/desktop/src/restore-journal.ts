@@ -122,8 +122,33 @@ export async function readJournal(paths: DataPaths): Promise<RestoreJournal | nu
   }
 }
 
-export async function clearJournal(paths: DataPaths): Promise<void> {
-  await rm(journalFile(paths), { force: true });
+export interface ClearJournalOptions {
+  /** How the file is removed. */
+  remove?: (path: string, options: { force: true }) => Promise<void>;
+  /** How many times it is tried before the error is given back. Default 5. */
+  attempts?: number;
+  /** The wait before the second try; it grows with each one. Default 200 ms. */
+  delayMs?: number;
+}
+
+/**
+ * Removes the record of a restore. A file that an antivirus or the indexer has open cannot be removed for a moment,
+ * and a record left behind stops the daily backups (and any restore) until the next start, so it is tried again.
+ */
+export async function clearJournal(
+  paths: DataPaths,
+  options: ClearJournalOptions = {},
+): Promise<void> {
+  const { remove = rm, attempts = 5, delayMs = 200 } = options;
+  for (let attempt = 1; ; attempt += 1) {
+    try {
+      await remove(journalFile(paths), { force: true });
+      return;
+    } catch (error) {
+      if (attempt >= attempts) throw error;
+      await new Promise<void>((resolve) => setTimeout(resolve, delayMs * attempt));
+    }
+  }
 }
 
 async function exists(path: string): Promise<boolean> {

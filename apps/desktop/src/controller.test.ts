@@ -2625,6 +2625,47 @@ describe('restoring a backup', () => {
     expect(harness.controller.phase).toBe('ready');
   });
 
+  const staleJournal = (step: string) =>
+    JSON.stringify({
+      version: 1,
+      stamp: '1',
+      step,
+      filesAside: join(harness.paths.root, 'files.replaced-1'),
+      unpacked: join(harness.paths.root, 'tmp-restore-1'),
+      configCopy: null,
+    });
+
+  it('clears the record of a restore that ended but could not remove it, and makes the daily backup instead of skipping every day', async () => {
+    await ready(false);
+    writeFileSync(join(harness.paths.root, 'restore-journal.json'), staleJournal('swapping'));
+    harness.setDatabases(['postgres', 'consultorio']);
+    const dumps = harness.dumps;
+    clock = new Date(2026, 9, 25, 9, 0, 0);
+
+    await harness.controller.maybeDailyBackup();
+
+    expect(existsSync(join(harness.paths.root, 'restore-journal.json'))).toBe(false);
+    expect(harness.dumps).toBe(dumps + 1);
+    expect(harness.config().settings.lastDailyBackup).toBe('2026-10-25');
+  });
+
+  it('says once in the log that the daily backup waits for a restore record, and does not touch a restore that may be running', async () => {
+    await ready(false);
+    writeFileSync(join(harness.paths.root, 'restore-journal.json'), staleJournal('swapping'));
+    // The scratch database is still there: this is a restore in progress, not one that ended.
+    harness.setDatabases(['postgres', 'consultorio', 'consultorio_restore']);
+    const dumps = harness.dumps;
+    clock = new Date(2026, 9, 25, 9, 0, 0);
+
+    await harness.controller.maybeDailyBackup();
+    await harness.controller.maybeDailyBackup();
+
+    expect(existsSync(join(harness.paths.root, 'restore-journal.json'))).toBe(true);
+    expect(harness.dumps).toBe(dumps);
+    const log = readFileSync(join(harness.paths.logs, 'shell.log'), 'utf8');
+    expect(log.split('daily backup skipped: a restore record is still there').length - 1).toBe(1);
+  });
+
   it('refuses to restore, to back up or to make the daily backup while a restore is waiting to be undone', async () => {
     const backup = await ready(false);
     writeFileSync(

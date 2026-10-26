@@ -345,6 +345,24 @@ describe('restoring a backup of this installation', () => {
     expect(adopted).toBeNull();
   });
 
+  it('says so in the log when the record of the restore cannot be removed, and the restore still ends', async () => {
+    const path = await makeBackup(install, { 't/a/docs/1.obj': 'one' });
+    const logged: string[] = [];
+
+    const result = await restoreBackup(
+      restoreDeps({
+        clearJournal: () => Promise.reject(new Error('the file is busy')),
+        log: (message) => logged.push(message),
+      }),
+      path,
+    );
+
+    expect(result.header.kind).toBe('manual');
+    expect(events.at(-1)).toBe('start');
+    expect(logged.join(' | ')).toContain('the record of the restore could not be removed');
+    expect(logged.join(' | ')).toContain('the file is busy');
+  });
+
   it('leaves no scratch folder and no old documents folder behind', async () => {
     const path = await makeBackup(install, { 't/a/docs/1.obj': 'one' });
 

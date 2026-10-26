@@ -157,6 +157,8 @@ export interface RestoreDeps {
    * places, with `config.json` copied aside first so it can be put back.
    */
   adoptSecrets: (adopted: AdoptedSecrets) => Promise<void> | void;
+  /** Removes the record of the restore once the data is right. Defaults to `clearJournal`; replaced by the tests. */
+  clearJournal?: (paths: DataPaths) => Promise<void>;
   /** The size of the data of the install (database and documents), to know the room a restore needs. */
   dataBytes: () => Promise<number>;
   /** Free bytes where the data lives. Defaults to the real disk. */
@@ -538,7 +540,12 @@ export async function restoreBackup(
 
   // From here the restored data is the data of the install: what is left is housekeeping, and starting. The
   // journal goes first: a crash after it leaves garbage that the next start sweeps, not a start that fails.
-  await clearJournal(deps.paths).catch(() => undefined);
+  await (deps.clearJournal ?? clearJournal)(deps.paths).catch((error: unknown) => {
+    // Not fatal: the data is right. The record is cleared by the next tick of the daily backup, or by the next start.
+    deps.log?.(
+      `the record of the restore could not be removed: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  });
   // The roles are as they were before: said again, in case anything touched them since the check.
   await deps.audit.revert(snapshot).catch(() => undefined);
   await removeQuietly(unpacked);
