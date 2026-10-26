@@ -565,7 +565,78 @@ async function main(): Promise<void> {
     });
 
     await check(
-      'set up "Clínica Prueba" with an owner (POST /__setup with the one-time token)',
+      'a setup that is interrupted after the key is shown and before it is confirmed creates nothing, and asks again with a new key',
+      async () => {
+        const url = lastMatch(logText(session), /setup url: (\S+)/) ?? '';
+        const token = new URL(url).searchParams.get('t') ?? '';
+        const form = {
+          organizationName: OWNER.organizationName,
+          ownerName: OWNER.ownerName,
+          ownerEmail: OWNER.ownerEmail,
+          password: OWNER.password,
+          passwordConfirmation: OWNER.password,
+          timeZone: 'America/Argentina/Buenos_Aires',
+        };
+        const shown = await web.call('POST', '/__setup', { token, json: form });
+        assert(shown.status === 200, `setup answered ${String(shown.status)}`);
+        const first = shown.json<{ recoveryKey: string; ackToken: string }>();
+        // The key is on the screen and NOTHING exists: the API is not running, the form is still there.
+        assert(
+          (await web.call('GET', '/api/health')).status === 503,
+          'the services started before the key was confirmed',
+        );
+        assert(
+          (await web.call('GET', `/__setup?t=${token}`)).status === 200,
+          'the form is gone before the key was confirmed',
+        );
+        // The program closes (the window, a power cut) before the owner confirms.
+        const addresses = logText(session).split('setup url:').length - 1;
+        await exited(launch(session, ['--quit']));
+        if (app) await Promise.race([exited(app), sleep(60_000)]);
+        await until(
+          'every process of the install to end',
+          () => (leftovers(session).length === 0 ? true : undefined),
+          240_000,
+          1_000,
+        );
+        app = launch(session);
+        const next = await until(
+          'the setup address after the restart',
+          () =>
+            logText(session).split('setup url:').length - 1 > addresses
+              ? lastMatch(logText(session), /setup url: (\S+)/)
+              : undefined,
+          600_000,
+        );
+        web = new Client(new URL(new URL(next).origin), proofOf);
+        const nextToken = new URL(next).searchParams.get('t') ?? '';
+        // The old confirmation does not exist any more, and nothing was created in between.
+        const stale = await web.call('POST', '/__ack', {
+          token: first.ackToken,
+          json: { recoveryKeyLast4: first.recoveryKey.slice(-4) },
+        });
+        assert(stale.status === 404, `the old confirmation answered ${String(stale.status)}`);
+        assert(
+          (await web.call('GET', '/api/health')).status === 503,
+          'the services are running after an interrupted setup',
+        );
+        const found = filesMentioning(session.dataDir, [first.recoveryKey]);
+        assert(
+          found.length === 0,
+          `the key of the interrupted setup is written in ${found.join(', ')}`,
+        );
+        const second = await web.call('POST', '/__setup', { token: nextToken, json: form });
+        assert(second.status === 200, `the second setup answered ${String(second.status)}`);
+        assert(
+          second.json<{ recoveryKey: string }>().recoveryKey !== first.recoveryKey,
+          'the same key was shown again',
+        );
+        return 'nothing created; the form came back and made a new key';
+      },
+    );
+
+    await check(
+      'set up "Clínica Prueba" with an owner (the key is shown first; POST /__setup creates nothing yet)',
       async () => {
         const url = lastMatch(logText(session), /setup url: (\S+)/) ?? '';
         const token = new URL(url).searchParams.get('t') ?? '';
@@ -592,9 +663,16 @@ async function main(): Promise<void> {
         assert(body.ackToken.length >= 20, 'no token to confirm the key');
         recoveryKey = body.recoveryKey;
         ackToken = body.ackToken;
-        const gone = await web.call('GET', `/__setup?t=${token}`);
-        assert(gone.status === 404, 'the setup page must be 404 once the organization exists');
-        return 'recovery key shown; /__setup is now 404';
+        // Nothing is created until the key is confirmed: the API is not running yet, and the form still works.
+        assert(
+          (await web.call('GET', '/api/health')).status === 503,
+          'the services started before the key was confirmed',
+        );
+        assert(
+          (await web.call('GET', `/__setup?t=${token}`)).status === 200,
+          'the setup page is gone before the key was confirmed',
+        );
+        return 'recovery key shown; nothing created yet';
       },
     );
 
@@ -618,7 +696,18 @@ async function main(): Promise<void> {
           token: ackToken,
           json: { recoveryKeyLast4: recoveryKey.slice(-4).toLowerCase() },
         });
-        assert(right.status === 200, `the right tail answered ${String(right.status)}`);
+        assert(
+          right.status === 200,
+          `the right tail answered ${String(right.status)}: ${right.text()}`,
+        );
+        // Confirming the key is what creates the organization, and the setup page is gone for good.
+        const setupToken =
+          new URL(lastMatch(logText(session), /setup url: (\S+)/) ?? '').searchParams.get('t') ??
+          '';
+        assert(
+          (await web.call('GET', `/__setup?t=${setupToken}`)).status === 404,
+          'the setup page must be 404 once the organization exists',
+        );
         const again = await web.call('POST', '/__ack', {
           token: ackToken,
           json: { recoveryKeyLast4: recoveryKey.slice(-4) },

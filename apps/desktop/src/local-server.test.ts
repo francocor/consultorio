@@ -75,6 +75,12 @@ const actions: PageActions = {
     ),
   restoreKeyNeeds: () => keyNeeds,
   browserSession: () => CREDENTIALS.browser,
+  regenerateRecoveryKey: (input) =>
+    Promise.resolve(
+      input.password === 'right'
+        ? { ok: true, recoveryKey: 'NEWKE-YNEWK', ackToken: 'ack-for-the-new-key' }
+        : { ok: false, errors: { password: 'No.' } },
+    ),
   submitRecoveryKey: (keys) =>
     Promise.resolve(
       keys.backup === 'ABCDE' && (!keyNeeds.current || keys.current === 'CURRNT')
@@ -689,6 +695,40 @@ describe('the pages of the shell', () => {
 
     expect(withReset.status).toBe(404);
     expect(withAck.status).toBe(200);
+  });
+
+  it('serves the page that makes a new recovery key only with its token, and passes the credentials on', async () => {
+    const token = vault.issue(PURPOSE.regenerate);
+    const headers = { ...json, 'x-consulvia-token': token };
+
+    const page = await call(`/__regen?t=${token}`);
+    const noToken = await call('/__regen');
+    const refused = await call('/__regen', {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ email: 'ana@clinica.example', password: 'wrong', code: '' }),
+    });
+    const missing = await call('/__regen', {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ email: '', password: '' }),
+    });
+    const accepted = await call('/__regen', {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ email: 'ana@clinica.example', password: 'right', code: '123456' }),
+    });
+
+    expect(page.status).toBe(200);
+    expect(page.body.toString()).toContain('name="password"');
+    expect(noToken.status).toBe(404);
+    expect(refused.status).toBe(422);
+    expect(missing.status).toBe(422);
+    expect(accepted.status).toBe(200);
+    expect(JSON.parse(accepted.body.toString())).toMatchObject({
+      ok: true,
+      ackToken: 'ack-for-the-new-key',
+    });
   });
 
   it('checks a typed key without showing anything', async () => {

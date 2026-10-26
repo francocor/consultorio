@@ -30,6 +30,7 @@ import { readLedger } from './backup-ledger.js';
 import { newTestInstall, testBackupDeps } from './backup-testing.js';
 import { ConfigStore, type Cipher } from './config-store.js';
 import { Controller, type ControllerDeps, type ShellUi } from './controller.js';
+import type { OwnerCheck, OwnerCheckOptions } from './owner-check.js';
 import type { DataPaths } from './paths.js';
 import type { PostgresCluster } from './postgres.js';
 import { resolveResources } from './resources.js';
@@ -111,6 +112,9 @@ let listCode = 0;
 let databaseAlive = true;
 /** How many migrations the database has had applied; `null` is a new one. */
 let appliedMigrations: number | null = null;
+/** What the API says about the owner who asks for a new recovery key, and what it was asked. */
+let ownerAnswer: OwnerCheck = { ok: true };
+let ownerChecks: OwnerCheckOptions[] = [];
 /** What the fake cluster was told about the right of app_owner to hand out audit_sealer, and what it was at each migration. */
 let ownerAdminCalls: boolean[] = [];
 let ownerAdminNow = false;
@@ -400,6 +404,10 @@ function build(
       }
       return child;
     },
+    verifyOwner: (options) => {
+      ownerChecks.push(options);
+      return Promise.resolve(ownerAnswer);
+    },
     probeHealth: (port, secret) => {
       probes.push({ port, secret });
       return Promise.resolve(true);
@@ -525,6 +533,19 @@ function post(
   });
 }
 
+/**
+ * The two steps of the setup: the form (which only shows the recovery key) and the confirmation of the key (which
+ * creates the organization). Returns both answers.
+ */
+async function completeSetup(url: string, values: Record<string, unknown> = form) {
+  const shown = await post(new URL('/__setup', url).href, tokenOf(url), values);
+  if (shown.status !== 200) return { shown, confirmed: shown };
+  const confirmed = await post(new URL('/__ack', url).href, String(shown.body['ackToken']), {
+    recoveryKeyLast4: String(shown.body['recoveryKey']).slice(-4),
+  });
+  return { shown, confirmed };
+}
+
 const tokenOf = (url: string | undefined) =>
   new URL(url ?? 'http://x/?t=').searchParams.get('t') ?? '';
 const setupUrl = () => harness.loadedUrls.find((url) => url.includes('/__setup'));
@@ -549,6 +570,8 @@ beforeEach(() => {
   listCode = 0;
   databaseAlive = true;
   appliedMigrations = null;
+  ownerAnswer = { ok: true };
+  ownerChecks = [];
   ownerAdminCalls = [];
   ownerAdminNow = false;
   ownerAdminAtMigrate = [];
@@ -571,7 +594,7 @@ describe('an install whose configuration cannot be opened', () => {
   async function provisionedFolder(): Promise<string> {
     await harness.controller.start();
     const url = setupUrl() ?? '';
-    await post(new URL('/__setup', url).href, tokenOf(url), form);
+    await completeSetup(url);
     await harness.controller.quit();
     return harness.folder;
   }
@@ -724,7 +747,7 @@ describe('a restore that was cut off', () => {
   it('is undone at the next start: the old documents come back and the scratch database goes', async () => {
     await harness.controller.start();
     const url = setupUrl() ?? '';
-    await post(new URL('/__setup', url).href, tokenOf(url), form);
+    await completeSetup(url);
     await harness.controller.quit();
     const { paths } = harness;
     // Where a restore stops after it swapped the documents: the backup's in place, the old ones aside.
@@ -792,6 +815,7 @@ describe('the port of the local server', () => {
 });
 
 describe('the recovery key', () => {
+  /** The key is shown; nothing is created until it is confirmed. */
   async function setUp(): Promise<{ ack: string }> {
     await harness.controller.start();
     const url = setupUrl() ?? '';
@@ -799,21 +823,43 @@ describe('the recovery key', () => {
     return { ack: String(answer.body['ackToken']) };
   }
 
-  const lastFour = () => shownKey.slice(-4);
-  const confirm = (ack: string, value: string) =>
-    post(`http://127.0.0.1:${String(harness.config().port)}/__ack`, ack, {
-      recoveryKeyLast4: value,
+  /**
+   * An install of an earlier build whose owner never confirmed the key (a new install cannot get there any more):
+   * created and confirmed here, then marked as not confirmed, and started again. Returns the key it was set up with.
+   */
+  async function unconfirmedInstall(): Promise<string> {
+    await harness.controller.start();
+    const url = setupUrl() ?? '';
+    await completeSetup(url);
+    const key = shownKey;
+    await harness.controller.quit();
+    new ConfigStore(harness.paths.configFile, cipher).update((config) => {
+      config.recoveryAcknowledged = false;
     });
+    harness = build(harness.folder);
+    await harness.controller.start();
+    expect(harness.controller.recoveryPending).toBe(true);
+    return key;
+  }
 
-  it('hands the page that shows the key a token to confirm it, because the setup token is gone', async () => {
+  const lastFour = () => shownKey.slice(-4);
+  const base = () => `http://127.0.0.1:${String(harness.config().port)}`;
+  const confirm = (ack: string, value: string) =>
+    post(`${base()}/__ack`, ack, { recoveryKeyLast4: value });
+
+  it('hands the page that shows the key a token to confirm it, because the setup token is for the form', async () => {
     const { ack } = await setUp();
 
     expect(ack).toMatch(/^[\w-]{20,}$/);
-    expect(harness.controller.recoveryPending).toBe(true);
+    // Nothing is created, so there is nothing to remind about.
+    expect(harness.controller.recoveryPending).toBe(false);
+    expect(harness.config().provisioned).toBe(false);
   });
 
   it('shows the key once, in the answer to the setup, and writes it nowhere: not the configuration, not the log', async () => {
-    await setUp();
+    const { ack } = await setUp();
+    expect(readFileSync(harness.paths.configFile, 'utf8')).not.toContain(shownKey);
+    await confirm(ack, lastFour());
 
     expect(shownKey).toMatch(/^([A-Z2-9]{5}-){5}[A-Z2-9]{5}$/);
     expect(harness.config().secrets.recoveryKey).toBeNull();
@@ -821,40 +867,17 @@ describe('the recovery key', () => {
     for (const file of files) {
       expect(readFileSync(file, 'utf8'), file).not.toContain(shownKey);
     }
-    // The key the owner saw is the one the install checks and the backups are wrapped with.
-    const secrets = harness.config().secrets;
-    expect(verifyRecoveryKey(shownKey, secrets.recoveryKeyHash)).toBe(true);
-    expect(unwrapBackupKey(secrets.backupKeyWrap, shownKey).toString('base64')).toBe(
-      secrets.backupKeyBase64,
-    );
   });
 
   it('has no page that shows it again, with the token of the setup or any other', async () => {
     const { ack } = await setUp();
 
-    const page = await fetch(`http://127.0.0.1:${String(harness.config().port)}/__ack?t=${ack}`);
+    const page = await fetch(`${base()}/__ack?t=${ack}`);
 
     expect(page.status).toBe(404);
   });
 
-  it('takes a key that an earlier build kept in the configuration off the disk at the next start', async () => {
-    await setUp();
-    await harness.controller.quit();
-    const store = new ConfigStore(harness.paths.configFile, cipher);
-    store.update((config) => {
-      config.secrets.recoveryKey = shownKey;
-    });
-    expect(readFileSync(harness.paths.logs + '/shell.log', 'utf8')).not.toContain(shownKey);
-
-    const again = build(harness.folder);
-    await again.controller.start();
-
-    expect(again.config().secrets.recoveryKey).toBeNull();
-    expect(again.controller.recoveryPending).toBe(true);
-    await again.controller.quit();
-  });
-
-  it('is confirmed by typing its last four characters, and is not kept on this PC after that', async () => {
+  it('is confirmed by typing its last four characters, which creates the organization, and is not kept on this PC after that', async () => {
     const { ack } = await setUp();
     const key = shownKey;
 
@@ -865,6 +888,7 @@ describe('the recovery key', () => {
     expect(right.status).toBe(200);
     const config = harness.config();
     expect(config.recoveryAcknowledged).toBe(true);
+    expect(config.provisioned).toBe(true);
     expect(config.secrets.recoveryKey).toBeNull();
     expect(JSON.stringify(readFileSync(harness.paths.configFile, 'utf8'))).not.toContain(key);
     expect(harness.controller.recoveryPending).toBe(false);
@@ -872,22 +896,35 @@ describe('the recovery key', () => {
     expect((await confirm(ack, lastFour())).status).toBe(404);
   });
 
-  it('closes the page after five wrong tails', async () => {
+  it('closes the page after five wrong tails, and creates nothing', async () => {
     const { ack } = await setUp();
 
     for (let attempt = 0; attempt < 5; attempt += 1) await confirm(ack, 'ZZZZ');
     const sixth = await confirm(ack, lastFour());
 
     expect(sixth.status).toBe(404);
-    expect(harness.config().recoveryAcknowledged).toBe(false);
+    expect(harness.config().provisioned).toBe(false);
+    expect(harness.commandCalls.some((call) => call.command === 'provision')).toBe(false);
   });
 
-  it('opens the check page from the tray, and typing the whole key right confirms it, until then and after', async () => {
-    await setUp();
+  it('takes a key that an earlier build kept in the configuration off the disk at the next start', async () => {
+    const key = await unconfirmedInstall();
     await harness.controller.quit();
-    harness = build(harness.folder);
-    await harness.controller.start();
-    expect(harness.controller.recoveryPending).toBe(true);
+    const store = new ConfigStore(harness.paths.configFile, cipher);
+    store.update((config) => {
+      config.secrets.recoveryKey = key;
+    });
+
+    const again = build(harness.folder);
+    await again.controller.start();
+
+    expect(again.config().secrets.recoveryKey).toBeNull();
+    expect(again.controller.recoveryPending).toBe(true);
+    await again.controller.quit();
+  });
+
+  it('opens the check page from the tray, and typing the whole key right confirms an install that never did', async () => {
+    const key = await unconfirmedInstall();
     harness.uiCalls.length = 0;
 
     harness.controller.openRecoveryKey();
@@ -897,34 +934,22 @@ describe('the recovery key', () => {
     // Never the key itself: not in the address, not on the page.
     expect(url).toContain('/__check?t=');
     const page = await fetch(url);
-    expect(await page.text()).not.toContain(shownKey);
+    expect(await page.text()).not.toContain(key);
     const no = await post(new URL('/__check', url).href, tokenOf(url), {
       recoveryKey: 'AAAAA-AAAAA-AAAAA-AAAAA-AAAAA-AAAAA',
     });
     expect(no.status).toBe(422);
     expect(harness.controller.recoveryPending).toBe(true);
-    const yes = await post(new URL('/__check', url).href, tokenOf(url), { recoveryKey: shownKey });
+    const yes = await post(new URL('/__check', url).href, tokenOf(url), { recoveryKey: key });
     expect(yes.status).toBe(200);
     expect(harness.controller.recoveryPending).toBe(false);
     expect(harness.config().recoveryAcknowledged).toBe(true);
   });
 
-  it('cannot confirm with the last four characters once the program was restarted: the key is not kept to compare', async () => {
-    const { ack } = await setUp();
-    await harness.controller.quit();
-    harness = build(harness.folder);
+  it('opens a check page too once it is confirmed, and the check says yes only to the real key', async () => {
     await harness.controller.start();
-
-    const late = await confirm(ack, lastFour());
-
-    expect(late.status).toBe(404);
-    expect(harness.controller.recoveryPending).toBe(true);
-  });
-
-  it('opens a check page instead once it is confirmed, and the check says yes only to the real key', async () => {
-    const { ack } = await setUp();
+    await completeSetup(setupUrl() ?? '');
     const key = shownKey;
-    await confirm(ack, lastFour());
     harness.uiCalls.length = 0;
 
     harness.controller.openRecoveryKey();
@@ -942,27 +967,156 @@ describe('the recovery key', () => {
     expect(yes.status).toBe(200);
   });
 
-  it('reminds the person at every start until the key is confirmed, and then stops', async () => {
-    const { ack } = await setUp();
+  it('reminds the person at every start of an install that never confirmed the key, and then stops', async () => {
+    const key = await unconfirmedInstall();
+    const reminded = (target: Harness) =>
+      target.uiCalls.filter(
+        (call) => call[0] === 'notify' && call[1] === 'Falta confirmar la clave de recuperación',
+      );
+    expect(reminded(harness)).toHaveLength(1);
     await harness.controller.quit();
 
     const again = build(harness.folder);
     await again.controller.start();
-    const reminded = again.uiCalls.filter(
-      (call) => call[0] === 'notify' && call[1] === 'Falta confirmar la clave de recuperación',
-    );
-    expect(reminded).toHaveLength(1);
-    await again.controller.quit();
+    expect(reminded(again)).toHaveLength(1);
+    harness = again;
+    harness.controller.openRecoveryKey();
+    const opened = harness.uiCalls.find((call) => call[0] === 'openAuxWindow');
+    const url = String(opened?.[1]);
+    await post(new URL('/__check', url).href, tokenOf(url), { recoveryKey: key });
+    await harness.controller.quit();
 
-    await confirm(ack, lastFour()).catch(() => undefined);
-    const store = new ConfigStore(harness.paths.configFile, cipher);
-    store.update((config) => {
-      config.recoveryAcknowledged = true;
-      config.secrets.recoveryKey = null;
-    });
     const last = build(harness.folder);
     await last.controller.start();
     expect(last.uiCalls.some((call) => call[0] === 'notify')).toBe(false);
+  });
+});
+
+describe('a new recovery key for an install that never confirmed one', () => {
+  const regenUrl = () => {
+    const opened = harness.uiCalls.filter((call) => call[0] === 'openAuxWindow').at(-1);
+    return String(opened?.[1]);
+  };
+  const submit = (body: Record<string, unknown>) =>
+    post(new URL('/__regen', regenUrl()).href, tokenOf(regenUrl()), body);
+  const credentials = { email: 'ana@clinica.example', password: 'una frase larga', code: '' };
+
+  async function unconfirmed(): Promise<string> {
+    await harness.controller.start();
+    await completeSetup(setupUrl() ?? '');
+    const key = shownKey;
+    await harness.controller.quit();
+    new ConfigStore(harness.paths.configFile, cipher).update((config) => {
+      config.recoveryAcknowledged = false;
+    });
+    harness = build(harness.folder);
+    await harness.controller.start();
+    harness.uiCalls.length = 0;
+    harness.controller.openRegenerateRecoveryKey();
+    return key;
+  }
+
+  it('is offered only while the key is not confirmed', async () => {
+    await harness.controller.start();
+    await completeSetup(setupUrl() ?? '');
+    harness.uiCalls.length = 0;
+
+    harness.controller.openRegenerateRecoveryKey();
+
+    expect(harness.uiCalls.some((call) => call[0] === 'openAuxWindow')).toBe(false);
+    await harness.controller.quit();
+  });
+
+  it('opens a page that asks for the credentials of the owner', async () => {
+    await unconfirmed();
+
+    expect(regenUrl()).toContain('/__regen?t=');
+    const html = await (await fetch(regenUrl())).text();
+    expect(html).toContain('name="email"');
+    expect(html).toContain('name="password"');
+    expect(html).toContain('name="code"');
+  });
+
+  it('is gated by the API: the password (and the code) of an owner, never the Windows session alone', async () => {
+    const oldKey = await unconfirmed();
+    const before = harness.config().secrets.recoveryKeyHash;
+
+    ownerAnswer = { ok: false, reason: 'refused' };
+    const refused = await submit(credentials);
+    ownerAnswer = { ok: false, reason: 'needs_code' };
+    const needsCode = await submit(credentials);
+
+    expect(refused.status).toBe(422);
+    expect(refused.body).toMatchObject({ errors: { password: expect.any(String) as string } });
+    expect(needsCode.status).toBe(422);
+    expect(needsCode.body).toMatchObject({ errors: { code: expect.any(String) as string } });
+    // Nothing changed, and the API was asked with what it needs to be the one that decides.
+    expect(harness.config().secrets.recoveryKeyHash).toBe(before);
+    expect(verifyRecoveryKey(oldKey, before)).toBe(true);
+    expect(ownerChecks).toHaveLength(2);
+    expect(ownerChecks[0]).toMatchObject({
+      email: credentials.email,
+      password: credentials.password,
+      publicOrigin: harness.controller.appUrl,
+    });
+    expect(ownerChecks[0]?.apiPort).toBeGreaterThan(0);
+    expect(ownerChecks[0]?.proxySecret).toMatch(/^[0-9a-f]{64}$/);
+  });
+
+  it('closes the page after five refusals, even if the sixth would be accepted', async () => {
+    await unconfirmed();
+    ownerAnswer = { ok: false, reason: 'refused' };
+
+    for (let attempt = 0; attempt < 5; attempt += 1) await submit(credentials);
+    ownerAnswer = { ok: true };
+    const sixth = await submit(credentials);
+
+    expect(sixth.status).toBe(404);
+    expect(harness.uiCalls).toContainEqual(['closeAuxWindow']);
+  });
+
+  it('says so when the API cannot be asked, and makes no key', async () => {
+    await unconfirmed();
+    ownerAnswer = { ok: false, reason: 'unavailable' };
+
+    const answer = await submit(credentials);
+
+    expect(answer.status).toBe(422);
+    expect(answer.body).toMatchObject({ message: expect.any(String) as string });
+    expect(harness.controller.recoveryPending).toBe(true);
+  });
+
+  it('shows a new key that counts only when it is confirmed, and then the old one stops working', async () => {
+    const oldKey = await unconfirmed();
+    const before = harness.config().secrets;
+
+    const shown = await submit(credentials);
+
+    expect(shown.status).toBe(200);
+    const newKey = String(shown.body['recoveryKey']);
+    const ack = String(shown.body['ackToken']);
+    expect(newKey).toMatch(/^([A-Z2-9]{5}-){5}[A-Z2-9]{5}$/);
+    expect(newKey).not.toBe(oldKey);
+    // Shown, not yet in force: the old key still works, and the new one is written nowhere.
+    expect(harness.config().secrets.recoveryKeyHash).toBe(before.recoveryKeyHash);
+    expect(readFileSync(harness.paths.configFile, 'utf8')).not.toContain(newKey);
+    const base = `http://127.0.0.1:${String(harness.config().port)}`;
+    expect((await post(`${base}/__ack`, ack, { recoveryKeyLast4: 'ZZZZ' })).status).toBe(422);
+    expect(harness.controller.recoveryPending).toBe(true);
+
+    const confirmed = await post(`${base}/__ack`, ack, { recoveryKeyLast4: newKey.slice(-4) });
+
+    expect(confirmed.status).toBe(200);
+    const after = harness.config();
+    expect(after.recoveryAcknowledged).toBe(true);
+    expect(harness.controller.recoveryPending).toBe(false);
+    expect(verifyRecoveryKey(newKey, after.secrets.recoveryKeyHash)).toBe(true);
+    expect(verifyRecoveryKey(oldKey, after.secrets.recoveryKeyHash)).toBe(false);
+    // The backups made from now on open with the new key.
+    expect(unwrapBackupKey(after.secrets.backupKeyWrap, newKey).toString('base64')).toBe(
+      after.secrets.backupKeyBase64,
+    );
+    expect(readFileSync(harness.paths.configFile, 'utf8')).not.toContain(newKey);
   });
 });
 
@@ -972,7 +1126,7 @@ describe('the reminder to copy the backups off this PC', () => {
   async function provisioned(): Promise<void> {
     await harness.controller.start();
     const url = setupUrl() ?? '';
-    await post(new URL('/__setup', url).href, tokenOf(url), form);
+    await completeSetup(url);
     await harness.controller.quit();
   }
 
@@ -1014,7 +1168,7 @@ describe('who may hand out audit_sealer', () => {
   it('is app_owner only while a migration that is pending runs, and not before or after', async () => {
     await harness.controller.start();
     const url = setupUrl() ?? '';
-    await post(new URL('/__setup', url).href, tokenOf(url), form);
+    await completeSetup(url);
     await harness.controller.quit();
     ownerAdminCalls = [];
     ownerAdminAtMigrate = [];
@@ -1051,7 +1205,7 @@ describe('an update of the program', () => {
   async function provisionedFolder(): Promise<string> {
     await harness.controller.start();
     const url = setupUrl() ?? '';
-    await post(new URL('/__setup', url).href, tokenOf(url), form);
+    await completeSetup(url);
     await waitFor(() => {
       expect(harness.config().settings.lastDailyBackup).not.toBeNull();
     });
@@ -1220,7 +1374,7 @@ describe('when something of the install stops', () => {
   async function ready(): Promise<void> {
     await harness.controller.start();
     const url = setupUrl() ?? '';
-    await post(new URL('/__setup', url).href, tokenOf(url), form);
+    await completeSetup(url);
     // Let the backup of the first open of the day end: while it runs the program is busy.
     await waitFor(() => {
       expect(harness.config().settings.lastDailyBackup).not.toBeNull();
@@ -1264,7 +1418,7 @@ describe('when something of the install stops', () => {
 
     await harness.controller.start();
     const url = setupUrl() ?? '';
-    await post(new URL('/__setup', url).href, tokenOf(url), form);
+    await completeSetup(url);
     await waitFor(() => {
       expect(dialogs(harness).length).toBeGreaterThan(0);
     });
@@ -1317,7 +1471,7 @@ describe('how the backups are doing', () => {
   async function ready(): Promise<void> {
     await harness.controller.start();
     const url = setupUrl() ?? '';
-    await post(new URL('/__setup', url).href, tokenOf(url), form);
+    await completeSetup(url);
     await waitFor(() => {
       expect(harness.config().settings.lastDailyBackup).toBe('2026-10-24');
     });
@@ -1329,7 +1483,7 @@ describe('how the backups are doing', () => {
     await harness.controller.start();
     expect(harness.controller.lastBackupText).toBe('Última copia: todavía no hay ninguna');
     const url = setupUrl() ?? '';
-    await post(new URL('/__setup', url).href, tokenOf(url), form);
+    await completeSetup(url);
     await waitFor(() => {
       expect(harness.config().settings.lastGoodBackup).toBe(clock.toISOString());
     });
@@ -1400,7 +1554,7 @@ describe('how the backups are doing', () => {
     const first = build(folder, { env });
     await first.controller.start();
     const url = first.loadedUrls.find((candidate) => candidate.includes('/__setup')) ?? '';
-    await post(new URL('/__setup', url).href, tokenOf(url), form);
+    await completeSetup(url);
     await first.controller.quit();
     const notices = (target: Harness) =>
       target.uiCalls.filter(
@@ -1468,18 +1622,33 @@ describe('the first run', () => {
     expect(log).not.toContain(harness.controller.windowProof);
   });
 
-  it('provisions with the data of the form, starts the API and the worker, and answers the recovery key', async () => {
+  it('shows the recovery key BEFORE anything is created, and creates the organization only when the owner confirms it', async () => {
     await harness.controller.start();
     const url = setupUrl() ?? '';
 
-    const answer = await post(new URL('/__setup', url).href, tokenOf(url), form);
+    const shown = await post(new URL('/__setup', url).href, tokenOf(url), form);
 
-    expect(answer.status).toBe(200);
-    expect(answer.body).toEqual({
+    expect(shown.status).toBe(200);
+    expect(shown.body).toEqual({
       ok: true,
       recoveryKey: shownKey,
       ackToken: expect.any(String) as string,
     });
+    // Nothing exists yet: not the organization, not the services, not a key in the install.
+    expect(harness.commandCalls.some((call) => call.command === 'provision')).toBe(false);
+    expect(harness.spawned).toHaveLength(0);
+    expect(harness.controller.phase).toBe('setup');
+    expect(harness.config().provisioned).toBe(false);
+    expect(verifyRecoveryKey(shownKey, harness.config().secrets.recoveryKeyHash)).toBe(false);
+
+    const ack = String(shown.body['ackToken']);
+    const confirm = (value: string) =>
+      post(new URL('/__ack', url).href, ack, { recoveryKeyLast4: value });
+    expect((await confirm('ZZZZ')).status).toBe(422);
+    expect(harness.commandCalls.some((call) => call.command === 'provision')).toBe(false);
+    const done = await confirm(shownKey.slice(-4).toLowerCase());
+
+    expect(done.status).toBe(200);
     const provision = harness.commandCalls.find((call) => call.command === 'provision');
     expect(provision?.input).toEqual({
       organizationName: 'Clínica Prueba',
@@ -1496,13 +1665,75 @@ describe('the first run', () => {
     });
     expect(harness.spawned.map((child) => child.role).sort()).toEqual(['api', 'worker']);
     expect(harness.controller.phase).toBe('ready');
-    expect(harness.config().provisioned).toBe(true);
+    const config = harness.config();
+    expect(config.provisioned).toBe(true);
+    expect(config.recoveryAcknowledged).toBe(true);
+    // The key the owner saw is the one the install checks and the backups are wrapped with.
+    expect(verifyRecoveryKey(shownKey, config.secrets.recoveryKeyHash)).toBe(true);
+    expect(unwrapBackupKey(config.secrets.backupKeyWrap, shownKey).toString('base64')).toBe(
+      config.secrets.backupKeyBase64,
+    );
+  });
+
+  it('leaves nothing behind when the window or the program closes before the key is confirmed, and asks again with a new key', async () => {
+    await harness.controller.start();
+    const url = setupUrl() ?? '';
+    const first = await post(new URL('/__setup', url).href, tokenOf(url), form);
+    const oldKey = String(first.body['recoveryKey']);
+    const oldAck = String(first.body['ackToken']);
+    await harness.controller.quit();
+
+    const again = build(harness.folder);
+    await again.controller.start();
+
+    // The install is as it was: a form to fill, nothing created, no service.
+    expect(again.controller.phase).toBe('setup');
+    expect(again.config().provisioned).toBe(false);
+    expect(again.commandCalls.some((call) => call.command === 'provision')).toBe(false);
+    const newUrl = again.loadedUrls.find((candidate) => candidate.includes('/__setup')) ?? '';
+    // The key of before is of no use to anything, and the address that confirmed it does not exist any more.
+    expect(
+      (await post(new URL('/__ack', newUrl).href, oldAck, { recoveryKeyLast4: oldKey.slice(-4) }))
+        .status,
+    ).toBe(404);
+    const second = await post(new URL('/__setup', newUrl).href, tokenOf(newUrl), form);
+    expect(String(second.body['recoveryKey'])).not.toBe(oldKey);
+    expect(verifyRecoveryKey(oldKey, again.config().secrets.recoveryKeyHash)).toBe(false);
+  });
+
+  it('sends the owner back to the form, with the reason, when the organization cannot be created, and makes a new key', async () => {
+    await harness.controller.start();
+    const url = setupUrl() ?? '';
+    provisionFails = new ApiCommandError(
+      'provision',
+      EXIT.invalidInput,
+      { error: 'password_rejected', issues: ['common'] },
+      '',
+    );
+
+    const { shown, confirmed } = await completeSetup(url);
+
+    expect(shown.status).toBe(200);
+    expect(confirmed.status).toBe(422);
+    expect(confirmed.body).toMatchObject({
+      ok: false,
+      back: true,
+      errors: { password: expect.stringContaining('muy común') as string },
+    });
+    expect(harness.controller.phase).toBe('setup');
+    expect(harness.config().provisioned).toBe(false);
+    expect(harness.spawned).toHaveLength(0);
+    // And the form works again: another key is made for the next try.
+    provisionFails = null;
+    const retry = await completeSetup(url);
+    expect(retry.confirmed.status).toBe(200);
+    expect(String(retry.shown.body['recoveryKey'])).not.toBe(String(shown.body['recoveryKey']));
   });
 
   it('gives the API, and only the API, a secret of this run, and checks the proof with the same one', async () => {
     await harness.controller.start();
     const url = setupUrl() ?? '';
-    await post(new URL('/__setup', url).href, tokenOf(url), form);
+    await completeSetup(url);
 
     const api = harness.spawned.find((child) => child.role === 'api');
     const worker = harness.spawned.find((child) => child.role === 'worker');
@@ -1520,11 +1751,11 @@ describe('the first run', () => {
   it('uses a new secret and a port of its own every time the services start', async () => {
     await harness.controller.start();
     const url = setupUrl() ?? '';
-    await post(new URL('/__setup', url).href, tokenOf(url), form);
+    await completeSetup(url);
     const other = build(mkdtempSync(join(tmpdir(), 'consulvia-controller-')));
     await other.controller.start();
     const otherUrl = other.loadedUrls.find((candidate) => candidate.includes('/__setup')) ?? '';
-    await post(new URL('/__setup', otherUrl).href, tokenOf(otherUrl), form);
+    await completeSetup(otherUrl);
 
     const first = harness.spawned.find((child) => child.role === 'api')?.env[
       'DESKTOP_PROXY_SECRET'
@@ -1537,34 +1768,12 @@ describe('the first run', () => {
   it('turns the setup screen into a 404 once the organization exists', async () => {
     await harness.controller.start();
     const url = setupUrl() ?? '';
-    await post(new URL('/__setup', url).href, tokenOf(url), form);
+    await completeSetup(url);
 
     const again = await post(new URL('/__setup', url).href, tokenOf(url), form);
 
     expect(again.status).toBe(404);
     expect(harness.commandCalls.filter((call) => call.command === 'provision')).toHaveLength(1);
-  });
-
-  it('shows the owner a rejected password in the words of the product and stays at the setup screen', async () => {
-    await harness.controller.start();
-    const url = setupUrl() ?? '';
-    provisionFails = new ApiCommandError(
-      'provision',
-      EXIT.invalidInput,
-      { error: 'password_rejected', issues: ['common'] },
-      '',
-    );
-
-    const answer = await post(new URL('/__setup', url).href, tokenOf(url), form);
-
-    expect(answer.status).toBe(422);
-    expect(answer.body).toMatchObject({
-      ok: false,
-      errors: { password: expect.stringContaining('muy común') as string },
-    });
-    expect(harness.controller.phase).toBe('setup');
-    expect(harness.config().provisioned).toBe(false);
-    expect(harness.spawned).toHaveLength(0);
   });
 
   it('writes the setup address to the log only in test mode', async () => {
@@ -1583,7 +1792,7 @@ describe('every other start', () => {
   async function provisioned(): Promise<void> {
     await harness.controller.start();
     const url = setupUrl() ?? '';
-    await post(new URL('/__setup', url).href, tokenOf(url), form);
+    await completeSetup(url);
     await harness.controller.quit();
     // A new process: a new controller over the same folders.
     const folder = harness.folder;
@@ -1632,7 +1841,7 @@ describe('opening the program in the browser of the PC', () => {
   const ready = async () => {
     await harness.controller.start();
     const url = setupUrl() ?? '';
-    await post(new URL('/__setup', url).href, tokenOf(url), form);
+    await completeSetup(url);
   };
 
   it('opens an address that works once and leaves the browser with a proof, not the plain address', async () => {
@@ -1676,7 +1885,7 @@ describe('quitting', () => {
   it('stops the API and the worker before the database, and closes everything', async () => {
     await harness.controller.start();
     const url = setupUrl() ?? '';
-    await post(new URL('/__setup', url).href, tokenOf(url), form);
+    await completeSetup(url);
     harness.events.length = 0;
 
     await harness.controller.quit();
@@ -1798,7 +2007,7 @@ describe('the backups', () => {
   async function ready(): Promise<void> {
     await harness.controller.start();
     const url = setupUrl() ?? '';
-    await post(new URL('/__setup', url).href, tokenOf(url), form);
+    await completeSetup(url);
     // The automatic backup of the first open of the day runs by itself; wait for it.
     await waitFor(() => {
       expect(harness.config().settings.lastDailyBackup).toBe('2026-10-24');
@@ -1901,8 +2110,8 @@ describe('restoring a backup', () => {
     harness = build(mkdtempSync(join(tmpdir(), 'consulvia-controller-')), { testMode });
     await harness.controller.start();
     const url = setupUrl() ?? '';
-    const answer = await post(new URL('/__setup', url).href, tokenOf(url), form);
-    installKey = String(answer.body['recoveryKey']);
+    const { shown } = await completeSetup(url);
+    installKey = String(shown.body['recoveryKey']);
     await waitFor(() => {
       expect(harness.config().settings.lastDailyBackup).toBe('2026-10-24');
     });
@@ -2104,7 +2313,7 @@ describe('restoring a backup', () => {
     expect(await getText(page)).not.toContain('name="currentKey"');
     // The owner then sets the install up, and it has data to protect.
     const setup = setupUrl() ?? '';
-    await post(new URL('/__setup', setup).href, tokenOf(setup), form);
+    await completeSetup(setup);
     expect(fresh.controller.phase).toBe('ready');
     const restores = fresh.restores.length;
 
@@ -2160,7 +2369,7 @@ describe("resetting the owner's password", () => {
   async function ready(): Promise<void> {
     await harness.controller.start();
     const url = setupUrl() ?? '';
-    await post(new URL('/__setup', url).href, tokenOf(url), form);
+    await completeSetup(url);
   }
 
   const NEW_PASSWORD = 'otra frase larga para entrar';

@@ -31,12 +31,14 @@ La primera vez, Consulvia prepara la base de datos. Tarda uno o dos minutos y mu
 
 1. Escriba el **nombre del consultorio**, su **nombre y apellido**, su **correo electrónico** (con él va a ingresar) y la **zona horaria**.
 2. Elija una **contraseña** de al menos 12 caracteres. Una frase larga es una buena opción. Consulvia rechaza las contraseñas muy comunes.
-3. Pulse **Crear mi consultorio** y espere unos segundos.
+3. Pulse **Continuar**. Todavía no se crea nada: primero se muestra la clave de recuperación.
 4. Se muestra la **clave de recuperación**: 30 letras y números en grupos de cinco. **Imprímala o anótela y guárdela en un lugar seguro: es la única vez que Consulvia la muestra.** Sirve para abrir una copia de seguridad en otra computadora y para restablecer la contraseña de la propietaria.
-5. Para seguir, **escriba los últimos 4 caracteres de la clave** y pulse **La guardé**. Es la forma de confirmar que la leyó y la anotó. **Consulvia no guarda la clave en esta computadora en ningún momento** (se conserva solo una huella que permite comprobarla): así nadie que use la computadora puede verla, ni siquiera antes de confirmar. Si la pierde, no se puede recuperar ni cambiar desde el programa: una clave nueva permitiría a cualquiera que use la computadora restablecer la contraseña de la propietaria.
+5. **Escriba los últimos 4 caracteres de la clave** y pulse **La guardé: crear mi consultorio**. Es la forma de confirmar que la leyó y la anotó, y recién entonces Consulvia crea el consultorio (espere unos segundos). **Consulvia no guarda la clave en esta computadora en ningún momento** (se conserva solo una huella que permite comprobarla): así nadie que use la computadora puede verla.
 6. Pulse **Abrir Consulvia** e ingrese con su correo y su contraseña.
 
-Si cierra la ventana sin confirmar, Consulvia lo recuerda cada vez que se abre y en el icono junto al reloj (_Confirmar que guardó la clave de recuperación…_) hasta que lo haga. Ahí se confirma **escribiendo la clave completa**, tal como la tiene anotada; Consulvia comprueba que sea la correcta y no la muestra.
+Si cierra la ventana, o se corta la luz, antes de confirmar la clave, **no queda nada a medias**: el consultorio no se creó, y al abrir Consulvia de nuevo empieza otra vez, con una clave nueva. Si no puede crear el consultorio (por ejemplo, la contraseña no es aceptada), Consulvia vuelve al formulario con el motivo.
+
+Si la clave se pierde, no se puede recuperar desde el programa. Para una instalación que nunca llegó a confirmar su clave (solo las de una versión de prueba anterior), el icono junto al reloj ofrece _Generar una nueva clave de recuperación…_: pide el **correo, la contraseña y, si la tiene, el código de verificación en dos pasos de la propietaria**, comprobados por el propio servicio de Consulvia (no basta con tener la sesión de Windows abierta); muestra la clave nueva una sola vez y la deja en vigor cuando se confirma con los últimos 4 caracteres. La clave anterior deja de servir; las copias hechas antes siguen abriéndose en esta computadora, y en otra solo con la clave con que se hicieron. Una instalación que ya confirmó su clave no la puede cambiar: eso permitiría a cualquiera que use la computadora tomar la cuenta de la propietaria.
 
 Esa cuenta es la de la **propietaria** del consultorio. Desde Configuración puede invitar a más personas (profesionales, recepción).
 

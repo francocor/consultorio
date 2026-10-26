@@ -21,6 +21,7 @@ export const TEXT = {
     restore: 'Restaurar copia…',
     resetPassword: 'Restablecer contraseña de la propietaria…',
     confirmRecoveryKey: 'Confirmar que guardó la clave de recuperación…',
+    regenerateRecoveryKey: 'Generar una nueva clave de recuperación…',
     checkRecoveryKey: 'Comprobar la clave de recuperación…',
     tooltipRecoveryPending: 'Consulvia: falta confirmar que guardó la clave de recuperación',
     logs: 'Ver registros',
@@ -126,6 +127,17 @@ export const TEXT = {
       'No se pudieron apartar los datos actuales (puede que otro programa los esté usando). No se cambió nada.',
   },
 
+  regenerate: {
+    /** The same words whatever was wrong: password, code, or an account that is not an owner. */
+    refused:
+      'No se pudo comprobar la cuenta de la propietaria. Revise el correo, la contraseña y el código.',
+    codeRequired: 'Esta cuenta tiene la verificación en dos pasos: escriba el código.',
+    unavailable:
+      'Consulvia no pudo comprobar la cuenta en este momento. Intente de nuevo en unos segundos.',
+    notNeeded: 'La clave de recuperación de esta instalación ya está confirmada.',
+    busy: 'Hay otra operación en curso. Espere unos segundos.',
+  },
+
   upgradeWithoutCopy: {
     confirmTitle: 'Actualizar sin copia de seguridad',
     confirmMessage:
@@ -151,6 +163,7 @@ export const TEXT = {
   recoveryKey: {
     windowTitle: 'Consulvia: clave de recuperación',
     checkWindowTitle: 'Consulvia: comprobar la clave de recuperación',
+    regenerateWindowTitle: 'Consulvia: nueva clave de recuperación',
     gone: 'Consulvia muestra la clave de recuperación una sola vez, al configurar, y no la guarda, para que nadie que use esta computadora pueda verla. Si la tiene anotada, escríbala completa desde el icono de Consulvia, junto al reloj de Windows.',
     wrongLast4:
       'No coincide con el final de la clave. Revise la clave y vuelva a escribir los últimos 4 caracteres.',

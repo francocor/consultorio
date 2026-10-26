@@ -7,6 +7,7 @@ import {
   renderCheckPage,
   renderKeyPage,
   type RestoreKeyNeeds,
+  renderRegeneratePage,
   renderResetPage,
   renderSetupPage,
 } from './pages.js';
@@ -24,6 +25,11 @@ export type SetupOutcome =
     }
   | { ok: false; errors?: FieldErrors; message?: string };
 
+/** A new recovery key made for an install, shown and waiting to be confirmed; or why not. */
+export type RegenerateOutcome =
+  | { ok: true; recoveryKey: string; ackToken: string }
+  | { ok: false; errors?: Record<string, string>; message?: string };
+
 export type ResetOutcome =
   | { ok: true; email: string; secondFactorCleared: boolean }
   | { ok: false; errors?: Record<string, string>; message?: string };
@@ -31,7 +37,14 @@ export type ResetOutcome =
 export type KeyOutcome = { ok: true } | { ok: false; message: string };
 
 export type ConfirmOutcome =
-  { ok: true } | { ok: false; errors?: Record<string, string>; message?: string };
+  | { ok: true }
+  | {
+      ok: false;
+      errors?: Record<string, string>;
+      message?: string;
+      /** The page goes back to its form: what was asked could not be done with what was typed there. */
+      back?: boolean;
+    };
 
 /** What the pages do. The shell implements these; this module only speaks HTTP. */
 export interface PageActions {
@@ -62,6 +75,15 @@ export interface PageActions {
   checkRecoveryKey(typed: string): Promise<ConfirmOutcome>;
   /** The value the browser of the PC keeps as its proof once the owner opened the program there. */
   browserSession(): string;
+  /**
+   * A new recovery key for an install that never confirmed its key, once the API has accepted the password (and the
+   * code of the second factor) of an owner. Like the setup, it only shows the key: the confirmation makes it count.
+   */
+  regenerateRecoveryKey(input: {
+    email: string;
+    password: string;
+    code: string;
+  }): Promise<RegenerateOutcome>;
 }
 
 export const PURPOSE = {
@@ -71,6 +93,7 @@ export const PURPOSE = {
   ack: 'ack',
   check: 'check',
   browser: 'browser',
+  regenerate: 'regenerate',
 } as const;
 
 const MAX_BODY_BYTES = 16 * 1024;
@@ -123,6 +146,7 @@ const PAGES: Record<string, { purpose: string; render: (actions: PageActions) =>
     // Only an answer (POST) lives here: the key is shown once, by the setup page, and no page shows it again.
     '/__ack': { purpose: PURPOSE.ack, render: () => null },
     '/__check': { purpose: PURPOSE.check, render: renderCheckPage },
+    '/__regen': { purpose: PURPOSE.regenerate, render: renderRegeneratePage },
   };
 
 /**
@@ -252,6 +276,24 @@ export function createInternalPages(vault: TokenVault, actions: PageActions) {
         return;
       }
       const outcome = await actions.confirmRecoveryKey(lastFour);
+      sendJson(response, outcome.ok ? 200 : 422, outcome);
+      return;
+    }
+
+    if (purpose === PURPOSE.regenerate) {
+      const text = (name: string) => (typeof input[name] === 'string' ? input[name] : '');
+      if (text('email').trim() === '' || text('password') === '') {
+        sendJson(response, 422, {
+          ok: false,
+          errors: { password: 'Ingrese el correo y la contraseña de la propietaria.' },
+        });
+        return;
+      }
+      const outcome = await actions.regenerateRecoveryKey({
+        email: text('email').trim(),
+        password: text('password'),
+        code: text('code'),
+      });
       sendJson(response, outcome.ok ? 200 : 422, outcome);
       return;
     }

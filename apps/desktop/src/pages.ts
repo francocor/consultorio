@@ -76,12 +76,13 @@ function confirmKeyForm(
   formId: string,
   extra: string,
   ids: { submit: string; busy: string; error: string },
+  words: { button: string; busy: string } = { button: 'La guardé', busy: 'Comprobando…' },
 ): string {
   return `<form id="${formId}" data-endpoint="/__ack" data-submit="${ids.submit}" data-busy="${ids.busy}" data-error="${ids.error}" ${extra} novalidate>
 ${field({ name: 'recoveryKeyLast4', label: 'Para confirmar que la guardó, escriba los últimos 4 caracteres de la clave', maxlength: 4 })}
 <p class="error form-error" id="${ids.error}" role="alert"></p>
-<button type="submit" id="${ids.submit}">La guardé</button>
-<p class="busy" id="${ids.busy}" hidden>Comprobando…</p>
+<button type="submit" id="${ids.submit}">${words.button}</button>
+<p class="busy" id="${ids.busy}" hidden>${words.busy}</p>
 </form>`;
 }
 
@@ -110,22 +111,31 @@ ${zones}
 ${field({ name: 'password', label: 'Contraseña', type: 'password', autocomplete: 'new-password', hint: 'Al menos 12 caracteres. Una frase larga es una buena opción.', maxlength: 256 })}
 ${field({ name: 'passwordConfirmation', label: 'Repita la contraseña', type: 'password', autocomplete: 'new-password', maxlength: 256 })}
 ${FORM_ERROR}
-<button type="submit" id="submit">Crear mi consultorio</button>
-<p class="busy" id="busy" hidden>Preparando su consultorio. Esto puede demorar unos segundos, no cierre esta ventana.</p>
+<button type="submit" id="submit">Continuar</button>
+<p class="busy" id="busy" hidden>Un momento…</p>
 </form>
 </div>
 <div id="done" hidden>
-<h1>Su consultorio está listo</h1>
-<p class="lead">Guarde esta clave de recuperación en un lugar seguro, por ejemplo impresa. Sirve para abrir una copia de seguridad en otra computadora y para restablecer la contraseña de la propietaria; sin ella no se puede hacer ninguna de las dos cosas.</p>
+<h1>Su clave de recuperación</h1>
+<p class="lead">Antes de crear su consultorio, guarde esta clave de recuperación en un lugar seguro, por ejemplo impresa. Sirve para abrir una copia de seguridad en otra computadora y para restablecer la contraseña de la propietaria; sin ella no se puede hacer ninguna de las dos cosas.</p>
+<p class="hint"><strong>Su consultorio todavía no se creó:</strong> se crea cuando usted confirme, aquí abajo, que guardó la clave. Si cierra esta ventana antes, no queda nada a medias: al abrir Consulvia de nuevo empieza otra vez, con una clave nueva.</p>
 <p class="key" id="recovery-key" data-fill="recoveryKey" aria-label="Clave de recuperación"></p>
 <p class="hint">Es la única vez que se muestra: Consulvia no la guarda en esta computadora, así que nadie que use la computadora podrá verla después.</p>
 <div class="actions">
 <button type="button" class="secondary" data-action="print">Imprimir</button>
 <button type="button" class="secondary" data-action="copy" data-copy="recovery-key">Copiar</button>
 </div>
-${confirmKeyForm('ack-box', 'data-token-from="ackToken" data-hide="ack-box" data-show="ack-done"', { submit: 'ack-submit', busy: 'ack-busy', error: 'ack-error' })}
+${confirmKeyForm(
+  'ack-box',
+  'data-token-from="ackToken" data-hide="ack-box" data-show="ack-done" data-leave="done" data-back="step-form"',
+  { submit: 'ack-submit', busy: 'ack-busy', error: 'ack-error' },
+  {
+    button: 'La guardé: crear mi consultorio',
+    busy: 'Creando su consultorio. Esto puede demorar unos segundos, no cierre esta ventana.',
+  },
+)}
 <div id="ack-done" hidden>
-<p class="lead"><strong>Listo.</strong> La clave quedó confirmada.</p>
+<p class="lead"><strong>Listo.</strong> La clave quedó confirmada y su consultorio está creado.</p>
 <div class="actions"><button type="button" data-action="go-home">Abrir Consulvia</button></div>
 </div>
 <p class="hint">Consulvia no vuelve a mostrar esta clave ni la puede recuperar: si cierra esta ventana sin guardarla, tendrá que usar una copia anotada en otro momento.</p>
@@ -180,6 +190,43 @@ ${FORM_ERROR}
 <h1>La clave es correcta</h1>
 <p class="lead">Es la clave de recuperación de esta instalación.</p>
 <div class="actions"><button type="button" data-action="close">Cerrar</button></div>
+</div>`,
+  );
+}
+
+/**
+ * A new recovery key for an install whose key was never confirmed. The old one is lost, so it cannot be what proves
+ * who asks: the owner's own password (and second factor) do, and the API checks them.
+ */
+export function renderRegeneratePage(): string {
+  return layout(
+    'Consulvia: nueva clave de recuperación',
+    `<div id="step-form">
+<h1>Generar una nueva clave de recuperación</h1>
+<p class="lead">Esta instalación no llegó a confirmar su clave de recuperación. Aquí se genera una nueva; la anterior deja de servir. Para hacerlo Consulvia pide los datos de ingreso de la propietaria, como al entrar al programa.</p>
+<form id="form" data-endpoint="/__regen" novalidate>
+${field({ name: 'email', label: 'Correo electrónico de la propietaria', type: 'email', autocomplete: 'email', maxlength: 254 })}
+${field({ name: 'password', label: 'Contraseña de la propietaria', type: 'password', autocomplete: 'current-password', maxlength: 256 })}
+${field({ name: 'code', label: 'Código de la verificación en dos pasos', hint: 'Solo si la cuenta la tiene activada.', autocomplete: 'one-time-code', maxlength: 32, required: false })}
+${FORM_ERROR}
+<button type="submit" id="submit">Generar una clave nueva</button>
+<p class="busy" id="busy" hidden>Comprobando…</p>
+</form>
+</div>
+<div id="done" hidden>
+<h1>Su nueva clave de recuperación</h1>
+<p class="lead">Guárdela en un lugar seguro, por ejemplo impresa. Sirve para abrir una copia de seguridad en otra computadora y para restablecer la contraseña de la propietaria. Las copias hechas hasta ahora siguen abriéndose en esta computadora; en otra, solo con la clave con la que se hicieron.</p>
+<p class="key" id="recovery-key" data-fill="recoveryKey" aria-label="Clave de recuperación"></p>
+<p class="hint">Es la única vez que se muestra. La clave anterior sigue vigente hasta que usted confirme esta.</p>
+<div class="actions">
+<button type="button" class="secondary" data-action="print">Imprimir</button>
+<button type="button" class="secondary" data-action="copy" data-copy="recovery-key">Copiar</button>
+</div>
+${confirmKeyForm('ack-box', 'data-token-from="ackToken" data-hide="ack-box" data-show="ack-done"', { submit: 'ack-submit', busy: 'ack-busy', error: 'ack-error' })}
+<div id="ack-done" hidden>
+<p class="lead"><strong>Listo.</strong> La clave nueva quedó confirmada.</p>
+<div class="actions"><button type="button" data-action="close">Cerrar</button></div>
+</div>
 </div>`,
   );
 }
@@ -351,6 +398,11 @@ export const PAGE_JS = `(function () {
         submit.disabled = false;
         if (busy) { busy.hidden = true; }
         showErrors(body && body.errors, (body && body.message) || 'No se pudo completar la operación. Intente de nuevo.', errorId);
+        if (body && body.back) {
+          var leave = byId(form.getAttribute('data-leave'));
+          var back = byId(form.getAttribute('data-back'));
+          if (leave && back) { leave.hidden = true; back.hidden = false; }
+        }
       }).catch(function () {
         submit.disabled = false;
         if (busy) { busy.hidden = true; }

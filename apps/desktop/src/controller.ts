@@ -35,12 +35,15 @@ import { DiskFullError, directoryBytes, isDiskFull } from './disk.js';
 import {
   createInternalPages,
   PURPOSE,
+  type ConfirmOutcome,
   type PageActions,
+  type RegenerateOutcome,
   type ResetOutcome,
   type SetupOutcome,
 } from './internal-pages.js';
 import { createLocalServer, loadContentSecurityPolicy, type LocalServer } from './local-server.js';
 import { pruneOutbox } from './outbox.js';
+import { type OwnerCheck, type OwnerCheckOptions } from './owner-check.js';
 import { loadCommonPasswordsSync, messagesForIssues } from './password-check.js';
 import type { DataPaths } from './paths.js';
 import { chooseServerPort, findFreePort, type PortRetry } from './ports.js';
@@ -65,7 +68,7 @@ import {
 } from './restore.js';
 import { parameterizeRolesScript } from './roles.js';
 import type { RotatingLog } from './rotating-log.js';
-import { generateSecrets, newRecoveryKey } from './secrets.js';
+import { generateSecrets, newRecoveryKey, type FreshRecoveryKey } from './secrets.js';
 import { INSTALL_SLUG, type SetupValues } from './setup-validation.js';
 import type { PgTools } from './streams.js';
 import { TEXT } from './strings.js';
@@ -128,6 +131,8 @@ export interface ControllerDeps {
    */
   probeHealth: (port: number, secret: string) => Promise<boolean>;
   createCluster: (secrets: InstallConfig['secrets']) => PostgresCluster;
+  /** Signs in through the API to prove that whoever asks is an owner (see `owner-check.ts`). */
+  verifyOwner: (options: OwnerCheckOptions) => Promise<OwnerCheck>;
   logs: { shell: RotatingLog; api: RotatingLog; worker: RotatingLog };
   /** The tests of the installer drive the app from outside; some conveniences exist only then. */
   testMode: boolean;
@@ -240,6 +245,11 @@ export class Controller {
    * to this PC, and a restart forgets it (the owner then confirms by typing the key from their paper copy).
    */
   private pendingRecoveryKey: string | null = null;
+  /** The data of the setup form and the key that was shown for it, until the owner confirms the key. */
+  private pendingSetup: { values: SetupValues; fresh: FreshRecoveryKey } | null = null;
+  /** A new key for an install that never confirmed one, shown and not yet confirmed. */
+  private pendingRegeneration: FreshRecoveryKey | null = null;
+  private regenerateAttempts = 0;
   private api: Supervisor | null = null;
   private worker: Supervisor | null = null;
   private readonly vault = new TokenVault();
@@ -808,20 +818,53 @@ export class Controller {
     if (this.deps.testMode) this.log(`setup url: ${url}`);
   }
 
-  private async runSetup(values: SetupValues): Promise<SetupOutcome> {
+  /**
+   * The first step of the setup: the data of the form is checked and kept in memory, and the recovery key is made and
+   * shown. NOTHING is created yet. The key is the one thing that cannot be shown again, so it is shown first, and the
+   * organization is created only when the owner has typed its last four characters on that same page
+   * (`completeSetup`). A window or a program that closes in between leaves nothing behind: the next start asks again,
+   * with a new key.
+   */
+  private runSetup(values: SetupValues): Promise<SetupOutcome> {
+    if (this.setupRunning || this.config.provisioned) {
+      return Promise.resolve({ ok: false, message: TEXT.setup.busy });
+    }
+    const fresh = newRecoveryKey(this.config.secrets.backupKeyBase64);
+    this.pendingSetup = { values, fresh };
+    this.keyPageAttempts = 0;
+    return Promise.resolve({
+      ok: true,
+      recoveryKey: fresh.recoveryKey,
+      ackToken: this.vault.issue(PURPOSE.ack, 24 * HOUR_MS),
+    });
+  }
+
+  /**
+   * The second step: the owner typed the end of the key they were shown. Only now the install is wrapped with it
+   * (nothing was backed up yet, so nothing is wrapped with another key), the organization is created and the
+   * services start.
+   */
+  private async completeSetup(
+    setup: { values: SetupValues; fresh: FreshRecoveryKey },
+    lastFour: string,
+  ): Promise<ConfirmOutcome> {
+    if (
+      normalizeRecoveryKey(lastFour) !== normalizeRecoveryKey(setup.fresh.recoveryKey).slice(-4)
+    ) {
+      return this.keyPageMiss(PURPOSE.ack, 'recoveryKeyLast4', TEXT.recoveryKey.wrongLast4);
+    }
     if (this.setupRunning || this.config.provisioned) {
       return { ok: false, message: TEXT.setup.busy };
     }
     this.setupRunning = true;
+    const { values, fresh } = setup;
     try {
-      // The key the owner is about to see is made now, and only its hash and the wrap of the backup key are kept.
-      // Nothing was backed up yet, so nothing is wrapped with another key.
-      const fresh = newRecoveryKey(this.config.secrets.backupKeyBase64);
       this.config = this.deps.store.update((config) => {
         config.secrets.backupKeyWrap = fresh.backupKeyWrap;
         config.secrets.recoveryKeyHash = fresh.recoveryKeyHash;
+        config.secrets.recoveryKey = null;
+        config.recoveryAcknowledged = true;
       });
-      this.pendingRecoveryKey = fresh.recoveryKey;
       const context: RuntimeContext = {
         config: this.config,
         paths: this.deps.paths,
@@ -838,8 +881,14 @@ export class Controller {
           timeZone: values.timeZone,
         });
       } catch (error) {
-        return this.setupFailure(error);
+        // What the API refused is a thing to change in the form: back to it, and the key is made anew.
+        this.pendingSetup = null;
+        const failure = this.setupFailure(error);
+        return failure.ok
+          ? { ok: false, message: TEXT.setup.failed, back: true }
+          : { ...failure, back: true };
       }
+      this.pendingSetup = null;
       this.config = this.deps.store.update((config) => {
         config.provisioned = true;
         // The reminders to copy the backups off this PC start counting now.
@@ -854,17 +903,13 @@ export class Controller {
         return { ok: false, message: TEXT.errors.service };
       }
       this.vault.revoke(PURPOSE.setup);
+      this.vault.revoke(PURPOSE.ack);
       this.finishStart({ keepWindow: true });
-      this.keyPageAttempts = 0;
-      return {
-        ok: true,
-        recoveryKey: fresh.recoveryKey,
-        // The setup token is revoked above; this one lets the page confirm the key it just showed.
-        ackToken: this.vault.issue(PURPOSE.ack, 24 * HOUR_MS),
-      };
+      this.log('the recovery key was confirmed by the owner before the organization was created');
+      return { ok: true };
     } catch (error) {
       this.log(`setup failed: ${describeError(error).detail}`);
-      return { ok: false, message: describeError(error).message };
+      return { ok: false, message: describeError(error).message, back: true };
     } finally {
       this.setupRunning = false;
     }
@@ -1757,6 +1802,8 @@ export class Controller {
         return { ok: true, email: outcome.email, secondFactorCleared: outcome.secondFactorCleared };
       },
       confirmRecoveryKey: (lastFour) => {
+        if (this.pendingSetup) return this.completeSetup(this.pendingSetup, lastFour);
+        if (this.pendingRegeneration) return Promise.resolve(this.confirmRegeneration(lastFour));
         const stored = this.pendingRecoveryKey;
         if (this.config.recoveryAcknowledged || stored === null) {
           return Promise.resolve({ ok: false, message: TEXT.recoveryKey.gone });
@@ -1784,6 +1831,7 @@ export class Controller {
         return Promise.resolve({ ok: true });
       },
       browserSession: () => this.credentials.browser,
+      regenerateRecoveryKey: (input) => this.regenerateRecoveryKey(input),
       restoreKeyNeeds: () => ({
         current: (this.pendingRestore?.needsCurrent ?? true) || this.currentKeyRequired(),
         backup: this.pendingRestore?.needsBackup ?? false,
@@ -1898,6 +1946,89 @@ export class Controller {
     });
     this.log('the recovery key was confirmed by the owner and is not kept');
     this.changed();
+  }
+
+  /** The tray: a new recovery key for an install that never confirmed one. Gated by the owner, not by the Windows session. */
+  openRegenerateRecoveryKey(): void {
+    if (this.currentPhase !== 'ready' || !this.recoveryPending) return;
+    this.regenerateAttempts = 0;
+    this.pendingRegeneration = null;
+    const token = this.vault.issue(PURPOSE.regenerate, 15 * 60_000);
+    this.deps.ui.openAuxWindow(
+      `${this.appUrl}/__regen?t=${token}`,
+      TEXT.recoveryKey.regenerateWindowTitle,
+    );
+  }
+
+  private async regenerateRecoveryKey(input: {
+    email: string;
+    password: string;
+    code: string;
+  }): Promise<RegenerateOutcome> {
+    if (!this.recoveryPending) return { ok: false, message: TEXT.regenerate.notNeeded };
+    if (this.apiPort === null || this.proxySecret === null || this.currentPhase !== 'ready') {
+      return { ok: false, message: TEXT.regenerate.unavailable };
+    }
+    if (this.busy) return { ok: false, message: TEXT.regenerate.busy };
+    // The password and the second factor are checked by the API itself: the same lockout, the same trail.
+    const checked = await this.deps.verifyOwner({
+      apiPort: this.apiPort,
+      proxySecret: this.proxySecret,
+      publicOrigin: this.appUrl,
+      email: input.email,
+      password: input.password,
+      code: input.code,
+    });
+    if (!checked.ok) {
+      if (checked.reason === 'unavailable')
+        return { ok: false, message: TEXT.regenerate.unavailable };
+      if (checked.reason === 'needs_code') {
+        return { ok: false, errors: { code: TEXT.regenerate.codeRequired } };
+      }
+      this.regenerateAttempts += 1;
+      this.log(
+        `a new recovery key was refused: the owner was not proven (attempt ${String(this.regenerateAttempts)})`,
+      );
+      if (this.regenerateAttempts >= MAX_RESET_ATTEMPTS) {
+        this.vault.revoke(PURPOSE.regenerate);
+        this.deps.ui.closeAuxWindow();
+        return { ok: false, message: TEXT.recoveryKey.tooManyAttempts };
+      }
+      return { ok: false, errors: { password: TEXT.regenerate.refused } };
+    }
+    const fresh = newRecoveryKey(this.config.secrets.backupKeyBase64);
+    this.pendingRegeneration = fresh;
+    this.keyPageAttempts = 0;
+    this.log(
+      'a new recovery key was made after the owner proved who they are; it counts once it is confirmed',
+    );
+    return {
+      ok: true,
+      recoveryKey: fresh.recoveryKey,
+      ackToken: this.vault.issue(PURPOSE.ack, 15 * 60_000),
+    };
+  }
+
+  /** The owner typed the end of the new key: from here it is the key of the install, and the old one is not. */
+  private confirmRegeneration(lastFour: string): ConfirmOutcome {
+    const fresh = this.pendingRegeneration;
+    if (fresh === null) return { ok: false, message: TEXT.recoveryKey.gone };
+    if (normalizeRecoveryKey(lastFour) !== normalizeRecoveryKey(fresh.recoveryKey).slice(-4)) {
+      return this.keyPageMiss(PURPOSE.ack, 'recoveryKeyLast4', TEXT.recoveryKey.wrongLast4);
+    }
+    this.pendingRegeneration = null;
+    this.pendingRecoveryKey = null;
+    this.config = this.deps.store.update((config) => {
+      config.secrets.backupKeyWrap = fresh.backupKeyWrap;
+      config.secrets.recoveryKeyHash = fresh.recoveryKeyHash;
+      config.secrets.recoveryKey = null;
+      config.recoveryAcknowledged = true;
+    });
+    this.vault.revoke(PURPOSE.ack);
+    this.vault.revoke(PURPOSE.regenerate);
+    this.log('a new recovery key was confirmed by the owner; the old one no longer works');
+    this.changed();
+    return { ok: true };
   }
 
   async about(): Promise<void> {

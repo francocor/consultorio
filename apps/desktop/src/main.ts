@@ -22,6 +22,7 @@ import { ConfigStore, type Cipher } from './config-store.js';
 import { Controller, type ShellUi } from './controller.js';
 import { probeApiHealth } from './health-probe.js';
 import { decideNavigation, decideWindowOpen } from './navigation-policy.js';
+import { verifyOwner } from './owner-check.js';
 import { resolveDataPaths } from './paths.js';
 import { findFreePort } from './ports.js';
 import { PostgresCluster } from './postgres.js';
@@ -305,6 +306,7 @@ async function run(): Promise<void> {
         windowsHide: true,
       }),
     probeHealth: (port, secret) => probeApiHealth(port, secret),
+    verifyOwner: (options) => verifyOwner(options),
     createCluster: (secrets) =>
       new PostgresCluster({
         binDir: resources.pgBinDir,
@@ -450,6 +452,17 @@ async function run(): Promise<void> {
             controller.openRecoveryKey();
           },
         },
+        ...(controller.recoveryPending
+          ? [
+              {
+                label: TEXT.tray.regenerateRecoveryKey,
+                enabled: ready,
+                click: () => {
+                  controller.openRegenerateRecoveryKey();
+                },
+              },
+            ]
+          : []),
         { type: 'separator' },
         { label: TEXT.tray.logs, click: () => void controller.openLogs() },
         {
