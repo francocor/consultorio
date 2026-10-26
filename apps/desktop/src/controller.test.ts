@@ -1743,6 +1743,27 @@ describe('the backups', () => {
     });
   }
 
+  it('enters in the ledger a backup that is in the folder but not in the ledger, at the next start', async () => {
+    await ready();
+    await harness.controller.quit();
+    const folder = harness.folder;
+    rmSync(join(harness.paths.backups, 'registro-de-copias.json'));
+    expect(await readLedger(harness.paths.backups)).toEqual({});
+
+    const next = build(folder);
+    await next.controller.start();
+
+    await vi.waitFor(
+      async () => {
+        expect(Object.keys(await readLedger(next.paths.backups))).toEqual([
+          'consulvia-diaria-2026-10-24_1000.cvb',
+        ]);
+      },
+      { timeout: 30_000, interval: 25 },
+    );
+    await next.controller.whenIdle();
+  });
+
   it('makes the daily backup at the first open of the day, once, and writes the day down', async () => {
     await ready();
 

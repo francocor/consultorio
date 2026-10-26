@@ -16,7 +16,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { readArchive, readArchiveHeader } from './backup-archive.js';
 import { unwrapBackupKey } from './backup-crypto.js';
-import { readLedger, recordVerified, sha256OfFile } from './backup-ledger.js';
+import { LEDGER_NAME, readLedger, recordVerified, sha256OfFile } from './backup-ledger.js';
 import {
   fakeDump,
   fakeList,
@@ -26,6 +26,7 @@ import {
   type TestInstall,
 } from './backup-testing.js';
 import {
+  adoptUnledgeredBackups,
   backupFileName,
   BackupError,
   createBackup,
@@ -264,6 +265,162 @@ describe('a backup is opened again after it is written', () => {
     await expect(verifyBackupFile(testBackupDeps(install, paths), path)).rejects.toBeInstanceOf(
       BackupError,
     );
+  });
+});
+
+describe('backups that are in the folder but not in the ledger', () => {
+  /** Backups made at different minutes, as the program makes them. */
+  async function makeSome(count: number): Promise<string[]> {
+    const names: string[] = [];
+    for (let index = 0; index < count; index += 1) {
+      const made = await createBackup(
+        testBackupDeps(install, paths, {
+          now: () => new Date(2026, 9, 10 + index, 9, 0, 0),
+        }),
+        'daily',
+      );
+      names.push(made.path.split(/[\\/]/).at(-1) ?? '');
+    }
+    return names;
+  }
+
+  const deps = () => testBackupDeps(install, paths);
+
+  it('are checked again and entered in the ledger when the ledger is gone, so pruning can count them', async () => {
+    const names = await makeSome(3);
+    rmSync(join(paths.backups, LEDGER_NAME));
+    expect(await readLedger(paths.backups)).toEqual({});
+
+    const result = await adoptUnledgeredBackups(deps());
+
+    expect(result.adopted.sort()).toEqual([...names].sort());
+    expect(Object.keys(await readLedger(paths.backups)).sort()).toEqual([...names].sort());
+    const entry = (await readLedger(paths.backups))[names[0] ?? ''];
+    expect(entry?.sha256).toBe(await sha256OfFile(join(paths.backups, names[0] ?? '')));
+  });
+
+  it('are adopted when the ledger exists but lacks them, or has a different size for them', async () => {
+    const names = await makeSome(2);
+    await recordVerified(paths.backups, names[0] ?? '', {
+      sha256: 'x',
+      bytes: 1,
+      verifiedAt: new Date().toISOString(),
+    });
+
+    const result = await adoptUnledgeredBackups(deps());
+
+    // The first has an entry that does not fit the file; the second was entered when it was made.
+    expect(result.adopted).toEqual([names[0]]);
+  });
+
+  it('leave a file that is already verified alone, without reading it', async () => {
+    await makeSome(2);
+    let listed = 0;
+
+    const result = await adoptUnledgeredBackups(
+      testBackupDeps(install, paths, {
+        listDump: (source) => {
+          listed += 1;
+          return fakeList()(source);
+        },
+      }),
+    );
+
+    expect(result.adopted).toEqual([]);
+    expect(listed).toBe(0);
+  });
+
+  it('never adopt a file that does not pass, and leave it where it is', async () => {
+    const names = await makeSome(2);
+    rmSync(join(paths.backups, LEDGER_NAME));
+    const damaged = join(paths.backups, names[1] ?? '');
+    const bytes = readFileSync(damaged);
+    bytes[bytes.length - 40] = (bytes[bytes.length - 40] ?? 0) ^ 0x80;
+    writeFileSync(damaged, bytes);
+
+    const result = await adoptUnledgeredBackups(deps());
+
+    expect(result.adopted).toEqual([names[0]]);
+    expect(result.rejected).toEqual([names[1]]);
+    expect(existsSync(damaged)).toBe(true);
+    expect(Object.keys(await readLedger(paths.backups))).toEqual([names[0]]);
+  });
+
+  it('skip a backup of another install without opening it: it is not ours to vouch for', async () => {
+    const names = await makeSome(1);
+    rmSync(join(paths.backups, LEDGER_NAME));
+    const other = newTestInstall();
+
+    const result = await adoptUnledgeredBackups(testBackupDeps(other, paths));
+
+    expect(result.adopted).toEqual([]);
+    expect(result.skipped).toEqual(names);
+  });
+
+  it('look at the newest first and at no more than it was asked, so a start is never held up by a shelf of old copies', async () => {
+    const names = await makeSome(4);
+    rmSync(join(paths.backups, LEDGER_NAME));
+
+    const result = await adoptUnledgeredBackups(deps(), { max: 2 });
+
+    expect(result.adopted.sort()).toEqual([names[2], names[3]]);
+  });
+
+  it('ignore files that are not backups', async () => {
+    await makeSome(1);
+    rmSync(join(paths.backups, LEDGER_NAME));
+    writeFileSync(join(paths.backups, 'notes.txt'), 'x');
+    writeFileSync(join(paths.backups, 'consulvia-diaria-2026-10-10_0900.cvb.partial'), 'x');
+
+    const result = await adoptUnledgeredBackups(deps());
+
+    expect(result.adopted).toHaveLength(1);
+    expect(result.rejected).toEqual([]);
+  });
+
+  it('do nothing when the folder does not exist', async () => {
+    expect(await adoptUnledgeredBackups(deps())).toEqual({
+      adopted: [],
+      rejected: [],
+      skipped: [],
+    });
+  });
+});
+
+describe('the ledger itself', () => {
+  it('keeps every entry when many are recorded at once (the writes take turns)', async () => {
+    mkdirSync(paths.backups, { recursive: true });
+    const names = Array.from(
+      { length: 25 },
+      (_, index) => `consulvia-diaria-2026-10-${String(index + 1).padStart(2, '0')}_0900.cvb`,
+    );
+
+    await Promise.all(
+      names.map((name) =>
+        recordVerified(paths.backups, name, {
+          sha256: 'x',
+          bytes: 1,
+          verifiedAt: new Date().toISOString(),
+        }),
+      ),
+    );
+
+    expect(Object.keys(await readLedger(paths.backups)).sort()).toEqual([...names].sort());
+  });
+
+  it('is written whole, with no temporary file left beside it', async () => {
+    mkdirSync(paths.backups, { recursive: true });
+
+    await recordVerified(paths.backups, 'consulvia-diaria-2026-10-01_0900.cvb', {
+      sha256: 'x',
+      bytes: 1,
+      verifiedAt: new Date().toISOString(),
+    });
+
+    expect(readdirSync(paths.backups)).toEqual([LEDGER_NAME]);
+    expect(JSON.parse(readFileSync(join(paths.backups, LEDGER_NAME), 'utf8'))).toMatchObject({
+      version: 1,
+    });
   });
 });
 

@@ -16,6 +16,8 @@ import {
 import { verifyRecoveryKey, keyIdOf } from './backup-crypto.js';
 import { readLedger } from './backup-ledger.js';
 import {
+  adoptUnledgeredBackups,
+  unledgeredBackups,
   BackupError,
   createBackup,
   localDay,
@@ -1050,7 +1052,8 @@ export class Controller {
         if (count > 0) this.log(`outbox: ${String(count)} old files deleted`);
       })
       .catch(() => undefined);
-    void this.maybeDailyBackup();
+    // The backups found outside the ledger are looked at after the daily one, so the two never read the same file.
+    void this.maybeDailyBackup().then(() => this.adoptUnledgered());
     if (options.keepWindow !== true) {
       // Just after the setup the person is looking at the key; later starts remind them if it is not confirmed.
       if (this.recoveryPending) {
@@ -1275,6 +1278,28 @@ export class Controller {
   }
 
   /** Pruning is housekeeping: its failure never turns a backup that exists into a failed one. */
+  /**
+   * Backups in the folder that the ledger does not know (it was lost, or could not be written that day) are opened
+   * again and entered if they pass, so that they count as copies and the owner is not told there is none.
+   */
+  private async adoptUnledgered(): Promise<void> {
+    try {
+      if (this.currentPhase !== 'ready') return;
+      // Nothing to look at is the usual case, and it must not hold the backups up even for a moment.
+      if ((await unledgeredBackups(this.deps.paths.backups)).length === 0) return;
+      const result = await this.exclusive(() => adoptUnledgeredBackups(this.backupDeps()));
+      if (result !== 'busy' && result.adopted.length > 0) {
+        this.log(
+          `${String(result.adopted.length)} backups found outside the ledger were checked and entered`,
+        );
+      }
+    } catch (error) {
+      this.log(
+        `looking for backups outside the ledger failed: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+  }
+
   private async pruneQuietly(): Promise<string[]> {
     try {
       const pruned = await pruneBackups(this.deps.paths.backups);

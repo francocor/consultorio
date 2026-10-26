@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { createReadStream } from 'node:fs';
-import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, open, readFile, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 
 import { renameWithRetry } from './backup-archive.js';
@@ -36,12 +36,30 @@ export async function readLedger(directory: string): Promise<Ledger> {
   }
 }
 
+/**
+ * The writes of the ledger take turns: a read-change-write that overlaps another one (a backup recording itself while
+ * the backups found at the start are being entered) would lose the entry of one of them.
+ */
+let turn: Promise<unknown> = Promise.resolve();
+function inTurn<T>(work: () => Promise<T>): Promise<T> {
+  const next = turn.then(work, work);
+  turn = next.catch(() => undefined);
+  return next;
+}
+
+/** Written to a temporary file, forced to the disk, and renamed: a power cut leaves the old ledger or the new one. */
 async function writeLedger(directory: string, files: Ledger): Promise<void> {
   await mkdir(directory, { recursive: true });
   const target = join(directory, LEDGER_NAME);
   const temporary = `${target}.tmp`;
   try {
-    await writeFile(temporary, `${JSON.stringify({ version: 1, files }, null, 2)}\n`);
+    const handle = await open(temporary, 'w');
+    try {
+      await handle.writeFile(`${JSON.stringify({ version: 1, files }, null, 2)}\n`);
+      await handle.sync();
+    } finally {
+      await handle.close();
+    }
     await renameWithRetry(temporary, target);
   } catch (error) {
     await rm(temporary, { force: true });
@@ -54,23 +72,27 @@ export async function recordVerified(
   name: string,
   entry: LedgerEntry,
 ): Promise<void> {
-  const files = await readLedger(directory);
-  files[name] = entry;
-  await writeLedger(directory, files);
+  await inTurn(async () => {
+    const files = await readLedger(directory);
+    files[name] = entry;
+    await writeLedger(directory, files);
+  });
 }
 
 /** Drops the entries of files that are gone (or were deleted). */
 export async function forgetBackups(directory: string, names: readonly string[]): Promise<void> {
   if (names.length === 0) return;
-  const files = await readLedger(directory);
-  let changed = false;
-  for (const name of names) {
-    if (name in files) {
-      Reflect.deleteProperty(files, name);
-      changed = true;
+  await inTurn(async () => {
+    const files = await readLedger(directory);
+    let changed = false;
+    for (const name of names) {
+      if (name in files) {
+        Reflect.deleteProperty(files, name);
+        changed = true;
+      }
     }
-  }
-  if (changed) await writeLedger(directory, files);
+    if (changed) await writeLedger(directory, files);
+  });
 }
 
 /** SHA-256 of a file, read in pieces. */

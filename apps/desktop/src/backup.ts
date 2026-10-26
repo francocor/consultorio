@@ -4,7 +4,7 @@ import { mkdir, readdir, rm, stat } from 'node:fs/promises';
 import { join } from 'node:path';
 import { PassThrough, type Readable } from 'node:stream';
 
-import { createArchiveWriter, discard, readArchive } from './backup-archive.js';
+import { createArchiveWriter, discard, readArchive, readArchiveHeader } from './backup-archive.js';
 import {
   FORMAT,
   keyIdOf,
@@ -273,6 +273,75 @@ export async function createBackup(
       throw error;
     }
   }
+}
+
+/** The backups in `directory` that the ledger does not vouch for (no entry, or an entry for a file of another size), newest first. */
+export async function unledgeredBackups(directory: string): Promise<string[]> {
+  let names: string[];
+  try {
+    names = await readdir(directory);
+  } catch {
+    return [];
+  }
+  const pattern = new RegExp(
+    `^consulvia-(?:${Object.values(KIND_NAMES).join('|')})-\\d{4}-\\d{2}-\\d{2}_\\d{4}\\${BACKUP_EXTENSION}$`,
+  );
+  const ledger = await readLedger(directory);
+  const pending: string[] = [];
+  for (const name of names.filter((candidate) => pattern.test(candidate))) {
+    const entry = ledger[name];
+    if (!entry || entry.bytes !== (await sizeOf(join(directory, name)))) pending.push(name);
+  }
+  return pending.sort((left, right) => stampOf(right).localeCompare(stampOf(left)));
+}
+
+export interface AdoptionResult {
+  /** Entered in the ledger now. */
+  adopted: string[];
+  /** Looked at and found not whole: left where they are, not counted. */
+  rejected: string[];
+  /** Made with another key: not this install's to vouch for. */
+  skipped: string[];
+}
+
+/**
+ * Backups that are in the folder but not in the ledger (the ledger was lost, or could not be written the day the backup
+ * was made) are not counted as copies, so pruning leaves them alone and the owner is told there is no good copy.
+ * This opens them again, the newest first and no more than `max`, and enters the ones that pass. A file made with
+ * another key is skipped from its header, without reading the rest.
+ */
+export async function adoptUnledgeredBackups(
+  deps: Pick<BackupDeps, 'backupKey' | 'listDump' | 'paths' | 'now' | 'log'>,
+  options: { max?: number } = {},
+): Promise<AdoptionResult> {
+  const result: AdoptionResult = { adopted: [], rejected: [], skipped: [] };
+  const directory = deps.paths.backups;
+  const pending = await unledgeredBackups(directory);
+  const ownKeyId = keyIdOf(deps.backupKey());
+  for (const name of pending.slice(0, options.max ?? 5)) {
+    const path = join(directory, name);
+    try {
+      const { header } = await readArchiveHeader(path);
+      if (header.keyId !== ownKeyId) {
+        result.skipped.push(name);
+        continue;
+      }
+      const verified = await verifyBackupFile(deps, path);
+      await recordVerified(directory, name, {
+        sha256: verified.sha256,
+        bytes: verified.bytes,
+        verifiedAt: deps.now().toISOString(),
+      });
+      result.adopted.push(name);
+      deps.log?.(`a backup that was not in the ledger passed its check and was entered: ${name}`);
+    } catch (error) {
+      result.rejected.push(name);
+      deps.log?.(
+        `a backup that is not in the ledger did not pass its check and was left alone: ${name}: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+  }
+  return result;
 }
 
 /** How many of each kind are kept. Safety copies are only a way back from one operation. */
