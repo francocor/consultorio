@@ -108,6 +108,9 @@ let confirmAnswer = true;
 let cipherBroken = false;
 /** The exit code of `pg_restore --list`, the check of a backup after it is written. */
 let listCode = 0;
+/** pg_restore ends with this code when it restores (not when it lists), and dropping a database fails. */
+let restoreCode = 0;
+let dropFails = false;
 /** The database server answers its pings. */
 let databaseAlive = true;
 /** How many migrations the database has had applied; `null` is a new one. */
@@ -294,6 +297,7 @@ function build(
     },
     createRestoreScratch: () => {
       events.push('scratch create');
+      if (!databaseNames.includes('consultorio_restore')) databaseNames.push('consultorio_restore');
       return Promise.resolve({
         database: 'consultorio_restore',
         user: 'consulvia_restore_test',
@@ -318,6 +322,7 @@ function build(
       return Promise.resolve();
     },
     dropDatabase: (name: string) => {
+      if (dropFails) return Promise.reject(new Error('the database is in use'));
       events.push('scratch drop');
       databaseNames = databaseNames.filter((candidate) => candidate !== name);
       return Promise.resolve();
@@ -376,7 +381,7 @@ function build(
       restores.push(args);
       restoreEnvs.push(env);
       await discard(source);
-      return { code: 0, stderr: '' };
+      return { code: restoreCode, stderr: restoreCode === 0 ? '' : 'pg_restore: error: boom' };
     },
   };
 
@@ -568,6 +573,8 @@ beforeEach(() => {
   confirmAnswer = true;
   cipherBroken = false;
   listCode = 0;
+  restoreCode = 0;
+  dropFails = false;
   databaseAlive = true;
   appliedMigrations = null;
   ownerAnswer = { ok: true };
@@ -777,6 +784,28 @@ describe('a restore that was cut off', () => {
     expect(next.events).toContain('scratch drop');
     expect(existsSync(join(paths.root, 'restore-journal.json'))).toBe(false);
     expect(next.controller.phase).toBe('ready');
+  });
+});
+
+describe('a restore whose record cannot be read', () => {
+  it('does not start on top of it: the data may be half way between two states, and the person is told', async () => {
+    await harness.controller.start();
+    await completeSetup(setupUrl() ?? '');
+    await harness.controller.quit();
+    writeFileSync(join(harness.paths.root, 'restore-journal.json'), '{ not json');
+
+    const next = build(harness.folder);
+    await next.controller.start();
+
+    expect(next.controller.phase).toBe('error');
+    expect(next.events).not.toContain('migrate');
+    expect(next.spawned).toHaveLength(0);
+    const dialog = next.uiCalls.find((call) => call[0] === 'choose');
+    expect(String(dialog?.[1])).toContain('no pudo iniciar');
+    // Nothing of it was touched: the record is still there for whoever has to look at it.
+    expect(existsSync(join(harness.paths.root, 'restore-journal.json'))).toBe(true);
+    const splash = next.uiCalls.filter((call) => call[0] === 'splash').at(-1);
+    expect(String(splash?.[1])).toContain('restauración');
   });
 });
 
@@ -2340,6 +2369,79 @@ describe('restoring a backup', () => {
     expect(answer.status).toBe(422);
     expect(answer.body).toMatchObject({ errors: { currentKey: expect.any(String) as string } });
     expect(harness.restores).toHaveLength(0);
+  });
+
+  it('tells the person, with a dialog, and stops, when a failed restore leaves the services stopped', async () => {
+    const backup = await ready(false);
+    await harness.controller.restoreFlow(backup);
+    restoreCode = 1;
+    // The restore fails, the data is put back, and then the services cannot start again.
+    migrateFails = true;
+
+    const answer = await postKeys({ currentKey: installKey });
+
+    expect(answer.status).toBe(422);
+    expect(harness.controller.phase).toBe('error');
+    await waitFor(() => {
+      expect(harness.uiCalls.some((call) => call[0] === 'choose')).toBe(true);
+    });
+    // And nothing runs on its own on top of that: no backup of a program that is not running.
+    expect(await harness.controller.backupNow()).toBeNull();
+  });
+
+  it('stops too when a failed restore cannot be undone: the next start finishes it, and until then nothing else is done', async () => {
+    const backup = await ready(false);
+    await harness.controller.restoreFlow(backup);
+    restoreCode = 1;
+    dropFails = true;
+
+    const answer = await postKeys({ currentKey: installKey });
+
+    expect(answer.status).toBe(422);
+    expect(harness.controller.phase).toBe('error');
+    expect(existsSync(join(harness.paths.root, 'restore-journal.json'))).toBe(true);
+    await waitFor(() => {
+      expect(harness.uiCalls.some((call) => call[0] === 'choose')).toBe(true);
+    });
+    const dialog = harness.uiCalls.find((call) => call[0] === 'choose');
+    expect(String(dialog?.[1])).toContain('no pudo iniciar');
+    // Retry starts again, and the start undoes what was left.
+    dropFails = false;
+    chooseAnswers = [0];
+    harness.events.length = 0;
+    await harness.controller.start();
+    expect(existsSync(join(harness.paths.root, 'restore-journal.json'))).toBe(false);
+    expect(harness.controller.phase).toBe('ready');
+  });
+
+  it('refuses to restore, to back up or to make the daily backup while a restore is waiting to be undone', async () => {
+    const backup = await ready(false);
+    writeFileSync(
+      join(harness.paths.root, 'restore-journal.json'),
+      JSON.stringify({
+        version: 1,
+        stamp: '1',
+        step: 'prepared',
+        filesAside: 'x',
+        unpacked: 'y',
+        configCopy: null,
+      }),
+    );
+    harness.uiCalls.length = 0;
+    harness.events.length = 0;
+    const dumps = harness.dumps;
+
+    const restored = await harness.controller.restoreFlow(backup);
+    const made = await harness.controller.backupNow();
+    clock = new Date(2026, 9, 25, 9, 0, 0);
+    await harness.controller.maybeDailyBackup();
+
+    expect(restored).toBe(false);
+    expect(made).toBeNull();
+    expect(harness.dumps).toBe(dumps);
+    expect(harness.restores).toHaveLength(0);
+    expect(harness.uiCalls.filter((call) => call[0] === 'message')).toHaveLength(2);
+    expect(harness.uiCalls.some((call) => call[0] === 'openAuxWindow')).toBe(false);
   });
 
   it('asks for no current key on a new install that is waiting for its setup', async () => {

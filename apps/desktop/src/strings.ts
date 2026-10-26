@@ -89,6 +89,10 @@ export const TEXT = {
     wrongKey: 'La clave de recuperación no es correcta.',
     undoIncomplete:
       'La restauración falló y no se pudo volver por completo al estado anterior. Cierre Consulvia y ábralo de nuevo: al iniciar terminará de deshacerse sola. No borre ninguna carpeta mientras tanto.',
+    servicesFailed:
+      'La restauración no se pudo hacer y sus datos siguen como estaban, pero Consulvia no pudo volver a iniciar. Reintente; si sigue igual, abra los registros.',
+    journalPending:
+      'Una restauración quedó a medias y todavía no se terminó de deshacer. Cierre Consulvia y ábralo de nuevo: al iniciar la termina sola. No se hace nada más hasta entonces.',
     unsafe:
       'La copia de seguridad hace cosas que una copia no debe hacer (cambia permisos o la configuración de la base de datos). No se restauró nada y los datos actuales no se modificaron.',
     incomplete:
@@ -125,6 +129,11 @@ export const TEXT = {
     cancelButton: 'Cancelar',
     failed:
       'No se pudieron apartar los datos actuales (puede que otro programa los esté usando). No se cambió nada.',
+  },
+
+  busy: {
+    title: 'Consulvia está ocupado',
+    body: 'Hay otra operación en curso (una copia de seguridad o una restauración). Intente de nuevo en un momento.',
   },
 
   regenerate: {
@@ -209,6 +218,8 @@ export const TEXT = {
       'Los datos de esta instalación fueron creados por una versión de Consulvia más nueva que la que está instalada. Instale la versión más reciente de Consulvia. No se cambió nada.',
     upgradeBackup:
       'Antes de actualizar la base de datos, Consulvia hace una copia de seguridad, y esa copia no se pudo hacer. No se actualiza sin ella: sus datos no se modificaron. Libere espacio en el disco o abra los registros para ver el detalle.',
+    restoreJournal:
+      'Una restauración quedó a medias y Consulvia no pudo leer su registro, así que no abre para no dañar sus datos. Reintente; si sigue igual, abra los registros y avise a quien le da soporte: no borre nada.',
     migration:
       'No se pudieron aplicar las actualizaciones de la base de datos. Sus datos no se modificaron. Abra los registros para ver el detalle.',
   },

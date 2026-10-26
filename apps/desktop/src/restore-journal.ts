@@ -72,6 +72,9 @@ export async function writeJournal(paths: DataPaths, journal: RestoreJournal): P
 
 const UNREADABLE = Symbol('unreadable');
 const BUSY = new Set(['EBUSY', 'EPERM', 'EACCES']);
+/** An antivirus or an indexer that holds the file lets go within seconds: it is waited for about ten. */
+const READ_ATTEMPTS = 40;
+const READ_WAIT_MS = 250;
 
 /** Reads the journal file, trying again a few times when something (an antivirus) holds it for a moment. */
 async function readJournalText(paths: DataPaths): Promise<string | null | typeof UNREADABLE> {
@@ -81,8 +84,8 @@ async function readJournalText(paths: DataPaths): Promise<string | null | typeof
     } catch (error) {
       const code = (error as NodeJS.ErrnoException).code ?? '';
       if (code === 'ENOENT') return null;
-      if (!BUSY.has(code) || attempt >= 6) return UNREADABLE;
-      await new Promise((resolve) => setTimeout(resolve, 100 * attempt));
+      if (!BUSY.has(code) || attempt >= READ_ATTEMPTS) return UNREADABLE;
+      await new Promise((resolve) => setTimeout(resolve, READ_WAIT_MS));
     }
   }
 }

@@ -950,6 +950,8 @@ describe('restoring a backup of another installation', () => {
 
   it('adopts the secrets, the backup key and the typed recovery key once the data is in place', async () => {
     const path = await makeBackup(other, { 't/a/docs/1.obj': 'theirs' });
+    // The configuration of this install exists, as on every install that has a recovery key to give.
+    writeFileSync(paths.configFile, 'the configuration of this install');
 
     await restoreBackup(restoreDeps(), path, {
       recoveryKey: other.recoveryKey.toLowerCase().replaceAll('-', ' '),
@@ -1135,6 +1137,50 @@ describe('a process that dies at any point of a restore', () => {
 
     expect(existsSync(paths.files)).toBe(false);
     expect(leftovers()).toEqual([]);
+  });
+});
+
+describe('a restore that cannot be put right or cannot start again', () => {
+  it('says so when the services do not start after a failed restore, instead of failing as if all were well', async () => {
+    const path = await makeBackup(install, { 't/a/docs/1.obj': 'theirs' });
+    writeFileSync(join(paths.files, 't', 'a', 'docs', '1.obj'), 'ours');
+    failSwap = true;
+
+    const failure = await restoreBackup(
+      restoreDeps({ startServices: () => Promise.reject(new Error('the api did not answer')) }),
+      path,
+    ).catch((error: unknown) => error);
+
+    // The data are as they were, but the program is stopped, and the person has to be told.
+    expect(failure).toMatchObject({ code: 'services_not_started' });
+    expect(readDoc('t/a/docs/1.obj')).toBe('ours');
+    expect([...db.entries()]).toEqual([[DATABASE, OLD_DB]]);
+  });
+
+  it('refuses a restore of another install that would adopt its keys when config.json could not be copied first', async () => {
+    const path = await makeBackup(other, { 't/a/docs/1.obj': 'theirs' });
+    writeFileSync(join(paths.files, 't', 'a', 'docs', '1.obj'), 'ours');
+    // No config.json to copy: the keys of the backup would be adopted with no way back.
+    rmSync(paths.configFile, { force: true });
+
+    const failure = await restoreBackup(restoreDeps(), path, {
+      recoveryKey: other.recoveryKey,
+    }).catch((error: unknown) => error);
+
+    expect(failure).toMatchObject({ code: 'restore_failed' });
+    expect(events).toEqual([]);
+    expect(adopted).toBeNull();
+    expect(readDoc('t/a/docs/1.obj')).toBe('ours');
+    expect(leftovers()).toEqual([]);
+  });
+
+  it('does not need that copy for a backup of this install: it adopts no key', async () => {
+    const path = await makeBackup(install, { 't/a/docs/1.obj': 'one' });
+    rmSync(paths.configFile, { force: true });
+
+    await restoreBackup(restoreDeps(), path);
+
+    expect(events).toContain('swap');
   });
 });
 

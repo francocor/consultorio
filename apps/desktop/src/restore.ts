@@ -49,7 +49,9 @@ export type RestoreErrorCode =
   /** The restore failed and putting everything back failed too: the next start finishes undoing it. */
   | 'undo_incomplete'
   /** The backup authenticated, but what it did to the database or the roles is not what a backup does. Nothing was kept. */
-  | 'unsafe_backup';
+  | 'unsafe_backup'
+  /** The restore failed and the data are as they were, but the services could not be started again. */
+  | 'services_not_started';
 
 export class RestoreError extends Error {
   constructor(
@@ -328,6 +330,15 @@ export async function restoreBackup(
     () => true,
     () => false,
   );
+  // The keys of another install's backup are adopted with `config.json` copied aside first, so they can be put back:
+  // without the copy they are not adopted at all.
+  if (foreign && options.recoveryKey !== undefined && !hasConfigCopy) {
+    await removeQuietly(unpacked);
+    throw new RestoreError(
+      'restore_failed',
+      'a copy of config.json could not be made, so the keys of the backup cannot be adopted with a way back',
+    );
+  }
   const journal: RestoreJournal = {
     version: 1,
     stamp,
@@ -492,7 +503,13 @@ export async function restoreBackup(
       throw new RestoreError('undo_incomplete', detail);
     }
     if (!finished) {
-      await restart(deps, servicesStopped);
+      if (!(await restart(deps, servicesStopped))) {
+        throw new RestoreError(
+          'services_not_started',
+          error instanceof Error ? error.message : String(error),
+          { cause: error },
+        );
+      }
       throw isDiskFull(error) && !(error instanceof DiskFullError)
         ? new DiskFullError(0, 0)
         : error;
@@ -522,13 +539,15 @@ export async function restoreBackup(
 }
 
 /** Starts the services again after a restore that failed, and never hides the failure that came first. */
-async function restart(deps: RestoreDeps, stopped: boolean): Promise<void> {
-  if (!stopped) return;
+async function restart(deps: RestoreDeps, stopped: boolean): Promise<boolean> {
+  if (!stopped) return true;
   try {
     await deps.startServices();
+    return true;
   } catch (error) {
     deps.log?.(
       `the services did not start after a failed restore: ${error instanceof Error ? error.message : String(error)}`,
     );
+    return false;
   }
 }

@@ -1,4 +1,5 @@
 import { randomBytes } from 'node:crypto';
+import { existsSync } from 'node:fs';
 import { mkdir, readFile, rename, rm, stat } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { Readable } from 'node:stream';
@@ -58,7 +59,7 @@ import { normalizeRecoveryKey } from './recovery-key.js';
 import { redact } from './redact.js';
 import { migrationCountOf, missingResources, type Resources } from './resources.js';
 import { auditProblems, revertStatements, type ClusterFacts } from './restore-audit.js';
-import { reconcileInterruptedRestore, type ReconcileDeps } from './restore-journal.js';
+import { journalFile, reconcileInterruptedRestore, type ReconcileDeps } from './restore-journal.js';
 import {
   readBackupInfo,
   restoreBackup,
@@ -755,6 +756,11 @@ export class Controller {
   /** A restore that was cut off (a power cut, a crash) is finished or undone before anything uses the database. */
   private async reconcileRestore(): Promise<void> {
     const outcome = await reconcileInterruptedRestore(this.reconcileDeps());
+    // A record that cannot be read is a restore of which nothing is known: starting on top of it could do what
+    // the restore was in the middle of a second time, or hide it. The start waits for a retry.
+    if (outcome === 'unreadable') {
+      throw new ShellError(TEXT.errors.restoreJournal, 'restore-journal.json cannot be read');
+    }
     if (outcome !== 'none') this.log(`restore reconciled at start: ${outcome}`);
   }
 
@@ -1287,6 +1293,10 @@ export class Controller {
       await this.deps.ui.message('info', TEXT.backup.failed, TEXT.backup.notReady);
       return null;
     }
+    if (this.restoreJournalPending()) {
+      await this.deps.ui.message('error', TEXT.backup.failed, TEXT.restore.journalPending);
+      return null;
+    }
     const outcome = await this.exclusive(async () => {
       try {
         const result = await createBackup(this.backupDeps(), 'manual');
@@ -1401,7 +1411,7 @@ export class Controller {
    * every hour), until one backup of the day exists.
    */
   async maybeDailyBackup(): Promise<void> {
-    if (this.currentPhase !== 'ready' || this.busy) return;
+    if (this.currentPhase !== 'ready' || this.busy || this.restoreJournalPending()) return;
     const today = localDay(this.deps.now());
     if (this.config.settings.lastDailyBackup === today) return;
     if (this.deps.now().getTime() < this.nextDailyAttempt) return;
@@ -1542,6 +1552,8 @@ export class Controller {
           return TEXT.restore.undoIncomplete;
         case 'unsafe_backup':
           return TEXT.restore.unsafe;
+        case 'services_not_started':
+          return TEXT.restore.servicesFailed;
         default:
           return TEXT.restore.generic;
       }
@@ -1559,6 +1571,10 @@ export class Controller {
    * address of the keys page from the log, like the other pages.
    */
   async restoreFlow(file?: string): Promise<boolean> {
+    if (this.restoreJournalPending()) {
+      await this.deps.ui.message('error', TEXT.restore.failed, TEXT.restore.journalPending);
+      return false;
+    }
     // On a new install that is still waiting for its setup the restore takes the place of the setup.
     if (this.currentPhase !== 'ready' && this.currentPhase !== 'setup') {
       await this.deps.ui.message('info', TEXT.restore.failed, TEXT.backup.notReady);
@@ -1628,6 +1644,33 @@ export class Controller {
   }
 
   /** Makes the safety backup (on an install in use) and restores. */
+  /**
+   * A restore that was cut off, or could not be undone, leaves `restore-journal.json` until the next start finishes it.
+   * Until then the data may be half way between two states, and no copy of them (or restore over them) is made.
+   */
+  private restoreJournalPending(): boolean {
+    return existsSync(journalFile(this.deps.paths));
+  }
+
+  /**
+   * A restore that failed and left the program stopped (it could not undo itself, or could not start the services
+   * again): the person is told with the dialog every failed start has, and its Retry starts again from the
+   * beginning, which finishes what was left.
+   */
+  private afterBrokenRestore(error: RestoreError): void {
+    clearInterval(this.dailyTimer);
+    clearInterval(this.databaseTimer);
+    this.setPhase('error');
+    void this.fail(
+      new ShellError(
+        error.code === 'undo_incomplete'
+          ? TEXT.restore.undoIncomplete
+          : TEXT.restore.servicesFailed,
+        `a restore left the program stopped: ${error.code}: ${error.detail}`,
+      ),
+    );
+  }
+
   /** Forgets the restore that waits for its keys: its address stops working and its window closes. */
   private clearPendingRestore(): void {
     this.pendingRestore = null;
@@ -1683,6 +1726,15 @@ export class Controller {
         return { ok: false as const, needsKey: false, error };
       }
     }, 'restore');
+    if (
+      outcome !== 'busy' &&
+      !outcome.ok &&
+      outcome.error instanceof RestoreError &&
+      (outcome.error.code === 'undo_incomplete' || outcome.error.code === 'services_not_started')
+    ) {
+      this.afterBrokenRestore(outcome.error);
+      return outcome;
+    }
     this.deps.ui.loadUrl(this.appUrl);
     return outcome;
   }
