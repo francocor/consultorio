@@ -101,6 +101,7 @@ let harness: Harness;
 let folders: string[] = [];
 let controllers: Controller[] = [];
 let migrateFails = false;
+let stopFails = false;
 let confirmAnswer = true;
 /** The Windows account can no longer read what it encrypted (another user, a reinstalled Windows). */
 let cipherBroken = false;
@@ -298,6 +299,7 @@ function build(
     },
     stop: () => {
       events.push('pg stop');
+      if (stopFails) return Promise.reject(new Error('the database would not stop'));
       port = null;
       return Promise.resolve();
     },
@@ -519,6 +521,7 @@ beforeEach(() => {
   folders = [];
   controllers = [];
   migrateFails = false;
+  stopFails = false;
   confirmAnswer = true;
   cipherBroken = false;
   listCode = 0;
@@ -1545,6 +1548,60 @@ describe('when something fails at the start', () => {
 
     expect(harness.controller.phase).toBe('setup');
     expect(harness.events.filter((event) => event === 'migrate').length).toBeGreaterThanOrEqual(2);
+  });
+
+  it('still shows the dialog and starts again when stopping what was running fails on a retry', async () => {
+    migrateFails = true;
+    stopFails = true;
+    chooseAnswers = [0];
+    whileDialogOpen = () => {
+      migrateFails = false;
+    };
+
+    await harness.controller.start();
+
+    // The failure to stop is logged and does not leave the splash with nobody to ask.
+    expect(harness.controller.phase).toBe('setup');
+    const log = readFileSync(join(harness.paths.logs, 'shell.log'), 'utf8');
+    expect(log).toContain('could not stop');
+  });
+
+  it('still asks, after three failures in a row, whether to start over and restore a copy, whatever the cause', async () => {
+    migrateFails = true;
+    chooseAnswers = [0, 0, 3];
+
+    await harness.controller.start();
+
+    const dialogs = harness.uiCalls.filter((call) => call[0] === 'choose').map((call) => call[2]);
+    expect(dialogs).toHaveLength(3);
+    expect(dialogs[0]).toEqual(['Reintentar', 'Ver registros', 'Salir']);
+    expect(dialogs[1]).toEqual(['Reintentar', 'Ver registros', 'Salir']);
+    expect(dialogs[2]).toEqual([
+      'Reintentar',
+      'Ver registros',
+      'Empezar de nuevo y restaurar una copia',
+      'Salir',
+    ]);
+  });
+
+  it('counts the failures again from zero after a start that works', async () => {
+    migrateFails = true;
+    chooseAnswers = [0, 0];
+    let opened = 0;
+    whileDialogOpen = () => {
+      opened += 1;
+      if (opened === 2) migrateFails = false;
+    };
+    await harness.controller.start();
+    expect(harness.controller.phase).toBe('setup');
+
+    migrateFails = true;
+    chooseAnswers = [2];
+    harness.uiCalls.length = 0;
+    await harness.controller.start();
+
+    const dialogs = harness.uiCalls.filter((call) => call[0] === 'choose').map((call) => call[2]);
+    expect(dialogs[0]).toEqual(['Reintentar', 'Ver registros', 'Salir']);
   });
 
   it('tells the user what to do when the installation is incomplete', async () => {

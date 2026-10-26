@@ -119,7 +119,7 @@ export const TEXT = {
     confirmMessage:
       'Consulvia va a apartar los datos actuales y empezar con una instalación vacía, para que usted restaure una copia de seguridad.',
     confirmDetail: (stamp: string) =>
-      `Nada se borra: la configuración, la base de datos y los documentos actuales se mueven a carpetas con el sufijo "aside-${stamp}" dentro de la carpeta de datos de Consulvia. Va a necesitar el archivo de la copia y la clave de recuperación de aquella instalación.`,
+      `Nada se borra: la configuración, la base de datos y los documentos actuales se mueven a carpetas con el sufijo "aside-${stamp}" dentro de la carpeta de datos de Consulvia. Va a necesitar el archivo de la copia y la clave de recuperación de aquella instalación. Esas carpetas conservan los datos de los pacientes sin cifrar en esta computadora: bórrelas cuando haya comprobado que la copia restaurada está completa.`,
     confirmButton: 'Apartar y empezar de nuevo',
     cancelButton: 'Cancelar',
     failed:

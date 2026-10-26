@@ -203,6 +203,8 @@ function describeError(error: unknown): { message: string; detail: string } {
  * password and the quit. It owns the database server, the API, the worker and the local server, and it
  * talks to the user only through `ShellUi`.
  */
+const REPEATED_FAILURES = 3;
+
 export class Controller {
   private loaded: InstallConfig | null = null;
   private clusterOrNull: PostgresCluster | null = null;
@@ -210,6 +212,8 @@ export class Controller {
   private apiPort: number | null = null;
   /** The secret of this run, known to the local server and the API only; null while the API is down. */
   private proxySecret: string | null = null;
+  /** Starts that failed one after the other: a start that works resets it. */
+  private failures = 0;
   /**
    * The recovery key between the setup that made it and the owner's confirmation. Memory only: it is never written
    * to this PC, and a restart forgets it (the owner then confirms by typing the key from their paper copy).
@@ -323,8 +327,13 @@ export class Controller {
 
   /** Starts the install. Never rejects: a failure is shown to the user and leaves the controller in `error`. */
   start(): Promise<void> {
-    this.bootRun = this.boot();
-    return this.bootRun.catch((error: unknown) => this.fail(error));
+    this.bootRun = this.boot().then(() => {
+      this.failures = 0;
+    });
+    return this.bootRun.catch((error: unknown) => {
+      this.failures += 1;
+      return this.fail(error);
+    });
   }
 
   private async fail(error: unknown): Promise<void> {
@@ -333,7 +342,9 @@ export class Controller {
     this.log(`startup failed: ${detail}`);
     this.setPhase('error');
     this.deps.ui.showSplash(message, false);
-    const deadEnd = isDeadEnd(error);
+    // Whatever the cause, a start that failed three times in a row offers the way out too: waiting for the
+    // fourth try is no help to a person whose database or documents will not open.
+    const deadEnd = isDeadEnd(error) || this.failures >= REPEATED_FAILURES;
     const buttons = deadEnd
       ? [TEXT.errors.retry, TEXT.errors.logs, TEXT.errors.startOver, TEXT.errors.quit]
       : [TEXT.errors.retry, TEXT.errors.logs, TEXT.errors.quit];
@@ -348,7 +359,7 @@ export class Controller {
       await this.deps.ui.openPath(this.deps.paths.logs);
       await this.fail(error);
     } else if (choice === 0) {
-      await this.stopEverything();
+      await this.stopQuietly();
       await this.start();
     } else if (deadEnd && choice === 2) {
       if (!(await this.startOver())) await this.fail(error);
@@ -373,7 +384,7 @@ export class Controller {
       cancel: TEXT.startOver.cancelButton,
     });
     if (!confirmed || this.isQuitting()) return false;
-    await this.stopEverything();
+    await this.stopQuietly();
     const { configFile, pgdata, files } = this.deps.paths;
     const moved: [string, string][] = [];
     try {
@@ -399,6 +410,7 @@ export class Controller {
     this.clusterOrNull = null;
     this.server = null;
     this.offerRestoreAfterBoot = true;
+    this.failures = 0;
     await this.start();
     return true;
   }
@@ -1744,6 +1756,21 @@ export class Controller {
   }
 
   // ---- quit -------------------------------------------------------------------------------------
+
+  /**
+   * Stops what runs before a retry or a start over. A failure here is logged and does not stop the dialog that
+   * follows: the person asked for a way out, and a service that will not stop is a reason for one, not for
+   * leaving the splash with nothing to click.
+   */
+  private async stopQuietly(): Promise<void> {
+    try {
+      await this.stopEverything();
+    } catch (error) {
+      this.log(
+        `could not stop everything before starting again: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+  }
 
   private async stopEverything(): Promise<void> {
     await this.stopServices();
