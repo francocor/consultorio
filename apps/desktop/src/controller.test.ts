@@ -108,6 +108,8 @@ let confirmAnswer = true;
 let cipherBroken = false;
 /** The exit code of `pg_restore --list`, the check of a backup after it is written. */
 let listCode = 0;
+/** While set, a pg_dump does not end: a backup is in progress. */
+let dumpGate: Promise<void> | null = null;
 /** pg_restore ends with this code when it restores (not when it lists), and dropping a database fails. */
 let restoreCode = 0;
 let dropFails = false;
@@ -369,7 +371,10 @@ function build(
       dumpCalls.push({ args, env });
       const stdout = new PassThrough();
       stdout.end('PGDMP-fake');
-      return { stdout, finished: Promise.resolve({ code: 0, stderr: '' }) };
+      return {
+        stdout,
+        finished: (dumpGate ?? Promise.resolve()).then(() => ({ code: 0, stderr: '' })),
+      };
     },
     restore: async (_file, args, env, source) => {
       if (args.includes('--list')) {
@@ -573,6 +578,7 @@ beforeEach(() => {
   confirmAnswer = true;
   cipherBroken = false;
   listCode = 0;
+  dumpGate = null;
   restoreCode = 0;
   dropFails = false;
   databaseAlive = true;
@@ -2112,6 +2118,65 @@ describe('when something fails at the start', () => {
     const splash = harness.uiCalls.filter((call) => call[0] === 'splash').at(-1);
     expect(splash?.[1]).toContain('Vuelva a instalar');
     expect(harness.events).toEqual([]);
+  });
+});
+
+describe('when another operation is running', () => {
+  async function ready(): Promise<void> {
+    await harness.controller.start();
+    await completeSetup(setupUrl() ?? '');
+    await waitFor(() => {
+      expect(harness.config().settings.lastDailyBackup).toBe('2026-10-24');
+    });
+  }
+
+  it('says that the program is busy, instead of doing nothing, to a backup, a restore and a key page asked meanwhile', async () => {
+    await ready();
+    let release: () => void = () => undefined;
+    dumpGate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const running = harness.controller.backupNow();
+    await vi.waitFor(() => {
+      expect(harness.dumps).toBeGreaterThan(1);
+    });
+    harness.uiCalls.length = 0;
+
+    const second = await harness.controller.backupNow();
+    const restored = await harness.controller.restoreFlow(join(harness.folder, 'any.cvb'));
+
+    expect(second).toBeNull();
+    expect(restored).toBe(false);
+    const messages = harness.uiCalls.filter((call) => call[0] === 'message');
+    expect(messages).toHaveLength(2);
+    for (const message of messages) expect(String(message[3])).toContain('otra operación en curso');
+    expect(harness.uiCalls.some((call) => call[0] === 'openAuxWindow')).toBe(false);
+    release();
+    await running;
+  });
+
+  it('lets the backups it is checking give way: it stops at the next file when a person asks for something', async () => {
+    await ready();
+    // Two backups that the ledger does not know.
+    const backups = readdirSync(harness.paths.backups).filter((name) => name.endsWith('.cvb'));
+    expect(backups.length).toBeGreaterThan(0);
+    rmSync(join(harness.paths.backups, 'registro-de-copias.json'));
+    let release: () => void = () => undefined;
+    dumpGate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const running = harness.controller.backupNow();
+    await vi.waitFor(() => {
+      expect(harness.dumps).toBeGreaterThan(1);
+    });
+    const listed = harness.lists.length;
+
+    await (harness.controller as unknown as { adoptUnledgered(): Promise<void> }).adoptUnledgered();
+
+    // The person's backup was running: the check of the old ones did not take its place, and did not read anything.
+    expect(harness.lists.length).toBe(listed);
+    release();
+    await running;
   });
 });
 

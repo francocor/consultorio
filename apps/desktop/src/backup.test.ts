@@ -27,6 +27,7 @@ import {
 } from './backup-testing.js';
 import {
   adoptUnledgeredBackups,
+  unledgeredBackups,
   backupFileName,
   BackupError,
   createBackup,
@@ -355,6 +356,42 @@ describe('backups that are in the folder but not in the ledger', () => {
 
     expect(result.adopted).toEqual([]);
     expect(result.skipped).toEqual(names);
+  });
+
+  it('remember the file they rejected, and do not read it again while it is the same file', async () => {
+    const names = await makeSome(2);
+    rmSync(join(paths.backups, LEDGER_NAME));
+    const damaged = join(paths.backups, names[1] ?? '');
+    const bytes = readFileSync(damaged);
+    bytes[bytes.length - 40] = (bytes[bytes.length - 40] ?? 0) ^ 0x80;
+    writeFileSync(damaged, bytes);
+    await adoptUnledgeredBackups(deps());
+    let listed = 0;
+    const counting = testBackupDeps(install, paths, {
+      listDump: (source) => {
+        listed += 1;
+        return fakeList()(source);
+      },
+    });
+
+    const again = await adoptUnledgeredBackups(counting);
+
+    expect(again).toEqual({ adopted: [], rejected: [], skipped: [] });
+    expect(listed).toBe(0);
+    expect(await unledgeredBackups(paths.backups)).toEqual([]);
+
+    // A different file under the same name (it was copied over, or finished copying) is looked at again.
+    writeFileSync(damaged, Buffer.concat([bytes, Buffer.from('more')]));
+    expect(await unledgeredBackups(paths.backups)).toEqual([names[1]]);
+  });
+
+  it('remember a backup of another install the same way: it is not theirs to vouch for, and need not be opened at every start', async () => {
+    await makeSome(1);
+    rmSync(join(paths.backups, LEDGER_NAME));
+    const other = newTestInstall();
+    await adoptUnledgeredBackups(testBackupDeps(other, paths));
+
+    expect(await unledgeredBackups(paths.backups)).toEqual([]);
   });
 
   it('look at the newest first and at no more than it was asked, so a start is never held up by a shelf of old copies', async () => {

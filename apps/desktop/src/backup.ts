@@ -12,7 +12,14 @@ import {
   type BackupKind,
   type KeyWrap,
 } from './backup-crypto.js';
-import { forgetBackups, readLedger, recordVerified, sha256OfFile } from './backup-ledger.js';
+import {
+  forgetBackups,
+  readLedger,
+  readRejected,
+  recordVerified,
+  rememberRejected,
+  sha256OfFile,
+} from './backup-ledger.js';
 import { DiskFullError, ensureRoom, isDiskFull } from './disk.js';
 import { isBackupFile, listFiles, sizeOf } from './files.js';
 import type { DataPaths } from './paths.js';
@@ -287,10 +294,12 @@ export async function unledgeredBackups(directory: string): Promise<string[]> {
     `^consulvia-(?:${Object.values(KIND_NAMES).join('|')})-\\d{4}-\\d{2}-\\d{2}_\\d{4}\\${BACKUP_EXTENSION}$`,
   );
   const ledger = await readLedger(directory);
+  const rejected = await readRejected(directory);
   const pending: string[] = [];
   for (const name of names.filter((candidate) => pattern.test(candidate))) {
+    const size = await sizeOf(join(directory, name));
     const entry = ledger[name];
-    if (!entry || entry.bytes !== (await sizeOf(join(directory, name)))) pending.push(name);
+    if ((!entry || entry.bytes !== size) && rejected[name] !== size) pending.push(name);
   }
   return pending.sort((left, right) => stampOf(right).localeCompare(stampOf(left)));
 }
@@ -324,6 +333,7 @@ export async function adoptUnledgeredBackups(
       const { header } = await readArchiveHeader(path);
       if (header.keyId !== ownKeyId) {
         result.skipped.push(name);
+        await rememberRejected(directory, name, await sizeOf(path)).catch(() => undefined);
         continue;
       }
       const verified = await verifyBackupFile(deps, path);
@@ -336,6 +346,9 @@ export async function adoptUnledgeredBackups(
       deps.log?.(`a backup that was not in the ledger passed its check and was entered: ${name}`);
     } catch (error) {
       result.rejected.push(name);
+      await rememberRejected(directory, name, await sizeOf(path).catch(() => -1)).catch(
+        () => undefined,
+      );
       deps.log?.(
         `a backup that is not in the ledger did not pass its check and was left alone: ${name}: ${error instanceof Error ? error.message : String(error)}`,
       );

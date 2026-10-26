@@ -47,19 +47,23 @@ function inTurn<T>(work: () => Promise<T>): Promise<T> {
   return next;
 }
 
+async function writeJsonDurably(path: string, value: unknown): Promise<void> {
+  const handle = await open(path, 'w');
+  try {
+    await handle.writeFile(`${JSON.stringify(value, null, 2)}\n`);
+    await handle.sync();
+  } finally {
+    await handle.close();
+  }
+}
+
 /** Written to a temporary file, forced to the disk, and renamed: a power cut leaves the old ledger or the new one. */
 async function writeLedger(directory: string, files: Ledger): Promise<void> {
   await mkdir(directory, { recursive: true });
   const target = join(directory, LEDGER_NAME);
   const temporary = `${target}.tmp`;
   try {
-    const handle = await open(temporary, 'w');
-    try {
-      await handle.writeFile(`${JSON.stringify({ version: 1, files }, null, 2)}\n`);
-      await handle.sync();
-    } finally {
-      await handle.close();
-    }
+    await writeJsonDurably(temporary, { version: 1, files });
     await renameWithRetry(temporary, target);
   } catch (error) {
     await rm(temporary, { force: true });
@@ -92,6 +96,51 @@ export async function forgetBackups(directory: string, names: readonly string[])
       }
     }
     if (changed) await writeLedger(directory, files);
+  });
+}
+
+/**
+ * Backups that were looked at and not entered in the ledger (they do not authenticate, or were made with another
+ * key), with the size they had: a file is not read again at every start while it is the same file. The ledger says
+ * what is vouched for; this says what is not worth opening again.
+ */
+export const REJECTED_NAME = 'registro-de-copias-rechazadas.json';
+
+export async function readRejected(directory: string): Promise<Record<string, number>> {
+  try {
+    const parsed = JSON.parse(await readFile(join(directory, REJECTED_NAME), 'utf8')) as {
+      files?: unknown;
+    };
+    const files = parsed.files;
+    if (typeof files !== 'object' || files === null || Array.isArray(files)) return {};
+    return Object.fromEntries(
+      Object.entries(files).filter(
+        (entry): entry is [string, number] => typeof entry[1] === 'number',
+      ),
+    );
+  } catch {
+    return {};
+  }
+}
+
+export async function rememberRejected(
+  directory: string,
+  name: string,
+  bytes: number,
+): Promise<void> {
+  await inTurn(async () => {
+    const files = await readRejected(directory);
+    files[name] = bytes;
+    await mkdir(directory, { recursive: true });
+    const target = join(directory, REJECTED_NAME);
+    const temporary = `${target}.tmp`;
+    try {
+      await writeJsonDurably(temporary, { version: 1, files });
+      await renameWithRetry(temporary, target);
+    } catch (error) {
+      await rm(temporary, { force: true });
+      throw error;
+    }
   });
 }
 

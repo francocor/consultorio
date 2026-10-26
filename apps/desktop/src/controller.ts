@@ -1365,7 +1365,10 @@ export class Controller {
         return { error };
       }
     });
-    if (outcome === 'busy') return null;
+    if (outcome === 'busy') {
+      await this.deps.ui.message('info', TEXT.busy.title, TEXT.busy.body);
+      return null;
+    }
     if ('error' in outcome) {
       await this.deps.ui.message(
         'error',
@@ -1437,11 +1440,20 @@ export class Controller {
       if (this.currentPhase !== 'ready') return;
       // Nothing to look at is the usual case, and it must not hold the backups up even for a moment.
       if ((await unledgeredBackups(this.deps.paths.backups)).length === 0) return;
-      const result = await this.exclusive(() => adoptUnledgeredBackups(this.backupDeps()));
-      if (result !== 'busy' && result.adopted.length > 0) {
-        this.log(
-          `${String(result.adopted.length)} backups found outside the ledger were checked and entered`,
+      // One file at a time, each as an operation of its own: a backup or a restore that a person asks for in
+      // between is not kept waiting for the rest, and the old copies give way to it (the check is repeated at the
+      // next start).
+      let adopted = 0;
+      for (let looked = 0; looked < 5; looked += 1) {
+        const result = await this.exclusive(() =>
+          adoptUnledgeredBackups(this.backupDeps(), { max: 1 }),
         );
+        if (result === 'busy') break;
+        adopted += result.adopted.length;
+        if (result.adopted.length + result.rejected.length + result.skipped.length === 0) break;
+      }
+      if (adopted > 0) {
+        this.log(`${String(adopted)} backups found outside the ledger were checked and entered`);
       }
     } catch (error) {
       this.log(
@@ -1632,6 +1644,10 @@ export class Controller {
       await this.deps.ui.message('error', TEXT.restore.failed, TEXT.restore.journalPending);
       return false;
     }
+    if (this.busy) {
+      await this.deps.ui.message('info', TEXT.busy.title, TEXT.busy.body);
+      return false;
+    }
     // On a new install that is still waiting for its setup the restore takes the place of the setup.
     if (this.currentPhase !== 'ready' && this.currentPhase !== 'setup') {
       await this.deps.ui.message('info', TEXT.restore.failed, TEXT.backup.notReady);
@@ -1675,7 +1691,10 @@ export class Controller {
     }
     // A new install: nothing to lose, and only a backup of another install needs its key.
     const outcome = await this.runRestore(archive);
-    if (outcome === 'busy') return false;
+    if (outcome === 'busy') {
+      await this.deps.ui.message('info', TEXT.busy.title, TEXT.busy.body);
+      return false;
+    }
     if (outcome.ok) return this.finishRestore();
     if (outcome.needsKey) {
       this.askForRestoreKeys({ archive, needsCurrent: false, needsBackup: true });
@@ -1975,7 +1994,7 @@ export class Controller {
           ...(needsCurrent ? { current: keys.current } : {}),
           ...(pending.needsBackup ? { backup: keys.backup } : {}),
         });
-        if (outcome === 'busy') return { ok: false, message: TEXT.restore.generic };
+        if (outcome === 'busy') return { ok: false, message: TEXT.busy.body };
         if (outcome.ok) {
           this.pendingRestore = null;
           this.vault.revoke(PURPOSE.key);
