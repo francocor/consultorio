@@ -1752,7 +1752,8 @@ export class Controller {
           this.pendingRestore = null;
           this.vault.revoke(PURPOSE.key);
           this.deps.ui.closeAuxWindow();
-          await this.finishRestore();
+          // The notice waits for a click of the owner: the page that asked for the keys is not held up by it.
+          void this.finishRestore();
           return { ok: true };
         }
         if (outcome.needsKey)

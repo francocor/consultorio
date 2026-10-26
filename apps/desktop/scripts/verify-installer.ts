@@ -15,7 +15,7 @@ import { basename, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { createArchiveWriter, readArchiveHeader } from '../src/backup-archive.js';
-import { newBackupKey, wrapBackupKey } from '../src/backup-crypto.js';
+import { keyIdOf, newBackupKey, wrapBackupKey } from '../src/backup-crypto.js';
 
 /* eslint-disable @typescript-eslint/no-unnecessary-type-parameters -- `json<T>()` is a typed view of a JSON answer, checked by the assertions that follow. */
 
@@ -93,7 +93,14 @@ interface Reply {
 
 class Client {
   private readonly cookies = new Map<string, string>();
-  constructor(readonly base: URL) {}
+  /**
+   * `proof` gives the proof of the window that the program wrote in its log (it changes at every start): the
+   * local server serves `/api` to nothing that does not carry it, and this client plays the window.
+   */
+  constructor(
+    readonly base: URL,
+    private readonly proof: () => string | undefined = () => undefined,
+  ) {}
 
   call(
     method: string,
@@ -103,8 +110,11 @@ class Client {
       body?: Buffer;
       headers?: Record<string, string>;
       token?: string;
+      /** Leaves out the proof, like a program of the PC that is not the window. */
+      withoutProof?: boolean;
     } = {},
   ): Promise<Reply> {
+    const proof = options.withoutProof === true ? undefined : this.proof();
     const payload =
       options.body ??
       (options.json === undefined ? undefined : Buffer.from(JSON.stringify(options.json)));
@@ -114,6 +124,7 @@ class Client {
       ...(payload && options.json !== undefined ? { 'content-type': 'application/json' } : {}),
       ...(payload ? { 'content-length': String(payload.length) } : {}),
       ...(options.token ? { 'x-consulvia-token': options.token } : {}),
+      ...(proof ? { 'x-consulvia-window': proof } : {}),
       ...options.headers,
     };
     if (this.cookies.size > 0) {
@@ -211,6 +222,29 @@ function leftovers(session: Session): { pid: number; name: string }[] {
       // The PowerShell that asks is not part of the program.
       .filter((entry) => entry.name.toLowerCase() !== 'powershell.exe')
   );
+}
+
+/** The files under `folder` (not the database, which is large and holds no such thing) that contain any of `needles`. */
+function filesMentioning(folder: string, needles: string[]): string[] {
+  const found: string[] = [];
+  const visit = (current: string) => {
+    for (const entry of readdirSync(current, { withFileTypes: true })) {
+      const path = join(current, entry.name);
+      if (entry.isDirectory()) {
+        if (entry.name !== 'pgdata') visit(path);
+      } else if (entry.isFile()) {
+        let bytes: Buffer;
+        try {
+          bytes = readFileSync(path);
+        } catch {
+          continue;
+        }
+        if (needles.some((needle) => bytes.includes(Buffer.from(needle)))) found.push(path);
+      }
+    }
+  };
+  visit(folder);
+  return found;
 }
 
 // ---- TOTP, to enroll a second factor like a phone would ---------------------------------------
@@ -414,6 +448,36 @@ async function main(): Promise<void> {
   let ackToken = '';
   /** The password of the owner now: the reset changes it. */
   let currentPassword = OWNER.password;
+  /** The proof of the window that the running program wrote in its log: new at every start. */
+  const proofOf = () => lastMatch(logText(session), /window proof: (\S+)/);
+  /** How many times the program has written the address of the page that asks for the keys of a restore. */
+  const keyPages = () => logText(session).split('restore keys url:').length - 1;
+  /**
+   * Asks the running program to restore `file`, like the tray does, and returns the one-time token of the page that
+   * asks for the recovery key(s). Nothing is restored until the keys are sent.
+   */
+  const startRestore = async (file: string): Promise<string> => {
+    const before = keyPages();
+    await exited(launch(session, [`--restore=${file}`]));
+    const url = await until(
+      'the address of the page that asks for the keys',
+      () =>
+        keyPages() > before ? lastMatch(logText(session), /restore keys url: (\S+)/) : undefined,
+      180_000,
+    );
+    return new URL(url).searchParams.get('t') ?? '';
+  };
+  const sendKeys = (token: string, keys: Record<string, string>) =>
+    new Client(base, proofOf).call('POST', '/__key', { token, json: keys });
+  const patientCount = async (): Promise<number> => {
+    const client = new Client(base, proofOf);
+    const login = await client.call('POST', '/api/auth/login', {
+      json: { email: OWNER.ownerEmail, password: currentPassword },
+    });
+    assert(login.status === 200, `login answered ${String(login.status)}`);
+    return (await client.call('GET', '/api/patients')).json<{ patients: unknown[] }>().patients
+      .length;
+  };
   const upgradeTo = process.argv
     .find((argument) => argument.startsWith('--upgrade-to='))
     ?.slice('--upgrade-to='.length);
@@ -462,7 +526,7 @@ async function main(): Promise<void> {
         );
         const parsed = new URL(url);
         base = new URL(parsed.origin);
-        web = new Client(base);
+        web = new Client(base, proofOf);
         return `bootstrap done; ${base.origin}`;
       },
     );
@@ -537,6 +601,9 @@ async function main(): Promise<void> {
     await check(
       'the recovery key is confirmed with its last four characters (and the token works once)',
       async () => {
+        // The key was shown once, in the answer to the setup. No page shows it again, with any token.
+        const page = await web.call('GET', `/__ack?t=${ackToken}`);
+        assert(page.status === 404, `a page for the recovery key answered ${String(page.status)}`);
         const wrong = await web.call('POST', '/__ack', {
           token: ackToken,
           json: { recoveryKeyLast4: 'ZZZZ' },
@@ -565,6 +632,22 @@ async function main(): Promise<void> {
       },
     );
 
+    await check(
+      'the recovery key is never shown again and is written nowhere on this PC (no log, no file, no page)',
+      () => {
+        const found = filesMentioning(session.dataDir, [
+          recoveryKey,
+          recoveryKey.replaceAll('-', ''),
+        ]);
+        assert(found.length === 0, `the recovery key is written in: ${found.join(', ')}`);
+        const config = JSON.parse(readFileSync(join(session.dataDir, 'config.json'), 'utf8')) as {
+          public: { recoveryAcknowledged: boolean };
+        };
+        assert(config.public.recoveryAcknowledged, 'the key is not marked as confirmed');
+        return 'no file under the data folder holds the key; it was in the answer to the setup only';
+      },
+    );
+
     await check('GET /api/health through the local server answers 200', async () => {
       const reply = await web.call('GET', '/api/health');
       assert(reply.status === 200, `health answered ${String(reply.status)}`);
@@ -572,6 +655,43 @@ async function main(): Promise<void> {
       assert(ready.status === 200, `ready answered ${String(ready.status)}`);
       return reply.text();
     });
+
+    await check(
+      'a request to 127.0.0.1:<port>/api/... without the proof of the window is refused (403) and never reaches the API',
+      async () => {
+        for (const [method, path] of [
+          ['GET', '/api/health'],
+          ['GET', '/api/patients'],
+          ['POST', '/api/auth/login'],
+        ] as const) {
+          const reply = await web.call(method, path, {
+            withoutProof: true,
+            ...(method === 'POST' ? { json: {} } : {}),
+          });
+          assert(
+            reply.status === 403,
+            `${method} ${path} without the proof answered ${String(reply.status)}`,
+          );
+        }
+        const forged = await web.call('GET', '/api/health', {
+          withoutProof: true,
+          headers: { 'x-consulvia-window': 'a-guess-at-the-proof' },
+        });
+        assert(forged.status === 403, `a wrong proof answered ${String(forged.status)}`);
+        // A page of the shell that is not the API still needs its token, and the bundle is public.
+        assert((await web.call('GET', '/', { withoutProof: true })).status === 200, 'bundle');
+        assert(
+          (await web.call('GET', '/manifest.webmanifest', { withoutProof: true })).status === 200,
+          'the public manifest should not need the proof',
+        );
+        const log = logText(session);
+        assert(
+          log.includes('a request to the API without the proof of the window was refused'),
+          'the refusal is not in the log',
+        );
+        return '403 for the API without the proof, with a wrong one; the bundle and the public routes stay open';
+      },
+    );
 
     await check(
       'the web app is served with its Content Security Policy and the service worker is not cached',
@@ -869,7 +989,7 @@ async function main(): Promise<void> {
           },
           600_000,
         );
-        const after = new Client(base);
+        const after = new Client(base, proofOf);
         const login = await after.call('POST', '/api/auth/login', {
           json: { email: OWNER.ownerEmail, password: currentPassword },
         });
@@ -906,7 +1026,10 @@ async function main(): Promise<void> {
         const tampered = join(session.root, 'alterada.cvb');
         writeFileSync(tampered, bytes);
         let seen = refusals();
-        await exited(launch(session, [`--restore=${tampered}`]));
+        const tamperedAnswer = await sendKeys(await startRestore(tampered), {
+          currentKey: recoveryKey,
+        });
+        assert(tamperedAnswer.status === 422, 'a changed backup was not refused by the page');
         await until(
           'the refusal of the changed backup',
           () => (refusals() > seen ? true : undefined),
@@ -931,7 +1054,10 @@ async function main(): Promise<void> {
         await writer.addBuffer('manifest.json', '{}');
         await writer.finish();
         seen = refusals();
-        await exited(launch(session, [`--restore=${planted}`]));
+        const plantedAnswer = await sendKeys(await startRestore(planted), {
+          currentKey: recoveryKey,
+        });
+        assert(plantedAnswer.status === 422, 'a planted backup was not refused by the page');
         await until(
           'the refusal of the planted backup',
           () => (refusals() > seen ? true : undefined),
@@ -943,7 +1069,7 @@ async function main(): Promise<void> {
         );
 
         // Nothing was touched: the same two patients and the same document.
-        const check = new Client(base);
+        const check = new Client(base, proofOf);
         const login = await check.call('POST', '/api/auth/login', {
           json: { email: OWNER.ownerEmail, password: currentPassword },
         });
@@ -958,12 +1084,132 @@ async function main(): Promise<void> {
     );
 
     await check(
+      'a restore needs the recovery key of THIS install, even for its own backup: without it, or with a wrong one, nothing happens',
+      async () => {
+        const token = await startRestore(backupPath);
+        const page = await new Client(base, proofOf).call('GET', `/__key?t=${token}`);
+        assert(page.status === 200, `the keys page answered ${String(page.status)}`);
+        assert(
+          page.text().includes('name="currentKey"'),
+          'the page does not ask for the current key',
+        );
+        assert(
+          !page.text().includes('name="recoveryKey"'),
+          'the page asks for the key of a backup that is this install’s own',
+        );
+        const before = await patientCount();
+        const safetyBackups = () => logText(session).split('safety backup before restoring').length;
+        const safetyBefore = safetyBackups();
+        const none = await sendKeys(token, {});
+        assert(none.status === 422, `no key answered ${String(none.status)}`);
+        const wrong = await sendKeys(token, { currentKey: 'AAAAA-BBBBB-CCCCC-DDDDD-EEEEE-FFFFF' });
+        assert(wrong.status === 422, `a wrong key answered ${String(wrong.status)}`);
+        // The key of another install is not this one's either.
+        const theirs = await sendKeys(token, { currentKey: newBackupKey().toString('hex') });
+        assert(theirs.status === 422, `another key answered ${String(theirs.status)}`);
+        assert(safetyBackups() === safetyBefore, 'a restore started without the key');
+        assert((await patientCount()) === before, 'the data changed without the key');
+        // The page gives up after five wrong answers: the address stops working.
+        for (let attempt = 0; attempt < 3; attempt += 1) {
+          await sendKeys(token, { currentKey: 'AAAAA-BBBBB-CCCCC-DDDDD-EEEEE-FFFFF' });
+        }
+        const closed = await sendKeys(token, { currentKey: recoveryKey });
+        assert(
+          closed.status === 404,
+          `after five misses the address answered ${String(closed.status)}`,
+        );
+        return 'no key, a wrong key and another key were refused; five misses close the page; the data is as it was';
+      },
+    );
+
+    await check(
+      'a backup of ANOTHER install needs both keys: this install’s and the backup’s',
+      async () => {
+        const foreignKey = newBackupKey();
+        const foreignRecovery = 'GGGGG-HHHHH-JJJJJ-KKKKK-LLLLL-MMMMM';
+        const { header } = await readArchiveHeader(backupPath);
+        const foreign = join(session.root, 'ajena.cvb');
+        const writer = createArchiveWriter(foreign, foreignKey, {
+          ...header,
+          keyId: keyIdOf(foreignKey),
+          fileSalt: randomBytes(32).toString('base64'),
+          wrap: wrapBackupKey(foreignKey, foreignRecovery),
+        });
+        // A file that authenticates but whose dump cannot be restored: the keys are all this check is about.
+        await writer.addBuffer('db.dump', 'PGDMP-not-a-dump');
+        await writer.addBuffer(
+          'secrets.json',
+          JSON.stringify({
+            slug: 'consultorio',
+            kmsLocalKekBase64: 'x',
+            addressHashPepper: 'x',
+            storageUploadSecret: 'x',
+            recoveryKeyHash: 'x',
+          }),
+        );
+        await writer.addBuffer('manifest.json', '{}');
+        await writer.finish();
+
+        const token = await startRestore(foreign);
+        const page = await new Client(base, proofOf).call('GET', `/__key?t=${token}`);
+        assert(
+          page.text().includes('name="currentKey"') && page.text().includes('name="recoveryKey"'),
+          'the page does not ask for both keys',
+        );
+        const before = await patientCount();
+        const onlyMine = await sendKeys(token, { currentKey: recoveryKey });
+        assert(onlyMine.status === 422, `only this key answered ${String(onlyMine.status)}`);
+        const onlyTheirs = await sendKeys(token, { recoveryKey: foreignRecovery });
+        assert(
+          onlyTheirs.status === 422,
+          `only the backup key answered ${String(onlyTheirs.status)}`,
+        );
+        const wrongTheirs = await sendKeys(token, {
+          currentKey: recoveryKey,
+          recoveryKey: 'AAAAA-BBBBB-CCCCC-DDDDD-EEEEE-FFFFF',
+        });
+        assert(
+          wrongTheirs.status === 422,
+          `a wrong backup key answered ${String(wrongTheirs.status)}`,
+        );
+        const seen = logText(session).split('restore failed:').length - 1;
+        // Both right: the keys pass, and the restore itself then fails because the file holds no real dump.
+        const both = await sendKeys(token, {
+          currentKey: recoveryKey,
+          recoveryKey: foreignRecovery,
+        });
+        assert(both.status === 422, `both keys answered ${String(both.status)}: ${both.text()}`);
+        await until(
+          'the restore of the file with no dump to fail',
+          () => (logText(session).split('restore failed:').length - 1 > seen ? true : undefined),
+          300_000,
+        );
+        assert(
+          !/restore failed: (wrong_recovery_key|recovery_key_required)/.test(
+            logText(session)
+              .split('restore failed:')
+              .slice(seen + 1)
+              .join('restore failed:'),
+          ),
+          'with both keys right the restore still asked for a key',
+        );
+        assert((await patientCount()) === before, 'a failed restore changed the data');
+        return 'one key is not enough; a wrong backup key is refused; with both the restore starts (and the data is as it was when it fails)';
+      },
+    );
+
+    await check(
       'restore the backup (Consulvia.exe --restore=<zip>): the second patient is gone, the first and the PDF remain',
       async () => {
         const count = () => logText(session).split('restore finished').length - 1;
         const before = count();
-        const second = launch(session, [`--restore=${backupPath}`]);
-        await exited(second);
+        const keysAccepted = await sendKeys(await startRestore(backupPath), {
+          currentKey: recoveryKey.toLowerCase(),
+        });
+        assert(
+          keysAccepted.status === 200,
+          `the right key answered ${String(keysAccepted.status)}: ${keysAccepted.text()}`,
+        );
         await until('the restore to finish', () => (count() > before ? true : undefined), 300_000);
         assert(
           readdirSync(session.backupDir).some((name) =>
@@ -971,7 +1217,7 @@ async function main(): Promise<void> {
           ),
           'no safety backup was made before restoring',
         );
-        const after = new Client(base);
+        const after = new Client(base, proofOf);
         await until(
           'the API after the restore',
           async () => ((await after.call('GET', '/api/health')).status === 200 ? true : undefined),
@@ -1024,6 +1270,8 @@ async function main(): Promise<void> {
             filesAside: aside,
             unpacked: unpackedFolder,
             configCopy: null,
+            hadFiles: true,
+            undoing: false,
           }),
         );
         const starts = logText(session).split('api on port').length - 1;
@@ -1041,7 +1289,7 @@ async function main(): Promise<void> {
           logText(session).includes('an interrupted restore was undone'),
           'the log does not say the restore was undone',
         );
-        const after = new Client(base);
+        const after = new Client(base, proofOf);
         const login = await after.call('POST', '/api/auth/login', {
           json: { email: OWNER.ownerEmail, password: currentPassword },
         });
@@ -1051,6 +1299,60 @@ async function main(): Promise<void> {
         assert(download.body.equals(PDF), 'the document is not readable after the recovery');
         web = after;
         return 'journal gone, documents back, the PDF downloads';
+      },
+    );
+
+    await check(
+      'a restore cut off BETWEEN the two renames of the documents (no folder in place, the real ones aside) is undone too',
+      async () => {
+        await exited(launch(session, ['--quit']));
+        if (app) await Promise.race([exited(app), sleep(60_000)]);
+        await until(
+          'every process of the install to end',
+          () => (leftovers(session).length === 0 ? true : undefined),
+          240_000,
+          1_000,
+        );
+        const files = join(session.dataDir, 'files');
+        const aside = `${files}.replaced-2`;
+        renameSync(files, aside);
+        const unpackedFolder = join(session.dataDir, 'tmp-restore-2');
+        mkdirSync(join(unpackedFolder, 'files', 'half'), { recursive: true });
+        const journal = join(session.dataDir, 'restore-journal.json');
+        writeFileSync(
+          journal,
+          JSON.stringify({
+            version: 1,
+            stamp: '2',
+            step: 'files-swapping',
+            filesAside: aside,
+            unpacked: unpackedFolder,
+            configCopy: null,
+            hadFiles: true,
+            undoing: false,
+          }),
+        );
+        const starts = logText(session).split('api on port').length - 1;
+        app = launch(session);
+        await until(
+          'the API after the start',
+          () => (logText(session).split('api on port').length - 1 > starts ? true : undefined),
+          600_000,
+        );
+        assert(!existsSync(journal), 'the journal of the cut-off restore is still there');
+        assert(!existsSync(aside), 'the documents are still aside');
+        assert(existsSync(files), 'the documents did not come back');
+        assert(!existsSync(unpackedFolder), 'the work folder of the restore is still there');
+        const after = new Client(base, proofOf);
+        const login = await after.call('POST', '/api/auth/login', {
+          json: { email: OWNER.ownerEmail, password: currentPassword },
+        });
+        assert(login.status === 200, `login after the recovery answered ${String(login.status)}`);
+        const link = await after.call('POST', `/api/documents/${documentId}/download-link`);
+        const download = await after.call('GET', `/api${link.json<{ url: string }>().url}`);
+        assert(download.body.equals(PDF), 'the document is not readable after the recovery');
+        web = after;
+        return 'documents back from aside, journal gone, the PDF downloads';
       },
     );
 
@@ -1071,7 +1373,7 @@ async function main(): Promise<void> {
           confirm.status === 200,
           `enroll confirm answered ${String(confirm.status)}: ${confirm.text()}`,
         );
-        const asksCode = new Client(base);
+        const asksCode = new Client(base, proofOf);
         const withFactor = await asksCode.call('POST', '/api/auth/login', {
           json: { email: OWNER.ownerEmail, password: OWNER.password },
         });
@@ -1094,7 +1396,7 @@ async function main(): Promise<void> {
           60_000,
         );
         const token = new URL(resetUrl).searchParams.get('t') ?? '';
-        const page = await new Client(base).call('GET', `/__reset?t=${token}`);
+        const page = await new Client(base, proofOf).call('GET', `/__reset?t=${token}`);
         assert(
           page.status === 200 &&
             page.text().includes('Quitar también la verificación en dos pasos'),
@@ -1104,14 +1406,14 @@ async function main(): Promise<void> {
           page.text().includes('name="recoveryKey"'),
           'the reset page does not ask for the recovery key',
         );
-        const weak = await new Client(base).call('POST', '/__reset', {
+        const weak = await new Client(base, proofOf).call('POST', '/__reset', {
           token,
           json: { password: 'corta', passwordConfirmation: 'corta', recoveryKey },
         });
         assert(weak.status === 422, 'a weak password must be refused on the page');
         const newPassword = 'otra frase larga y nueva para entrar';
         // Whoever only has the Windows session cannot take the account over: no key, or a wrong one, is refused.
-        const noKey = await new Client(base).call('POST', '/__reset', {
+        const noKey = await new Client(base, proofOf).call('POST', '/__reset', {
           token,
           json: {
             password: newPassword,
@@ -1120,7 +1422,7 @@ async function main(): Promise<void> {
           },
         });
         assert(noKey.status === 422, `a reset without the key answered ${String(noKey.status)}`);
-        const wrongKey = await new Client(base).call('POST', '/__reset', {
+        const wrongKey = await new Client(base, proofOf).call('POST', '/__reset', {
           token,
           json: {
             password: newPassword,
@@ -1133,11 +1435,11 @@ async function main(): Promise<void> {
           wrongKey.status === 422,
           `a reset with a wrong key answered ${String(wrongKey.status)}`,
         );
-        const stillOld = await new Client(base).call('POST', '/api/auth/login', {
+        const stillOld = await new Client(base, proofOf).call('POST', '/api/auth/login', {
           json: { email: OWNER.ownerEmail, password: currentPassword },
         });
         assert(stillOld.status !== 401, 'a refused reset changed the password');
-        const reset = await new Client(base).call('POST', '/__reset', {
+        const reset = await new Client(base, proofOf).call('POST', '/__reset', {
           token,
           json: {
             password: newPassword,
@@ -1152,16 +1454,16 @@ async function main(): Promise<void> {
           'the second factor was not cleared',
         );
 
-        const second = await new Client(base).call('POST', '/__reset', {
+        const second = await new Client(base, proofOf).call('POST', '/__reset', {
           token,
           json: { password: newPassword, passwordConfirmation: newPassword, recoveryKey },
         });
         assert(second.status === 404, 'the reset address must stop working once it was used');
-        const old = await new Client(base).call('POST', '/api/auth/login', {
+        const old = await new Client(base, proofOf).call('POST', '/api/auth/login', {
           json: { email: OWNER.ownerEmail, password: currentPassword },
         });
         assert(old.status === 401, `the old password must stop working, got ${String(old.status)}`);
-        const fresh = await new Client(base).call('POST', '/api/auth/login', {
+        const fresh = await new Client(base, proofOf).call('POST', '/api/auth/login', {
           json: { email: OWNER.ownerEmail, password: newPassword },
         });
         assert(
@@ -1243,7 +1545,7 @@ async function main(): Promise<void> {
                 : undefined,
             300_000,
           );
-          const after = new Client(base);
+          const after = new Client(base, proofOf);
           await until(
             'the API of the new version',
             async () => {
