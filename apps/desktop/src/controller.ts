@@ -1,4 +1,4 @@
-import { randomBytes } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { mkdir, readdir, readFile, rename, rm } from 'node:fs/promises';
 import { join, sep } from 'node:path';
@@ -1747,6 +1747,26 @@ export class Controller {
     );
   }
 
+  /**
+   * In test mode only: a digest of the roles of the cluster (memberships, parameters, the password of app_owner, the
+   * privileges on the audit trail), so that a script that makes a hostile backup can see that a restore left them as
+   * they were. Never written outside test mode.
+   */
+  private async rolesDigest(): Promise<string | null> {
+    if (!this.deps.testMode) return null;
+    try {
+      const facts = await this.cluster.clusterFacts(DATABASE_NAME);
+      return createHash('sha256').update(JSON.stringify(facts)).digest('hex').slice(0, 16);
+    } catch {
+      return null;
+    }
+  }
+
+  private async logRoles(before: string | null): Promise<void> {
+    if (before === null) return;
+    this.log(`restore roles: before=${before} after=${(await this.rolesDigest()) ?? 'unknown'}`);
+  }
+
   /** Forgets the restore that waits for its keys: its address stops working and its window closes. */
   private clearPendingRestore(): void {
     this.pendingRestore = null;
@@ -1782,6 +1802,7 @@ export class Controller {
     const recoveryKey = keys.backup;
     const outcome = await this.exclusive(async () => {
       this.deps.ui.showSplash(TEXT.splash.restoring);
+      const rolesBefore = await this.rolesDigest();
       try {
         // A new install that is still waiting for its setup has nothing to lose.
         if (this.currentPhase === 'ready') {
@@ -1791,8 +1812,10 @@ export class Controller {
         await restoreBackup(this.restoreDeps(), archive, {
           ...(recoveryKey === undefined ? {} : { recoveryKey }),
         });
+        await this.logRoles(rolesBefore);
         return { ok: true as const };
       } catch (error) {
+        await this.logRoles(rolesBefore);
         if (error instanceof RestoreError && error.code === 'recovery_key_required') {
           return { ok: false as const, needsKey: true };
         }

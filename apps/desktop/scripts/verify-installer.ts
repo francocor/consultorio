@@ -1,5 +1,5 @@
 import { spawn, spawnSync, type ChildProcess } from 'node:child_process';
-import { createHmac, randomBytes } from 'node:crypto';
+import { createHash, createHmac, randomBytes } from 'node:crypto';
 import {
   existsSync,
   mkdirSync,
@@ -15,7 +15,15 @@ import { basename, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { createArchiveWriter, readArchiveHeader } from '../src/backup-archive.js';
-import { keyIdOf, newBackupKey, wrapBackupKey } from '../src/backup-crypto.js';
+import {
+  FORMAT,
+  keyIdOf,
+  newBackupKey,
+  wrapBackupKey,
+  type BackupHeader,
+} from '../src/backup-crypto.js';
+import { craftDump } from '../src/crafted-dump.js';
+import { generateRecoveryKey } from '../src/recovery-key.js';
 
 /* eslint-disable @typescript-eslint/no-unnecessary-type-parameters -- `json<T>()` is a typed view of a JSON answer, checked by the assertions that follow. */
 
@@ -247,6 +255,52 @@ function filesMentioning(folder: string, needles: string[]): string[] {
   return found;
 }
 
+/**
+ * A backup of ANOTHER install, made by hand: its own key (wrapped by a recovery key that the test knows), a dump
+ * that is `dump`, and the manifest that fits it. The program cannot tell it from a real one until `pg_restore` reads
+ * the dump, which is the point: the dump is what a hostile backup writes.
+ */
+async function writeForeignBackup(
+  path: string,
+  dump: Buffer,
+): Promise<{ path: string; recovery: string }> {
+  const key = newBackupKey();
+  const recovery = generateRecoveryKey();
+  const header: BackupHeader = {
+    format: FORMAT,
+    createdAt: new Date().toISOString(),
+    appVersion: '0.1.0',
+    migrationCount: 1,
+    kind: 'manual',
+    keyId: keyIdOf(key),
+    fileSalt: randomBytes(32).toString('base64'),
+    wrap: wrapBackupKey(key, recovery),
+  };
+  const writer = createArchiveWriter(path, key, header);
+  await writer.addBuffer('db.dump', dump);
+  await writer.addBuffer(
+    'secrets.json',
+    JSON.stringify({
+      slug: 'consultorio',
+      kmsLocalKekBase64: 'x',
+      addressHashPepper: 'x',
+      storageUploadSecret: 'x',
+      recoveryKeyHash: 'x',
+    }),
+  );
+  await writer.addBuffer(
+    'manifest.json',
+    JSON.stringify({
+      dumpBytes: dump.length,
+      dumpSha256: createHash('sha256').update(dump).digest('hex'),
+      fileCount: 0,
+      fileBytes: 0,
+    }),
+  );
+  await writer.finish();
+  return { path, recovery };
+}
+
 // ---- TOTP, to enroll a second factor like a phone would ---------------------------------------
 
 function base32Decode(text: string): Buffer {
@@ -374,6 +428,13 @@ async function screenshot(
       awaitPromise: true,
       returnByValue: true,
     });
+    const where = JSON.parse(String((csp['result'] as { value?: string }).value)) as {
+      origin: string;
+    };
+    assert(
+      where.origin.startsWith('http://127.0.0.1:'),
+      `the window is at ${where.origin}, not at 127.0.0.1`,
+    );
     const violations = problems.filter((problem) =>
       /Content Security Policy|Refused to|CSP|upgrade|mixed/i.test(problem),
     );
@@ -525,6 +586,11 @@ async function main(): Promise<void> {
           600_000,
         );
         const parsed = new URL(url);
+        // By number, never by name: a name can lead to ::1, where another program may be listening.
+        assert(
+          parsed.hostname === '127.0.0.1',
+          `the program is served at ${parsed.origin}, not at 127.0.0.1`,
+        );
         base = new URL(parsed.origin);
         web = new Client(base, proofOf);
         return `bootstrap done; ${base.origin}`;
@@ -635,6 +701,26 @@ async function main(): Promise<void> {
       },
     );
 
+    let setupKeys: { token: string; recovery: string } | undefined;
+    await check(
+      'a restore asked while the install still waits for its setup opens a page that asks for the key of that backup only',
+      async () => {
+        const foreign = await writeForeignBackup(
+          join(session.root, 'ajena-del-inicio.cvb'),
+          Buffer.from('PGDMP-not-a-dump'),
+        );
+        const token = await startRestore(foreign.path);
+        const page = await new Client(base, proofOf).call('GET', `/__key?t=${token}`);
+        assert(page.status === 200, `the keys page answered ${String(page.status)}`);
+        assert(
+          page.text().includes('name="recoveryKey"') && !page.text().includes('name="currentKey"'),
+          'during the setup the page should ask for the key of the backup and no key of this install',
+        );
+        setupKeys = { token, recovery: foreign.recovery };
+        return 'the page is open, with the token kept for after the setup';
+      },
+    );
+
     await check(
       'set up "Clínica Prueba" with an owner (the key is shown first; POST /__setup creates nothing yet)',
       async () => {
@@ -718,6 +804,27 @@ async function main(): Promise<void> {
           'the recovery key is in the log of the program',
         );
         return 'confirmed; the key is not kept on this PC any more';
+      },
+    );
+
+    await check(
+      'the page that asked for the keys of a restore during the setup does not outlive it: it cannot restore once the install exists',
+      async () => {
+        assert(setupKeys !== undefined, 'no page was opened during the setup');
+        const restores = logText(session).split('restore finished').length;
+        const answer = await new Client(base, proofOf).call('POST', '/__key', {
+          token: setupKeys.token,
+          json: { recoveryKey: setupKeys.recovery },
+        });
+        assert(
+          answer.status === 404,
+          `the old keys page answered ${String(answer.status)}, not 404`,
+        );
+        assert(
+          logText(session).split('restore finished').length === restores,
+          'a restore ran from a page opened during the setup',
+        );
+        return 'the token no longer exists; nothing was restored';
       },
     );
 
@@ -1284,6 +1391,76 @@ async function main(): Promise<void> {
         );
         assert((await patientCount()) === before, 'a failed restore changed the data');
         return 'one key is not enough; a wrong backup key is refused; with both the restore starts (and the data is as it was when it fails)';
+      },
+    );
+
+    await check(
+      'a hostile dump (SQL no backup carries) leaves the roles of the cluster as they were, whether pg_restore refuses it or takes it',
+      async () => {
+        const rolesLines = () =>
+          [...logText(session).matchAll(/restore roles: before=(\w+) after=(\w+)/g)].map(
+            (match) => ({ before: match[1], after: match[2] }),
+          );
+        const patients = await patientCount();
+        const scenarios: { name: string; statements: string[]; expect: string }[] = [
+          {
+            // PostgreSQL refuses what the role of the restore may not do, and the trailing entry ends it anyway.
+            name: 'refused by PostgreSQL',
+            statements: [
+              'CREATE TABLE public.ok (a int)',
+              'GRANT audit_sealer TO app_rw GRANTED BY app_owner',
+              "ALTER ROLE app_owner PASSWORD 'hostile'",
+              'ALTER ROLE app_rw SET search_path = evil',
+              'SELECT 1/0',
+            ],
+            expect: 'restore failed: restore_failed',
+          },
+          {
+            // Everything here the role may do: the dump restores without an error, and is found out afterwards.
+            name: 'accepted by pg_restore, found out afterwards',
+            statements: [
+              'CREATE TABLE public.patient_copy (id int)',
+              'GRANT SELECT ON public.patient_copy TO app_operator',
+              'ALTER DATABASE consultorio_restore SET search_path = evil',
+              'ALTER ROLE CURRENT_USER SET search_path = evil',
+            ],
+            expect: 'restore failed: unsafe_backup',
+          },
+        ];
+        const seen: string[] = [];
+        for (const scenario of scenarios) {
+          const dump = craftDump(
+            scenario.statements.map((sql, index) => ({ tag: `entry ${String(index)}`, sql })),
+          );
+          const foreign = await writeForeignBackup(
+            join(session.root, `hostil-${String(seen.length)}.cvb`),
+            dump,
+          );
+          const lines = rolesLines().length;
+          const failures = logText(session).split(scenario.expect).length - 1;
+          const answer = await sendKeys(await startRestore(foreign.path), {
+            currentKey: recoveryKey,
+            recoveryKey: foreign.recovery,
+          });
+          assert(
+            answer.status === 422,
+            `${scenario.name}: the hostile dump answered ${String(answer.status)}`,
+          );
+          assert(
+            logText(session).split(scenario.expect).length - 1 > failures,
+            `${scenario.name}: the log does not say "${scenario.expect}"`,
+          );
+          const after = rolesLines();
+          assert(after.length === lines + 1, `${scenario.name}: no roles line in the log`);
+          const line = after.at(-1);
+          assert(
+            line !== undefined && line.before === line.after,
+            `${scenario.name}: the roles of the cluster changed (${String(line?.before)} -> ${String(line?.after)})`,
+          );
+          seen.push(scenario.name);
+        }
+        assert((await patientCount()) === patients, 'a hostile dump changed the data');
+        return `${seen.join('; ')}: roles unchanged, data untouched`;
       },
     );
 

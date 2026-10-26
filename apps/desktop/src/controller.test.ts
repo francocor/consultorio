@@ -2519,6 +2519,31 @@ describe('restoring a backup', () => {
     expect(harness.restores).toHaveLength(0);
   });
 
+  it('writes down, in test mode only, the roles of the cluster before and after a restore, so a script can compare them', async () => {
+    const backup = await ready(true);
+    restoreCode = 1;
+    await harness.controller.restoreFlow(backup);
+
+    await postKeys({ currentKey: installKey });
+
+    const log = readFileSync(join(harness.paths.logs, 'shell.log'), 'utf8');
+    const line = /restore roles: before=(\w+) after=(\w+)/.exec(log);
+    expect(line).not.toBeNull();
+    expect(line?.[1]).toBe(line?.[2]);
+  });
+
+  it('does not write that down outside test mode', async () => {
+    const backup = await ready(false);
+    restoreCode = 1;
+    await harness.controller.restoreFlow(backup);
+
+    await postKeys({ currentKey: installKey });
+
+    expect(readFileSync(join(harness.paths.logs, 'shell.log'), 'utf8')).not.toContain(
+      'restore roles:',
+    );
+  });
+
   it('tells the person, with a dialog, and stops, when a failed restore leaves the services stopped', async () => {
     const backup = await ready(false);
     await harness.controller.restoreFlow(backup);
