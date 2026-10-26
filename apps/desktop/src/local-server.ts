@@ -55,6 +55,7 @@ const UNAVAILABLE_BODY = JSON.stringify({
  * victim's browser by pointing its own domain at 127.0.0.1 (DNS rebinding).
  */
 export function createLocalServer(options: LocalServerOptions) {
+  // `localhost` is accepted for whoever types it, but the window never uses it (see `window-proof.ts`).
   const hosts = new Set([`localhost:${String(options.port)}`, `127.0.0.1:${String(options.port)}`]);
   const bundleHeaders = { 'Content-Security-Policy': options.contentSecurityPolicy };
 

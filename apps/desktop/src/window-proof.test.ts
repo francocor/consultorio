@@ -60,17 +60,26 @@ describe('cookies', () => {
 });
 
 describe('the headers a window sends', () => {
-  it('adds the proof to the local server in both spellings of its address', () => {
-    for (const url of ['http://localhost:47800/api/x', 'http://127.0.0.1:47800/']) {
+  it('adds the proof to the local server by its numeric address, and only by that one', () => {
+    for (const url of ['http://127.0.0.1:47800/api/x', 'http://127.0.0.1:47800/']) {
       const headers = headersWithProof({ Accept: '*/*' }, url, 47800, 'proof');
       expect(headers).toEqual({ Accept: '*/*', 'X-Consulvia-Window': 'proof' });
+    }
+  });
+
+  it('never sends it to a name: localhost can lead to ::1, where any program may be listening on the same port', () => {
+    for (const url of ['http://localhost:47800/api/x', 'http://[::1]:47800/api/x']) {
+      expect(headersWithProof({ Accept: '*/*' }, url, 47800, 'proof'), url).toEqual({
+        Accept: '*/*',
+      });
+      expect(isLocalServerUrl(url, 47800), url).toBe(false);
     }
   });
 
   it('replaces a header of that name that the page set, whatever its case', () => {
     const headers = headersWithProof(
       { 'x-CONSULVIA-window': 'forged' },
-      'http://localhost:47800/api/x',
+      'http://127.0.0.1:47800/api/x',
       47800,
       'proof',
     );

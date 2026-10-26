@@ -58,8 +58,12 @@ export interface RuntimeContext {
   proxySecret?: string;
 }
 
+/**
+ * The address of the program. The numeric one, never `localhost`: a name can lead to `::1`, where any program of the PC
+ * may be listening on the same port, and the window would hand it the proof it sends with every request.
+ */
 export function publicUrl(serverPort: number): string {
-  return `http://localhost:${String(serverPort)}`;
+  return `http://127.0.0.1:${String(serverPort)}`;
 }
 
 function databaseUrl(role: string, password: string, port: number): string {

@@ -801,7 +801,7 @@ describe('the recovery key', () => {
 
   const lastFour = () => shownKey.slice(-4);
   const confirm = (ack: string, value: string) =>
-    post(`http://localhost:${String(harness.config().port)}/__ack`, ack, {
+    post(`http://127.0.0.1:${String(harness.config().port)}/__ack`, ack, {
       recoveryKeyLast4: value,
     });
 
@@ -832,7 +832,7 @@ describe('the recovery key', () => {
   it('has no page that shows it again, with the token of the setup or any other', async () => {
     const { ack } = await setUp();
 
-    const page = await fetch(`http://localhost:${String(harness.config().port)}/__ack?t=${ack}`);
+    const page = await fetch(`http://127.0.0.1:${String(harness.config().port)}/__ack?t=${ack}`);
 
     expect(page.status).toBe(404);
   });
@@ -1434,7 +1434,7 @@ describe('the first run', () => {
 
     expect(harness.events).toEqual(['initdb', 'pg start', 'create database', 'roles', 'migrate']);
     expect(harness.controller.phase).toBe('setup');
-    expect(setupUrl()).toMatch(/^http:\/\/localhost:\d+\/__setup\?t=[\w-]{20,}$/);
+    expect(setupUrl()).toMatch(/^http:\/\/127\.0\.0\.1:\d+\/__setup\?t=[\w-]{20,}$/);
     expect(harness.spawned).toHaveLength(0);
     const config = harness.config();
     expect(config).toMatchObject({
@@ -1612,7 +1612,7 @@ describe('every other start', () => {
 
     expect(harness.config().port).toBe(before);
     const api = harness.spawned.find((child) => child.role === 'api');
-    expect(api?.env['PUBLIC_URL']).toBe(`http://localhost:${String(before)}`);
+    expect(api?.env['PUBLIC_URL']).toBe(`http://127.0.0.1:${String(before)}`);
   });
 
   it('gives the API its login and the worker the sealing login too', async () => {

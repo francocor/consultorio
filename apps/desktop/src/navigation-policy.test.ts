@@ -2,20 +2,21 @@ import { describe, expect, it } from 'vitest';
 
 import { decideNavigation, decideWindowOpen, isSameOrigin } from './navigation-policy.js';
 
-const APP = 'http://localhost:47800';
+const APP = 'http://127.0.0.1:47800';
 
 describe('which addresses belong to the app', () => {
   it('compares parsed origins, not the start of the text', () => {
-    expect(isSameOrigin('http://localhost:47800/', APP)).toBe(true);
-    expect(isSameOrigin('http://localhost:47800/agenda?x=1#y', APP)).toBe(true);
+    expect(isSameOrigin('http://127.0.0.1:47800/', APP)).toBe(true);
+    expect(isSameOrigin('http://127.0.0.1:47800/agenda?x=1#y', APP)).toBe(true);
     for (const url of [
-      'http://localhost:47800@evil.example/',
-      'http://localhost:47800.evil.example/',
-      'http://localhost:478001/',
-      'https://localhost:47800/',
-      'http://localhost:47801/',
-      'http://127.0.0.1:47800/',
-      'http://evil.example/http://localhost:47800/',
+      'http://127.0.0.1:47800@evil.example/',
+      'http://127.0.0.1:47800.evil.example/',
+      'http://127.0.0.1:478001/',
+      'https://127.0.0.1:47800/',
+      'http://127.0.0.1:47801/',
+      // The name is another origin than the number: the window uses the number, and the name may lead to ::1.
+      'http://localhost:47800/',
+      'http://evil.example/http://127.0.0.1:47800/',
       'javascript:alert(1)',
       'file:///C:/Windows/System32/calc.exe',
       'data:text/html,<script>1</script>',
@@ -44,7 +45,7 @@ describe('where a link goes', () => {
   });
 
   it("blocks the address that only starts like the app's own, and anything with credentials", () => {
-    expect(decideNavigation('http://localhost:47800@evil.example/', APP)).toEqual({
+    expect(decideNavigation('http://127.0.0.1:47800@evil.example/', APP)).toEqual({
       action: 'block',
     });
     expect(decideNavigation('https://user:pass@evil.example/', APP)).toEqual({ action: 'block' });
@@ -56,7 +57,7 @@ describe('where a link goes', () => {
       'file:///C:/Windows/System32/cmd.exe',
       'data:text/html,hi',
       'ms-msdt:/id PCWDiagnostic',
-      'blob:http://localhost:47800/abc',
+      'blob:http://127.0.0.1:47800/abc',
       'not a url',
     ]) {
       expect(decideNavigation(url, APP), url).toEqual({ action: 'block' });
@@ -78,7 +79,7 @@ describe('opening a window', () => {
 
   it('denies and opens nothing for a disguised or non-web address', () => {
     for (const url of [
-      'http://localhost:47800@evil.example/',
+      'http://127.0.0.1:47800@evil.example/',
       'javascript:alert(1)',
       'file:///C:/x',
     ]) {

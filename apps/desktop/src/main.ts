@@ -105,7 +105,7 @@ async function run(): Promise<void> {
     });
 
   let knownPort = 0;
-  const appOrigin = () => `http://localhost:${String(knownPort)}`;
+  const appOrigin = () => `http://127.0.0.1:${String(knownPort)}`;
 
   /**
    * Keeps every page of the program on the app: other web addresses open in the browser of the PC, nothing

@@ -63,14 +63,15 @@ export function presentsProof(headers: IncomingHttpHeaders, credentials: Credent
   return secretsMatch(cookieValue(headers.cookie, BROWSER_COOKIE), credentials.browser);
 }
 
-/** True for an address of the local server of this run, however it is spelled. */
+/**
+ * True for the address of the local server of this run, spelled as a number. A name (`localhost`) is not: it can
+ * resolve to `::1`, and a program listening there on the same port would be handed the proof.
+ */
 export function isLocalServerUrl(url: string, port: number): boolean {
   try {
     const parsed = new URL(url);
     return (
-      parsed.protocol === 'http:' &&
-      (parsed.hostname === 'localhost' || parsed.hostname === '127.0.0.1') &&
-      Number(parsed.port) === port
+      parsed.protocol === 'http:' && parsed.hostname === '127.0.0.1' && Number(parsed.port) === port
     );
   } catch {
     return false;

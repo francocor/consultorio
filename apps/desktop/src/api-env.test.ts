@@ -35,7 +35,7 @@ describe('the environment of the API and the worker', () => {
       DEPLOYMENT_PROFILE: 'desktop',
       DEPLOYMENT_MODE: 'single',
       SINGLE_TENANT_SLUG: 'consultorio',
-      PUBLIC_URL: 'http://localhost:47800',
+      PUBLIC_URL: 'http://127.0.0.1:47800',
       KMS_PROVIDER: 'local',
       KMS_LOCAL_KEK_BASE64: config.secrets.kmsLocalKekBase64,
       ADDRESS_HASH_PEPPER: config.secrets.addressHashPepper,
@@ -164,6 +164,6 @@ describe('the Windows variables a child gets', () => {
   });
 
   it('builds PUBLIC_URL from the port of the local server', () => {
-    expect(publicUrl(47800)).toBe('http://localhost:47800');
+    expect(publicUrl(47800)).toBe('http://127.0.0.1:47800');
   });
 });
