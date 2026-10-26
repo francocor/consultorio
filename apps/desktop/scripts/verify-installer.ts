@@ -1104,7 +1104,9 @@ async function main(): Promise<void> {
       );
       await until(
         'the log line of the backup',
-        () => (logText(session).includes('backup created:') ? true : undefined),
+        // This backup's own line: the daily backup of the first open has a line that ends the same way, and the
+        // file of a backup exists (renamed) a moment before it is verified and entered in the ledger.
+        () => (logText(session).includes(`backup created: ${backupPath}`) ? true : undefined),
         30_000,
       );
       // The backup is encrypted and authenticated: no marker of what is inside shows in the file.

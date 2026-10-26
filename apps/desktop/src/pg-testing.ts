@@ -59,50 +59,61 @@ export async function startTestCluster(schema: string): Promise<TestCluster> {
     scratchDir: join(folder, 'tmp'),
   });
   mkdirSync(folder, { recursive: true });
-  await cluster.initCluster();
-  const port = await cluster.start();
-  await cluster.ensureDatabase();
-  await cluster.runScript(
-    parameterizeRolesScript(readFileSync(join(stage, 'sql', '01-roles.sql'), 'utf8'), {
-      appOwner: secrets.appOwnerPassword,
-      appRw: secrets.appRwPassword,
-      auditSealer: secrets.auditSealerPassword,
-    }),
-  );
-  // Plain sessions: the schema is created with the default search path, as the migrations do.
-  const connect = async (user: string, password: string, database: string) => {
-    const client = new pg.Client({ host: '127.0.0.1', port, user, password, database });
-    await client.connect();
-    return client;
+  const stop = async () => {
+    await cluster.stop().catch(() => undefined);
+    if (existsSync(folder)) rmSync(folder, { recursive: true, force: true, maxRetries: 5 });
   };
-  const asOwner = async (sql: string) => {
-    const client = await connect('app_owner', secrets.appOwnerPassword, DATABASE_NAME);
-    try {
-      await client.query(sql);
-    } finally {
-      await client.end();
-    }
-  };
-  await asOwner(schema);
-  return {
-    cluster,
-    secrets,
-    folder,
-    port,
-    connect,
-    async asSuperuser(database, sql) {
-      await cluster.asSuperuser(
-        database,
-        async (client) => {
-          await client.query(sql);
-        },
-        false,
-      );
-    },
-    asOwner,
-    async stop() {
-      await cluster.stop().catch(() => undefined);
-      if (existsSync(folder)) rmSync(folder, { recursive: true, force: true, maxRetries: 5 });
-    },
-  };
+  try {
+    return await prepare();
+  } catch (error) {
+    // A server left running by a setup that failed would be left running for good: nobody holds it to stop it.
+    await stop();
+    throw error;
+  }
+
+  async function prepare(): Promise<TestCluster> {
+    await cluster.initCluster();
+    const port = await cluster.start();
+    await cluster.ensureDatabase();
+    await cluster.runScript(
+      parameterizeRolesScript(readFileSync(join(stage, 'sql', '01-roles.sql'), 'utf8'), {
+        appOwner: secrets.appOwnerPassword,
+        appRw: secrets.appRwPassword,
+        auditSealer: secrets.auditSealerPassword,
+      }),
+    );
+    // Plain sessions: the schema is created with the default search path, as the migrations do.
+    const connect = async (user: string, password: string, database: string) => {
+      const client = new pg.Client({ host: '127.0.0.1', port, user, password, database });
+      await client.connect();
+      return client;
+    };
+    const asOwner = async (sql: string) => {
+      const client = await connect('app_owner', secrets.appOwnerPassword, DATABASE_NAME);
+      try {
+        await client.query(sql);
+      } finally {
+        await client.end();
+      }
+    };
+    await asOwner(schema);
+    return {
+      cluster,
+      secrets,
+      folder,
+      port,
+      connect,
+      async asSuperuser(database, sql) {
+        await cluster.asSuperuser(
+          database,
+          async (client) => {
+            await client.query(sql);
+          },
+          false,
+        );
+      },
+      asOwner,
+      stop,
+    };
+  }
 }
