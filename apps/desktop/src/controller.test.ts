@@ -1007,6 +1007,22 @@ describe('the recovery key', () => {
     expect(harness.commandCalls.some((call) => call.command === 'provision')).toBe(false);
   });
 
+  it('sends the setup page back to its form after five wrong tails, where a new key can be asked for, instead of leaving it dead', async () => {
+    const { ack } = await setUp();
+
+    let fifth;
+    for (let attempt = 0; attempt < 5; attempt += 1) fifth = await confirm(ack, 'ZZZZ');
+
+    expect(fifth?.body).toMatchObject({ ok: false, back: true });
+    expect((await confirm(ack, lastFour())).status).toBe(404);
+    expect(harness.config().provisioned).toBe(false);
+    // The form still works: it makes a new key, and the organization is created once that one is confirmed.
+    const url = setupUrl() ?? '';
+    const again = await completeSetup(url);
+    expect(again.confirmed.status).toBe(200);
+    expect(harness.config().provisioned).toBe(true);
+  });
+
   it('takes a key that an earlier build kept in the configuration off the disk at the next start', async () => {
     const key = await unconfirmedInstall();
     await harness.controller.quit();
@@ -2634,6 +2650,27 @@ describe('restoring a backup', () => {
     });
     // And nothing runs on its own on top of that: no backup of a program that is not running.
     expect(await harness.controller.backupNow()).toBeNull();
+  });
+
+  it('stops too when the restore worked and only the start after it failed, and offers Retry instead of a window with nothing behind it', async () => {
+    const backup = await ready(false);
+    await harness.controller.restoreFlow(backup);
+    // The data is the backup's; then the API cannot start.
+    dieOnSpawn = { api: true };
+
+    const answer = await postKeys({ currentKey: installKey });
+
+    expect(answer.status).toBe(422);
+    expect(harness.controller.phase).toBe('error');
+    await waitFor(() => {
+      expect(harness.uiCalls.some((call) => call[0] === 'choose')).toBe(true);
+    });
+    expect(await harness.controller.backupNow()).toBeNull();
+    // Retry starts again from the beginning, and once the cause is gone it comes up.
+    dieOnSpawn = {};
+    chooseAnswers = [0];
+    await harness.controller.start();
+    expect(harness.controller.phase).toBe('ready');
   });
 
   it('stops too when a failed restore cannot be undone: the next start finishes it, and until then nothing else is done', async () => {

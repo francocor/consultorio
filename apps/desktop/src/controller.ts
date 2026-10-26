@@ -922,7 +922,12 @@ export class Controller {
     if (
       normalizeRecoveryKey(lastFour) !== normalizeRecoveryKey(setup.fresh.recoveryKey).slice(-4)
     ) {
-      return this.keyPageMiss(PURPOSE.ack, 'recoveryKeyLast4', TEXT.recoveryKey.wrongLast4);
+      const miss = this.keyPageMiss(PURPOSE.ack, 'recoveryKeyLast4', TEXT.recoveryKey.wrongLast4);
+      if (this.keyPageAttempts < MAX_RESET_ATTEMPTS) return miss;
+      // The address of this key is closed. The key was never used for anything: back to the form, which makes a
+      // new one, instead of a page with nothing behind it.
+      this.pendingSetup = null;
+      return { ...miss, back: true };
     }
     if (this.setupRunning || this.config.provisioned) {
       return { ok: false, message: TEXT.setup.busy };
@@ -1790,7 +1795,9 @@ export class Controller {
       new ShellError(
         error.code === 'undo_incomplete'
           ? TEXT.restore.undoIncomplete
-          : TEXT.restore.servicesFailed,
+          : error.code === 'restore_incomplete'
+            ? TEXT.restore.incomplete
+            : TEXT.restore.servicesFailed,
         `a restore left the program stopped: ${error.code}: ${error.detail}`,
       ),
     );
@@ -1878,7 +1885,9 @@ export class Controller {
       outcome !== 'busy' &&
       !outcome.ok &&
       outcome.error instanceof RestoreError &&
-      (outcome.error.code === 'undo_incomplete' || outcome.error.code === 'services_not_started')
+      (outcome.error.code === 'undo_incomplete' ||
+        outcome.error.code === 'services_not_started' ||
+        outcome.error.code === 'restore_incomplete')
     ) {
       this.afterBrokenRestore(outcome.error);
       return outcome;
