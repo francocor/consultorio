@@ -67,7 +67,7 @@ export class ConfigError extends Error {
   }
 }
 
-const SecretsSchema = z.strictObject({
+const SecretsSchema = z.object({
   pgSuperuserPassword: z.string().min(16),
   appOwnerPassword: z.string().min(16),
   appRwPassword: z.string().min(16),
@@ -83,28 +83,28 @@ const SecretsSchema = z.strictObject({
     data: z.string().min(1),
   }),
   recoveryKeyHash: z.string().min(20),
-  recoveryKey: z.string().min(20).nullable(),
+  recoveryKey: z.string().min(20).nullable().default(null),
 });
 
-const PublicSchema = z.strictObject({
+const PublicSchema = z.object({
   installId: z.string().min(1),
   port: z.number().int().min(1024).max(65535),
   slug: z.string().nullable(),
   databaseState: z.enum(['new', 'ready']),
   provisioned: z.boolean(),
   /** The owner confirmed having saved the recovery key. */
-  recoveryAcknowledged: z.boolean(),
-  settings: z.strictObject({
-    autoStart: z.boolean(),
-    trayHintShown: z.boolean(),
-    lastDailyBackup: z.string().nullable(),
-    lastCopyReminder: z.string().nullable(),
-    lastGoodBackup: z.string().nullable(),
-    cloudNoticeShown: z.boolean(),
+  recoveryAcknowledged: z.boolean().default(false),
+  settings: z.object({
+    autoStart: z.boolean().default(false),
+    trayHintShown: z.boolean().default(false),
+    lastDailyBackup: z.string().nullable().default(null),
+    lastCopyReminder: z.string().nullable().default(null),
+    lastGoodBackup: z.string().nullable().default(null),
+    cloudNoticeShown: z.boolean().default(false),
   }),
 });
 
-const FileSchema = z.strictObject({
+const FileSchema = z.object({
   version: z.literal(1),
   public: PublicSchema,
   /** The secrets as one JSON document, encrypted and in base64. */
@@ -191,8 +191,25 @@ export class ConfigStore {
     mkdirSync(dirname(this.file), { recursive: true });
     const temporary = `${this.file}.tmp`;
     writeDurably(temporary, body);
-    if (existsSync(this.file)) writeDurably(`${this.file}.bak`, readFileSync(this.file, 'utf8'));
+    // The file in place becomes the previous good copy only if it is one: a damaged file must never replace the
+    // copy that may be the only one left (`quarantine` sets a damaged file aside).
+    if (existsSync(this.file)) {
+      const current = readFileSync(this.file, 'utf8');
+      if (parsesAsConfig(current)) writeDurably(`${this.file}.bak`, current);
+    }
     renameWithRetry(temporary, this.file);
+  }
+
+  /**
+   * Moves a damaged file out of the way to `config.json.corrupt-<stamp>` (kept, never deleted) and returns where it
+   * went, or null when there was no file. After this the previous good copy is untouched and a new file can be
+   * written without it being replaced.
+   */
+  quarantine(stamp: string): string | null {
+    if (!existsSync(this.file)) return null;
+    const target = `${this.file}.corrupt-${stamp}`;
+    renameWithRetry(this.file, target);
+    return target;
   }
 
   /** Reads, lets `change` edit the configuration, writes it back and returns it. */
@@ -201,6 +218,16 @@ export class ConfigStore {
     change(config);
     this.write(config);
     return config;
+  }
+}
+
+/** True when the text has the shape of a configuration file (what a good previous copy must have). */
+function parsesAsConfig(text: string): boolean {
+  try {
+    FileSchema.parse(JSON.parse(text));
+    return true;
+  } catch {
+    return false;
   }
 }
 

@@ -511,8 +511,12 @@ export class Controller {
           throw error;
         }
         this.config = previous.read();
+        // The damaged file is kept aside first: writing over it would copy it onto the good previous copy.
+        const kept = store.quarantine(String(this.deps.now().getTime()));
         store.write(this.config);
-        this.log('config.json was damaged; restored from config.json.bak');
+        this.log(
+          `config.json was damaged (kept as ${kept ?? 'nothing'}); restored from config.json.bak`,
+        );
       }
     } else {
       const recovered = this.readPreviousConfig();

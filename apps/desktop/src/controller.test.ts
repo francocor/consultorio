@@ -640,6 +640,30 @@ describe('an install whose configuration cannot be opened', () => {
     ).toBe(false);
   });
 
+  it('keeps the damaged config.json aside and the good copy as it was when it recovers from config.json.bak', async () => {
+    const folder = await provisionedFolder();
+    const paths = build(folder).paths;
+    const good = readFileSync(paths.configFile, 'utf8');
+    writeFileSync(paths.configFile + '.bak', good);
+    writeFileSync(paths.configFile, '{ "version": 1, "public": ');
+
+    const next = build(folder);
+    await next.controller.start();
+
+    // The copy that saved the install is not overwritten by the file that failed: it still reads.
+    expect(() => new ConfigStore(paths.configFile + '.bak', cipher).read()).not.toThrow();
+    // ...which is kept, for whoever has to find out what happened.
+    const corrupt = readdirSync(paths.root).filter((name) =>
+      name.startsWith('config.json.corrupt-'),
+    );
+    expect(corrupt).toHaveLength(1);
+    expect(readFileSync(join(paths.root, corrupt[0] ?? ''), 'utf8')).toBe(
+      '{ "version": 1, "public": ',
+    );
+    expect(next.config().provisioned).toBe(true);
+    expect(next.controller.phase).toBe('ready');
+  });
+
   it('says where the data went when config.json is gone for good', async () => {
     const folder = await provisionedFolder();
     const paths = build(folder).paths;

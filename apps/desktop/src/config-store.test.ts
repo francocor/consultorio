@@ -51,6 +51,109 @@ describe('config.json', () => {
     }
   });
 
+  it('sets a damaged file aside under a name of its own and never copies it over the previous good one', () => {
+    const store = new ConfigStore(file, fakeCipher());
+    store.write(newInstallConfig(47800, generateSecrets()));
+    store.write(newInstallConfig(47800, generateSecrets()));
+    const good = readFileSync(`${file}.bak`, 'utf8');
+    writeFileSync(file, '{ not a configuration');
+
+    const moved = store.quarantine('7');
+
+    expect(moved).toBe(`${file}.corrupt-7`);
+    expect(readFileSync(`${file}.corrupt-7`, 'utf8')).toBe('{ not a configuration');
+    expect(store.exists()).toBe(false);
+    expect(readFileSync(`${file}.bak`, 'utf8')).toBe(good);
+    // And there is nothing to set aside when there is no file.
+    expect(store.quarantine('8')).toBeNull();
+  });
+
+  it('does not make the previous copy out of a file that cannot be read', () => {
+    const store = new ConfigStore(file, fakeCipher());
+    store.write(newInstallConfig(47800, generateSecrets()));
+    store.write(newInstallConfig(47800, generateSecrets()));
+    const good = readFileSync(`${file}.bak`, 'utf8');
+    writeFileSync(file, '{ damaged');
+
+    store.write(newInstallConfig(47800, generateSecrets()));
+
+    expect(readFileSync(`${file}.bak`, 'utf8')).toBe(good);
+  });
+
+  describe('a file written by another version', () => {
+    /** Rewrites the file as an earlier build wrote it: fields that did not exist yet are not there. */
+    function asAnEarlierBuild(
+      change: (file: Record<string, unknown>, secrets: Record<string, unknown>) => void,
+    ) {
+      const cipher = fakeCipher();
+      const raw = JSON.parse(readFileSync(file, 'utf8')) as {
+        public: Record<string, unknown>;
+        secrets: string;
+      };
+      const secrets = JSON.parse(cipher.decrypt(Buffer.from(raw.secrets, 'base64'))) as Record<
+        string,
+        unknown
+      >;
+      change(raw.public, secrets);
+      raw.secrets = cipher.encrypt(JSON.stringify(secrets)).toString('base64');
+      writeFileSync(file, JSON.stringify(raw));
+    }
+
+    it('fills in the settings and fields that did not exist yet, so a new field never makes the install unreadable', () => {
+      const store = new ConfigStore(file, fakeCipher());
+      store.write(newInstallConfig(47800, generateSecrets()));
+      asAnEarlierBuild((publicPart, secrets) => {
+        const settings = publicPart['settings'] as Record<string, unknown>;
+        delete settings['cloudNoticeShown'];
+        delete settings['lastGoodBackup'];
+        delete settings['lastCopyReminder'];
+        delete publicPart['recoveryAcknowledged'];
+        delete secrets['recoveryKey'];
+      });
+
+      const read = store.read();
+
+      expect(read.settings).toMatchObject({
+        cloudNoticeShown: false,
+        lastGoodBackup: null,
+        lastCopyReminder: null,
+        autoStart: false,
+      });
+      expect(read.recoveryAcknowledged).toBe(false);
+      expect(read.secrets.recoveryKey).toBeNull();
+    });
+
+    it('reads a file with fields it does not know, which a newer build added', () => {
+      const store = new ConfigStore(file, fakeCipher());
+      store.write(newInstallConfig(47800, generateSecrets()));
+      asAnEarlierBuild((publicPart, secrets) => {
+        publicPart['somethingNew'] = true;
+        (publicPart['settings'] as Record<string, unknown>)['alsoNew'] = 1;
+        secrets['aNewSecret'] = 'x';
+      });
+
+      expect(() => store.read()).not.toThrow();
+    });
+
+    it('still refuses what is not a configuration, and a file of a version it cannot know', () => {
+      const store = new ConfigStore(file, fakeCipher());
+      store.write(newInstallConfig(47800, generateSecrets()));
+      const raw = JSON.parse(readFileSync(file, 'utf8')) as Record<string, unknown>;
+
+      writeFileSync(file, JSON.stringify({ ...raw, version: 2 }));
+      expect(() => store.read()).toThrow(ConfigError);
+
+      writeFileSync(file, JSON.stringify({ ...raw, public: { port: 'not a number' } }));
+      expect(() => store.read()).toThrow(ConfigError);
+    });
+
+    it('writes the version of the format in the file, to know what to migrate when it changes', () => {
+      new ConfigStore(file, fakeCipher()).write(newInstallConfig(47800, generateSecrets()));
+
+      expect(JSON.parse(readFileSync(file, 'utf8'))).toMatchObject({ version: 1 });
+    });
+  });
+
   it('reads back what was written', () => {
     const store = new ConfigStore(file, fakeCipher());
     const config = newInstallConfig(47801, generateSecrets());
@@ -121,16 +224,6 @@ describe('config.json', () => {
     const store = new ConfigStore(file, fakeCipher());
     store.write(newInstallConfig(47800, generateSecrets()));
     writeFileSync(file, '{ not json');
-
-    expect(() => store.read()).toThrow(expect.objectContaining({ code: 'unreadable' }));
-  });
-
-  it('refuses a file that has a field it does not know', () => {
-    const store = new ConfigStore(file, fakeCipher());
-    store.write(newInstallConfig(47800, generateSecrets()));
-    const document = JSON.parse(readFileSync(file, 'utf8')) as { public: Record<string, unknown> };
-    document.public['surprise'] = true;
-    writeFileSync(file, JSON.stringify(document));
 
     expect(() => store.read()).toThrow(expect.objectContaining({ code: 'unreadable' }));
   });
