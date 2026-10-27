@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
   auditProblems,
   clusterProblems,
+  parseClusterFacts,
   planRevert,
   revertStatements,
   type ClusterFacts,
@@ -31,6 +32,8 @@ const clean: ClusterFacts = {
   memberships: [OWNER_ADMIN, RELEASER],
   roleSettings: [],
   ownerPasswordHash: 'SCRAM-SHA-256$4096:aaa$bbb:ccc',
+  databaseFlags: { consultorio: { template: false, allowConnections: true, connectionLimit: -1 } },
+  databaseParameters: [],
   auditPrivileges: [
     { role: 'app_rw', privilege: 'INSERT', table: 'audit_event' },
     { role: 'app_rw', privilege: 'SELECT', table: 'audit_event' },
@@ -56,6 +59,55 @@ describe('what the roles of the cluster may have lost, read from the cluster alo
       expect.stringContaining('statement_timeout=1ms'),
       'the password of app_owner was changed',
     ]);
+  });
+});
+
+describe('the databases the owner can reach', () => {
+  const tampered: ClusterFacts = {
+    ...clean,
+    databaseFlags: {
+      ...clean.databaseFlags,
+      consultorio: { template: false, allowConnections: false, connectionLimit: 0 },
+    },
+    databaseParameters: ['consultorio=statement_timeout=1ms'],
+  };
+
+  it('are compared: flags that changed and a parameter set for the whole database are findings', () => {
+    expect(clusterProblems(clean, clean)).toEqual([]);
+    expect(clusterProblems(clean, tampered)).toEqual([
+      expect.stringContaining('the flags of the database consultorio changed'),
+      expect.stringContaining('consultorio=statement_timeout=1ms'),
+    ]);
+  });
+
+  it('are put back: the flags first, then the parameters of the database', () => {
+    const { statements, skipped } = planRevert(clean, tampered, 'owner-password');
+
+    expect(skipped).toEqual([]);
+    expect(statements).toEqual([
+      'ALTER DATABASE "consultorio" WITH IS_TEMPLATE false ALLOW_CONNECTIONS true CONNECTION LIMIT -1',
+      'ALTER DATABASE "consultorio" RESET ALL',
+    ]);
+  });
+
+  it('are given back the parameters they had', () => {
+    const had: ClusterFacts = { ...clean, databaseParameters: ['consultorio=work_mem=8MB'] };
+
+    const { statements } = planRevert(had, tampered, 'owner-password');
+
+    expect(statements).toContain('ALTER DATABASE "consultorio" RESET ALL');
+    expect(statements).toContain('ALTER DATABASE "consultorio" SET work_mem TO \'8MB\'');
+  });
+});
+
+describe('the facts as the record of a restore holds them', () => {
+  it('are accepted whole, and refused when they are not of the shape', () => {
+    expect(parseClusterFacts(JSON.parse(JSON.stringify(clean)))).toEqual(clean);
+    expect(parseClusterFacts({ ...clean, memberships: 'none' })).toBeNull();
+    expect(
+      parseClusterFacts({ ...clean, databaseFlags: { consultorio: { template: 1 } } }),
+    ).toBeNull();
+    expect(parseClusterFacts('roles')).toBeNull();
   });
 });
 
@@ -238,6 +290,8 @@ describe('what a restored database may change', () => {
         ...clean,
         roleSettings: ['app_owner=search_path=evil'],
         ownerPasswordHash: 'SCRAM-SHA-256$4096:zzz$yyy:xxx',
+        databaseFlags: clean.databaseFlags,
+        databaseParameters: [],
         auditPrivileges: [
           ...clean.auditPrivileges,
           { role: 'app_rw', privilege: 'UPDATE', table: 'audit_event' },
@@ -270,6 +324,8 @@ describe('putting the cluster back', () => {
       ],
       roleSettings: ['app_owner=search_path=evil'],
       ownerPasswordHash: 'SCRAM-SHA-256$4096:zzz$yyy:xxx',
+      databaseFlags: clean.databaseFlags,
+      databaseParameters: [],
       auditPrivileges: clean.auditPrivileges,
     };
 

@@ -9,7 +9,12 @@ import {
   trustedGrants,
   type AclEntry,
 } from './restore-acl.js';
-import type { ClusterFacts, DatabaseFlags, ScratchFacts } from './restore-audit.js';
+import {
+  WATCHED_DATABASES,
+  type ClusterFacts,
+  type DatabaseFlags,
+  type ScratchFacts,
+} from './restore-audit.js';
 import { rotateBySize } from './rotating-log.js';
 import type { Runner } from './runner.js';
 
@@ -632,6 +637,21 @@ export class PostgresCluster {
       const password = await client.query(
         `SELECT rolpassword AS hash FROM pg_authid WHERE rolname = 'app_owner'`,
       );
+      // The databases the owner can reach: it owns the one of the product.
+      const flags = await client.query(
+        `SELECT datname, datistemplate, datallowconn, datconnlimit
+           FROM pg_database WHERE datname = ANY($1) ORDER BY 1`,
+        [[...WATCHED_DATABASES]],
+      );
+      const databaseParameters = await client.query(
+        `SELECT db.datname AS db, s.setting
+           FROM pg_db_role_setting d
+           JOIN pg_database db ON db.oid = d.setdatabase
+           CROSS JOIN LATERAL unnest(d.setconfig) AS s(setting)
+          WHERE d.setrole = 0 AND db.datname = ANY($1)
+          ORDER BY 1, 2`,
+        [[...WATCHED_DATABASES]],
+      );
       return {
         memberships: memberships.rows.map((row) => ({
           role: String(row['role']),
@@ -648,6 +668,19 @@ export class PostgresCluster {
         ),
         ownerPasswordHash:
           typeof password.rows[0]?.['hash'] === 'string' ? password.rows[0]['hash'] : '',
+        databaseFlags: Object.fromEntries(
+          flags.rows.map((row) => [
+            String(row['datname']),
+            {
+              template: row['datistemplate'] === true,
+              allowConnections: row['datallowconn'] !== false,
+              connectionLimit: Number(row['datconnlimit'] ?? -1),
+            },
+          ]),
+        ),
+        databaseParameters: databaseParameters.rows.map(
+          (row) => `${String(row['db'])}=${String(row['setting'])}`,
+        ),
       };
     });
     const auditPrivileges =
@@ -701,12 +734,13 @@ export class PostgresCluster {
     const failures: string[] = [];
     await this.asSuperuser('postgres', async (client) => {
       // Every statement is tried: one that fails must not leave the ones after it undone.
-      for (const statement of statements) {
+      for (const [index, statement] of statements.entries()) {
         try {
           await client.query(statement);
         } catch (error) {
+          // Never the statement itself: one of them sets the password of app_owner, and this goes to the log.
           failures.push(
-            `${statement.slice(0, 80)}: ${error instanceof Error ? error.message : String(error)}`,
+            `#${String(index + 1)} ${maskLiterals(statement).slice(0, 60)}: ${maskLiterals(error instanceof Error ? error.message : String(error))}`,
           );
         }
       }
@@ -809,6 +843,11 @@ const DRIZZLE_HOOKS_SQL = `
    WHERE n.nspname = 'drizzle'
   ORDER BY 1, 2, 3
 `;
+
+/** Text with whatever is between single quotes taken out: for anything that is written to a log. */
+function maskLiterals(text: string): string {
+  return text.replace(/'(?:[^']|'')*'/g, "'?'");
+}
 
 const SAFE_SEARCH_PATH = '-c search_path=pg_catalog,pg_temp';
 

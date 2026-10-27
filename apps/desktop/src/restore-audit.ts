@@ -9,6 +9,8 @@
  * the live cluster looked like before it started, and refuses (and puts back) anything that differs.
  */
 
+import { z } from 'zod';
+
 /** One privilege of one application role on one table of the audit trail. */
 export interface AuditPrivilege {
   role: string;
@@ -29,6 +31,9 @@ export interface Membership {
   set: boolean;
 }
 
+/** The databases whose flags and parameters are part of the facts: the product's, and the two the server keeps. */
+export const WATCHED_DATABASES = ['consultorio', 'postgres', 'template1'] as const;
+
 /** The cluster-wide facts a restore must leave as they were. */
 export interface ClusterFacts {
   /** Memberships among the roles of the application. */
@@ -40,6 +45,13 @@ export interface ClusterFacts {
   roleSettings: string[];
   /** The stored password verifier of `app_owner`: a restored dump can change its own. */
   ownerPasswordHash: string;
+  /**
+   * `IS_TEMPLATE`, `ALLOW_CONNECTIONS` and `CONNECTION LIMIT` of the watched databases. `app_owner` OWNS the database
+   * of the product, so code running as it can forbid connecting to it or limit them to none.
+   */
+  databaseFlags: Record<string, DatabaseFlags>;
+  /** The parameters set for a whole database (`ALTER DATABASE ... SET`, a row of `pg_db_role_setting` with no role): `database=name=value`. */
+  databaseParameters: string[];
   /** What the application roles may do to the audit trail, one tuple of catalog columns each. */
   auditPrivileges: AuditPrivilege[];
 }
@@ -153,6 +165,27 @@ export function clusterProblems(before: ClusterFacts, after: ClusterFacts): stri
   if (after.ownerPasswordHash !== before.ownerPasswordHash) {
     problems.push('the password of app_owner was changed');
   }
+  for (const name of watchedNames(before, after)) {
+    const was = before.databaseFlags[name];
+    const now = after.databaseFlags[name];
+    if (was !== undefined && JSON.stringify(was) !== JSON.stringify(now)) {
+      problems.push(
+        `the flags of the database ${name} changed: ${JSON.stringify(was)} -> ${JSON.stringify(now)}`,
+      );
+    }
+  }
+  const parametersBefore = new Set(before.databaseParameters);
+  const parametersNow = new Set(after.databaseParameters);
+  for (const parameter of after.databaseParameters) {
+    if (!parametersBefore.has(parameter)) {
+      problems.push(`a database sets a parameter: ${JSON.stringify(parameter)}`);
+    }
+  }
+  for (const parameter of before.databaseParameters) {
+    if (!parametersNow.has(parameter)) {
+      problems.push(`a parameter of a database was taken away: ${JSON.stringify(parameter)}`);
+    }
+  }
   const privilegesBefore = new Set(before.auditPrivileges.map(privilegeKey));
   for (const privilege of after.auditPrivileges) {
     if (!privilegesBefore.has(privilegeKey(privilege))) {
@@ -160,6 +193,10 @@ export function clusterProblems(before: ClusterFacts, after: ClusterFacts): stri
     }
   }
   return problems;
+}
+
+function watchedNames(before: ClusterFacts, after: ClusterFacts): string[] {
+  return [...new Set([...Object.keys(before.databaseFlags), ...Object.keys(after.databaseFlags)])];
 }
 
 const SAFE_NAME = /^[a-z_][a-z0-9_]*$/;
@@ -227,6 +264,46 @@ export function planRevert(
     );
   }
 
+  // The databases: what forbids connecting to one goes first, it is what stops everything else from being done.
+  for (const name of watchedNames(before, after)) {
+    const was = before.databaseFlags[name];
+    if (was === undefined || JSON.stringify(was) === JSON.stringify(after.databaseFlags[name]))
+      continue;
+    add(
+      () =>
+        `ALTER DATABASE ${identifier(name)} WITH IS_TEMPLATE ${was.template ? 'true' : 'false'} ALLOW_CONNECTIONS ${was.allowConnections ? 'true' : 'false'} CONNECTION LIMIT ${String(Math.trunc(was.connectionLimit))}`,
+      `the flags of the database ${name}`,
+    );
+  }
+  const parameterDatabases = new Set<string>();
+  const parametersWas = new Set(before.databaseParameters);
+  const parametersIs = new Set(after.databaseParameters);
+  for (const entry of after.databaseParameters) {
+    if (!parametersWas.has(entry)) parameterDatabases.add(entry.split('=')[0] ?? '');
+  }
+  for (const entry of before.databaseParameters) {
+    if (!parametersIs.has(entry)) parameterDatabases.add(entry.split('=')[0] ?? '');
+  }
+  for (const name of parameterDatabases) {
+    add(
+      () => `ALTER DATABASE ${identifier(name)} RESET ALL`,
+      `the parameters of the database ${name}`,
+    );
+    for (const entry of before.databaseParameters) {
+      const equals = entry.indexOf('=');
+      if (entry.slice(0, equals) !== name) continue;
+      const setting = entry.slice(equals + 1);
+      const inner = setting.indexOf('=');
+      add(() => {
+        const parameter = setting.slice(0, inner);
+        if (inner < 0 || !SAFE_PARAMETER.test(parameter)) {
+          throw new Error(`unsafe parameter name: ${parameter}`);
+        }
+        return `ALTER DATABASE ${identifier(name)} SET ${parameter} TO ${literal(setting.slice(inner + 1))}`;
+      }, `a parameter of the database ${name}`);
+    }
+  }
+
   // Rows of pg_db_role_setting that differ, by (role, database).
   const rowOf = (entry: string) => {
     const parsed = parseRoleSetting(entry);
@@ -283,4 +360,36 @@ export function revertStatements(
   ownerPassword: string,
 ): string[] {
   return planRevert(before, after, ownerPassword).statements;
+}
+
+const FlagsSchema = z.object({
+  template: z.boolean(),
+  allowConnections: z.boolean(),
+  connectionLimit: z.number(),
+});
+
+const ClusterFactsSchema = z.object({
+  memberships: z.array(
+    z.object({
+      role: z.string(),
+      member: z.string(),
+      grantor: z.string(),
+      admin: z.boolean(),
+      inherit: z.boolean(),
+      set: z.boolean(),
+    }),
+  ),
+  roleSettings: z.array(z.string()),
+  ownerPasswordHash: z.string(),
+  databaseFlags: z.record(z.string(), FlagsSchema),
+  databaseParameters: z.array(z.string()),
+  auditPrivileges: z.array(
+    z.object({ role: z.string(), privilege: z.string(), table: z.string() }),
+  ),
+});
+
+/** The facts as the record of a restore holds them, or null when what is there is not their shape. */
+export function parseClusterFacts(value: unknown): ClusterFacts | null {
+  const parsed = ClusterFactsSchema.safeParse(value);
+  return parsed.success ? parsed.data : null;
 }

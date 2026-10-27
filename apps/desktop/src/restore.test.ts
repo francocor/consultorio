@@ -77,6 +77,8 @@ const CLEAN: ClusterFacts = {
   ],
   roleSettings: [],
   ownerPasswordHash: 'SCRAM-SHA-256$4096:aaa$bbb:ccc',
+  databaseFlags: { consultorio: { template: false, allowConnections: true, connectionLimit: -1 } },
+  databaseParameters: [],
   auditPrivileges: [{ role: 'app_rw', privilege: 'INSERT', table: 'audit_event' }],
 };
 const CLEAN_SCRATCH: ScratchFacts = {

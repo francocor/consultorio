@@ -163,7 +163,14 @@ describe('the journal of a restore', () => {
 });
 
 describe('the roles a restore marked in its record', () => {
-  const marked = { memberships: [], roleSettings: [], ownerPasswordHash: 'h', auditPrivileges: [] };
+  const marked = {
+    memberships: [],
+    roleSettings: [],
+    ownerPasswordHash: 'h',
+    databaseFlags: {},
+    databaseParameters: [],
+    auditPrivileges: [],
+  };
 
   it('are put back first, before the databases are looked at, and the mark goes only after that worked', async () => {
     await writeJournal(paths, { ...journal('restoring'), roles: marked });
@@ -209,6 +216,17 @@ describe('the roles a restore marked in its record', () => {
 
     expect(calls).toEqual(['revert roles']);
     expect(((await readJournal(paths)) as RestoreJournal).roles).toEqual(marked);
+  });
+
+  it('make the record unreadable when they are not of the shape of the roles, instead of failing on every start', async () => {
+    writeFileSync(
+      journalFile(paths),
+      JSON.stringify({ ...journal('restoring'), roles: { memberships: 'none' } }),
+    );
+
+    expect(await readJournal(paths)).toBe('unreadable');
+    expect(await reconcile()).toBe('unreadable');
+    expect(calls).not.toContain('revert roles');
   });
 
   it('are asked for only when the record holds them', async () => {

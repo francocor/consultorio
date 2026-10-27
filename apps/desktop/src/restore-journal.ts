@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { renameWithRetry } from './backup-archive.js';
 import { BACKUP_EXTENSION } from './backup.js';
 import type { DataPaths } from './paths.js';
+import { parseClusterFacts } from './restore-audit.js';
 
 /** The database of the product, the one a restore fills first, and the old one while the two trade places. */
 export const DATABASE = 'consultorio';
@@ -113,6 +114,11 @@ export async function readJournal(paths: DataPaths): Promise<RestoreJournal | nu
     ) {
       return 'unreadable';
     }
+    // The roles the restore marked: a record whose snapshot is not of that shape cannot be used to put them back,
+    // and is treated like one nobody can read (the start waits, instead of failing on every boot).
+    const roles =
+      value.roles === undefined || value.roles === null ? null : parseClusterFacts(value.roles);
+    if (value.roles !== undefined && value.roles !== null && roles === null) return 'unreadable';
     return {
       version: 1,
       stamp: value.stamp,
@@ -123,7 +129,7 @@ export async function readJournal(paths: DataPaths): Promise<RestoreJournal | nu
       // A journal written before this field existed: the safe reading is that there were documents.
       hadFiles: value.hadFiles !== false,
       undoing: value.undoing === true,
-      roles: typeof value.roles === 'object' && value.roles !== null ? value.roles : null,
+      roles,
     };
   } catch {
     return 'unreadable';

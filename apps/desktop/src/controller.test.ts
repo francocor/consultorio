@@ -267,6 +267,10 @@ function build(
         memberships: [],
         roleSettings: [],
         ownerPasswordHash: 'hash',
+        databaseFlags: {
+          consultorio: { template: false, allowConnections: true, connectionLimit: -1 },
+        },
+        databaseParameters: [],
         auditPrivileges: [],
       }),
     scratchFacts: () =>

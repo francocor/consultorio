@@ -684,6 +684,138 @@ describeReal('a restore into a database owned by a throwaway role', () => {
     }
   }, 120_000);
 
+  /** Whether the roles of the application can connect to the database of the product. */
+  const connections = async () => {
+    const result: Record<string, string> = {};
+    for (const [user, password] of [
+      ['app_owner', cluster.secrets.appOwnerPassword],
+      ['app_rw', cluster.secrets.appRwPassword],
+    ] as const) {
+      try {
+        const client = await cluster.connect(user, password, DATABASE_NAME);
+        const timeout = await client.query('SHOW statement_timeout');
+        await client.end();
+        result[user] =
+          `connects, statement_timeout ${String((timeout.rows[0] as Record<string, unknown> | undefined)?.['statement_timeout'])}`;
+      } catch (error) {
+        result[user] = (error as Error).message;
+      }
+    }
+    return result;
+  };
+
+  const TAMPERING = [
+    'ALTER DATABASE consultorio WITH ALLOW_CONNECTIONS false',
+    'ALTER DATABASE consultorio WITH CONNECTION LIMIT 0',
+    "ALTER DATABASE consultorio SET statement_timeout = '1ms'",
+  ];
+
+  it('leaves the database of the product as it was when a refused restore had a hook forbid connecting to it, limit them and set a parameter for it', async () => {
+    const audit = createRestoreAudit(
+      cluster.cluster,
+      { live: DATABASE_NAME, scratch: SCRATCH },
+      () => cluster.secrets.appOwnerPassword,
+    );
+    const snapshot = await audit.snapshot();
+    const untouched = await connections();
+    expect(untouched).toEqual({
+      app_owner: 'connects, statement_timeout 0',
+      app_rw: 'connects, statement_timeout 0',
+    });
+    const scratch = await cluster.cluster.createRestoreScratch(SCRATCH);
+    const restored = await pgRestore(scratch, dump);
+    expect(restored.code, restored.stderr).toBe(0);
+    const body = TAMPERING.map((statement) => `EXECUTE '${statement.replaceAll("'", "''")}';`).join(
+      ' ',
+    );
+    const failures = await asRestorer(scratch, [
+      `CREATE FUNCTION public.hook() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN ${body} RETURN NEW; END $$`,
+      'CREATE TRIGGER hook BEFORE INSERT ON public.audit_event FOR EACH ROW EXECUTE FUNCTION public.hook()',
+    ]);
+    expect(failures).toEqual([]);
+    expect(await cluster.cluster.sealRestoreScratch(scratch)).toEqual([]);
+    const owner = await cluster.connect('app_owner', cluster.secrets.appOwnerPassword, SCRATCH);
+    try {
+      await owner.query("INSERT INTO public.audit_event (body) VALUES ('seed')");
+    } finally {
+      await owner.end().catch(() => undefined);
+    }
+
+    // The hook worked: nobody connects to the live database any more.
+    const bricked = await connections();
+    expect(bricked['app_owner']).not.toContain('connects');
+    expect(bricked['app_rw']).not.toContain('connects');
+    // The check says so (from the side of the superuser), and the restore is refused...
+    const problems = (await audit.check(snapshot)).join(' | ');
+    expect(problems).toContain('the flags of the database consultorio changed');
+    expect(problems).toContain('consultorio=statement_timeout=1ms');
+    // ...and what it leaves is the live database as it was.
+    await audit.revert(snapshot);
+    expect(await connections()).toEqual(untouched);
+    const now = await cluster.cluster.clusterFacts(null);
+    expect(now.databaseParameters).toEqual(
+      (snapshot as { databaseParameters: string[] }).databaseParameters,
+    );
+    expect(now.databaseFlags).toEqual(
+      (snapshot as { databaseFlags: Record<string, unknown> }).databaseFlags,
+    );
+    await cluster.cluster.dropDatabase(SCRATCH);
+    await cluster.cluster.dropRestoreRoles();
+  }, 180_000);
+
+  it('puts the database of the product back at the next start too when the process died after the hook', async () => {
+    const audit = createRestoreAudit(
+      cluster.cluster,
+      { live: DATABASE_NAME, scratch: SCRATCH },
+      () => cluster.secrets.appOwnerPassword,
+    );
+    const snapshot = await audit.snapshot();
+    const folder = mkdtempSync(join(tmpdir(), 'consulvia-crash-'));
+    const paths = testPaths(folder);
+    mkdirSync(paths.root, { recursive: true });
+    await writeJournal(paths, {
+      version: 1,
+      stamp: '1',
+      step: 'restoring',
+      filesAside: join(paths.root, 'files.replaced-1'),
+      unpacked: join(paths.root, 'tmp-restore-1'),
+      configCopy: null,
+      hadFiles: true,
+      undoing: false,
+      roles: snapshot,
+    });
+    // What the hook did before the process was killed; from another database, as the owner.
+    const owner = await cluster.connect('app_owner', cluster.secrets.appOwnerPassword, 'postgres');
+    try {
+      for (const statement of TAMPERING) await owner.query(statement);
+    } finally {
+      await owner.end();
+    }
+    expect((await connections())['app_rw']).not.toContain('connects');
+
+    try {
+      await reconcileInterruptedRestore({
+        paths,
+        databases: {
+          names: () => cluster.cluster.listDatabases(),
+          rename: (from, to) => cluster.cluster.renameDatabase(from, to),
+          drop: (name) => cluster.cluster.dropDatabase(name),
+          dropRestoreRoles: () => cluster.cluster.dropRestoreRoles(),
+        },
+        revertRoles: (marked) => audit.revert(marked),
+        reloadConfig: () => undefined,
+      });
+
+      expect(await connections()).toEqual({
+        app_owner: 'connects, statement_timeout 0',
+        app_rw: 'connects, statement_timeout 0',
+      });
+      expect(existsSync(journalFile(paths))).toBe(false);
+    } finally {
+      rmSync(folder, { recursive: true, force: true });
+    }
+  }, 120_000);
+
   it('only lets app_owner hand out audit_sealer while a migration needs it', async () => {
     const admin = async () =>
       cluster.cluster.asSuperuser('postgres', async (client) => {

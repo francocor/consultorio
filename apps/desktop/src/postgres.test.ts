@@ -92,7 +92,7 @@ function cluster(
           return Promise.reject(new Error('rename failed'));
         }
         if (failStatement !== null && sql === failStatement) {
-          return Promise.reject(new Error('role does not exist'));
+          return Promise.reject(new Error("role does not exist near 'hunter2-secret'"));
         }
         if (missingTable && sql.includes('__drizzle_migrations')) {
           return Promise.reject(
@@ -322,6 +322,33 @@ describe('reading what a backup may have written', () => {
     );
 
     expect(queries.map((query) => query.sql)).toEqual([failing, 'ALTER ROLE "app_rw" RESET ALL']);
+  });
+
+  it('never puts the text of a statement of the way back in its error: one of them sets the password of app_owner', async () => {
+    const pg = cluster();
+    await pg.start();
+    const failing = 'ALTER ROLE "app_owner" PASSWORD \'hunter2-secret\'';
+    failStatement = failing;
+
+    const failure = await pg
+      .executeStatements([failing, 'ALTER ROLE "app_rw" RESET ALL'])
+      .catch((error: unknown) => error as Error);
+
+    expect(failure).toBeInstanceOf(Error);
+    expect((failure as Error).message).not.toContain('hunter2');
+    expect((failure as Error).message).toContain('#1 ALTER ROLE "app_owner" PASSWORD \'?\'');
+    expect((failure as Error).message).toContain('role does not exist');
+  });
+
+  it('reads the flags and the parameters of the databases the owner can reach, and not only those of the roles', async () => {
+    const pg = cluster();
+    await pg.start();
+
+    await pg.clusterFacts(null);
+
+    const sql = queries.map((query) => query.sql).join(' ; ');
+    expect(sql).toContain('datconnlimit');
+    expect(sql).toContain('d.setrole = 0');
   });
 
   it('runs the statements that put the roles back, as the superuser, in the postgres database', async () => {
