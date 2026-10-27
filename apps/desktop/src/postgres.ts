@@ -618,12 +618,15 @@ export class PostgresCluster {
           ORDER BY 1, 2, 3`,
         [roles],
       );
+      // In every database: "ALTER ROLE x IN DATABASE d SET ..." is a row of its own, and a role can write its own.
       const settings = await client.query(
-        `SELECT r.rolname AS role, s.setting
+        `SELECT r.rolname AS role, COALESCE(db.datname, '') AS db, s.setting
            FROM pg_db_role_setting d
            JOIN pg_roles r ON r.oid = d.setrole
+           LEFT JOIN pg_database db ON db.oid = d.setdatabase
            CROSS JOIN LATERAL unnest(d.setconfig) AS s(setting)
-          WHERE r.rolname = ANY($1)`,
+          WHERE r.rolname = ANY($1)
+          ORDER BY 1, 2, 3`,
         [roles],
       );
       const password = await client.query(
@@ -638,8 +641,10 @@ export class PostgresCluster {
           inherit: row['inherit'] === true,
           set: row['set'] === true,
         })),
-        roleSettings: settings.rows.map(
-          (row) => `${String(row['role'])}=${String(row['setting'])}`,
+        roleSettings: settings.rows.map((row) =>
+          String(row['db']) === ''
+            ? `${String(row['role'])}=${String(row['setting'])}`
+            : `${String(row['role'])}@${String(row['db'])}=${String(row['setting'])}`,
         ),
         ownerPasswordHash:
           typeof password.rows[0]?.['hash'] === 'string' ? password.rows[0]['hash'] : '',
@@ -693,9 +698,24 @@ export class PostgresCluster {
   /** Runs statements built by `revertStatements`, as the superuser, in the `postgres` database. */
   async executeStatements(statements: readonly string[]): Promise<void> {
     if (statements.length === 0) return;
+    const failures: string[] = [];
     await this.asSuperuser('postgres', async (client) => {
-      for (const statement of statements) await client.query(statement);
+      // Every statement is tried: one that fails must not leave the ones after it undone.
+      for (const statement of statements) {
+        try {
+          await client.query(statement);
+        } catch (error) {
+          failures.push(
+            `${statement.slice(0, 80)}: ${error instanceof Error ? error.message : String(error)}`,
+          );
+        }
+      }
     });
+    if (failures.length > 0) {
+      throw new PostgresError(
+        `${String(failures.length)} statements failed: ${failures.join(' | ')}`,
+      );
+    }
   }
 
   /** The names of the databases of the server. */

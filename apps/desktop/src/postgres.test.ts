@@ -49,6 +49,8 @@ const pidFileText = (pid: number, port: number, status: string) =>
 let connectFails: number;
 let answerRows: Record<string, unknown>[] | null;
 let missingTable: boolean;
+/** A statement that fails when it is run, to see what comes after it. */
+let failStatement: string | null;
 /** What the query for the hooks on the tables of the migrator answers. */
 let hookRows: Record<string, unknown>[];
 /** Statements for which the fake answers "that object does not exist" (or another code). */
@@ -88,6 +90,9 @@ function cluster(
         ) {
           failQueryContaining = null;
           return Promise.reject(new Error('rename failed'));
+        }
+        if (failStatement !== null && sql === failStatement) {
+          return Promise.reject(new Error('role does not exist'));
         }
         if (missingTable && sql.includes('__drizzle_migrations')) {
           return Promise.reject(
@@ -137,6 +142,7 @@ beforeEach(() => {
   connectFails = 0;
   answerRows = null;
   missingTable = false;
+  failStatement = null;
   hookRows = [];
   onMissing = () => false;
   otherCode = '42P01';
@@ -291,6 +297,31 @@ describe('reading what a backup may have written', () => {
     await pg.start();
 
     await expect(pg.scratchFacts('x; drop database consultorio')).rejects.toThrow(/unsafe/);
+  });
+
+  it('reads the parameters of the roles in every database, not only the global ones', async () => {
+    const pg = cluster();
+    await pg.start();
+
+    await pg.clusterFacts(null);
+
+    const read = queries.find((query) => query.sql.includes('pg_db_role_setting'));
+    expect(read?.sql).toContain('d.setdatabase');
+    expect(read?.target).toMatchObject({ database: 'postgres', user: 'postgres' });
+  });
+
+  it('tries every statement of the way back, also after one fails, and says which failed', async () => {
+    const pg = cluster();
+    await pg.start();
+    const failing = 'ALTER ROLE "app_owner" PASSWORD \'x\'';
+    failStatement = failing;
+    queries.length = 0;
+
+    await expect(pg.executeStatements([failing, 'ALTER ROLE "app_rw" RESET ALL'])).rejects.toThrow(
+      /1 statements failed.*role does not exist/,
+    );
+
+    expect(queries.map((query) => query.sql)).toEqual([failing, 'ALTER ROLE "app_rw" RESET ALL']);
   });
 
   it('runs the statements that put the roles back, as the superuser, in the postgres database', async () => {

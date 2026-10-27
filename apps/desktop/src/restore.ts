@@ -179,6 +179,7 @@ export type RestoreCheckpoint =
   | 'files-swapped'
   | 'secrets-step'
   | 'secrets-adopted'
+  | 'roles-marked'
   | 'swapping'
   | 'swapped';
 
@@ -356,6 +357,7 @@ export async function restoreBackup(
     configCopy: hasConfigCopy ? configCopy : null,
     hadFiles,
     undoing: false,
+    roles: null,
   };
   const advance = async (step: RestoreStep) => {
     journal.step = step;
@@ -452,6 +454,11 @@ export async function restoreBackup(
     let problems = await deps.scratch.inspect(scratch);
     if (problems.length === 0) problems = await deps.scratch.seal(scratch);
     if (problems.length === 0) {
+      // The migrations run code of the backup as app_owner. The roles as they are now go to the journal first, so
+      // that a crash, or a force quit, anywhere from here to the end of the check is put right by the next start.
+      journal.roles = snapshot;
+      await writeJournal(deps.paths, journal);
+      await reached('roles-marked');
       try {
         await deps.scratch.migrate(scratch);
       } catch (error) {
@@ -470,6 +477,10 @@ export async function restoreBackup(
         // the failure goes on to undo the rest.
         await revertLogged();
         throw error;
+      }
+      if (problems.length === 0) {
+        journal.roles = null;
+        await writeJournal(deps.paths, journal);
       }
     }
     if (problems.length > 0) {
@@ -562,7 +573,7 @@ export async function restoreBackup(
     );
   });
   // The roles are as they were before: said again, in case anything touched them since the check.
-  await deps.audit.revert(snapshot).catch(() => undefined);
+  await revertLogged();
   await removeQuietly(unpacked);
   await removeQuietly(aside);
   if (hasConfigCopy) await removeQuietly(configCopy);

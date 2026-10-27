@@ -59,12 +59,7 @@ import {
 import { normalizeRecoveryKey } from './recovery-key.js';
 import { redact } from './redact.js';
 import { migrationCountOf, missingResources, type Resources } from './resources.js';
-import {
-  auditProblems,
-  clusterProblems,
-  revertStatements,
-  type ClusterFacts,
-} from './restore-audit.js';
+import { createRestoreAudit } from './restore-audit-wiring.js';
 import {
   journalFile,
   readJournal,
@@ -834,9 +829,19 @@ export class Controller {
     if (outcome !== 'none') this.log(`restore reconciled at start: ${outcome}`);
   }
 
+  /** The audit of a restore, the same code the tests of a hostile backup run (`restore-audit-wiring.ts`). */
+  private restoreAudit() {
+    return createRestoreAudit(
+      this.cluster,
+      { live: DATABASE_NAME, scratch: SCRATCH_DATABASE },
+      () => this.config.secrets.appOwnerPassword,
+    );
+  }
+
   private reconcileDeps(): ReconcileDeps {
     return {
       paths: this.deps.paths,
+      revertRoles: (snapshot) => this.restoreAudit().revert(snapshot),
       databases: {
         names: () => this.cluster.listDatabases(),
         rename: (from, to) => this.cluster.renameDatabase(from, to),
@@ -1616,27 +1621,7 @@ export class Controller {
         swapIn: () => this.cluster.swapInDatabase(SCRATCH_DATABASE),
       },
       reconcile: () => reconcileInterruptedRestore({ ...this.reconcileDeps(), sweep: false }),
-      audit: {
-        snapshot: () => this.cluster.clusterFacts(DATABASE_NAME),
-        check: async (snapshot: unknown) => {
-          const before = snapshot as ClusterFacts;
-          // The roles first, from the superuser side alone: a hook that changed the password of app_owner or gave it a
-          // timeout makes every read through it fail, and that must be a finding and not an exception.
-          const roleProblems = clusterProblems(before, await this.cluster.clusterFacts(null));
-          if (roleProblems.length > 0) return roleProblems;
-          return auditProblems(
-            before,
-            await this.cluster.clusterFacts(SCRATCH_DATABASE),
-            await this.cluster.scratchFacts(SCRATCH_DATABASE),
-          );
-        },
-        revert: async (snapshot: unknown) => {
-          const now = await this.cluster.clusterFacts(null);
-          await this.cluster.executeStatements(
-            revertStatements(snapshot as ClusterFacts, now, this.config.secrets.appOwnerPassword),
-          );
-        },
-      },
+      audit: this.restoreAudit(),
       migrationCount: migrationCountOf(this.deps.resources),
       dataBytes: async () =>
         (await directoryBytes(this.deps.paths.pgdata)) +

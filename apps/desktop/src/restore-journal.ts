@@ -51,6 +51,13 @@ export interface RestoreJournal {
    * looks like by then.
    */
   undoing: boolean;
+  /**
+   * The roles of the cluster as they were before the migrations of the scratch database ran, written (and forced to
+   * the disk) before they start and removed once the check passed: code of the backup runs as `app_owner` then, and
+   * a crash in the middle must not leave what it did in place. The start puts the roles back from it, as the
+   * superuser, before anything connects as `app_owner`. Null when there is nothing to put back.
+   */
+  roles: unknown;
 }
 
 export const journalFile = (paths: DataPaths) => join(paths.root, 'restore-journal.json');
@@ -116,6 +123,7 @@ export async function readJournal(paths: DataPaths): Promise<RestoreJournal | nu
       // A journal written before this field existed: the safe reading is that there were documents.
       hadFiles: value.hadFiles !== false,
       undoing: value.undoing === true,
+      roles: typeof value.roles === 'object' && value.roles !== null ? value.roles : null,
     };
   } catch {
     return 'unreadable';
@@ -204,6 +212,8 @@ export interface ReconcileDeps {
   };
   /** Reads the secrets again after `config.json` was put back. */
   reloadConfig: () => void;
+  /** Puts the roles back as the snapshot of the journal had them (as the superuser); it throws if it could not. */
+  revertRoles?: (snapshot: unknown) => Promise<void>;
   log?: (message: string) => void;
   /** Clear the work files of backups and restores too (at the start, when nothing else is running). Default true. */
   sweep?: boolean;
@@ -232,6 +242,18 @@ export async function reconcileInterruptedRestore(deps: ReconcileDeps): Promise<
     return 'unreadable';
   }
   let outcome: Reconciled = 'none';
+  if (journal !== null && journal.roles !== null) {
+    // Before anything connects as app_owner: code of the backup may have changed its password or given it a timeout.
+    if (deps.revertRoles === undefined) {
+      throw new Error(
+        'the record of a restore holds the roles, and there is no way to put them back',
+      );
+    }
+    await deps.revertRoles(journal.roles);
+    journal.roles = null;
+    await writeJournal(paths, journal);
+    log?.('the roles of the cluster were put back as an interrupted restore found them');
+  }
   const names = await databases.names();
   if (journal !== null) {
     const swapped =

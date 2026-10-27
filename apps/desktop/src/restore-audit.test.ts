@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
   auditProblems,
   clusterProblems,
+  planRevert,
   revertStatements,
   type ClusterFacts,
   type Membership,
@@ -55,6 +56,87 @@ describe('what the roles of the cluster may have lost, read from the cluster alo
       expect.stringContaining('statement_timeout=1ms'),
       'the password of app_owner was changed',
     ]);
+  });
+});
+
+describe('the parameters a role has in a database', () => {
+  const hostile: ClusterFacts = {
+    ...clean,
+    roleSettings: ['app_owner@consultorio=statement_timeout=1ms', 'app_rw@postgres=work_mem=1TB'],
+  };
+
+  it('are found whichever database they are for', () => {
+    expect(clusterProblems(clean, hostile)).toEqual([
+      expect.stringContaining('app_owner@consultorio=statement_timeout=1ms'),
+      expect.stringContaining('app_rw@postgres=work_mem=1TB'),
+    ]);
+  });
+
+  it('are found when one is taken away too', () => {
+    const had: ClusterFacts = { ...clean, roleSettings: ['app_owner@consultorio=work_mem=8MB'] };
+
+    expect(clusterProblems(had, clean)).toEqual([expect.stringContaining('was taken away')]);
+  });
+
+  it('are reset where they are, in the database they were written for, and the global row is left alone', () => {
+    const { statements, skipped } = planRevert(clean, hostile, 'owner-password');
+
+    expect(skipped).toEqual([]);
+    expect(statements).toContain('ALTER ROLE "app_owner" IN DATABASE "consultorio" RESET ALL');
+    expect(statements).toContain('ALTER ROLE "app_rw" IN DATABASE "postgres" RESET ALL');
+    expect(statements).not.toContain('ALTER ROLE "app_owner" RESET ALL');
+  });
+
+  it('are given back the values they had, row by row', () => {
+    const had: ClusterFacts = {
+      ...clean,
+      roleSettings: ['app_owner=search_path=public', 'app_owner@consultorio=work_mem=8MB'],
+    };
+    const now: ClusterFacts = {
+      ...clean,
+      roleSettings: ['app_owner=search_path=public', 'app_owner@consultorio=work_mem=1TB'],
+    };
+
+    const { statements } = planRevert(had, now, 'owner-password');
+
+    expect(statements).toEqual([
+      'ALTER ROLE "app_owner" IN DATABASE "consultorio" RESET ALL',
+      'ALTER ROLE "app_owner" IN DATABASE "consultorio" SET work_mem TO \'8MB\'',
+    ]);
+  });
+});
+
+describe('the way back', () => {
+  it('starts with the password of app_owner: it is what every other connection of the application needs', () => {
+    const changed: ClusterFacts = {
+      ...clean,
+      ownerPasswordHash: 'other',
+      roleSettings: ['app_owner=statement_timeout=1ms'],
+      memberships: [...clean.memberships, { ...RELEASER, role: 'audit_sealer', member: 'app_rw' }],
+    };
+
+    const { statements } = planRevert(clean, changed, 'owner-password');
+
+    expect(statements[0]).toBe('ALTER ROLE "app_owner" PASSWORD \'owner-password\'');
+    expect(statements.length).toBeGreaterThan(2);
+  });
+
+  it('skips only the statement whose name is not safe, and says which', () => {
+    const odd: ClusterFacts = {
+      ...clean,
+      memberships: [
+        ...clean.memberships,
+        { ...RELEASER, role: 'audit_sealer', member: 'Weird"Name' },
+        { ...RELEASER, role: 'audit_sealer', member: 'app_rw' },
+      ],
+      ownerPasswordHash: 'other',
+    };
+
+    const { statements, skipped } = planRevert(clean, odd, 'owner-password');
+
+    expect(statements).toContain('ALTER ROLE "app_owner" PASSWORD \'owner-password\'');
+    expect(statements.some((statement) => statement.includes('"app_rw"'))).toBe(true);
+    expect(skipped).toEqual([expect.stringContaining('unsafe role name')]);
   });
 });
 
@@ -192,21 +274,24 @@ describe('putting the cluster back', () => {
     };
 
     expect(revertStatements(clean, hostile, "the'password")).toEqual([
+      `ALTER ROLE "app_owner" PASSWORD 'the''password'`,
+      'ALTER ROLE "app_owner" RESET ALL',
       'REVOKE "audit_sealer" FROM "app_rw" GRANTED BY "app_owner"',
       'GRANT "app_rw" TO "app_releaser" WITH ADMIN FALSE, INHERIT TRUE, SET FALSE GRANTED BY "postgres"',
-      'ALTER ROLE "app_owner" RESET ALL',
-      `ALTER ROLE "app_owner" PASSWORD 'the''password'`,
     ]);
   });
 
-  it('has nothing to do when nothing changed, and refuses a name that is not a plain role name', () => {
+  it('has nothing to do when nothing changed, and leaves out (and says so) a name that is not a plain role name', () => {
     expect(revertStatements(clean, clean, 'x')).toEqual([]);
-    expect(() =>
-      revertStatements(
-        clean,
-        { ...clean, memberships: [{ ...OWNER_ADMIN, member: 'a"; DROP ROLE app_rw; --' }] },
-        'x',
-      ),
-    ).toThrow(/unsafe role name/);
+
+    const plan = planRevert(
+      clean,
+      { ...clean, memberships: [{ ...OWNER_ADMIN, member: 'a"; DROP ROLE app_rw; --' }] },
+      'x',
+    );
+
+    expect(plan.statements).toHaveLength(2);
+    expect(plan.statements.every((statement) => statement.startsWith('GRANT'))).toBe(true);
+    expect(plan.skipped).toEqual([expect.stringContaining('unsafe role name')]);
   });
 });

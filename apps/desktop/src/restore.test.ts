@@ -90,6 +90,8 @@ let reverted: string[][];
 let failSwap: boolean;
 /** What the fake `migrate` of the scratch database does: nothing, fail, or leave something behind that the check must find. */
 let migrateFails: boolean;
+/** The snapshots the next start was asked to put back, and whether that fails. */
+let rolesPutBack: unknown[];
 let migrateLeaves: ScratchFacts | null;
 /** The throwaway roles the fake cluster was asked to drop, and who `pg_restore` ran as. */
 let roleDrops: number;
@@ -144,6 +146,11 @@ function reconcileDeps(): ReconcileDeps {
   return {
     paths,
     databases: fakeDatabases(),
+    revertRoles: (snapshot) => {
+      events.push('roles put back');
+      rolesPutBack.push(snapshot);
+      return Promise.resolve();
+    },
     reloadConfig: () => {
       events.push('reload secrets');
     },
@@ -264,6 +271,7 @@ beforeEach(() => {
   adopted = null;
   failSwap = false;
   migrateFails = false;
+  rolesPutBack = [];
   migrateLeaves = null;
   failAdopt = false;
   roleDrops = 0;
@@ -707,6 +715,25 @@ describe('the role a dump runs as', () => {
     expect(readDoc('t/a/docs/1.obj')).toBe('current data');
   });
 
+  it('says in the log when the roles cannot be put back after the swap, instead of swallowing it', async () => {
+    const path = await makeBackup(install, { 't/a/docs/1.obj': 'one' });
+    const logged: string[] = [];
+
+    await restoreBackup(
+      restoreDeps({
+        audit: {
+          snapshot: () => Promise.resolve(CLEAN),
+          check: () => Promise.resolve([]),
+          revert: () => Promise.reject(new Error('the server went away')),
+        },
+        log: (message) => logged.push(message),
+      }),
+      path,
+    );
+
+    expect(logged.join(' | ')).toContain('the roles could not be put back: the server went away');
+  });
+
   it('does not swap a database whose migrations failed, and starts the services again on the old one', async () => {
     const path = await makeBackup(install, { 't/a/docs/1.obj': 'from the backup' });
     writeFileSync(join(paths.files, 't', 'a', 'docs', '1.obj'), 'current data');
@@ -1108,6 +1135,7 @@ describe('a process that dies at any point of a restore', () => {
     'files-swapped',
     'secrets-step',
     'secrets-adopted',
+    'roles-marked',
     'swapping',
     'swap-1',
     'swap-2',
@@ -1171,6 +1199,33 @@ describe('a process that dies at any point of a restore', () => {
       });
     }
   }
+
+  it('puts the roles back, once, when the process dies with the roles marked in the record (a hook of the backup may have run)', async () => {
+    await dieAt('roles-marked', false);
+    // What the journal holds at that moment: the roles as they were, forced to the disk before the migrations.
+    const written = (await readJournal(paths)) as { roles: unknown };
+    expect(written.roles).toEqual(CLEAN);
+
+    await reconcileInterruptedRestore(reconcileDeps());
+
+    expect(rolesPutBack).toEqual([CLEAN]);
+    expect(existsSync(journalFile(paths))).toBe(false);
+    // And a second start has nothing left to put back.
+    await reconcileInterruptedRestore(reconcileDeps());
+    expect(rolesPutBack).toHaveLength(1);
+  });
+
+  it('never marks the roles for a death before the migrations, nor leaves the mark after the check passed', async () => {
+    for (const point of ['prepared', 'restoring', 'files-swapping', 'swapping'] as const) {
+      events.length = 0;
+      rolesPutBack = [];
+      await dieAt(point, false);
+      await reconcileInterruptedRestore(reconcileDeps());
+      expect(rolesPutBack, point).toEqual([]);
+      db = new Map([[DATABASE, OLD_DB]]);
+      dead = false;
+    }
+  });
 
   it('finds the same state when the clean up itself dies on any of its database steps and is run again', async () => {
     for (const point of ['files-aside', 'secrets-adopted', 'swap-1', 'swap-2'] as const) {

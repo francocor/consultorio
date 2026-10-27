@@ -1,13 +1,17 @@
-import { writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
+import { testPaths } from './backup-testing.js';
 import { craftDump, type CraftedEntry } from './crafted-dump.js';
 import { STAGE_TOOLS, stageAvailable, startTestCluster, type TestCluster } from './pg-testing.js';
 import { DATABASE_NAME, type RestoreScratch } from './postgres.js';
 import { aclKey } from './restore-acl.js';
-import { auditProblems, clusterProblems, revertStatements } from './restore-audit.js';
+import { createRestoreAudit } from './restore-audit-wiring.js';
+import { auditProblems, clusterProblems, planRevert, revertStatements } from './restore-audit.js';
+import { journalFile, reconcileInterruptedRestore, writeJournal } from './restore-journal.js';
 import { spawnRunner } from './runner.js';
 
 /**
@@ -60,6 +64,12 @@ describeReal('a restore into a database owned by a throwaway role', () => {
       );
       return found.rows.map((row) => String(row['rolname']));
     });
+
+  /** A read by app_owner that takes longer than a 1 ms timeout allows. */
+  const ownerReadsSlowly = () =>
+    cluster.cluster.asOwner(DATABASE_NAME, (client) =>
+      client.query('SELECT pg_catalog.pg_sleep(0.05)'),
+    );
 
   async function pgRestore(scratch: RestoreScratch, archive: string) {
     return spawnRunner(
@@ -516,6 +526,163 @@ describeReal('a restore into a database owned by a throwaway role', () => {
       await expect(cluster.cluster.appliedMigrationCount()).resolves.not.toBeUndefined();
     }
   }, 180_000);
+
+  it('lets an ordinary role write its own parameters for any database, and not those of another role (why they are read in every database)', async () => {
+    const before = await cluster.cluster.clusterFacts(DATABASE_NAME);
+    const owner = await cluster.connect(
+      'app_owner',
+      cluster.secrets.appOwnerPassword,
+      DATABASE_NAME,
+    );
+    const attempts: Record<string, string> = {};
+    try {
+      for (const statement of [
+        "ALTER ROLE app_owner IN DATABASE consultorio SET statement_timeout = '1ms'",
+        "ALTER ROLE app_owner IN DATABASE postgres SET statement_timeout = '1ms'",
+        "ALTER ROLE app_rw IN DATABASE consultorio SET statement_timeout = '1ms'",
+        "ALTER ROLE audit_sealer IN DATABASE postgres SET statement_timeout = '1ms'",
+      ]) {
+        try {
+          await owner.query(statement);
+          attempts[statement] = 'allowed';
+        } catch (error) {
+          attempts[statement] = (error as Error).message;
+        }
+      }
+    } finally {
+      await owner.end();
+    }
+    const after = await cluster.cluster.clusterFacts(null);
+
+    // PostgreSQL lets the role do it for itself, in any database, and refuses it for the others.
+    expect(attempts).toEqual({
+      "ALTER ROLE app_owner IN DATABASE consultorio SET statement_timeout = '1ms'": 'allowed',
+      "ALTER ROLE app_owner IN DATABASE postgres SET statement_timeout = '1ms'": 'allowed',
+      "ALTER ROLE app_rw IN DATABASE consultorio SET statement_timeout = '1ms'":
+        'permission denied to alter role',
+      "ALTER ROLE audit_sealer IN DATABASE postgres SET statement_timeout = '1ms'":
+        'permission denied to alter role',
+    });
+    expect(after.roleSettings).toEqual([
+      'app_owner@consultorio=statement_timeout=1ms',
+      'app_owner@postgres=statement_timeout=1ms',
+    ]);
+    expect(clusterProblems(before, after)).toHaveLength(2);
+    // It bricks the role: a read that takes longer than that is cancelled.
+    await expect(ownerReadsSlowly()).rejects.toThrow(/statement timeout/);
+
+    await cluster.cluster.executeStatements(
+      planRevert(before, after, cluster.secrets.appOwnerPassword).statements,
+    );
+
+    expect((await cluster.cluster.clusterFacts(null)).roleSettings).toEqual(before.roleSettings);
+    await expect(ownerReadsSlowly()).resolves.toBeDefined();
+  }, 60_000);
+
+  it('goes through the audit the product uses: the check finds what a hook did during the seed, the revert undoes it, and app_owner reads again', async () => {
+    const audit = createRestoreAudit(
+      cluster.cluster,
+      { live: DATABASE_NAME, scratch: SCRATCH },
+      () => cluster.secrets.appOwnerPassword,
+    );
+    const snapshot = await audit.snapshot();
+    const scratch = await cluster.cluster.createRestoreScratch(SCRATCH);
+    const restored = await pgRestore(scratch, dump);
+    expect(restored.code, restored.stderr).toBe(0);
+    const hooks = [
+      "ALTER ROLE app_owner PASSWORD ''something-else''",
+      "ALTER ROLE app_owner IN DATABASE consultorio SET statement_timeout = ''1ms''",
+      "ALTER ROLE app_owner IN DATABASE postgres SET statement_timeout = ''1ms''",
+    ];
+    const body = hooks.map((hook) => `EXECUTE '${hook}';`).join(' ');
+    const failures = await asRestorer(scratch, [
+      `CREATE FUNCTION public.hook() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN ${body} RETURN NEW; END $$`,
+      'CREATE TRIGGER hook BEFORE INSERT ON public.audit_event FOR EACH ROW EXECUTE FUNCTION public.hook()',
+    ]);
+    expect(failures).toEqual([]);
+    expect(await cluster.cluster.sealRestoreScratch(scratch)).toEqual([]);
+    // The seed of the catalogs: a write by app_owner into a table of the backup.
+    const owner = await cluster.connect('app_owner', cluster.secrets.appOwnerPassword, SCRATCH);
+    try {
+      await owner.query("INSERT INTO public.audit_event (body) VALUES ('seed')");
+    } finally {
+      await owner.end().catch(() => undefined);
+    }
+
+    // What app_owner can no longer do...
+    await expect(
+      cluster.cluster.asOwner(DATABASE_NAME, (client) => client.query('SELECT 1')),
+    ).rejects.toThrow();
+    // ...is a finding of the check, not an exception.
+    const problems = (await audit.check(snapshot)).join(' | ');
+    expect(problems).toContain('the password of app_owner was changed');
+    expect(problems).toContain('app_owner@consultorio=statement_timeout=1ms');
+    expect(problems).toContain('app_owner@postgres=statement_timeout=1ms');
+
+    await audit.revert(snapshot);
+
+    await expect(ownerReadsSlowly()).resolves.toBeDefined();
+    const now = await cluster.cluster.clusterFacts(null);
+    expect(now.roleSettings).toEqual((snapshot as { roleSettings: string[] }).roleSettings);
+    await cluster.cluster.dropDatabase(SCRATCH);
+    await cluster.cluster.dropRestoreRoles();
+  }, 180_000);
+
+  it('puts the roles back at the next start when the process died with them marked in the record', async () => {
+    const audit = createRestoreAudit(
+      cluster.cluster,
+      { live: DATABASE_NAME, scratch: SCRATCH },
+      () => cluster.secrets.appOwnerPassword,
+    );
+    const snapshot = await audit.snapshot();
+    // What the record holds at that moment, and what a hook did before the process was killed.
+    const folder = mkdtempSync(join(tmpdir(), 'consulvia-crash-'));
+    const paths = testPaths(folder);
+    mkdirSync(paths.root, { recursive: true });
+    await writeJournal(paths, {
+      version: 1,
+      stamp: '1',
+      step: 'restoring',
+      filesAside: join(paths.root, 'files.replaced-1'),
+      unpacked: join(paths.root, 'tmp-restore-1'),
+      configCopy: null,
+      hadFiles: true,
+      undoing: false,
+      roles: snapshot,
+    });
+    const owner = await cluster.connect(
+      'app_owner',
+      cluster.secrets.appOwnerPassword,
+      DATABASE_NAME,
+    );
+    try {
+      await owner.query(
+        "ALTER ROLE app_owner IN DATABASE consultorio SET statement_timeout = '1ms'",
+      );
+    } finally {
+      await owner.end();
+    }
+    await expect(ownerReadsSlowly()).rejects.toThrow(/statement timeout/);
+
+    try {
+      await reconcileInterruptedRestore({
+        paths,
+        databases: {
+          names: () => cluster.cluster.listDatabases(),
+          rename: (from, to) => cluster.cluster.renameDatabase(from, to),
+          drop: (name) => cluster.cluster.dropDatabase(name),
+          dropRestoreRoles: () => cluster.cluster.dropRestoreRoles(),
+        },
+        revertRoles: (marked) => audit.revert(marked),
+        reloadConfig: () => undefined,
+      });
+
+      await expect(ownerReadsSlowly()).resolves.toBeDefined();
+      expect(existsSync(journalFile(paths))).toBe(false);
+    } finally {
+      rmSync(folder, { recursive: true, force: true });
+    }
+  }, 120_000);
 
   it('only lets app_owner hand out audit_sealer while a migration needs it', async () => {
     const admin = async () =>

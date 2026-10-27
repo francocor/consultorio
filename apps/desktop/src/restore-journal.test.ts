@@ -28,6 +28,9 @@ let reloads: number;
 let roleDrops: number;
 let roleDropFails: boolean;
 let logged: string[];
+/** What the fake `revertRoles` was given, and whether it fails. */
+let revertedRoles: unknown[];
+let revertRolesFails: boolean;
 
 beforeEach(() => {
   folder = mkdtempSync(join(tmpdir(), 'consulvia-journal-'));
@@ -39,6 +42,8 @@ beforeEach(() => {
   roleDrops = 0;
   roleDropFails = false;
   logged = [];
+  revertedRoles = [];
+  revertRolesFails = false;
 });
 
 afterEach(() => {
@@ -57,6 +62,7 @@ function journal(step: RestoreStep, configCopy: string | null = null): RestoreJo
     configCopy,
     hadFiles: true,
     undoing: false,
+    roles: null,
   };
 }
 
@@ -81,6 +87,12 @@ function reconcile() {
           ? Promise.reject(new Error('still owns something'))
           : Promise.resolve();
       },
+    },
+    revertRoles: (snapshot) => {
+      calls.push('revert roles');
+      if (revertRolesFails) return Promise.reject(new Error('the server refused'));
+      revertedRoles.push(snapshot);
+      return Promise.resolve();
     },
     reloadConfig: () => {
       reloads += 1;
@@ -147,6 +159,64 @@ describe('the journal of a restore', () => {
 
     writeFileSync(journalFile(paths), JSON.stringify({ version: 1, step: 'nowhere' }));
     expect(await readJournal(paths)).toBe('unreadable');
+  });
+});
+
+describe('the roles a restore marked in its record', () => {
+  const marked = { memberships: [], roleSettings: [], ownerPasswordHash: 'h', auditPrivileges: [] };
+
+  it('are put back first, before the databases are looked at, and the mark goes only after that worked', async () => {
+    await writeJournal(paths, { ...journal('restoring'), roles: marked });
+    databases = [DATABASE, SCRATCH_DATABASE];
+    let markWhenDatabasesWereRead: unknown = 'not read';
+    const names = () => {
+      calls.push('names');
+      return Promise.resolve([...databases]);
+    };
+
+    await reconcileInterruptedRestore({
+      paths,
+      databases: {
+        names: async () => {
+          markWhenDatabasesWereRead = ((await readJournal(paths)) as RestoreJournal).roles;
+          return names();
+        },
+        rename: () => Promise.resolve(),
+        drop: (name) => {
+          databases = databases.filter((candidate) => candidate !== name);
+          return Promise.resolve();
+        },
+        dropRestoreRoles: () => Promise.resolve(),
+      },
+      revertRoles: (snapshot) => {
+        calls.push('revert roles');
+        revertedRoles.push(snapshot);
+        return Promise.resolve();
+      },
+      reloadConfig: () => undefined,
+    });
+
+    expect(revertedRoles).toEqual([marked]);
+    expect(calls.slice(0, 2)).toEqual(['revert roles', 'names']);
+    expect(markWhenDatabasesWereRead).toBeNull();
+  });
+
+  it('keep the restore from going on when they cannot be put back: the mark stays for the next start', async () => {
+    await writeJournal(paths, { ...journal('restoring'), roles: marked });
+    revertRolesFails = true;
+
+    await expect(reconcile()).rejects.toThrow('the server refused');
+
+    expect(calls).toEqual(['revert roles']);
+    expect(((await readJournal(paths)) as RestoreJournal).roles).toEqual(marked);
+  });
+
+  it('are asked for only when the record holds them', async () => {
+    await writeJournal(paths, journal('restoring'));
+
+    await reconcile();
+
+    expect(calls).not.toContain('revert roles');
   });
 });
 

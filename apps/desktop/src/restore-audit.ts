@@ -33,7 +33,10 @@ export interface Membership {
 export interface ClusterFacts {
   /** Memberships among the roles of the application. */
   memberships: Membership[];
-  /** `pg_db_role_setting` of the roles of the application: `role=name=value`. */
+  /**
+   * `pg_db_role_setting` of the roles of the application, in every database: `role=name=value` for the setting
+   * of the role everywhere, `role@database=name=value` for the one it has only in a database.
+   */
   roleSettings: string[];
   /** The stored password verifier of `app_owner`: a restored dump can change its own. */
   ownerPasswordHash: string;
@@ -138,9 +141,14 @@ export function clusterProblems(before: ClusterFacts, after: ClusterFacts): stri
     }
   }
   const settingsBefore = new Set(before.roleSettings);
+  const settingsNow = new Set(after.roleSettings);
   for (const setting of after.roleSettings) {
     if (!settingsBefore.has(setting))
       problems.push(`a role sets a parameter: ${JSON.stringify(setting)}`);
+  }
+  for (const setting of before.roleSettings) {
+    if (!settingsNow.has(setting))
+      problems.push(`a parameter of a role was taken away: ${JSON.stringify(setting)}`);
   }
   if (after.ownerPasswordHash !== before.ownerPasswordHash) {
     problems.push('the password of app_owner was changed');
@@ -165,42 +173,114 @@ function literal(value: string): string {
   return `'${value.replaceAll("'", "''")}'`;
 }
 
+const SAFE_PARAMETER = /^[a-z_][a-z0-9_.]*$/;
+
+/** A setting of the list `roleSettings`, taken apart. */
+function parseRoleSetting(
+  entry: string,
+): { role: string; database: string | null; name: string; value: string } | null {
+  const equals = entry.indexOf('=');
+  if (equals < 0) return null;
+  const head = entry.slice(0, equals);
+  const setting = entry.slice(equals + 1);
+  const at = head.indexOf('@');
+  const role = at < 0 ? head : head.slice(0, at);
+  const database = at < 0 ? null : head.slice(at + 1);
+  const inner = setting.indexOf('=');
+  if (inner < 0) return null;
+  return { role, database, name: setting.slice(0, inner), value: setting.slice(inner + 1) };
+}
+
+/** The statements that put the cluster back, and what could not be turned into one. */
+export interface RevertPlan {
+  statements: string[];
+  /** Why a statement was left out (a name that is not a plain identifier): the revert is NOT complete if any. */
+  skipped: string[];
+}
+
 /**
  * The statements that put the cluster back as `before` had it, run as the superuser in the `postgres` database
- * (never inside a restored one): memberships that appeared are revoked, the ones that went are granted again,
- * the parameters of the roles are reset and the password of `app_owner` is set to the one the shell holds.
+ * (never inside a restored one). The password of `app_owner` comes first (it is what every other connection of the
+ * application needs), then the parameters of the roles (the global ones and the ones in a database: each row that
+ * differs is reset and given the values it had), then the memberships that appeared are revoked and the ones that
+ * went are granted again. A name that is not safe to write into a statement skips that statement alone.
  */
+export function planRevert(
+  before: ClusterFacts,
+  after: ClusterFacts,
+  ownerPassword: string,
+): RevertPlan {
+  const statements: string[] = [];
+  const skipped: string[] = [];
+  const add = (build: () => string, what: string) => {
+    try {
+      statements.push(build());
+    } catch (error) {
+      skipped.push(`${what}: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  };
+
+  if (after.ownerPasswordHash !== before.ownerPasswordHash) {
+    add(
+      () => `ALTER ROLE "app_owner" PASSWORD ${literal(ownerPassword)}`,
+      'the password of app_owner',
+    );
+  }
+
+  // Rows of pg_db_role_setting that differ, by (role, database).
+  const rowOf = (entry: string) => {
+    const parsed = parseRoleSetting(entry);
+    return parsed === null ? null : `${parsed.role}@${parsed.database ?? ''}`;
+  };
+  const differing = new Set<string>();
+  const was = new Set(before.roleSettings);
+  const is = new Set(after.roleSettings);
+  for (const entry of after.roleSettings) if (!was.has(entry)) differing.add(rowOf(entry) ?? entry);
+  for (const entry of before.roleSettings) if (!is.has(entry)) differing.add(rowOf(entry) ?? entry);
+  for (const row of differing) {
+    const at = row.indexOf('@');
+    const role = at < 0 ? row : row.slice(0, at);
+    const database = at < 0 || row.slice(at + 1) === '' ? null : row.slice(at + 1);
+    const target = () =>
+      `ALTER ROLE ${identifier(role)}${database === null ? '' : ` IN DATABASE ${identifier(database)}`}`;
+    add(() => `${target()} RESET ALL`, `the parameters of ${row}`);
+    for (const entry of before.roleSettings) {
+      const parsed = parseRoleSetting(entry);
+      if (parsed === null || parsed.role !== role || parsed.database !== database) continue;
+      add(() => {
+        if (!SAFE_PARAMETER.test(parsed.name))
+          throw new Error(`unsafe parameter name: ${parsed.name}`);
+        return `${target()} SET ${parsed.name} TO ${literal(parsed.value)}`;
+      }, `a parameter of ${row}`);
+    }
+  }
+
+  const wasBefore = new Set(before.memberships.map(key));
+  const isNow = new Set(after.memberships.map(key));
+  for (const membership of after.memberships) {
+    if (wasBefore.has(key(membership))) continue;
+    add(
+      () =>
+        `REVOKE ${identifier(membership.role)} FROM ${identifier(membership.member)} GRANTED BY ${identifier(membership.grantor)}`,
+      `a membership: ${roleAndMember(membership)}`,
+    );
+  }
+  for (const membership of before.memberships) {
+    if (isNow.has(key(membership))) continue;
+    add(
+      () =>
+        `GRANT ${identifier(membership.role)} TO ${identifier(membership.member)} WITH ADMIN ${membership.admin ? 'TRUE' : 'FALSE'}, INHERIT ${membership.inherit ? 'TRUE' : 'FALSE'}, SET ${membership.set ? 'TRUE' : 'FALSE'} GRANTED BY ${identifier(membership.grantor)}`,
+      `a membership: ${roleAndMember(membership)}`,
+    );
+  }
+  return { statements, skipped };
+}
+
+/** The statements of `planRevert`, for the callers that do not care about what was skipped. */
 export function revertStatements(
   before: ClusterFacts,
   after: ClusterFacts,
   ownerPassword: string,
 ): string[] {
-  const statements: string[] = [];
-  const wasBefore = new Set(before.memberships.map(key));
-  const isNow = new Set(after.memberships.map(key));
-  for (const membership of after.memberships) {
-    if (!wasBefore.has(key(membership))) {
-      statements.push(
-        `REVOKE ${identifier(membership.role)} FROM ${identifier(membership.member)} GRANTED BY ${identifier(membership.grantor)}`,
-      );
-    }
-  }
-  for (const membership of before.memberships) {
-    if (!isNow.has(key(membership))) {
-      statements.push(
-        `GRANT ${identifier(membership.role)} TO ${identifier(membership.member)} WITH ADMIN ${membership.admin ? 'TRUE' : 'FALSE'}, INHERIT ${membership.inherit ? 'TRUE' : 'FALSE'}, SET ${membership.set ? 'TRUE' : 'FALSE'} GRANTED BY ${identifier(membership.grantor)}`,
-      );
-    }
-  }
-  const settingsBefore = new Set(before.roleSettings);
-  const changedRoles = new Set(
-    after.roleSettings
-      .filter((setting) => !settingsBefore.has(setting))
-      .map((setting) => setting.split('=')[0] ?? ''),
-  );
-  for (const role of changedRoles) statements.push(`ALTER ROLE ${identifier(role)} RESET ALL`);
-  if (after.ownerPasswordHash !== before.ownerPasswordHash) {
-    statements.push(`ALTER ROLE "app_owner" PASSWORD ${literal(ownerPassword)}`);
-  }
-  return statements;
+  return planRevert(before, after, ownerPassword).statements;
 }
