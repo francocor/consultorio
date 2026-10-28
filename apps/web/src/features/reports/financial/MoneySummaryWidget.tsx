@@ -134,7 +134,7 @@ export function MoneySummaryWidget({
                   <Button
                     type="button"
                     variant="link"
-                    className="h-auto p-0"
+                    className="link-target h-auto p-0"
                     aria-label={t('money.kpi.seeRecords', { name: tile.label })}
                     onClick={() => {
                       onOpen(tile.id);

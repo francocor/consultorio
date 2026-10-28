@@ -62,7 +62,7 @@ export function ClinicalSearch({ patientId }: { patientId: string }) {
       <form
         noValidate
         role="search"
-        className="grid gap-3 sm:grid-cols-[1fr_9rem_9rem_auto] sm:items-end"
+        className="grid gap-3 sm:grid-cols-[1fr_9rem_9rem_auto] sm:items-end md:grid-cols-2 lg:grid-cols-[1fr_9rem_9rem_auto]"
         onSubmit={(event) => {
           event.preventDefault();
           const q = term.trim();
@@ -74,7 +74,7 @@ export function ClinicalSearch({ patientId }: { patientId: string }) {
           setSubmitted({ q, ...(from ? { from } : {}), ...(to ? { to } : {}) });
         }}
       >
-        <div className="grid gap-1.5">
+        <div className="grid gap-1.5 md:col-span-2 lg:col-span-1">
           <Label htmlFor={termId}>{t('clinical:search.label')}</Label>
           <Input
             id={termId}
@@ -109,7 +109,11 @@ export function ClinicalSearch({ patientId }: { patientId: string }) {
             }}
           />
         </div>
-        <Button type="submit" loading={results.isFetching}>
+        <Button
+          type="submit"
+          loading={results.isFetching}
+          className="md:justify-self-start lg:justify-self-auto"
+        >
           <Search aria-hidden="true" />
           {t('clinical:search.submit')}
         </Button>

@@ -236,6 +236,7 @@ export function BookingFlow({
                   <span className="font-medium">{professional.name}</span>
                   <Button
                     variant="link"
+                    className="link-target"
                     onClick={() => {
                       dispatch({ type: 'professional', slug: null });
                     }}

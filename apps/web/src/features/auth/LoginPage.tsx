@@ -298,10 +298,14 @@ function CodeStep({
       </Form>
 
       <div className="grid gap-1 text-center text-sm">
-        <Button variant="link" onClick={onToggleRecovery} className="justify-self-center">
+        <Button
+          variant="link"
+          onClick={onToggleRecovery}
+          className="min-h-11 justify-self-center md:min-h-0"
+        >
           {recovery ? t('twoFactor.useApp') : t('twoFactor.useRecovery')}
         </Button>
-        <Button variant="link" onClick={onBack} className="justify-self-center">
+        <Button variant="link" onClick={onBack} className="min-h-11 justify-self-center md:min-h-0">
           {t('twoFactor.back')}
         </Button>
       </div>
