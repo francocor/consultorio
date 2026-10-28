@@ -10,6 +10,7 @@ import {
   nativeImage,
   Notification,
   safeStorage,
+  screen,
   session,
   shell,
   Tray,
@@ -35,6 +36,7 @@ import { spawnPgTools } from './streams.js';
 import { TEXT } from './strings.js';
 import type { ChildLike } from './supervisor.js';
 import { headersWithProof } from './window-proof.js';
+import { AUX_WINDOW, fitToWorkArea, MAIN_WINDOW } from './window-size.js';
 
 /**
  * The Electron entry: windows, tray, dialogs and the single-instance rules. Everything that decides
@@ -138,10 +140,8 @@ async function run(): Promise<void> {
 
   function createMainWindow(): BrowserWindow {
     const window = secureWindow({
-      width: 1360,
-      height: 860,
-      minWidth: 800,
-      minHeight: 560,
+      // A laptop screen is smaller than the preferred size: open inside the free area of the display.
+      ...fitToWorkArea(MAIN_WINDOW, screen.getPrimaryDisplay().workAreaSize),
       show: false,
       title: TEXT.appName,
     });
@@ -188,8 +188,7 @@ async function run(): Promise<void> {
       auxWindow?.close();
       const parent = mainWindow ?? undefined;
       auxWindow = secureWindow({
-        width: 560,
-        height: 720,
+        ...fitToWorkArea(AUX_WINDOW, screen.getPrimaryDisplay().workAreaSize),
         title,
         ...(parent ? { parent } : {}),
         show: true,
