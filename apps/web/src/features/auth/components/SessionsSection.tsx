@@ -96,7 +96,7 @@ function SessionRow({
       <span className="grid size-10 shrink-0 place-content-center rounded-full bg-muted text-muted-foreground">
         <Laptop className="size-5" aria-hidden="true" />
       </span>
-      <div className="grid min-w-0 flex-1 gap-0.5 text-sm">
+      <div className="grid min-w-0 flex-[1_1_14rem] gap-0.5 text-sm">
         <p className="flex flex-wrap items-center gap-2 font-medium">
           <span>
             {device

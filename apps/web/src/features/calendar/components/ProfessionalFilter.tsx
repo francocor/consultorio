@@ -18,7 +18,7 @@ function Chip({
       aria-pressed={pressed}
       onClick={onClick}
       className={cn(
-        'touch-target-md inline-flex cursor-pointer items-center whitespace-nowrap rounded-full border px-3.5 text-sm font-medium',
+        'touch-target-md inline-flex shrink-0 cursor-pointer items-center whitespace-nowrap rounded-full border px-3.5 text-sm font-medium',
         pressed
           ? 'border-primary bg-primary text-primary-foreground'
           : 'border-input bg-card hover:bg-accent',
