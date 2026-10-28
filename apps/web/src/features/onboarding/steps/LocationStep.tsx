@@ -84,7 +84,7 @@ export function LocationStep({ next, back }: StepProps) {
           </ul>
           <Link
             to="/settings/locations"
-            className="w-fit text-sm font-medium text-primary-ink underline-offset-4 hover:underline"
+            className="link-target w-fit text-sm font-medium text-primary-ink underline-offset-4 hover:underline"
           >
             {t('onboarding:location.manage')}
           </Link>

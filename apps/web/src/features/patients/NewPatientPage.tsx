@@ -73,7 +73,7 @@ export function NewPatientPage() {
     <div>
       <Link
         to="/patients"
-        className="mb-3 inline-flex items-center gap-1.5 text-sm font-medium text-muted-foreground hover:text-foreground"
+        className="link-target mb-3 inline-flex items-center gap-1.5 text-sm font-medium text-muted-foreground hover:text-foreground"
       >
         <ArrowLeft className="size-4" aria-hidden="true" />
         {t('patients:detail.back')}

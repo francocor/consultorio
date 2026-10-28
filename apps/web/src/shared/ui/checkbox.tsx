@@ -31,7 +31,7 @@ export function Switch({ className, ...props }: ComponentProps<typeof SwitchPrim
         'peer relative inline-flex h-6 w-11 shrink-0 cursor-pointer items-center rounded-full border border-input bg-muted transition-colors',
         'data-[state=checked]:border-primary data-[state=checked]:bg-primary',
         'disabled:cursor-not-allowed disabled:opacity-60',
-        'after:absolute after:-inset-2 after:content-[""]',
+        'after:absolute after:-inset-x-2 after:-inset-y-3 after:content-[""]',
         className,
       )}
       {...props}

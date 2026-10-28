@@ -55,7 +55,7 @@ export function PatientHeader({
     <header className="mb-6 grid gap-4">
       <Link
         to="/patients"
-        className="inline-flex w-fit items-center gap-1.5 text-sm font-medium text-muted-foreground hover:text-foreground"
+        className="link-target inline-flex w-fit items-center gap-1.5 text-sm font-medium text-muted-foreground hover:text-foreground"
       >
         <ArrowLeft className="size-4" aria-hidden="true" />
         {t('patients:detail.back')}

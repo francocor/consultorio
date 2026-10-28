@@ -52,7 +52,7 @@ export function CallPanel({ items }: { items: readonly WaitlistCallItemDto[] }) 
                 {item.contact.phone ? (
                   <a
                     href={`tel:${item.contact.phone.replace(/[^\d+]/g, '')}`}
-                    className="inline-flex items-center gap-1.5 font-medium text-primary-ink underline-offset-4 hover:underline"
+                    className="link-target inline-flex items-center gap-1.5 font-medium text-primary-ink underline-offset-4 hover:underline"
                   >
                     <PhoneCall className="size-4" aria-hidden="true" />
                     {item.contact.phone}

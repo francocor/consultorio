@@ -195,7 +195,7 @@ function CredentialsStep({
       <div className="grid gap-3 text-center text-sm">
         <Link
           to="/forgot-password"
-          className="font-medium text-primary-ink underline-offset-4 hover:underline"
+          className="link-target font-medium text-primary-ink underline-offset-4 hover:underline"
         >
           {t('auth:login.forgot')}
         </Link>

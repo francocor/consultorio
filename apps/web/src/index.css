@@ -128,6 +128,24 @@
   min-width: 2.75rem;
 }
 
+/*
+ * Grows the tap area of a text link or a link-style button to 44 px tall on phones, without moving
+ * anything around it: the extra area is an invisible box over the line above and below the text.
+ * From the tablet size the pointer is a mouse and the box goes away. Not for a link inside a
+ * sentence (the line already is its target) nor for one stacked tightly under another.
+ */
+@utility link-target {
+  position: relative;
+  &::after {
+    content: '';
+    position: absolute;
+    inset: -0.75rem 0;
+    @media (min-width: 48rem) {
+      display: none;
+    }
+  }
+}
+
 @utility touch-target-md {
   min-height: 2.75rem;
   min-width: 2.75rem;

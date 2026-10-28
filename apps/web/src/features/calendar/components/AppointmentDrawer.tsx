@@ -170,7 +170,7 @@ function DrawerBody({
           <Link
             to="/patients/$patientId"
             params={{ patientId: entry.patientId }}
-            className="text-sm font-medium text-primary-ink underline-offset-4 hover:underline"
+            className="link-target text-sm font-medium text-primary-ink underline-offset-4 hover:underline"
           >
             {t('scheduling:drawer.patientLink')}
           </Link>

@@ -20,7 +20,7 @@ export const buttonVariants = cva(
         outline: 'border border-input bg-card px-4 hover:bg-accent hover:text-accent-foreground',
         ghost: 'px-3 hover:bg-accent hover:text-accent-foreground',
         destructive: 'bg-destructive px-4 text-destructive-foreground hover:bg-destructive/90',
-        link: 'min-h-0 min-w-0 px-0 text-primary-ink underline-offset-4 hover:underline',
+        link: 'link-target min-h-0 min-w-0 px-0 text-primary-ink underline-offset-4 hover:underline',
       },
       size: {
         default: '',

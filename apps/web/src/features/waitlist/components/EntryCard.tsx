@@ -201,7 +201,7 @@ export function EntryCard({ entry, readOnly }: { entry: WaitlistEntryDto; readOn
               id={`priority-${entry.id}`}
               value={String(entry.priority)}
               disabled={disabled || priority.isPending}
-              className="min-h-9 w-44"
+              className="w-44 md:min-h-9"
               onChange={(event) => {
                 priority.mutate(Number(event.target.value));
               }}

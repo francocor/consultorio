@@ -55,7 +55,7 @@ export function ForgotPasswordPage() {
         </p>
         <Link
           to="/login"
-          className="text-sm font-medium text-primary-ink underline-offset-4 hover:underline"
+          className="link-target text-sm font-medium text-primary-ink underline-offset-4 hover:underline"
         >
           {t('auth:forgot.back')}
         </Link>
@@ -106,7 +106,7 @@ export function ForgotPasswordPage() {
       </Form>
       <Link
         to="/login"
-        className="text-center text-sm font-medium text-primary-ink underline-offset-4 hover:underline"
+        className="link-target text-center text-sm font-medium text-primary-ink underline-offset-4 hover:underline"
       >
         {t('auth:forgot.back')}
       </Link>
