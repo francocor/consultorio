@@ -1,6 +1,12 @@
 import { expect, test, type Page } from '@playwright/test';
 
-import { clippedLabels, hitHeight, layoutProblems, overlappingBoxes } from './support/layout.js';
+import {
+  clippedLabels,
+  hitHeight,
+  layoutProblems,
+  overlappingBoxes,
+  stolenTargets,
+} from './support/layout.js';
 import {
   emailOf,
   horizontalOverflow,
@@ -78,10 +84,13 @@ const SCREENS: Screen[] = [
   { name: 'clinical export', account: 'cardiology', path: '/export/clinical' },
 ];
 
-/** The page is drawn: a heading, and no request still in flight. */
+/**
+ * The page is drawn: a heading, and no loading placeholder left. Loading regions announce
+ * themselves with `aria-busy`, so this waits for a concrete state and not for a quiet network.
+ */
 async function settled(page: Page) {
   await expect(page.getByRole('heading', { level: 1 }).first()).toBeVisible();
-  await page.waitForLoadState('networkidle');
+  await expect(page.locator('[aria-busy="true"]')).toHaveCount(0);
 }
 
 async function visit(page: Page, screen: Screen) {
@@ -108,6 +117,7 @@ for (const viewport of VIEWPORTS) {
         expect(await horizontalOverflow(page)).toBeLessThanOrEqual(0);
         expect(await layoutProblems(page)).toEqual([]);
         expect(await clippedLabels(page)).toEqual([]);
+        expect(await stolenTargets(page)).toEqual([]);
       });
     }
 
@@ -118,7 +128,7 @@ for (const viewport of VIEWPORTS) {
 
       for (const tab of await page.getByRole('tab').all()) {
         await tab.click();
-        await page.waitForLoadState('networkidle');
+        await expect(page.locator('[aria-busy="true"]')).toHaveCount(0);
         expect(await horizontalOverflow(page), (await tab.textContent()) ?? '').toBeLessThanOrEqual(
           0,
         );
@@ -192,6 +202,25 @@ test.describe('a phone: what a finger can hit', () => {
     expect(
       await hitHeight(page.getByRole('link', { name: 'Volver a pacientes' })),
     ).toBeGreaterThanOrEqual(MINIMUM);
+  });
+
+  test('the check for a stolen target does find an overlay that covers a neighbour', async ({
+    page,
+  }) => {
+    await page.goto(urlOf('aillu', '/login'));
+    await settled(page);
+    // Two stacked links, the second with the +-12 px overlay the first version of `link-target` gave.
+    await page.evaluate(() => {
+      document.body.insertAdjacentHTML(
+        'beforeend',
+        `<div style="position:fixed;top:120px;left:12px;z-index:99999;background:#fff">
+           <a href="#first" style="display:block;position:relative;padding:2px 8px">First link</a>
+           <a href="#second" style="display:block;position:relative;margin-top:4px;padding:2px 8px">Second link<span style="position:absolute;inset:-12px 0"></span></a>
+         </div>`,
+      );
+    });
+
+    expect(await stolenTargets(page)).toContain('"First link" answers as "Second link"');
   });
 
   test('a switch has a target of 44 px', async ({ page }) => {

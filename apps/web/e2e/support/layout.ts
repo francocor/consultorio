@@ -141,3 +141,55 @@ export async function overlappingBoxes(
     [containerSelector, controlSelector],
   );
 }
+
+/**
+ * Controls whose tap area is taken by another control: a point well inside one control that
+ * answers as a different one. It is how a grown hit area (`link-target`, the 44 px box of a switch
+ * or a checkbox) shows up as a fault: it must reach the empty space around its control, never the
+ * body of a neighbour. Each control is centered on screen before it is probed, so a bar at the
+ * top or at the bottom does not cover it.
+ */
+export async function stolenTargets(page: Page): Promise<string[]> {
+  return page.evaluate(() => {
+    const interactive =
+      'a[href], button, input:not([type="hidden"]), select, textarea, [role="tab"], [role="switch"], [role="checkbox"], [role="menuitem"]';
+    const label = (element: Element) =>
+      (element.textContent.trim() || element.getAttribute('aria-label') || element.tagName)
+        .replace(/\s+/g, ' ')
+        .slice(0, 30);
+    const found: string[] = [];
+    for (const control of document.querySelectorAll(interactive)) {
+      const style = getComputedStyle(control);
+      if (style.display === 'none' || style.visibility === 'hidden') continue;
+      if (control.closest('[aria-hidden="true"], [inert]')) continue;
+      control.scrollIntoView({ block: 'center' });
+      const box = control.getBoundingClientRect();
+      if (box.width < 8 || box.height < 8) continue;
+      if (box.top < 0 || box.bottom > innerHeight) continue;
+      const inset = Math.min(4, box.width / 4, box.height / 4);
+      const points: [number, number][] = [
+        [box.left + box.width / 2, box.top + box.height / 2],
+        [box.left + inset, box.top + inset],
+        [box.right - inset, box.top + inset],
+        [box.left + inset, box.bottom - inset],
+        [box.right - inset, box.bottom - inset],
+      ];
+      for (const [x, y] of points) {
+        const hit = document.elementFromPoint(x, y);
+        if (!hit || control.contains(hit)) continue;
+        const other = hit.closest(interactive);
+        // A button laid over its own field on purpose (show the password) is not a theft.
+        const overlay =
+          other !== null &&
+          getComputedStyle(other).position === 'absolute' &&
+          control.parentElement?.contains(other) === true;
+        if (other && other !== control && !other.contains(control) && !overlay) {
+          found.push(`"${label(control)}" answers as "${label(other)}"`);
+          break;
+        }
+      }
+      if (found.length >= 5) break;
+    }
+    return found;
+  });
+}
