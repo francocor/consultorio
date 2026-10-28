@@ -188,7 +188,12 @@ async function run(): Promise<void> {
       auxWindow?.close();
       const parent = mainWindow ?? undefined;
       auxWindow = secureWindow({
-        ...fitToWorkArea(AUX_WINDOW, screen.getPrimaryDisplay().workAreaSize),
+        // The display the main window is on, which may not be the primary one.
+        ...fitToWorkArea(
+          AUX_WINDOW,
+          (parent ? screen.getDisplayMatching(parent.getBounds()) : screen.getPrimaryDisplay())
+            .workAreaSize,
+        ),
         title,
         ...(parent ? { parent } : {}),
         show: true,
