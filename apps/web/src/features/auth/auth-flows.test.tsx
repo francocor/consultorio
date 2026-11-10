@@ -396,7 +396,7 @@ describe('invitation', () => {
     appWithSignIn('/accept-invitation?token=inv-9');
 
     expect(await screen.findByText('Una buena contraseña:')).toBeInTheDocument();
-    expect(screen.getByText('Tiene entre 10 y 128 caracteres')).toBeInTheDocument();
+    expect(screen.getByText('Tiene entre 12 y 128 caracteres')).toBeInTheDocument();
   });
 
   it('explains an invitation that expired or was cancelled', async () => {

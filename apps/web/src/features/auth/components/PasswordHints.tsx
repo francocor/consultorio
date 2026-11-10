@@ -19,7 +19,9 @@ export function PasswordHints({ value }: { value: string }) {
           ) : (
             <Circle className="mt-0.5 size-4 shrink-0" aria-hidden="true" />
           )}
-          <span className={cn(lengthOk && 'text-foreground')}>{t('password.hints.length')}</span>
+          <span className={cn(lengthOk && 'text-foreground')}>
+            {t('password.hints.length', { min: PASSWORD_MIN_LENGTH, max: PASSWORD_MAX_LENGTH })}
+          </span>
         </li>
         <li className="flex items-start gap-2">
           <Circle className="mt-0.5 size-4 shrink-0" aria-hidden="true" />
