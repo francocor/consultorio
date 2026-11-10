@@ -114,7 +114,7 @@ The demo organizations open on their Stage 3 data. Nothing in it was sent: a dem
 | `aillu`      | `http://aillu.localhost:5173/book/wfg3xazkdesq` |
 | `norte`      | `http://norte.localhost:5173/book/mh4p4sxuiq7j` |
 
-Under it each professional has a page of their own: for `aillu`, `/book/wfg3xazkdesq/p/exijd7fnx6bd` (cardiology), `/p/utz3dh6ghsgx` (pediatrics) and `/p/79t6mfxadwpa` (psychology). The owner finds the same addresses, with their QR codes, in Settings > Turnos online. Open the page in a 360 px window to see it as a patient does.
+Under it each professional has a page of their own: for `aillu`, `/book/wfg3xazkdesq/p/exijd7fnx6bd` (cardiology), `/p/utz3dh6ghsgx` (pediatrics) and `/p/79t6mfxadwpa` (psychology). The owner finds the same addresses, with their QR codes, in Configuración > Turnos online. Open the page in a 360 px window to see it as a patient does.
 
 **1. Book as a patient.** Open the address, choose "Dra. Lucía Paz Ferrer", pick a time and fill the form; the six-digit code arrives in Mailpit (the banner of `pnpm demo:stack` prints its address). The demo does not require approval, so the confirmation says the appointment is booked, with a link to change or cancel it.
 
@@ -152,13 +152,13 @@ Not in the seed: an invoice flagged as a prolonged outage. That flag is computed
 
 **2. Charges.** Cobros lists the charges of a period (it opens on today: widen "Desde" to see the week). Open one to see its lines, its payments and, for the owner or an administrator, "Devolver" and "Anular cobro" (reception sees who can do it, and the API refuses the call). The tab "A cobrar a obras sociales" adds up what the payers owe.
 
-**3. Prices and payers.** As `administracion@`, Ajustes > Precios y obras sociales: the payers with and without a CUIT, the price history and what each plan pays. Press the CUIT button of Galeno, load a valid CUIT, and its invoices become possible.
+**3. Prices and payers.** As `administracion@`, Configuración > Precios y obras sociales: the payers with and without a CUIT, the price history and what each plan pays. Press the CUIT button of Galeno, load a valid CUIT, and its invoices become possible.
 
 **4. An invoice.** As reception, Facturas > "Cobros por facturar": the paid visits that nothing has invoiced yet. "Facturar el cobro de ..." asks for the amount (all of it, or a part) and the invoice is issued with a CAE, a number that follows the vouchers the seed left, and a PDF that the worker builds a few seconds later ("Descargar PDF" in the detail of the voucher). The owner can issue a credit note from the same detail; reception cannot.
 
-**5. An outage of AFIP.** In the platform console (`platform.localhost:5173`), Proveedores > AFIP, put the issuer of the demonstration in "down". Invoice another charge: it stays "Todavía no se emitió" and nothing is invented. Put it back in "ok": within a minute or two the clock of the retries issues it, once, with the next number. A pending invoice older than the threshold of the organization (24 hours by default, in Ajustes > Facturación) is flagged and offers the owner to register the voucher by hand.
+**5. An outage of AFIP.** In the platform console (`platform.localhost:5173`), Proveedores > AFIP, put the issuer of the demonstration in "down". Invoice another charge: it stays "Todavía no se emitió" and nothing is invented. Put it back in "ok": within a minute or two the clock of the retries issues it, once, with the next number. A pending invoice older than the threshold of the organization (24 hours by default, in Configuración > Facturación) is flagged and offers the owner to register the voucher by hand.
 
-**6. Reports.** Reportes opens the operational dashboard; its "Dinero" and "Caja" screens (the money and cash reports) have the totals, the breakdown by place, professional, payer and type (a chart and a table each), the drill-down to the records behind each figure and the export. Reception reads the places it works at and never revenue by professional; a professional reads only their own appointments.
+**6. Reports.** Informes opens the operational dashboard; its "Dinero" and "Caja" screens (the money and cash reports) have the totals, the breakdown by place, professional, payer and type (a chart and a table each), the drill-down to the records behind each figure and the export. Reception reads the places it works at and never revenue by professional; a professional reads only their own appointments.
 
 Steps 1, 4 and 5, automated and checked at 360 px:
 
