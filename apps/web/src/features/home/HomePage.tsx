@@ -106,11 +106,6 @@ export function HomePage() {
           })}
         </ul>
       </section>
-
-      <section className="mt-8 rounded-lg border border-dashed bg-card p-5">
-        <h2 className="font-display text-base font-semibold">{t('home.soon.title')}</h2>
-        <p className="mt-1 text-sm text-muted-foreground">{t('home.soon.description')}</p>
-      </section>
     </div>
   );
 }
