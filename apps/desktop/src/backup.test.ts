@@ -385,11 +385,11 @@ describe('backups that are in the folder but not in the ledger', () => {
 
     expect(again).toEqual({ adopted: [], rejected: [], skipped: [] });
     expect(listed).toBe(0);
-    expect(await unledgeredBackups(paths.backups)).toEqual([]);
+    expect(await unledgeredBackups(paths.backups, deps().now())).toEqual([]);
 
     // A different file under the same name (it was copied over, or finished copying) is looked at again.
     writeFileSync(damaged, Buffer.concat([bytes, Buffer.from('more')]));
-    expect(await unledgeredBackups(paths.backups)).toEqual([names[1]]);
+    expect(await unledgeredBackups(paths.backups, deps().now())).toEqual([names[1]]);
   });
 
   it('do not remember a file they could not read (busy, no permission): only one that is not whole', async () => {
@@ -439,9 +439,10 @@ describe('backups that are in the folder but not in the ledger', () => {
     await makeSome(1);
     rmSync(join(paths.backups, LEDGER_NAME));
     const other = newTestInstall();
-    await adoptUnledgeredBackups(testBackupDeps(other, paths));
+    const otherDeps = testBackupDeps(other, paths);
+    await adoptUnledgeredBackups(otherDeps);
 
-    expect(await unledgeredBackups(paths.backups)).toEqual([]);
+    expect(await unledgeredBackups(paths.backups, otherDeps.now())).toEqual([]);
   });
 
   it('look at the newest first and at no more than it was asked, so a start is never held up by a shelf of old copies', async () => {
