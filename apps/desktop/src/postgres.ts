@@ -1,6 +1,6 @@
 import { randomBytes } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { dirname, join, win32 } from 'node:path';
 
 import {
   MISSING_OBJECT_CODES,
@@ -108,7 +108,8 @@ export class PostgresCluster {
   }
 
   private bin(name: string): string {
-    return join(this.options.binDir, `${name}.exe`);
+    // The binaries only ship for Windows, so the path is always a Windows one whatever the host OS.
+    return win32.join(this.options.binDir, `${name}.exe`);
   }
 
   get runningPort(): number | null {

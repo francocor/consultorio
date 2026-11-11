@@ -1,4 +1,7 @@
-import { sep } from 'node:path';
+// The app only ships for Windows: these are always Windows paths, whatever OS runs the code (CI is Linux).
+import { win32 } from 'node:path';
+
+const { sep } = win32;
 
 /** The environment variables Windows sets to the folders OneDrive syncs. */
 const ONEDRIVE_VARIABLES = ['OneDrive', 'OneDriveConsumer', 'OneDriveCommercial'];

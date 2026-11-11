@@ -1,4 +1,5 @@
-import { isAbsolute, join } from 'node:path';
+// The app only ships for Windows: these are always Windows paths, whatever OS runs the code (CI is Linux).
+import { win32 } from 'node:path';
 
 /** Where an install keeps everything. All of it lives under `root`, except the backups. */
 export interface DataPaths {
@@ -32,7 +33,7 @@ export interface PathSources {
 function override(env: NodeJS.ProcessEnv, name: string): string | undefined {
   const value = env[name];
   if (value === undefined || value === '') return undefined;
-  if (!isAbsolute(value)) throw new Error(`${name} must be an absolute path`);
+  if (!win32.isAbsolute(value)) throw new Error(`${name} must be an absolute path`);
   return value;
 }
 
@@ -41,15 +42,15 @@ function override(env: NodeJS.ProcessEnv, name: string): string | undefined {
  * tests of the installer run beside a real install without touching it.
  */
 export function resolveDataPaths({ env, localAppData, documents }: PathSources): DataPaths {
-  const root = override(env, 'CONSULVIA_DATA_DIR') ?? join(localAppData, 'Consulvia');
+  const root = override(env, 'CONSULVIA_DATA_DIR') ?? win32.join(localAppData, 'Consulvia');
   return {
     root,
-    pgdata: join(root, 'pgdata'),
-    files: join(root, 'files'),
-    outbox: join(root, 'outbox'),
-    logs: join(root, 'logs'),
-    configFile: join(root, 'config.json'),
-    electronProfile: join(root, 'electron-profile'),
-    backups: override(env, 'CONSULVIA_BACKUP_DIR') ?? join(documents, 'Consulvia', 'Copias'),
+    pgdata: win32.join(root, 'pgdata'),
+    files: win32.join(root, 'files'),
+    outbox: win32.join(root, 'outbox'),
+    logs: win32.join(root, 'logs'),
+    configFile: win32.join(root, 'config.json'),
+    electronProfile: win32.join(root, 'electron-profile'),
+    backups: override(env, 'CONSULVIA_BACKUP_DIR') ?? win32.join(documents, 'Consulvia', 'Copias'),
   };
 }
