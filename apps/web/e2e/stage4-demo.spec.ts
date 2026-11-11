@@ -282,25 +282,48 @@ test('reception closes the register of the day and invoices through the local AF
         break;
       }
     }
-    expect(closedPlace, 'a register is open at one of the desks').not.toBe('');
-    await expect(page.getByRole('heading', { name: `Caja de ${closedPlace}` })).toBeVisible();
-    await expectFitsAndAccessible(page, 'the open register');
+    // A retry of this test runs on the same stack: the first attempt already closed the register of
+    // the day, and a closed register cannot be opened again from here. Then the closing (proved by the
+    // first attempt, whose failure was somewhere else) is not repeated, and the register that attempt
+    // closed is read from the history instead.
+    const closedBefore = await callOrg<{
+      sessions: { status: string; locationName: string; countedCents: number | null }[];
+    }>(page, 'GET', `/billing/cash/sessions?status=closed&from=${day(0)}&to=${day(0)}`);
+    let expectedCents = 0;
+    if (closedPlace === '') {
+      const earlier = closedBefore.body.sessions.find((entry) =>
+        places.includes(entry.locationName),
+      );
+      expect(
+        earlier,
+        'a register is open at one of the desks, or an earlier attempt closed it today',
+      ).toBeDefined();
+      test.info().annotations.push({
+        type: 'retry',
+        description: 'the register of the day was closed by the first attempt',
+      });
+      closedPlace = earlier?.locationName ?? '';
+      expectedCents = earlier?.countedCents ?? 0;
+    } else {
+      await expect(page.getByRole('heading', { name: `Caja de ${closedPlace}` })).toBeVisible();
+      await expectFitsAndAccessible(page, 'the open register');
 
-    const summary = page.getByText('Efectivo que debería haber', { exact: true }).first();
-    const expectedCents = centsOf(await summary.locator('xpath=following-sibling::dd').innerText());
-    expect(expectedCents).toBeGreaterThan(0);
-    await page.getByRole('button', { name: 'Cerrar caja' }).click();
-    const closing = page.getByRole('dialog', { name: 'Cerrar la caja' });
-    await closing.getByLabel('Efectivo contado').fill(pesos(expectedCents).replace('$ ', ''));
-    await expect(closing.getByText(/Faltan|Sobran/)).toHaveCount(0);
-    await expectFitsAndAccessible(page, 'closing the register');
-    await closing.getByRole('button', { name: 'Cerrar caja' }).click();
-    await expect(closing).toBeHidden();
-    await expect(
-      page.getByText(new RegExp(`La caja de ${closedPlace} está cerrada`)),
-    ).toBeVisible();
-    await expect(page.getByRole('heading', { name: 'Cajas anteriores' })).toBeVisible();
-    await expectFitsAndAccessible(page, 'the closed register');
+      const summary = page.getByText('Efectivo que debería haber', { exact: true }).first();
+      expectedCents = centsOf(await summary.locator('xpath=following-sibling::dd').innerText());
+      expect(expectedCents).toBeGreaterThan(0);
+      await page.getByRole('button', { name: 'Cerrar caja' }).click();
+      const closing = page.getByRole('dialog', { name: 'Cerrar la caja' });
+      await closing.getByLabel('Efectivo contado').fill(pesos(expectedCents).replace('$ ', ''));
+      await expect(closing.getByText(/Faltan|Sobran/)).toHaveCount(0);
+      await expectFitsAndAccessible(page, 'closing the register');
+      await closing.getByRole('button', { name: 'Cerrar caja' }).click();
+      await expect(closing).toBeHidden();
+      await expect(
+        page.getByText(new RegExp(`La caja de ${closedPlace} está cerrada`)),
+      ).toBeVisible();
+      await expect(page.getByRole('heading', { name: 'Cajas anteriores' })).toBeVisible();
+      await expectFitsAndAccessible(page, 'the closed register');
+    }
 
     const sessions = await callOrg<{
       sessions: { status: string; locationName: string; countedCents: number | null }[];
@@ -338,15 +361,28 @@ test('reception closes the register of the day and invoices through the local AF
     }
 
     // 2. Invoices through the AFIP of the demonstration. The vouchers the seed left are numbered
-    // first; the new ones follow them, with the PDF built by the worker.
-    const seeded = (await callOrg<{ invoices: InvoiceRow[] }>(page, 'GET', '/invoices?limit=200'))
-      .body.invoices;
-    const highest = Math.max(
-      0,
-      ...seeded
-        .filter((row) => row.type === 'FC' && row.number !== null)
-        .map((row) => row.number ?? 0),
-    );
+    // first; the new ones follow them, with the PDF built by the worker. The numbering belongs to the
+    // whole organization, but reception only sees the invoices of its own desks (and the seed leaves
+    // the latest vouchers wherever the clock put them), so the highest number is read as the owner,
+    // who sees every desk. Nothing else issues vouchers for this organization while this journey runs.
+    const owner = await playwright.request.newContext();
+    let highest: number;
+    try {
+      await signInWithApi(owner, ORG, emailOf('owner', ORG));
+      const everything = await owner.get(urlOf(ORG, '/api/invoices?limit=200'), {
+        headers: { origin: originOf(ORG) },
+      });
+      expect(everything.status(), await everything.text()).toBe(200);
+      const seeded = ((await everything.json()) as { invoices: InvoiceRow[] }).invoices;
+      highest = Math.max(
+        0,
+        ...seeded
+          .filter((row) => row.type === 'FC' && row.number !== null)
+          .map((row) => row.number ?? 0),
+      );
+    } finally {
+      await owner.dispose();
+    }
     expect(highest, 'the seed left issued vouchers').toBeGreaterThan(5);
 
     const toInvoice = await chargesToInvoice(page);
