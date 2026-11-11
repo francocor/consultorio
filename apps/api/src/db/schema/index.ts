@@ -1,3 +1,47 @@
-// Table definitions are re-exported from here, one module per bounded context, starting in
-// Stage 1. Stage 0 only creates the roles, schema and extensions (see migration 0000).
-export {};
+// Table definitions are re-exported from here, one module per bounded context. drizzle-kit reads
+// this file, so a table that is not exported here never gets a migration.
+export * from './access.js';
+export * from './anamnesis.js';
+export * from './action-token.js';
+export * from './audit.js';
+export * from './billing-charges.js';
+export * from './billing-payments.js';
+export * from './billing-pricing.js';
+export * from './booking-submission.js';
+export * from './care.js';
+export * from './channel-preference.js';
+export * from './clinical.js';
+export * from './consent.js';
+export * from './coverage.js';
+export * from './demo-outbox.js';
+export * from './documents.js';
+export * from './identity.js';
+export * from './invoicing-config.js';
+export * from './invoicing.js';
+export * from './jobs.js';
+export * from './local-afip.js';
+export * from './local-erx.js';
+export * from './notifications.js';
+export * from './onboarding.js';
+export * from './online-booking.js';
+export * from './operator.js';
+export * from './patients.js';
+export * from './platform-catalogs.js';
+export * from './portal.js';
+export * from './prescriptions.js';
+export * from './privacy.js';
+export * from './scheduling-config.js';
+export * from './scheduling.js';
+export * from './staff.js';
+export * from './tenant-key.js';
+export * from './usage-event.js';
+export * from './tenant.js';
+export * from './teleconsultation.js';
+export * from './waitlist.js';
+export * from './worklist.js';
+export * from './subscriptions.js';
+export * from './local-mercadopago.js';
+export * from './signup.js';
+export * from './export-package.js';
+export * from './archive-key.js';
+export * from './archive-release.js';

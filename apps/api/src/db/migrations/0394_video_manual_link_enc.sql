@@ -1,0 +1,1 @@
+ALTER TABLE "video_session" ADD COLUMN "manual_link_enc" "bytea";

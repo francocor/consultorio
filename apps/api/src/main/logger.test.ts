@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { captureLogs } from '../testing/log-capture.js';
+import { testTenancy } from '../testing/tenancy.js';
 
 import { serializeRequest, stripQuery } from './logger.js';
 import { buildServer } from './server.js';
@@ -14,6 +15,23 @@ describe('stripQuery', () => {
     ['/?x=1', '/'],
   ])('%s -> %s', (input, expected) => {
     expect(stripQuery(input)).toBe(expected);
+  });
+});
+
+describe('tokens that travel in the path', () => {
+  it.each([
+    ['/files/abcDEF123_-abcDEF123_-abcDEF123_-abcDEF123_-', '/files/:token'],
+    ['/files/abc?x=1', '/files/:token'],
+    ['/public/t/secret-link-token', '/public/t/:token'],
+    ['/public/v/video-token', '/public/v/:token'],
+    [
+      '/patients/0190a000-0000-7000-8000-000000000001/documents',
+      '/patients/0190a000-0000-7000-8000-000000000001/documents',
+    ],
+    ['/documents/uploads', '/documents/uploads'],
+    ['/files', '/files'],
+  ])('%s is logged as %s', (url, expected) => {
+    expect(serializeRequest({ url }).url).toBe(expected);
   });
 });
 
@@ -37,6 +55,7 @@ describe('request logging', () => {
       logLevel: 'info',
       logStream: logs.stream,
       health: { checkDatabase: () => Promise.resolve({ ok: true }) },
+      ...testTenancy(),
     });
 
     await app.inject({ method: 'GET', url: '/health?token=action-token-123&q=maria' });
@@ -56,6 +75,7 @@ describe('request logging', () => {
       logLevel: 'info',
       logStream: logs.stream,
       health: { checkDatabase: () => Promise.resolve({ ok: true }) },
+      ...testTenancy(),
     });
     await app.ready();
 

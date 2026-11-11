@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="Consulvia">
+  <rect width="512" height="512" rx="112" fill="#0f766e"/>
+  <path d="M341 158A128 128 0 1 0 341 354" fill="none" stroke="#ffffff" stroke-width="56" stroke-linecap="round"/>
+  <path d="M375 222V290M341 256H409" fill="none" stroke="#ffffff" stroke-width="30" stroke-linecap="round"/>
+</svg>

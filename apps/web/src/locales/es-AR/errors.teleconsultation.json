@@ -1,0 +1,6 @@
+{
+  "video_outside_window": "La videoconsulta solo se puede abrir desde unos minutos antes del turno hasta una hora después de su horario de finalización.",
+  "video_link_unavailable": "Este turno todavía no tiene un enlace de videoconsulta disponible. Adjunte un enlace manual o intente nuevamente en unos minutos.",
+  "video_not_virtual": "Este turno no es una videoconsulta.",
+  "video_no_show_too_early": "Todavía no se puede registrar la ausencia: espere unos minutos después del inicio de la videoconsulta."
+}

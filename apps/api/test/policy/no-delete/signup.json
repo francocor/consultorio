@@ -1,0 +1,15 @@
+{
+  "description": "Signup (track B). Retention exception 2 of the no-delete rule: an unverified signup, which holds no patient data, is hard-deleted after seven days by the signup.purge pass of the worker.",
+  "code": [],
+  "sql": [
+    {
+      "file": "src/db/migrations/0640_signup.sql",
+      "why": "Retention exception 2: app.signup_purge removes an organization that was never confirmed (status unverified, older than the cutoff and never younger than a day) with its pending signup, links, job markers and audit trail, and writes signup.purged in the platform trail. Only the fixed list of tables is deleted: any other row that points at the organization (a member, a patient, a key) stops it with a foreign key violation, so it can never take clinical data or a verified organization. The application role has no DELETE on any of these tables; it can only run this function."
+    },
+    {
+      "file": "src/db/migrations/0685_signup_set_password_at_verify.sql",
+      "why": "Retention exception 2, unchanged: the same function app.signup_purge, replaced to count the organizations it could not remove (purge_attempts) and work the ones with fewer failures first, so rows that fail with a foreign key violation do not starve the newer ones. It deletes the same fixed list of tables for an organization nobody confirmed; nothing about what it may delete changed."
+    }
+  ],
+  "ephemeralTables": []
+}

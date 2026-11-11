@@ -1,0 +1,2 @@
+ALTER TABLE "document" ADD COLUMN "rescan_attempts" integer DEFAULT 0 NOT NULL;--> statement-breakpoint
+ALTER TABLE "document" ADD CONSTRAINT "document_rescan_attempts_check" CHECK ("document"."rescan_attempts" >= 0);

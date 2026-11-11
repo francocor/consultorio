@@ -1,0 +1,2 @@
+ALTER TABLE "booking_link" ADD COLUMN "max_unconfirmed_appointments" integer DEFAULT 20 NOT NULL;--> statement-breakpoint
+ALTER TABLE "booking_link" ADD CONSTRAINT "booking_link_max_unconfirmed_check" CHECK ("booking_link"."max_unconfirmed_appointments" between 0 and 500);

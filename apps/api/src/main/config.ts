@@ -1,30 +1,519 @@
+import { isAbsolute } from 'node:path';
+
 import { z } from 'zod';
+
+import { DEFAULT_RUNTIME_POOL_MAX } from '../platform/db/pool.js';
+import { CONNECTION_HOLDING_JOBS, JOB_LOCAL_CONCURRENCY } from '../platform/jobs/concurrency.js';
+
+import { readMetricsConfig, type MetricsConfig } from './config-metrics.js';
+import { readProviderConfig, type ProviderConfig } from './config-providers.js';
+import { readScannerConfig, type ScannerConfig } from './config-scanner.js';
+import { parseTrustProxy, type TrustProxySetting } from './trust-proxy.js';
 
 const LOG_LEVELS = ['fatal', 'error', 'warn', 'info', 'debug', 'trace', 'silent'] as const;
 
+const HOSTNAME =
+  /^(?=.{1,253}$)[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)*$/;
+/** 2 to 63 characters, lowercase letters, digits and inner hyphens: safe as a DNS label. */
+const TENANT_SLUG = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])$/;
+const KEK_BYTES = 32;
+/**
+ * The smallest runtime pool: a job of the families in `CONNECTION_HOLDING_JOBS` (an attempt to issue
+ * an invoice, a reconcile pass of e-prescriptions, a sweep of portal notices) holds the transaction
+ * of `runJob` idle and asks for a second connection for its own work, so it needs two; the worker
+ * runs `JOB_LOCAL_CONCURRENCY` of each family at once, and two more serve the sweeper and the other
+ * jobs (JD-S4 R4-B-T5; the families other than invoicing joined in JD-S5 R4-2).
+ */
+export const MIN_DB_POOL_MAX = CONNECTION_HOLDING_JOBS.length * JOB_LOCAL_CONCURRENCY * 2 + 2;
+/** The addresses a process that serves one PC only may listen on. */
+const LOOPBACK_HOSTS: ReadonlySet<string> = new Set(['127.0.0.1', 'localhost', '::1']);
+/** `name@host` or `Display Name <name@host>`. */
+const MAIL_FROM_PATTERN = /^(?:[^<>\r\n]+ <[^\s<>@]+@[^\s<>@]+>|[^\s<>@]+@[^\s<>@]+)$/;
+
+/** True for `http(s)://localhost:<port>` and `http(s)://127.0.0.1:<port>`: the port is required. */
+function isLoopbackOrigin(value: string): boolean {
+  try {
+    const url = new URL(value);
+    return (
+      (url.hostname === 'localhost' || url.hostname === '127.0.0.1') &&
+      url.port !== '' &&
+      /^https?:\/\/(?:localhost|127\.0\.0\.1):\d+/.test(value)
+    );
+  } catch {
+    return false;
+  }
+}
+
+/** The origin of an http(s) URL without credentials, or null. */
+function originOf(value: string): string | null {
+  try {
+    const url = new URL(value);
+    const http = url.protocol === 'https:' || url.protocol === 'http:';
+    return http && url.username === '' && url.password === '' ? url.origin : null;
+  } catch {
+    return null;
+  }
+}
+
+const booleanFlag = z.enum(['true', 'false']).transform((value) => value === 'true');
+
+/** The process roles of `main.ts`. */
+export type ProcessRole = 'api' | 'worker' | 'releaser';
+
+/**
+ * Whether the environment being parsed must carry the key service of the organizations. The releaser
+ * opens the archive with its own key and never touches the data key of an organization, so it needs
+ * none (JD-S6 R1-S6-12). Set around ONE synchronous parse by `loadConfig`.
+ */
+let keyServiceRequired = true;
+
 /**
  * Environment contract of the API and worker processes.
- * Secrets (such as the database URL) come only from the environment, never from code or defaults.
+ * Secrets (such as the database URL and the local KEK) come only from the environment, never from
+ * code or defaults. Cross-variable rules live in `superRefine` so a bad combination fails at
+ * startup, naming the variables and never their values.
  */
-const envSchema = z.object({
-  NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
-  DATABASE_URL: z.url({ protocol: /^postgres(ql)?$/ }),
-  DEPLOYMENT_MODE: z.enum(['multi', 'single']).default('multi'),
-  LOG_LEVEL: z.enum(LOG_LEVELS).default('info'),
-  HOST: z.string().min(1).default('0.0.0.0'),
-  PORT: z.coerce.number().int().min(1).max(65535).default(3000),
-});
+const envSchema = z
+  .object({
+    NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
+    DATABASE_URL: z.url({ protocol: /^postgres(ql)?$/ }),
+    /**
+     * The most connections the runtime pool opens (default 16). A job that waits for the authority,
+     * the e-prescription provider or the mail server holds the transaction `runJob` opened for it and
+     * asks for a second connection for its own work, so the pool is sized for the jobs the worker runs
+     * at once (docs/runbooks/afip-switch-to-real.md). At least `MIN_DB_POOL_MAX`: with fewer, jobs
+     * each hold one connection and wait for the other's (JD-S4 R4-B-T5, JD-S5 R4-2).
+     */
+    DB_POOL_MAX: z.coerce
+      .number()
+      .int()
+      .min(MIN_DB_POOL_MAX, {
+        message: `must be at least ${String(MIN_DB_POOL_MAX)}: each of the ${String(JOB_LOCAL_CONCURRENCY)} jobs of each of the ${String(CONNECTION_HOLDING_JOBS.length)} families that wait for an outside service (${CONNECTION_HOLDING_JOBS.join(', ')}) that run at once holds 2 connections, and 2 more serve the sweeper and the other jobs`,
+      })
+      .max(100)
+      .default(DEFAULT_RUNTIME_POOL_MAX),
+    /**
+     * The login of the platform operator console (role `app_operator`). Without it the console
+     * does not exist: every `/operator/*` path answers 404. Multi-tenant mode only.
+     */
+    OPERATOR_DATABASE_URL: z.url({ protocol: /^postgres(ql)?$/ }).optional(),
+    /**
+     * The login of the audit sealer (role `audit_sealer`): the only role that may fill the hash
+     * chain of the audit trails. Only the worker process needs it, and the worker refuses to start
+     * without it. The API process should not have it.
+     */
+    AUDIT_SEALER_DATABASE_URL: z.url({ protocol: /^postgres(ql)?$/ }).optional(),
+    DEPLOYMENT_MODE: z.enum(['multi', 'single']).default('multi'),
+    /**
+     * `hosted` (default): the product run by the operator for many clinics, with every production
+     * refusal. `desktop`: one clinic on one Windows PC, behind a loopback server
+     * (docs/desktop/design.md). It relaxes the rows of that table and nothing else, and needs single
+     * mode and production.
+     */
+    DEPLOYMENT_PROFILE: z.enum(['hosted', 'desktop']).default('hosted'),
+    /** multi mode: tenants live at `{slug}.BASE_DOMAIN`. Host name only: no scheme, port or path. */
+    BASE_DOMAIN: z.string().regex(HOSTNAME).optional(),
+    /** multi mode: the host that serves the platform operator console. */
+    PLATFORM_HOST: z.string().regex(HOSTNAME).optional(),
+    /** single mode: the one organization this deployment serves. */
+    SINGLE_TENANT_SLUG: z.string().regex(TENANT_SLUG).optional(),
+    /** Secure cookies. Defaults to true in production and false elsewhere (plain http locally). */
+    COOKIE_SECURE: booleanFlag.optional(),
+    /**
+     * How many reverse proxies sit in front of the app (client addresses are read from
+     * X-Forwarded-For that many hops from the right), or a list of proxy addresses and ranges, or
+     * `false`. Default: 1 in production (one reverse proxy), `false` elsewhere. `true` is refused.
+     */
+    TRUST_PROXY: z.string().optional(),
+    /**
+     * Single mode: the origin the deployment is served from. Emailed links (password reset,
+     * invitation) are built from it and never from the Host header of a request.
+     */
+    PUBLIC_URL: z.string().optional(),
+    /** Multi mode, development only: the port the web app is served on, for emailed links. */
+    PUBLIC_PORT: z.coerce.number().int().min(1).max(65535).optional(),
+    KMS_PROVIDER: z.enum(['local', 'aws']).default('local'),
+    /** Development and tests only: 32 random bytes, base64. */
+    KMS_LOCAL_KEK_BASE64: z.string().min(1).optional(),
+    AWS_REGION: z.string().min(1).optional(),
+    AWS_KMS_KEY_ID: z.string().min(1).optional(),
+    /**
+     * Object storage (logos now, documents later). MinIO locally (S3_ENDPOINT, static keys) or AWS
+     * S3 in production (no endpoint; the task role supplies the credentials).
+     */
+    S3_BUCKET: z.string().min(3).max(63).optional(),
+    S3_ENDPOINT: z.string().optional(),
+    /** Defaults to AWS_REGION, then to us-east-1 (what MinIO expects). */
+    S3_REGION: z.string().min(1).optional(),
+    S3_FORCE_PATH_STYLE: booleanFlag.optional(),
+    S3_ACCESS_KEY_ID: z.string().min(1).optional(),
+    S3_SECRET_ACCESS_KEY: z.string().min(1).optional(),
+    /**
+     * Object storage on the disk instead of a bucket (docs/desktop/design.md): the folder every file
+     * lives under. Absolute. In production only the desktop profile may use it, because it has no
+     * virus scanner of its own to insist on.
+     */
+    STORAGE_DIR: z
+      .string()
+      .min(1)
+      .refine(isAbsolute, { message: 'must be an absolute path' })
+      .optional(),
+    /** Signs the upload links of the disk storage (HMAC). Random per install; at least 32 characters. */
+    STORAGE_UPLOAD_SECRET: z.string().min(32).optional(),
+    /**
+     * Mail without a mail server: each message is written to this folder as an `.eml` file with a JSON
+     * entry beside it, and counts as sent. The desktop profile needs it when it has no SMTP_HOST;
+     * with SMTP_HOST it is refused.
+     */
+    OUTBOX_DIR: z
+      .string()
+      .min(1)
+      .refine(isAbsolute, { message: 'must be an absolute path' })
+      .optional(),
+    /** Transactional email over SMTP: Mailpit locally, the SES SMTP interface in production. */
+    SMTP_HOST: z.string().regex(HOSTNAME).optional(),
+    SMTP_PORT: z.coerce.number().int().min(1).max(65535).default(1025),
+    SMTP_SECURITY: z.enum(['none', 'starttls', 'tls']).default('none'),
+    SMTP_USER: z.string().min(1).optional(),
+    SMTP_PASSWORD: z.string().min(1).optional(),
+    MAIL_FROM: z.string().regex(MAIL_FROM_PATTERN).default('Consulvia <no-responder@localhost>'),
+    /** Also check new passwords against a k-anonymity breach range API. Off by default. */
+    AUTH_BREACH_CHECK: booleanFlag.default(false),
+    /** Consecutive failed sign-ins (wrong password or second-factor code) that lock an account. */
+    AUTH_LOCKOUT_MAX_FAILURES: z.coerce.number().int().min(1).max(100).default(10),
+    /** How long a locked account stays locked. */
+    AUTH_LOCKOUT_MINUTES: z.coerce.number().int().min(1).max(1440).default(15),
+    LOG_LEVEL: z.enum(LOG_LEVELS).default('info'),
+    /**
+     * Desktop profile, API process: a random value per run of the shell. The API serves only the requests
+     * that carry it (`x-consulvia-proxy`), because any program of the PC can connect to a loopback port.
+     */
+    DESKTOP_PROXY_SECRET: z.string().min(32).max(256).optional(),
+    /** Every interface by default; the loopback in the desktop profile, which accepts nothing else. */
+    HOST: z.string().min(1).optional(),
+    PORT: z.coerce.number().int().min(1).max(65535).default(3000),
+  })
+  .superRefine((env, ctx) => {
+    const require = (name: keyof typeof env, reason: string) => {
+      if (env[name] === undefined) {
+        ctx.addIssue({ code: 'custom', path: [name], message: reason });
+      }
+    };
+    const desktop = env.DEPLOYMENT_PROFILE === 'desktop';
+
+    if (env.DEPLOYMENT_MODE === 'multi') {
+      require('BASE_DOMAIN', 'is required when DEPLOYMENT_MODE is multi');
+      require('PLATFORM_HOST', 'is required when DEPLOYMENT_MODE is multi');
+    } else {
+      require('SINGLE_TENANT_SLUG', 'is required when DEPLOYMENT_MODE is single');
+      require('PUBLIC_URL', 'is required when DEPLOYMENT_MODE is single');
+    }
+
+    if (!desktop && env.DESKTOP_PROXY_SECRET !== undefined) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['DESKTOP_PROXY_SECRET'],
+        message: 'is only used when DEPLOYMENT_PROFILE is desktop',
+      });
+    }
+
+    if (desktop) {
+      if (env.DEPLOYMENT_MODE !== 'single') {
+        ctx.addIssue({
+          code: 'custom',
+          path: ['DEPLOYMENT_MODE'],
+          message: 'must be single when DEPLOYMENT_PROFILE is desktop',
+        });
+      }
+      if (env.NODE_ENV !== 'production') {
+        ctx.addIssue({
+          code: 'custom',
+          path: ['NODE_ENV'],
+          message: 'must be production when DEPLOYMENT_PROFILE is desktop',
+        });
+      }
+      if (env.HOST !== undefined && !LOOPBACK_HOSTS.has(env.HOST)) {
+        ctx.addIssue({
+          code: 'custom',
+          path: ['HOST'],
+          message: 'must be 127.0.0.1, localhost or ::1 in the desktop profile',
+        });
+      }
+      if (env.COOKIE_SECURE === true) {
+        ctx.addIssue({
+          code: 'custom',
+          path: ['COOKIE_SECURE'],
+          message: 'must be false in the desktop profile (the loopback address is plain http)',
+        });
+      }
+      const proxy = env.TRUST_PROXY === undefined ? undefined : parseTrustProxy(env.TRUST_PROXY);
+      if (proxy?.ok === true && proxy.value !== false) {
+        ctx.addIssue({
+          code: 'custom',
+          path: ['TRUST_PROXY'],
+          message: 'must be false in the desktop profile (no proxy sits in front of the API)',
+        });
+      }
+      if (env.S3_BUCKET !== undefined) {
+        ctx.addIssue({
+          code: 'custom',
+          path: ['S3_BUCKET'],
+          message: 'is not used in the desktop profile (files are kept on the disk)',
+        });
+      }
+    }
+
+    if (env.PUBLIC_URL !== undefined) {
+      const origin = originOf(env.PUBLIC_URL);
+      if (origin === null) {
+        ctx.addIssue({
+          code: 'custom',
+          path: ['PUBLIC_URL'],
+          message: 'must be an http(s) origin without credentials, such as https://agenda.example',
+        });
+      } else if (desktop) {
+        if (!isLoopbackOrigin(env.PUBLIC_URL)) {
+          ctx.addIssue({
+            code: 'custom',
+            path: ['PUBLIC_URL'],
+            message:
+              'must be http(s)://localhost:<port> or http(s)://127.0.0.1:<port> in the desktop profile',
+          });
+        }
+      } else if (env.NODE_ENV === 'production' && !origin.startsWith('https://')) {
+        ctx.addIssue({
+          code: 'custom',
+          path: ['PUBLIC_URL'],
+          message: 'must be https in production',
+        });
+      }
+    }
+
+    if (env.TRUST_PROXY !== undefined) {
+      const parsed = parseTrustProxy(env.TRUST_PROXY);
+      if (!parsed.ok) {
+        ctx.addIssue({ code: 'custom', path: ['TRUST_PROXY'], message: parsed.message });
+      }
+    }
+
+    if (!keyServiceRequired) {
+      // The releaser: no key service.
+    } else if (env.KMS_PROVIDER === 'aws') {
+      require('AWS_REGION', 'is required when KMS_PROVIDER is aws');
+      require('AWS_KMS_KEY_ID', 'is required when KMS_PROVIDER is aws');
+    } else {
+      require('KMS_LOCAL_KEK_BASE64', 'is required when KMS_PROVIDER is local');
+      if (
+        env.KMS_LOCAL_KEK_BASE64 !== undefined &&
+        Buffer.from(env.KMS_LOCAL_KEK_BASE64, 'base64').length !== KEK_BYTES
+      ) {
+        ctx.addIssue({
+          code: 'custom',
+          path: ['KMS_LOCAL_KEK_BASE64'],
+          message: `must be ${String(KEK_BYTES)} bytes encoded as base64`,
+        });
+      }
+    }
+
+    if (env.OUTBOX_DIR !== undefined && env.SMTP_HOST !== undefined) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['OUTBOX_DIR'],
+        message: 'cannot be set together with SMTP_HOST: mail goes to one place',
+      });
+    }
+    if (desktop && env.SMTP_HOST === undefined) {
+      require('OUTBOX_DIR', 'is required in the desktop profile when SMTP_HOST is not set (where else would the mail go)');
+    }
+
+    if ((env.SMTP_USER === undefined) !== (env.SMTP_PASSWORD === undefined)) {
+      ctx.addIssue({
+        code: 'custom',
+        path: [env.SMTP_USER === undefined ? 'SMTP_USER' : 'SMTP_PASSWORD'],
+        message: 'SMTP_USER and SMTP_PASSWORD must be set together',
+      });
+    }
+
+    if (env.STORAGE_DIR !== undefined) {
+      require('STORAGE_UPLOAD_SECRET', 'is required when STORAGE_DIR is set (it signs the upload links)');
+      if (env.S3_BUCKET !== undefined) {
+        ctx.addIssue({
+          code: 'custom',
+          path: ['STORAGE_DIR'],
+          message: 'cannot be set together with S3_BUCKET: files live in one place',
+        });
+      }
+      if (env.NODE_ENV === 'production' && !desktop) {
+        ctx.addIssue({
+          code: 'custom',
+          path: ['STORAGE_DIR'],
+          message:
+            'is only for the desktop profile in production; a hosted deployment uses S3_BUCKET',
+        });
+      }
+    } else {
+      if (desktop) {
+        require('STORAGE_DIR', 'is required when DEPLOYMENT_PROFILE is desktop (files are kept on the disk)');
+      }
+      if (env.STORAGE_UPLOAD_SECRET !== undefined) {
+        require('STORAGE_DIR', 'is required when STORAGE_UPLOAD_SECRET is set');
+      }
+    }
+
+    if (env.S3_BUCKET === undefined) {
+      for (const name of [
+        'S3_ENDPOINT',
+        'S3_REGION',
+        'S3_ACCESS_KEY_ID',
+        'S3_SECRET_ACCESS_KEY',
+      ] as const) {
+        if (env[name] !== undefined) require('S3_BUCKET', `is required when ${name} is set`);
+      }
+    }
+    if (
+      env.S3_ENDPOINT !== undefined &&
+      !/^https?:\/\/[^\s/]+(?::\d+)?\/?$/.test(env.S3_ENDPOINT)
+    ) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['S3_ENDPOINT'],
+        message: 'must be an http(s) URL such as http://localhost:9000',
+      });
+    }
+    if ((env.S3_ACCESS_KEY_ID === undefined) !== (env.S3_SECRET_ACCESS_KEY === undefined)) {
+      ctx.addIssue({
+        code: 'custom',
+        path: [env.S3_ACCESS_KEY_ID === undefined ? 'S3_SECRET_ACCESS_KEY' : 'S3_ACCESS_KEY_ID'],
+        message: 'S3_ACCESS_KEY_ID and S3_SECRET_ACCESS_KEY must be set together',
+      });
+    }
+
+    if (env.NODE_ENV === 'production') {
+      if (env.S3_ACCESS_KEY_ID !== undefined) {
+        ctx.addIssue({
+          code: 'custom',
+          path: ['S3_ACCESS_KEY_ID'],
+          message: 'static storage keys are not allowed in production; the task role is used',
+        });
+      }
+      // The desktop profile has no mail server by default: its mail goes to a local outbox.
+      if (!desktop) require('SMTP_HOST', 'is required in production (transactional email)');
+      if (env.SMTP_HOST !== undefined && env.SMTP_SECURITY === 'none') {
+        ctx.addIssue({
+          code: 'custom',
+          path: ['SMTP_SECURITY'],
+          message: 'the mail connection must use starttls or tls in production',
+        });
+      }
+      // The desktop profile keeps a random key-encryption key of its own per install.
+      if (keyServiceRequired && env.KMS_PROVIDER === 'local' && !desktop) {
+        ctx.addIssue({
+          code: 'custom',
+          path: ['KMS_PROVIDER'],
+          message: 'the local key-encryption key is not allowed in production',
+        });
+      }
+      if (env.COOKIE_SECURE === false && !desktop) {
+        ctx.addIssue({
+          code: 'custom',
+          path: ['COOKIE_SECURE'],
+          message: 'cookies must be secure in production',
+        });
+      }
+    }
+  });
 
 /** Names of every variable the application reads. `.env.example` must document each of them. */
 export const ENV_VARIABLES: readonly string[] = Object.keys(envSchema.shape);
 
+export type KmsConfig =
+  | { readonly provider: 'local'; readonly kekBase64: string }
+  | { readonly provider: 'aws'; readonly region: string; readonly keyId: string };
+
+export interface StorageConfig {
+  readonly bucket: string;
+  readonly region: string;
+  /** Set for MinIO or any S3-compatible service; unset for AWS S3. */
+  readonly endpoint?: string;
+  readonly forcePathStyle: boolean;
+  /** Only for local development; production uses the role of the task. */
+  readonly credentials?: { readonly accessKeyId: string; readonly secretAccessKey: string };
+}
+
+/** Files on the disk (STORAGE_DIR): the desktop profile. */
+export interface FileStorageConfig {
+  readonly dir: string;
+  /** Signs the upload links. */
+  readonly uploadSecret: string;
+}
+
+export interface MailConfig {
+  readonly host: string;
+  readonly port: number;
+  readonly security: 'none' | 'starttls' | 'tls';
+  readonly user?: string;
+  readonly password?: string;
+  readonly from: string;
+}
+
+/** Mail written to a folder (`OUTBOX_DIR`): the desktop profile without a mail server. */
+export interface OutboxConfig {
+  readonly dir: string;
+  readonly from: string;
+}
+
 export interface Config {
   readonly nodeEnv: 'development' | 'test' | 'production';
+  /** `desktop` is one clinic on one PC (see `DEPLOYMENT_PROFILE`); `hosted` is everything else. */
+  readonly profile: 'hosted' | 'desktop';
   readonly databaseUrl: string;
+  /** The most connections of the runtime pool (`DB_POOL_MAX`). */
+  readonly dbPoolMax: number;
+  /** Set when the operator console is enabled (multi-tenant mode and OPERATOR_DATABASE_URL). */
+  readonly operatorDatabaseUrl?: string;
+  /** Set for the worker: the `audit_sealer` login that seals and verifies the audit trails. */
+  readonly auditSealerDatabaseUrl?: string;
+  /**
+   * Set for the releaser: the `app_releaser` login, the only role that may mark a release request
+   * released and write the entries of a release. The API and the worker refuse to start with it.
+   */
+  readonly releaserDatabaseUrl?: string;
   readonly deploymentMode: 'multi' | 'single';
+  /** Set in multi mode. */
+  readonly baseDomain?: string;
+  /** Set in multi mode. */
+  readonly platformHost?: string;
+  /** Set in single mode. */
+  readonly singleTenantSlug?: string;
+  readonly cookieSecure: boolean;
+  /** See `TrustProxySetting`: which hops of X-Forwarded-For are believed. */
+  readonly trustProxy: TrustProxySetting;
+  /** Single mode: the origin emailed links point at. */
+  readonly publicUrl?: string;
+  /** Multi mode, development: the web port in emailed links. */
+  readonly publicPort?: number;
+  readonly kms: KmsConfig;
+  /** Undefined when S3_BUCKET is not set: logo upload and documents are then unavailable. */
+  readonly storage?: StorageConfig;
+  /** Set when STORAGE_DIR is: the files live on the disk, and `storage` is undefined. */
+  readonly fsStorage?: FileStorageConfig;
+  /** Undefined when CLAMAV_HOST is not set: development then scans with the fake scanner. */
+  readonly scanner?: ScannerConfig;
+  /** Undefined when METRICS_PORT is not set: nothing then listens for a scraper. */
+  readonly metrics?: MetricsConfig;
+  /** Undefined when SMTP_HOST is not set (allowed outside production). */
+  readonly mail?: MailConfig;
+  /** Set when OUTBOX_DIR is: mail is written to a folder instead of being sent. */
+  readonly outbox?: OutboxConfig;
+  /** Which provider serves WhatsApp, video and the bot challenge (see config-providers.ts). */
+  readonly providers: ProviderConfig;
+  readonly passwordBreachCheck: boolean;
+  readonly lockout: { readonly maxFailures: number; readonly lockMs: number };
   readonly logLevel: (typeof LOG_LEVELS)[number];
   readonly host: string;
   readonly port: number;
+  /** Desktop profile: the secret of this run of the shell. The API process refuses to start without it. */
+  readonly desktopProxySecret?: string;
 }
 
 /** Raised when the environment is invalid. The message names variables, never their values. */
@@ -35,8 +524,39 @@ export class ConfigError extends Error {
   }
 }
 
-export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
-  const parsed = envSchema.safeParse(env);
+function kmsFrom(value: z.output<typeof envSchema>): KmsConfig {
+  if (value.KMS_PROVIDER === 'aws') {
+    // superRefine guarantees both are present.
+    return { provider: 'aws', region: value.AWS_REGION ?? '', keyId: value.AWS_KMS_KEY_ID ?? '' };
+  }
+  return { provider: 'local', kekBase64: value.KMS_LOCAL_KEK_BASE64 ?? '' };
+}
+
+function trustProxyFrom(value: z.output<typeof envSchema>): TrustProxySetting {
+  if (value.TRUST_PROXY === undefined) {
+    return value.NODE_ENV === 'production' && value.DEPLOYMENT_PROFILE === 'hosted' ? 1 : false;
+  }
+  const parsed = parseTrustProxy(value.TRUST_PROXY);
+  // superRefine guarantees the value is valid.
+  return parsed.ok ? parsed.value : false;
+}
+
+/** An empty variable (`NAME=` in an env file) means "not set". */
+function withoutEmptyValues(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  return Object.fromEntries(Object.entries(env).filter(([, value]) => value !== ''));
+}
+
+export function loadConfig(
+  env: NodeJS.ProcessEnv = process.env,
+  options: { role?: ProcessRole } = {},
+): Config {
+  keyServiceRequired = options.role !== 'releaser';
+  let parsed: ReturnType<typeof envSchema.safeParse>;
+  try {
+    parsed = envSchema.safeParse(withoutEmptyValues(env));
+  } finally {
+    keyServiceRequired = true;
+  }
   if (!parsed.success) {
     // Only the variable name and the validation message are reported. Input values are
     // deliberately left out because they may be secrets.
@@ -46,12 +566,114 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     throw new ConfigError(`Invalid environment configuration. ${problems}`);
   }
   const value = parsed.data;
+  // The login of the releaser has no place in the schema above: it belongs to one process only.
+  const releaserUrl = z
+    .url({ protocol: /^postgres(ql)?$/ })
+    .optional()
+    .safeParse(withoutEmptyValues(env)['RELEASER_DATABASE_URL']);
+  if (!releaserUrl.success) {
+    throw new ConfigError(
+      'Invalid environment configuration. RELEASER_DATABASE_URL: must be a postgres URL',
+    );
+  }
+  // The scanner has its own small schema (see config-scanner.ts), read from the same environment.
+  const scanner = readScannerConfig(withoutEmptyValues(env), {
+    nodeEnv: value.NODE_ENV,
+    storageConfigured: value.S3_BUCKET !== undefined,
+  });
+  if (scanner.problems.length > 0) {
+    const problems = scanner.problems.map((problem) => `${problem.path}: ${problem.message}`);
+    throw new ConfigError(`Invalid environment configuration. ${problems.join('; ')}`);
+  }
+  // So have the metrics: a port, a host and a token (see config-metrics.ts).
+  const metrics = readMetricsConfig(withoutEmptyValues(env));
+  if (metrics.problems.length > 0) {
+    const problems = metrics.problems.map((problem) => `${problem.path}: ${problem.message}`);
+    throw new ConfigError(`Invalid environment configuration. ${problems.join('; ')}`);
+  }
+  // The provider variables have their own small schema too; production refuses a simulator.
+  const providers = readProviderConfig(withoutEmptyValues(env), {
+    nodeEnv: value.NODE_ENV,
+    profile: value.DEPLOYMENT_PROFILE,
+  });
+  if (providers.config === undefined) {
+    const problems = providers.problems.map((problem) => `${problem.path}: ${problem.message}`);
+    throw new ConfigError(`Invalid environment configuration. ${problems.join('; ')}`);
+  }
   return {
     nodeEnv: value.NODE_ENV,
+    profile: value.DEPLOYMENT_PROFILE,
     databaseUrl: value.DATABASE_URL,
+    dbPoolMax: value.DB_POOL_MAX,
+    ...(value.AUDIT_SEALER_DATABASE_URL === undefined
+      ? {}
+      : { auditSealerDatabaseUrl: value.AUDIT_SEALER_DATABASE_URL }),
+    ...(releaserUrl.data === undefined ? {} : { releaserDatabaseUrl: releaserUrl.data }),
+    ...(value.OPERATOR_DATABASE_URL === undefined || value.DEPLOYMENT_MODE === 'single'
+      ? {}
+      : { operatorDatabaseUrl: value.OPERATOR_DATABASE_URL }),
     deploymentMode: value.DEPLOYMENT_MODE,
+    ...(value.BASE_DOMAIN === undefined ? {} : { baseDomain: value.BASE_DOMAIN }),
+    ...(value.PLATFORM_HOST === undefined ? {} : { platformHost: value.PLATFORM_HOST }),
+    ...(value.SINGLE_TENANT_SLUG === undefined
+      ? {}
+      : { singleTenantSlug: value.SINGLE_TENANT_SLUG }),
+    cookieSecure:
+      value.COOKIE_SECURE ??
+      (value.NODE_ENV === 'production' && value.DEPLOYMENT_PROFILE === 'hosted'),
+    trustProxy: trustProxyFrom(value),
+    ...(value.PUBLIC_URL === undefined ? {} : { publicUrl: originOf(value.PUBLIC_URL) ?? '' }),
+    ...(value.PUBLIC_PORT === undefined ? {} : { publicPort: value.PUBLIC_PORT }),
+    kms: kmsFrom(value),
+    ...(value.S3_BUCKET === undefined
+      ? {}
+      : {
+          storage: {
+            bucket: value.S3_BUCKET,
+            region: value.S3_REGION ?? value.AWS_REGION ?? 'us-east-1',
+            ...(value.S3_ENDPOINT === undefined ? {} : { endpoint: value.S3_ENDPOINT }),
+            forcePathStyle: value.S3_FORCE_PATH_STYLE ?? value.S3_ENDPOINT !== undefined,
+            ...(value.S3_ACCESS_KEY_ID === undefined || value.S3_SECRET_ACCESS_KEY === undefined
+              ? {}
+              : {
+                  credentials: {
+                    accessKeyId: value.S3_ACCESS_KEY_ID,
+                    secretAccessKey: value.S3_SECRET_ACCESS_KEY,
+                  },
+                }),
+          },
+        }),
+    ...(value.STORAGE_DIR === undefined || value.STORAGE_UPLOAD_SECRET === undefined
+      ? {}
+      : { fsStorage: { dir: value.STORAGE_DIR, uploadSecret: value.STORAGE_UPLOAD_SECRET } }),
+    ...(scanner.config === undefined ? {} : { scanner: scanner.config }),
+    ...(metrics.config === undefined ? {} : { metrics: metrics.config }),
+    ...(value.SMTP_HOST === undefined
+      ? {}
+      : {
+          mail: {
+            host: value.SMTP_HOST,
+            port: value.SMTP_PORT,
+            security: value.SMTP_SECURITY,
+            ...(value.SMTP_USER === undefined ? {} : { user: value.SMTP_USER }),
+            ...(value.SMTP_PASSWORD === undefined ? {} : { password: value.SMTP_PASSWORD }),
+            from: value.MAIL_FROM,
+          },
+        }),
+    ...(value.OUTBOX_DIR === undefined
+      ? {}
+      : { outbox: { dir: value.OUTBOX_DIR, from: value.MAIL_FROM } }),
+    providers: providers.config,
+    passwordBreachCheck: value.AUTH_BREACH_CHECK,
+    lockout: {
+      maxFailures: value.AUTH_LOCKOUT_MAX_FAILURES,
+      lockMs: value.AUTH_LOCKOUT_MINUTES * 60_000,
+    },
     logLevel: value.LOG_LEVEL,
-    host: value.HOST,
+    host: value.HOST ?? (value.DEPLOYMENT_PROFILE === 'desktop' ? '127.0.0.1' : '0.0.0.0'),
     port: value.PORT,
+    ...(value.DESKTOP_PROXY_SECRET === undefined
+      ? {}
+      : { desktopProxySecret: value.DESKTOP_PROXY_SECRET }),
   };
 }

@@ -1,6 +1,7 @@
 # syntax=docker/dockerfile:1
 #
-# One image, two roles: `docker run IMAGE api` or `docker run IMAGE worker`.
+# One image, three roles: `docker run IMAGE api`, `worker` or `releaser` (the process that holds the
+# key of the retention archive; see docs/runbooks/archive-release.md).
 # Build from the repository root:  docker build -f infra/Dockerfile -t consultorio-api .
 
 # ---- build: install the workspace and bundle the API ------------------------------------------
@@ -12,6 +13,7 @@ WORKDIR /repo
 # Manifests first so the dependency layer is cached until a manifest or the lockfile changes.
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml .npmrc ./
 COPY apps/api/package.json apps/api/
+COPY apps/desktop/package.json apps/desktop/
 COPY apps/web/package.json apps/web/
 COPY packages/config/package.json packages/config/
 COPY packages/contracts/package.json packages/contracts/
@@ -34,11 +36,13 @@ WORKDIR /app
 COPY --from=build --chown=node:node /prod/package.json ./package.json
 COPY --from=build --chown=node:node /prod/node_modules ./node_modules
 COPY --from=build --chown=node:node /repo/apps/api/dist ./dist
+# Data the API reads at startup (the common-password list). It stops if it cannot find it.
+COPY --from=build --chown=node:node /repo/apps/api/assets ./assets
 
 USER node
 EXPOSE 3000
 
-# Meaningful for the `api` role. The `worker` role has no HTTP port: override this check there.
+# Meaningful for the `api` role. The `worker` and `releaser` roles have no HTTP port: override this check there.
 HEALTHCHECK --interval=30s --timeout=3s --start-period=15s --retries=3 \
     CMD ["node", "-e", "fetch('http://127.0.0.1:'+(process.env.PORT||3000)+'/health').then(r=>process.exit(r.ok?0:1),()=>process.exit(1))"]
 

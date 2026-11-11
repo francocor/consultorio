@@ -1,0 +1,56 @@
+// The app only ships for Windows: these are always Windows paths, whatever OS runs the code (CI is Linux).
+import { win32 } from 'node:path';
+
+/** Where an install keeps everything. All of it lives under `root`, except the backups. */
+export interface DataPaths {
+  /**
+   * `%LOCALAPPDATA%\Consulvia`, or `CONSULVIA_DATA_DIR`. Local and not Roaming: a roaming profile copies the
+   * folder to other PCs and back, which corrupts a database that is open.
+   */
+  root: string;
+  pgdata: string;
+  /** `STORAGE_DIR` of the API: the documents. */
+  files: string;
+  /** `OUTBOX_DIR` of the API: the mail that has no mail server. */
+  outbox: string;
+  logs: string;
+  /** The secrets (encrypted with the Windows account) and the settings of the install. */
+  configFile: string;
+  /** The Chromium profile of the window (cache, cookies, service worker). Not backed up. */
+  electronProfile: string;
+  /** `Documents\Consulvia\Copias`, or `CONSULVIA_BACKUP_DIR`. */
+  backups: string;
+}
+
+export interface PathSources {
+  env: NodeJS.ProcessEnv;
+  /** `%LOCALAPPDATA%` (`C:Users<user>AppDataLocal`) */
+  localAppData: string;
+  /** `app.getPath('documents')` */
+  documents: string;
+}
+
+function override(env: NodeJS.ProcessEnv, name: string): string | undefined {
+  const value = env[name];
+  if (value === undefined || value === '') return undefined;
+  if (!win32.isAbsolute(value)) throw new Error(`${name} must be an absolute path`);
+  return value;
+}
+
+/**
+ * The folders of an install. `CONSULVIA_DATA_DIR` and `CONSULVIA_BACKUP_DIR` move them, which is how the
+ * tests of the installer run beside a real install without touching it.
+ */
+export function resolveDataPaths({ env, localAppData, documents }: PathSources): DataPaths {
+  const root = override(env, 'CONSULVIA_DATA_DIR') ?? win32.join(localAppData, 'Consulvia');
+  return {
+    root,
+    pgdata: win32.join(root, 'pgdata'),
+    files: win32.join(root, 'files'),
+    outbox: win32.join(root, 'outbox'),
+    logs: win32.join(root, 'logs'),
+    configFile: win32.join(root, 'config.json'),
+    electronProfile: win32.join(root, 'electron-profile'),
+    backups: override(env, 'CONSULVIA_BACKUP_DIR') ?? win32.join(documents, 'Consulvia', 'Copias'),
+  };
+}

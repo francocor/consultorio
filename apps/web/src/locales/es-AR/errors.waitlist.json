@@ -1,0 +1,7 @@
+{
+  "waitlist_entry_limit": "El paciente ya tiene la cantidad máxima de esperas activas. Cierre alguna antes de agregar otra.",
+  "waitlist_entry_closed": "Esta espera ya está cerrada y no se puede modificar.",
+  "waitlist_not_available": "No se puede anotar al paciente para este tipo de turno, profesional o sede.",
+  "waitlist_opt_in_required": "Para recibir ofertas de turnos hace falta aceptar que le escribamos.",
+  "waitlist_code_invalid": "El código no es válido o ya venció. Revise el correo o pida uno nuevo."
+}

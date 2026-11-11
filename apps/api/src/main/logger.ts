@@ -21,6 +21,12 @@ export const REDACT_PATHS: string[] = [
   '*.body',
 ];
 
+/**
+ * Links that carry a token IN the path, not in the query string (document downloads and the public
+ * action links). The token is the secret of the link, so the log keeps the route and drops it.
+ */
+const TOKEN_IN_PATH = /^\/(files|public\/t|public\/v)\/[^/]+/;
+
 /** Returns the URL path without its query string or fragment. */
 export function stripQuery(url: string): string {
   const end = url.search(/[?#]/);
@@ -41,7 +47,7 @@ interface LoggableRequest {
 export function serializeRequest(request: LoggableRequest) {
   return {
     method: request.method,
-    url: stripQuery(request.url ?? ''),
+    url: stripQuery(request.url ?? '').replace(TOKEN_IN_PATH, '/$1/:token'),
     host: request.host,
     remoteAddress: request.ip,
   };

@@ -1,0 +1,2 @@
+ALTER TABLE "appointment_type" ADD COLUMN "invoice_description" text;--> statement-breakpoint
+ALTER TABLE "appointment_type" ADD CONSTRAINT "appointment_type_invoice_description_check" CHECK ("appointment_type"."invoice_description" is null or length(btrim("appointment_type"."invoice_description")) between 1 and 120);

@@ -1,0 +1,20 @@
+{
+  "fiscal_profile_required": "Cargue primero los datos fiscales (CUIT y condición frente al IVA): el certificado se verifica contra ese CUIT.",
+  "invoicing_not_ready": "Todavía no se puede facturar. Complete la configuración fiscal o revise el estado de la facturación electrónica.",
+  "invoice_charge_voided": "El cobro está anulado: no se puede facturar.",
+  "invoice_lines_mixed": "Las líneas elegidas no corresponden a un mismo destinatario. Facture por separado la parte del paciente y la de la obra social o prepaga.",
+  "invoice_line_over_invoiced": "El importe supera lo que todavía no está facturado de esa línea.",
+  "invoice_payer_cuit_required": "La obra social o prepaga no tiene CUIT cargado. Cárguelo en la configuración de financiadores y vuelva a intentar.",
+  "invoice_point_of_sale_invalid": "Elija un punto de venta activo para emitir la factura.",
+  "invoice_cannot_void": "Una factura emitida no se anula ni se borra: para dejarla sin efecto emita una nota de crédito.",
+  "invoice_credit_note_exceeds": "Las notas de crédito de una factura no pueden superar su importe.",
+  "invoice_credit_note_not_applicable": "Solo una factura emitida o registrada puede tener nota de crédito, y una nota de crédito no tiene otra nota.",
+  "invoice_number_taken": "Ya hay un comprobante registrado con ese tipo, punto de venta y número.",
+  "invoice_not_rejected": "Solo se puede reintentar un intento rechazado que todavía no se haya reintentado.",
+  "invoice_pdf_not_ready": "El PDF de la factura todavía no está listo. Intente de nuevo en unos minutos.",
+  "invoice_awaiting_reconciliation": "Esta factura se envió a ARCA y todavía no sabemos si fue emitida. Espere a que se confirme antes de registrar una factura manual en su lugar. Si ARCA sigue sin responder, el titular o la administración pueden registrarla igual confirmando que el resultado es desconocido.",
+  "invoice_issuer_mismatch": "Esta factura se emitió con otro CUIT del que figura hoy en la configuración fiscal. La nota de crédito la tiene que emitir el CUIT original: cargue el certificado de ese CUIT o emítala desde ARCA.",
+  "invoice_replacement_mismatch": "La factura manual tiene que ser de la misma clase, por el mismo importe, y cubrir las mismas líneas y al mismo destinatario que la factura pendiente que reemplaza. Una nota de crédito hecha a mano solo puede reemplazar una nota de crédito que quedó en pausa, de la misma clase, por el mismo importe y sobre el mismo comprobante.",
+  "invoice_cae_taken": "Ya hay un comprobante registrado con ese CAE.",
+  "point_of_sale_has_invoices": "Este punto de venta ya tiene facturas: no se puede cambiar su ambiente. Cree otro punto de venta para el otro ambiente."
+}

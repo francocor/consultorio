@@ -1,0 +1,15 @@
+{
+  "creator": "Centro Médico Aillu",
+  "created": "2031-05-12T15:30:00.000Z",
+  "sheet": "Cobros de mayo de 2031",
+  "rows": [
+    ["Fecha", "Paciente", "Servicio", "Visitas", "Importe"],
+    ["2031-05-12T00:00:00.000Z", "Pérez, Juana \"la Gallega\"", "Consulta, control", 1, 1234.5],
+    ["2031-05-13T00:00:00.000Z", "=HYPERLINK(\"http://x\")", "Línea 1\nLínea 2", 2, 0.05],
+    ["2031-05-14T00:00:00.000Z", "Núñez, Óscar", "+54 11", 1, -90],
+    [null, "Subtotal", null, 4, 1144.55]
+  ],
+  "amountFormat": "#,##0.00",
+  "dateFormat": "dd/mm/yyyy",
+  "boldRows": [1, 5]
+}

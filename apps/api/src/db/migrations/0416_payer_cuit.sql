@@ -1,0 +1,2 @@
+ALTER TABLE "tenant_payer" ADD COLUMN "cuit" text;--> statement-breakpoint
+ALTER TABLE "tenant_payer" ADD CONSTRAINT "tenant_payer_cuit_check" CHECK ("tenant_payer"."cuit" is null or "tenant_payer"."cuit" ~ '^[0-9]{11}$');

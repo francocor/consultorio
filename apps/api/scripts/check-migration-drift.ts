@@ -1,12 +1,8 @@
-import { execFile } from 'node:child_process';
-import { cp, mkdir, mkdtemp, readdir, rm, writeFile } from 'node:fs/promises';
-import { createRequire } from 'node:module';
-import { dirname, join, relative, resolve } from 'node:path';
+import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { promisify } from 'node:util';
 
-const run = promisify(execFile);
-const require = createRequire(import.meta.url);
+import { generateInScratch } from './drizzle-scratch.js';
+import { checkJournalFolder, type JournalProblem } from './migration-journal.js';
 
 export interface DriftOptions {
   /** Entry file that re-exports every Drizzle table. */
@@ -21,52 +17,31 @@ export interface DriftResult {
   drift: boolean;
   /** Names of migrations the current schema would still need. Empty when there is no drift. */
   missing: string[];
+  /**
+   * What is wrong with the journal itself: a stamp that does not rise, a duplicate tag or number, a
+   * number outside every range, a missing file, a broken snapshot chain. When there are any, the
+   * schema is not compared: drizzle-kit's answer would not mean anything.
+   */
+  problems: JournalProblem[];
   /** Output of drizzle-kit, for the failure message. */
   output: string;
 }
 
-async function sqlFiles(directory: string): Promise<string[]> {
-  return (await readdir(directory)).filter((name) => name.endsWith('.sql')).sort();
-}
-
 /**
- * Fails when the Drizzle schema and the migration folder disagree.
+ * Fails when the migration folder is not sound, or when the Drizzle schema and the folder disagree.
  *
- * It copies the committed migrations to a scratch folder and asks drizzle-kit to generate the
- * migration for the current schema there. If drizzle-kit writes a new `.sql` file, the schema has
- * changes nobody turned into a migration. The committed folder is never modified.
+ * First the journal is checked (`migration-journal.ts`). Then it copies the committed migrations
+ * to a scratch folder and asks drizzle-kit to generate the migration for the current schema there.
+ * If drizzle-kit writes a new `.sql` file, the schema has changes nobody turned into a migration.
+ * The committed folder is never modified.
  */
 export async function checkMigrationDrift(options: DriftOptions): Promise<DriftResult> {
-  await mkdir(options.scratchDir, { recursive: true });
-  const scratch = await mkdtemp(join(options.scratchDir, 'drift-'));
-  try {
-    const outName = 'migrations';
-    const out = join(scratch, outName);
-    await cp(options.migrationsDir, out, { recursive: true });
-    const before = await sqlFiles(out);
+  const problems = await checkJournalFolder(options.migrationsDir);
+  if (problems.length > 0) return { drift: false, missing: [], problems, output: '' };
 
-    const config = join(scratch, 'drizzle.config.ts');
-    await writeFile(
-      config,
-      `export default ${JSON.stringify({
-        dialect: 'postgresql',
-        // drizzle-kit resolves these against its working directory, so they are relative.
-        schema: relative(scratch, options.schemaFile).replaceAll('\\', '/'),
-        out: outName,
-      })};\n`,
-    );
-
-    // The package does not export its bin, so locate it next to the main entry file.
-    const cli = join(dirname(require.resolve('drizzle-kit')), 'bin.cjs');
-    const { stdout, stderr } = await run(process.execPath, [cli, 'generate', '--config', config], {
-      cwd: scratch,
-    });
-
-    const missing = (await sqlFiles(out)).filter((name) => !before.includes(name));
-    return { drift: missing.length > 0, missing, output: `${stdout}${stderr}`.trim() };
-  } finally {
-    await rm(scratch, { recursive: true, force: true });
-  }
+  const generated = await generateInScratch(options);
+  const missing = generated.sql ? [generated.sql.fileName] : [];
+  return { drift: missing.length > 0, missing, problems: [], output: generated.output };
 }
 
 async function main(): Promise<void> {
@@ -77,9 +52,15 @@ async function main(): Promise<void> {
     scratchDir: join(apiRoot, 'node_modules/.cache/migration-drift'),
   });
 
+  if (result.problems.length > 0) {
+    process.stderr.write(
+      `The migration folder is not sound:\n${result.problems.map((problem) => `- ${problem.message}`).join('\n')}\n`,
+    );
+    process.exit(1);
+  }
   if (result.drift) {
     process.stderr.write(
-      'Schema and migrations disagree. Run "pnpm --filter @consultorio/api db:generate" and commit the result.\n' +
+      'Schema and migrations disagree. Run "pnpm db:new <track> <name>" (docs/migration-ranges.md) and commit the result.\n' +
         `Pending: ${result.missing.join(', ')}\n`,
     );
     process.exit(1);

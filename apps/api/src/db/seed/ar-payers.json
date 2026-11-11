@@ -1,0 +1,34 @@
+[
+  { "country": "AR", "code": "particular", "name": "Particular", "kind": "private" },
+  { "country": "AR", "code": "pami", "name": "PAMI (INSSJP)", "kind": "obra_social" },
+  { "country": "AR", "code": "ioma", "name": "IOMA", "kind": "obra_social" },
+  { "country": "AR", "code": "osecac", "name": "OSECAC", "kind": "obra_social" },
+  { "country": "AR", "code": "osprera", "name": "OSPRERA", "kind": "obra_social" },
+  { "country": "AR", "code": "osplad", "name": "OSPLAD", "kind": "obra_social" },
+  { "country": "AR", "code": "osdepym", "name": "OSDEPYM", "kind": "obra_social" },
+  { "country": "AR", "code": "osep", "name": "OSEP", "kind": "obra_social" },
+  { "country": "AR", "code": "apross", "name": "APROSS", "kind": "obra_social" },
+  { "country": "AR", "code": "iosfa", "name": "IOSFA", "kind": "obra_social" },
+  { "country": "AR", "code": "osde", "name": "OSDE", "kind": "prepaga" },
+  { "country": "AR", "code": "swiss_medical", "name": "Swiss Medical", "kind": "prepaga" },
+  { "country": "AR", "code": "galeno", "name": "Galeno", "kind": "prepaga" },
+  { "country": "AR", "code": "medife", "name": "Medifé", "kind": "prepaga" },
+  { "country": "AR", "code": "omint", "name": "Omint", "kind": "prepaga" },
+  { "country": "AR", "code": "sancor_salud", "name": "Sancor Salud", "kind": "prepaga" },
+  { "country": "AR", "code": "accord_salud", "name": "Accord Salud", "kind": "prepaga" },
+  { "country": "AR", "code": "avalian", "name": "Avalian", "kind": "prepaga" },
+  { "country": "AR", "code": "medicus", "name": "Medicus", "kind": "prepaga" },
+  { "country": "AR", "code": "jerarquicos_salud", "name": "Jerárquicos Salud", "kind": "prepaga" },
+  {
+    "country": "AR",
+    "code": "hospital_italiano",
+    "name": "Plan de Salud Hospital Italiano",
+    "kind": "prepaga"
+  },
+  {
+    "country": "AR",
+    "code": "hospital_aleman",
+    "name": "Plan de Salud Hospital Alemán",
+    "kind": "prepaga"
+  }
+]

@@ -4,6 +4,7 @@ packages:
 
 # pnpm 10 does not run dependency lifecycle scripts unless allowed here.
 onlyBuiltDependencies:
+  - electron
   - esbuild
 
 # Supply-chain guard: do not install versions published less than one day ago (minutes).
@@ -11,7 +12,9 @@ minimumReleaseAge: 1440
 
 # Install scripts we have reviewed and deliberately skip (prebuilt binaries ship as optional deps).
 ignoredBuiltDependencies:
+  - '@embedded-postgres/windows-x64'
   - cpu-features
+  - electron-winstaller
   - lefthook
   - protobufjs
   - ssh2

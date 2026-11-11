@@ -1,0 +1,1 @@
+ALTER TABLE "user_account" ADD COLUMN "totp_pending_enc" "bytea";

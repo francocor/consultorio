@@ -10,5 +10,10 @@ playwright-report
 test-results
 pnpm-lock.yaml
 
+# The desktop installer: what it stages and what it builds
+apps/desktop/stage
+apps/desktop/release
+apps/desktop/build
+
 # drizzle-kit owns the format of its snapshots
 apps/api/src/db/migrations/meta

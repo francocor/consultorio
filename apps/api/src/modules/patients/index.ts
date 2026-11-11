@@ -1,0 +1,153 @@
+/**
+ * Public API of the patients module: the registry (demographics, deduplication, search, history).
+ * Other modules and the composition root import from here only.
+ */
+import type { FastifyInstance } from 'fastify';
+
+import type { AuthzOptions } from '../../platform/authz/guard.js';
+import type { TenantKeys } from '../../platform/crypto/tenant-keys.js';
+import type { WithTenant } from '../../platform/db/tenant-context.js';
+import type { ExportRegistry } from '../tenancy/index.js';
+
+import { exportAnamnesis } from './application/anamnesis-export.js';
+import { createAnamnesisService } from './application/anamnesis.js';
+import { createAssignmentService } from './application/assignments.js';
+import { createConsentService } from './application/consent.js';
+import { createCoverageService } from './application/coverage.js';
+import { exportPatients } from './application/export-contributor.js';
+import { createPatientService, type DocumentRules } from './application/patients.js';
+import { createRepresentativeService } from './application/representatives.js';
+import { createRightsService } from './application/rights.js';
+import { anamnesisRoutes } from './http/anamnesis-routes.js';
+import { assignmentRoutes } from './http/assignment-routes.js';
+import { consentRoutes } from './http/consent-routes.js';
+import { coverageRoutes } from './http/coverage-routes.js';
+import { patientRoutes } from './http/patient-routes.js';
+import { representativeRoutes } from './http/representative-routes.js';
+import { rightsRoutes } from './http/rights-routes.js';
+
+/**
+ * Registers what patients contributes to the cancellation export: the demographics (administrative)
+ * and, per professional, the anamnesis (clinical, it needs the key service).
+ */
+export function registerPatientsExportContributors(
+  registry: ExportRegistry,
+  deps: { keys?: TenantKeys } = {},
+): void {
+  registry.registerExportContributor('administrative', 'patients', exportPatients);
+  registry.registerExportContributor('clinical', 'patients', exportAnamnesis(deps.keys));
+}
+
+export { hasDataProcessingConsent } from './application/consent.js';
+// Online booking (track B, S3.09): match a patient by document and register one from a verified booking.
+export {
+  createOnlinePatient,
+  findOnlineRecordOfItsOwn,
+  findPatientByDocument,
+} from './application/online-registry.js';
+export type { NewOnlinePatient, OnlinePatientMatch } from './application/online-registry.js';
+export { isTreating } from './application/write-access.js';
+export type { DocumentRules } from './application/patients.js';
+// Track A (messaging): how to reach a patient, without the rest of the demographics.
+export { readPatientContact, readPatientContacts } from './application/contact.js';
+export type { PatientContact } from './application/contact.js';
+// Consent (Stage 5, track A2): is a person a minor on a day, by the age of majority of the country.
+export { isMinor } from './domain/majority.js';
+
+// Track B of Stage 5 (patient portal): who a patient is, to invite them or to link a dependent.
+export {
+  createPortalRightsRequest,
+  listPortalRightsRequests,
+  readPatientBasics,
+  readPortalProfile,
+  updatePortalContact,
+} from './application/portal-source.js';
+export type {
+  PatientBasics,
+  PortalContactChanges,
+  PortalPatientProfile,
+  PortalRightsRequest,
+} from './application/portal-source.js';
+// Track A of Stage 4 (billing): the payer plan a patient is covered by on a day.
+export { readPatientPayerPlan } from './application/payer-plan.js';
+export type { PatientPayerPlan } from './application/payer-plan.js';
+
+export interface PatientsOptions {
+  withTenant: WithTenant;
+  auditDeny: AuthzOptions['auditDeny'];
+  /** Identity document rules of the organization's country (from its country pack). */
+  documents: DocumentRules;
+  /** Age at which a person is no longer a minor, from the country pack. */
+  majorityAge: (country: string) => number;
+  /** Envelope encryption: the anamnesis is stored encrypted with the tenant data key. */
+  keys: TenantKeys;
+  /** Key and version of the data-processing consent text, from the country pack. */
+  consentText: (country: string) => { textKey: string; version: string };
+  clock?: () => Date;
+}
+
+export interface Patients {
+  routes: (app: FastifyInstance) => void;
+}
+
+export function createPatients(options: PatientsOptions): Patients {
+  const clock = options.clock ? { clock: options.clock } : {};
+  const representatives = createRepresentativeService({
+    majorityAge: options.majorityAge,
+    ...clock,
+  });
+  const consent = createConsentService({ textFor: options.consentText });
+  const patients = createPatientService({
+    documents: options.documents,
+    representatives,
+    consent,
+    ...clock,
+  });
+  const registry = patientRoutes({
+    withTenant: options.withTenant,
+    auditDeny: options.auditDeny,
+    patients,
+  });
+
+  const contacts = representativeRoutes({ withTenant: options.withTenant, representatives });
+  const consentEndpoints = consentRoutes({ withTenant: options.withTenant, consent });
+  const clinical = anamnesisRoutes({
+    withTenant: options.withTenant,
+    auditDeny: options.auditDeny,
+    anamnesis: createAnamnesisService({ keys: options.keys }),
+  });
+  const assignments = assignmentRoutes({
+    withTenant: options.withTenant,
+    auditDeny: options.auditDeny,
+    assignments: createAssignmentService(clock),
+  });
+  const coverageService = createCoverageService(clock);
+  const coverage = coverageRoutes({
+    withTenant: options.withTenant,
+    auditDeny: options.auditDeny,
+    coverage: coverageService,
+  });
+  const rights = rightsRoutes({
+    withTenant: options.withTenant,
+    auditDeny: options.auditDeny,
+    rights: createRightsService({
+      patients,
+      coverage: coverageService,
+      consent,
+      representatives,
+      ...clock,
+    }),
+  });
+
+  return {
+    routes: (app) => {
+      registry(app);
+      contacts(app);
+      coverage(app);
+      consentEndpoints(app);
+      rights(app);
+      clinical(app);
+      assignments(app);
+    },
+  };
+}

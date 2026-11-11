@@ -1,0 +1,26 @@
+{
+  "description": "Online booking (track B). Retention exception 4 of the no-delete rule: abandoned booking submissions and spent or expired one-time codes are hard-deleted by the hourly booking.purge job.",
+  "code": [
+    {
+      "file": "src/modules/online-booking/application/purge.ts",
+      "table": "bookingSubmission",
+      "why": "Retention exception 4: a submission still unverified 24 hours after it was made is deleted, so what a visitor typed into the form does not outlive the attempt. Verified submissions are never touched."
+    },
+    {
+      "file": "src/modules/online-booking/application/purge.ts",
+      "table": "otpChallenge",
+      "why": "A one-time code that expired (or was spent) is deleted with the submission it served; it has no value afterwards and is never read for history."
+    }
+  ],
+  "sql": [],
+  "ephemeralTables": [
+    {
+      "table": "booking_submission",
+      "why": "Unverified public form data, deleted after 24 hours by booking.purge (retention exception 4 of the no-delete rule)."
+    },
+    {
+      "table": "otp_challenge",
+      "why": "One-time codes live ten minutes; spent and expired rows are deleted by booking.purge."
+    }
+  ]
+}

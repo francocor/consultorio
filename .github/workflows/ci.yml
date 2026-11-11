@@ -9,13 +9,31 @@ on:
 permissions:
   contents: read
 
+env:
+  # The workspace has an Electron app (apps/desktop). Its tests, typecheck and bundle need no Electron binary,
+  # so installing the workspace must not download the ~120 MB one.
+  ELECTRON_SKIP_BINARY_DOWNLOAD: '1'
+
 # A newer push to the same branch or PR makes the older run pointless.
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
+  # The type-aware lint runs in several processes, one after the other (about five minutes on a laptop,
+  # packages/config/eslint/lint.js): it is a job of its own so that it runs beside the rest and the
+  # time of the checks is the longer of the two, not their sum.
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: ./.github/actions/setup-workspace
+      - run: pnpm lint
+
   check:
+    # The name stays as the required checks of the repository know it; lint has its own job above.
     name: Typecheck, lint, unit tests, build
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -23,7 +41,6 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - uses: ./.github/actions/setup-workspace
       - run: pnpm typecheck
-      - run: pnpm lint
       - run: pnpm format:check
       - run: pnpm test
       - run: pnpm build
@@ -33,7 +50,8 @@ jobs:
   integration:
     name: Integration tests (Postgres 17)
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    # The suite runs its files one after another against one Postgres and takes about 35 minutes.
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - uses: ./.github/actions/setup-workspace
@@ -50,8 +68,19 @@ jobs:
         run: docker build -f infra/Dockerfile -t consultorio-api:ci .
       - name: Smoke test /health
         run: |
+          # The image runs with NODE_ENV=production, so this uses the production configuration:
+          # AWS KMS and SMTP settings (nothing contacts them at startup) and the multi-tenant domains.
           docker run -d --name api -p 3000:3000 \
             -e DATABASE_URL=postgres://unused:unused@127.0.0.1:1/unused \
+            -e DEPLOYMENT_MODE=multi \
+            -e BASE_DOMAIN=smoke.test \
+            -e PLATFORM_HOST=platform.smoke.test \
+            -e KMS_PROVIDER=aws \
+            -e AWS_REGION=sa-east-1 \
+            -e AWS_KMS_KEY_ID=alias/smoke-test \
+            -e SMTP_HOST=smtp.smoke.test \
+            -e SMTP_SECURITY=starttls \
+            -e ADDRESS_HASH_PEPPER=smoke-test-pepper-0123456789-abcdefghij \
             consultorio-api:ci api
           for attempt in $(seq 1 20); do
             if curl -fsS http://127.0.0.1:3000/health; then exit 0; fi
@@ -63,11 +92,12 @@ jobs:
   e2e:
     name: End-to-end (Playwright)
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - uses: ./.github/actions/setup-workspace
       - run: pnpm --filter @consultorio/web exec playwright install --with-deps chromium
+      # Starts the whole stack with Docker (Postgres, Mailpit, API, worker) and runs the browser suite.
       - run: pnpm test:e2e
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: failure()
@@ -75,6 +105,34 @@ jobs:
           name: playwright-report
           path: apps/web/playwright-report
           retention-days: 7
+
+  lighthouse:
+    name: Performance budget (Lighthouse)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: ./.github/actions/setup-workspace
+      - run: pnpm --filter @consultorio/web build
+      # What the sign-in page downloads first: the catalogs and the navigation of the features stay out.
+      - run: pnpm --filter @consultorio/web test:build
+      # lighthouserc.json: mobile, 4G with a 4x slower CPU. The job fails when LCP is over 2.5 s,
+      # performance is under 0.85, accessibility is under 0.95 or the layout shifts too much.
+      - run: pnpm exec lhci autorun
+
+  alert-rules:
+    name: Alert rules (promtool)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      # The rules are code (infra/alerts/rules.yml). Prometheus itself checks their syntax and the scrape
+      # configuration that loads them; the unit test alert-rules.test.ts checks that they read only
+      # series the application exposes.
+      - name: Check the rules and the scrape configuration
+        run: |
+          docker run --rm -v "$PWD/infra:/infra:ro" --entrypoint promtool prom/prometheus:v3.5.0 check rules /infra/alerts/rules.yml
+          docker run --rm -v "$PWD/infra:/etc/prometheus:ro" --entrypoint promtool prom/prometheus:v3.5.0 check config /etc/prometheus/prometheus/prometheus.yml
 
   audit:
     name: Dependency audit
