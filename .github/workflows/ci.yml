@@ -50,7 +50,8 @@ jobs:
   integration:
     name: Integration tests (Postgres 17)
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    # The suite runs its files one after another against one Postgres and takes about 35 minutes.
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - uses: ./.github/actions/setup-workspace
