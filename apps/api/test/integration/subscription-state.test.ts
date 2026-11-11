@@ -322,7 +322,9 @@ describe('the limit of professionals of the plan (task 6.8)', () => {
   let limited: ClinicalWorld;
 
   beforeAll(async () => {
-    limited = await createClinicalWorld(runtime, 'sub-limit', { clock: () => NOW });
+    // The real clock: the seat check counts the open invitations against the system time, so a
+    // fixed clock would see them expire once the real date passes it.
+    limited = await createClinicalWorld(runtime, 'sub-limit', { clock: () => new Date() });
     // Two professionals now; the plan allows three.
     await limited.professional();
     await limited.professional();
@@ -621,7 +623,8 @@ describe('the professional role given back counts against the plan (JD-S6 R1, A-
   let full: ClinicalWorld;
 
   beforeAll(async () => {
-    full = await createClinicalWorld(runtime, 'sub-seats', { clock: () => NOW });
+    // The real clock, for the same reason as the limit of professionals above.
+    full = await createClinicalWorld(runtime, 'sub-seats', { clock: () => new Date() });
     await full.professional();
     await full.professional();
     await asTenant(runtime, full.tenant.id, (tx) =>

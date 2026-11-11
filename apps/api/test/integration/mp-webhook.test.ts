@@ -224,12 +224,16 @@ describe('the webhook refuses what is not the provider and changes nothing (task
     const org = await world.organization();
     await org.checkout();
     const preapprovalId = String((await org.subscription())['provider_preapproval_id']);
+    // Dated against the test clock, which the reconcile measures the month from (not the database's
+    // own now(), which moves with the real date).
+    const daysAgo = (days: number) =>
+      new Date(clock.now.getTime() - days * 86_400_000).toISOString();
     await org.run(sql`
       insert into subscription_event (tenant_id, event_id, topic, resource_id, signed_at, received_at)
       values (current_setting('app.tenant_id')::uuid, 'old-1', 'preapproval', 'PRE-OLD',
-              now() - interval '40 days', now() - interval '40 days'),
+              ${daysAgo(40)}::timestamptz, ${daysAgo(40)}::timestamptz),
              (current_setting('app.tenant_id')::uuid, 'recent-1', 'preapproval', 'PRE-RECENT',
-              now() - interval '2 days', now() - interval '2 days')`);
+              ${daysAgo(2)}::timestamptz, ${daysAgo(2)}::timestamptz)`);
 
     await reconcileSubscription(world.deps, org.tenant.id);
 
